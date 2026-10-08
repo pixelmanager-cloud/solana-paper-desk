@@ -290,6 +290,14 @@
         "pr": 72,
         "head": "f64144d4c583520666ca866c37dde3e8e81f2205",
         "base": "2ef1071"
+      },
+      {
+        "worker": "worker10",
+        "thread_id": "01a118fd-56d5-70b8-ad31-dba13e982082",
+        "host_id": "durable",
+        "status": "IMPLEMENTING",
+        "task": "Lossless mint-bound raw/human quantity witness in existing unsigned diagnostic path",
+        "base": "b5e4d66"
       }
     ],
     "saved_launch_probe": {
