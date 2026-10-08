@@ -294,16 +294,18 @@
         "worker": "worker08",
         "thread_id": "01a118fd-2563-7126-90d7-bd07693de0b2",
         "host_id": "durable",
-        "task": "Consumer missing-checkpoint recovery diagnostics; no ledger.py edits",
-        "status": "IMPLEMENTING",
-        "base": "e13d17b"
+        "task": "PR65 standalone report missing checkpoint integrity repair, then distinct consumer diagnostics",
+        "status": "FIXING",
+        "base": "e13d17b",
+        "pr": 65,
+        "head": "30f70c4665b3c19a16636dcbdc378042d67c9db2"
       },
       {
         "worker": "worker02",
         "thread_id": "01a118fc-666c-70b6-9fa8-2c7520f0a0bb",
         "host_id": "durable",
         "task": "Independent PR65 second repair review",
-        "status": "REVIEWING",
+        "status": "WAITING_REPAIR",
         "pr": 65,
         "head": "30f70c4665b3c19a16636dcbdc378042d67c9db2"
       },
@@ -757,10 +759,11 @@
     "65": {
       "head": "30f70c4665b3c19a16636dcbdc378042d67c9db2",
       "reviewer": "worker02",
-      "status": "RE_REVIEWING",
+      "status": "CHANGES_REQUESTED",
       "integrated": false,
-      "finding": "Duplicate acknowledgment accepts malformed null/empty checkpoint",
-      "repair_worker": "worker08"
+      "finding": "Standalone Ledger.report returns state:null with retained fills after committed checkpoint deletion",
+      "repair_worker": "worker08",
+      "previous_findings_resolved": true
     },
     "67": {
       "head": "77991bf90bb31f428b1c3dd33076ab7dc6e1ca3f",
