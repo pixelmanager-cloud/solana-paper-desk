@@ -28,6 +28,10 @@ class _Setup:
                     raise ValueError('Missing charged acquisition setup')
                 c.execute('INSERT INTO ownership_acquisition_setup VALUES(?,?,NULL,NULL)',(self.identity,digest(descriptor)))
             c.execute("CREATE TRIGGER IF NOT EXISTS acquisition_setup_update BEFORE UPDATE ON ownership_acquisition_setup WHEN NEW.scan_id!=OLD.scan_id OR NEW.job_descriptor_hash!=OLD.job_descriptor_hash OR (OLD.mint_hash IS NOT NULL AND NEW.mint_hash IS NOT OLD.mint_hash) OR (OLD.cutoff_hash IS NOT NULL AND NEW.cutoff_hash IS NOT OLD.cutoff_hash) BEGIN SELECT RAISE(ABORT,'Immutable acquisition setup'); END")
+            # Separate guard also upgrades databases created before this repair.
+            # NEW.rowid detects writes through rowid, _rowid_ and oid aliases,
+            # including OR REPLACE collisions that otherwise delete another job.
+            c.execute("CREATE TRIGGER IF NOT EXISTS acquisition_setup_identity BEFORE UPDATE ON ownership_acquisition_setup WHEN NEW.rowid IS NOT OLD.rowid BEGIN SELECT RAISE(ABORT,'Immutable acquisition row identity'); END")
             c.execute("CREATE TRIGGER IF NOT EXISTS acquisition_setup_delete BEFORE DELETE ON ownership_acquisition_setup BEGIN SELECT RAISE(ABORT,'Immutable acquisition setup'); END")
             c.execute("CREATE TRIGGER IF NOT EXISTS acquisition_setup_replace BEFORE INSERT ON ownership_acquisition_setup WHEN EXISTS(SELECT 1 FROM ownership_acquisition_setup WHERE scan_id=NEW.scan_id OR rowid=NEW.rowid) BEGIN SELECT RAISE(ABORT,'Immutable acquisition setup'); END")
         self.read()

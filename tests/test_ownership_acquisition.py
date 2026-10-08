@@ -260,6 +260,35 @@ class AcquisitionTests(unittest.TestCase):
         terminal=acquire(self.db,self.evidence,lambda *a:self.fail('Sealed acquisition resumed'),scan_id=uid)
         self.assertEqual(terminal['status'],'ALREADY_COMPLETE');self.assertEqual(terminal['requests_used'],4)
 
+    def test_setup_row_identity_aliases_and_replace_collisions_preserve_charged_jobs(self):
+        first=self.admit();second=self.admit(self.owner)
+        store=EvidenceStore(self.evidence);progress=HistoryProgress(store)
+        for uid in (first,second):
+            descriptor=self.jobs().descriptor(uid)
+            admission=progress.admit(uid,{'kind':'ownership_admission_v1','scan_id':uid,
+                                         'mint':descriptor['mint'],'created':descriptor['admitted_at']})
+            _Setup(store,descriptor,admission)
+            self.assertTrue(progress.reserve(uid))
+        with store.connect() as c:
+            before=c.execute('SELECT rowid,* FROM ownership_acquisition_setup ORDER BY rowid').fetchall()
+            budget=c.execute('SELECT * FROM ownership_budgets ORDER BY id').fetchall()
+            for alias in ('rowid','_rowid_','oid'):
+                for conflict in ('','OR REPLACE'):
+                    for target in (before[1][0],99):
+                        with self.subTest(alias=alias,conflict=conflict,target=target):
+                            with self.assertRaises(sqlite3.IntegrityError):
+                                c.execute('UPDATE '+conflict+' ownership_acquisition_setup SET '+alias+'=? WHERE scan_id=?',(target,first))
+                            self.assertEqual(c.execute('SELECT rowid,* FROM ownership_acquisition_setup ORDER BY rowid').fetchall(),before)
+                            self.assertEqual(c.execute('SELECT * FROM ownership_budgets ORDER BY id').fetchall(),budget)
+            # Existing databases receive the new guard when setup is reopened.
+            c.execute('DROP TRIGGER acquisition_setup_identity')
+        _Setup(store,self.jobs().descriptor(first),progress.admission(first))
+        with store.connect() as c:
+            with self.assertRaises(sqlite3.IntegrityError):
+                c.execute("UPDATE OR REPLACE ownership_acquisition_setup SET rowid=? WHERE scan_id=?",(before[1][0],first))
+        self.assertEqual(progress.admission(first)['requests_used'],1)
+        self.assertEqual(progress.admission(second)['requests_used'],1)
+
     def test_real_cli_fixture_backend_and_mutually_exclusive_target(self):
         fixture=self.root/'fixture.json';fixture.write_text(canonical({'mint':self.mint,'raw':self.raw,'values':self.values}))
         child="""
