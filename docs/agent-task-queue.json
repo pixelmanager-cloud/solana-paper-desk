@@ -278,7 +278,7 @@
         "worker": "02",
         "thread_id": "01a118fc-666c-70b6-9fa8-2c7520f0a0bb",
         "host_id": "durable",
-        "status": "RESERVED_PENDING_DISPATCH",
+        "status": "DISPATCHED",
         "base": "421a9ce1c92a737375b249e8fe83cb11e9295198",
         "scope": "Atomic original union getMultipleAccounts reservation and completion after audited finalized-slot DONE; no transport or publication"
       }
