@@ -203,7 +203,7 @@
       "worker04": "Implement protected pool receipt ledger; isolated module/tests, no provider or runtime wiring",
       "worker05": "PR30 reviewed and integrated; available",
       "worker09": "PR35 reviewed and integrated; available",
-      "worker01": "PR36 published d184189654ddbae327d23dbca8e308cc2b0b83eb; available for review fixes",
+      "worker01": "Repair PR36 setup UPDATE OR REPLACE rowid collision; append-only",
       "worker07": "Implement raw execution trace ordering/caller reconstruction prerequisite; no runtime gate relaxation",
       "worker08": "PR31 reviewed and integrated; available"
     },
@@ -265,6 +265,15 @@
         "pr": 36,
         "head": "d184189654ddbae327d23dbca8e308cc2b0b83eb",
         "status": "REVIEWING"
+      },
+      {
+        "worker": "worker01",
+        "thread_id": "01a118fc-39bc-722c-b442-8bf5a749e0bb",
+        "host_id": "durable",
+        "task": "PR36 immutable setup rowid collision fix",
+        "pr": 36,
+        "head": "d184189654ddbae327d23dbca8e308cc2b0b83eb",
+        "status": "FIXING"
       }
     ],
     "saved_launch_probe": {
@@ -294,7 +303,7 @@
       "scratch_merge": "ec5d5104e5ceae3f9ef1c64135ccb9f23b0527d2",
       "combined_tests": 909,
       "result": "PASS",
-      "independent_review": "PENDING",
+      "independent_review": "IN_PROGRESS; coordinator confirmed setup rowid collision deletion",
       "integrated": false
     }
   }

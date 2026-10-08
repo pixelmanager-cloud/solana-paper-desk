@@ -345,3 +345,6 @@ PR35 exact head `ab41ed0a9b56bc0a1a96a9c10630b57425465f5d` passed independent re
 ### Acquisition executor review checkpoint
 
 PR36 `d184189654ddbae327d23dbca8e308cc2b0b83eb` implements explicit birth-inclusive acquisition with queue fencing, shared budget and sealed-source publication. Scratch combined source `ec5d5104e5ceae3f9ef1c64135ccb9f23b0527d2` passes 909 tests in23.571s. Independent review by worker02 is pending, including setup identity immutability and archive/publication crash boundaries. This candidate is not integrated or deployed and establishes no live acceptance.
+
+
+PR36 coordinator probe confirmed setup identity defect: default SQLite `UPDATE OR REPLACE` changing one setup rowid to another deletes the second setup despite current triggers. Author repair assigned; independent review continues. Candidate remains excluded from integration/deployment despite passing909 tests.
