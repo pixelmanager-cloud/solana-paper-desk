@@ -189,23 +189,23 @@
   ],
   "integration": {
     "branch": "integration/cloud-wave1",
-    "tested_commit": "40c6a25",
-    "combined_tests": 806,
+    "tested_commit": "c61f088eff19c952e434df64a08a75215a3b5cd4",
+    "combined_tests": 852,
     "result": "PASS",
     "live_verification": "BLOCKED_NO_SUPPORTED_BUDGET_FEASIBLE_PUBLIC_LEGACY_SEED; acquisition path in development",
     "blocker": "PR31 remaining rowid replacement repair; acquisition executor; live legacy acceptance; exposure integration unfinished",
     "followups": {
-      "worker02": "Re-review PR31 repaired04a9301",
-      "worker06": "PR34 published; independent review active",
-      "cloud_reviewer": "PR33 exclusive normalizer review; redirected from duplicate automated PR31 review",
-      "worker10": "Independent PR34 ae5a36bc0e8f6e6d33afea6292a64a2c6cc1e23e sealed consumer review",
+      "worker02": "Re-review PR31 latest5a97f42 rowid identity and one-time migration fix",
+      "worker06": "PR34 integrated; available",
+      "cloud_reviewer": "PR33 reviewed and integrated; available",
+      "worker10": "PR34 reviewed and integrated; available",
       "worker03": "Public legacy feasibility report c932cbf published/reviewed; idle",
       "worker04": "PR26 reviewed; available",
       "worker05": "PR30 e1b22f0d7b55181a97f1eebe4338c0db0b700f70 published; independent repeated-concurrency review active",
       "worker09": "Implement static decision UI original observation age and explicit historical scope; no backend changes",
       "worker01": "PR32 reviewed and integrated; acquisition executor awaits queue repair",
-      "worker07": "PR33 5095a17557c7fb916d74e508a3e157b49abcd784 raw control normalizer published",
-      "worker08": "Repair UPDATE OR REPLACE rowid/oid aliases and recurring missing-descriptor migration risk, samePR append-only"
+      "worker07": "PR33 integrated; no runtime control lifecycle approval",
+      "worker08": "PR31 5a97f42a92a1691659dad60b0f4f61af41562f2d published; re-review active"
     },
     "reviews": {
       "PR18": "92e9c6104b411101e414c03774a1675cbbf1ac91: independent review no blocking scoped defect",
@@ -219,23 +219,25 @@
       "PR28": "e81d9be392bef4d29b70490ef2354bf3ec966f99: independent correction PASS,724 tests; union bound corrected",
       "PR30": "e1b22f0d7b55181a97f1eebe4338c0db0b700f70: independent PASS, 726 tests,100 threaded startups,120 spawned consumers, bounded5s lock timeout",
       "PR32": "64765af62379fe4fbb185271c1d54405a527a0af: independent scoped PASS,737 tests,53 focused; successor locking/fencing/publication mandatory",
-      "PR31": "04a9301 re-review: non-object JSON fixed, INSERT replacement blocked, remaining UPDATE OR REPLACE rowid deletion permits constructor to reclassify acquisition as SCREEN; held"
+      "PR31": "04a9301 re-review: non-object JSON fixed, INSERT replacement blocked, remaining UPDATE OR REPLACE rowid deletion permits constructor to reclassify acquisition as SCREEN; held",
+      "PR33": "5095a17557c7fb916d74e508a3e157b49abcd784: independent syntax-only PASS,746tests,43445 adversarial checks; no lifecycle approval",
+      "PR34": "ae5a36bc0e8f6e6d33afea6292a64a2c6cc1e23e: independent PASS,823tests,54 focused,20 metadata interleaving runs"
     },
     "candidate_combination": {
       "commit": "bfcc550ca25bd6cb79dc7ac3ad2b30c72f7b1033",
       "location": "local detached worktree work/cloud-controls",
-      "result": "PASS single combined run; PR31 rowid bypass unresolved and PR34 independent review pending",
+      "result": "PASS; includes PR31 latest5a97f42 pending independent review",
       "published": false,
       "prs": {
         "26": "aa4626fec148c244f841f0614abc4d18c52274dd",
         "27": "dbffb7551ce2925156b1c8a173f4b0c38ad4f6c9",
         "28": "e81d9be392bef4d29b70490ef2354bf3ec966f99",
         "30": "e1b22f0d7b55181a97f1eebe4338c0db0b700f70",
-        "31": "04a930172a088607b833017112e9d4721869e60c",
+        "31": "5a97f42a92a1691659dad60b0f4f61af41562f2d",
         "32": "64765af62379fe4fbb185271c1d54405a527a0af",
         "34": "ae5a36bc0e8f6e6d33afea6292a64a2c6cc1e23e"
       },
-      "tests": 843
+      "tests": 878
     },
     "published_ci": "d0caa0f1262366ca541d052310d78fbfdc63722d successful"
   }
