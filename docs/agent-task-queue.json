@@ -197,9 +197,9 @@
     "followups": {
       "worker01": "PR79 independent PASS; available",
       "worker05": "PR79 integrated; available",
-      "worker06": "PR75 exact combined review PASS; available",
+      "worker06": "Independent PR80 review",
       "worker10": "PR75 integrated; available",
-      "worker02": "Verify and fix aggregate classification resource bound",
+      "worker02": "PR80 published; available",
       "worker03": "PR70 integrated; available",
       "worker04": "PR68 integrated; available",
       "worker07": "PR77 repair published; available",
@@ -262,12 +262,14 @@
     "published_ci": "Deployed d758bc529a7da1f74509117288740911f2ad6845: both CI runs successful",
     "active_claims": [
       {
-        "worker": "worker02",
-        "thread_id": "01a118fc-666c-70b6-9fa8-2c7520f0a0bb",
+        "worker": "worker06",
+        "thread_id": "01a118fc-f867-7233-8eec-c20659e70095",
         "host_id": "durable",
-        "status": "INVESTIGATING_AND_FIXING",
-        "base": "e130c8c",
-        "task": "Bound aggregate classification evidence traversal/retention without accepting prefixes"
+        "status": "REVIEWING",
+        "base": "a6aee2c",
+        "pr": 80,
+        "head": "03d0a2ffce477243b8af813c9d5b310c490292ab",
+        "task": "Independent aggregate classification resource-bound review"
       }
     ],
     "saved_launch_probe": {
@@ -1001,6 +1003,22 @@
       "reviewed_tree": "9d5556b2305cdcdefdfdc659b5a469b96f183440",
       "tree_match": true,
       "integration_commit": "04abb83d1b6d9f24e8746a9433621c7b15f65a1d"
+    },
+    "80": {
+      "head": "03d0a2ffce477243b8af813c9d5b310c490292ab",
+      "reviewer": "worker06",
+      "status": "INDEPENDENT_REVIEW_PENDING",
+      "integrated": false,
+      "ci": "Both exact head runs SUCCESS",
+      "coordinator_diff_review": "Full classifier and dedicated test diff reviewed",
+      "mac_combined": {
+        "base": "a6aee2c",
+        "tree": "afcb5cc7a9f317be20bfad97ec556a5c09b091f3",
+        "discovered": 1563,
+        "passed": 1432,
+        "skips": 131,
+        "seconds": 32.616
+      }
     }
   },
   "parallel_combined_regression": {
