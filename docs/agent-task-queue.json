@@ -199,7 +199,7 @@
       "worker06": "PR34 integrated; available",
       "cloud_reviewer": "PR33 reviewed and integrated; available",
       "worker10": "PR42 review complete retrieved from GitHub;cloudchat host unavailable",
-      "worker03": "PR39 published; reference-only fixture review pending",
+      "worker03": "Resolve historical event schema provenance offline;no inferred production approval",
       "worker04": "PR40 repairs published3744192;review remains incomplete",
       "worker05": "PR30 reviewed and integrated; available",
       "worker09": "PR35 reviewed and integrated; available",
@@ -255,6 +255,13 @@
         "host_id": "durable",
         "task": "raw legacy SPL accounting decoding,preserve unresolved controls",
         "status": "IMPLEMENTING"
+      },
+      {
+        "worker": "worker03",
+        "thread_id": "01a118fc-9478-778a-b77a-8f8f6ec7e0ad",
+        "host_id": "durable",
+        "task": "bounded authoritative historical CreateEvent schema research",
+        "status": "RESEARCHING"
       }
     ],
     "saved_launch_probe": {
