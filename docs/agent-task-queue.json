@@ -262,25 +262,25 @@
     "published_ci": "Deployed d758bc529a7da1f74509117288740911f2ad6845: both CI runs successful",
     "active_claims": [
       {
-        "id": "PR94-REVIEW-FIX",
-        "worker": "01",
-        "pr": 94,
-        "head": "714e1e915ae74b965150b8a234c89d92a03b8590",
-        "thread_id": "01a118fc-39bc-722c-b442-8bf5a749e0bb",
-        "host_id": "durable",
-        "status": "IN_PROGRESS",
-        "scope": "Reject schema typed-name collisions and malformed/rebound local intent fields",
-        "wait_cursor": "5e651fc7-2996-4765-974d-5c852257a005:61",
-        "turn_id": "01a11c01-b8e2-72d4-b87c-13ae7c27aeba"
-      },
-      {
         "id": "REQUEST-BOUND-DISCOVERY-CUTOFF",
         "worker": "02",
         "thread_id": "01a118fc-666c-70b6-9fa8-2c7520f0a0bb",
         "host_id": "durable",
-        "status": "DISPATCH_PENDING",
+        "status": "IN_PROGRESS",
         "base": "d1863d3360fb5449629478545955b29df1e01054",
-        "scope": "Establish original request-bound discovery cutoff through existing bounded acquisition; no live calls/publication"
+        "scope": "Establish original request-bound discovery cutoff through existing bounded acquisition; no live calls/publication",
+        "wait_cursor": "a2dcfb97-463d-4188-9da3-48a81e644d23:61",
+        "turn_id": "01a11c0f-e216-749d-8675-14e00e57b0db"
+      },
+      {
+        "id": "PR94-FIX-REREVIEW",
+        "worker": "06",
+        "pr": 94,
+        "head": "6024d130e01c75b4075bba57856e010b7dc7778a",
+        "base": "7f57cf0e7b50f44868e77a149c2ca4c10173ee3b",
+        "thread_id": "01a118fc-f867-7233-8eec-c20659e70095",
+        "host_id": "durable",
+        "status": "DISPATCHED"
       }
     ],
     "saved_launch_probe": {
@@ -866,22 +866,23 @@
     },
     "pending_completion_inventory": {
       "pr": 94,
-      "head": "714e1e915ae74b965150b8a234c89d92a03b8590",
+      "head": "6024d130e01c75b4075bba57856e010b7dc7778a",
       "integrated": false,
-      "review": "CHANGES REQUIRED worker06: schema-family typed-name collision and partial intent structural validation",
-      "author_linux_tests": 1841,
+      "review": "REPAIR PENDING independent06 rereview",
+      "author_linux_tests": 1851,
       "author_skips": 0,
-      "combined_base": "07049e5",
-      "combined_tree": "1b166bdbb4d3d92f957474024959e2c6cc1ba304",
-      "mac_discovered": 1841,
-      "mac_passed": 1507,
-      "mac_skipped": 334,
-      "mac_seconds": 33.921,
-      "ci": "Original dashboard Node10s timeout retained; unchanged head714e1e9 rerun37794887536 SUCCESS14:53:35Z and PRrun37794988759 SUCCESS; structural review blockers remain",
+      "combined_base": "7f57cf0e7b50f44868e77a149c2ca4c10173ee3b",
+      "combined_tree": "5e7588561ffb61352b32339186c83c22b3000391",
+      "mac_discovered": 1880,
+      "mac_passed": 1508,
+      "mac_skipped": 372,
+      "mac_seconds": 33.867,
+      "ci": "PENDING corrected head",
       "coordinator_diff_review": "Module inspected; independent security/full Linux pending",
       "independent_linux_tests": 1841,
       "independent_linux_seconds": 261.463,
-      "independent_probes": 14
+      "independent_probes": 14,
+      "previous_blocked_head": "714e1e915ae74b965150b8a234c89d92a03b8590"
     }
   },
   "native_reconciliation_review": {
