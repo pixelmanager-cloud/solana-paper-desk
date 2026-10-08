@@ -196,7 +196,7 @@
     "blocker": "PR26 contradiction fix/re-review and decoder authority gap repair active; live legacy acceptance and exposure integration unfinished",
     "followups": {
       "worker02": "PR24 exact-head review complete; idle",
-      "worker06": "PR27 dbffb7551ce2925156b1c8a173f4b0c38ad4f6c9 published, independent review active",
+      "worker06": "PR27 idle; confirmed prohibited force-with-lease history rewrite, instructed future append-only. No integration until new exact-head independent review.",
       "cloud_reviewer": "Independent exact-head PR26 point-in-time pool admission review",
       "worker10": "Independent exact-head PR27 authority control rejection review",
       "worker03": "Public legacy feasibility report c932cbf published/reviewed; idle",
@@ -213,7 +213,8 @@
       "PR21": "22e1dae7c8f6a1adaca2690c14b13aabc663e729: worker10 independently passed 687 tests, no new regression",
       "PR25": "28e04362e426e50fc5cceca232bb227f38a3707c: independent scoped PASS; known silent authority-operation omission prevents interval-control acceptance",
       "PR24": "b5911a6fece35f83af87b89a14537de2d7c11dec: independent test/fixture review passed, 700 tests, no scoped blocking defect; lifetime authority gap remains",
-      "PR26": "f873c52cfab48ebb203377d0e3548cfc38c477bf: independent P2 contradictory same-slot capture admission; NOT integrated"
+      "PR26": "f873c52cfab48ebb203377d0e3548cfc38c477bf: independent P2 contradictory same-slot capture admission; NOT integrated",
+      "PR27": "dbffb7551ce2925156b1c8a173f4b0c38ad4f6c9: local 727 tests pass; independent latest-head review required. Worker rebased/force-with-lease from f87178b contrary to policy; original-head review cannot approve replacement."
     },
     "candidate_combination": {
       "commit": "57a51245c85ba50d11fe782612a443131ffaa934",
