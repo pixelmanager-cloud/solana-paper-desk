@@ -46,7 +46,7 @@ def simulate_sell(mint, wallet, holding, amount, rpc=helius_rpc, quote=jupiter_p
     effects=check_effects(value,resolved_keys,wallet,mint,amount,minimum_out)
     controls=check_account_controls(value,resolved_keys,wallet,effects.get('owned_token_account_indices',[]),mint=mint)
     from .instructions import inventory
-    instruction_inventory=inventory(raw_instructions,value,resolved_keys,wallet)
+    instruction_inventory=inventory(raw_instructions,value,resolved_keys,wallet,compiled=compiled)
     from .debits import check_sell_debits
     debit_checks=check_sell_debits(instruction_inventory,value,resolved_keys,wallet,mint,holding,amount)
     rent_quote=None

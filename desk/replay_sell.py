@@ -47,7 +47,7 @@ def replay_sell(store,key):
     value=record['simulation'];keys=compiled['keys'];outer=compiled['outer']
     effects=check_effects(value,keys,wallet,mint,amount,minimum)
     controls=check_account_controls(value,keys,wallet,effects.get('owned_token_account_indices',[]),mint=mint)
-    instructions=inventory(outer,value,keys,wallet)
+    instructions=inventory(outer,value,keys,wallet,compiled=compiled)
     debits=check_sell_debits(instructions,value,keys,wallet,mint,holding,amount,rent_exempt_lamports=record['rent_lookup']['lamports'])
     bindings=check_sell_bindings(instructions,pool,mint,wallet,holding,amount,minimum,slot)
     recipients=check_sell_recipients(instructions,bindings,amount,minimum)

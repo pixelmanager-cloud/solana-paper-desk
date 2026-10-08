@@ -13,7 +13,7 @@ from .dynamic_fees import fee_schema
 
 REQUIRED=('effects','controls','debits','router','envelope','amm','recipients','fees','fee_query','fee_split','event','setup')
 ROW_CHECKS=('envelope','amm','recipients','fee_query','event','setup')
-FIELDS=('instruction','program','data_base64','accounts','stack_height','parent_instruction','parent_program')
+FIELDS=('instruction','program','data_base64','accounts','stack_height','parent_instruction','parent_program','requested_account_metas')
 
 
 def instruction_receipt(row):
@@ -25,7 +25,15 @@ def instruction_receipt(row):
             or any(row.get(k) is not None and type(row[k]) is not str
                    for k in ('instruction','parent_instruction','parent_program'))):
         raise ValueError('Malformed instruction receipt identity')
-    return {name:list(row['accounts']) if name=='accounts' else row.get(name) for name in FIELDS}
+    metas=row.get('requested_account_metas')
+    if metas is not None:
+        if (type(metas) is not list or len(metas)!=len(row['accounts']) or
+                any(type(a) is not dict or set(a)!={'pubkey','isSigner','isWritable'} or
+                    a['pubkey']!=key or type(a['isSigner']) is not bool or type(a['isWritable']) is not bool
+                    for a,key in zip(metas,row['accounts']))):
+            raise ValueError('Malformed requested account privileges')
+    return {name:([dict(a) for a in metas] if metas is not None else None) if name=='requested_account_metas'
+            else list(row['accounts']) if name=='accounts' else row.get(name) for name in FIELDS}
 
 
 def outer_receipt(ix,index=None):
@@ -34,6 +42,7 @@ def outer_receipt(ix,index=None):
     return instruction_receipt({'instruction':str(index) if index is not None else None,
         'program':ix['programId'],'data_base64':ix['data'],
         'accounts':[a['pubkey'] for a in ix['accounts']],
+        'requested_account_metas':[{k:a.get(k) for k in ('pubkey','isSigner','isWritable')} for a in ix['accounts']],
         'stack_height':1,'parent_instruction':None,'parent_program':None})
 
 
@@ -46,6 +55,22 @@ def check_route_coverage(inventory,checks):
     rows=inventory.get('instructions',[])
     if not isinstance(rows,list) or len(rows)>256:
         rows=[];reasons.append('ROUTE_INVENTORY_MALFORMED_OR_EXCESSIVE')
+    declarations=None
+    outer_rows=[r for r in rows if isinstance(r,dict) and type(r.get('stack_height')) is int and r['stack_height']==1]
+    if outer_rows:
+        try:
+            from .compile import declared_message_privileges
+            outer_rows=sorted(outer_rows,key=lambda r:int(r['instruction']))
+            if [r['instruction'] for r in outer_rows]!=[str(i) for i in range(len(outer_rows))]:raise ValueError('Outer path/order mismatch')
+            witness=inventory['outer_privilege_evidence']
+            source=[{'programId':r['program'],'data':r['data_base64'],'accounts':r['requested_account_metas']} for r in outer_rows]
+            declarations=declared_message_privileges(base64.b64decode(witness['unsigned_transaction'],validate=True),
+                witness['lookup_snapshot'],source,inventory['transaction_keys'],witness['wallet'])
+            if declarations!=inventory.get('outer_message_privileges') or any(
+                r.get('declared_account_privileges')!=item['account_privileges']
+                for r,item in zip(outer_rows,declarations['outer'])):raise ValueError('Declared privilege fields contradict message')
+        except (ValueError,KeyError,TypeError,IndexError):
+            declarations=None;reasons.append('ROUTE_OUTER_MESSAGE_PRIVILEGES_UNAVAILABLE_OR_CONTRADICTORY')
     paths=Counter(r.get('instruction') for r in rows if isinstance(r,dict) and isinstance(r.get('instruction'),str))
     if any(n>1 for n in paths.values()):reasons.append('ROUTE_DUPLICATE_INSTRUCTION_PATH')
     receipts={name:checks.get(name,{}).get('checked_instructions') for name in ROW_CHECKS}
@@ -75,7 +100,7 @@ def check_route_coverage(inventory,checks):
             if not isinstance(identity['accounts'],list) or not all(isinstance(a,str) for a in identity['accounts']):raise ValueError('Invalid accounts')
             raw=base64.b64decode(row['data_base64'],validate=True)
             if row.get('stack_height')==1:
-                if program in (COMPUTE,ATA,JUPITER,TOKEN_PROGRAM) and bound('envelope',identity):
+                if declarations is not None and program in (COMPUTE,ATA,JUPITER,TOKEN_PROGRAM) and bound('envelope',identity):
                     if program!=JUPITER or router_bound(identity):role='outer_envelope'
             elif program==PUMPSWAP:
                 if path==checks.get('amm',{}).get('instruction') and bound('amm',identity):role='bound_sell'
@@ -98,5 +123,7 @@ def check_route_coverage(inventory,checks):
     if uncovered:reasons.append('ROUTE_HAS_UNCHECKED_INSTRUCTIONS')
     return {'coverage_passed':not reasons,'full_route_policy_passed':False,'transaction_policy_ok':False,
         'reasons':sorted(set(reasons)),'incomplete_components':missing,'unavailable_bindings':sorted(set(unavailable)),
+        'outer_message_privileges':declarations,'outer_message_privileges_bound':declarations is not None,
+        'runtime_cpi_privileges_authenticated':False,'source_authenticated':False,'finality_authenticated':False,
         'uncovered':uncovered,'roles':roles,'approval_blockers':['INDEPENDENT_FULL_ROUTE_VALIDATION_REQUIRED'],
         'notice':'Exact checked-row coverage is diagnostic consistency, not receipt authentication or fresh full transaction approval.'}
