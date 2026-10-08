@@ -262,15 +262,6 @@
     "published_ci": "Deployed d758bc529a7da1f74509117288740911f2ad6845: both CI runs successful",
     "active_claims": [
       {
-        "id": "COMMON-BANK-UNION-STAGE",
-        "worker": "02",
-        "thread_id": "01a118fc-666c-70b6-9fa8-2c7520f0a0bb",
-        "host_id": "durable",
-        "status": "DISPATCHED",
-        "base": "421a9ce1c92a737375b249e8fe83cb11e9295198",
-        "scope": "Atomic original union getMultipleAccounts reservation and completion after audited finalized-slot DONE; no transport or publication"
-      },
-      {
         "id": "MIXED-RECEIPT-PROTECTED-READER",
         "worker": "01",
         "thread_id": "01a118fc-39bc-722c-b442-8bf5a749e0bb",
@@ -278,6 +269,16 @@
         "status": "DISPATCHED",
         "base": "0ce2a333be6c149fc4ac2398815e7ab7f46abc79",
         "scope": "Implement guarded read-only physical format2 reader with independent anchors; no migration/issuer"
+      },
+      {
+        "id": "PR90-INDEPENDENT-REVIEW",
+        "worker": "05",
+        "thread_id": "01a118fc-dd83-7672-ac81-7445f85fe09f",
+        "host_id": "durable",
+        "status": "REVIEWING",
+        "pr": 90,
+        "head": "2d341f05aa008c50f9b8a432c312826df1d22866",
+        "base": "1f4c40553bc18162c6cb09cea6f9f252fcecb098"
       }
     ],
     "saved_launch_probe": {
@@ -770,6 +771,15 @@
       "review_manifest_sha256": "4822bf3365201383c59851f23c65002f96b46a356a6254e3c59b8b0ee006cb18",
       "ci": "Both unchanged exact-head checks SUCCESS",
       "deployed": false
+    },
+    "pending_union_stage": {
+      "pr": 90,
+      "head": "2d341f05aa008c50f9b8a432c312826df1d22866",
+      "integrated": false,
+      "review": "PENDING worker05",
+      "author_linux_tests": 1732,
+      "author_skips": 0,
+      "combined_base": "1f4c40553bc18162c6cb09cea6f9f252fcecb098"
     }
   },
   "native_reconciliation_review": {
