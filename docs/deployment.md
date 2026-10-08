@@ -380,3 +380,10 @@ Deployed exact d758bc529a7da1f74509117288740911f2ad6845 after independent combin
 Fresh five-database backup: `/var/backups/solana-desk/pre-integration-d758bc5/daily-20261008T080718Z`. Copied-data validation under `/var/lib/solana-desk-validation/d758bc5` preserved eight decisions and 28 evaluations plus research/evidence hashes; eight reassessments all rejected. No provider calls. Dashboard HTTP200, decisions/monitor success and listener 127.0.0.1:8765 verified. Paper remains NOT_CONFIGURED/NOT_CONNECTED with automatic entry false.
 
 Rollback: restore the five overrides saved in `/var/backups/solana-desk/pre-integration-d758bc5/systemd-overrides/{unit}.conf` to `/etc/systemd/system/{unit}.service.d/60-reviewed-release.conf` for dashboard, decisions, discovery, paper-monitor and backup (each prefixed desk-); daemon-reload and restart dashboard. Saved overrides select release884e4ca. Preserve databases; no experiment migration occurred.
+
+
+## Reviewed release 19e3527 — 2026-10-08 08:44 UTC
+
+Deployed exact19e3527490a4ad28e9d13f0ee7647331293bd41d including PR75/76 after independent reviews and both successful CI runs. VPS service-user full suite:1,513 tests, zero skips,143.687s. Archive SHA25642106d314f89081fa56c0d55b95e591552b6ecc5ef55f2514508b1a6874929dd matched locally/remotely. Backup `/var/backups/solana-desk/pre-integration-19e3527/daily-20261008T084150Z` contains five databases. Copy validation `/var/lib/solana-desk-validation/19e3527` retained eight original decisions and28 evaluations, unchanged research/evidence hashes; all eight reassessments rejected. Linux read guards succeeded on both copies. No provider calls.
+
+Dashboard HTTP200; decisions/monitor success; listener127.0.0.1:8765; paperNOT_CONFIGURED/NOT_CONNECTED and entryfalse. No original data or experiment replaced. Rollback restores five overrides from `/var/backups/solana-desk/pre-integration-19e3527/systemd-overrides/{unit}.conf` to the corresponding desk service's60-reviewed-release.conf, daemon-reload and restart dashboard; saved overrides select d758bc5. Preserve databases.

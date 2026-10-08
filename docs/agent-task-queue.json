@@ -504,8 +504,8 @@
       "next_requirement": "Use reviewed normal acquisition to create a bounded admitted scan; never retrofit older records or create ad-hoc diagnostic budget"
     },
     "vps_deployment": {
-      "commit": "d758bc529a7da1f74509117288740911f2ad6845",
-      "release": "/opt/solana-desk-releases/d758bc5",
+      "commit": "19e3527490a4ad28e9d13f0ee7647331293bd41d",
+      "release": "/opt/solana-desk-releases/19e3527",
       "override": "60-reviewed-release.conf",
       "services": [
         "desk-dashboard",
@@ -1030,7 +1030,7 @@
   },
   "vps_stage_19e3527": {
     "source": "19e3527490a4ad28e9d13f0ee7647331293bd41d",
-    "status": "STAGED_VALIDATING",
+    "status": "DEPLOYED_VERIFIED_RELEASE",
     "archive_sha256": "42106d314f89081fa56c0d55b95e591552b6ecc5ef55f2514508b1a6874929dd",
     "provider_calls": 0,
     "service_release": "d758bc5",
@@ -1040,6 +1040,13 @@
     "original_decisions_preserved": 8,
     "original_evaluations_preserved": 28,
     "source_hashes_unchanged": true,
-    "copy_research_and_evidence_read_guards": "AVAILABLE"
+    "copy_research_and_evidence_read_guards": "AVAILABLE",
+    "tests": 1513,
+    "skips": 0,
+    "seconds": 143.687,
+    "dashboard_http": 200,
+    "listener": "127.0.0.1:8765",
+    "paper_status": "NOT_CONFIGURED",
+    "automatic_entry_enabled": false
   }
 }
