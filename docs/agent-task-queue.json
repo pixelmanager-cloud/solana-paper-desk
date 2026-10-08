@@ -198,10 +198,10 @@
       "worker02": "PR40 review interrupted by automated cybersecurity-risk flag; no final acceptance",
       "worker06": "PR34 integrated; available",
       "cloud_reviewer": "PR40 independently scheduled scoped review passed; combined Linux verification assigned",
-      "worker10": "Independent PR44 exact-head documentation/provenance review",
+      "worker10": "PR44 documentation/provenance PASS; available for upcoming parser review",
       "worker03": "Bounded newerlegacysearch found no matching authoritative event;available",
       "worker04": "PR40 repairs published3744192;review remains incomplete",
-      "worker05": "PR30 reviewed and integrated; available",
+      "worker05": "Implement disconnected nonredirecting bounded coordinator RPC transport",
       "worker09": "PR35 reviewed and integrated; available",
       "worker01": "Implement disconnected Token-2022 instruction syntax; PR43 already accepted",
       "worker07": "Implement disconnected exact Token-2022 raw state decoder",
@@ -229,7 +229,8 @@
       "PR39": "7651db1fa2842957fc15fb16a4e616c12ecef520 independent provenance PASS; final Linux982 zero skips; no finality/acceptance",
       "PR41": "69f556dce2012ab1e9b2963d3dd7f8c0e190a476 independent structural-scope PASS;1006Linux,1034malformed+11targeted probes;notruntimeapproval",
       "PR42": "c174c07c5bcfe7776003be7d011075ec333115fa independent scopedPASS;1024combinedLinux,330header combinations+45invalid+8malformed probes;no rawtoken/launch acceptance",
-      "PR43": "77ed0fbc46ad3ce1f342d7f5b43c5cb3fa3063c9 independent scopedPASS;1038Linux,1137malformed/boundary checks;unresolved execution gates intact"
+      "PR43": "77ed0fbc46ad3ce1f342d7f5b43c5cb3fa3063c9 independent scopedPASS;1038Linux,1137malformed/boundary checks;unresolved execution gates intact",
+      "PR44": "c121119589880ae143fbb2f34d65eec93749a5c2 independent scoped documentation PASS; proposed profile only, no runtime approval"
     },
     "candidate_combination": {
       "commit": "bfcc550ca25bd6cb79dc7ac3ad2b30c72f7b1033",
@@ -271,21 +272,19 @@
         "reference_head": "c121119589880ae143fbb2f34d65eec93749a5c2"
       },
       {
-        "worker": "worker10",
-        "thread_id": "01a118fd-56d5-70b8-ad31-dba13e982082",
-        "host_id": "durable",
-        "task": "Independent PR44 provenance review",
-        "status": "DISPATCHED",
-        "base_commit": "d9c093b0f0be103ebdb11a826c1896be6b8f055b",
-        "reference_pr": 44,
-        "reference_head": "c121119589880ae143fbb2f34d65eec93749a5c2"
-      },
-      {
         "worker": "cloud_reviewer",
         "thread_id": "01a11901-8b68-70f9-8672-5a731a149091",
         "host_id": "durable",
         "task": "Combined Linux validation d9c093b plus PR40 3744192",
         "status": "DISPATCHED"
+      },
+      {
+        "worker": "worker05",
+        "thread_id": "01a118fc-dd83-7672-ac81-7445f85fe09f",
+        "host_id": "durable",
+        "task": "Dedicated nonredirecting single-request coordinator RPC transport; disconnected",
+        "status": "DISPATCHED",
+        "base_commit": "586bae86f8858f6c642be184b87c93d0995f7ceb"
       }
     ],
     "saved_launch_probe": {
@@ -401,8 +400,8 @@
       "pr": 44,
       "head": "c121119589880ae143fbb2f34d65eec93749a5c2",
       "ci": "PASS",
-      "review": "IN_PROGRESS",
-      "integrated": false,
+      "review": "Independent documentation/provenance PASS; fixture facts and16 public references verified",
+      "integrated": true,
       "limitation": "Proposed exact extension profile; no raw state or runtime admission proof"
     }
   }
