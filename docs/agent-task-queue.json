@@ -260,7 +260,26 @@
       "status": "SUPERSEDED_BY_PUBLISHED_TESTED_COMMIT"
     },
     "published_ci": "Deployed d758bc529a7da1f74509117288740911f2ad6845: both CI runs successful",
-    "active_claims": [],
+    "active_claims": [
+      {
+        "id": "COMMON-BANK-VIEW",
+        "worker": "01",
+        "thread_id": "01a118fc-39bc-722c-b442-8bf5a749e0bb",
+        "host_id": "durable",
+        "status": "DISPATCHED",
+        "base": "b4cbfaf588412cbd49a94f66b12abfa3f5b1c9a1",
+        "scope": "Disconnected original-parent manifest/index validator"
+      },
+      {
+        "id": "COMMON-BANK-JOURNAL",
+        "worker": "02",
+        "thread_id": "01a118fc-666c-70b6-9fa8-2c7520f0a0bb",
+        "host_id": "durable",
+        "status": "DISPATCHED",
+        "base": "b4cbfaf588412cbd49a94f66b12abfa3f5b1c9a1",
+        "scope": "Disconnected atomic shared-counter reservation and immutable pending intent journal"
+      }
+    ],
     "saved_launch_probe": {
       "source": "VPS saved raw launch events, read-only; no provider calls",
       "sample_size": 150,
