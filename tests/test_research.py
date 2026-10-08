@@ -68,9 +68,10 @@ class ScanTests(unittest.TestCase):
         from desk.evidence import EvidenceStore
         with tempfile.TemporaryDirectory() as d:
             store=EvidenceStore(Path(d)/'evidence.sqlite');r=self.holder_scan(store.save)
-            self.assertTrue(r['holder_evidence']['verified']);self.assertNotIn('FULL_HOLDER_COVERAGE',r['unknowns'])
-            raw=store.load(r['holder_evidence']['evidence_hash'])
-            self.assertEqual(raw['method'],'getMultipleAccounts');self.assertEqual(raw['result']['context']['slot'],r['holder_evidence']['slot'])
+            self.assertFalse(r['holder_evidence']['verified']);self.assertIn('FULL_HOLDER_COVERAGE',r['unknowns'])
+            self.assertIn('EXTERNAL_CLOSE_AUTHORITY',r['unknowns'])
+            raw=store.load(r['holder_snapshot']['evidence_hash'])
+            self.assertEqual(raw['method'],'getMultipleAccounts');self.assertEqual(raw['result']['context']['slot'],r['holder_snapshot']['slot'])
             self.assertFalse(r['eligible_for_trading']);self.assertLessEqual(r['calls'],18)
 
 class JobTests(unittest.TestCase):

@@ -18,11 +18,12 @@ class EntryEvidenceTests(unittest.TestCase):
         report=copy.deepcopy(self.report);report['report_hash']=digest(report)
         return evaluate(report,self.store)
     def test_real_holder_capture_drives_components_not_summary_flags(self):
-        self.report['holder_snapshot']['verified']=False
+        self.report['holder_snapshot']['verified']=True
         result=self.check()
-        self.assertEqual(result['gates']['holder_snapshot']['status'],'VERIFIED_COMPONENT')
+        self.assertEqual(result['gates']['holder_snapshot']['status'],'BLOCKED')
+        self.assertIn('EXTERNAL_CLOSE_AUTHORITY',result['gates']['holder_snapshot']['reasons'])
         self.assertEqual(result['gates']['token_controls']['status'],'VERIFIED_COMPONENT')
-        self.assertGreater(result['metrics']['holder_owner_count'],0)
+        self.assertNotIn('holder_owner_count',result['metrics'])
         self.assertFalse(result['eligible_for_trading'])
         self.assertIn('CURRENT_HOLDER_BUNDLE_EXPOSURE_UNVERIFIED',result['reasons'])
     def test_missing_raw_data_cannot_be_replaced_by_approval_flags(self):

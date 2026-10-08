@@ -36,7 +36,7 @@ class HolderSnapshotTests(unittest.TestCase):
         from pathlib import Path
         p=json.loads((Path(__file__).resolve().parents[1]/'fixtures/mainnet-holder-snapshot.json').read_text())
         r=verify_holder_snapshot(p['enumeration'],lambda *args:p['rpc']['response'],capture=digest)
-        self.assertTrue(r['verified']);self.assertEqual(r['account_count'],17);self.assertEqual(r['observed_supply_raw'],'800017057543498')
+        self.assertFalse(r['verified']);self.assertIn('EXTERNAL_CLOSE_AUTHORITY',r['reasons']);self.assertEqual(r['account_count'],17);self.assertEqual(r['observed_supply_raw'],'800017057543498')
     def test_unpersisted_snapshot_cannot_verify_live_coverage(self):
         r=verify_holder_snapshot(self.e,self.rpc)
         self.assertFalse(r['verified']);self.assertFalse(r['raw_evidence_persisted'])

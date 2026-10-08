@@ -1,5 +1,54 @@
 # Cloud token controls review — Agent 06
 
+## Authorized correction follow-up
+
+This section supersedes the original PR15 characterization for findings 1 and 2
+below; the original audit and its historical validation results remain recorded.
+Branch: `codex/cloud-wave1-06-fix-token-controls`, based on PR15 head
+`e3a7e33707581eb12f707a1422c76da28f68d6fb`.
+
+`desk/security.py` now shares exact-layout raw authority consistency checks with
+`desk/holders.py`. Both holding policy and atomic holder coverage reject a nonzero
+delegated amount when delegate option is absent, independent of whether the indexed
+amount matches. Holder snapshots now reject invalid close-option tags and a close
+key other than the bound wallet. None and wallet-owned close authority remain
+allowed. Nonzero delegate tags remain rejected by holding policy; snapshots retain
+the existing `delegated_accounts` reporting (including zero allowance), which
+existing entry checks separately block. No result fields or request budgets changed.
+
+Before correction, the two new regression methods produced six failing subcases:
+amounts 1 and UINT64_MAX with matching indexed delegation, external close authority,
+and invalid close tags 2, 256 and UINT32_MAX. After correction these reject with
+`DELEGATED_AMOUNT_WITHOUT_DELEGATE` or `EXTERNAL_CLOSE_AUTHORITY`. Positive cases
+preserve absent/wallet close control and zero-allowance delegate semantics.
+
+The unchanged public snapshot contains two accounts with external close authority:
+`5t9RuoBVvXoQ3jrM63Mnb3wotQ9tTpyUmyAFxwK7HEk7` and
+`AprzHTNg3dqjgdSpV7QYTYczmK5bFsfCM8NC34ZN3Pri`, both naming
+`AgmLJBMDCqWynYnQiPCuj9ewsNNsBJXyzoUhD9LJzN51` rather than their holder wallets.
+It now fails verification while still reporting its exact supply total. These
+bytes were inspected locally; no new on-chain claims or calls were made. The scoped
+attack tests explicitly use a synthetic copy with all close options set to None
+to isolate positive cases and individual mutations. Original fixture files are
+unchanged. Existing holder, persisted-entry and scanner test expectations were
+updated only for this actual stricter rejection; raw failed evidence remains saved
+and does not produce verified holder metrics.
+
+Production edits are limited to security/holder policy modules. No ownership
+worker, classification/exposure adapter or entry decision wiring changed. Extension
+payload semantics and low-level malformed-encoding exception contracts remain as
+reported below. Uncertain legacy layout semantics are handled conservatively; this
+is validation policy, not independent program-source verification. OWN dependencies
+and live readiness remain unresolved; this does not mark ownership complete.
+
+Correction validation (Python 3.12.14): focused security/holder/effects/entry/scanner
+checks ran **77 tests in 0.092s, OK**. Full command
+`.venv/bin/python -m unittest discover -q` ran **531 tests in 2.979s, OK**,
+with no skips, failures or errors, using the approved private-loopback test run.
+A prior default-sandbox run had one loopback PermissionError and two now-corrected
+fixture expectation failures (531 tests in 2.836s); no production wiring was altered
+to accommodate the updated tests. `git diff --check` passed.
+
 Date: 8 October 2026 (Asia/Seoul). Repository: pixelmanager-cloud/solana-paper-desk.
 Branch: `codex/cloud-wave1-06`. Reviewed base: `e95a8dfcd0536efa5479934f81b872c050d7ed5e`.
 Scope: offline audit and adversarial tests only. Production modules, shared guidance,

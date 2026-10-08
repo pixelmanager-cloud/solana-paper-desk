@@ -53,7 +53,7 @@ def enumerate_holders(mint, supply, mint_slot, rpc, max_pages=3, page_size=1000)
 
 def verify_holder_snapshot(enumeration,rpc,max_accounts=99,*,capture=None):
     """Recheck every enumerated legacy account and mint in one RPC bank context."""
-    from .security import TOKEN_PROGRAM,account_bytes,base58,mint_policy
+    from .security import TOKEN_PROGRAM,account_bytes,base58,mint_policy,holding_authority_reasons
     if type(max_accounts) is not int or not 1<=max_accounts<=99:raise ValueError('Invalid atomic holder budget')
     result={'verified':False,'snapshot_atomic':False,'raw_evidence_persisted':False,'reasons':[],'delegated_accounts':[]}
     if enumeration.get('coverage_verified') is not True:
@@ -89,6 +89,7 @@ def verify_holder_snapshot(enumeration,rpc,max_accounts=99,*,capture=None):
         if base58(raw[:32])!=mint or base58(raw[32:64])!=row['wallet']:reasons.append('SNAPSHOT_HOLDER_IDENTITY_CHANGED')
         amount=int.from_bytes(raw[64:72],'little');delegated=int.from_bytes(raw[121:129],'little');flag=int.from_bytes(raw[72:76],'little')
         if flag not in (0,1):reasons.append('SNAPSHOT_DELEGATE_OPTION_INVALID')
+        reasons.extend(holding_authority_reasons(raw,row['wallet']))
         if flag==1:result['delegated_accounts'].append(row['address'])
         if raw[108] not in (1,2):reasons.append('SNAPSHOT_HOLDER_UNINITIALIZED')
         if amount!=integer(row['amount_raw']) or (raw[108]==2)!=row['frozen'] or delegated!=integer(row['delegated_raw']):
