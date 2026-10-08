@@ -1,8 +1,12 @@
 {
-  "status": "PREPARED_NOT_DISPATCHED",
+  "status": "CLOUD_WAVE1_DISPATCHED",
   "repository": "https://github.com/pixelmanager-cloud/solana-paper-desk",
-  "cloud_environment": null,
-  "proposed_max_concurrent_workers": 3,
+  "cloud_environment": {
+    "name": "solana-paper-desk",
+    "published": true,
+    "dispatch_manifest": "docs/cloud-wave1.json"
+  },
+  "proposed_max_concurrent_workers": 10,
   "coordination": {
     "controller": "One coordinator claims dependency-ready tickets, assigns isolated branches, tracks cloud tasks, reviews PRs and dispatches successors.",
     "claim": "One active assignment per ticket; leases and task IDs survive coordinator restart.",
@@ -20,7 +24,7 @@
     {
       "id": "OWN-1",
       "title": "Finish finalized snapshot capture and slot-bounded history integration",
-      "status": "BACKLOG",
+      "status": "IN_PROGRESS_CLOUD",
       "depends_on": [],
       "suggested_scope": [
         "ownership_worker.py",
@@ -37,7 +41,7 @@
     {
       "id": "OWN-2",
       "title": "Implement evidence-backed pool/service classification",
-      "status": "BACKLOG",
+      "status": "IN_PROGRESS_CLOUD",
       "depends_on": [],
       "suggested_scope": [
         "new classification module and fixtures"
