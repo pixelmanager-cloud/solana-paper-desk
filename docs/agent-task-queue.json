@@ -195,16 +195,16 @@
     "live_verification": "BLOCKED_NO_SUPPORTED_BUDGET_FEASIBLE_PUBLIC_LEGACY_SEED; acquisition path in development",
     "blocker": "Live legacy evidence,protected pool receipt capture,lifecycle semantic approval and holder exposure integration unfinished",
     "followups": {
-      "worker02": "Review PR40 including minContextSlot lower-bound vs actual returned bank semantics",
+      "worker02": "PR40 review interrupted by automated cybersecurity-risk flag; no final acceptance",
       "worker06": "PR34 integrated; available",
       "cloud_reviewer": "PR33 reviewed and integrated; available",
-      "worker10": "PR39 final Linux combination passed; available",
+      "worker10": "Review PR41 offline birth structural analyzer",
       "worker03": "PR39 published; reference-only fixture review pending",
-      "worker04": "PR40 capturebridge79e0352 published,reviewpending",
+      "worker04": "PR40 duplicate hash replacement journal preservation repair assigned",
       "worker05": "PR30 reviewed and integrated; available",
       "worker09": "PR35 reviewed and integrated; available",
       "worker01": "Reviewed PR36/37; available",
-      "worker07": "Implement narrow birth-control semantic profile; authentication/lifecycle acceptance remain false",
+      "worker07": "PR41 published69f556d,scoped reviewpending",
       "worker08": "PR31 reviewed and integrated; available"
     },
     "reviews": {
@@ -248,27 +248,20 @@
     "published_ci": "e5d9f9b0e3210421aabe3a80efd519b0d122d340 successful",
     "active_claims": [
       {
-        "worker": "worker07",
-        "thread_id": "01a118fd-0f1c-749c-b85b-5e730937d0a8",
-        "host_id": "durable",
-        "task": "narrow legacy birth-control semantic analyzer,disconnected research",
-        "status": "IMPLEMENTING"
-      },
-      {
-        "worker": "worker02",
-        "thread_id": "01a118fc-666c-70b6-9fa8-2c7520f0a0bb",
-        "host_id": "durable",
-        "task": "independent guarded capture bridge Linux review",
-        "pr": 40,
-        "head": "79e0352f11370158c53b9b043fbf2fcb9d8cdd2a",
-        "status": "REVIEWING"
-      },
-      {
         "worker": "worker04",
         "thread_id": "01a118fc-b862-7340-ab3a-e1115a3280a4",
         "host_id": "durable",
         "task": "PR40 test platform guard repair",
         "status": "FIXING"
+      },
+      {
+        "worker": "worker10",
+        "thread_id": "01a118fd-56d5-70b8-ad31-dba13e982082",
+        "host_id": "durable",
+        "task": "independent offline birth structural analyzer review",
+        "pr": 41,
+        "head": "69f556dce2012ab1e9b2963d3dd7f8c0e190a476",
+        "status": "REVIEWING"
       }
     ],
     "saved_launch_probe": {
@@ -334,12 +327,22 @@
     },
     "pending_capture_bridge": {
       "pr": 40,
-      "head": "79e0352f11370158c53b9b043fbf2fcb9d8cdd2a",
+      "head": "457e7f15f97c04033a51f07abf32c514cade5b08",
       "scratch_commit": "34829a5011dc2a37178522b6c5d8ef2fdcb3eb54",
       "mac_discovered": 1018,
       "mac_errors": 36,
       "mac_skips": 33,
-      "result": "Linux-only capture tests missing platform guard; authorrepair pending;Linuxbehavior review pending",
+      "result": "Platformguard fixed;duplicate hash replacement journal integrity defect reported;review incomplete due external safety flag",
+      "integrated": false
+    },
+    "pending_birth_analyzer": {
+      "pr": 41,
+      "head": "69f556dce2012ab1e9b2963d3dd7f8c0e190a476",
+      "scratch_commit": "679f238b74060b3e1e5d5ba7e457cd445c0164b8",
+      "mac_discovered": 1006,
+      "mac_executed": 973,
+      "mac_skips": 33,
+      "result": "Mac PASS;independentLinuxreview pending",
       "integrated": false
     }
   }

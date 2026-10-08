@@ -377,3 +377,6 @@ Final PR39 combination verified on Linux:982 tests,zero skips,40.311s. Independe
 
 
 PR40 capturebridge79e0352 is under independent Linux review. Desktop scratch34829a5 discovered1018 tests:36errors from Linux-only capture setUp lacking platform guard,33ledger skips. Author repair assigned; no safety guard mocking. Returned bank slot greater than request minContextSlot is also under usability review; no saved request may be rewritten to match response. Candidate not integrated/deployed.
+
+
+PR40 review interrupted by automated cybersecurity-risk flag; it is not a passed review. Before interruption reviewer reported duplicate UNIQUE hash replacement can delete original capture-journal event (replay still blocks). Author repair assigned; platformguard already repaired at457e7f1. No candidate integration/deployment. Separate PR41 offline birth structural analyzer69f556d is now under independent review by worker10; no lifecycle authorization follows structural matching.
