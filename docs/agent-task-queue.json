@@ -193,14 +193,14 @@
     "combined_tests": 717,
     "result": "PASS",
     "live_verification": "NOT_STARTED_PENDING_REVIEW_AND_LEGACY_CAPTURE",
-    "blocker": "PR26 review pending; decoder authority gap fix active; fresh legacy live acceptance, protected pool acquisition and exposure integration unfinished",
+    "blocker": "PR26 contradiction fix/re-review and decoder authority gap repair active; live legacy acceptance and exposure integration unfinished",
     "followups": {
       "worker02": "PR24 exact-head review complete; idle",
       "worker06": "Fix silently omitted parsed authority/control operations in decoder and history; new branch/PR",
       "cloud_reviewer": "Independent exact-head PR26 point-in-time pool admission review",
       "worker10": "PR25 scoped independent review complete; authority gap acknowledged, no distinct adapter defect",
       "worker03": "Read-only public legacy launch fixture and bounded capture feasibility assessment",
-      "worker04": "PR26 published; idle pending review",
+      "worker04": "Repair PR26 same-scope contradictory trusted receipt conflict handling; both ref directions and source variants",
       "worker05": "PR25 published; idle pending review",
       "worker09": "Measure 50-scan repeated continuation replay, idempotence and dashboard historical-component projection; tests/report only"
     },
@@ -210,7 +210,8 @@
       "PR23": "11bf7d168200f7945a36493f763378b4a8a5ca39: token control correction reviewed",
       "PR21": "22e1dae7c8f6a1adaca2690c14b13aabc663e729: worker10 independently passed 687 tests, no new regression",
       "PR25": "28e04362e426e50fc5cceca232bb227f38a3707c: independent scoped PASS; known silent authority-operation omission prevents interval-control acceptance",
-      "PR24": "b5911a6fece35f83af87b89a14537de2d7c11dec: independent test/fixture review passed, 700 tests, no scoped blocking defect; lifetime authority gap remains"
+      "PR24": "b5911a6fece35f83af87b89a14537de2d7c11dec: independent test/fixture review passed, 700 tests, no scoped blocking defect; lifetime authority gap remains",
+      "PR26": "f873c52cfab48ebb203377d0e3548cfc38c477bf: independent P2 contradictory same-slot capture admission; NOT integrated"
     },
     "candidate_combination": {
       "commit": "57a51245c85ba50d11fe782612a443131ffaa934",
