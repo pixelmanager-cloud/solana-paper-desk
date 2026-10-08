@@ -1,6 +1,6 @@
 {
   "schema_version": 1,
-  "revision": 1,
+  "revision": 2,
   "repository": "pixelmanager-cloud/solana-paper-desk",
   "source_main_sha": "e298e15cd758932e81d2241130716632702f5bd0",
   "observed_date": "2026-10-08",
@@ -22,7 +22,7 @@
     "private_repo_read": "VERIFIED",
     "branch_write": "VERIFIED",
     "commit_write": "VERIFIED",
-    "pr_create": "NOT_YET_PROBED",
+    "pr_create": "VERIFIED",
     "worker_chat_read": "UNAVAILABLE_NO_SUPPORTED_TOOL",
     "worker_diff_recovery": "BLOCKED_NO_REMOTE_WORKER_BRANCHES_OR_PRS_FOUND",
     "worker_followup": "UNAVAILABLE_NO_SUPPORTED_TOOL",
@@ -343,6 +343,17 @@
       "accepted_tasks": [],
       "spawned_workers": 0,
       "merged_prs": 0
+    },
+    {
+      "kind": "DURABLE_ARTIFACT_WRITE",
+      "result": "Branch/commit/PR creation verified through GitHub connector; saved state content read back exactly.",
+      "prior_artifact_head_sha": "808f5dfb599149d77d3aa9c0dca47675221b67b4"
     }
-  ]
+  ],
+  "artifact_pr": {
+    "number": 10,
+    "url": "https://github.com/pixelmanager-cloud/solana-paper-desk/pull/10",
+    "status": "DRAFT_NOT_MERGED",
+    "branch": "codex/cloud-coordinator-protocol-20261008"
+  }
 }
