@@ -1,0 +1,50 @@
+# Disconnected Token-2022 state decoder
+
+Implements PR44's next prerequisite in `research/token2022_state.py`, with dedicated synthetic tests. Base is the verified full remote integration SHA `d9c093b0f0be103ebdb11a826c1896be6b8f055b`; branch `codex/cloud-wave1-07-token2022-state`. No production imports, policy/gate changes, instruction syntax normalization, lifecycle integration or readiness claim.
+
+`decode_token2022_state(raw, *, kind, address, program_owner, executable, ...)` consumes bytes or copied bytearrays only. Missing raw bytes return `RAW_STATE_MISSING`; parsed instructions, event totals and allocation sizes never produce a snapshot. Required envelope fields and account mint/owner bindings are explicit, caller-supplied **unauthenticated witnesses**. Omitted executable differs from explicit `False`; integer zero is rejected. Optional `expected_metadata` must contain exactly three strings. Without it, metadata text is decoded as untrusted text, not compared to a launch declaration. Nothing fetches a URI.
+
+## Exact structural boundary
+
+| Component | Validation and retained evidence |
+| --- | --- |
+| Mint base | 82-byte official Pack layout: authority COption36, supply u64LE, decimals u8, initialized bool0/1, freeze COption36. Candidate endpoint requires initialized, decimals6, raw supply10^15 and both authorities None; different supply/decimals are profile mismatches, not universal invalid Token-2022 state. |
+| Token account base | 165-byte Pack layout: mint/owner32, amount u64LE, delegate COption36, state u8, native reserve COption12, allowance u64LE, close COption36. Require expected mint/token owner, Initialized, no delegate/native/explicit close authority, and no orphan allowance. Frozen/uninitialized states decode but fail the profile. Delegate Some with zero allowance remains adverse; allowance exceeding balance is retained, not incorrectly declared invalid syntax. |
+| COptions | Exactly four-byte little-endian tags0/1. None may legally retain arbitrary old body bytes: official `pack_coption_*` writes only its tag on None. Preserve inactive body hex without treating it as an active authority/reserve. Some(all-zero address) is an active base authority, distinct from extension nullable None. Close=None means the token owner is the effective closer; ImmutableOwner does not make the account unclosable. |
+| Extended prefix/TLV | Mint bytes82–164 must be zero; account type at165 is1 for mint /2 for account; TLV starts166 with u16LE type/u16LE length. Exactly mint `{18,19}` or account `{7}`, no duplicate or wrong-class types. Every unsupported ID remains an opaque, rejecting raw witness, even apparently inactive/zero-valued. Length355 is excluded as multisig. The only accepted TLV suffix is exactly two zero bytes at used length355 / allocated length357, corroborating official multisig-length adjustment; other zero/nonzero allocation tails reject. |
+| MetadataPointer18 | Exactly64 bytes: nullable authority32 and nullable metadata address32. Authority must be explicitly all-zero None; address must be present and equal supplied mint address. No authority-role conflation with base mint or metadata update authority. |
+| TokenMetadata19 | Borsh nullable update authority32, mint32, three u32LE-length UTF-8 strings, u32LE pair count and string pairs. Require update authority None, mint=self, empty additional metadata, exact consumption and optional exact text bindings. Preserve partial authority/fields plus complete raw TLV when decoding fails. Variable value/account lengths are supported; 418 bytes is only one synthetic example, and a separately constructed 431-byte mint also matches. |
+| ImmutableOwner7 | Exactly zero-byte payload on a token account. Records the genuine Token-2022 owner-change lock, not legacy's no-op. Does not prove ATA derivation, caller authorization, absence of delegate/close/freeze controls or transfer eligibility. |
+
+Bounded research policy: maximum raw state8192 bytes; UTF-8 byte limits name256, symbol64, URI2048, additional key256/value2048, at most16 additional pairs before refusing decoding. Nonempty pairs always fail the profile, including duplicate keys; bounded pairs are retained individually. These are explicit conservative research limits, **not asserted official protocol maxima**. The official metadata unpacker uses unchecked Borsh and TLV enumeration can stop at uninitialized padding or a single realloc byte; this narrower decoder rejects those unproved suffixes, except the exact documented multisig adjustment. It is not a universal parser for every legitimate allocation/reallocation state.
+
+`decoding_complete` means the supported payloads were consumed; adverse decoded controls can leave it true. Unsupported payloads or malformed/bounded data leave it false. `structural_profile_match` additionally requires no diagnostic, including missing/bad supplied bindings. Neither flag authenticates state. Raw hash/hex, byte offsets, exact extension order, authorities, amounts, source pins and unknown context remain reviewable. TLV storage order is never execution/effect order. Endpoint restoration after transient controls can structurally match but supplies no lifecycle proof.
+
+Every output keeps `snapshot_authenticated`, `lifecycle_verified`, `authenticated_lifecycle_accepted` and `eligible` **false**. Missing predecessor/history, finality/slot/program-binary provenance, CPI success/caller privileges and actual effect order/coverage remain explicit. No signer/PDA authorization, complete holder coverage, sellability, pool or entry approval follows from these bytes.
+
+## Official pinned layout verification
+
+Sources were inspected at immutable revisions, independently of PR44's proposal. Token-2022 commit `d9ffb9787187b6bc29adda1a6b389b9931377e03` is the existing inventory's source pin; these establish reference layouts, not the binary deployed at a historical slot.
+
+| Official source | Git blob |
+| --- | --- |
+| [Token-2022 state.rs](https://github.com/solana-program/token-2022/blob/d9ffb9787187b6bc29adda1a6b389b9931377e03/interface/src/state.rs) | `8c94447787faee9ef05ba752392df6db2d00cb1d` |
+| [extension/mod.rs](https://github.com/solana-program/token-2022/blob/d9ffb9787187b6bc29adda1a6b389b9931377e03/interface/src/extension/mod.rs) | `12f066a14f0db3ee65543a48919a82a870db44a6` |
+| [metadata_pointer/mod.rs](https://github.com/solana-program/token-2022/blob/d9ffb9787187b6bc29adda1a6b389b9931377e03/interface/src/extension/metadata_pointer/mod.rs) | `0d334fa95d79a94d317bd1345f6f5dec745ae1af` |
+| [immutable_owner.rs](https://github.com/solana-program/token-2022/blob/d9ffb9787187b6bc29adda1a6b389b9931377e03/interface/src/extension/immutable_owner.rs) | `a0294f34ea156b9218886bd768db50f6f5f17333` |
+| [Token metadata state.rs](https://github.com/solana-program/token-metadata/blob/fb7755d1520af9fb2cda2fbfbcceb0248080121a/interface/src/state.rs) | `0c5cef2cc5e8c074daa15de3a458aa0722ec5938` |
+
+Nullable representation was also checked against the official registry archives, with hashes matching Token-2022's [pinned Cargo.lock](https://github.com/solana-program/token-2022/blob/d9ffb9787187b6bc29adda1a6b389b9931377e03/Cargo.lock), Git blob `76e5430f90dd893f951ee1f1e2c57d6b69f0fa68`:
+
+- `solana-nullable`1.3.0 archive SHA256 `889194d8c5faec648f2f6fadddb60566249921ebb074e2707e7095458d5864e2`; source revision `df930d35439b67b848bda57b7851d41ad3ce9dd2`, path `nullable`; `src/maybe_null.rs` SHA256 `bd3794fab8efe7a600b8aad74369a247db8d8f72090185e40841ef0d9841b3ee`. The transparent wrapper derives Borsh on its contained value with no option tag.
+- `solana-address`2.7.0 archive SHA256 `01332a01c0a3098404d55a724c8d9a92aed4a50fe40a7dd0c7a51e29274c14de`; revision `89d254ea9a093de35d69c64f267905bb7b5f2b57`, path `address`; `src/lib.rs` SHA256 `c93a7d9fb216e2778fba29a478ebe17ff9a538a7691aeed22e35264f32624904`. Its `Nullable::NONE` is `[0u8;32]`.
+
+Official GitHub/registry source reads only; no token-research API, RPC/provider, VPS, credentials, signing or broadcasting. Archive bytes were checksum verified in ignored `work/`, never committed or used as chain fixtures.
+
+## Evidence, dependencies and verification
+
+All positive/adversarial state bytes in `tests/test_token2022_state.py` are explicitly **synthetic, source-built**. No mainnet state has been added. Unchanged `fixtures/mainnet-launch.json` SHA256 remains `d80cf9876fdb3e9b465e4103fa14bf2baaf09483dad9a27a57ff7339624b3bf2`; its launch mint has no raw state and retains `RAW_STATE_MISSING`. The coordinator's reconnaissance of a **different** mint (431 bytes, confirmed slot454381661, saved record hash `4eb613e6f35230d79cde49eca6ce865a53882609f439de510cf77e5d8c67943d`) was not accessed, decoded or adopted as a fixture. Its shape is consistent with variable metadata length only; it is not finalized evidence or state for this launch.
+
+Independent instruction-syntax worker API is neither imported nor required. Remaining dependencies: independent decoder review; trusted same-bank finalized mint/account capture; program-slot semantic provenance; exact raw CPI syntax and privileges; coverage/order/success-aware lifecycle analysis including transient controls; separate holder/pool/exit evidence. This foundation resolves none of those evidence gates. Shared queue/readiness, all runtime policy and PR27 blockers stay unchanged.
+
+Python **3.12.14**, isolated checkout/venv: `.venv/bin/python -m unittest tests.test_token2022_state -q` — **44 tests in0.115s, OK**; `.venv/bin/python -m unittest discover -q` — **1,082 tests in38.717s, OK**, zero failures/errors/skips. Existing private-loopback/subprocess tests ran with authorized sandbox permission; no provider requests. Dedicated coverage includes variable431-byte metadata, official collision padding, stale COption bodies, every excluded known extension ID plus unknown IDs, redirection, UTF-8/bounds/truncation, duplicates/hidden suffixes, adverse endpoints and restored-endpoint non-approval. Recursive AST check confirms no production import. `git diff --check` is clean. No known test failures; the evidence dependencies above remain unresolved.
