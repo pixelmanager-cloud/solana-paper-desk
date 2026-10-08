@@ -762,8 +762,10 @@
     "61": {
       "head": "bfff737c8c0ae8ce1428ae9f3fa022ec7ff280b9",
       "reviewer": "worker02",
-      "status": "PASS_PENDING_COORDINATOR_INTEGRATION",
-      "integrated": false
+      "status": "PASS_INTEGRATED",
+      "integrated": true,
+      "reviewed_tree": "0ee51495153b74477623c86033ae813effd993bc",
+      "linux_tests": 1338
     },
     "62": {
       "head": "9e35c2bce3b4aa47051418ce0d5793c9b872edcd",
