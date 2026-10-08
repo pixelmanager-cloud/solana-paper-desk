@@ -262,15 +262,6 @@
     "published_ci": "Deployed d758bc529a7da1f74509117288740911f2ad6845: both CI runs successful",
     "active_claims": [
       {
-        "id": "MIXED-RECEIPT-PROTECTED-READER",
-        "worker": "01",
-        "thread_id": "01a118fc-39bc-722c-b442-8bf5a749e0bb",
-        "host_id": "durable",
-        "status": "DISPATCHED",
-        "base": "0ce2a333be6c149fc4ac2398815e7ab7f46abc79",
-        "scope": "Implement guarded read-only physical format2 reader with independent anchors; no migration/issuer"
-      },
-      {
         "id": "COMMON-BANK-CLOCK-STAGE",
         "worker": "02",
         "thread_id": "01a118fc-666c-70b6-9fa8-2c7520f0a0bb",
@@ -278,6 +269,16 @@
         "status": "DISPATCHED",
         "base": "32417a5965b6d92aeefd05ffbb54a0a20dede891",
         "scope": "Atomic original clock request/completion bound to actual union T; no transport/publication"
+      },
+      {
+        "id": "PR91-INDEPENDENT-REVIEW",
+        "worker": "06",
+        "thread_id": "01a118fc-f867-7233-8eec-c20659e70095",
+        "host_id": "durable",
+        "status": "REVIEWING",
+        "pr": 91,
+        "head": "ce5928225a40a4d32ff5c53781631c0fa010a414",
+        "base": "94eb463c58d08cfe6c5ac470ae41b4b6a3ef077e"
       }
     ],
     "saved_launch_probe": {
@@ -789,6 +790,15 @@
       "review_manifest_sha256": "7a1f1603413701639e1a8e334707a8feb3623ad36c17ec791cb5ba184da189b1",
       "ci": "Both unchanged exact-head checks SUCCESS",
       "deployed": false
+    },
+    "pending_protected_reader": {
+      "pr": 91,
+      "head": "ce5928225a40a4d32ff5c53781631c0fa010a414",
+      "integrated": false,
+      "review": "PENDING worker06",
+      "author_linux_tests": 1777,
+      "author_skips": 0,
+      "combined_base": "94eb463c58d08cfe6c5ac470ae41b4b6a3ef077e"
     }
   },
   "native_reconciliation_review": {
