@@ -189,8 +189,8 @@
   ],
   "integration": {
     "branch": "integration/cloud-wave1",
-    "tested_commit": "27de4d7a28b2d360159dcea8275f3250048964d0",
-    "combined_tests": 1492,
+    "tested_commit": "ce8cad01fdea900570da93cc0bf456863d4ad050",
+    "combined_tests": 1541,
     "result": "PASS_FIXTURE_ONLY",
     "live_verification": "BLOCKED_NO_SUPPORTED_BUDGET_FEASIBLE_PUBLIC_LEGACY_SEED; acquisition path in development",
     "blocker": "No accepted provider-backed ownership candidate; historical-control semantics, complete route/effect policy, current measured features and trusted entry/refresh driver remain unfinished",
@@ -199,7 +199,7 @@
       "worker05": "PR76 repaired ownership diagnostics integrated; available",
       "worker06": "PR75 exact combined review PASS; available",
       "worker10": "PR75 integrated; available",
-      "worker02": "Re-reviewing repaired PR77",
+      "worker02": "PR77 repaired exact combined independent PASS; available",
       "worker03": "PR70 integrated; available",
       "worker04": "PR68 integrated; available",
       "worker07": "PR77 repair published; available",
@@ -260,18 +260,7 @@
       "status": "SUPERSEDED_BY_PUBLISHED_TESTED_COMMIT"
     },
     "published_ci": "Deployed d758bc529a7da1f74509117288740911f2ad6845: both CI runs successful",
-    "active_claims": [
-      {
-        "worker": "worker02",
-        "thread_id": "01a118fc-666c-70b6-9fa8-2c7520f0a0bb",
-        "host_id": "durable",
-        "status": "REVIEWING",
-        "base": "3a232c0",
-        "pr": 77,
-        "head": "ac4bcb2a24864620d49398b9eeff777b347764c0",
-        "task": "Independent re-review of inventory completeness repair"
-      }
-    ],
+    "active_claims": [],
     "saved_launch_probe": {
       "source": "VPS saved raw launch events, read-only; no provider calls",
       "sample_size": 150,
@@ -927,8 +916,8 @@
     "77": {
       "head": "ac4bcb2a24864620d49398b9eeff777b347764c0",
       "reviewer": "worker02",
-      "status": "REPAIRED_INDEPENDENT_REVIEW_PENDING",
-      "integrated": false,
+      "status": "PASS_INTEGRATED",
+      "integrated": true,
       "mac_combined": {
         "base": "d94613e",
         "tree": "f6c63a930516e2e1f45cc7902b76b0b948c96688",
@@ -937,12 +926,23 @@
         "skips": 112,
         "seconds": 30.898
       },
-      "ci": "Both exact head runs SUCCESS",
+      "ci": "Both repaired exact head runs SUCCESS",
       "finding": "Production inventory drops account identities/rows for unsupported parsed or encoded operations; verifier ignores inventory errors and reports false conservation agreement",
-      "linux_tests": 1527,
+      "linux_tests": 1541,
       "linux_skips": 0,
-      "reviewed_tree": "f6c63a930516e2e1f45cc7902b76b0b948c96688",
-      "tree_match": true
+      "reviewed_tree": "5f78941ecc12c4c395929544151ebe82f649287f",
+      "tree_match": true,
+      "mac_repaired_combined": {
+        "base": "31a5d8d",
+        "tree": "5f78941ecc12c4c395929544151ebe82f649287f",
+        "discovered": 1541,
+        "passed": 1422,
+        "skips": 119,
+        "seconds": 32.586
+      },
+      "finding_resolved": true,
+      "linux_seconds": 79.998,
+      "integration_commit": "ce8cad01fdea900570da93cc0bf456863d4ad050"
     },
     "78": {
       "head": "d013dfc26096735d949639b9fb2224cb8431f40b",
