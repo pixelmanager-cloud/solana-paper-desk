@@ -1,0 +1,43 @@
+{
+  "kind": "PUBLIC_REPOSITORY_HISTORICAL_REFERENCE",
+  "finality_status": "CONFIRMED_SOURCE_NOT_FINALIZED",
+  "reference_only": true,
+  "finality_verified": false,
+  "authenticity_verified": false,
+  "eligible_for_trading": false,
+  "source": {
+    "repository": "https://github.com/DefaultPerson/solana-dex-parser-go",
+    "commit": "57ce4f643deec96b363d66778f220658df461497",
+    "path": "testdata/example/4Cod1cNGv6RboJ7rSB79yeVCR4Lfd25rFgLY3eiPJfTJjTGyYP1r2i1upAYZHQsWDqUbGd1bhTRm1bpSQcpWMnEz.json",
+    "url": "https://github.com/DefaultPerson/solana-dex-parser-go/blob/57ce4f643deec96b363d66778f220658df461497/testdata/example/4Cod1cNGv6RboJ7rSB79yeVCR4Lfd25rFgLY3eiPJfTJjTGyYP1r2i1upAYZHQsWDqUbGd1bhTRm1bpSQcpWMnEz.json",
+    "raw_url": "https://raw.githubusercontent.com/DefaultPerson/solana-dex-parser-go/57ce4f643deec96b363d66778f220658df461497/testdata/example/4Cod1cNGv6RboJ7rSB79yeVCR4Lfd25rFgLY3eiPJfTJjTGyYP1r2i1upAYZHQsWDqUbGd1bhTRm1bpSQcpWMnEz.json",
+    "documentation_url": "https://github.com/DefaultPerson/solana-dex-parser-go/blob/57ce4f643deec96b363d66778f220658df461497/docs/getting-started.md",
+    "documented_fetch_commitment": "confirmed",
+    "fixture_acquisition_commitment": "unknown",
+    "original_request_binding_available": false,
+    "license": "MIT",
+    "license_file": "LICENSE"
+  },
+  "artifact": {
+    "path": "create_buy.json",
+    "sha256": "89dcc14ecad1432598e4937da2dfa9955af8637a5ae373418e9631c174991749",
+    "bytes": 12523,
+    "unchanged_source_bytes": true
+  },
+  "transaction": {
+    "signature": "4Cod1cNGv6RboJ7rSB79yeVCR4Lfd25rFgLY3eiPJfTJjTGyYP1r2i1upAYZHQsWDqUbGd1bhTRm1bpSQcpWMnEz",
+    "mint": "B9Z9mKUoVy5k8KuL2HauUD1mhmfF3PPNnJoK83S1pump",
+    "slot": 282653703,
+    "block_time": 1723261303,
+    "encoding": "compiled_json",
+    "version": 0
+  },
+  "limitations": [
+    "Source documents a confirmed fetch; the saved result alone does not bind acquisition commitment or prove finality.",
+    "Historical reference only; source authenticity and current state require independent coordinator capture.",
+    "Production decode rejects compiled account keys.",
+    "The saved Pump create event fails pinned event schemas; no verified creation anchor is asserted.",
+    "No request manifest, synthetic normalization, changed stack heights or finalized label has been added to the raw source.",
+    "This is not ownership completeness, a low-activity candidate, an eligibility grant or live acceptance."
+  ]
+}
