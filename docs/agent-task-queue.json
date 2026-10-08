@@ -270,6 +270,15 @@
         "status": "RESEARCHING",
         "base": "745622f",
         "scope": "review report only"
+      },
+      {
+        "worker": "worker10",
+        "thread_id": "01a118fd-56d5-70b8-ad31-dba13e982082",
+        "host_id": "durable",
+        "task": "Live paper entry/exit adapter critical path audit excluding ownership evidence research",
+        "status": "RESEARCHING",
+        "base": "b449b92",
+        "scope": "review report only"
       }
     ],
     "saved_launch_probe": {
