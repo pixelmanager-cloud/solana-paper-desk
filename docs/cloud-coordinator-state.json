@@ -1,6 +1,6 @@
 {
   "schema_version": 1,
-  "revision": 36,
+  "revision": 37,
   "repository": "pixelmanager-cloud/solana-paper-desk",
   "source_main_sha": "e298e15cd758932e81d2241130716632702f5bd0",
   "observed_date": "2026-10-08",
@@ -2310,12 +2310,11 @@
     "last_success": "PR57 repaired exacthead1336 Linux zero skips"
   },
   "review_lease": {
-    "holder": null,
-    "fencing_token": 8,
-    "status": "RELEASED",
-    "scope": "PR59_REPORT_ONLY",
-    "expires_at": null,
-    "last_holder": "cloud-pr59-c120bee-review"
+    "holder": "cloud-pr62-9e35c2b-review",
+    "fencing_token": 9,
+    "status": "HELD",
+    "scope": "PR62_FIXTURE_RESEARCH_ONLY",
+    "expires_at": "2026-10-08T08:00:00Z"
   },
   "external_review_observations": [
     {
