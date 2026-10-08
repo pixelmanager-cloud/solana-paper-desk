@@ -1044,7 +1044,7 @@
       ],
       "minimum_calls": "6+H discovery pages; not completeness guarantee",
       "blocked_on": "PR97 final independent review; producer state handoff and wire outcome contract",
-      "ready_parallel_work": "Strict original-byte read transport coverage assigned01; uses accepted code only"
+      "ready_parallel_work": "Transport coverage and full common-bank outcomes completed in accepted PR98/99. No remaining unclaimed dependency-ready implementation identified; cohesive producer remains gated on PR97 independent review."
     },
     "pending_read_transport": {
       "pr": 98,
@@ -1108,7 +1108,26 @@
         "additional_checks": 87,
         "log_sha256": "727d761e8814729d94023550fb319117c91c2daf5da8a4e0bb719a5f3364881f",
         "manifest_sha256": "decf6c1759b14a92b851cbc7020e46fe6991f5fa6f2ba187df7506c24ad8f7e9"
+      },
+      "integration_ci": {
+        "head": "7d563a5d1ee1ea19c9a0254a3b239ef64999df0c",
+        "successful_runs": [
+          37820540929,
+          37820533608
+        ]
       }
+    },
+    "latest_cloud_reconciliation": {
+      "pr10_head": "6ce54047648ea2981b453da4baf144a7bc0369cf",
+      "at": "2026-10-08T17:57:02Z",
+      "status": "NO_NEW_UNASSIGNED_REVIEW_WORK",
+      "pr97": "RESERVED_WORKER05_PLATFORM_BLOCK_REPORTED_NO_RETRY"
+    },
+    "desktop_pause": {
+      "at": "2026-10-08T18:02Z",
+      "reason": "Repeated platform cybersecurity filter blocks required PR97 independent review; all accepted dependency-independent transport work complete; no useful unclaimed dependency-ready work identified. No blocked review retried or bypassed.",
+      "readiness": false,
+      "resume_condition": "Required independent review becomes available through an authorized supported path; reassess dependencies before dispatch."
     }
   },
   "native_reconciliation_review": {
