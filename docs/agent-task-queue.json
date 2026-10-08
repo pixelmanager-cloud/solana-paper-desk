@@ -267,9 +267,10 @@
         "thread_id": "01a118fc-666c-70b6-9fa8-2c7520f0a0bb",
         "host_id": "durable",
         "base": "2ab25cbb8472fd29072da078e2fa7e049e0c65ea",
-        "status": "DISPATCHED",
+        "status": "ACTIVE",
         "scope": "Smallest missing source-bound pool-vault classification prerequisite; implement only justified raw/source/bank binding; otherwise report precise blocking inputs. No admission or entry guard relaxation.",
-        "assigned_at": "2026-10-08T10:55:25Z"
+        "assigned_at": "2026-10-08T10:55:25Z",
+        "wait_cursor": "a2dcfb97-463d-4188-9da3-48a81e644d23:39"
       }
     ],
     "saved_launch_probe": {
@@ -284,8 +285,8 @@
       "reported_last_run": "2026-10-08T03:58:47.779603+00:00",
       "limitation": "Reviewer-recorded execution evidence; desktop has not independently queried hosted scheduler; same-chat binding unverified.",
       "last_reconciliation": "2026-10-08T07:56:59Z",
-      "latest_protocol_head": "755b4438c4a4a9e350446c493c9bd91c09abeee3",
-      "latest_reconciliation": "2026-10-08T10:01:15Z: revision44 reserves PR79 to worker01; no new unassigned review; durable schedule binding remains unverified"
+      "latest_protocol_head": "431d70a9af61a5424ed37f10b68a884b43bcaca6",
+      "latest_reconciliation": "2026-10-08T11:02:15Z: revision45 confirms PR79/80 desktop integration, reserves OWN-2 source-bound admission to worker02, no unassigned review; durable schedule binding remains unverified"
     },
     "pending_ui_candidate": {
       "pr": 35,
