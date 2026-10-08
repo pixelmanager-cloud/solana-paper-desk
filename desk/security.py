@@ -57,6 +57,24 @@ def mint_policy(account):
             "notice": "Token-policy pass does not prove sellability, liquidity safety or honest ownership."}
 
 
+def holding_authority_reasons(data, wallet):
+    """Validate raw legacy authority consistency after layout/program checks.
+
+    A present delegate is reported separately by each caller: coverage may still
+    reconcile its balance, whereas holding policy rejects even zero allowance.
+    """
+    if len(data) != 165:
+        raise ValueError("Exact legacy holding layout required")
+    reasons = []
+    if (int.from_bytes(data[72:76], "little") == 0
+            and int.from_bytes(data[121:129], "little") != 0):
+        reasons.append("DELEGATED_AMOUNT_WITHOUT_DELEGATE")
+    close_option = int.from_bytes(data[129:133], "little")
+    if close_option not in (0, 1) or (close_option and base58(data[133:165]) != wallet):
+        reasons.append("EXTERNAL_CLOSE_AUTHORITY")
+    return reasons
+
+
 def holding_policy(account, mint, wallet):
     reasons = []
     if not isinstance(account, dict) or account.get("owner") != TOKEN_PROGRAM:
@@ -70,9 +88,7 @@ def holding_policy(account, mint, wallet):
         reasons.append("FROZEN_OR_UNINITIALIZED_HOLDING")
     if int.from_bytes(data[72:76], "little") != 0:
         reasons.append("TOKEN_ACCOUNT_DELEGATE")
-    close_option = int.from_bytes(data[129:133], "little")
-    if close_option not in (0, 1) or (close_option and base58(data[133:165]) != wallet):
-        reasons.append("EXTERNAL_CLOSE_AUTHORITY")
+    reasons.extend(holding_authority_reasons(data, wallet))
     return {"decision": "SKIP" if reasons else "PASS_HOLDING_POLICY", "reasons": reasons,
             "amount_raw": str(int.from_bytes(data[64:72], "little"))}
 

@@ -16,6 +16,13 @@ class CloudTokenControlsTests(unittest.TestCase):
         path = Path(__file__).resolve().parents[1] / 'fixtures/mainnet-holder-snapshot.json'
         self.fixture = json.loads(path.read_text())
         self.response = copy.deepcopy(self.fixture['rpc']['response'])
+        # Two captured accounts have external close authorities. For isolated
+        # positive/attack cases, use a synthetic copy with all close options None.
+        for account in self.response['value'][1:]:
+            raw = self.raw(account)
+            raw[129:133] = bytes(4)
+            self.put(account, raw)
+        self.baseline_response = copy.deepcopy(self.response)
         self.mint_account, self.holder = self.response['value'][:2]
         self.mint = self.fixture['enumeration']['mint']
         self.wallet = self.fixture['enumeration']['accounts'][0]['wallet']
@@ -46,7 +53,14 @@ class CloudTokenControlsTests(unittest.TestCase):
         self.assertEqual(self.holding()['decision'], 'PASS_HOLDING_POLICY')
         self.assertTrue(self.snapshot()['verified'])
         self.assertEqual(len(self.calls), 1)
+        self.assertEqual(self.response, self.baseline_response)
+        original = self.response
+        self.response = copy.deepcopy(self.fixture['rpc']['response'])
+        result = self.snapshot()
+        self.assertFalse(result['verified'])
+        self.assertIn('EXTERNAL_CLOSE_AUTHORITY', result['reasons'])
         self.assertEqual(self.response, self.fixture['rpc']['response'])
+        self.response = original
 
     def test_each_mint_authority_independently_blocks_policy_and_snapshot(self):
         for offset, reason in ((0, 'ACTIVE_MINT_AUTHORITY'), (46, 'ACTIVE_FREEZE_AUTHORITY')):
@@ -112,20 +126,23 @@ class CloudTokenControlsTests(unittest.TestCase):
                 if not allowed:
                     self.assertIn('EXTERNAL_CLOSE_AUTHORITY', result['reasons'])
 
-    def test_snapshot_close_authority_gap_is_not_a_holding_approval(self):
+    def test_snapshot_external_close_authority_blocks_coverage(self):
         raw = self.raw(self.holder)
         raw[129:133] = (1).to_bytes(4, 'little')
         raw[133:165] = bytes([9]) * 32
         self.put(self.holder, raw)
-        self.assertTrue(self.snapshot()['verified'])
+        result = self.snapshot()
+        self.assertFalse(result['verified'])
+        self.assertIn('EXTERNAL_CLOSE_AUTHORITY', result['reasons'])
         self.assertEqual(self.holding()['decision'], 'SKIP')
 
-    def test_delegate_amount_without_option_is_a_documented_policy_gap(self):
+    def test_delegate_amount_without_option_blocks_holding_policy(self):
         raw = self.raw(self.holder)
         raw[72:76] = bytes(4)
         raw[121:129] = (1).to_bytes(8, 'little')
         self.put(self.holder, raw)
-        self.assertEqual(self.holding()['decision'], 'PASS_HOLDING_POLICY')
+        self.assertEqual(self.holding()['decision'], 'SKIP')
+        self.assertIn('DELEGATED_AMOUNT_WITHOUT_DELEGATE', self.holding()['reasons'])
         self.assertIn('INDEXED_HOLDER_STATE_CHANGED', self.snapshot()['reasons'])
 
     def test_token_identity_and_program_owner_mismatches_rejected(self):
@@ -214,3 +231,36 @@ class CloudTokenControlsTests(unittest.TestCase):
                 self.assertIn(reason, result['reasons'])
                 self.assertFalse(result['layout_inventory_complete'])
                 self.assertFalse(result['eligible_for_trading'])
+
+    def test_matching_index_cannot_hide_orphaned_delegated_amount(self):
+        for amount in (1, 2**64 - 1):
+            with self.subTest(amount=amount):
+                raw = self.raw(self.holder)
+                raw[72:76] = bytes(4)
+                raw[121:129] = amount.to_bytes(8, 'little')
+                self.put(self.holder, raw)
+                self.fixture['enumeration']['accounts'][0]['delegated_raw'] = str(amount)
+                result = self.snapshot()
+                self.assertFalse(result['verified'])
+                self.assertIn('DELEGATED_AMOUNT_WITHOUT_DELEGATE', result['reasons'])
+                self.assertNotIn('INDEXED_HOLDER_STATE_CHANGED', result['reasons'])
+                self.assertIn('DELEGATED_AMOUNT_WITHOUT_DELEGATE', self.holding()['reasons'])
+
+    def test_snapshot_validates_close_option_and_exact_wallet_binding(self):
+        baseline = self.raw(self.holder)
+        for tag, key, allowed in ((0, bytes([9]) * 32, True),
+                                  (1, baseline[32:64], True),
+                                  (1, bytes([9]) * 32, False),
+                                  (2, baseline[32:64], False),
+                                  (256, baseline[32:64], False),
+                                  (2**32 - 1, baseline[32:64], False)):
+            with self.subTest(tag=tag, allowed=allowed):
+                raw = baseline.copy()
+                raw[129:133] = tag.to_bytes(4, 'little')
+                raw[133:165] = key
+                self.put(self.holder, raw)
+                result = self.snapshot()
+                self.assertEqual(result['verified'], allowed)
+                self.assertEqual(self.holding()['decision'] == 'PASS_HOLDING_POLICY', allowed)
+                if not allowed:
+                    self.assertIn('EXTERNAL_CLOSE_AUTHORITY', result['reasons'])
