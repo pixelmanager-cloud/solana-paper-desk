@@ -779,7 +779,13 @@
       "review": "PENDING worker05",
       "author_linux_tests": 1732,
       "author_skips": 0,
-      "combined_base": "1f4c40553bc18162c6cb09cea6f9f252fcecb098"
+      "combined_base": "1f4c40553bc18162c6cb09cea6f9f252fcecb098",
+      "mac_discovered": 1763,
+      "mac_passed": 1505,
+      "mac_skipped": 258,
+      "mac_seconds": 33.9,
+      "combined_tree": "733b58705c7ca746af726608132e963491d635b3",
+      "coordinator_diff_review": "Full journal diff reviewed; independent Linux review pending"
     }
   },
   "native_reconciliation_review": {
