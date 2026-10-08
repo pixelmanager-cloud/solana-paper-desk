@@ -262,16 +262,6 @@
     "published_ci": "Deployed d758bc529a7da1f74509117288740911f2ad6845: both CI runs successful",
     "active_claims": [
       {
-        "id": "PR87-INDEPENDENT-REVIEW",
-        "worker": "06",
-        "thread_id": "01a118fc-f867-7233-8eec-c20659e70095",
-        "host_id": "durable",
-        "status": "REVIEWING",
-        "pr": 87,
-        "head": "6561aa7a429f8f3db94668ad0da94005ee2cfb08",
-        "wait_cursor": "8f3328cf-bef6-441d-83f8-2d1f46b3b0df:47"
-      },
-      {
         "id": "COMMON-BANK-SLOT-STAGE",
         "worker": "02",
         "thread_id": "01a118fc-666c-70b6-9fa8-2c7520f0a0bb",
@@ -279,6 +269,15 @@
         "status": "DISPATCHED",
         "base": "072f654478dd7a73563cfbc5b18092f1ed92829d",
         "scope": "Disconnected finalized-slot atomic reservation/completion after genesis; no transport or publication"
+      },
+      {
+        "id": "MIXED-RECEIPT-PROTECTED-READER",
+        "worker": "01",
+        "thread_id": "01a118fc-39bc-722c-b442-8bf5a749e0bb",
+        "host_id": "durable",
+        "status": "RESERVED_PENDING_DISPATCH",
+        "base": "28e59ac3da521c032cec49a26b603088c78e78f1",
+        "scope": "Disconnected guarded exact-format snapshot reader with independently supplied anchors; no migration, issuer or entry"
       }
     ],
     "saved_launch_probe": {
@@ -712,15 +711,19 @@
     "pending_mixed_receipt_validator": {
       "pr": 87,
       "head": "6561aa7a429f8f3db94668ad0da94005ee2cfb08",
-      "review": "PENDING worker06",
-      "integrated": false,
+      "review": "PASS worker06 exact combined tree; Linux1691 zero skips157.150s;20 independent probes",
+      "integrated": true,
       "mac_discovered": 1691,
       "mac_passed": 1475,
       "mac_skipped": 216,
       "mac_seconds": 33.384,
       "combined_base": "072f654478dd7a73563cfbc5b18092f1ed92829d",
       "combined_tree": "5cb5647e98e1a958a78b1509e3f3f69e64a2cadf",
-      "ci": "Both exact-head checks PASS"
+      "ci": "Both exact-head checks PASS",
+      "integration_commit": "28e59ac3da521c032cec49a26b603088c78e78f1",
+      "review_url": "https://github.com/pixelmanager-cloud/solana-paper-desk/pull/87#issuecomment-6060373059",
+      "review_manifest_sha256": "6b971962e7fb9ea0e20e58f7f17be8a0d7bae0e7ba5f46d4f38d4461456f866f",
+      "deployed": false
     }
   },
   "native_reconciliation_review": {
