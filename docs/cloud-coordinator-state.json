@@ -1,6 +1,6 @@
 {
   "schema_version": 1,
-  "revision": 20,
+  "revision": 21,
   "repository": "pixelmanager-cloud/solana-paper-desk",
   "source_main_sha": "e298e15cd758932e81d2241130716632702f5bd0",
   "observed_date": "2026-10-08",
@@ -353,6 +353,14 @@
     {
       "id": "AUTOMATION_BINDING",
       "action": "Hosted last_run_time now observed and current cloud executor verified; same-chat/durable environment binding unverified and next_run_time null. Do not infer durable worker access."
+    },
+    {
+      "id": "PR51_PARTIAL_SCHEMA_RECAPTURE",
+      "pr": 51,
+      "head_sha": "5bd4cd0854fa95470489cbbef00a3b8cb620c8db",
+      "review_id": 5451587196,
+      "status": "OPEN",
+      "action": "Only pristine initialization allowed; any partially missing initialized schema fails closed; preserve original records/counters; explicit recovery/regressions required."
     }
   ],
   "events": [
@@ -627,6 +635,68 @@
         "No cryptographic signature/finality proof",
         "Socket timeout not total deadline",
         "Current integration accepts actual finalized pointT>=floorS with preserved original request; no interval atS"
+      ],
+      "accepted": false,
+      "live_acceptance": false
+    },
+    {
+      "kind": "PR51_INDEPENDENT_REVIEW",
+      "policy_version": "cloud-independent-review-v1",
+      "pr": 51,
+      "head_sha": "5bd4cd0854fa95470489cbbef00a3b8cb620c8db",
+      "base_sha": "149bfabd1c288d1807fc0bdfacbb7a24dfd547f0",
+      "worker_agent": "01",
+      "worker_thread_id": "01a118fc-39bc-722c-b442-8bf5a749e0bb",
+      "branch": "codex/cloud-raw-transaction-capture",
+      "author_login": "pixelmanager-cloud",
+      "reviewer": "Independent cloud execution; COMMENT only; shared GitHub identity",
+      "review_id": 5451587196,
+      "review_action": "COMMENT",
+      "status": "CHANGES_REQUIRED_P2_PARTIAL_SCHEMA_RECAPTURE",
+      "findings": [
+        {
+          "priority": "P2",
+          "path": "desk/raw_transaction_capture.py",
+          "line": 138,
+          "title": "Missing claims table silently rebuilt allows second charged RPC after ambiguous attempt",
+          "reproduction": "After one RPC/raw save and failed terminal write, DROP only raw_transaction_claims. Reopen same binding -> COMPLETE second RPC spent2, not pending blocked. Missing protection trigger silently recreated; missing results table yields pending.",
+          "action": "Only pristine initialization allowed; any partially missing initialized schema fails closed; preserve original records/counters; explicit recovery/regressions required."
+        }
+      ],
+      "tests": {
+        "python": "3.12.14",
+        "full_suite_command": "python -m unittest discover -s tests -v",
+        "full_suite_passed": 1199,
+        "full_suite_seconds": 50.82,
+        "adversarial_command": "python /workspace/work/review/p51-independent.py",
+        "adversarial_passed": 3,
+        "adversarial_seconds": 0.053,
+        "schema_probe_command": "python /workspace/work/review/p51-schema-probe.py",
+        "schema_probe_result": "P2_REPRODUCED_SECOND_RPC_AFTER_ONLY_CLAIMS_LOSS",
+        "skipped": 0,
+        "provider_calls": 0
+      },
+      "ci": [
+        {
+          "id": 37729316532,
+          "name": "Tests",
+          "status": "completed",
+          "conclusion": "success",
+          "run_number": 304,
+          "jobs_url": "https://api.github.com/repos/pixelmanager-cloud/solana-paper-desk/actions/runs/37729316532/jobs",
+          "logs_url": "https://api.github.com/repos/pixelmanager-cloud/solana-paper-desk/actions/runs/37729316532/logs",
+          "workflow_id": 377958194
+        }
+      ],
+      "combined_ci": "NOT_RUN_SCRATCH_TREE",
+      "source_manifest": "docs/reviews/cloud-pr51-149bfab-5bd4cd0-hashes.json",
+      "source_manifest_sha256": "157ccf22c874616e0cb5f74f3a00f9911d0fbcbea4cb9cde51e69e112b4640d0",
+      "source_files": 260,
+      "proof_artifact": "docs/reviews/cloud-pr51-5bd4cd0.md",
+      "limitations": [
+        "Lockfile open follows symlinks; stable trusted local filesystem assumption not replacement/identity defense",
+        "Source/chain/signature/CPI/lifecycle/ownership approval false",
+        "Full suite pass not acceptance"
       ],
       "accepted": false,
       "live_acceptance": false
@@ -1325,6 +1395,67 @@
       ],
       "accepted": false,
       "live_acceptance": false
+    },
+    {
+      "policy_version": "cloud-independent-review-v1",
+      "pr": 51,
+      "head_sha": "5bd4cd0854fa95470489cbbef00a3b8cb620c8db",
+      "base_sha": "149bfabd1c288d1807fc0bdfacbb7a24dfd547f0",
+      "worker_agent": "01",
+      "worker_thread_id": "01a118fc-39bc-722c-b442-8bf5a749e0bb",
+      "branch": "codex/cloud-raw-transaction-capture",
+      "author_login": "pixelmanager-cloud",
+      "reviewer": "Independent cloud execution; COMMENT only; shared GitHub identity",
+      "review_id": 5451587196,
+      "review_action": "COMMENT",
+      "status": "CHANGES_REQUIRED_P2_PARTIAL_SCHEMA_RECAPTURE",
+      "findings": [
+        {
+          "priority": "P2",
+          "path": "desk/raw_transaction_capture.py",
+          "line": 138,
+          "title": "Missing claims table silently rebuilt allows second charged RPC after ambiguous attempt",
+          "reproduction": "After one RPC/raw save and failed terminal write, DROP only raw_transaction_claims. Reopen same binding -> COMPLETE second RPC spent2, not pending blocked. Missing protection trigger silently recreated; missing results table yields pending.",
+          "action": "Only pristine initialization allowed; any partially missing initialized schema fails closed; preserve original records/counters; explicit recovery/regressions required."
+        }
+      ],
+      "tests": {
+        "python": "3.12.14",
+        "full_suite_command": "python -m unittest discover -s tests -v",
+        "full_suite_passed": 1199,
+        "full_suite_seconds": 50.82,
+        "adversarial_command": "python /workspace/work/review/p51-independent.py",
+        "adversarial_passed": 3,
+        "adversarial_seconds": 0.053,
+        "schema_probe_command": "python /workspace/work/review/p51-schema-probe.py",
+        "schema_probe_result": "P2_REPRODUCED_SECOND_RPC_AFTER_ONLY_CLAIMS_LOSS",
+        "skipped": 0,
+        "provider_calls": 0
+      },
+      "ci": [
+        {
+          "id": 37729316532,
+          "name": "Tests",
+          "status": "completed",
+          "conclusion": "success",
+          "run_number": 304,
+          "jobs_url": "https://api.github.com/repos/pixelmanager-cloud/solana-paper-desk/actions/runs/37729316532/jobs",
+          "logs_url": "https://api.github.com/repos/pixelmanager-cloud/solana-paper-desk/actions/runs/37729316532/logs",
+          "workflow_id": 377958194
+        }
+      ],
+      "combined_ci": "NOT_RUN_SCRATCH_TREE",
+      "source_manifest": "docs/reviews/cloud-pr51-149bfab-5bd4cd0-hashes.json",
+      "source_manifest_sha256": "157ccf22c874616e0cb5f74f3a00f9911d0fbcbea4cb9cde51e69e112b4640d0",
+      "source_files": 260,
+      "proof_artifact": "docs/reviews/cloud-pr51-5bd4cd0.md",
+      "limitations": [
+        "Lockfile open follows symlinks; stable trusted local filesystem assumption not replacement/identity defense",
+        "Source/chain/signature/CPI/lifecycle/ownership approval false",
+        "Full suite pass not acceptance"
+      ],
+      "accepted": false,
+      "live_acceptance": false
     }
   ],
   "infrastructure": {
@@ -1832,10 +1963,10 @@
   ],
   "review_assignments": {
     "cloud_coordinator": {
-      "exclusive_pr": 49,
-      "head_sha": "2b11fbf6c8a5d7933088283a9a7ab9cbd9f25578",
-      "status": "REVIEW_COMPLETE_COMMENT_POSTED",
-      "review_id": 5451499079
+      "exclusive_pr": 51,
+      "head_sha": "5bd4cd0854fa95470489cbbef00a3b8cb620c8db",
+      "status": "CHANGES_REQUIRED",
+      "review_id": 5451587196
     },
     "pr31": {
       "owner": "worker02",
@@ -2025,69 +2156,69 @@
     }
   ],
   "last_review_run": {
-    "mode": "PR49_EXCLUSIVE_COMBINED_FIXTURE_REVIEW",
+    "mode": "PR51_EXCLUSIVE_COMBINED_FIXTURE_REVIEW",
     "policy_version": "cloud-independent-review-v1",
-    "pr": 49,
-    "head_sha": "2b11fbf6c8a5d7933088283a9a7ab9cbd9f25578",
-    "base_sha": "12ca1ed4a48547f8dd8acc59a8b1fcec940ffc9d",
-    "worker_agent": "05",
-    "worker_thread_id": "01a118fc-dd83-7672-ac81-7445f85fe09f",
-    "branch": "codex/cloud-wave1-05-transaction-rpc",
+    "pr": 51,
+    "head_sha": "5bd4cd0854fa95470489cbbef00a3b8cb620c8db",
+    "base_sha": "149bfabd1c288d1807fc0bdfacbb7a24dfd547f0",
+    "worker_agent": "01",
+    "worker_thread_id": "01a118fc-39bc-722c-b442-8bf5a749e0bb",
+    "branch": "codex/cloud-raw-transaction-capture",
     "author_login": "pixelmanager-cloud",
-    "reviewer": "Independent cloud execution; shared GitHub identity; COMMENT only",
-    "review_id": 5451499079,
+    "reviewer": "Independent cloud execution; COMMENT only; shared GitHub identity",
+    "review_id": 5451587196,
     "review_action": "COMMENT",
-    "status": "SCOPED_NARROW_GETTRANSACTION_NO_BLOCKER_FOUND",
+    "status": "CHANGES_REQUIRED_P2_PARTIAL_SCHEMA_RECAPTURE",
     "findings": [
-      "Canonical64byte signature and strict finalized/json/integer0 options verified",
-      "Six shared transport definitions unchanged",
-      "Opaque/null result remains capture responsibility"
+      {
+        "priority": "P2",
+        "path": "desk/raw_transaction_capture.py",
+        "line": 138,
+        "title": "Missing claims table silently rebuilt allows second charged RPC after ambiguous attempt",
+        "reproduction": "After one RPC/raw save and failed terminal write, DROP only raw_transaction_claims. Reopen same binding -> COMPLETE second RPC spent2, not pending blocked. Missing protection trigger silently recreated; missing results table yields pending.",
+        "action": "Only pristine initialization allowed; any partially missing initialized schema fails closed; preserve original records/counters; explicit recovery/regressions required."
+      }
     ],
     "tests": {
       "python": "3.12.14",
       "full_suite_command": "python -m unittest discover -s tests -v",
-      "full_suite_passed": 1179,
-      "full_suite_seconds": 52.876,
-      "targeted_command": "python -m unittest tests.test_coordinator_rpc tests.test_coordinator_transaction_rpc -q",
-      "targeted_passed": 23,
-      "targeted_seconds": 0.599,
-      "adversarial_command": "python /workspace/work/review/p49-independent.py",
+      "full_suite_passed": 1199,
+      "full_suite_seconds": 50.82,
+      "adversarial_command": "python /workspace/work/review/p51-independent.py",
       "adversarial_passed": 3,
-      "adversarial_seconds": 0.189,
-      "boundaries": {
-        "canonical_accepted": 68,
-        "wrong_byte_length_rejected": 387,
-        "option_substitutions": 30,
-        "redirect_paths": 15
-      },
+      "adversarial_seconds": 0.053,
+      "schema_probe_command": "python /workspace/work/review/p51-schema-probe.py",
+      "schema_probe_result": "P2_REPRODUCED_SECOND_RPC_AFTER_ONLY_CLAIMS_LOSS",
       "skipped": 0,
       "provider_calls": 0
     },
     "ci": [
       {
-        "id": 37728550556,
+        "id": 37729316532,
         "name": "Tests",
         "status": "completed",
         "conclusion": "success",
-        "run_number": 290,
-        "jobs_url": "https://api.github.com/repos/pixelmanager-cloud/solana-paper-desk/actions/runs/37728550556/jobs",
-        "logs_url": "https://api.github.com/repos/pixelmanager-cloud/solana-paper-desk/actions/runs/37728550556/logs",
+        "run_number": 304,
+        "jobs_url": "https://api.github.com/repos/pixelmanager-cloud/solana-paper-desk/actions/runs/37729316532/jobs",
+        "logs_url": "https://api.github.com/repos/pixelmanager-cloud/solana-paper-desk/actions/runs/37729316532/logs",
         "workflow_id": 377958194
       }
     ],
-    "combined_ci": "NOT_RUN_UNPUBLISHED_SCRATCH_TREE",
-    "source_manifest": "docs/reviews/cloud-pr49-12ca1ed-2b11fbf-hashes.json",
-    "source_manifest_sha256": "81acf26de4d69c2477e2d1c5485e8616a4e98e67cf4b4d53f46ffa5eaf68c9b3",
-    "source_files": 257,
-    "proof_artifact": "docs/reviews/cloud-pr49-2b11fbf.md",
+    "combined_ci": "NOT_RUN_SCRATCH_TREE",
+    "source_manifest": "docs/reviews/cloud-pr51-149bfab-5bd4cd0-hashes.json",
+    "source_manifest_sha256": "157ccf22c874616e0cb5f74f3a00f9911d0fbcbea4cb9cde51e69e112b4640d0",
+    "source_files": 260,
+    "proof_artifact": "docs/reviews/cloud-pr51-5bd4cd0.md",
     "limitations": [
-      "Source provisioning/reserve-before-I/O/raw capture/lifecycle acceptance separate",
-      "No cryptographic signature/finality proof",
-      "Socket timeout not total deadline",
-      "Current integration accepts actual finalized pointT>=floorS with preserved original request; no interval atS"
+      "Lockfile open follows symlinks; stable trusted local filesystem assumption not replacement/identity defense",
+      "Source/chain/signature/CPI/lifecycle/ownership approval false",
+      "Full suite pass not acceptance"
     ],
     "accepted": false,
     "live_acceptance": false,
+    "excluded_review_prs": [
+      50
+    ],
     "production_edits": false,
     "merged_prs": 0,
     "dispatched_workers": 0,
