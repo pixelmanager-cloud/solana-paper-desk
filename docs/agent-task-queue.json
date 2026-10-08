@@ -192,17 +192,19 @@
     "tested_commit": "f083a2860e5fe54455ed263d1e64ba51604e0648",
     "combined_tests": 717,
     "result": "PASS",
-    "live_verification": "NOT_STARTED_PENDING_REVIEW_AND_LEGACY_CAPTURE",
+    "live_verification": "BLOCKED_NO_SUPPORTED_BUDGET_FEASIBLE_PUBLIC_LEGACY_SEED; acquisition path in development",
     "blocker": "PR26 contradiction fix/re-review and decoder authority gap repair active; live legacy acceptance and exposure integration unfinished",
     "followups": {
       "worker02": "PR24 exact-head review complete; idle",
-      "worker06": "Fix silently omitted parsed authority/control operations in decoder and history; new branch/PR",
+      "worker06": "PR27 dbffb7551ce2925156b1c8a173f4b0c38ad4f6c9 published, independent review active",
       "cloud_reviewer": "Independent exact-head PR26 point-in-time pool admission review",
-      "worker10": "PR25 scoped independent review complete; authority gap acknowledged, no distinct adapter defect",
-      "worker03": "Read-only public legacy launch fixture and bounded capture feasibility assessment",
+      "worker10": "Independent exact-head PR27 authority control rejection review",
+      "worker03": "Public legacy feasibility report c932cbf published/reviewed; idle",
       "worker04": "Repair PR26 same-scope contradictory trusted receipt conflict handling; both ref directions and source variants",
       "worker05": "PR25 published; idle pending review",
-      "worker09": "Measure 50-scan repeated continuation replay, idempotence and dashboard historical-component projection; tests/report only"
+      "worker09": "Measure 50-scan repeated continuation replay, idempotence and dashboard historical-component projection; tests/report only",
+      "worker01": "Implement bounded birth-inclusive acquisition seed with durable scan limits and shared 18-request accounting; fixture-only",
+      "worker07": "Read-only minimum safe control-lifecycle semantics plan; no gate changes"
     },
     "reviews": {
       "PR18": "92e9c6104b411101e414c03774a1675cbbf1ac91: independent review no blocking scoped defect",
