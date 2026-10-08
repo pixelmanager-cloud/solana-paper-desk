@@ -202,7 +202,7 @@
       "worker02": "PR74 integrated; available",
       "worker03": "PR70 integrated; available",
       "worker04": "PR68 integrated; available",
-      "worker07": "Assessing next dischargeable full-route semantic obligation, no code yet",
+      "worker07": "Implementing pool-vault conservation diagnostic",
       "worker08": "PR72 integrated; available",
       "worker09": "PR66 integrated; available"
     },
@@ -265,9 +265,9 @@
         "worker": "worker07",
         "thread_id": "01a118fd-0f1c-749c-b85b-5e730937d0a8",
         "host_id": "durable",
-        "status": "ASSESSING_IMPLEMENTABLE_OBLIGATION",
+        "status": "IMPLEMENTING",
         "base": "19e3527",
-        "task": "Select one dischargeable full-route semantic obligation from existing raw inputs; exact scope before implementation"
+        "task": "Exact pool-vault token and WSOL conservation diagnostic wired into sell/replay"
       }
     ],
     "saved_launch_probe": {
@@ -1027,5 +1027,19 @@
     "paper_status": "NOT_CONFIGURED",
     "automatic_entry_enabled": false,
     "listener": "127.0.0.1:8765"
+  },
+  "vps_stage_19e3527": {
+    "source": "19e3527490a4ad28e9d13f0ee7647331293bd41d",
+    "status": "STAGED_VALIDATING",
+    "archive_sha256": "42106d314f89081fa56c0d55b95e591552b6ecc5ef55f2514508b1a6874929dd",
+    "provider_calls": 0,
+    "service_release": "d758bc5",
+    "ci": "Both exact release CI runs SUCCESS",
+    "backup": "/var/backups/solana-desk/pre-integration-19e3527/daily-20261008T084150Z",
+    "copy_reassessed": 8,
+    "original_decisions_preserved": 8,
+    "original_evaluations_preserved": 28,
+    "source_hashes_unchanged": true,
+    "copy_research_and_evidence_read_guards": "AVAILABLE"
   }
 }
