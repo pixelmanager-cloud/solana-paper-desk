@@ -195,16 +195,16 @@
     "live_verification": "BLOCKED_NO_SUPPORTED_BUDGET_FEASIBLE_PUBLIC_LEGACY_SEED; acquisition path in development",
     "blocker": "Concurrent journal initialization race fix; PR26 re-review; acquisition foundations; live legacy acceptance and exposure integration unfinished",
     "followups": {
-      "worker02": "Independent exact-head PR28 operating tests review",
+      "worker02": "PR28 review complete; correction/re-review pending",
       "worker06": "PR27 idle; confirmed prohibited force-with-lease history rewrite, instructed future append-only. No integration until new exact-head independent review.",
-      "cloud_reviewer": "Re-review PR26 repair aa4626fec148c244f841f0614abc4d18c52274dd",
+      "cloud_reviewer": "PR26 aa4626f re-review passed; available",
       "worker10": "PR27 latest-head review passed decoder scope; inherited WAL race found and assigned worker05",
       "worker03": "Public legacy feasibility report c932cbf published/reviewed; idle",
-      "worker04": "PR26 repair aa4626f published; re-review active",
+      "worker04": "PR26 reviewed; available",
       "worker05": "Repair concurrent decision journal WAL initialization race, repeated fresh-db/multiprocess tests",
-      "worker09": "Measure 50-scan repeated continuation replay, idempotence and dashboard historical-component projection; tests/report only",
+      "worker09": "Correct PR28 total assessment bound and unseen-old/recent-window test; no production changes",
       "worker01": "PR29 design-only; now implement durable admission descriptor and one-time source seal in history_progress/ownership_worker, latest integration",
-      "worker07": "Read-only minimum safe control-lifecycle semantics plan; no gate changes",
+      "worker07": "Implement pure raw legacy control normalizer; retain runtime rejection pending separate semantic approval",
       "worker08": "Implement shared Jobs kind/descriptor, exclusive recovery/claim fencing, existing admission limits; no budget/CLI changes"
     },
     "reviews": {
@@ -214,8 +214,9 @@
       "PR21": "22e1dae7c8f6a1adaca2690c14b13aabc663e729: worker10 independently passed 687 tests, no new regression",
       "PR25": "28e04362e426e50fc5cceca232bb227f38a3707c: independent scoped PASS; known silent authority-operation omission prevents interval-control acceptance",
       "PR24": "b5911a6fece35f83af87b89a14537de2d7c11dec: independent test/fixture review passed, 700 tests, no scoped blocking defect; lifetime authority gap remains",
-      "PR26": "f873c52cfab48ebb203377d0e3548cfc38c477bf: independent P2 contradictory same-slot capture admission; NOT integrated",
-      "PR27": "dbffb7551ce2925156b1c8a173f4b0c38ad4f6c9: independent decoder scope passed. Full suite first failed inherited WAL init race then 727 passed; repeat race 11/40 failures. Hold combined reliability claim until repair."
+      "PR26": "aa4626fec148c244f841f0614abc4d18c52274dd: independent re-review P2 resolved, 713 tests and 302 adversarial checks pass; external complete trusted ledger remains required",
+      "PR27": "dbffb7551ce2925156b1c8a173f4b0c38ad4f6c9: independent decoder scope passed. Full suite first failed inherited WAL init race then 727 passed; repeat race 11/40 failures. Hold combined reliability claim until repair.",
+      "PR28": "674b268a2162230cea3aaf30381d5c4e3b7ae3b1: independent scope pass; total assessed may exceed50, report/test correction requested. Inherited WAL race confirmed 5/20."
     },
     "candidate_combination": {
       "commit": "57a51245c85ba50d11fe782612a443131ffaa934",
