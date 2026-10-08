@@ -269,7 +269,8 @@
         "status": "REVIEWING",
         "base": "a557decf642f4408c6532ebd3ab24661503f916c",
         "pr": 81,
-        "head": "7385abd0104b7e2b5f955f865e4a5b9569a5d24f"
+        "head": "7385abd0104b7e2b5f955f865e4a5b9569a5d24f",
+        "wait_cursor": "8f3328cf-bef6-441d-83f8-2d1f46b3b0df:37"
       }
     ],
     "saved_launch_probe": {
@@ -611,7 +612,13 @@
       "author_linux_skips": 0,
       "integrated": false,
       "review": "PENDING worker06",
-      "scope": "Source/revision-bound pool-vault point prerequisite only; history/exclusion/entry remain false"
+      "scope": "Source/revision-bound pool-vault point prerequisite only; history/exclusion/entry remain false",
+      "mac_discovered": 1576,
+      "mac_passed": 1432,
+      "mac_skipped": 144,
+      "mac_seconds": 32.743,
+      "combined_tree": "e30ab4370b1f9104cc049dd61812305d45189454",
+      "ci": "Both exact-head checks PASS"
     }
   },
   "native_reconciliation_review": {
