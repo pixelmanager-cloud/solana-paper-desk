@@ -1,6 +1,6 @@
 {
   "schema_version": 1,
-  "revision": 33,
+  "revision": 34,
   "repository": "pixelmanager-cloud/solana-paper-desk",
   "source_main_sha": "e298e15cd758932e81d2241130716632702f5bd0",
   "observed_date": "2026-10-08",
@@ -1014,6 +1014,12 @@
       "comment_id": 6053795748,
       "full_suite_passed": 1333,
       "status": "P2_REMAINS_UNRESOLVED_COMBINED_FIXTURES_PASS"
+    },
+    {
+      "kind": "PR57_P2_REPAIR_INDEPENDENTLY_VERIFIED",
+      "head_sha": "4b0d9ba49a4ffadce82ad7a42178ab8b53372c31",
+      "review_id": 5452563667,
+      "accepted": false
     }
   ],
   "artifact_pr": {
@@ -2169,20 +2175,89 @@
         "accepted": false,
         "live_acceptance": false
       }
+    },
+    {
+      "policy_version": "cloud-independent-review-v1",
+      "pr": 57,
+      "head_sha": "4b0d9ba49a4ffadce82ad7a42178ab8b53372c31",
+      "base_sha": "5bc3adfc230a221b0959c55084749633c11e909e",
+      "combined_baseline_sha": "7b05a68147a1f13819d6283ab5fe77bad78c2f95",
+      "worker_agent": "03",
+      "worker_thread_id": "01a118fc-9478-778a-b77a-8f8f6ec7e0ad",
+      "branch": "codex/trade-event-schema",
+      "review_id": 5452563667,
+      "review_action": "COMMENT",
+      "status": "PRIOR_P2_RESOLVED_NO_SCOPED_CODE_BLOCKER",
+      "resolves_review_id": 5452419572,
+      "findings": [
+        "TradeEvent-only registration excludes newCreateEvent shapes;all256depth values preserve unverified production anchor",
+        "28malformed registrations and1ambiguous source name reject",
+        "49boundary consumer probes preserve unresolved effects andfalseapproval",
+        "Nonblocking stale report says programs.py unchanged althoughrepair modifiesloader"
+      ],
+      "tests": {
+        "python": "3.12.14",
+        "full_suite_command": "python -m unittest discover -q",
+        "full_suite_passed": 1336,
+        "full_suite_seconds": 62.585,
+        "skipped": 0,
+        "targeted_command": "python -m unittest tests.test_versioned_trade_event tests.test_trade_event_provenance tests.test_create_v2_raw_support tests.test_launch -q",
+        "targeted_passed": 41,
+        "targeted_seconds": 1.033,
+        "independent_commands": [
+          "python fix57-independent.py",
+          "python fix57-depth.py"
+        ],
+        "malformed_allowlist_probes": 28,
+        "ambiguous_source_probes": 1,
+        "all_depth_probes": 256,
+        "boundary_binding_probes": 49,
+        "provider_calls": 0
+      },
+      "ci": [
+        {
+          "id": 37737938934,
+          "name": "Tests",
+          "status": "completed",
+          "conclusion": "success",
+          "run_number": 438,
+          "jobs_url": "https://api.github.com/repos/pixelmanager-cloud/solana-paper-desk/actions/runs/37737938934/jobs",
+          "logs_url": "https://api.github.com/repos/pixelmanager-cloud/solana-paper-desk/actions/runs/37737938934/logs",
+          "workflow_id": 377958194
+        }
+      ],
+      "combined_ci": "NOT_RUN_SOURCE_SNAPSHOT_ONLY",
+      "source_manifest_sha256": "e315514bb39987653932300173a6238ff46f0b9ab16eb2c2df44ffa498040243",
+      "source_manifest": "docs/reviews/cloud-pr57-7b05a68-4b0d9ba-hashes.json",
+      "source_files": 281,
+      "proof_artifact": "docs/reviews/cloud-pr57-4b0d9ba.md",
+      "limitations": [
+        "Legacy unscoped manifests remainall;trustedmanifest changes require separate review",
+        "Fixture syntax review not deployment/sourceauth/finality/CPI/economic/lifecycle/ownership/entry/liveacceptance",
+        "PR56independent arithmetic not duplicated"
+      ],
+      "infrastructure_failures": [],
+      "accepted": false,
+      "live_acceptance": false,
+      "production_edits": false,
+      "merged_prs": 0,
+      "dispatched_workers": 0,
+      "accepted_tasks": []
     }
   ],
   "infrastructure": {
     "consecutive_failures": 0,
     "last_failure": "Historical immediate-run probe404; no current run infrastructure failure.",
     "retry_policy": "No busy polling; future supported review runs reconcile and pause after three consecutive execution/access failures.",
-    "last_success": "PR57 hosted independent1300tests zero skips; P2 separately reproduced"
+    "last_success": "PR57 repaired exacthead1336 Linux zero skips"
   },
   "review_lease": {
-    "holder": "cloud-fix57-4b0d9ba-review",
+    "holder": null,
     "fencing_token": 7,
-    "status": "HELD",
+    "status": "RELEASED",
     "scope": "PR57_REPAIR_REVIEW_ONLY",
-    "expires_at": "2026-10-08T07:30:00Z"
+    "expires_at": null,
+    "last_holder": "cloud-fix57-4b0d9ba-review"
   },
   "external_review_observations": [
     {
@@ -2676,9 +2751,9 @@
   "review_assignments": {
     "cloud_coordinator": {
       "exclusive_pr": 57,
-      "head_sha": "70d1dfcaa20350a2a8126c8d47ce58a71e9b2e2b",
-      "status": "P2_FIX_REQUIRED",
-      "review_id": 5452419572
+      "head_sha": "4b0d9ba49a4ffadce82ad7a42178ab8b53372c31",
+      "status": "PRIOR_P2_RESOLVED_NO_SCOPED_CODE_BLOCKER",
+      "review_id": 5452563667
     },
     "pr31": {
       "owner": "worker02",
@@ -2877,95 +2952,70 @@
   "last_review_run": {
     "policy_version": "cloud-independent-review-v1",
     "pr": 57,
-    "head_sha": "70d1dfcaa20350a2a8126c8d47ce58a71e9b2e2b",
+    "head_sha": "4b0d9ba49a4ffadce82ad7a42178ab8b53372c31",
     "base_sha": "5bc3adfc230a221b0959c55084749633c11e909e",
-    "combined_baseline_sha": "7e1d3e47fd3a90ae9344e0ed4bebb1a33d6712af",
+    "combined_baseline_sha": "7b05a68147a1f13819d6283ab5fe77bad78c2f95",
     "worker_agent": "03",
     "worker_thread_id": "01a118fc-9478-778a-b77a-8f8f6ec7e0ad",
     "branch": "codex/trade-event-schema",
-    "review_id": 5452419572,
+    "review_id": 5452563667,
     "review_action": "COMMENT",
-    "status": "P2_FIX_REQUIRED",
+    "status": "PRIOR_P2_RESOLVED_NO_SCOPED_CODE_BLOCKER",
+    "resolves_review_id": 5452419572,
     "findings": [
-      {
-        "priority": "P2",
-        "path": "desk/schemas/manifest.json",
-        "line": 38,
-        "problem": "Whole new event IDL promotes appended CreateEvent.depth into verified launch anchor outside TradeEvent-only scope",
-        "reproduction": "Existing19field valid CreateEvent+depth255: baselinePREFIX/anchorfalse; headEVENT_DECODED/anchortrue",
-        "requested_fix": "Restrict new registration to TradeEvent or independently constrain/review new CreateEvent consumers"
-      }
+      "TradeEvent-only registration excludes newCreateEvent shapes;all256depth values preserve unverified production anchor",
+      "28malformed registrations and1ambiguous source name reject",
+      "49boundary consumer probes preserve unresolved effects andfalseapproval",
+      "Nonblocking stale report says programs.py unchanged althoughrepair modifiesloader"
     ],
     "tests": {
       "python": "3.12.14",
       "full_suite_command": "python -m unittest discover -q",
-      "full_suite_passed": 1300,
-      "full_suite_seconds": 60.561,
+      "full_suite_passed": 1336,
+      "full_suite_seconds": 62.585,
       "skipped": 0,
-      "targeted_command": "python -m unittest tests.test_versioned_trade_event tests.test_trade_event_provenance tests.test_create_v2_raw_support -q",
-      "targeted_passed": 31,
-      "targeted_seconds": 0.381,
-      "independent_command": "python p57-independent.py <baseline-or-head-source-root>",
-      "boundary_probes": 49,
-      "baseline_head_create_event_regression": "REPRODUCED_P2",
+      "targeted_command": "python -m unittest tests.test_versioned_trade_event tests.test_trade_event_provenance tests.test_create_v2_raw_support tests.test_launch -q",
+      "targeted_passed": 41,
+      "targeted_seconds": 1.033,
+      "independent_commands": [
+        "python fix57-independent.py",
+        "python fix57-depth.py"
+      ],
+      "malformed_allowlist_probes": 28,
+      "ambiguous_source_probes": 1,
+      "all_depth_probes": 256,
+      "boundary_binding_probes": 49,
       "provider_calls": 0
     },
     "ci": [
       {
-        "id": 37736684380,
+        "id": 37737938934,
         "name": "Tests",
         "status": "completed",
         "conclusion": "success",
-        "run_number": 404,
-        "jobs_url": "https://api.github.com/repos/pixelmanager-cloud/solana-paper-desk/actions/runs/37736684380/jobs",
-        "logs_url": "https://api.github.com/repos/pixelmanager-cloud/solana-paper-desk/actions/runs/37736684380/logs",
+        "run_number": 438,
+        "jobs_url": "https://api.github.com/repos/pixelmanager-cloud/solana-paper-desk/actions/runs/37737938934/jobs",
+        "logs_url": "https://api.github.com/repos/pixelmanager-cloud/solana-paper-desk/actions/runs/37737938934/logs",
         "workflow_id": 377958194
       }
     ],
-    "combined_ci": "NOT_RUN_SCRATCH_SOURCE_ONLY",
-    "source_manifest": "docs/reviews/cloud-pr57-7e1d3e4-70d1dfc-hashes.json",
-    "source_manifest_sha256": "67e402722c1511d5568f3bf02ae37c2df63bade5a7ed35c8c690e4eefeacda2a",
-    "source_files": 278,
-    "proof_artifact": "docs/reviews/cloud-pr57-70d1dfc.md",
+    "combined_ci": "NOT_RUN_SOURCE_SNAPSHOT_ONLY",
+    "source_manifest_sha256": "e315514bb39987653932300173a6238ff46f0b9ab16eb2c2df44ffa498040243",
+    "source_manifest": "docs/reviews/cloud-pr57-7b05a68-4b0d9ba-hashes.json",
+    "source_files": 281,
+    "proof_artifact": "docs/reviews/cloud-pr57-4b0d9ba.md",
     "limitations": [
-      "Tested snapshot baseline+8PRfiles; final source manifest includes intervening queue-doc-only revision; executable/test sources identical",
-      "P2 affects verified launch component; fullentry bypass NOT established",
-      "No authenticity/deployment/finality/CPI/economics/lifecycle/ownership/live acceptance",
-      "PR56 reserved worker06 excluded"
+      "Legacy unscoped manifests remainall;trustedmanifest changes require separate review",
+      "Fixture syntax review not deployment/sourceauth/finality/CPI/economic/lifecycle/ownership/entry/liveacceptance",
+      "PR56independent arithmetic not duplicated"
     ],
+    "infrastructure_failures": [],
     "accepted": false,
     "live_acceptance": false,
     "production_edits": false,
     "merged_prs": 0,
     "dispatched_workers": 0,
-    "accepted_tasks": [],
-    "infrastructure_failures": [],
-    "combined_addendum": {
-      "pr": 57,
-      "head_sha": "70d1dfcaa20350a2a8126c8d47ce58a71e9b2e2b",
-      "combined_baseline_sha": "1beeed0994f052bb03e3583235b603ea826b1eb6",
-      "accepted_pr56_integration_sha": "745622f4d178f1483c25237745d04a4fe4805ecc",
-      "review_id": 5452419572,
-      "addendum_comment_id": 6053795748,
-      "status": "P2_REMAINS_UNRESOLVED_COMBINED_FIXTURES_PASS",
-      "full_suite_command": "python -m unittest discover -q",
-      "python": "3.12.14",
-      "full_suite_passed": 1333,
-      "seconds": 61.306,
-      "skipped": 0,
-      "independent_pr57_probes": 49,
-      "createevent_regression": "REPRODUCED",
-      "native_independent_review": "NOT_REPEATED_WORKER06_OWNS",
-      "source_files": 281,
-      "source_manifest_sha256": "6c5be02b478abc975b75c1a19b3a96f31a31468dc60166380d60c6c22b6aad35",
-      "source_manifest": "docs/reviews/cloud-pr57-1beeed0-70d1dfc-hashes.json",
-      "proof_artifact": "docs/reviews/cloud-pr57-accepted-pr56-combined.md",
-      "combined_ci": "NOT_RUN_SOURCE_SNAPSHOT_ONLY",
-      "infrastructure_failures": [],
-      "provider_calls": 0,
-      "accepted": false,
-      "live_acceptance": false
-    }
+    "accepted_tasks": []
   },
   "combined_validations": [
     {
