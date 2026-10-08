@@ -625,6 +625,11 @@
     "head": "70d1dfcaa20350a2a8126c8d47ce58a71e9b2e2b",
     "status": "INDEPENDENT_REVIEW_IN_PROGRESS",
     "integrated": false,
-    "author_linux_tests": 1300
+    "author_linux_tests": 1300,
+    "combined_native_pr": 56,
+    "mac_discovered": 1333,
+    "mac_passed": 1241,
+    "mac_skipped": 92,
+    "mac_seconds": 25.646
   }
 }
