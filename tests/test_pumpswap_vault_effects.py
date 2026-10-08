@@ -24,7 +24,7 @@ def synthetic():
     keys = list(dict.fromkeys(names.values()))
     def row(path, program, raw, accounts, height, parent=None, parent_program=None):
         return dict(instruction=path, program=program, data_base64=base64.b64encode(raw).decode(),
-                    accounts=accounts, stack_height=height, parent_instruction=parent, parent_program=parent_program)
+                    accounts=accounts, stack_height=height, parent_instruction=parent, parent_program=parent_program, reasons=[])
     outer = row('0', JUPITER, b'opaque', [names['pool_base_token_account'], names['pool_quote_token_account']], 1)
     sell = row('0.0', PUMPSWAP, bytes(spec['discriminator']) + (10).to_bytes(8,'little') + (100).to_bytes(8,'little'),
                [names[e['name']] for e in spec['accounts']], 2, '0', JUPITER)
@@ -46,7 +46,22 @@ def synthetic():
         raw=bytearray(165);raw[:32]=unbase58(mint);raw[32:64]=unbase58(names['pool']);raw[64:72]=post.to_bytes(8,'little');raw[108]=1
         if mint==SOL: raw[109:113]=(1).to_bytes(4,'little');raw[113:121]=reserve.to_bytes(8,'little')
         value['accounts'][index]=dict(owner=TOKEN_PROGRAM,executable=False,lamports=value['postBalances'][index],data=[base64.b64encode(raw).decode(),'base64'])
-    return dict(instructions=rows,stack_metadata_verified=True),bindings,value,keys
+    return dict(instructions=rows,stack_metadata_verified=True,inventory_checks_passed=True,reasons=[]),bindings,value,keys
+
+
+def production_inventory(extra=None):
+    inv,b,v,keys=synthetic()
+    if JUPITER not in keys:
+        keys.append(JUPITER);v['preBalances'].append(0);v['postBalances'].append(0);v['accounts'].append(None)
+    outer=[dict(programId=JUPITER,data=inv['instructions'][0]['data_base64'],
+                accounts=[dict(pubkey=k,isSigner=False,isWritable=True) for k in inv['instructions'][0]['accounts']])]
+    nested=[dict(programIdIndex=keys.index(r['program']),accounts=[keys.index(k) for k in r['accounts']],
+                 data=base58(base64.b64decode(r['data_base64'])),stackHeight=r['stack_height']) for r in inv['instructions'][1:]]
+    if extra is not None:nested.append(extra(b['account_bindings'],keys))
+    v['innerInstructions']=[dict(index=0,instructions=nested)]
+    observed=inventory(outer,v,keys,b['account_bindings']['user'])
+    b['checked_instructions']=[instruction_receipt(observed['instructions'][1])]
+    return observed,b,v,keys
 
 
 def mutate_raw(v, keys, names, field, offset, rawbytes):
@@ -68,6 +83,37 @@ class VaultEffectsTests(unittest.TestCase):
         for field in ('source_authenticated','runtime_cpi_success_verified','runtime_privileges_authenticated','deployed_program_authenticated','ownership_approved','eligible_for_trading','full_route_policy_passed','transaction_policy_ok'):
             self.assertIs(r[field],False)
         self.assertIn('PRE_RAW_ACCOUNT_STATE',r['unverified_effect_context'])
+
+    def test_production_inventory_lost_identity_and_omitted_rows_reject(self):
+        baseline=production_inventory();self.assertTrue(check(*baseline)['passed'])
+        attacks=[
+            ('TOKEN_APPROVE_NOT_ALLOWED',lambda n,k:dict(programId=TOKEN_PROGRAM,stackHeight=3,parsed=dict(type='approve',info=dict(source=n['pool_quote_token_account'],owner=n['pool'],delegate=n['user'],amount='1')))),
+            ('UNSUPPORTED_PARSED_INSTRUCTION',lambda n,k:dict(programId=TOKEN_PROGRAM,stackHeight=3,parsed=dict(type='unknownOperation',info=dict(source=n['pool_quote_token_account'])))),
+            ('UNSUPPORTED_INNER_INSTRUCTION_ENCODING',lambda n,k:dict(stackHeight=3,accounts=[k.index(n['pool_quote_token_account'])],data='')),
+        ]
+        for reason,extra in attacks:
+            with self.subTest(reason=reason):
+                args=production_inventory(extra);observed=args[0];original=copy.deepcopy(args)
+                self.assertIn(reason,observed['reasons']);self.assertFalse(observed['inventory_checks_passed'])
+                if reason=='UNSUPPORTED_INNER_INSTRUCTION_ENCODING':self.assertEqual(len(observed['instructions']),6)
+                else:self.assertEqual(observed['instructions'][-1]['accounts'],[])
+                result=check(*args)
+                self.assertFalse(result['provider_observed_conservation_agreement'],result)
+                self.assertIn('INVENTORY_INCOMPLETE_OR_ERRORS',result['reasons'])
+                self.assertIn(reason,result['inventory_reasons'])
+                self.assertEqual(args,original)
+
+    def test_incomplete_missing_malformed_and_contradictory_inventory_witnesses(self):
+        for mode in ('false','missing_flag','missing_reasons','malformed_reasons','global_error','row_error','missing_row_reasons'):
+            args=synthetic();inv=args[0]
+            if mode=='false':inv['inventory_checks_passed']=False
+            elif mode=='missing_flag':inv.pop('inventory_checks_passed')
+            elif mode=='missing_reasons':inv.pop('reasons')
+            elif mode=='malformed_reasons':inv['reasons']='error'
+            elif mode=='global_error':inv['reasons']=['UNSUPPORTED_INNER_INSTRUCTION_ENCODING']
+            elif mode=='row_error':inv['instructions'][0]['reasons']=['UNSUPPORTED_PARSED_INSTRUCTION']
+            else:inv['instructions'][0].pop('reasons')
+            self.assert_rejected(args)
 
     def test_zero_and_self_transfers_have_no_effect(self):
         args=synthetic();inv,b,_,_=args;row=copy.deepcopy(inv['instructions'][2]);row['instruction']='0.5'

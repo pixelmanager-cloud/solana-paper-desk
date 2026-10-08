@@ -39,7 +39,7 @@ def check_pumpswap_vault_effects(inventory, bindings, value, keys):
            'runtime_privileges_authenticated': False, 'deployed_program_authenticated': False,
            'finality_authenticated': False, 'authenticated_lifecycle_accepted': False,
            'ownership_approved': False, 'eligible_for_trading': False,
-           'reasons': [], 'vaults': [], 'transfers': [],
+           'reasons': [], 'inventory_reasons': [], 'vaults': [], 'transfers': [],
            'semantics_commit': SEMANTICS_COMMIT, 'semantics_blobs': dict(SEMANTICS_BLOBS),
            'unverified_effect_context': ['INDIVIDUAL_CPI_OUTCOMES', 'DEPLOYED_PROGRAM_EQUIVALENCE', 'PRE_RAW_ACCOUNT_STATE', 'OUTER_ROUTER_EFFECTS'],
            'notice': 'Conditional SPL transfer semantics/provider-observed conservation only; no CPI success, deployed-program authenticity or recipient permission.'}
@@ -65,12 +65,24 @@ def check_pumpswap_vault_effects(inventory, bindings, value, keys):
         _require(not recipients.intersection(vaults) and names['user_base_token_account'] not in vaults, 'VAULT_ROLE_ALIAS')
         rows = inventory['instructions']
         _require(type(rows) is list and 1 <= len(rows) <= 256 and inventory.get('stack_metadata_verified') is True, 'INVENTORY_MISSING_OR_BOUND')
+        inventory_reasons = inventory.get('reasons')
+        _require(type(inventory_reasons) is list and len(inventory_reasons) <= 256
+                 and all(type(r) is str and len(r) <= 256 for r in inventory_reasons), 'INVENTORY_ERROR_WITNESS_MISSING_OR_MALFORMED')
+        out['inventory_reasons'] = list(inventory_reasons)
+        # Enumeration can discard parsed account identities or omit undecodable
+        # rows. Never apply the touched-vault filter to an incomplete inventory.
+        _require(inventory.get('inventory_checks_passed') is True and not inventory_reasons,
+                 'INVENTORY_INCOMPLETE_OR_ERRORS')
         paths = set()
         for row in rows:
             _require(type(row) is dict and type(row.get('instruction')) is str and len(row['instruction']) <= 16
                      and re.fullmatch(r'(0|[1-9][0-9]*)(\.(0|[1-9][0-9]*))?', row['instruction']), 'INSTRUCTION_PATH_INVALID')
             _require(row['instruction'] not in paths, 'DUPLICATE_INSTRUCTION_PATH')
             paths.add(row['instruction'])
+            flags = row.get('reasons')
+            _require(type(flags) is list and len(flags) <= 256
+                     and all(type(r) is str and len(r) <= 256 for r in flags), 'INSTRUCTION_ERROR_WITNESS_MISSING_OR_MALFORMED')
+            _require(not flags, 'INSTRUCTION_ERRORS_CONTRADICT_CLEAN_INVENTORY')
             _require(type(row.get('accounts')) is list and len(row['accounts']) <= 64, 'INSTRUCTION_ACCOUNTS_INVALID')
             for key in row['accounts']:
                 address(key)
