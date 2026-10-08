@@ -1,6 +1,6 @@
 {
   "schema_version": 1,
-  "revision": 6,
+  "revision": 7,
   "repository": "pixelmanager-cloud/solana-paper-desk",
   "source_main_sha": "e298e15cd758932e81d2241130716632702f5bd0",
   "observed_date": "2026-10-08",
@@ -57,11 +57,11 @@
       "host_id": "durable",
       "assignment": "OWN-1 finalized snapshot integration",
       "expected_branch": "codex/cloud-wave1-01",
-      "branch_sha": "0e16a91b994191ea95e98bf7803bdc1284a3c922",
+      "branch_sha": "92e9c6104b411101e414c03774a1675cbbf1ac91",
       "pr": 18,
       "activity": "UNKNOWN_LAST_DISPATCH_ACTIVE",
       "claim": "RESERVED_UNRESOLVED",
-      "review_status": "FINDING_P2_DATABASE_ALIAS_LOCK_FIX_REQUESTED",
+      "review_status": "SCOPED_REVIEW_PRIOR_P2_FINDINGS_RESOLVED_NO_NEW_BLOCKER",
       "acceptance": "NOT_ACCEPTED",
       "followup_delivery": "BLOCKED",
       "requested_followup": "Return a pushed reviewable branch or PR, exact base/head SHAs, changed files, full test result, provenance, limitations and unresolved dependencies. Preserve assigned scope; do not integrate or claim live acceptance."
@@ -386,6 +386,12 @@
         5450301585
       ],
       "result": "Scoped reviews posted with positive-authentication gaps explicit; exact-head CI success; no merge/acceptance."
+    },
+    {
+      "kind": "PR18_CANONICAL_LOCK_DISPOSITION",
+      "head_sha": "92e9c6104b411101e414c03774a1675cbbf1ac91",
+      "review_id": 5450316600,
+      "result": "Prior P2 findings resolved; exact-head tests/CI pass; no ownership acceptance or merge."
     }
   ],
   "artifact_pr": {
@@ -638,6 +644,52 @@
         }
       ],
       "proof_artifact": "docs/reviews/cloud-pr22-pr23-independent.md",
+      "accepted": false,
+      "live_acceptance": false
+    },
+    {
+      "policy_version": "cloud-independent-review-v1",
+      "pr": 18,
+      "worker_agent": "01",
+      "head_sha": "92e9c6104b411101e414c03774a1675cbbf1ac91",
+      "base_sha": "e298e15cd758932e81d2241130716632702f5bd0",
+      "review_id": 5450316600,
+      "review_action": "COMMENT",
+      "status": "SCOPED_REVIEW_PRIOR_P2_FINDINGS_RESOLVED_NO_NEW_BLOCKER",
+      "supersedes_head": "0e16a91b994191ea95e98bf7803bdc1284a3c922",
+      "resolved": [
+        "Whole-invocation publication race",
+        "Database symlink alias lock identity race",
+        "Unmocked positive and missing-query/new-frontier replay fixtures"
+      ],
+      "limitations": [
+        "Local stable regular single-link database contract; no replacement/renaming/link changes during active workers.",
+        "No source authentication or bounded live ownership acceptance; exact combined PR21 revision still requires independent CI/tests."
+      ],
+      "tests": {
+        "python": "3.12.14",
+        "targeted_passed": 21,
+        "full_suite_passed": 534,
+        "skipped": 0,
+        "independent_path_variants": 5,
+        "canonical_invocation_request_bank_locks": "VERIFIED",
+        "late_hardlinks": "REJECTED_NO_BUDGET_HEAD_CHANGE",
+        "process_death_recovery": "PASS_NO_ADDITIONAL_RPC",
+        "exact_changed_blobs_verified": true
+      },
+      "ci": [
+        {
+          "id": 37712377104,
+          "name": "Tests",
+          "status": "completed",
+          "conclusion": "success",
+          "run_number": 58,
+          "jobs_url": "https://api.github.com/repos/pixelmanager-cloud/solana-paper-desk/actions/runs/37712377104/jobs",
+          "logs_url": "https://api.github.com/repos/pixelmanager-cloud/solana-paper-desk/actions/runs/37712377104/logs",
+          "workflow_id": 377958194
+        }
+      ],
+      "proof_artifact": "docs/reviews/cloud-pr18-92e9c61.md",
       "accepted": false,
       "live_acceptance": false
     }
