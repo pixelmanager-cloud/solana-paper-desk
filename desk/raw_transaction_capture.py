@@ -137,10 +137,15 @@ class RawTransactionCapture:
 
     def _schema(self,c):
         c.execute('BEGIN IMMEDIATE')
-        for name,sql in SCHEMA.items():
-            old=c.execute('SELECT sql FROM sqlite_master WHERE name=?',(name,)).fetchone()
-            if old:need(old[0]==sql,'CAPTURE_SCHEMA_MISMATCH')
-            else:c.execute(sql)
+        existing=dict(c.execute("SELECT name,sql FROM sqlite_master WHERE name GLOB 'raw_transaction_*'"))
+        if existing:
+            # Never reconstruct individual objects: a lost claim table can erase
+            # an ambiguous charged attempt while its response and budget survive.
+            need(existing==SCHEMA,'CAPTURE_SCHEMA_MISMATCH')
+        else:
+            # Whole-journal initialization is one atomic transaction. A crash
+            # rolls back every object, leaving a genuinely uninitialized journal.
+            for sql in SCHEMA.values():c.execute(sql)
         c.commit()
 
     def _binding(self,progress,binding):

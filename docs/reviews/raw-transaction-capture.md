@@ -141,3 +141,28 @@ Final validation on Python 3.12.14 (Linux):
 - Dedicated fixture suite: 20 tests, 0.188s, OK.
 - Full fixture-only unittest discovery: 1190 tests, 41.566s, OK (zero skips).
 - git diff --check: clean. No known test failures.
+
+## PR51 partial-schema repair
+
+Independent review at 5bd4cd0854fa95470489cbbef00a3b8cb620c8db reproduced
+recapture after deleting only the claims table following a charged publication
+failure. Schema validation now distinguishes an absent journal from an existing
+journal: first initialization creates every object in one SQLite transaction;
+any existing capture object requires the exact complete table/trigger inventory.
+Missing, altered or unexpected capture objects block without schema repair,
+reservation or transport I/O. Operator recovery requires separate review.
+
+Linux regressions remove each table and protection trigger after PENDING,
+FAILED, COMPLETE and REFUSED outcomes, then retry the original binding, a new
+signature and a new source. Every retry blocks and snapshots of surviving schema,
+rows, original pages and budgets remain identical. Fresh initialization failure
+rolls back all objects and spending, while subsequent pristine initialization
+works. Existing process-death and publication-crash cases remain covered.
+Complete privileged removal/reconstruction of the whole journal or database
+rollback cannot be authenticated by this local journal and remains outside its
+protection boundary; stable trusted filesystem/lock identity is still assumed.
+
+Repair validation: Python 3.12.14/Linux dedicated suite 22 tests in 0.403s,
+OK; full fixture-only discovery 1192 tests in 41.434s, OK, zero skips.
+The partial-damage matrix covers 32 damaged state/object combinations and
+96 blocked retry variants. git diff --check clean; no known test failures.

@@ -18,7 +18,7 @@ from unittest.mock import patch
 from desk.evidence import EvidenceStore
 from desk.history_progress import HistoryProgress, ownership_lock_path
 from desk.model import canonical, digest
-from desk.raw_transaction_capture import RawTransactionCapture, TransactionBinding, ReadOnlyRPC, CONFIG
+from desk.raw_transaction_capture import RawTransactionCapture, TransactionBinding, ReadOnlyRPC, CONFIG, SCHEMA
 from desk.security import base58, TOKEN_2022
 
 MINT=base58(bytes([1])*32);OWNER=base58(bytes([2])*32)
@@ -286,8 +286,54 @@ class RawTransactionCaptureTests(unittest.TestCase):
         with closing(self.store.connect()) as c:
             c.execute('DROP TRIGGER raw_transaction_claims_update')
             c.execute("UPDATE raw_transaction_claims SET body='{}'")
+            c.execute(SCHEMA['raw_transaction_claims_update'])
         self.assertEqual(self.capture.capture(self.binding)['reason'],'CAPTURE_RECORD_CORRUPT')
         self.assertEqual(len(self.calls),1)
+
+    def test_partial_schema_damage_never_recreates_or_recaptures(self):
+        for state in ('PENDING','FAILED','COMPLETE','REFUSED'):
+            for name in SCHEMA:
+                with self.subTest(state=state,missing=name):
+                    self.setUp()
+                    if state=='PENDING':
+                        with patch.object(self.capture,'_finish',side_effect=OSError('publication crash')):
+                            self.assertEqual(self.capture.capture(self.binding)['state'],'BLOCKED')
+                    if state=='FAILED':
+                        def fail_rpc(*args):
+                            self.calls.append(args);raise OSError('fixture failure')
+                        self.capture=RawTransactionCapture(self.store,ReadOnlyRPC('fixture-source',fail_rpc))
+                        self.assertEqual(self.capture.capture(self.binding)['state'],'FAILED')
+                    elif state=='REFUSED':
+                        for _ in range(18):self.assertTrue(self.progress.reserve('scan'))
+                        self.assertEqual(self.capture.capture(self.binding)['state'],'REFUSED')
+                    elif state=='COMPLETE':
+                        self.assertEqual(self.capture.capture(self.binding)['state'],'COMPLETE')
+                    with closing(self.store.connect()) as c:
+                        c.execute(('DROP TABLE ' if name in ('raw_transaction_claims','raw_transaction_results') else 'DROP TRIGGER ')+name)
+                        def snapshot():
+                            tables=[r[0] for r in c.execute("SELECT name FROM sqlite_master WHERE type='table' ORDER BY name")]
+                            return (c.execute('SELECT type,name,sql FROM sqlite_master ORDER BY name').fetchall(),
+                                    [(t,c.execute('SELECT * FROM '+t+' ORDER BY rowid').fetchall()) for t in tables])
+                        before=snapshot()
+                        calls=len(self.calls)
+                        for binding,source in ((self.binding,'fixture-source'),
+                                               (replace(self.binding,signature=OTHER_SIGNATURE),'fixture-source'),
+                                               (self.binding,'new-source')):
+                            reopened=RawTransactionCapture(self.store,ReadOnlyRPC(source,lambda *a:self.fail('Damaged journal RPC')))
+                            result=reopened.capture(binding)
+                            self.assertEqual((result['state'],result['reason'],result['provider_calls']),
+                                             ('BLOCKED','CAPTURE_SCHEMA_MISMATCH',0))
+                            self.assertEqual(snapshot(),before)
+                        self.assertEqual(len(self.calls),calls)
+
+    def test_fresh_schema_initialization_is_atomic_on_failure(self):
+        with patch.dict(SCHEMA,{'raw_transaction_invalid':'INVALID SQL'}):
+            self.assertEqual(self.capture.capture(self.binding)['state'],'BLOCKED')
+        with closing(self.store.connect()) as c:
+            self.assertEqual(c.execute("SELECT name FROM sqlite_master WHERE name GLOB 'raw_transaction_*'").fetchall(),[])
+        self.assertEqual(self.progress.admission('scan')['requests_used'],0)
+        self.assertEqual(self.calls,[])
+        self.assertEqual(self.capture.capture(self.binding)['state'],'COMPLETE')
 
     def test_no_missing_foundation_creates_an_admission_or_budget(self):
         empty=EvidenceStore(self.root/'empty.sqlite')
