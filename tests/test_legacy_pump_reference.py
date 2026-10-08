@@ -129,7 +129,16 @@ class LegacyPumpReferenceTests(unittest.TestCase):
         self.assertEqual(observation['commitment'],'unverified')
         self.assertIn('UNDECODED_TOKEN_INSTRUCTION',observation['limitations'])
         self.assertTrue(any(p['status']=='EVENT_SCHEMA_MISMATCH' for p in observation['program_observations']))
-        self.assertEqual(observation['mint_initializations'],[])
+        self.assertEqual(len(observation['mint_initializations']),1)
+        init=observation['mint_initializations'][0]
+        self.assertEqual((init['mint'],init['decimals'],init['freeze_authority']),(MINT,6,None))
+        self.assertEqual(init['instruction'],'3.1')
+        self.assertEqual(len(observation['token_account_initializations']),2)
+        supply=observation['token_supply_changes'][0]
+        self.assertEqual((supply['mint'],supply['amount_raw'],supply['direction']),(MINT,'1000000000000000','mint'))
+        self.assertEqual(observation['transfers'][0]['amount_raw'],'67062499999999')
+        self.assertTrue(any(control['type']=='setAuthority' for control in observation['token_control_operations']))
+        self.assertIn('RAW_TOKEN_EXECUTION_UNVERIFIED',observation['limitations'])
         inventory=account_inventory(MINT,[observation],{'address':MINT,'token_accounts_filter':'none'})
         self.assertFalse(inventory['initialization_inventory_verified'])
         self.assertFalse(inventory['eligible_for_trading'])

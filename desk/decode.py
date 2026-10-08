@@ -111,7 +111,23 @@ def decode(payload):
         if compiled:ix = compiled_instruction(ix,keys)
         parsed, program = ix.get('parsed'), ix.get('programId')
         if not isinstance(parsed, dict):
-            if program in TOKENS:result['limitations'].append('UNDECODED_TOKEN_INSTRUCTION')
+            if program in TOKENS:
+                from .legacy_token_accounting import accounting, bind_balances
+                raw_token=accounting(ix)
+                # Syntax normalization never clears execution/lifetime blockers.
+                result['limitations'].append('UNDECODED_TOKEN_INSTRUCTION')
+                event={'instruction':path,'program':program,'type':raw_token['type'],
+                       'raw_tag':raw_token['tag'],'raw_status':raw_token['status']}
+                if raw_token['status']=='ACCOUNTING_SYNTAX':
+                    bind_balances(raw_token,result['token_deltas'])
+                    result[raw_token['field']].append({**event,**raw_token['row'],'raw_accounting_only':True})
+                    result['limitations'].append('RAW_TOKEN_EXECUTION_UNVERIFIED')
+                else:
+                    # PR27 inventory remains unresolved even for canonical control bytes.
+                    result['token_control_operations'].append(event)
+                    result['limitations'].append('UNSUPPORTED_TOKEN_CONTROL_OPERATION')
+                    if raw_token['status']=='MALFORMED':result['limitations'].append('MALFORMED_TOKEN_INSTRUCTION')
+                continue
             known = instruction(ix)
             if known:
                 result['program_observations'].append({'instruction': path, **known})
