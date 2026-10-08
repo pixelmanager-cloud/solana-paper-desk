@@ -1,6 +1,6 @@
 {
   "schema_version": 1,
-  "revision": 15,
+  "revision": 16,
   "repository": "pixelmanager-cloud/solana-paper-desk",
   "source_main_sha": "e298e15cd758932e81d2241130716632702f5bd0",
   "observed_date": "2026-10-08",
@@ -988,12 +988,11 @@
     "last_success": "Current hosted/cloud run verified; published heads, review timelines and exact-head CI reconciled without duplicate reviews. No infrastructure failures this run."
   },
   "review_lease": {
-    "holder": null,
-    "fencing_token": 2,
-    "expires_at": null,
-    "status": "RELEASED",
-    "scope": "GITHUB_REVIEW_RECONCILIATION_ONLY",
-    "last_holder": "cloud-review-2026-10-08T03:04:00Z"
+    "holder": "cloud-review-2026-10-08T04:00:07Z",
+    "fencing_token": 3,
+    "expires_at": "2026-10-08T04:30:07.000Z",
+    "status": "HELD",
+    "scope": "EXACT_HEAD_PR40_FIXTURE_REVIEW_NO_INTEGRATION_DISPATCH"
   },
   "external_review_observations": [
     {
