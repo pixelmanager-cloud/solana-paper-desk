@@ -3,7 +3,7 @@ import json,sqlite3
 from pathlib import Path
 from .model import digest
 from .evidence import EvidenceStore
-from .history_progress import HistoryProgress
+from .history_progress import HistoryProgress,canonical_ownership_path,ownership_lock_path
 from .replay_history import replay_history,reconstruct_launch_history
 from .security import mint_policy
 
@@ -13,12 +13,12 @@ def advance(source,evidence_db,scan_id,rpc,*,max_calls=2):
     # Serialize capture, aggregation, replay and head publication together. The
     # per-request lock remains separate so nested continuation cannot deadlock.
     import fcntl
-    store=EvidenceStore(evidence_db)
-    with open(str(store.path)+'.ownership-invocation.lock','a') as lock:
+    store=EvidenceStore(canonical_ownership_path(evidence_db))
+    with open(ownership_lock_path(store,invocation=True),'a') as lock:
         try:fcntl.flock(lock,fcntl.LOCK_EX|fcntl.LOCK_NB)
         except BlockingIOError:
             return {'scan_id':scan_id,'status':'BUSY','provider_calls':0,'eligible_for_trading':False}
-        return _advance_locked(source,evidence_db,scan_id,rpc,max_calls=max_calls)
+        return _advance_locked(source,store.path,scan_id,rpc,max_calls=max_calls)
 
 
 def _advance_locked(source,evidence_db,scan_id,rpc,*,max_calls):

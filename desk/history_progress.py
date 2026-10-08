@@ -5,9 +5,33 @@ from .history import collect_history
 from .replay_history import replay_history
 
 
+def canonical_ownership_path(path):
+    """Pin symlink/relative aliases; hard-linked databases are unsupported.
+
+    SQLite and its sidecars require one stable pathname. Multiple hard links
+    have no canonical pathname, so reject them before ownership writes or I/O.
+    Operators must not rename/replace/link the database while workers run.
+    """
+    from pathlib import Path
+    from stat import S_ISREG
+    resolved=Path(path).resolve()
+    try:identity=resolved.stat()
+    except FileNotFoundError:return resolved
+    if not S_ISREG(identity.st_mode) or identity.st_nlink!=1:
+        raise ValueError('Ownership evidence database must be a regular file with one hard link')
+    return resolved
+
+
+def ownership_lock_path(store,invocation=False):
+    # Recheck hard links before every lock, including direct HistoryProgress use.
+    path=canonical_ownership_path(store.path)
+    return str(path)+('.ownership-invocation.lock' if invocation else '.ownership.lock')
+
+
 class HistoryProgress:
     def __init__(self,store):
         if store.read_only:raise ValueError('Writable evidence store required')
+        store.path=canonical_ownership_path(store.path)
         self.store=store
         with store.connect() as c:
             c.execute('CREATE TABLE IF NOT EXISTS ownership_budgets(id TEXT PRIMARY KEY,source_hash TEXT NOT NULL,used INTEGER NOT NULL,ceiling INTEGER NOT NULL)')
@@ -39,7 +63,7 @@ class HistoryProgress:
         """One locked, charged I/O step; a saved bank never moves on restart."""
         import fcntl
         from .ownership_snapshot import validate_bank
-        with open(str(self.store.path)+'.ownership.lock','a') as lock:
+        with open(ownership_lock_path(self.store),'a') as lock:
             try:fcntl.flock(lock,fcntl.LOCK_EX|fcntl.LOCK_NB)
             except BlockingIOError:return {'blocked':'BUSY','attempted':False}
             bank=self.bank(budget)
@@ -116,7 +140,7 @@ class HistoryProgress:
         # One process lock per evidence store. Concurrent processes fail quickly;
         # process death releases the lock, while the reserved request stays spent.
         import fcntl
-        with open(str(self.store.path)+'.ownership.lock','a') as lock:
+        with open(ownership_lock_path(self.store),'a') as lock:
             try:fcntl.flock(lock,fcntl.LOCK_EX|fcntl.LOCK_NB)
             except BlockingIOError:return {**self.snapshot(key),'busy':True}
             before=self.snapshot(key);coverage=before['coverage'];query=before['query']

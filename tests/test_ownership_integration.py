@@ -154,6 +154,36 @@ class OwnershipIntegrationTests(unittest.TestCase):
         self.assertEqual(sum(m=='getMultipleAccounts' for m,p in self.calls),1)
 
     def test_interleaved_invocation_cannot_replace_published_head(self):
+        self.interleaved_invocations(self.evidence,self.evidence)
+
+    def test_real_path_worker_blocks_symlink_worker_publication(self):
+        alias=self.evidence.parent/'alias.sqlite';alias.symlink_to(self.evidence)
+        self.interleaved_invocations(self.evidence,alias)
+        self.assertFalse(Path(str(alias)+'.ownership-invocation.lock').exists())
+        self.assertFalse(Path(str(alias)+'.ownership.lock').exists())
+
+    def test_symlink_worker_blocks_real_path_worker_publication(self):
+        alias=self.evidence.parent/'alias.sqlite';alias.symlink_to(self.evidence)
+        self.interleaved_invocations(alias,self.evidence)
+        self.assertFalse(Path(str(alias)+'.ownership-invocation.lock').exists())
+        self.assertFalse(Path(str(alias)+'.ownership.lock').exists())
+
+    def test_hardlink_aliases_are_rejected_without_budget_or_head_changes(self):
+        import os
+        first=self.run_worker(1);alias=self.evidence.parent/'hardlink.sqlite'
+        os.link(self.evidence,alias)
+        for path in (self.evidence,alias):
+            with self.subTest(path=path):
+                with self.assertRaisesRegex(ValueError,'one hard link'):
+                    advance(self.db,path,'scan',lambda *a:self.fail('Hardlink provider I/O'))
+                with self.assertRaisesRegex(ValueError,'one hard link'):
+                    HistoryProgress(EvidenceStore(path))
+        with self.store.connect() as c:self.assertEqual(c.execute('SELECT used FROM ownership_budgets').fetchone()[0],8)
+        self.assertEqual(saved_progress(self.store,self.scan)['evidence_hash'],first['evidence_hash'])
+        alias.unlink()
+        self.assertTrue(self.run_worker()['snapshot']['reconciled'])
+
+    def interleaved_invocations(self,first_path,second_path):
         paused=threading.Event();release=threading.Event();original_save=EvidenceStore.save
         def save(store,payload):
             if payload.get('kind')=='ownership_progress_v1' and threading.current_thread().name.startswith('first'):
@@ -161,17 +191,17 @@ class OwnershipIntegrationTests(unittest.TestCase):
                 if not release.wait(10):raise AssertionError('Publication fixture timed out')
             return original_save(store,payload)
         with patch.object(EvidenceStore,'save',save),ThreadPoolExecutor(max_workers=1,thread_name_prefix='first') as pool:
-            future=pool.submit(self.run_worker,1)
+            future=pool.submit(advance,self.db,first_path,'scan',self.rpc,max_calls=1)
             try:
                 self.assertTrue(paused.wait(10))
-                busy=self.run_worker()
+                busy=advance(self.db,second_path,'scan',self.rpc)
                 self.assertEqual(busy['status'],'BUSY');self.assertEqual(busy['provider_calls'],0)
                 self.assertIsNone(saved_progress(self.store,self.scan))
                 with self.store.connect() as c:self.assertEqual(c.execute('SELECT used FROM ownership_budgets').fetchone()[0],8)
             finally:release.set()
             older=future.result(timeout=10)
         self.assertEqual(saved_progress(self.store,self.scan)['evidence_hash'],older['evidence_hash'])
-        newer=self.run_worker()
+        newer=advance(self.db,second_path,'scan',self.rpc,max_calls=4)
         self.assertTrue(newer['snapshot']['reconciled']);self.assertEqual(newer['requests_used'],11)
         head=saved_progress(self.store,self.scan)
         self.assertEqual(head['evidence_hash'],newer['evidence_hash']);self.assertEqual(head['requests_used'],11)
