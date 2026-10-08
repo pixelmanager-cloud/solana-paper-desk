@@ -279,12 +279,28 @@
         "worker": "01",
         "thread_id": "01a118fc-39bc-722c-b442-8bf5a749e0bb",
         "host_id": "durable",
-        "status": "IN_PROGRESS",
+        "status": "PUBLISHED_AWAITING_INDEPENDENT_REVIEW",
         "base": "a4e15f34f78d2ca8752d40c6f5d53b1deebc7906",
         "scope": "Accepted commonbank stages preserve original bytes plus failure, coherent reader/version compatibility; no PR97 or runtime wiring",
         "turn_id": "01a11c84-ce06-71d7-94a7-e6a888114ac0",
-        "wait_cursor": "5e651fc7-2996-4765-974d-5c852257a005:73",
-        "execution_observation": "Worker output now confirms implementation and tests across all four stages; valid-looking partial bodies stay FAILED with exact bytes, missing and empty distinct. Compatibility test setup being corrected. Worker-reported results, not independently accepted; branch/head not yet published."
+        "wait_cursor": "5e651fc7-2996-4765-974d-5c852257a005:74",
+        "execution_observation": "Author reports 14 focused tests and full Linux 1948 zero skips; not independently accepted.",
+        "publication_request": "2026-10-08T17:46Z: Requested scoped draft branch/head after focused compatibility passes so coordinator can inspect while full suite runs; no new assignment.",
+        "pr": 99,
+        "head": "7350f46fe5fcc0be187f4935428ace4d0b6c7518"
+      },
+      {
+        "id": "PR99-INDEPENDENT-REVIEW",
+        "worker": "06",
+        "thread_id": "01a118fc-f867-7233-8eec-c20659e70095",
+        "host_id": "durable",
+        "status": "IN_PROGRESS",
+        "pr": 99,
+        "head": "7350f46fe5fcc0be187f4935428ace4d0b6c7518",
+        "base": "a4e15f34f78d2ca8752d40c6f5d53b1deebc7906",
+        "scope": "Independent original transport outcome/version compatibility review and full Linux suite; excludes PR97",
+        "turn_id": "01a11ca4-b544-741c-bf21-1a039c2368f6",
+        "wait_cursor": "8f3328cf-bef6-441d-83f8-2d1f46b3b0df:75"
       }
     ],
     "saved_launch_probe": {
@@ -1086,6 +1102,29 @@
       "ci": "both exact-head SUCCESS",
       "identity": "Only coordinator queue differs from independently tested combined tree",
       "deployment": "not deployed; disconnected"
+    },
+    "pending_pr99_review": {
+      "pr": 99,
+      "head": "7350f46fe5fcc0be187f4935428ace4d0b6c7518",
+      "combined_tree": "474ce68e5873515a567dfe1a1affe6f43933c021",
+      "desktop_review": "Production diff and regression tests inspected; no finding so far; independent review outstanding",
+      "local_test_log": "work/commonbank-outcome-tests.log",
+      "status": "AWAITING_INDEPENDENT_REVIEW",
+      "live_acceptance": false,
+      "local_tests": {
+        "total": 1948,
+        "passed": 1561,
+        "skipped": 387,
+        "seconds": 34.603,
+        "platform": "macOS"
+      },
+      "ci": {
+        "head": "7350f46fe5fcc0be187f4935428ace4d0b6c7518",
+        "successful_runs": [
+          37819364610,
+          37819161845
+        ]
+      }
     }
   },
   "native_reconciliation_review": {
