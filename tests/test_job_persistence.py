@@ -97,8 +97,8 @@ class JobPersistenceTests(unittest.TestCase):
         self.assertEqual(descriptor['kind'], BIRTH_ACQUISITION_V1)
         self.assertEqual(descriptor['scan_id'], uid)
         self.assertEqual(descriptor['request_ceiling'], 18)
-        self.assertEqual(descriptor['research_db'], str(self.path))
-        self.assertEqual(descriptor['evidence_db'], str(self.root/'evidence.sqlite'))
+        self.assertEqual(descriptor['research_db'], str(self.path.resolve()))
+        self.assertEqual(descriptor['evidence_db'], str((self.root/'evidence.sqlite').resolve()))
         self.assertFalse((self.root/'evidence.sqlite').exists())
         with self.jobs.connect() as c:
             for sql in ("UPDATE scan_jobs SET kind='SCREEN'", "UPDATE scan_jobs SET descriptor='{}'",
@@ -219,7 +219,7 @@ class JobPersistenceTests(unittest.TestCase):
         self.wait_ready(process, ready)
         for path in (alias, relative, self.path):
             jobs = Jobs(path)
-            self.assertEqual(jobs.db, str(self.path))
+            self.assertEqual(jobs.db, str(self.path.resolve()))
             self.assertEqual(jobs.list()[0]['status'], 'RUNNING')
             self.assertFalse(jobs.once())
         self.assertFalse(Path(str(alias)+'.jobs-worker.lock').exists())
