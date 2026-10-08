@@ -270,18 +270,20 @@
         "pr": 97,
         "head": "2de92b72fa972bfbf1a1299e608830050e5c06ca",
         "base": "1a9f69595bf4c8c8814654a093fbba1bde93d5ad",
-        "wait_cursor": "b9784eaf-f3e5-457f-a98d-a386c23b37ea:44",
+        "wait_cursor": "b9784eaf-f3e5-457f-a98d-a386c23b37ea:45",
         "turn_id": "01a11c37-7fa2-77ad-acb5-1cfc502f2cce"
       },
       {
-        "id": "PR97-MAC-INJECTION-REPAIR",
+        "id": "PR97-SCHEMA-COMPLETION-REPAIR",
         "worker": "02",
         "thread_id": "01a118fc-666c-70b6-9fa8-2c7520f0a0bb",
         "host_id": "durable",
         "status": "IN_PROGRESS",
         "pr": 97,
-        "head": "2de92b72fa972bfbf1a1299e608830050e5c06ca",
-        "scope": "Test portability only; preserve real death/commit fault injection, no skips"
+        "head": "524dfbc42debd74c29382ce3d1754d5f0a691655",
+        "scope": "Complete bounded typed schema preflight including base tables/all objects; verify exact attachment persisted after write; independent rereview required",
+        "turn_id": "01a11c39-4e83-72e9-9a00-a44a16617836",
+        "wait_cursor": "a2dcfb97-463d-4188-9da3-48a81e644d23:65"
       },
       {
         "id": "PR96-HTTP-FRAMING-REPAIR",
@@ -291,7 +293,9 @@
         "status": "IN_PROGRESS",
         "pr": 96,
         "head": "33ff34b15930989bc85337372c59f070eb0651f1",
-        "scope": "Reject transfer coding before body read; real in-memory HTTP parser regression fixtures; no runtime wiring"
+        "scope": "Reject transfer coding before body read; real in-memory HTTP parser regression fixtures; no runtime wiring",
+        "turn_id": "01a11c3a-c894-70cb-a8df-e967468a1b95",
+        "wait_cursor": "5e651fc7-2996-4765-974d-5c852257a005:67"
       }
     ],
     "saved_launch_probe": {
@@ -940,18 +944,19 @@
       },
       "journal": {
         "pr": 97,
-        "head": "2de92b72fa972bfbf1a1299e608830050e5c06ca",
+        "head": "524dfbc42debd74c29382ce3d1754d5f0a691655",
         "author": "02",
-        "candidate_tree": "a48ad2baa5ace136cb811235decf782f56627529",
+        "candidate_tree": "a1ee3cf9c55e1aab72925e4dea3eb100c763ba55",
         "ci": "both SUCCESS; does not resolve desktop failures or schema concerns",
         "desktop_tests": {
           "total": 1904,
           "skipped": 373,
-          "failures": 3,
-          "seconds": 34.593,
-          "reason": "Crash/commit injection likely misses Mac canonical temp paths; author02 assigned test-only fix"
+          "failures": 0,
+          "seconds": 34.534
         },
-        "desktop_probe": "Unknown unrecognized_hook AFTER UPDATE trigger accepted through DONE; false eligibility preserved; reviewer05 alerted for complete typed schema assessment."
+        "desktop_probe": "Unknown hidden_ignore BEFORE INSERT trigger using RAISE(IGNORE) accepted after reservation: attach_response returns DONE but inspect PENDING_TERMINAL. No durable attachment. Eligibility remains false.",
+        "status": "BLOCKED_SCHEMA_AND_FALSE_COMPLETION",
+        "repair_scope": "Complete bounded typed schema preflight including base tables/all objects; verify exact attachment persisted after write; independent rereview required"
       },
       "desktop_concerns": [
         "PR97 complete initial and journal schema validation and bounded cardinality preflight require independent probes.",
