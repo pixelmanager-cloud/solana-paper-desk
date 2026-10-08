@@ -262,15 +262,6 @@
     "published_ci": "Deployed d758bc529a7da1f74509117288740911f2ad6845: both CI runs successful",
     "active_claims": [
       {
-        "id": "COMMON-BANK-CLOCK-STAGE",
-        "worker": "02",
-        "thread_id": "01a118fc-666c-70b6-9fa8-2c7520f0a0bb",
-        "host_id": "durable",
-        "status": "DISPATCHED",
-        "base": "32417a5965b6d92aeefd05ffbb54a0a20dede891",
-        "scope": "Atomic original clock request/completion bound to actual union T; no transport/publication"
-      },
-      {
         "id": "PR91-INDEPENDENT-REVIEW",
         "worker": "06",
         "thread_id": "01a118fc-f867-7233-8eec-c20659e70095",
@@ -278,6 +269,16 @@
         "status": "REVIEWING",
         "pr": 91,
         "head": "ce5928225a40a4d32ff5c53781631c0fa010a414",
+        "base": "94eb463c58d08cfe6c5ac470ae41b4b6a3ef077e"
+      },
+      {
+        "id": "PR92-INDEPENDENT-REVIEW",
+        "worker": "05",
+        "thread_id": "01a118fc-dd83-7672-ac81-7445f85fe09f",
+        "host_id": "durable",
+        "status": "REVIEWING",
+        "pr": 92,
+        "head": "c94889edeaf1b5ddd6ce098220c2a5cf7c9a410e",
         "base": "94eb463c58d08cfe6c5ac470ae41b4b6a3ef077e"
       }
     ],
@@ -805,6 +806,15 @@
       "mac_seconds": 33.889,
       "combined_tree": "83dc34013c41f09462e603abb426d324157d2c98",
       "coordinator_diff_review": "Full reader implementation reviewed; independent Linux review pending"
+    },
+    "pending_clock_stage": {
+      "pr": 92,
+      "head": "c94889edeaf1b5ddd6ce098220c2a5cf7c9a410e",
+      "integrated": false,
+      "review": "PENDING worker05",
+      "author_linux_tests": 1783,
+      "author_skips": 0,
+      "combined_base": "94eb463c58d08cfe6c5ac470ae41b4b6a3ef077e"
     }
   },
   "native_reconciliation_review": {
