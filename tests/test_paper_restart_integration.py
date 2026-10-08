@@ -273,5 +273,63 @@ with patch('desk.monitor.time.time',return_value=now):
         self.assertEqual(self.records(),before)
 
 
+    def test_partial_restore_surviving_evidence_never_reinitializes_or_fills(self):
+        losses = (
+            ('events', 'state'),
+            ('events', 'config_hash'),
+            ('events',),
+            ('events', 'outcomes', 'state'),
+            ('events', 'outcomes', 'state', 'metadata'),
+            ('config',),
+            ('implementation_hash',),
+        )
+        for index, missing in enumerate(losses):
+            with self.subTest(missing=missing):
+                self.ledger.close()
+                self.path = self.root / f'partial-restore-{index}.sqlite'
+                self.ledger = Ledger(self.path)
+                self.apply(event())
+                self.ledger.record_raw('synthetic-original', T, 1, {'fixture': 'original'})
+                self.ledger.health(T, 'SYNTHETIC_TEST_ONLY', {'provider_calls': 0})
+                for item in missing:
+                    if item in ('config_hash', 'implementation_hash', 'config'):
+                        self.ledger.db.execute('DELETE FROM metadata WHERE key=?', (item,))
+                    else:
+                        self.ledger.db.execute(f'DELETE FROM {item}')
+                self.restart()
+                before = self.records()
+                for observation in (event(), event(T+5, danger=True), control(T+6, 'RESUME')):
+                    for cfg in (self.cfg, dict(self.cfg, fixed_fee_sol='.0002')):
+                        with self.assertRaises(ValueError):
+                            self.ledger.apply(observation, cfg, transition, initial_state)
+                        self.assertEqual(self.records(), before)
+                self.restart()
+                self.assertEqual(self.records(), before)
+
+    def test_orphan_outcome_after_partial_event_loss_refuses_replay(self):
+        self.apply(event())
+        self.apply(event(T+5, reserve_sol='160'))
+        self.ledger.db.execute('DELETE FROM events WHERE event_id=?', (event()['event_id'],))
+        self.restart()
+        before = self.records()
+        with self.assertRaisesRegex(ValueError, 'event journal incomplete'):
+            self.apply(event())
+        self.assertEqual(self.records(), before)
+
+    def test_fresh_raw_and_health_only_ledger_initializes_legitimately(self):
+        self.ledger.record_raw('synthetic-original', T, 1, {'fixture': 'original'})
+        self.ledger.health(T, 'SYNTHETIC_TEST_ONLY', {'provider_calls': 0})
+        self.restart()
+        before = self.records()
+        fills = self.apply(event())
+        self.assertEqual(sum(o['type']=='fill' for o in fills), 1)
+        after = self.records()
+        for table in ('raw_events', 'health'):
+            self.assertEqual(after[table], before[table])
+        self.restart()
+        self.assertEqual(self.apply(event()), [])
+        self.assertEqual(self.records(), after)
+
+
 if __name__ == '__main__':
     unittest.main()

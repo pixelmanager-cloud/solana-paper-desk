@@ -43,17 +43,30 @@ class Ledger:
             old_code = self.db.execute("SELECT value FROM metadata WHERE key='implementation_hash'").fetchone()
             has_events = self.db.execute("SELECT 1 FROM events LIMIT 1").fetchone()
             checkpoint = self.db.execute("SELECT payload FROM state WHERE id=1").fetchone()
+            has_outcomes = self.db.execute("SELECT 1 FROM outcomes LIMIT 1").fetchone()
+            identity = self.db.execute(
+                "SELECT 1 FROM metadata WHERE key IN ('implementation_hash','config_hash','config') LIMIT 1").fetchone()
+            journal_sequence = self.db.execute(
+                "SELECT 1 FROM sqlite_sequence WHERE name IN ('events','outcomes') AND seq>0 LIMIT 1").fetchone()
+            nonfresh = bool(has_events or has_outcomes or checkpoint or identity or journal_sequence)
             # A previously committed ledger cannot be treated as a new experiment
             # when a damaged/partial restore has lost its checkpoint. Reject even
             # duplicate delivery rather than acknowledge an unrecoverable state.
-            if has_events and not checkpoint:
+            if nonfresh and not checkpoint:
                 raise ValueError("ledger checkpoint missing: recovery required; original records preserved")
-            if (old_code and old_code[0] != implementation) or (has_events and not old_code):
+            if nonfresh and (not has_events or self.db.execute(
+                    "SELECT 1 FROM outcomes o LEFT JOIN events e ON e.event_id=o.event_id "
+                    "WHERE e.event_id IS NULL LIMIT 1").fetchone()):
+                raise ValueError("ledger event journal incomplete: recovery required; original records preserved")
+            if (old_code and old_code[0] != implementation) or (nonfresh and not old_code):
                 raise ValueError("implementation changed or unversioned: use a new experiment database")
-            self.db.execute("INSERT OR IGNORE INTO metadata VALUES('implementation_hash',?)", (implementation,))
             row = self.db.execute("SELECT value FROM metadata WHERE key='config_hash'").fetchone()
-            if (row and row[0] != fingerprint) or (has_events and not row):
+            if (row and row[0] != fingerprint) or (nonfresh and not row):
                 raise ValueError("config changed or unversioned: use a new experiment database")
+            saved_config = self.db.execute("SELECT value FROM metadata WHERE key='config'").fetchone()
+            if (saved_config and saved_config[0] != canonical(cfg)) or (nonfresh and not saved_config):
+                raise ValueError("config changed or unversioned: use a new experiment database")
+            self.db.execute("INSERT OR IGNORE INTO metadata VALUES('implementation_hash',?)", (implementation,))
             self.db.execute("INSERT OR IGNORE INTO metadata VALUES('config_hash',?)", (fingerprint,))
             self.db.execute("INSERT OR IGNORE INTO metadata VALUES('config',?)", (canonical(cfg),))
             row = self.db.execute("SELECT payload_hash FROM events WHERE event_id=?", (event["event_id"],)).fetchone()
