@@ -260,19 +260,7 @@
       "status": "SUPERSEDED_BY_PUBLISHED_TESTED_COMMIT"
     },
     "published_ci": "Deployed d758bc529a7da1f74509117288740911f2ad6845: both CI runs successful",
-    "active_claims": [
-      {
-        "id": "PR82-INDEPENDENT-REVIEW",
-        "worker": "06",
-        "thread_id": "01a118fc-f867-7233-8eec-c20659e70095",
-        "host_id": "durable",
-        "base": "5d7e7ac7474cf3c215a07d2906d01afbfbf00656",
-        "status": "REVIEWING",
-        "pr": 82,
-        "head": "2859e55a77a3f6122ef23d6cf3f60a60914331a4",
-        "wait_cursor": "8f3328cf-bef6-441d-83f8-2d1f46b3b0df:39"
-      }
-    ],
+    "active_claims": [],
     "saved_launch_probe": {
       "source": "VPS saved raw launch events, read-only; no provider calls",
       "sample_size": 150,
@@ -625,8 +613,8 @@
     "pending_common_bank_contract": {
       "pr": 82,
       "head": "2859e55a77a3f6122ef23d6cf3f60a60914331a4",
-      "review": "PENDING worker06",
-      "integrated": false,
+      "review": "PASS design only; worker06 Linux1586 zero skips118.404s,16probes; exact tree matched",
+      "integrated": true,
       "author_linux_tests": 1586,
       "author_skips": 0,
       "scope": "Design and fixture proof only; production unchanged; atomic journal/versioned readers and mixed-profile receipts unimplemented",
@@ -635,7 +623,8 @@
       "mac_skipped": 146,
       "mac_seconds": 32.786,
       "combined_tree": "223b60be7b3c3b38248b24851bc94fe141e92340",
-      "ci": "Both exact-head checks PASS"
+      "ci": "Both exact-head checks PASS",
+      "review_manifest_sha256": "072fe96b3254435e7d40ea51ec550d956025287e237c32b8bd921b39bef3ae8a"
     }
   },
   "native_reconciliation_review": {
