@@ -510,6 +510,17 @@
       "eligible": 0,
       "paper_ready": false,
       "diagnostic_cli_included": false
+    },
+    "diagnostic_vps_stage": {
+      "commit": "f3987e58f9a39de2a69451aa08798fc4c16271f5",
+      "path": "/opt/solana-desk-releases/f3987e5",
+      "test_log": "/var/tmp/solana-desk-f3987e5-cli-tests.log",
+      "status": "TARGETED_VPS_TEST_PASS",
+      "service_release": "886fc96",
+      "provider_calls": 0,
+      "tests": 20,
+      "skips": 0,
+      "seconds": 11.772
     }
   }
 }
