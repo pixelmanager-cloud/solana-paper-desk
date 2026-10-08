@@ -16,6 +16,10 @@ Only six-account atomic batches, initialized legacy SPL Token mints/accounts and
 known Pool layouts are supported. Token-2022, unknown profiles and authority gaps
 remain unresolved. A label is valid only at the exact slot/block-time pair; no
 historical interval, liquidity guarantee, common control or entry approval follows.
+minContextSlot is a request floor S, not a historical selector. The point slot T
+is the response context: require T >= S, retain exact S in request/manifest refs,
+and bind block time and all conflict checks to T. See the pinned primary-source
+semantics in docs/pool-point-rpc-semantics.md.
 """
 from dataclasses import dataclass
 from collections.abc import Callable, Mapping
@@ -179,7 +183,14 @@ def _load_capture(refs, load, cache):
 
 def _bound_capture(evidence, refs, keys, slot, at):
     snapshot, request, clock, clock_request = evidence
-    params = [keys, {'encoding': 'base64', 'commitment': 'finalized', 'minContextSlot': slot}]
+    raw_params = snapshot.get('params')
+    _require(isinstance(raw_params, list) and len(raw_params) == 2
+             and isinstance(raw_params[1], dict), 'RPC_REQUEST_OR_RESPONSE_MISMATCH')
+    floor = raw_params[1].get('minContextSlot')
+    _require(_int(floor), 'RPC_SLOT_TYPE_INVALID')
+    # Replay the ORIGINAL finalized request, not one rewritten to the returned
+    # bank. Each competing capture may have a different floor for the same T.
+    params = [keys, {'encoding': 'base64', 'commitment': 'finalized', 'minContextSlot': floor}]
     for envelope, manifest, method, expected_params, response_hash in (
             (snapshot, request, 'getMultipleAccounts', params, refs.snapshot),
             (clock, clock_request, 'getBlockTime', [slot], refs.block_time)):
@@ -198,6 +209,7 @@ def _bound_capture(evidence, refs, keys, slot, at):
     _require(isinstance(response, dict) and isinstance(response.get('context'), dict)
              and type(response['context'].get('slot')) is int
              and response['context']['slot'] == slot, 'ATOMIC_SNAPSHOT_SLOT_MISMATCH')
+    _require(slot >= floor, 'ATOMIC_SNAPSHOT_BELOW_REQUEST_FLOOR')
     _require(type(clock['result']) is int and clock['result'] == at,
              'SNAPSHOT_BLOCK_TIME_MISMATCH')
     values = response.get('value')
@@ -236,6 +248,7 @@ def admit_pool_vault(*, account: str, pool: str, mint: str, snapshot_slot: int,
     """
     result = {'profile': PROFILE, 'account': account, 'pool': pool, 'mint': mint,
               'label': 'UNKNOWN', 'snapshot_slot': snapshot_slot, 'snapshot_time': snapshot_time,
+              'request_min_context_slot': None,
               'acquisition_provenance_trusted': False, 'content_integrity_verified': False,
               'request_binding_verified': False, 'protocol_identity_verified': False,
               'chain_authenticated': False, 'snapshot_label_admitted': False,
@@ -308,7 +321,8 @@ def admit_pool_vault(*, account: str, pool: str, mint: str, snapshot_slot: int,
         keys = [pool, mint, SOL, lp, *vaults]
         _require(len(set(keys)) == 6 and account in vaults, 'VAULT_ACCOUNT_ATA_MISMATCH')
         values = _bound_capture(evidence, refs, keys, snapshot_slot, snapshot_time)
-        result['request_binding_verified'] = True
+        result.update(request_binding_verified=True,
+                      request_min_context_slot=evidence[0]['params'][1]['minContextSlot'])
         selected_state = _capture_state(values)
         checked_refs = {refs}
         # At most 256 receipts x four content-addressed reads (cached), all

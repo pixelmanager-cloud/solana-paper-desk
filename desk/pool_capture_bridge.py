@@ -289,8 +289,9 @@ class PoolCaptureBridge:
         at = records['time']['result']
         need(integer(slot) and type(at) is int and -2**63 <= at < 2**63, 'CAPTURE_SCOPE_AMBIGUOUS')
         source = run['descriptor']['source']; refs = []
-        # Persist BOTH request manifests and response refs. Exact-slot/min
-        # context mismatch remains visible to actual admission, never fixed.
+        # Persist BOTH request manifests and response refs. Request floor S
+        # stays unchanged; the single returned bank T and getBlockTime(T)
+        # define this point. Admission checks T >= S, never historical state S.
         with self._db() as c:
             for stage in ('snapshot', 'time'):
                 response = next(s['record'] for s in run['steps'] if s['stage'] == stage)
@@ -389,7 +390,8 @@ class PoolCaptureBridge:
                               snapshot_slot=slot, snapshot_time=at, now=self._now(), refs=receipt.refs,
                               policy=view.policy, load=view.load_evidence) for account in keys[4:]]
                 outcome.update(status='CAPTURED_POINT' if all(r['snapshot_label_admitted'] for r in labels) else 'BLOCKED',
-                               labels=labels, snapshot_slot=slot, snapshot_time=at)
+                               labels=labels, snapshot_slot=slot, snapshot_time=at,
+                               request_min_context_slot=records['slot']['result'])
                 if outcome['status'] == 'BLOCKED': outcome['reason'] = 'POINT_ADMISSION_REJECTED'
         except Exception as exc:
             outcome['reason'] = str(exc) if type(exc) is CaptureBlocked else 'CAPTURE_EVIDENCE_BLOCKED'
