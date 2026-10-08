@@ -34,6 +34,12 @@
       "sha256": "b7d8c57a4d9c4dd0109a9ab893052352333252d4eedced10ac091d4d66cab89b",
       "events_only": true,
       "source": "@pump-fun/pump-swap-sdk 2.1.0; provenance in fee_sdk_manifest.json"
+    },
+    "pump_events_8cda1fa": {
+      "url": "https://raw.githubusercontent.com/pump-fun/pump-public-docs/8cda1fa30ea658b20909d8aedf002047119388d2/idl/pump.json",
+      "commit": "8cda1fa30ea658b20909d8aedf002047119388d2",
+      "sha256": "38b8abcc5b279bda85cf473e7c6f67bd15eb89df658cf93434687a43c88ad937",
+      "events_only": true
     }
   }
 }

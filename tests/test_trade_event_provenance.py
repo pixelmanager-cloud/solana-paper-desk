@@ -105,12 +105,12 @@ class TradeEventProvenanceTests(unittest.TestCase):
             reader.read(field['type'])
         self.assertEqual(reader.pos + 16, 382)
 
-    def test_production_remains_partial_without_gate_changes(self):
+    def test_production_decodes_pinned_syntax_without_economic_approval(self):
         observed = instruction(self.ix)
-        self.assertEqual(observed['status'], 'EVENT_PREFIX_DECODED')
-        self.assertIs(observed['schema_complete'], False)
-        self.assertEqual(observed['unknown_trailing_bytes'], 8)
-        self.assertNotIn('creator_fee_unclaimed', observed['fields'])
+        self.assertEqual(observed['status'], 'EVENT_DECODED')
+        self.assertIs(observed['schema_complete'], True)
+        self.assertEqual(observed['schema_file'], 'pump_events_8cda1fa.json')
+        self.assertEqual(observed['fields']['creator_fee_unclaimed'], 0)
 
     def test_every_truncated_event_is_rejected(self):
         for end in range(len(self.raw)):

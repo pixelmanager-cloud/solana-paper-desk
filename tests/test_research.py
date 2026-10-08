@@ -124,7 +124,7 @@ class EventTests(unittest.TestCase):
         event_schemas.cache_clear()
         self.assertEqual(set(event_schemas()),set(schemas()))
         from desk.providers import PUMP,PUMPSWAP
-        self.assertEqual(len(event_schemas()[PUMP]),3)
+        self.assertEqual(len(event_schemas()[PUMP]),4)
         self.assertEqual(len(event_schemas()[PUMPSWAP]),4)
         self.assertNotIn('sell_v2',{s['name'] for s in schemas()[PUMPSWAP].values()})
 
