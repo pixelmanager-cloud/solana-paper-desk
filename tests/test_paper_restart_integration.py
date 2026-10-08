@@ -12,6 +12,7 @@ import subprocess
 import sys
 import tempfile
 import unittest
+from unittest.mock import Mock
 
 from desk.engine import initial_state, transition
 from desk.ledger import Ledger
@@ -329,6 +330,65 @@ with patch('desk.monitor.time.time',return_value=now):
         self.restart()
         self.assertEqual(self.apply(event()), [])
         self.assertEqual(self.records(), after)
+
+
+    def test_invalid_checkpoint_duplicates_and_new_work_never_acknowledge_or_mutate(self):
+        self.apply(event())
+        good = self.ledger.report()['state']
+        invalid = ['null', '{}', '{', '[]', '"checkpoint"']
+        for field in good:
+            broken = copy.deepcopy(good)
+            del broken[field]
+            invalid.append(json.dumps(broken))
+        for field in good['positions']['SYNTHETIC_A']:
+            broken = copy.deepcopy(good)
+            del broken['positions']['SYNTHETIC_A'][field]
+            invalid.append(json.dumps(broken))
+        for field, value in (('positions', []), ('cooldowns', []), ('cash', 'NaN'),
+                             ('last_ts', T-1), ('last_ts', True), ('mode', 'READY')):
+            broken = copy.deepcopy(good)
+            broken[field] = value
+            invalid.append(json.dumps(broken))
+        for field, value in (('qty', 'NaN'), ('qty', '0'), ('stage', True),
+                             ('mark_status', 'EXECUTABLE'), ('entry_scores', [])):
+            broken = copy.deepcopy(good)
+            broken['positions']['SYNTHETIC_A'][field] = value
+            invalid.append(json.dumps(broken))
+        for payload in invalid:
+            with self.subTest(payload=payload):
+                self.ledger.db.execute('UPDATE state SET payload=?', (payload,))
+                self.restart()
+                before = self.records()
+                forbidden = Mock(side_effect=AssertionError('invalid checkpoint reached transition'))
+                for observation in (event(), event(T+5, danger=True), control(T+6, 'RESUME')):
+                    with self.assertRaisesRegex(ValueError, 'checkpoint invalid'):
+                        self.ledger.apply(observation, self.cfg, forbidden, initial_state)
+                    self.assertEqual(self.records(), before)
+                forbidden.assert_not_called()
+                with self.assertRaisesRegex(ValueError, 'checkpoint invalid'):
+                    self.ledger.report()
+                self.assertEqual(self.records(), before)
+
+    def test_actual_duplicate_replay_cli_rejects_corrupt_checkpoint_without_report(self):
+        self.apply(event())
+        duplicate = self.root / 'synthetic-duplicate.jsonl'
+        duplicate.write_text(json.dumps(event())+'\n')
+        report = self.root / 'invalid-report.json'
+        for payload in ('null', '{}', '{'):
+            with self.subTest(payload=payload):
+                self.ledger.db.execute('UPDATE state SET payload=?', (payload,))
+                self.restart()
+                before = self.records()
+                result = subprocess.run([sys.executable, '-m', 'desk', 'replay', '--input',
+                    str(duplicate), '--db', str(self.path), '--config', str(ROOT/'config/paper.json'),
+                    '--report', str(report)], cwd=ROOT, env=self.env,
+                    capture_output=True, text=True, timeout=30)
+                self.assertNotEqual(result.returncode, 0)
+                self.assertIn('checkpoint invalid', result.stderr)
+                self.assertEqual(result.stdout.strip(), '')
+                self.assertFalse(report.exists())
+                self.restart()
+                self.assertEqual(self.records(), before)
 
 
 if __name__ == '__main__':
