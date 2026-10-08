@@ -30,12 +30,14 @@ let fetchOK=request.fetch_ok!==false;
 const calls=[],intervals=[];
 const context={document,Date:FixtureDate,console,setInterval:(callback,ms)=>intervals.push({callback,ms}),fetch:async(url,options)=>{
   calls.push({url,method:options?.method||'GET'});
-  const payload=url==='/api/decisions'?data:url==='/api/scans'?[]:url==='/api/launches'?{launches:[]}:{status:'NOT_CONFIGURED'};
+  const payload=url==='/api/decisions'?data:url==='/api/scans'?(request.scans_data??[]):url==='/api/launches'?{launches:[]}:(request.paper_data??{status:'NOT_CONFIGURED'});
   return {ok:url==='/api/decisions'?fetchOK:true,json:async()=>payload};
 }};
 vm.createContext(context);
 vm.runInContext(fs.readFileSync(process.argv[2],'utf8'),context,{filename:'desk/static/app.js'});
 (async()=>{
+  await context.paper();
+  await context.refresh();
   await context.decisions();
   const first=root.find('entry-decisions').serialize();
   if(request.next_now_ms!==undefined||request.next_fetch_ok!==undefined){
@@ -46,6 +48,6 @@ vm.runInContext(fs.readFileSync(process.argv[2],'utf8'),context,{filename:'desk/
   const section=root.find('entry-decisions');
   const paragraphs=section.children.flatMap(child=>child.tag==='details'?child.children.filter(n=>n.tag==='p').map(n=>n.textContent):child.tag==='p'?[child.textContent]:[]);
   const summaries=section.children.filter(child=>child.tag==='details').map(child=>child.children.find(n=>n.tag==='summary').textContent);
-  process.stdout.write(JSON.stringify({html:section.serialize(),first_html:first,paragraphs,summaries,calls,
+  process.stdout.write(JSON.stringify({html:section.serialize(),paper_html:root.find('paper').serialize(),scans_html:root.find('scans').serialize(),first_html:first,paragraphs,summaries,calls,
     intervals:intervals.map(i=>i.ms),controls:{submit_listeners:root.find('scan').listeners.length,refresh_listeners:root.find('refresh').listeners.length}}));
 })().catch(error=>{console.error(error);process.exitCode=1;});
