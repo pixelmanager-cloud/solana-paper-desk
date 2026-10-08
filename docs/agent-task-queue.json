@@ -271,16 +271,6 @@
         "base": "b5e4d66"
       },
       {
-        "worker": "worker02",
-        "thread_id": "01a118fc-666c-70b6-9fa8-2c7520f0a0bb",
-        "host_id": "durable",
-        "task": "Final PR74 combined validation including accepted PR72 and PR73",
-        "pr": 74,
-        "head": "63eaa3f876d7ee006e6a692dec8bceeb26d189f1",
-        "base": "ae33013",
-        "status": "COMBINED_VALIDATING"
-      },
-      {
         "worker": "worker05",
         "thread_id": "01a118fc-dd83-7672-ac81-7445f85fe09f",
         "host_id": "durable",
@@ -863,8 +853,8 @@
     "74": {
       "head": "63eaa3f876d7ee006e6a692dec8bceeb26d189f1",
       "reviewer": "worker02",
-      "status": "SCOPED_PASS_COMBINED_VALIDATING",
-      "integrated": false,
+      "status": "PASS_INTEGRATED",
+      "integrated": true,
       "mac_combined": {
         "base": "ae33013",
         "tree": "9ff75fa7ab81991e634455d73b9617ec688b90b5",
@@ -872,7 +862,14 @@
         "passed": 1380,
         "skips": 99,
         "seconds": 29.818
-      }
+      },
+      "linux_tests": 1479,
+      "linux_skips": 0,
+      "linux_seconds": 76.827,
+      "reviewed_tree": "9ff75fa7ab81991e634455d73b9617ec688b90b5",
+      "tree_match": true,
+      "ci": "SUCCESS unchanged exact head",
+      "integration_commit": "d35dda2ca9bbbf46a1389bc3b30dd98e463c04cc"
     }
   },
   "parallel_combined_regression": {
