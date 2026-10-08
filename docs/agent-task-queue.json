@@ -1093,5 +1093,33 @@
     "listener": "127.0.0.1:8765",
     "paper_status": "NOT_CONFIGURED",
     "automatic_entry_enabled": false
+  },
+  "vps_stage_9e7c7b5": {
+    "source": "9e7c7b5c70f04df50faec34d4323413c8440384f",
+    "status": "STAGED_SERVICE_TEST_RETRY_RUNNING_NOT_DEPLOYED",
+    "archive_sha256": "d0d161a7d8fdaf4e5bb7a6666a5399710adec405a1451a58d9a89cb3402b6961",
+    "ci": "Both exact release CI runs SUCCESS",
+    "provider_calls": 0,
+    "service_release": "19e3527",
+    "backup": "/var/backups/solana-desk/pre-integration-9e7c7b5/daily-20261008T092356Z",
+    "copy_reassessed": 8,
+    "original_decisions_preserved": 8,
+    "original_evaluations_preserved": 28,
+    "source_hashes_unchanged": true,
+    "copied_diagnostic_inspection": {
+      "scans": 8,
+      "http": 503,
+      "status": "UNAVAILABLE",
+      "reason": "Original evidence DB has no ownership_heads table; no head synthesized or migration performed",
+      "provider_calls": 0
+    },
+    "initial_test_run": {
+      "tests": 1541,
+      "errors": 100,
+      "seconds": 109.642,
+      "reason": "All errors missing writable release work scratch directory; root-owned source preserved"
+    },
+    "staging_repair": "Created only release/work owned by service user mode0700; full suite rerun",
+    "test_log": "/var/tmp/solana-desk-9e7c7b5-tests-retry.log"
   }
 }
