@@ -1,6 +1,6 @@
 {
   "schema_version": 1,
-  "revision": 16,
+  "revision": 17,
   "repository": "pixelmanager-cloud/solana-paper-desk",
   "source_main_sha": "e298e15cd758932e81d2241130716632702f5bd0",
   "observed_date": "2026-10-08",
@@ -15,7 +15,7 @@
     "conversation_id": null,
     "same_chat_binding": "NOT_VERIFIED",
     "cloud_execution": "HOSTED_LAST_RUN_OBSERVED_AND_CURRENT_CLOUD_EXECUTOR_VERIFIED",
-    "last_run_time": "2026-10-08T03:02:11.926931+00:00",
+    "last_run_time": "2026-10-08T03:58:47.779603+00:00",
     "next_run_time": null,
     "immediate_run_probe": "404 Action not found before invocation",
     "scope": "GITHUB_ONLY_INDEPENDENT_REVIEW",
@@ -26,7 +26,7 @@
     ],
     "execution_evidence": {
       "automation_peek_enabled": true,
-      "observed_last_run_time": "2026-10-08T03:02:11.926931+00:00",
+      "observed_last_run_time": "2026-10-08T03:58:47.779603+00:00",
       "current_environment_provider": "cloud",
       "environment_id": "ccarenv_b64_Y2NhcmVudl9kNmVjYmYwM2FiZDg4MTkxYWI1YzM1ZjNiZWZjYTg1Mg",
       "observations_current": true,
@@ -463,6 +463,13 @@
       "run_id": "cloud-review-2026-10-08T03:04:00Z",
       "hosted_last_run_time": "2026-10-08T03:02:11.926931+00:00",
       "result": "PR33 already reviewed exact head; PR31 excluded under worker02 ownership. PR34-38 published reviews and CI observed; PR39 exact-head artifact review already present, full diff read with reference-only authenticity/finality blockers preserved. No new significant finding; no tests executed or acceptance granted. Integration8871f0a has CI success but no full-suite independent execution claim by this run."
+    },
+    {
+      "kind": "PR40_REPAIR_INDEPENDENT_REVIEW",
+      "run_id": "cloud-review-2026-10-08T04:00:07Z",
+      "head_sha": "37441927f38f0b884d61fc2e1e563b6aa50a4355",
+      "review_id": 5451192398,
+      "result": "Prior replacement finding resolved within scoped trusted-local contract;1012+2 fixtures passed and CI success; no acceptance/integration/dispatch/live calls."
     }
   ],
   "artifact_pr": {
@@ -979,20 +986,79 @@
       "proof_artifact": "docs/reviews/cloud-pr33-5095a17.md",
       "accepted": false,
       "live_acceptance": false
+    },
+    {
+      "policy_version": "cloud-independent-review-v1",
+      "pr": 40,
+      "head_sha": "37441927f38f0b884d61fc2e1e563b6aa50a4355",
+      "base_sha": "7fdbe469e3835e80c87b0a261717dfe87d3809cb",
+      "worker_agent": "04",
+      "worker_thread_id": "01a118fc-b862-7340-ab3a-e1115a3280a4",
+      "branch": "codex/cloud-wave4-04-pool-capture",
+      "author_login": "pixelmanager-cloud",
+      "reviewer": "Independent cloud execution; shared GitHub identity; COMMENT only",
+      "review_id": 5451192398,
+      "review_action": "COMMENT",
+      "status": "SCOPED_REVIEW_PRIOR_REPLACEMENT_FINDING_RESOLVED_NO_NEW_BLOCKER",
+      "findings": [
+        "Prior UNIQUE hash replacement bypass resolved; original event rows preserved.",
+        "Committed reservation and PENDING visible before all four fixture requests.",
+        "Source trust remains externally provisioned; cutoff drift retained and rejected, no entry or live acceptance."
+      ],
+      "tests": {
+        "python": "3.12.14",
+        "full_suite_command": "python -m unittest discover -s tests -v",
+        "full_suite_passed": 1012,
+        "full_suite_seconds": 49.518,
+        "skipped": 0,
+        "adversarial_command": "python /workspace/work/review/r40-independent.py",
+        "adversarial_passed": 2,
+        "adversarial_seconds": 0.391,
+        "adversarial_checks": [
+          "Independent connection verifies shared count and durable PENDING at each RPC entry",
+          "Plain SQLite UPDATE OR REPLACE seq/hash collisions, UPSERT, DELETE and config replacement preserve rows; zero-I/O replay"
+        ],
+        "exact_changed_blobs_verified": 39,
+        "checkout": "Isolated source tree from verified ancestor5095a175 with all39 ancestor-to-head blobs fetched at exact37441927 and Git blob SHA1 checked; no git-fetch credential workaround.",
+        "provider_calls": 0,
+        "network_scope": "Existing loopback HTTP fixture suite only"
+      },
+      "ci": [
+        {
+          "id": 37722189881,
+          "name": "Tests",
+          "status": "completed",
+          "conclusion": "success",
+          "run_number": 220,
+          "jobs_url": "https://api.github.com/repos/pixelmanager-cloud/solana-paper-desk/actions/runs/37722189881/jobs",
+          "logs_url": "https://api.github.com/repos/pixelmanager-cloud/solana-paper-desk/actions/runs/37722189881/logs",
+          "workflow_id": 377958194
+        }
+      ],
+      "limitations": [
+        "Trusted local source/transport/clock provisioning not certified.",
+        "No privileged rewrite/rollback defense; stable private Linux filesystem required.",
+        "Old schema fails closed, separately reviewed recovery required.",
+        "No combined integration commit certification, lifecycle/ownership/entry/live acceptance."
+      ],
+      "proof_artifact": "docs/reviews/cloud-pr40-3744192.md",
+      "accepted": false,
+      "live_acceptance": false
     }
   ],
   "infrastructure": {
     "consecutive_failures": 0,
     "last_failure": "Historical immediate-run probe404; no current run infrastructure failure.",
     "retry_policy": "No busy polling; future supported review runs reconcile and pause after three consecutive execution/access failures.",
-    "last_success": "Current hosted/cloud run verified; published heads, review timelines and exact-head CI reconciled without duplicate reviews. No infrastructure failures this run."
+    "last_success": "PR40 exact-head fixture review and durable writes completed in verified cloud executor; no infrastructure failures this run. Initial incorrect scratch filename corrected without effect on tests."
   },
   "review_lease": {
-    "holder": "cloud-review-2026-10-08T04:00:07Z",
+    "holder": null,
     "fencing_token": 3,
-    "expires_at": "2026-10-08T04:30:07.000Z",
-    "status": "HELD",
-    "scope": "EXACT_HEAD_PR40_FIXTURE_REVIEW_NO_INTEGRATION_DISPATCH"
+    "expires_at": null,
+    "status": "RELEASED",
+    "scope": "EXACT_HEAD_PR40_FIXTURE_REVIEW_NO_INTEGRATION_DISPATCH",
+    "last_holder": "cloud-review-2026-10-08T04:00:07Z"
   },
   "external_review_observations": [
     {
@@ -1466,6 +1532,14 @@
       "base_sha": "e298e15cd758932e81d2241130716632702f5bd0",
       "state": "open",
       "merged": false
+    },
+    {
+      "pr": 40,
+      "branch": "codex/cloud-wave4-04-pool-capture",
+      "head_sha": "37441927f38f0b884d61fc2e1e563b6aa50a4355",
+      "base_sha": "7fdbe469e3835e80c87b0a261717dfe87d3809cb",
+      "state": "open",
+      "merged": false
     }
   ],
   "review_assignments": {
@@ -1643,34 +1717,47 @@
       ],
       "local_suite_this_run": "NOT_RUN",
       "accepted": false
+    },
+    {
+      "pr": 40,
+      "head_sha": "37441927f38f0b884d61fc2e1e563b6aa50a4355",
+      "workflow_runs": [
+        {
+          "id": 37722189881,
+          "name": "Tests",
+          "status": "completed",
+          "conclusion": "success",
+          "run_number": 220,
+          "jobs_url": "https://api.github.com/repos/pixelmanager-cloud/solana-paper-desk/actions/runs/37722189881/jobs",
+          "logs_url": "https://api.github.com/repos/pixelmanager-cloud/solana-paper-desk/actions/runs/37722189881/logs",
+          "workflow_id": 377958194
+        }
+      ],
+      "accepted": false
     }
   ],
   "last_review_run": {
-    "run_id": "cloud-review-2026-10-08T03:04:00Z",
-    "hosted_last_run_time": "2026-10-08T03:02:11.926931+00:00",
+    "run_id": "cloud-review-2026-10-08T04:00:07Z",
     "cloud_executor_verified": true,
-    "mode": "RECONCILIATION_ONLY",
-    "specific_assignment": {
-      "pr": 33,
-      "status": "EXACT_SHA_ALREADY_REVIEWED_AND_NOW_MERGED_NO_DUPLICATE",
-      "head_sha": "5095a17557c7fb916d74e508a3e157b49abcd784"
-    },
+    "hosted_last_run_time": "2026-10-08T03:58:47.779603+00:00",
+    "mode": "EXACT_HEAD_INDEPENDENT_FIXTURE_REVIEW",
+    "reviewed_prs": [
+      40
+    ],
     "excluded_review_prs": [
       31
     ],
-    "new_reference_pr": {
-      "pr": 39,
-      "head_sha": "7651db1fa2842957fc15fb16a4e616c12ecef520",
-      "base_sha": "d9061d6560805010bc42af7791e22e292e0bdc13",
-      "external_exact_head_review_comment_id": 6051279913,
-      "full_four_file_diff_read": true,
-      "worker_author_identity": "NOT_BOUND_BY_AVAILABLE_PROVENANCE",
-      "status": "EXTERNAL_REVIEW_ALREADY_PRESENT_NO_DUPLICATE_COMMENT_OR_TEST_CERTIFICATION"
-    },
-    "local_test_commands": [],
-    "local_test_result": "NOT_RUN_THIS_RECONCILIATION",
-    "new_findings": [],
-    "comment_writes": [],
+    "dedupe_key": "40/37441927f38f0b884d61fc2e1e563b6aa50a4355/cloud-independent-review-v1",
+    "heads_history_rechecked_before_submission": true,
+    "review_ids": [
+      5451192398
+    ],
+    "local_test_commands": [
+      "python -m unittest discover -s tests -v",
+      "python /workspace/work/review/r40-independent.py"
+    ],
+    "local_test_result": "1012 suite +2 independent supplemental tests passed,0skips",
+    "infrastructure_failures": [],
     "production_edits": false,
     "merged_prs": 0,
     "dispatched_workers": 0,
