@@ -1,6 +1,6 @@
 {
   "schema_version": 1,
-  "revision": 46,
+  "revision": 47,
   "repository": "pixelmanager-cloud/solana-paper-desk",
   "source_main_sha": "e298e15cd758932e81d2241130716632702f5bd0",
   "observed_date": "2026-10-08",
@@ -1353,6 +1353,12 @@
       "accepted_tasks": [],
       "live_acceptance": false,
       "schedule": "Notreprobed/modified;nobinding/durabilityclaim"
+    },
+    {
+      "kind": "PR83_SUPPLEMENTAL_VALIDATION_DEFERRED_RESERVED_REVIEW",
+      "head_sha": "2d61a6a5c78e89928982f07e4346af8af7dc545d",
+      "review_id": null,
+      "accepted": false
     }
   ],
   "artifact_pr": {
@@ -2770,11 +2776,12 @@
     "last_success": "PR69supportedcloud1360Linuxzero skips"
   },
   "review_lease": {
-    "holder": "cloud-pr83-2d61a6a-review",
+    "holder": null,
     "fencing_token": 11,
-    "status": "HELD",
+    "status": "RELEASED",
     "scope": "PR83_INDEPENDENT_FIXTURE_REVIEW_ONLY",
-    "expires_at": "2026-10-08T12:45:00Z"
+    "expires_at": null,
+    "last_holder": "cloud-pr83-2d61a6a-review"
   },
   "external_review_observations": [
     {
@@ -3289,14 +3296,25 @@
     },
     "external_current": [
       {
-        "id": "OWN-2-SOURCE-BOUND-ADMISSION",
+        "id": "PR83-INDEPENDENT-REVIEW",
+        "worker": "06",
+        "thread_id": "01a118fc-f867-7233-8eec-c20659e70095",
+        "host_id": "durable",
+        "status": "REVIEWING",
+        "base": "fbef1706df86f776d87773ac86fe9a37e6b0e982",
+        "pr": 83,
+        "head": "2d61a6a5c78e89928982f07e4346af8af7dc545d",
+        "wait_cursor": "8f3328cf-bef6-441d-83f8-2d1f46b3b0df:41"
+      },
+      {
+        "id": "COMMON-BANK-JOURNAL",
         "worker": "02",
         "thread_id": "01a118fc-666c-70b6-9fa8-2c7520f0a0bb",
         "host_id": "durable",
-        "base": "2ab25cbb8472fd29072da078e2fa7e049e0c65ea",
-        "status": "DISPATCHED",
-        "scope": "Smallest missing source-bound pool-vault classification prerequisite; implement only justified raw/source/bank binding; otherwise report precise blocking inputs. No admission or entry guard relaxation.",
-        "assigned_at": "2026-10-08T10:55:25Z"
+        "status": "ACTIVE",
+        "base": "b4cbfaf588412cbd49a94f66b12abfa3f5b1c9a1",
+        "scope": "Disconnected atomic shared-counter reservation and immutable pending intent journal",
+        "wait_cursor": "a2dcfb97-463d-4188-9da3-48a81e644d23:42"
       }
     ]
   },
@@ -3613,54 +3631,80 @@
     }
   ],
   "last_reconciliation": {
-    "kind": "HOURLY_REVIEW_RECONCILIATION",
-    "observed_at_utc": "2026-10-08T11:02:15Z",
-    "policy_version": "cloud-independent-review-v1",
-    "hosted_execution": {
-      "provider": "cloud",
-      "observations_current": true,
-      "observed_phase": "running",
-      "durable_schedule_binding_verified": false
-    },
-    "status": "NO_NEW_OPEN_UNASSIGNED_REVIEW_WORK",
-    "observed_prs": [
+    "kind": "PR83_ASSIGNMENT_CHANGED_DURING_TESTS",
+    "status": "SUPPLEMENTAL_TESTS_ONLY_REVIEW_DEFERRED_RESERVED_WORKER06",
+    "head_sha": "2d61a6a5c78e89928982f07e4346af8af7dc545d",
+    "external_claims": [
       {
-        "pr": 79,
-        "head_sha": "b3c527be544f25ea5d8d0329f181e74fdae46785",
-        "base_sha": "b96a0c5443431772258389fa050da10c9e779164",
-        "branch": "codex/cloud-wave1-05-legacy-control-inventory",
-        "merged": true,
-        "status": "DESKTOP_INTEGRATED_EXTERNAL_REVIEW_NOT_REPEATED"
+        "id": "PR83-INDEPENDENT-REVIEW",
+        "worker": "06",
+        "thread_id": "01a118fc-f867-7233-8eec-c20659e70095",
+        "host_id": "durable",
+        "status": "REVIEWING",
+        "base": "fbef1706df86f776d87773ac86fe9a37e6b0e982",
+        "pr": 83,
+        "head": "2d61a6a5c78e89928982f07e4346af8af7dc545d",
+        "wait_cursor": "8f3328cf-bef6-441d-83f8-2d1f46b3b0df:41"
       },
       {
-        "pr": 80,
-        "head_sha": "03d0a2ffce477243b8af813c9d5b310c490292ab",
-        "base_sha": "a6aee2cfabc6958c1ab51c426b72473890187772",
-        "branch": "codex/cloud-classification-resource-02",
-        "merged": true,
-        "status": "DESKTOP_INTEGRATED_EXTERNAL_REVIEW_NOT_REPEATED"
-      }
-    ],
-    "active_claims": [
-      {
-        "id": "OWN-2-SOURCE-BOUND-ADMISSION",
+        "id": "COMMON-BANK-JOURNAL",
         "worker": "02",
         "thread_id": "01a118fc-666c-70b6-9fa8-2c7520f0a0bb",
         "host_id": "durable",
-        "base": "2ab25cbb8472fd29072da078e2fa7e049e0c65ea",
-        "status": "DISPATCHED",
-        "scope": "Smallest missing source-bound pool-vault classification prerequisite; implement only justified raw/source/bank binding; otherwise report precise blocking inputs. No admission or entry guard relaxation.",
-        "assigned_at": "2026-10-08T10:55:25Z"
+        "status": "ACTIVE",
+        "base": "b4cbfaf588412cbd49a94f66b12abfa3f5b1c9a1",
+        "scope": "Disconnected atomic shared-counter reservation and immutable pending intent journal",
+        "wait_cursor": "a2dcfb97-463d-4188-9da3-48a81e644d23:42"
       }
-    ],
-    "branches_checked": 72,
-    "branch_pagination_complete": true,
-    "integration_queue_blob": "8a977bf555043ce9d2a7164adb4c57778e721356",
-    "tests": "NOT_RUN_NO_NEW_OPEN_UNASSIGNED_WORK",
-    "infrastructure_failures": [],
-    "new_review_comments": 0,
-    "accepted_tasks": [],
-    "live_acceptance": false,
-    "schedule": "Notreprobed/modified;nobinding/durabilityclaim"
-  }
+    ]
+  },
+  "supplemental_validations": [
+    {
+      "pr": 83,
+      "head_sha": "2d61a6a5c78e89928982f07e4346af8af7dc545d",
+      "base_sha": "fbef1706df86f776d87773ac86fe9a37e6b0e982",
+      "worker_agent": "01",
+      "worker_thread_id": "01a118fc-39bc-722c-b442-8bf5a749e0bb",
+      "branch": "codex/cloud-common-bank-view-01",
+      "policy_version": "cloud-independent-review-v1",
+      "status": "SUPPLEMENTAL_TESTS_ONLY_REVIEW_DEFERRED_RESERVED_WORKER06",
+      "review_id": null,
+      "review_comments": 0,
+      "reserved_reviewer_thread": "01a118fc-f867-7233-8eec-c20659e70095",
+      "final_queue_blob": "ec0f7924d6ddb029f5ac0e51ec0260bd748a6abb",
+      "tests": {
+        "python": "3.12.14",
+        "full_suite_command": "python -m unittest discover -q",
+        "passed": 1611,
+        "seconds": 97.795,
+        "skipped": 0,
+        "targeted_command": "python -m unittest tests.test_common_bank_view -q",
+        "targeted_passed": 25,
+        "targeted_seconds": 8.319,
+        "independent_command": "python p83-independent.py",
+        "cases": 97,
+        "probe_correction": "Fixture.bindrestoredreferencemutation;changedtestordering,allmissingreferencesreject",
+        "provider_calls": 0
+      },
+      "ci": [
+        {
+          "id": 37773363025,
+          "name": "Tests",
+          "status": "completed",
+          "conclusion": "success",
+          "run_number": 712,
+          "jobs_url": "https://api.github.com/repos/pixelmanager-cloud/solana-paper-desk/actions/runs/37773363025/jobs",
+          "logs_url": "https://api.github.com/repos/pixelmanager-cloud/solana-paper-desk/actions/runs/37773363025/logs",
+          "workflow_id": 377958194
+        }
+      ],
+      "source_files": 335,
+      "source_manifest": "docs/reviews/cloud-pr83-fbef170-2d61a6a-hashes.json",
+      "source_manifest_sha256": "b25c14c78af6b6c46c8f7f941d758a2bd2780fc844e5dd9a91a2a62e51e71cea",
+      "proof_artifact": "docs/reviews/cloud-pr83-2d61a6a-supplemental.md",
+      "accepted": false,
+      "live_acceptance": false,
+      "infrastructure_failures": []
+    }
+  ]
 }
