@@ -193,19 +193,19 @@
     "combined_tests": 717,
     "result": "PASS",
     "live_verification": "BLOCKED_NO_SUPPORTED_BUDGET_FEASIBLE_PUBLIC_LEGACY_SEED; acquisition path in development",
-    "blocker": "Concurrent journal initialization race fix; PR26 re-review; acquisition foundations; live legacy acceptance and exposure integration unfinished",
+    "blocker": "PR31 immutable-kind and malformed-descriptor fixes; acquisition executor and live legacy acceptance; exposure integration unfinished",
     "followups": {
-      "worker02": "Re-review PR28 e81d9be correction then independent PR31 queue/fencing review",
+      "worker02": "PR31 two P2 findings await repair; PR28 correction reviewed",
       "worker06": "PR27 idle; confirmed prohibited force-with-lease history rewrite, instructed future append-only. No integration until new exact-head independent review.",
-      "cloud_reviewer": "Independent PR32 admission budget/source seal review",
-      "worker10": "Independent PR30 journal concurrency review",
+      "cloud_reviewer": "PR32 independent review passed; available",
+      "worker10": "PR30 independent review passed; available",
       "worker03": "Public legacy feasibility report c932cbf published/reviewed; idle",
       "worker04": "PR26 reviewed; available",
       "worker05": "PR30 e1b22f0d7b55181a97f1eebe4338c0db0b700f70 published; independent repeated-concurrency review active",
       "worker09": "PR28 correction e81d9be392bef4d29b70490ef2354bf3ec966f99 published; review active",
       "worker01": "PR32 64765af62379fe4fbb185271c1d54405a527a0af published; cloud reviewer active",
       "worker07": "Implement pure raw legacy control normalizer; retain runtime rejection pending separate semantic approval",
-      "worker08": "PR31 988e5ef5478c8b310bd3f461daa560d1eb09c328 published; fix macOS resolved-temp-path test expectations, independent review active"
+      "worker08": "Repair PR31 REPLACE identity bypass and non-object JSON worker failure; append-only"
     },
     "reviews": {
       "PR18": "92e9c6104b411101e414c03774a1675cbbf1ac91: independent review no blocking scoped defect",
@@ -216,21 +216,25 @@
       "PR24": "b5911a6fece35f83af87b89a14537de2d7c11dec: independent test/fixture review passed, 700 tests, no scoped blocking defect; lifetime authority gap remains",
       "PR26": "aa4626fec148c244f841f0614abc4d18c52274dd: independent re-review P2 resolved, 713 tests and 302 adversarial checks pass; external complete trusted ledger remains required",
       "PR27": "dbffb7551ce2925156b1c8a173f4b0c38ad4f6c9: independent decoder scope passed. Full suite first failed inherited WAL init race then 727 passed; repeat race 11/40 failures. Hold combined reliability claim until repair.",
-      "PR28": "674b268a2162230cea3aaf30381d5c4e3b7ae3b1: independent scope pass; total assessed may exceed50, report/test correction requested. Inherited WAL race confirmed 5/20."
+      "PR28": "e81d9be392bef4d29b70490ef2354bf3ec966f99: independent correction PASS,724 tests; union bound corrected",
+      "PR30": "e1b22f0d7b55181a97f1eebe4338c0db0b700f70: independent PASS, 726 tests,100 threaded startups,120 spawned consumers, bounded5s lock timeout",
+      "PR32": "64765af62379fe4fbb185271c1d54405a527a0af: independent scoped PASS,737 tests,53 focused; successor locking/fencing/publication mandatory",
+      "PR31": "988e5ef review: two P2s also present in8a6ab02: INSERT OR REPLACE can replace immutable kind; non-object JSON stops worker. Fix assigned"
     },
     "candidate_combination": {
-      "commit": "884bf3c",
+      "commit": "a77bf9e2ab77e4cac9bf4fa2def15fd208e755de",
       "location": "local detached worktree work/cloud-controls",
-      "result": "NOT_VERIFIED: resolved PR28/27 conflict retaining strict PR27 authority test; initial premature test run had conflict import errors plus two macOS path assertion failures; rerun required after PR31 correction",
+      "result": "823 tests PASS on macOS; NOT APPROVED due independently reproduced PR31 contract defects",
       "published": false,
       "prs": {
         "26": "aa4626fec148c244f841f0614abc4d18c52274dd",
         "27": "dbffb7551ce2925156b1c8a173f4b0c38ad4f6c9",
         "28": "e81d9be392bef4d29b70490ef2354bf3ec966f99",
         "30": "e1b22f0d7b55181a97f1eebe4338c0db0b700f70",
-        "31": "988e5ef5478c8b310bd3f461daa560d1eb09c328",
+        "31": "8a6ab02298ba8a6cf1024e5938ccd6a95a06886a",
         "32": "64765af62379fe4fbb185271c1d54405a527a0af"
-      }
+      },
+      "tests": 823
     }
   }
 }
