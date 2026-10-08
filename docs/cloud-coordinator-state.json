@@ -1,6 +1,6 @@
 {
   "schema_version": 1,
-  "revision": 9,
+  "revision": 10,
   "repository": "pixelmanager-cloud/solana-paper-desk",
   "source_main_sha": "e298e15cd758932e81d2241130716632702f5bd0",
   "observed_date": "2026-10-08",
@@ -404,6 +404,12 @@
       "head_sha": "aa4626fec148c244f841f0614abc4d18c52274dd",
       "review_id": 5450436592,
       "result": "Prior P2 resolved within protected complete-policy contract; 713 tests, 302 independent checks and exact-head CI pass; no merge/dispatch/live acceptance."
+    },
+    {
+      "kind": "PR32_ADMISSION_SOURCE_SEAL_REVIEW",
+      "head_sha": "64765af62379fe4fbb185271c1d54405a527a0af",
+      "review_id": 5450508179,
+      "result": "Scoped foundation review found no blocker; 737 suite/53 focused and independent crash/rebinding/reservation/ceiling checks plus CI pass; successor lock/fence/publication dependencies explicit. No merge/dispatch/providers."
     }
   ],
   "artifact_pr": {
@@ -780,6 +786,43 @@
         }
       ],
       "proof_artifact": "docs/reviews/cloud-pr26-aa4626f.md",
+      "accepted": false,
+      "live_acceptance": false
+    },
+    {
+      "policy_version": "cloud-independent-review-v1",
+      "pr": 32,
+      "head_sha": "64765af62379fe4fbb185271c1d54405a527a0af",
+      "base_sha": "d24fc7f2910067254047b64e699f43aa1685130f",
+      "commit_parent_sha": "f2009acd09f846a305eca94b4179574920a845fa",
+      "review_id": 5450508179,
+      "review_action": "COMMENT",
+      "status": "SCOPED_REVIEW_NO_BLOCKING_DEFECT_FOUND_SUCCESSOR_GATES_PENDING",
+      "limitations": [
+        "Invocation lock and queue fence mandatory; prepare freezes new reservations but does not drain in-flight I/O.",
+        "Two-DB seal/publish recovery, queue/daily limits and acquisition caller remain successor responsibilities.",
+        "Hash/seal binding is not provider authentication or entry/live readiness."
+      ],
+      "tests": {
+        "python": "3.12.14",
+        "targeted_passed": 53,
+        "full_suite_passed": 737,
+        "skipped": 0,
+        "exact_changed_blobs_verified": 51,
+        "independent_reserve_before_failed_io": "PASS_HISTORY_1_2_3_4_BANK_5",
+        "independent_cross_id_descriptor_source_ceiling_rebinding": "REJECTED",
+        "independent_death_after_seal": "PASS_EXACT_SEALED_RECOVERY",
+        "independent_shared_ceiling": "PASS_18_NO_REFUND"
+      },
+      "ci": [
+        {
+          "id": 37715023000,
+          "name": "Tests",
+          "status": "completed",
+          "conclusion": "success"
+        }
+      ],
+      "proof_artifact": "docs/reviews/cloud-pr32-64765af.md",
       "accepted": false,
       "live_acceptance": false
     }
