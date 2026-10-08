@@ -392,3 +392,6 @@ PR42 c174c07 independent exact-head review retrieved from GitHub despite cloudch
 
 
 PR43 rawlegacy accounting77ed0fb in independent review,CIpass. Desktop scratch7aea8e8:1005 executedPASS+33Linuxskips,1038discovered,23.953s. No integration pending review. Historical event search checked17 officialIDL revisions/sevenlayouts;all require creator+timestamp missing from203byte2024reference. No trusted historical schema established;production rejection retained. Worker03 searches bounded newerlegacy publicreference matching existing authoritative schema,noRPC.
+
+
+PR43 rawlegacy accounting77ed0fb reviewed/CIpass and integratede9e3a4f. IndependentLinux1038tests,zero skips;implementation/tests match desktopcandidate. No execution/lifetime approval inferred. Bounded newerlegacysearch inspected456 DefaultPerson captures(369April2025onward),0xfnzero/nirholas examples;no matchinglegacyCreateEvent. Closest2025legacy also mismatches;only matching modern events were create_v2. Worker07 now assesses exactsaved create_v2 profile with official extension/control semantics,no gatechanges. Current legacy-only capability does not provide practical coverage of150saved create_v2launches. PR40 remains unaccepted after interrupted review.

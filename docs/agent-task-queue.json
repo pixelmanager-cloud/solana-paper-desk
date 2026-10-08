@@ -189,8 +189,8 @@
   ],
   "integration": {
     "branch": "integration/cloud-wave1",
-    "tested_commit": "0b1a4c2aab8c46ad3e20459e6492dbc7ce39cd65",
-    "combined_tests": 1024,
+    "tested_commit": "e9e3a4f95e5156ffd8f7d4c7a5dc3e90b46de2f2",
+    "combined_tests": 1038,
     "result": "PASS",
     "live_verification": "BLOCKED_NO_SUPPORTED_BUDGET_FEASIBLE_PUBLIC_LEGACY_SEED; acquisition path in development",
     "blocker": "Live legacy evidence,protected pool receipt capture,lifecycle semantic approval and holder exposure integration unfinished",
@@ -198,13 +198,13 @@
       "worker02": "PR40 review interrupted by automated cybersecurity-risk flag; no final acceptance",
       "worker06": "PR34 integrated; available",
       "cloud_reviewer": "PR33 reviewed and integrated; available",
-      "worker10": "PR43 independent review active",
-      "worker03": "Oldschema unsupported after17officialrevision checks;searchnewer matching legacyreference",
+      "worker10": "PR43 reviewed;available",
+      "worker03": "Bounded newerlegacysearch found no matching authoritative event;available",
       "worker04": "PR40 repairs published3744192;review remains incomplete",
       "worker05": "PR30 reviewed and integrated; available",
       "worker09": "PR35 reviewed and integrated; available",
       "worker01": "PR43 published77ed0fb;reviewpending",
-      "worker07": "PR41 published69f556d,scoped reviewpending",
+      "worker07": "Analyze exactsaved modernlaunch extension/control requirements;no gatechanges",
       "worker08": "PR31 reviewed and integrated; available"
     },
     "reviews": {
@@ -228,7 +228,8 @@
       "PR38": "fabebccda9064cd8e69833ff7e9f588ab8e7d9e8 independent PASS,33 ledger and975 combined Linux zero skips; production issuer/bridge unfinished",
       "PR39": "7651db1fa2842957fc15fb16a4e616c12ecef520 independent provenance PASS; final Linux982 zero skips; no finality/acceptance",
       "PR41": "69f556dce2012ab1e9b2963d3dd7f8c0e190a476 independent structural-scope PASS;1006Linux,1034malformed+11targeted probes;notruntimeapproval",
-      "PR42": "c174c07c5bcfe7776003be7d011075ec333115fa independent scopedPASS;1024combinedLinux,330header combinations+45invalid+8malformed probes;no rawtoken/launch acceptance"
+      "PR42": "c174c07c5bcfe7776003be7d011075ec333115fa independent scopedPASS;1024combinedLinux,330header combinations+45invalid+8malformed probes;no rawtoken/launch acceptance",
+      "PR43": "77ed0fbc46ad3ce1f342d7f5b43c5cb3fa3063c9 independent scopedPASS;1038Linux,1137malformed/boundary checks;unresolved execution gates intact"
     },
     "candidate_combination": {
       "commit": "bfcc550ca25bd6cb79dc7ac3ad2b30c72f7b1033",
@@ -250,20 +251,11 @@
     "published_ci": "e5d9f9b0e3210421aabe3a80efd519b0d122d340 successful",
     "active_claims": [
       {
-        "worker": "worker03",
-        "thread_id": "01a118fc-9478-778a-b77a-8f8f6ec7e0ad",
+        "worker": "worker07",
+        "thread_id": "01a118fd-0f1c-749c-b85b-5e730937d0a8",
         "host_id": "durable",
-        "task": "Bounded newer legacy raw reference search matching official pinned schema",
+        "task": "saved create_v2 exactprofile safety compatibility analysis",
         "status": "RESEARCHING"
-      },
-      {
-        "worker": "worker10",
-        "thread_id": "01a118fd-56d5-70b8-ad31-dba13e982082",
-        "host_id": "durable",
-        "task": "independent rawlegacy accounting review",
-        "pr": 43,
-        "head": "77ed0fbc46ad3ce1f342d7f5b43c5cb3fa3063c9",
-        "status": "REVIEWING"
       }
     ],
     "saved_launch_probe": {
@@ -316,7 +308,7 @@
       "result": "Linux combined975 PASS zero skips; reviewed",
       "integrated": true
     },
-    "test_platform_note": "IndependentLinux1024zero skips;implementation/tests identical desktop scratch991passed+33Linuxskips",
+    "test_platform_note": "Independent combinedLinux1038zero skips;matching implementation/tests Mac1005passed+33Linuxskips",
     "pending_reference_combination": {
       "commit": "8aa5938aeef5e96f22a54f80ff698d043f3a154d",
       "pr": 39,
@@ -370,8 +362,8 @@
       "mac_discovered": 1038,
       "mac_passed": 1005,
       "mac_skipped": 33,
-      "review": "PENDING",
-      "integrated": false
+      "review": "PASS",
+      "integrated": true
     }
   }
 }
