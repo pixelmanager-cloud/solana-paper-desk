@@ -3,7 +3,7 @@
   "published": true,
   "requested_workers": 10,
   "status": "DISPATCHED",
-  "note": "Independent cloud assignments; only coordinator integrates. Dependencies and live readiness remain unverified. No recurring automation enabled.",
+  "note": "Initial dispatch manifest; current claims and reviews are in docs/agent-task-queue.json. Desktop owns integration and five-minute recovery dispatch; hourly cloud GitHub review schedule is enabled but first scheduled execution remains unverified.",
   "workers": [
     {
       "agent": "01",
