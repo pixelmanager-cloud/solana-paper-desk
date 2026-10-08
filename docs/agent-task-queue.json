@@ -877,7 +877,17 @@
       "head": "3c4399af143380381a066b7a296067909384f8b1",
       "reviewer": "worker06",
       "status": "REVIEWING",
-      "integrated": false
+      "integrated": false,
+      "mac_combined": {
+        "base": "d758bc5",
+        "tree": "613d5e3393e8a930cb15df979cf0c211fa89c037",
+        "discovered": 1492,
+        "passed": 1393,
+        "skips": 99,
+        "seconds": 30.439
+      },
+      "ci": "SUCCESS exact head",
+      "coordinator_diff_review": "Production wiring and complete tests/report read; independent review pending"
     }
   },
   "parallel_combined_regression": {
