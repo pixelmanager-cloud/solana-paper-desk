@@ -262,18 +262,6 @@
     "published_ci": "Deployed d758bc529a7da1f74509117288740911f2ad6845: both CI runs successful",
     "active_claims": [
       {
-        "id": "COMMON-BANK-JOURNAL-SEMANTIC-REPLAY",
-        "worker": "02",
-        "thread_id": "01a118fc-666c-70b6-9fa8-2c7520f0a0bb",
-        "host_id": "durable",
-        "status": "IN_PROGRESS",
-        "base": "a2afb0075e2d1d33672027b71b9ff066ce6aa76c",
-        "scope": "Bounded diagnostic semantic replay of original completed journal bytes against accepted common bank view; no publication/transport",
-        "wait_cursor": "a2dcfb97-463d-4188-9da3-48a81e644d23:57",
-        "turn_id": "01a11bdb-9210-7306-a85b-0bbf62481f63",
-        "last_observation": "2026-10-08T14:32Z: worker reports 51 targeted and96 existing journal tests passed; full Linux suite starting. No published head or independent acceptance yet; no infrastructure blocker reported."
-      },
-      {
         "id": "COMMON-BANK-COMPLETION-INVENTORY",
         "worker": "01",
         "thread_id": "01a118fc-39bc-722c-b442-8bf5a749e0bb",
@@ -281,8 +269,19 @@
         "status": "IN_PROGRESS",
         "base": "5ab85134fd20af042153e950a9c64e6f353656f9",
         "scope": "Read-only bounded completion inventory prerequisite; no migration, semantic replay or authoritative quiescence assertion",
-        "wait_cursor": "5e651fc7-2996-4765-974d-5c852257a005:58",
+        "wait_cursor": "5e651fc7-2996-4765-974d-5c852257a005:59",
         "turn_id": "01a11be1-d4c7-7211-ad8f-a6545fe93c06"
+      },
+      {
+        "id": "PR93-INDEPENDENT-REVIEW",
+        "worker": "05",
+        "thread_id": "01a118fc-dd83-7672-ac81-7445f85fe09f",
+        "host_id": "durable",
+        "status": "REVIEWING",
+        "pr": 93,
+        "head": "94a025d96f4ad22db2fb195b1df10a73537ac293",
+        "base": "adb2118142bf8d40f8d8d41ee8b810b9366acf62",
+        "wait_cursor": "b9784eaf-f3e5-457f-a98d-a386c23b37ea:37"
       }
     ],
     "saved_launch_probe": {
@@ -842,6 +841,22 @@
       "integration_commit": "a2afb0075e2d1d33672027b71b9ff066ce6aa76c",
       "review_manifest_sha256": "5a95b6010e8858eb310df330e5e3a014ca8bef4e25cdb2ccb819135e371e48f5",
       "deployed": false
+    },
+    "pending_semantic_replay": {
+      "pr": 93,
+      "head": "94a025d96f4ad22db2fb195b1df10a73537ac293",
+      "integrated": false,
+      "review": "PENDING worker05",
+      "author_linux_tests": 1811,
+      "author_skips": 0,
+      "combined_tree": "6e5029e1cde34441bfd44b5348b3377fc0feee88",
+      "combined_base": "adb2118142bf8d40f8d8d41ee8b810b9366acf62",
+      "mac_tests": "PASS",
+      "mac_discovered": 1845,
+      "mac_passed": 1507,
+      "mac_skipped": 338,
+      "mac_seconds": 33.888,
+      "ci": "Both unchanged exact-head checks SUCCESS"
     }
   },
   "native_reconciliation_review": {
