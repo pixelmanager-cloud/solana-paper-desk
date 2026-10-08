@@ -263,26 +263,10 @@
     "published_ci": "886fc96d404b9d3ffd99c0045f7231d563a5d946 successful",
     "active_claims": [
       {
-        "worker": "worker04",
-        "thread_id": "01a118fc-b862-7340-ab3a-e1115a3280a4",
-        "host_id": "durable",
-        "task": "Current-holder exposure correctness",
-        "status": "DISPATCHED",
-        "base": "c578dbe"
-      },
-      {
         "worker": "worker07",
         "thread_id": "01a118fd-0f1c-749c-b85b-5e730937d0a8",
         "host_id": "durable",
         "task": "Signed-message witness validation",
-        "status": "DISPATCHED",
-        "base": "c578dbe"
-      },
-      {
-        "worker": "worker09",
-        "thread_id": "01a118fd-3f90-77d9-9549-c4497f5b10a6",
-        "host_id": "durable",
-        "task": "Paper dashboard rejection clarity",
         "status": "DISPATCHED",
         "base": "c578dbe"
       },
@@ -307,44 +291,22 @@
         "base": "13853bf"
       },
       {
-        "worker": "worker02",
-        "thread_id": "01a118fc-666c-70b6-9fa8-2c7520f0a0bb",
+        "worker": "worker08",
+        "thread_id": "01a118fd-2563-7126-90d7-bd07693de0b2",
         "pr": 65,
         "head": "209826064b770b67b9c528c763b7d0e0ba55f10d",
         "host_id": "durable",
-        "task": "Independent PR65 review",
-        "status": "REVIEWING",
+        "task": "PR65 partial restore identity repair",
+        "status": "FIXING",
         "base": "13853bf"
       },
       {
         "worker": "worker06",
         "thread_id": "01a118fc-f867-7233-8eec-c20659e70095",
-        "pr": 67,
-        "head": "77991bf90bb31f428b1c3dd33076ab7dc6e1ca3f",
         "host_id": "durable",
-        "task": "Independent PR67 review",
-        "status": "REVIEWING",
-        "base": "13853bf"
-      },
-      {
-        "worker": "worker08",
-        "thread_id": "01a118fd-2563-7126-90d7-bd07693de0b2",
-        "pr": 66,
-        "head": "8538fb3098a321e21d9b8bc2f1a4cb5ac24f03cd",
-        "host_id": "durable",
-        "task": "Independent PR66 review",
-        "status": "REVIEWING",
-        "base": "13853bf"
-      },
-      {
-        "worker": "worker10",
-        "thread_id": "01a118fd-56d5-70b8-ad31-dba13e982082",
-        "pr": 68,
-        "head": "944d97cf1a0cebb6e309e62f9583e9a87cba42b9",
-        "host_id": "durable",
-        "task": "Independent PR68 review",
-        "status": "REVIEWING",
-        "base": "13853bf"
+        "task": "Accepted f5eb854 combined Linux integration regression",
+        "status": "VERIFYING",
+        "base": "f5eb854"
       }
     ],
     "saved_launch_probe": {
@@ -759,8 +721,9 @@
     "64": {
       "head": "75eaed53f3b6802dbfb06eded6f92559bc586bdf",
       "reviewer": "worker03",
-      "status": "PASS_PENDING_INTEGRATION",
-      "integrated": false
+      "status": "PASS_INTEGRATED",
+      "integrated": true,
+      "integration_commit": "f5eb854"
     },
     "63": {
       "head": "2efe5a0422380350a51e62bd3a08e4a7759ae1e5",
@@ -771,26 +734,31 @@
     "65": {
       "head": "209826064b770b67b9c528c763b7d0e0ba55f10d",
       "reviewer": "worker02",
-      "status": "REVIEWING",
-      "integrated": false
+      "status": "CHANGES_REQUESTED",
+      "integrated": false,
+      "finding": "Partial restore missing events can bypass incomplete checkpoint/config guards",
+      "repair_worker": "worker08"
     },
     "67": {
       "head": "77991bf90bb31f428b1c3dd33076ab7dc6e1ca3f",
       "reviewer": "worker06",
-      "status": "REVIEWING",
-      "integrated": false
+      "status": "PASS_INTEGRATED",
+      "integrated": true,
+      "integration_commit": "f5eb854"
     },
     "66": {
       "head": "8538fb3098a321e21d9b8bc2f1a4cb5ac24f03cd",
       "reviewer": "worker08",
-      "status": "REVIEWING",
-      "integrated": false
+      "status": "PASS_INTEGRATED",
+      "integrated": true,
+      "integration_commit": "f5eb854"
     },
     "68": {
       "head": "944d97cf1a0cebb6e309e62f9583e9a87cba42b9",
       "reviewer": "worker10",
-      "status": "REVIEWING",
-      "integrated": false
+      "status": "PASS_INTEGRATED",
+      "integrated": true,
+      "integration_commit": "f5eb854"
     },
     "69": {
       "head": "5d53e384f2aa6e35bdb6054e1362beb74d42f850",
@@ -803,12 +771,17 @@
     "prs": [
       60,
       61,
-      62
+      62,
+      64,
+      66,
+      67,
+      68
     ],
-    "mac_discovered": 1355,
-    "mac_passed": 1263,
-    "mac_skipped": 92,
-    "seconds": 26.716,
-    "integrated": false
+    "mac_discovered": 1391,
+    "mac_passed": 1292,
+    "mac_skipped": 99,
+    "seconds": 27.26,
+    "integrated": false,
+    "scope": "Scratch includes still-unmerged PR60; accepted source rerun underway"
   }
 }
