@@ -189,14 +189,14 @@
   ],
   "integration": {
     "branch": "integration/cloud-wave1",
-    "tested_commit": "ce8cad01fdea900570da93cc0bf456863d4ad050",
-    "combined_tests": 1541,
+    "tested_commit": "04abb83d1b6d9f24e8746a9433621c7b15f65a1d",
+    "combined_tests": 1555,
     "result": "PASS_FIXTURE_ONLY",
     "live_verification": "BLOCKED_NO_SUPPORTED_BUDGET_FEASIBLE_PUBLIC_LEGACY_SEED; acquisition path in development",
     "blocker": "No accepted provider-backed ownership candidate; historical-control semantics, complete route/effect policy, current measured features and trusted entry/refresh driver remain unfinished",
     "followups": {
-      "worker01": "Independent PR79 review",
-      "worker05": "PR79 published; available for concrete fixes",
+      "worker01": "PR79 independent PASS; available",
+      "worker05": "PR79 integrated; available",
       "worker06": "PR75 exact combined review PASS; available",
       "worker10": "PR75 integrated; available",
       "worker02": "PR77 repaired exact combined independent PASS; available",
@@ -260,18 +260,7 @@
       "status": "SUPERSEDED_BY_PUBLISHED_TESTED_COMMIT"
     },
     "published_ci": "Deployed d758bc529a7da1f74509117288740911f2ad6845: both CI runs successful",
-    "active_claims": [
-      {
-        "worker": "worker01",
-        "thread_id": "01a118fc-39bc-722c-b442-8bf5a749e0bb",
-        "host_id": "durable",
-        "status": "REVIEWING",
-        "base": "b96a0c5",
-        "pr": 79,
-        "head": "b3c527be544f25ea5d8d0329f181e74fdae46785",
-        "task": "Independent persisted historical control inventory review"
-      }
-    ],
+    "active_claims": [],
     "saved_launch_probe": {
       "source": "VPS saved raw launch events, read-only; no provider calls",
       "sample_size": 150,
@@ -283,7 +272,9 @@
       "source": "PR10 aa120ae7a2944597dbd4b6e5d15fb592961e5c93",
       "reported_last_run": "2026-10-08T03:58:47.779603+00:00",
       "limitation": "Reviewer-recorded execution evidence; desktop has not independently queried hosted scheduler; same-chat binding unverified.",
-      "last_reconciliation": "2026-10-08T07:56:59Z"
+      "last_reconciliation": "2026-10-08T07:56:59Z",
+      "latest_protocol_head": "755b4438c4a4a9e350446c493c9bd91c09abeee3",
+      "latest_reconciliation": "2026-10-08T10:01:15Z: revision44 reserves PR79 to worker01; no new unassigned review; durable schedule binding remains unverified"
     },
     "pending_ui_candidate": {
       "pr": 35,
@@ -981,8 +972,8 @@
     "79": {
       "head": "b3c527be544f25ea5d8d0329f181e74fdae46785",
       "reviewer": "worker01",
-      "status": "INDEPENDENT_REVIEW_PENDING",
-      "integrated": false,
+      "status": "PASS_INTEGRATED",
+      "integrated": true,
       "author_linux_tests": 1555,
       "author_linux_skips": 0,
       "mac_combined": {
@@ -992,7 +983,15 @@
         "passed": 1424,
         "skips": 131,
         "seconds": 32.465
-      }
+      },
+      "ci": "Both unchanged exact head runs SUCCESS",
+      "linux_tests": 1555,
+      "linux_skips": 0,
+      "linux_seconds": 67.574,
+      "independent_probes": 15,
+      "reviewed_tree": "9d5556b2305cdcdefdfdc659b5a469b96f183440",
+      "tree_match": true,
+      "integration_commit": "04abb83d1b6d9f24e8746a9433621c7b15f65a1d"
     }
   },
   "parallel_combined_regression": {
