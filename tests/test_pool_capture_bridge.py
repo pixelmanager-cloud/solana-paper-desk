@@ -286,6 +286,34 @@ class PoolCaptureBridgeTests(unittest.TestCase):
             c.execute("UPDATE pool_capture_events SET body='{}' WHERE seq=2")
         self.blocked(self.capture(),'CAPTURE_SCHEMA_INVALID'); self.assertEqual(self.used(),4)
 
+    def test_plain_sqlite_replace_all_event_unique_keys_preserves_original_rows(self):
+        self.assertEqual(self.capture()['status'], 'CAPTURED_POINT')
+        # A fresh plain SQLite connection defaults to recursive_triggers=0:
+        # implicit REPLACE deletes would bypass the ordinary DELETE guard.
+        with sqlite3.connect(self.store.path) as c:
+            self.assertEqual(c.execute('PRAGMA recursive_triggers').fetchone()[0], 0)
+            original = c.execute('SELECT rowid,* FROM pool_capture_events ORDER BY seq').fetchall()
+            head = c.execute('SELECT * FROM pool_capture_head').fetchall()
+            seq, capture, body, previous, key = original[0][1:]
+            unused_seq = original[-1][1]+1
+            for sql, args in (
+                ('INSERT OR REPLACE INTO pool_capture_events VALUES(?,?,?,?,?)',
+                 (unused_seq, 'forged-hash-collision', body, previous, key)),
+                ('INSERT OR REPLACE INTO pool_capture_events VALUES(?,?,?,?,?)',
+                 (seq, 'forged-seq-collision', body, previous, 'f'*64)),
+                ('INSERT OR REPLACE INTO pool_capture_events(rowid,capture,body,previous,hash) VALUES(?,?,?,?,?)',
+                 (original[0][0], 'forged-rowid-collision', body, previous, 'e'*64)),
+            ):
+                with self.subTest(sql=sql, capture=args[1]):
+                    with self.assertRaises(sqlite3.IntegrityError): c.execute(sql, args)
+                    c.commit()
+                    self.assertEqual(c.execute('SELECT rowid,* FROM pool_capture_events ORDER BY seq').fetchall(), original)
+                    self.assertEqual(c.execute('SELECT * FROM pool_capture_head').fetchall(), head)
+        outcome = self.capture()
+        self.assertEqual(outcome['status'], 'CAPTURED_POINT', outcome)
+        self.assertEqual(outcome['provider_calls'], 0)
+        self.assertEqual(self.used(), 4)
+
     def test_missing_journal_head_not_reinitialized(self):
         self.capture()
         with self.store.connect() as c:c.execute('DROP TABLE pool_capture_head')

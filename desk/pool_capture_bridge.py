@@ -49,7 +49,12 @@ for table in ('pool_capture_config', 'pool_capture_events'):
         SCHEMA[name] = f"CREATE TRIGGER {name} BEFORE {verb} ON {table} BEGIN SELECT RAISE(ABORT,'Immutable capture journal'); END"
     name = 'protect_' + table + '_insert'
     column = 'id' if table.endswith('config') else 'seq'
-    SCHEMA[name] = f"CREATE TRIGGER {name} BEFORE INSERT ON {table} WHEN EXISTS(SELECT 1 FROM {table} WHERE {column}=NEW.{column} OR rowid=NEW.rowid) BEGIN SELECT RAISE(ABORT,'Capture journal identity'); END"
+    collisions = f'{column}=NEW.{column} OR rowid=NEW.rowid'
+    if table == 'pool_capture_events':
+        collisions += ' OR hash=NEW.hash'
+    # REPLACE implicitly deletes conflicting rows without firing DELETE
+    # triggers on a plain connection. Guard every UNIQUE key before insertion.
+    SCHEMA[name] = f"CREATE TRIGGER {name} BEFORE INSERT ON {table} WHEN EXISTS(SELECT 1 FROM {table} WHERE {collisions}) BEGIN SELECT RAISE(ABORT,'Capture journal identity'); END"
 
 
 class CaptureBlocked(ValueError):
