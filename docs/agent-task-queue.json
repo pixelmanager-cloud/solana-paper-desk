@@ -535,8 +535,8 @@
       "next_requirement": "Use reviewed normal acquisition to create a bounded admitted scan; never retrofit older records or create ad-hoc diagnostic budget"
     },
     "vps_deployment": {
-      "commit": "886fc96d404b9d3ffd99c0045f7231d563a5d946",
-      "release": "/opt/solana-desk-releases/886fc96",
+      "commit": "884e4ca1e7284d9b6e99ec661fc3a2b6ca147bd3",
+      "release": "/opt/solana-desk-releases/884e4ca",
       "override": "60-reviewed-release.conf",
       "services": [
         "desk-dashboard",
@@ -547,11 +547,11 @@
       ],
       "dashboard_http": 200,
       "listener": "127.0.0.1:8765",
-      "scans": 7,
-      "decision_evaluations": 27,
+      "scans": 8,
+      "decision_evaluations": 28,
       "eligible": 0,
       "paper_ready": false,
-      "diagnostic_cli_included": false
+      "diagnostic_cli_included": true
     },
     "diagnostic_vps_stage": {
       "commit": "f3987e58f9a39de2a69451aa08798fc4c16271f5",
@@ -912,7 +912,7 @@
     "live_acceptance": false
   },
   "vps_stage_884e4ca": {
-    "status": "TESTING_SERVICE_USER",
+    "status": "DEPLOYED_VERIFIED_RELEASE",
     "source": "884e4ca",
     "archive_sha256": "39c95dc1d5c774e213e883997e3a42c298c9df4dd53e9a2df30770291b3f58d4",
     "service_release": "886fc96",
@@ -921,6 +921,17 @@
       72,
       73
     ],
-    "reason": "Deploy accepted evidence and ledger root fixes; future consumer diagnostic remains excluded"
+    "reason": "Deploy accepted evidence and ledger root fixes; future consumer diagnostic remains excluded",
+    "tests": 1442,
+    "skips": 0,
+    "seconds": 129.057,
+    "backup": "/var/backups/solana-desk/pre-integration-884e4ca/daily-20261008T074546Z",
+    "copy_reassessed": 8,
+    "original_decisions_preserved": 8,
+    "original_evaluations_preserved": 28,
+    "dashboard_http": 200,
+    "paper_status": "NOT_CONFIGURED",
+    "automatic_entry_enabled": false,
+    "listener": "127.0.0.1:8765"
   }
 }

@@ -2,9 +2,9 @@
 
 Last verified: 8 October 2026, Korea time. The user's requested end state is a usable Solana paper-trading tool with bundle-first screening. Do not equate a usable research dashboard with that end state. Real-money execution is disabled.
 
-## Current status — 2026-10-08 07:42 UTC
+## Current status — 2026-10-08 07:47 UTC
 
-Paper readiness is incomplete. Production still runs release 886fc96; staged f5eb854 passed 1,385 service-user tests and copy-only replay of eight saved investigations, all rejected. The integration branch contains newer independently reviewed evidence and ledger fixes. Latest accepted combined Linux regression: 1,442 tests without skips. Later PR72 and PR73 candidates are not accepted by this checkpoint.
+Paper readiness is incomplete. Production runs reviewed release 884e4ca: 1,442 tests passed under the VPS service account, with zero skips. Copied-data validation reassessed eight investigations, all rejected; all eight original decisions and 28 evaluations were preserved. Dashboard HTTP200 and decision/monitor services verified on loopback. No active paper ledger; automatic entry remains false. PR72 and PR73 candidates remain excluded pending review/repair.
 
 Remaining critical path: live complete ownership/exposure evidence for a supported candidate; authenticated route/effect and exact quantity/cost evidence; measured current strategy features and a trusted source-bound entry adapter; durable supervised entry/refresh/exit integration; forward observation. Signed messages, parsed events, zero balance residuals and diagnostic receipt coverage alone do not satisfy those gates. No eligible live entry has been demonstrated.
 

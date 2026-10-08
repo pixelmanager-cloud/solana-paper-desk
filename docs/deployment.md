@@ -360,3 +360,14 @@ Release f5eb8541c05e32cc836656e833b73d2841d95d23 is staged at `/opt/solana-desk-
 
 
 07:36 UTC copy-only compatibility preflight: fresh five-database backup at `/var/backups/solana-desk/pre-integration-f5eb854/daily-20261008T073459Z`; isolated service-user copies at `/var/lib/solana-desk-validation/f5eb854`. All eight completed scans explicitly reassessed as REJECT; original8decisions/28evaluations preserved and research/evidence file hashes unchanged. Idempotent consumer added0decisions. No provider calls or service switch. This validates stagedf5eb854 compatibility only; later integrated code requires its own final-release validation.
+
+
+## Reviewed release deployed — 2026-10-08 07:47 UTC
+
+Release `884e4ca1e7284d9b6e99ec661fc3a2b6ca147bd3` is active at `/opt/solana-desk-releases/884e4ca`. Archive SHA256 `39c95dc1d5c774e213e883997e3a42c298c9df4dd53e9a2df30770291b3f58d4` matched locally and remotely. All 1,442 tests passed as solana-desk in 129.057 seconds, zero skips. Exact-release GitHub CI passed. Candidate PR72/73 changes are excluded.
+
+Fresh five-database backup: `/var/backups/solana-desk/pre-integration-884e4ca/daily-20261008T074546Z`. Copied-data validation at `/var/lib/solana-desk-validation/884e4ca` explicitly reassessed eight scans (all REJECT), preserved eight decisions and 28 evaluations, and preserved research/evidence hashes. No provider calls were made by validation or deployment.
+
+Five `60-reviewed-release.conf` WorkingDirectory overrides now select this release. Dashboard restart and decision/monitor runs succeeded. Dashboard and `/api/paper` HTTP200; paper status NOT_CONFIGURED and automatic entry false. Listener remains `127.0.0.1:8765`. Existing databases were neither replaced nor migrated.
+
+Rollback: restore the five saved unit overrides from `/var/backups/solana-desk/pre-integration-884e4ca/systemd-overrides/{unit}.conf` to `/etc/systemd/system/{unit}.service.d/60-reviewed-release.conf` for desk-dashboard, desk-decisions, desk-discovery, desk-paper-monitor and desk-backup; run daemon-reload and restart dashboard. Those saved overrides select 886fc96. Keep databases intact. A future paper experiment must retain its implementation identity; no experiment migration is implied by this deployment.
