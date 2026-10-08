@@ -273,16 +273,6 @@
         "head": "eb4432bbc614de775f510a1cfa86f917fb80abda"
       },
       {
-        "worker": "worker02",
-        "thread_id": "01a118fc-666c-70b6-9fa8-2c7520f0a0bb",
-        "host_id": "durable",
-        "task": "Independent PR61 review",
-        "status": "REVIEWING",
-        "base": "13853bf",
-        "pr": 61,
-        "head": "bfff737c8c0ae8ce1428ae9f3fa022ec7ff280b9"
-      },
-      {
         "worker": "worker04",
         "thread_id": "01a118fc-b862-7340-ab3a-e1115a3280a4",
         "host_id": "durable",
@@ -309,29 +299,12 @@
         "base": "c578dbe"
       },
       {
-        "worker": "worker08",
-        "thread_id": "01a118fd-2563-7126-90d7-bd07693de0b2",
-        "host_id": "durable",
-        "task": "Paper ledger restart verification",
-        "status": "DISPATCHED",
-        "base": "c578dbe"
-      },
-      {
         "worker": "worker09",
         "thread_id": "01a118fd-3f90-77d9-9549-c4497f5b10a6",
         "host_id": "durable",
         "task": "Paper dashboard rejection clarity",
         "status": "DISPATCHED",
         "base": "c578dbe"
-      },
-      {
-        "worker": "worker10",
-        "thread_id": "01a118fd-56d5-70b8-ad31-dba13e982082",
-        "host_id": "durable",
-        "task": "Read-only reject-only live feature snapshot builder",
-        "status": "IMPLEMENTING",
-        "base": "a8141f1",
-        "scope": "new desk/live_features.py and dedicated tests/report"
       },
       {
         "worker": "cloud_reviewer",
@@ -350,6 +323,46 @@
         "task": "Independent pool integration PR64 review",
         "pr": 64,
         "head": "75eaed53f3b6802dbfb06eded6f92559bc586bdf",
+        "status": "REVIEWING",
+        "base": "13853bf"
+      },
+      {
+        "worker": "worker02",
+        "thread_id": "01a118fc-666c-70b6-9fa8-2c7520f0a0bb",
+        "pr": 65,
+        "head": "209826064b770b67b9c528c763b7d0e0ba55f10d",
+        "host_id": "durable",
+        "task": "Independent PR65 review",
+        "status": "REVIEWING",
+        "base": "13853bf"
+      },
+      {
+        "worker": "worker06",
+        "thread_id": "01a118fc-f867-7233-8eec-c20659e70095",
+        "pr": 67,
+        "head": "77991bf90bb31f428b1c3dd33076ab7dc6e1ca3f",
+        "host_id": "durable",
+        "task": "Independent PR67 review",
+        "status": "REVIEWING",
+        "base": "13853bf"
+      },
+      {
+        "worker": "worker08",
+        "thread_id": "01a118fd-2563-7126-90d7-bd07693de0b2",
+        "pr": 66,
+        "head": "8538fb3098a321e21d9b8bc2f1a4cb5ac24f03cd",
+        "host_id": "durable",
+        "task": "Independent PR66 review",
+        "status": "REVIEWING",
+        "base": "13853bf"
+      },
+      {
+        "worker": "worker10",
+        "thread_id": "01a118fd-56d5-70b8-ad31-dba13e982082",
+        "pr": 68,
+        "head": "944d97cf1a0cebb6e309e62f9583e9a87cba42b9",
+        "host_id": "durable",
+        "task": "Independent PR68 review",
         "status": "REVIEWING",
         "base": "13853bf"
       }
@@ -749,7 +762,7 @@
     "61": {
       "head": "bfff737c8c0ae8ce1428ae9f3fa022ec7ff280b9",
       "reviewer": "worker02",
-      "status": "REVIEWING",
+      "status": "PASS_PENDING_COORDINATOR_INTEGRATION",
       "integrated": false
     },
     "62": {
@@ -767,6 +780,30 @@
     "63": {
       "head": "2efe5a0422380350a51e62bd3a08e4a7759ae1e5",
       "reviewer": "worker05",
+      "status": "REVIEWING",
+      "integrated": false
+    },
+    "65": {
+      "head": "209826064b770b67b9c528c763b7d0e0ba55f10d",
+      "reviewer": "worker02",
+      "status": "REVIEWING",
+      "integrated": false
+    },
+    "67": {
+      "head": "77991bf90bb31f428b1c3dd33076ab7dc6e1ca3f",
+      "reviewer": "worker06",
+      "status": "REVIEWING",
+      "integrated": false
+    },
+    "66": {
+      "head": "8538fb3098a321e21d9b8bc2f1a4cb5ac24f03cd",
+      "reviewer": "worker08",
+      "status": "REVIEWING",
+      "integrated": false
+    },
+    "68": {
+      "head": "944d97cf1a0cebb6e309e62f9583e9a87cba42b9",
+      "reviewer": "worker10",
       "status": "REVIEWING",
       "integrated": false
     }
