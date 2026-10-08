@@ -36,19 +36,134 @@ class HistoryProgress:
         with store.connect() as c:
             c.execute('CREATE TABLE IF NOT EXISTS ownership_budgets(id TEXT PRIMARY KEY,source_hash TEXT NOT NULL,used INTEGER NOT NULL,ceiling INTEGER NOT NULL)')
             c.execute('CREATE TABLE IF NOT EXISTS ownership_history(id TEXT PRIMARY KEY,budget TEXT NOT NULL,query TEXT NOT NULL,coverage TEXT,status TEXT NOT NULL,attempts INTEGER NOT NULL DEFAULT 0)')
+            c.execute('CREATE TABLE IF NOT EXISTS ownership_admissions(id TEXT PRIMARY KEY,descriptor TEXT NOT NULL,state TEXT NOT NULL,prepared_source TEXT,prepared_used INTEGER,completed_source_hash TEXT)')
+    def _admission(self,c,identity):
+        row=c.execute('SELECT a.descriptor,a.state,a.prepared_source,a.prepared_used,a.completed_source_hash,b.source_hash,b.used,b.ceiling FROM ownership_admissions a JOIN ownership_budgets b ON b.id=a.id WHERE a.id=?',(identity,)).fetchone()
+        if not row:
+            if c.execute('SELECT 1 FROM ownership_admissions WHERE id=?',(identity,)).fetchone():raise ValueError('Admission budget missing')
+            return None
+        descriptor=json.loads(row[0]);self._descriptor(identity,descriptor)
+        if canonical(descriptor)!=row[0] or digest(descriptor)!=row[5]:raise ValueError('Admission descriptor mismatch')
+        if row[1] not in ('ADMITTED','PREPARED','SEALED') or type(row[6]) is not int or type(row[7]) is not int or not 0<=row[6]<=row[7]<=18:
+            raise ValueError('Admission state or budget invalid')
+        source=json.loads(row[2]) if row[2] is not None else None
+        if row[1]=='ADMITTED':
+            if any(v is not None for v in row[2:5]):raise ValueError('Unexpected prepared source')
+        else:
+            self._completed_source(identity,descriptor,source)
+            calls=json.loads(source['result'])['calls']
+            if (type(row[3]) is not int or canonical(source)!=row[2] or digest(source)!=row[4]
+                    or calls!=row[3] or not 0<=row[3]<=row[6]):
+                raise ValueError('Prepared source or request count mismatch')
+            if row[1]=='PREPARED' and row[3]!=row[6]:raise ValueError('Prepared request count changed')
+        return {'descriptor':descriptor,'descriptor_hash':row[5],'state':row[1],
+                'prepared_source':source,'prepared_requests_used':row[3],'completed_source_hash':row[4],
+                'requests_used':row[6],'request_ceiling':row[7]}
+
+    @staticmethod
+    def _descriptor(identity,descriptor):
+        from .programs import address
+        if (not isinstance(identity,str) or not identity or not isinstance(descriptor,dict)
+                or set(descriptor)!={'kind','scan_id','mint','created'}
+                or descriptor['kind']!='ownership_admission_v1' or descriptor['scan_id']!=identity
+                or type(descriptor['created']) is not int or descriptor['created']<0):
+            raise ValueError('Immutable ownership admission descriptor required')
+        address(descriptor['mint'])
+
+    @staticmethod
+    def _completed_source(identity,descriptor,source):
+        if (not isinstance(source,dict) or set(source)!={'id','mint','created','status','result'}
+                or source['id']!=identity or source['mint']!=descriptor['mint']
+                or type(source['created']) is not int or source['created']!=descriptor['created']
+                or source['status']!='COMPLETE' or not isinstance(source['result'],str)
+                or len(source['result'].encode())>2*1024*1024):
+            raise ValueError('Exact completed scan projection required')
+        report=json.loads(source['result'])
+        if not isinstance(report,dict):raise ValueError('Completed report required')
+        summary=dict(report);claimed=summary.pop('report_hash',None)
+        if (claimed!=digest(summary) or report.get('mint')!=descriptor['mint']
+                or report.get('eligible_for_trading') is not False or type(report.get('calls')) is not int
+                or not 0<=report['calls']<=18):raise ValueError('Completed report identity or budget invalid')
+
+    def admit(self,identity,descriptor,ceiling=18):
+        """Create/reopen a zero-origin admission on the single durable counter."""
+        self._descriptor(identity,descriptor)
+        if type(ceiling) is not int or not 1<=ceiling<=18:raise ValueError('Invalid request ceiling')
+        with self.store.connect() as c:
+            c.execute('BEGIN IMMEDIATE')
+            try:
+                old=self._admission(c,identity)
+                if old:
+                    if old['descriptor']!=descriptor or old['request_ceiling']!=ceiling:raise ValueError('Admission identity changed')
+                else:
+                    if c.execute('SELECT 1 FROM ownership_budgets WHERE id=?',(identity,)).fetchone():raise ValueError('Existing completed budget cannot become an admission')
+                    c.execute('INSERT INTO ownership_budgets VALUES(?,?,0,?)',(identity,digest(descriptor),ceiling))
+                    c.execute("INSERT INTO ownership_admissions VALUES(?,?,'ADMITTED',NULL,NULL,NULL)",(identity,canonical(descriptor)))
+                result=self._admission(c,identity);c.commit();return result
+            except BaseException:c.rollback();raise
+
+    def admission(self,identity):
+        """Read immutable recovery data; legacy budgets return None."""
+        with self.store.connect() as c:return self._admission(c,identity)
+
+    def prepare_source(self,identity,descriptor_hash,source):
+        """Persist exact intended COMPLETE row and freeze all new attempts."""
+        with self.store.connect() as c:
+            c.execute('BEGIN IMMEDIATE')
+            try:
+                old=self._admission(c,identity)
+                if old is None or old['descriptor_hash']!=descriptor_hash:raise ValueError('Admission identity mismatch')
+                self._completed_source(identity,old['descriptor'],source)
+                if old['state']!='ADMITTED':
+                    if old['prepared_source']!=source:raise ValueError('Prepared source changed')
+                else:
+                    if json.loads(source['result'])['calls']!=old['requests_used']:raise ValueError('Source must include every charged attempt')
+                    c.execute("UPDATE ownership_admissions SET state='PREPARED',prepared_source=?,prepared_used=?,completed_source_hash=? WHERE id=?",
+                              (canonical(source),old['requests_used'],digest(source),identity))
+                result=self._admission(c,identity);c.commit();return result
+            except BaseException:c.rollback();raise
+
+    def seal_source(self,identity,descriptor_hash,source_hash):
+        """Idempotently seal the prepared source; never rebind or reset usage."""
+        with self.store.connect() as c:
+            c.execute('BEGIN IMMEDIATE')
+            try:
+                old=self._admission(c,identity)
+                if (old is None or old['descriptor_hash']!=descriptor_hash or old['state']=='ADMITTED'
+                        or old['completed_source_hash']!=source_hash):raise ValueError('Exact prepared source required')
+                c.execute("UPDATE ownership_admissions SET state='SEALED' WHERE id=? AND state='PREPARED'",(identity,))
+                result=self._admission(c,identity);c.commit();return result
+            except BaseException:c.rollback();raise
+
     def budget(self,identity,source_hash,used,ceiling=18):
         if not isinstance(identity,str) or not identity or not isinstance(source_hash,str) or len(source_hash)!=64:
             raise ValueError('Immutable investigation identity required')
         if type(used) is not int or type(ceiling) is not int or not 0<=used<=ceiling<=18:raise ValueError('Invalid request budget')
         with self.store.connect() as c:
             c.execute('BEGIN IMMEDIATE')
-            old=c.execute('SELECT source_hash,ceiling FROM ownership_budgets WHERE id=?',(identity,)).fetchone()
-            if old and old!=(source_hash,ceiling):c.rollback();raise ValueError('Investigation identity changed')
-            c.execute('INSERT OR IGNORE INTO ownership_budgets VALUES(?,?,?,?)',(identity,source_hash,used,ceiling));c.commit()
+            try:
+                admission=self._admission(c,identity)
+                if admission:
+                    if (admission['state']!='SEALED' or admission['completed_source_hash']!=source_hash
+                            or admission['prepared_requests_used']!=used or admission['request_ceiling']!=ceiling):
+                        raise ValueError('Completed admission source is not sealed or does not match')
+                else:
+                    old=c.execute('SELECT source_hash,ceiling FROM ownership_budgets WHERE id=?',(identity,)).fetchone()
+                    if old and old!=(source_hash,ceiling):raise ValueError('Investigation identity changed')
+                    c.execute('INSERT OR IGNORE INTO ownership_budgets VALUES(?,?,?,?)',(identity,source_hash,used,ceiling))
+                c.commit()
+            except BaseException:c.rollback();raise
+
+    def _reservation_blocker(self,c,identity):
+        admission=self._admission(c,identity)
+        if admission and admission['state']=='PREPARED':return 'INVESTIGATION_SOURCE_PREPARED'
+        return None
+
     def reserve(self,budget):
-        """Commit an attempted snapshot request before invoking the provider."""
+        """Commit an attempted setup/bank request before invoking the provider."""
         with self.store.connect() as c:
             c.execute('BEGIN IMMEDIATE')
+            if self._reservation_blocker(c,budget):c.rollback();return False
             changed=c.execute('UPDATE ownership_budgets SET used=used+1 WHERE id=? AND used<ceiling',(budget,)).rowcount
             c.commit()
         return bool(changed)
@@ -76,7 +191,9 @@ class HistoryProgress:
                 if not accounts or len(accounts)>99 or len(accounts)!=len(set(accounts)):
                     return {'blocked':'SNAPSHOT_ACCOUNT_COVERAGE_UNSUPPORTED','attempted':False}
                 method='getMultipleAccounts';params=[[mint]+sorted(accounts),{'encoding':'base64','commitment':'finalized'}]
-            if not self.reserve(budget):return {'blocked':'INVESTIGATION_REQUEST_BUDGET_EXHAUSTED','attempted':False}
+            if not self.reserve(budget):
+                with self.store.connect() as c:blocked=self._reservation_blocker(c,budget)
+                return {'blocked':blocked or 'INVESTIGATION_REQUEST_BUDGET_EXHAUSTED','attempted':False}
             try:
                 result=rpc(method,params)
                 record={'method':method,'params':params,'result':result}
@@ -153,6 +270,8 @@ class HistoryProgress:
             with self.store.connect() as c:
                 c.execute('BEGIN IMMEDIATE')
                 budget=c.execute('SELECT budget FROM ownership_history WHERE id=?',(key,)).fetchone()[0]
+                blocked=self._reservation_blocker(c,budget)
+                if blocked:c.rollback();return {**before,'blocked':blocked}
                 if not c.execute('UPDATE ownership_budgets SET used=used+1 WHERE id=? AND used<ceiling',(budget,)).rowcount:
                     c.rollback();return {**before,'blocked':'INVESTIGATION_REQUEST_BUDGET_EXHAUSTED'}
                 c.execute("UPDATE ownership_history SET attempts=attempts+1,status='PENDING' WHERE id=?",(key,));c.commit()
