@@ -1202,5 +1202,29 @@
     "automatic_entry_enabled": false,
     "dashboard_active": true,
     "decision_and_monitor_exit_status": 0
+  },
+  "vps_stage_f52840b": {
+    "source": "f52840b7f29940e34e03c9157bf4bb4981b3de2f",
+    "status": "DEPLOYED_VERIFIED_RELEASE",
+    "archive_sha256": "b7fffc931c0cd76064a56f04e16f019612b7ff7bc87a83a5cdb0ff56cc6fdde2",
+    "ci": "Both exact release CI runs SUCCESS",
+    "provider_calls": 0,
+    "service_release": "f52840b",
+    "backup": "/var/backups/solana-desk/pre-integration-f52840b/daily-20261008T104840Z",
+    "copy_reassessed": 8,
+    "original_decisions_preserved": 8,
+    "original_evaluations_preserved": 28,
+    "source_hashes_unchanged": true,
+    "test_log": "/var/tmp/solana-desk-f52840b-tests.log",
+    "previous_service_release": "d8e37c8",
+    "tests": 1563,
+    "skips": 0,
+    "seconds": 148.675,
+    "listener": "127.0.0.1:8765",
+    "paper_status": "NOT_CONFIGURED",
+    "runner_status": "NOT_CONNECTED",
+    "automatic_entry_enabled": false,
+    "dashboard_active": true,
+    "decision_and_monitor_exit_status": 0
   }
 }
