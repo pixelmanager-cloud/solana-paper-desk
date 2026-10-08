@@ -326,3 +326,12 @@ Source checkpoint c61f088eff19c952e434df64a08a75215a3b5cd4 adds independently re
 
 
 Queue foundation PR31 at5a97f42 independently passed re-review after replacement identity/migration repairs. Integrated source a24c88dd238d887b94ada69c4bd5be6de4265ce6 passes878 combined tests,zero skips. Existing rows migrate only once, acquisition descriptors cannot be reclassified by ordinary replacement SQL, and canonical worker locks/fenced publication preserve active scans. This enables the acquisition executor implementation; it does not yet supply that executor or positive live evidence. Before VPS upgrade, stop old unfenced dashboard workers; no production deployment occurred.
+
+
+### Coordinator checkpoint: acquisition and historical display
+
+PR35 at `ab41ed0a9b56bc0a1a96a9c10630b57425465f5d` is in independent review by worker10. It labels persisted evaluations as historical and displays original observation age; it does not enable entry. Acquisition executor remains active with worker01 on the reviewed queue/budget foundations.
+
+A read-only check of 150 saved VPS launch notifications found 150 create_v2 launches and no legacy candidates. No provider requests were spent. This sample does not establish that supported legacy candidates do not exist; bounded live acceptance remains blocked pending a suitable candidate and reviewed acquisition path.
+
+PR10 now records a hosted scheduler last-run time of 2026-10-08T02:01:01.779530Z. This is reviewer-recorded evidence, not a direct desktop scheduler query; same-chat binding remains unverified.

@@ -195,14 +195,14 @@
     "live_verification": "BLOCKED_NO_SUPPORTED_BUDGET_FEASIBLE_PUBLIC_LEGACY_SEED; acquisition path in development",
     "blocker": "Acquisition executor, live legacy evidence, lifecycle semantic approval and exposure integration unfinished",
     "followups": {
-      "worker02": "Re-review PR31 latest5a97f42 rowid identity and one-time migration fix",
+      "worker02": "PR31 independent re-review PASS; available",
       "worker06": "PR34 integrated; available",
       "cloud_reviewer": "PR33 reviewed and integrated; available",
-      "worker10": "PR34 reviewed and integrated; available",
+      "worker10": "Independent review PR35 ab41ed0a9b56bc0a1a96a9c10630b57425465f5d assigned",
       "worker03": "Public legacy feasibility report c932cbf published/reviewed; idle",
       "worker04": "PR26 reviewed; available",
-      "worker05": "PR30 e1b22f0d7b55181a97f1eebe4338c0db0b700f70 published; independent repeated-concurrency review active",
-      "worker09": "Implement static decision UI original observation age and explicit historical scope; no backend changes",
+      "worker05": "PR30 reviewed and integrated; available",
+      "worker09": "PR35 published ab41ed0a9b56bc0a1a96a9c10630b57425465f5d; awaiting independent review",
       "worker01": "Implement birth-inclusive acquisition executor/CLI on reviewed queue and budget foundations; exact raw setup/pagination and prepare/seal/publish recovery",
       "worker07": "PR33 integrated; no runtime control lifecycle approval",
       "worker08": "PR31 reviewed and integrated; available"
@@ -226,7 +226,7 @@
     "candidate_combination": {
       "commit": "bfcc550ca25bd6cb79dc7ac3ad2b30c72f7b1033",
       "location": "local detached worktree work/cloud-controls",
-      "result": "PASS; includes PR31 latest5a97f42 pending independent review",
+      "result": "Historical scratch combination; use integration.tested_commit for current accepted source",
       "published": false,
       "prs": {
         "26": "aa4626fec148c244f841f0614abc4d18c52274dd",
@@ -237,8 +237,48 @@
         "32": "64765af62379fe4fbb185271c1d54405a527a0af",
         "34": "ae5a36bc0e8f6e6d33afea6292a64a2c6cc1e23e"
       },
-      "tests": 878
+      "tests": 878,
+      "status": "SUPERSEDED_BY_PUBLISHED_TESTED_COMMIT"
     },
-    "published_ci": "d0caa0f1262366ca541d052310d78fbfdc63722d successful"
+    "published_ci": "d0caa0f1262366ca541d052310d78fbfdc63722d successful",
+    "active_claims": [
+      {
+        "worker": "worker01",
+        "thread_id": "01a118fc-39bc-722c-b442-8bf5a749e0bb",
+        "host_id": "durable",
+        "task": "birth-inclusive acquisition executor/CLI",
+        "status": "IMPLEMENTING"
+      },
+      {
+        "worker": "worker10",
+        "thread_id": "01a118fd-56d5-70b8-ad31-dba13e982082",
+        "host_id": "durable",
+        "task": "independent historical UI review",
+        "pr": 35,
+        "head": "ab41ed0a9b56bc0a1a96a9c10630b57425465f5d",
+        "status": "REVIEWING"
+      }
+    ],
+    "saved_launch_probe": {
+      "source": "VPS saved raw launch events, read-only; no provider calls",
+      "sample_size": 150,
+      "create_v2": 150,
+      "legacy_candidates": 0,
+      "limitation": "Sample absence does not establish absence of supported legacy tokens elsewhere."
+    },
+    "cloud_review_schedule_observation": {
+      "source": "PR10 state at9f46b445ed128bcc438fca991305bf4273dbc121",
+      "reported_last_run": "2026-10-08T02:01:01.779530+00:00",
+      "limitation": "Reviewer-recorded execution evidence; desktop has not independently queried hosted scheduler; same-chat binding unverified."
+    },
+    "pending_ui_candidate": {
+      "pr": 35,
+      "head": "ab41ed0a9b56bc0a1a96a9c10630b57425465f5d",
+      "combined_tests": 886,
+      "elapsed_seconds": 23.218,
+      "result": "PASS",
+      "independent_review": "PENDING",
+      "integrated": false
+    }
   }
 }
