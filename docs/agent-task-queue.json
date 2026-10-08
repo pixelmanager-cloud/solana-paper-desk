@@ -189,14 +189,14 @@
   ],
   "integration": {
     "branch": "integration/cloud-wave1",
-    "tested_commit": "1fb90010d668784c7cff81f515e32d1c529bbc9b",
-    "combined_tests": 1096,
+    "tested_commit": "842bb43f13f36bec2b382348d5d6894949759e98",
+    "combined_tests": 1170,
     "result": "PASS",
     "live_verification": "BLOCKED_NO_SUPPORTED_BUDGET_FEASIBLE_PUBLIC_LEGACY_SEED; acquisition path in development",
     "blocker": "Live legacy evidence,protected pool receipt capture,lifecycle semantic approval and holder exposure integration unfinished",
     "followups": {
       "worker02": "PR40 review interrupted by automated cybersecurity-risk flag; no final acceptance",
-      "worker06": "PR48 review and combined45/46/47/48 Linux validation",
+      "worker06": "PR48 and combinedreview complete;available",
       "cloud_reviewer": "PR46 scopedreview passed;available",
       "worker10": "PR45 independent review complete;available",
       "worker03": "Bounded newerlegacysearch found no matching authoritative event;available",
@@ -234,7 +234,8 @@
       "PR40": "37441927f38f0b884d61fc2e1e563b6aa50a4355 independent scheduled review5451192398 and combinedLinux1075 PASS; original worker02 run remains incomplete",
       "PR46": "5e47e972a53623c75e8ae7d485812ff1f6973a8f independent scopedPASS; combinedLinux1089zero skips and399status paths; final four-PR combination pending",
       "PR47": "9e73e6c5a10cfae5fd3c25c02eb71b2bd4deb12b independent scopedPASS; combinedLinux1091zero skips and102focused/probe tests; final combination pending",
-      "PR45": "ad09535f8db8c736e8295e2df1988e0b79de12af scopedPASS; Linux1096zero skips;3832probes; combinedtreecbc8f932f3fbf4de957a8d85086f2f8ec23c76ce"
+      "PR45": "ad09535f8db8c736e8295e2df1988e0b79de12af scopedPASS; Linux1096zero skips;3832probes; combinedtreecbc8f932f3fbf4de957a8d85086f2f8ec23c76ce",
+      "PR48": "3ffe18674a2162257e5fd641f1fafb92e5ef40c4 scopedPASS;6013 independentbyteprobes; exactLinux1082 andcombined1170zero skips"
     },
     "candidate_combination": {
       "commit": "bfcc550ca25bd6cb79dc7ac3ad2b30c72f7b1033",
@@ -255,15 +256,6 @@
     },
     "published_ci": "6267c94a3a861bebe1da10496032123ae8dbb125 successful",
     "active_claims": [
-      {
-        "worker": "worker06",
-        "thread_id": "01a118fc-f867-7233-8eec-c20659e70095",
-        "host_id": "durable",
-        "task": "Independent PR48 raw state review plus four-PR combined Linux verification",
-        "status": "REVIEWING",
-        "pr": 48,
-        "head": "3ffe18674a2162257e5fd641f1fafb92e5ef40c4"
-      },
       {
         "worker": "worker07",
         "thread_id": "01a118fd-0f1c-749c-b85b-5e730937d0a8",
@@ -325,7 +317,7 @@
       "result": "Linux combined975 PASS zero skips; reviewed",
       "integrated": true
     },
-    "test_platform_note": "Accepted source Linux1096 zero skips;Mac1026passed+70Linuxskips",
+    "test_platform_note": "Independent combinedLinux1170 zero skips; identical implementation/test tree desktop1097passed+73Linuxskips",
     "pending_reference_combination": {
       "commit": "8aa5938aeef5e96f22a54f80ff698d043f3a154d",
       "pr": 39,
@@ -411,11 +403,23 @@
         "48": "3ffe18674a2162257e5fd641f1fafb92e5ef40c4"
       },
       "scratch_commit": "68583298f6a6d22c65561c092f4820892aab2aeb",
-      "review": "Four separate independent reviews in progress",
-      "integrated": false,
+      "review": "All four exact-head independent reviews PASS;Linux1170zero skips",
+      "integrated": true,
       "mac_discovered": 1170,
       "mac_passed": 1097,
-      "mac_skipped": 73
+      "mac_skipped": 73,
+      "reviewed_tree": "5cfb4a9294252a37928a6b76b7333b1ff2ddcdd8"
+    },
+    "saved_mint_decoder_check": {
+      "evidence_hash": "4eb613e6f35230d79cde49eca6ce865a53882609f439de510cf77e5d8c67943d",
+      "bytes": 431,
+      "commitment": "confirmed",
+      "slot": 454381661,
+      "decoding_complete": true,
+      "structural_profile_match": true,
+      "lifecycle_verified": false,
+      "eligible": false,
+      "provider_calls": 0
     }
   }
 }
