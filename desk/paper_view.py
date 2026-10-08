@@ -5,6 +5,7 @@ import time
 from contextlib import closing
 from pathlib import Path
 from .model import decimal as dec,ZERO
+from .paper_checkpoint import read_checkpoint,RecoveryRequired
 
 
 def paper_status(path,*,now=None):
@@ -19,9 +20,9 @@ def paper_status(path,*,now=None):
     try:
         with closing(sqlite3.connect(path.resolve().as_uri()+'?mode=ro',uri=True,timeout=2)) as c:
             c.execute('PRAGMA query_only=ON');c.execute('BEGIN')
-            row=c.execute('SELECT payload FROM state WHERE id=1').fetchone()
-            if not row:return {**result,'status':'EMPTY_LEDGER'}
-            state=json.loads(row[0]);metadata=dict(c.execute("SELECT key,value FROM metadata WHERE key IN ('config','config_hash','implementation_hash')"))
+            state=read_checkpoint(c)
+            if state is None:return {**result,'status':'EMPTY_LEDGER'}
+            metadata=dict(c.execute("SELECT key,value FROM metadata WHERE key IN ('config','config_hash','implementation_hash')"))
             cfg=json.loads(metadata['config']);ttl=cfg['price_ttl_seconds']
             if type(ttl) is not int or ttl<=0:raise ValueError('Invalid price TTL')
             cash=dec(state['cash']);realized=dec(state['realized_pnl']);positions=[];marks=ZERO;all_fresh=True
@@ -46,5 +47,8 @@ def paper_status(path,*,now=None):
                 estimated_equity_sol=str(cash+marks) if all_fresh else None,
                 valuation_status='MODEL_ESTIMATE' if all_fresh else 'STALE_OR_EXIT_UNVERIFIED')
             return result
+    except RecoveryRequired as exc:
+        return {**result,'status':'RECOVERY_REQUIRED','recovery_reason':str(exc),
+            'notice':'Paper ledger is incomplete or corrupt. Recovery is required; original records are preserved. No balances, positions or outcomes can be confirmed.'}
     except (sqlite3.Error,ValueError,KeyError,TypeError,OverflowError):
         return {**result,'status':'LEDGER_UNAVAILABLE','notice':'Paper ledger could not be verified. No balances or outcomes are shown; inspect the local service and saved database.'}
