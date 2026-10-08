@@ -269,7 +269,8 @@
         "base": "5d7e7ac7474cf3c215a07d2906d01afbfbf00656",
         "status": "REVIEWING",
         "pr": 82,
-        "head": "2859e55a77a3f6122ef23d6cf3f60a60914331a4"
+        "head": "2859e55a77a3f6122ef23d6cf3f60a60914331a4",
+        "wait_cursor": "8f3328cf-bef6-441d-83f8-2d1f46b3b0df:39"
       }
     ],
     "saved_launch_probe": {
@@ -628,7 +629,13 @@
       "integrated": false,
       "author_linux_tests": 1586,
       "author_skips": 0,
-      "scope": "Design and fixture proof only; production unchanged; atomic journal/versioned readers and mixed-profile receipts unimplemented"
+      "scope": "Design and fixture proof only; production unchanged; atomic journal/versioned readers and mixed-profile receipts unimplemented",
+      "mac_discovered": 1586,
+      "mac_passed": 1440,
+      "mac_skipped": 146,
+      "mac_seconds": 32.786,
+      "combined_tree": "223b60be7b3c3b38248b24851bc94fe141e92340",
+      "ci": "Both exact-head checks PASS"
     }
   },
   "native_reconciliation_review": {
