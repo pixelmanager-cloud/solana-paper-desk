@@ -101,6 +101,78 @@ class CommonBankView:
                 'eligible_for_trading':False,'decision':'REJECT'}
 
 
+def _validate_account_semantics(mint, inventory, bounds, floor, declared_keys,
+                                declared_frontier, declared_roles, bank_params,
+                                bank_result, clock_params, at):
+    """Shared pure raw-account checks; no RPC records, manifests or trust issued.
+
+    Internal callers bind parsed fields to their own guarded original persistence.
+    V1 manifest and journal readers retain separate framing/provenance contracts.
+    """
+    mint=address(mint); _need(mint!=SOL,'COMMON_BANK_MINT_UNSUPPORTED')
+    _need(_integer(floor),'COMMON_BANK_FLOOR_INVALID')
+    _need(type(bounds) is dict and set(bounds)=={'gte','lt'} and type(bounds['gte']) is int
+          and bounds['gte']==0 and type(bounds['lt']) is int and 0<bounds['lt']<=floor+1,
+          'COMMON_BANK_DISCOVERY_RANGE_INVALID')
+    _need(inventory['initialization_inventory_verified'],'COMMON_BANK_DISCOVERY_UNVERIFIED')
+    frontier=[r['address'] for r in inventory['accounts']]
+    _need(frontier and len(frontier)<=99 and mint not in frontier,'COMMON_BANK_FRONTIER_INVALID')
+    owners={}
+    for row in inventory['accounts']:
+        initial=row['initializations']
+        _need(initial and all(r['program']==TOKEN_PROGRAM for r in initial),'COMMON_BANK_TOKEN_PROGRAM_UNSUPPORTED')
+        declared={address(r['owner_at_initialization']) for r in initial}
+        _need(len(declared)==1,'COMMON_BANK_HOLDER_AUTHORITY_AMBIGUOUS')
+        owners[row['address']]=next(iter(declared))
+    pool=canonical_accounts(mint)
+    _need(len(set(pool))==6 and pool[4] in frontier,'COMMON_BANK_BASE_VAULT_NOT_DISCOVERED')
+    keys=pool+sorted(set(frontier)-set(pool))
+    ownership=[keys.index(mint)]+[keys.index(k) for k in sorted(frontier)]
+    _need(len(keys)<=100,'COMMON_BANK_ACCOUNT_CEILING')
+    _need(type(declared_keys) is list and declared_keys==keys and type(declared_frontier) is list
+          and declared_frontier==sorted(frontier),'COMMON_BANK_FRONTIER_OR_ORDER_MISMATCH')
+    for field,expected in (('ownership_indices',ownership),('pool_indices',list(range(6)))):
+        _need(type(declared_roles[field]) is list and all(type(i) is int for i in declared_roles[field]) and declared_roles[field]==expected,
+              'COMMON_BANK_ROLE_INDICES_INVALID')
+    _need(type(bank_params) is list and canonical(bank_params)==canonical(
+          [keys,{'encoding':'base64','commitment':'finalized','minContextSlot':floor}]),
+          'COMMON_BANK_RPC_BINDING_INVALID')
+    result=bank_result
+    _need(type(result) is dict and type(result.get('context')) is dict
+          and _integer(result['context'].get('slot')),'COMMON_BANK_CONTEXT_INVALID')
+    at_slot=result['context']['slot']; values=result.get('value')
+    _need(at_slot>=floor and type(values) is list and len(values)==len(keys),'COMMON_BANK_ATOMIC_RESPONSE_INVALID')
+    _need(type(clock_params) is list and canonical(clock_params)==canonical([at_slot]),
+          'COMMON_BANK_RPC_BINDING_INVALID')
+    _need(_integer(at),'COMMON_BANK_CLOCK_INVALID')
+    _raw_account(values[0],PUMPSWAP,(243,287,300,301)); fields=parse_pool(values[0])
+    from solders.pubkey import Pubkey
+    creator,_=Pubkey.find_program_address([b'pool-authority',bytes(Pubkey.from_string(mint))],Pubkey.from_string(PUMP))
+    _,bump=Pubkey.find_program_address([b'pool',bytes(2),bytes(creator),bytes(Pubkey.from_string(mint)),bytes(Pubkey.from_string(SOL))],Pubkey.from_string(PUMPSWAP))
+    _need(fields['unknown_trailing_bytes']==0 and fields['pool_bump']==bump
+          and fields['index']==0 and fields['creator']==str(creator)
+          and [fields[k] for k in ('base_mint','quote_mint','lp_mint','pool_base_token_account','pool_quote_token_account')]==pool[1:],
+          'COMMON_BANK_POOL_IDENTITY_INVALID')
+    _need(not any(fields[k] for k in ('is_mayhem_mode','is_cashback_coin','is_holder_reward','can_edit_creator_fee')),
+          'COMMON_BANK_POOL_PROFILE_UNSUPPORTED')
+    supply=_mint(values[1]);_need(supply>0,'COMMON_BANK_MINT_SUPPLY_INVALID')
+    _mint(values[2],native=True);_mint(values[3],lp_authority=pool[0])
+    amount=_vault(values[4],mint,pool[0],native=False);_vault(values[5],SOL,pool[0],native=True)
+    _need(amount<=supply,'COMMON_BANK_VAULT_SUPPLY_INVALID')
+    for key in frontier:
+        value=values[keys.index(key)]
+        if value is None:continue  # Absence is not zero balance or proven closure.
+        raw=_raw_account(value,TOKEN_PROGRAM,(165,))
+        _need(int.from_bytes(raw[109:113],'little')==0,'COMMON_BANK_HOLDER_NATIVE_UNSUPPORTED')
+        checked=holding_policy(value,mint,owners[key])
+        _need(checked['decision']=='PASS_HOLDING_POLICY','COMMON_BANK_HOLDER_BINDING_INVALID')
+    return {'keys':keys,'frontier':sorted(frontier),'ownership_indices':ownership,
+            'pool_indices':list(range(6)),'slot':at_slot,'request_floor':floor,
+            'block_time':at,'discovery_cutoff':bounds['lt']-1,
+            'holder_states':{key:'ABSENT_AT_BANK_UNVERIFIED_LIFETIME' if values[keys.index(key)] is None
+                             else 'OBSERVED_LEGACY_ACCOUNT' for key in sorted(frontier)}}
+
+
 def validate_common_bank(manifest_hash, view):
     """Validate stored manifest/raw discovery and one original atomic parent.
 
@@ -128,57 +200,18 @@ def validate_common_bank(manifest_hash, view):
               'COMMON_BANK_DISCOVERY_RANGE_INVALID')
         observations,rebuilt=replay_history(coverage,view)
         inventory=account_inventory(mint,observations,rebuilt)
-        _need(inventory['initialization_inventory_verified'],'COMMON_BANK_DISCOVERY_UNVERIFIED')
-        frontier=[r['address'] for r in inventory['accounts']]
-        _need(frontier and len(frontier)<=99 and mint not in frontier,'COMMON_BANK_FRONTIER_INVALID')
-        owners={}
-        for row in inventory['accounts']:
-            initial=row['initializations']
-            _need(initial and all(r['program']==TOKEN_PROGRAM for r in initial),'COMMON_BANK_TOKEN_PROGRAM_UNSUPPORTED')
-            declared={address(r['owner_at_initialization']) for r in initial}
-            _need(len(declared)==1,'COMMON_BANK_HOLDER_AUTHORITY_AMBIGUOUS')
-            owners[row['address']]=next(iter(declared))
-        pool=canonical_accounts(mint)
-        _need(len(set(pool))==6 and pool[4] in frontier,'COMMON_BANK_BASE_VAULT_NOT_DISCOVERED')
-        keys=pool+sorted(set(frontier)-set(pool))
-        ownership=[keys.index(mint)]+[keys.index(k) for k in sorted(frontier)]
-        _need(len(keys)<=100,'COMMON_BANK_ACCOUNT_CEILING')
-        _need(type(m['keys']) is list and m['keys']==keys and type(m['frontier']) is list
-              and m['frontier']==sorted(frontier),'COMMON_BANK_FRONTIER_OR_ORDER_MISMATCH')
-        for field,expected in (('ownership_indices',ownership),('pool_indices',list(range(6)))):
-            _need(type(m[field]) is list and all(type(i) is int for i in m[field]) and m[field]==expected,
-                  'COMMON_BANK_ROLE_INDICES_INVALID')
-        params=[keys,{'encoding':'base64','commitment':'finalized','minContextSlot':floor}]
+        params=[m['keys'],{'encoding':'base64','commitment':'finalized','minContextSlot':floor}]
         bank=_load(view,m['bank_response_hash']); result=_rpc(bank,'getMultipleAccounts',params)
         _request(_load(view,m['bank_request_hash']),'getMultipleAccounts',params,m['bank_response_hash'])
         _need(type(result) is dict and type(result.get('context')) is dict
               and _integer(result['context'].get('slot')),'COMMON_BANK_CONTEXT_INVALID')
-        at_slot=result['context']['slot']; values=result.get('value')
-        _need(at_slot>=floor and type(values) is list and len(values)==len(keys),'COMMON_BANK_ATOMIC_RESPONSE_INVALID')
+        at_slot=result['context']['slot']
         clock=_load(view,m['clock_response_hash']); at=_rpc(clock,'getBlockTime',[at_slot])
-        _need(_integer(at),'COMMON_BANK_CLOCK_INVALID')
         _request(_load(view,m['clock_request_hash']),'getBlockTime',[at_slot],m['clock_response_hash'])
-        _raw_account(values[0],PUMPSWAP,(243,287,300,301)); fields=parse_pool(values[0])
-        from solders.pubkey import Pubkey
-        creator,_=Pubkey.find_program_address([b'pool-authority',bytes(Pubkey.from_string(mint))],Pubkey.from_string(PUMP))
-        _,bump=Pubkey.find_program_address([b'pool',bytes(2),bytes(creator),bytes(Pubkey.from_string(mint)),bytes(Pubkey.from_string(SOL))],Pubkey.from_string(PUMPSWAP))
-        _need(fields['unknown_trailing_bytes']==0 and fields['pool_bump']==bump
-              and fields['index']==0 and fields['creator']==str(creator)
-              and [fields[k] for k in ('base_mint','quote_mint','lp_mint','pool_base_token_account','pool_quote_token_account')]==pool[1:],
-              'COMMON_BANK_POOL_IDENTITY_INVALID')
-        _need(not any(fields[k] for k in ('is_mayhem_mode','is_cashback_coin','is_holder_reward','can_edit_creator_fee')),
-              'COMMON_BANK_POOL_PROFILE_UNSUPPORTED')
-        supply=_mint(values[1]);_need(supply>0,'COMMON_BANK_MINT_SUPPLY_INVALID')
-        _mint(values[2],native=True);_mint(values[3],lp_authority=pool[0])
-        amount=_vault(values[4],mint,pool[0],native=False);_vault(values[5],SOL,pool[0],native=True)
-        _need(amount<=supply,'COMMON_BANK_VAULT_SUPPLY_INVALID')
-        for key in frontier:
-            value=values[keys.index(key)]
-            if value is None:continue  # Absence is not zero balance or proven closure.
-            raw=_raw_account(value,TOKEN_PROGRAM,(165,))
-            _need(int.from_bytes(raw[109:113],'little')==0,'COMMON_BANK_HOLDER_NATIVE_UNSUPPORTED')
-            checked=holding_policy(value,mint,owners[key])
-            _need(checked['decision']=='PASS_HOLDING_POLICY','COMMON_BANK_HOLDER_BINDING_INVALID')
+        semantics=_validate_account_semantics(mint,inventory,coverage.get('slot_range'),floor,
+                    m['keys'],m['frontier'],m,bank['params'],result,clock['params'],at)
+        keys=semantics['keys'];frontier=semantics['frontier'];ownership=semantics['ownership_indices']
+        bounds=coverage['slot_range']
         return CommonBankView(manifest_hash,m['bank_response_hash'],canonical(bank),tuple(keys),tuple(sorted(frontier)),
                               tuple(ownership),tuple(range(6)),at_slot,floor,at,bounds['lt']-1,tuple(sorted(view.requested)))
     except CommonBankError:
