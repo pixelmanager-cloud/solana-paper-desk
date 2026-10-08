@@ -285,6 +285,14 @@
         "base": "1a9f69595bf4c8c8814654a093fbba1bde93d5ad",
         "wait_cursor": "8f3328cf-bef6-441d-83f8-2d1f46b3b0df:71",
         "turn_id": "01a11c45-08ec-7189-8553-0b1fb969545f"
+      },
+      {
+        "id": "OWN1-COHESIVE-INTEGRATION-SCOPE",
+        "worker": "03",
+        "thread_id": "01a118fc-9478-778a-b77a-8f8f6ec7e0ad",
+        "host_id": "durable",
+        "status": "IN_PROGRESS",
+        "scope": "Concrete cohesive fresh-admission through original cutoff/discovery/sealing/commonbank patch plan; no source modifications or dependency bypass"
       }
     ],
     "saved_launch_probe": {
