@@ -548,7 +548,19 @@
       "response_hash": "2b49cd4c6fe24a121cb59894c8a6fe0e82e4cf51db28e88151612984ccc9a0c7",
       "replay_rpc": 0,
       "lifecycle_verified": false,
-      "eligible": false
+      "eligible": false,
+      "later_mint_shape_check": {
+        "record_hash": "d54750a5501863fb6e967467fa69b16a13761b2466129b802597101d7e4be98d",
+        "commitment": "confirmed",
+        "slot": 454452430,
+        "supply": 968605695259037,
+        "decimals": 6,
+        "decoding_complete": true,
+        "structural_profile_match": false,
+        "reason": "MINT_SUPPLY_OR_DECIMALS_PROFILE_MISMATCH",
+        "extra_provider_calls": 0,
+        "limitation": "Later state cannot substitute for launch endpoints; cause of supply change unverified"
+      }
     }
   }
 }
