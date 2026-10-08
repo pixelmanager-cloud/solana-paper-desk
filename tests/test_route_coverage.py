@@ -16,10 +16,10 @@ class RouteCoverageTests(unittest.TestCase):
         self.checks['router']['checked_instruction']={**instruction_receipt(self.rows[0]),'instruction':None}
     def check(self):return check_route_coverage({'stack_metadata_verified':True,'instructions':self.rows},self.checks)
     def test_component_coverage_never_implies_full_approval(self):
-        r=self.check();self.assertTrue(r['coverage_passed']);self.assertFalse(r['transaction_policy_ok'])
+        r=self.check();self.assertFalse(r['coverage_passed']);self.assertIn('ROUTE_OUTER_MESSAGE_PRIVILEGES_UNAVAILABLE_OR_CONTRADICTORY',r['reasons']);self.assertFalse(r['transaction_policy_ok'])
     def test_unknown_inner_router_instruction_is_not_hidden_by_outer_approval(self):
         self.rows.append({'instruction':'1.2','program':JUPITER,'stack_height':2,'data_base64':'','reasons':[]})
-        self.assertFalse(self.check()['coverage_passed']);self.assertEqual(self.check()['uncovered'][0]['instruction'],'1.2')
+        self.assertFalse(self.check()['coverage_passed']);self.assertIn({'instruction':'1.2','program':JUPITER},self.check()['uncovered'])
     def test_fee_program_requires_specific_query_check(self):
         self.checks['fee_query']['passed']=False;self.assertFalse(self.check()['coverage_passed'])
     def test_duplicate_paths_and_remaining_inventory_flags_fail(self):

@@ -52,7 +52,7 @@ def parsed_instruction(program,parsed):
     raise ValueError('Unsupported parsed instruction')
 
 
-def inventory(outer,value,keys,wallet):
+def inventory(outer,value,keys,wallet,*,compiled=None):
     reasons=[];rows=[];contexts={};program_at={}
     if not isinstance(outer,list) or not 1<=len(outer)<=64:raise ValueError('Invalid outer instruction count')
     if len(keys)!=len(set(keys)):raise ValueError('Duplicate transaction keys')
@@ -62,7 +62,8 @@ def inventory(outer,value,keys,wallet):
     for index,ix in enumerate(outer):
         program=address(ix['programId']);accounts=[address(a['pubkey']) for a in ix['accounts']]
         if program not in keys or any(a not in keys for a in accounts):raise ValueError('Outer instruction key missing')
-        path=str(index);contexts[path]={'stack_height':1,'parent_instruction':None,'parent_program':None};program_at[path]=program
+        path=str(index);contexts[path]={'stack_height':1,'parent_instruction':None,'parent_program':None,
+            'requested_account_metas':[{k:a.get(k) for k in ('pubkey','isSigner','isWritable')} for a in ix['accounts']], 'declared_account_privileges':None};program_at[path]=program
         rows.append((path,program,base64.b64decode(ix['data'],validate=True),accounts))
     groups=value.get('innerInstructions')
     if not isinstance(groups,list):reasons.append('INNER_INSTRUCTIONS_UNAVAILABLE');groups=[]
@@ -84,7 +85,8 @@ def inventory(outer,value,keys,wallet):
             else:
                 parent_path=stack[height-1]
                 stack={level:value for level,value in stack.items() if level<height};stack[height]=path
-            contexts[path]={'stack_height':height,'parent_instruction':parent_path,'parent_program':program_at.get(parent_path)}
+            contexts[path]={'stack_height':height,'parent_instruction':parent_path,'parent_program':program_at.get(parent_path),
+                            'requested_account_metas':None,'declared_account_privileges':None}
             if 'programIdIndex' in ix:
                 program=resolve(ix['programIdIndex']);accounts=[resolve(i) for i in ix['accounts']]
                 data=unbase58(ix['data'])
@@ -102,6 +104,23 @@ def inventory(outer,value,keys,wallet):
                 reasons.append('UNSUPPORTED_INNER_INSTRUCTION_ENCODING');continue
             program_at[path]=program
             rows.append((path,program,data,accounts))
+    privilege_reasons=[];declarations=None;witness=None;loaded_status='UNAVAILABLE'
+    if compiled is None:privilege_reasons.append('OUTER_MESSAGE_PRIVILEGES_UNAVAILABLE')
+    else:
+        try:
+            from .compile import declared_message_privileges
+            declarations=declared_message_privileges(compiled['raw'],compiled.get('lookup_snapshot'),outer,keys,wallet)
+            if 'loadedAddresses' in value:
+                if value['loadedAddresses']!=declarations['loaded_addresses']:
+                    raise ValueError('Simulation loaded membership/order contradicts message')
+                loaded_status='MATCHED_UNAUTHENTICATED'
+            from copy import deepcopy
+            witness={'unsigned_transaction':base64.b64encode(compiled['raw']).decode(),
+                     'lookup_snapshot':deepcopy(compiled.get('lookup_snapshot')),'wallet':wallet}
+            for item in declarations['outer']:
+                contexts[item['instruction']]['declared_account_privileges']=item['account_privileges']
+        except (ValueError,KeyError,TypeError,IndexError):
+            declarations=None;witness=None;privilege_reasons.append('OUTER_MESSAGE_PRIVILEGES_CONTRADICTORY_OR_INVALID')
     summary=[]
     for path,program,data,accounts in rows:
         operation='opaque';flags=[]
@@ -134,4 +153,7 @@ def inventory(outer,value,keys,wallet):
         summary.append({**contexts[path],'instruction':path,'program':program,'operation':operation,'accounts':accounts,'data_base64':base64.b64encode(data).decode(),'reasons':flags})
     return {'stack_metadata_verified':not any(r.startswith('INSTRUCTION_STACK_') for r in reasons),'inventory_checks_passed':not reasons,'full_route_policy_passed':False,
             'reasons':sorted(set(reasons)),'programs':sorted({r[1] for r in rows}),'instructions':summary,
+            'outer_message_privileges':declarations,'outer_privilege_evidence':witness,
+            'transaction_keys':list(keys),'outer_privilege_reasons':privilege_reasons,'simulation_loaded_addresses_status':loaded_status,
+            'runtime_cpi_privileges_authenticated':False,'source_authenticated':False,'finality_authenticated':False,
             'notice':'Program IDs and basic token/system operations inspected. Router arguments, route account bindings and recipient/rent policy still require validation; never a trading approval.'}

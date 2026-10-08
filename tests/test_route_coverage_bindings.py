@@ -17,7 +17,7 @@ class ExactRouteCoverageTests(unittest.TestCase):
     def checks(self):
         checks={k:{'passed':True} for k in REQUIRED}
         for k in ROW_CHECKS:checks[k]['checked_instructions']=[]
-        checks['router']['checked_instruction']={**dict.fromkeys(('instruction','program','data_base64','accounts','stack_height','parent_instruction','parent_program')), 'instruction':None}
+        checks['router']['checked_instruction']={**dict.fromkeys(('instruction','program','data_base64','accounts','stack_height','parent_instruction','parent_program','requested_account_metas')), 'instruction':None}
         return checks
     def coverage(self,rows,checks):
         result=check_route_coverage({'stack_metadata_verified':True,'instructions':rows},checks)
@@ -82,14 +82,15 @@ class ExactRouteCoverageTests(unittest.TestCase):
         checks=self.checks();checks['router']=fixture.check()
         checks['envelope']=check_sell_envelope(outer,fixture.p['wallet'])
         rows=[outer_receipt(ix,i) for i,ix in enumerate(outer)]
-        self.assertTrue(self.coverage(rows,checks)['coverage_passed'])
+        self.assertFalse(self.coverage(rows,checks)['coverage_passed'])
+        self.assertIn('ROUTE_OUTER_MESSAGE_PRIVILEGES_UNAVAILABLE_OR_CONTRADICTORY',self.coverage(rows,checks)['reasons'])
         swap=next(r for r in rows if r['program']==JUPITER)
         result=self.coverage(rows+[{**swap,'instruction':'99'}],checks)
         self.assertFalse(result['coverage_passed'])
         self.assertIn({'instruction':swap['instruction'],'program':JUPITER},result['uncovered'])
         compute=next(r for r in rows if r['program']==COMPUTE)
         result=self.coverage(rows+[{**compute,'instruction':'99'}],checks)
-        self.assertEqual(result['uncovered'],[{'instruction':'99','program':COMPUTE}])
+        self.assertIn({'instruction':'99','program':COMPUTE},result['uncovered'])
         changed=copy.deepcopy(rows);next(r for r in changed if r['program']==JUPITER)['data_base64']='AA=='
         self.assertFalse(self.coverage(changed,checks)['coverage_passed'])
     def test_blanket_passed_flags_or_partial_and_duplicate_receipts_cannot_cover(self):

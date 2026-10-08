@@ -74,10 +74,13 @@ class SimulationTests(unittest.TestCase):
         from desk.replay_sell import replay_sell
         with tempfile.TemporaryDirectory() as d:
             store=EvidenceStore(Path(d)/'evidence.sqlite');live=simulate_sell(self.mint,self.wallet,self.holding,10,self.rpc,self.quote,capture=store.save)
-            calls=len(self.calls);replay=replay_sell(store,live['evidence_hash']);self.assertEqual(len(self.calls),calls)
+            original=store.load(live['evidence_hash']);calls=len(self.calls);replay=replay_sell(store,live['evidence_hash']);self.assertEqual(len(self.calls),calls)
             for name in ('balance_effects','account_controls','instruction_inventory','wallet_debit_checks','router_checks','envelope_checks','amm_bindings','recipient_checks','fee_checks','fee_query','sell_event_checks','fee_split_checks','setup_checks','route_coverage'):
                 self.assertEqual(live[name],replay[name])
             self.assertFalse(replay['fresh']);self.assertFalse(replay['eligible_for_trading'])
+            self.assertTrue(replay['instruction_inventory']['outer_message_privileges']['declarations_consistent'])
+            self.assertFalse(replay['instruction_inventory']['runtime_cpi_privileges_authenticated'])
+            self.assertEqual(store.load(live['evidence_hash']),original)
     def test_replay_rejects_altered_route_keys_and_missing_pool_evidence(self):
         import tempfile,copy
         from pathlib import Path
