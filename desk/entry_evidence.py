@@ -1,12 +1,51 @@
 """Entry gates reconstructed from saved provider responses; summaries cannot approve."""
 from collections import defaultdict
 import zlib
-from .model import digest, decimal
+from .model import canonical, digest, decimal
 from .security import account_bytes, base58, mint_policy
 from .holders import verify_holder_snapshot
 from .pools import verify_pool
 
-POLICY = 'persisted-entry-evidence-v4'
+POLICY = 'persisted-entry-evidence-v5'
+
+
+def _validate_continuation_source(scan, report, budget, admission):
+    """Validate captured admission rows without opening a writer or creating schema."""
+    import json
+    from .programs import address
+    source = dict(scan)
+    if admission is None:
+        # Historical budgets bind the completed source directly. A missing seal
+        # cannot upgrade a descriptor-bound budget into this legacy path.
+        if budget[0] != digest(source):
+            raise ValueError('Legacy continuation source mismatch')
+        return
+    descriptor_json, state, prepared_json, prepared_used, completed_hash = admission
+    if state != 'SEALED' or not isinstance(descriptor_json, str) or not isinstance(prepared_json, str):
+        raise ValueError('Sealed admission required')
+    descriptor = json.loads(descriptor_json)
+    if (not isinstance(descriptor, dict) or set(descriptor) != {'kind', 'scan_id', 'mint', 'created'}
+            or descriptor['kind'] != 'ownership_admission_v1'
+            or descriptor['scan_id'] != scan['id'] or descriptor['mint'] != scan['mint']
+            or type(descriptor['created']) is not int or descriptor['created'] < 0
+            or descriptor['created'] != scan['created']
+            or canonical(descriptor) != descriptor_json or digest(descriptor) != budget[0]):
+        raise ValueError('Admission descriptor mismatch')
+    address(descriptor['mint'])
+    prepared = json.loads(prepared_json)
+    if (not isinstance(prepared, dict) or set(prepared) != {'id', 'mint', 'created', 'status', 'result'}
+            or prepared != source or canonical(prepared) != prepared_json
+            or digest(prepared) != completed_hash
+            or type(prepared['created']) is not int or prepared['status'] != 'COMPLETE'
+            or not isinstance(prepared['result'], str)
+            or len(prepared['result'].encode()) > 2 * 1024 * 1024):
+        raise ValueError('Sealed completed source mismatch')
+    sealed_report = json.loads(prepared['result'])
+    if (not isinstance(sealed_report, dict) or sealed_report != report
+            or sealed_report.get('eligible_for_trading') is not False
+            or type(prepared_used) is not int or prepared_used != report['calls']
+            or not 0 <= prepared_used <= budget[1] <= budget[2] == 18):
+        raise ValueError('Sealed source report or shared accounting mismatch')
 
 
 def continuation_snapshot(scan, report, store, progress=None):
@@ -44,6 +83,7 @@ def continuation_snapshot(scan, report, store, progress=None):
             if not {'ownership_budgets', 'ownership_banks', 'ownership_history'} <= tables:
                 raise ValueError('Continuation accounting missing')
             budget = c.execute('SELECT source_hash,used,ceiling FROM ownership_budgets WHERE id=?', (scan['id'],)).fetchone()
+            admission = c.execute('SELECT descriptor,state,prepared_source,prepared_used,completed_source_hash FROM ownership_admissions WHERE id=?', (scan['id'],)).fetchone() if 'ownership_admissions' in tables else None
             bank = c.execute('SELECT snapshot_hash,clock_hash FROM ownership_banks WHERE budget=?', (scan['id'],)).fetchone()
             jobs = c.execute('SELECT id,query,coverage,attempts FROM ownership_history WHERE budget=?', (scan['id'],)).fetchall()
         source_hash = digest(dict(scan))
@@ -51,9 +91,10 @@ def continuation_snapshot(scan, report, store, progress=None):
         calls = report.get('calls')
         if (scan['status'] != 'COMPLETE' or report['mint'] != scan['mint']
                 or claimed != digest(summary) or type(calls) is not int or not 0 <= calls <= 18
-                or not budget or budget[0] != source_hash or type(budget[1]) is not int
+                or not budget or type(budget[1]) is not int
                 or type(budget[2]) is not int or not calls <= budget[1] <= budget[2] == 18):
             raise ValueError('Immutable source or budget mismatch')
+        _validate_continuation_source(scan, report, budget, admission)
         record = store.load(key)
         if (record['kind'] != 'ownership_progress_v1' or record['scan_id'] != scan['id']
                 or record['source_hash'] != source_hash or record['source_report_hash'] != claimed
