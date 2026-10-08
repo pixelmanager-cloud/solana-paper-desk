@@ -262,18 +262,6 @@
     "published_ci": "Deployed d758bc529a7da1f74509117288740911f2ad6845: both CI runs successful",
     "active_claims": [
       {
-        "id": "PR91-INDEPENDENT-REVIEW",
-        "worker": "06",
-        "thread_id": "01a118fc-f867-7233-8eec-c20659e70095",
-        "host_id": "durable",
-        "status": "REVIEWING",
-        "pr": 91,
-        "head": "ce5928225a40a4d32ff5c53781631c0fa010a414",
-        "base": "94eb463c58d08cfe6c5ac470ae41b4b6a3ef077e",
-        "wait_cursor": "8f3328cf-bef6-441d-83f8-2d1f46b3b0df:55",
-        "final_base": "a2afb0075e2d1d33672027b71b9ff066ce6aa76c"
-      },
-      {
         "id": "COMMON-BANK-JOURNAL-SEMANTIC-REPLAY",
         "worker": "02",
         "thread_id": "01a118fc-666c-70b6-9fa8-2c7520f0a0bb",
@@ -282,6 +270,15 @@
         "base": "a2afb0075e2d1d33672027b71b9ff066ce6aa76c",
         "scope": "Bounded diagnostic semantic replay of original completed journal bytes against accepted common bank view; no publication/transport",
         "wait_cursor": "a2dcfb97-463d-4188-9da3-48a81e644d23:56"
+      },
+      {
+        "id": "COMMON-BANK-COMPLETION-INVENTORY",
+        "worker": "01",
+        "thread_id": "01a118fc-39bc-722c-b442-8bf5a749e0bb",
+        "host_id": "durable",
+        "status": "DISPATCH_PENDING",
+        "base": "5ab85134fd20af042153e950a9c64e6f353656f9",
+        "scope": "Read-only bounded completion inventory prerequisite; no migration, semantic replay or authoritative quiescence assertion"
       }
     ],
     "saved_launch_probe": {
@@ -796,8 +793,8 @@
     "pending_protected_reader": {
       "pr": 91,
       "head": "ce5928225a40a4d32ff5c53781631c0fa010a414",
-      "integrated": false,
-      "review": "Initial independent PASS; final combination Linux validation pending worker06",
+      "integrated": true,
+      "review": "PASS worker06 final exact tree; Linux1817 zero skips246.656s;22 independent probes",
       "author_linux_tests": 1777,
       "author_skips": 0,
       "combined_base": "a2afb0075e2d1d33672027b71b9ff066ce6aa76c",
@@ -817,7 +814,11 @@
         "probes": 22,
         "review_url": "https://github.com/pixelmanager-cloud/solana-paper-desk/pull/91#issuecomment-6061749318",
         "tree": "83dc34013c41f09462e603abb426d324157d2c98"
-      }
+      },
+      "integration_commit": "5ab85134fd20af042153e950a9c64e6f353656f9",
+      "review_manifest_sha256": "51c535599523a050f57ce6881c6ca676cc9f09f5106c14387e1ddc19ed154b3d",
+      "review_url": "https://github.com/pixelmanager-cloud/solana-paper-desk/pull/91#issuecomment-6061868555",
+      "deployed": false
     },
     "pending_clock_stage": {
       "pr": 92,
