@@ -288,6 +288,14 @@
         "task": "Separate full valuation and exact partial-action evidence in paper engine; keep live gates disabled",
         "status": "IMPLEMENTING",
         "base": "c9b9356"
+      },
+      {
+        "worker": "worker01",
+        "thread_id": "01a118fc-39bc-722c-b442-8bf5a749e0bb",
+        "host_id": "durable",
+        "status": "IMPLEMENTING",
+        "task": "Exact declared outer message signer/writable privilege evidence and receipt binding",
+        "base": "3f6b9c2"
       }
     ],
     "saved_launch_probe": {
@@ -834,7 +842,18 @@
     "tests": 1385,
     "skips": 0,
     "seconds": 120.026,
-    "reason_not_switched": "Await ledger repair review and final release compatibility checks"
+    "reason_not_switched": "Await ledger repair review and final release compatibility checks",
+    "backup": "/var/backups/solana-desk/pre-integration-f5eb854/daily-20261008T073459Z",
+    "copy_validation": {
+      "path": "/var/lib/solana-desk-validation/f5eb854",
+      "explicit_reassessed": 8,
+      "all_reject": true,
+      "original_decisions_preserved": 8,
+      "original_evaluations_preserved": 28,
+      "source_hashes_unchanged": true,
+      "provider_calls": 0,
+      "running_service_changed": false
+    }
   },
   "classification_combined_regression": {
     "discovered": 1397,
