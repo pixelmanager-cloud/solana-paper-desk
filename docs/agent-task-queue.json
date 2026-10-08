@@ -288,16 +288,6 @@
         "task": "Separate full valuation and exact partial-action evidence in paper engine; keep live gates disabled",
         "status": "IMPLEMENTING",
         "base": "c9b9356"
-      },
-      {
-        "worker": "worker06",
-        "thread_id": "01a118fc-f867-7233-8eec-c20659e70095",
-        "host_id": "durable",
-        "task": "Independent exact route instruction receipt coverage review",
-        "status": "REVIEWING",
-        "pr": 71,
-        "head": "a97fec8a07c9da8166310b776d6e03c191866096",
-        "base": "a8e61c3"
       }
     ],
     "saved_launch_probe": {
@@ -790,15 +780,20 @@
     "71": {
       "head": "a97fec8a07c9da8166310b776d6e03c191866096",
       "reviewer": "worker06",
-      "status": "REVIEWING",
-      "integrated": false,
+      "status": "PASS_INTEGRATED",
+      "integrated": true,
       "mac_combined": {
         "discovered": 1430,
         "passed": 1331,
         "skips": 99,
         "seconds": 27.156
       },
-      "ci": "SUCCESS exact head; independent review pending"
+      "ci": "SUCCESS unchanged exact head",
+      "integration_commit": "83de3769dbae3c5dcd9fcddeb1cb1a105c99bfde",
+      "linux_tests": 1430,
+      "linux_skips": 0,
+      "independent_probes": 56,
+      "reviewed_tree": "bc0ec23315c260317a8ff465cd084af36be199b7"
     }
   },
   "parallel_combined_regression": {
