@@ -152,7 +152,11 @@ def adapt_classification(account, *, scope: ReplayScope, initial_raw, current_ra
     except (ValueError, KeyError, TypeError, AttributeError):
         reasons.add('RAW_ACCOUNT_BINDING_UNVERIFIED')
     # Copy before hashing/inspection; candidate dictionaries never become policy.
-    record = deepcopy(candidate)
+    try:
+        record = deepcopy(candidate)
+    except RecursionError:
+        record = None
+        reasons.add('CLASSIFICATION_CANDIDATE_MALFORMED')
     if not isinstance(record, dict) or not _hash(candidate_hash):
         reasons.add('CLASSIFICATION_CANDIDATE_MISSING_OR_MALFORMED')
     else:
