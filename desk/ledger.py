@@ -42,12 +42,18 @@ class Ledger:
                                      if p.is_file() and p.suffix in (".py", ".json")})
             old_code = self.db.execute("SELECT value FROM metadata WHERE key='implementation_hash'").fetchone()
             has_events = self.db.execute("SELECT 1 FROM events LIMIT 1").fetchone()
+            checkpoint = self.db.execute("SELECT payload FROM state WHERE id=1").fetchone()
+            # A previously committed ledger cannot be treated as a new experiment
+            # when a damaged/partial restore has lost its checkpoint. Reject even
+            # duplicate delivery rather than acknowledge an unrecoverable state.
+            if has_events and not checkpoint:
+                raise ValueError("ledger checkpoint missing: recovery required; original records preserved")
             if (old_code and old_code[0] != implementation) or (has_events and not old_code):
                 raise ValueError("implementation changed or unversioned: use a new experiment database")
             self.db.execute("INSERT OR IGNORE INTO metadata VALUES('implementation_hash',?)", (implementation,))
             row = self.db.execute("SELECT value FROM metadata WHERE key='config_hash'").fetchone()
-            if row and row[0] != fingerprint:
-                raise ValueError("config changed: use a new experiment database")
+            if (row and row[0] != fingerprint) or (has_events and not row):
+                raise ValueError("config changed or unversioned: use a new experiment database")
             self.db.execute("INSERT OR IGNORE INTO metadata VALUES('config_hash',?)", (fingerprint,))
             self.db.execute("INSERT OR IGNORE INTO metadata VALUES('config',?)", (canonical(cfg),))
             row = self.db.execute("SELECT payload_hash FROM events WHERE event_id=?", (event["event_id"],)).fetchone()
@@ -56,8 +62,7 @@ class Ledger:
                     raise ValueError("event_id collision with different payload")
                 self.db.execute("COMMIT")
                 return []
-            row = self.db.execute("SELECT payload FROM state WHERE id=1").fetchone()
-            state = json.loads(row[0]) if row else initial_state(cfg)
+            state = json.loads(checkpoint[0]) if checkpoint else initial_state(cfg)
             new_state, outcomes = transition(state, event, cfg)
             self.db.execute("INSERT INTO events(event_id,ts,payload,payload_hash) VALUES(?,?,?,?)",
                             (event["event_id"], event["ts"], canonical(event), digest(event)))
