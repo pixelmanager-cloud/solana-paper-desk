@@ -189,8 +189,8 @@
   ],
   "integration": {
     "branch": "integration/cloud-wave1",
-    "tested_commit": "1effeccecf3ed305d5f253fca1d77fa6d292fd9d",
-    "combined_tests": 975,
+    "tested_commit": "8aa5938aeef5e96f22a54f80ff698d043f3a154d",
+    "combined_tests": 982,
     "result": "PASS",
     "live_verification": "BLOCKED_NO_SUPPORTED_BUDGET_FEASIBLE_PUBLIC_LEGACY_SEED; acquisition path in development",
     "blocker": "Live legacy evidence,protected pool receipt capture,lifecycle semantic approval and holder exposure integration unfinished",
@@ -198,7 +198,7 @@
       "worker02": "PR38 reviewed; available",
       "worker06": "PR34 integrated; available",
       "cloud_reviewer": "PR33 reviewed and integrated; available",
-      "worker10": "Final Linux combined982 verification pending",
+      "worker10": "PR39 final Linux combination passed; available",
       "worker03": "PR39 published; reference-only fixture review pending",
       "worker04": "Implement guarded pool capture bridge on reviewed ledger,shared18counter",
       "worker05": "PR30 reviewed and integrated; available",
@@ -226,7 +226,7 @@
       "PR36": "1c87f2f2b37997bdb9291f0ae2184c5e5aad5f06 independent scoped PASS; identity repair,18-attempt budget,archive/recovery verified;902 exact and910 combined",
       "PR37": "8220f8baf0d84fc9905f39d2762664095cd6bba1 independent scoped PASS;14 probes/550 stack sequences;910 exact and918 combined; disconnected foundation only",
       "PR38": "fabebccda9064cd8e69833ff7e9f588ab8e7d9e8 independent PASS,33 ledger and975 combined Linux zero skips; production issuer/bridge unfinished",
-      "PR39": "7651db1fa2842957fc15fb16a4e616c12ecef520 independent artifact PASS; upstream bytes/license/14positions verified; latest Linux combination pending"
+      "PR39": "7651db1fa2842957fc15fb16a4e616c12ecef520 independent provenance PASS; final Linux982 zero skips; no finality/acceptance"
     },
     "candidate_combination": {
       "commit": "bfcc550ca25bd6cb79dc7ac3ad2b30c72f7b1033",
@@ -247,15 +247,6 @@
     },
     "published_ci": "e5d9f9b0e3210421aabe3a80efd519b0d122d340 successful",
     "active_claims": [
-      {
-        "worker": "worker10",
-        "thread_id": "01a118fd-56d5-70b8-ad31-dba13e982082",
-        "host_id": "durable",
-        "task": "Final Linux combined verification PR39 plus integrated poolledger",
-        "pr": 39,
-        "head": "7651db1fa2842957fc15fb16a4e616c12ecef520",
-        "status": "REVIEWING"
-      },
       {
         "worker": "worker04",
         "thread_id": "01a118fc-b862-7340-ab3a-e1115a3280a4",
@@ -279,8 +270,8 @@
       "limitation": "Sample absence does not establish absence of supported legacy tokens elsewhere."
     },
     "cloud_review_schedule_observation": {
-      "source": "PR10 state at9f46b445ed128bcc438fca991305bf4273dbc121",
-      "reported_last_run": "2026-10-08T02:01:01.779530+00:00",
+      "source": "PR10 state493ceb983e8a4cb4e6ba1ad26a77403aadb54657",
+      "reported_last_run": "2026-10-08T03:02:11.926931+00:00",
       "limitation": "Reviewer-recorded execution evidence; desktop has not independently queried hosted scheduler; same-chat binding unverified."
     },
     "pending_ui_candidate": {
@@ -321,7 +312,7 @@
       "result": "Linux combined975 PASS zero skips; reviewed",
       "integrated": true
     },
-    "test_platform_note": "Linux reviewer combined source975 pass zero skips; identical implementation/tests to desktop scratch942 executed+33 Linux skips",
+    "test_platform_note": "Independent Linux982 tests zero skips; exact combined tree95a17494b553ef37a9a1317adeeed988de1de3dc matches local merge",
     "pending_reference_combination": {
       "commit": "8aa5938aeef5e96f22a54f80ff698d043f3a154d",
       "pr": 39,
@@ -329,8 +320,8 @@
       "mac_discovered": 982,
       "mac_executed": 949,
       "mac_skipped": 33,
-      "linux_combined": "PENDING",
-      "published": false
+      "linux_combined": "PASS 982 zero skips40.311s exact tree95a17494b553ef37a9a1317adeeed988de1de3dc",
+      "published": true
     }
   }
 }

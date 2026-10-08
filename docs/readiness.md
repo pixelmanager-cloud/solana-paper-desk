@@ -371,3 +371,6 @@ PR38 fabebccd passed independent Linux review (975 combined tests,zero skips) an
 
 
 PR39 reference7651db1 passed independent provenance review, but final Linux combination with PR38 is pending. Local candidate8aa5938 has982 discovered tests:949 passed,33 Linux-only skips. Candidate is held locally until that final check. Worker07 begins narrow legacy birth-control structural semantics using reviewed unchanged reference and invocation trace; no runtime approval, finality or current-state claims. Pool capture bridge continues.
+
+
+Final PR39 combination verified on Linux:982 tests,zero skips,40.311s. Independent combined tree95a17494b553ef37a9a1317adeeed988de1de3dc exactly matches local merge8aa5938. Reference integration publication gate cleared. PR10 records another hosted run03:02:11.926931Z; reviewer reconciled existing findings without duplicate reviews. Live capture/authority semantics/holder exposure still unfinished.
