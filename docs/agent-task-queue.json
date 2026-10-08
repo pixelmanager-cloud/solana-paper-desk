@@ -189,15 +189,15 @@
   ],
   "integration": {
     "branch": "integration/cloud-wave1",
-    "tested_commit": "842bb43f13f36bec2b382348d5d6894949759e98",
-    "combined_tests": 1170,
+    "tested_commit": "c70df0bd63530b2d97d82399e0f7be42ad70199a",
+    "combined_tests": 1179,
     "result": "PASS",
     "live_verification": "BLOCKED_NO_SUPPORTED_BUDGET_FEASIBLE_PUBLIC_LEGACY_SEED; acquisition path in development",
     "blocker": "Live legacy evidence,protected pool receipt capture,lifecycle semantic approval and holder exposure integration unfinished",
     "followups": {
       "worker02": "PR40 review interrupted by automated cybersecurity-risk flag; no final acceptance",
       "worker06": "PR48 and combinedreview complete;available",
-      "cloud_reviewer": "PR49 exacthead transport extension review",
+      "cloud_reviewer": "PR49 review complete;available",
       "worker10": "PR45 independent review complete;available",
       "worker03": "Bounded newerlegacysearch found no matching authoritative event;available",
       "worker04": "PR47 published; under independent review",
@@ -235,7 +235,8 @@
       "PR46": "5e47e972a53623c75e8ae7d485812ff1f6973a8f independent scopedPASS; combinedLinux1089zero skips and399status paths; final four-PR combination pending",
       "PR47": "9e73e6c5a10cfae5fd3c25c02eb71b2bd4deb12b independent scopedPASS; combinedLinux1091zero skips and102focused/probe tests; final combination pending",
       "PR45": "ad09535f8db8c736e8295e2df1988e0b79de12af scopedPASS; Linux1096zero skips;3832probes; combinedtreecbc8f932f3fbf4de957a8d85086f2f8ec23c76ce",
-      "PR48": "3ffe18674a2162257e5fd641f1fafb92e5ef40c4 scopedPASS;6013 independentbyteprobes; exactLinux1082 andcombined1170zero skips"
+      "PR48": "3ffe18674a2162257e5fd641f1fafb92e5ef40c4 scopedPASS;6013 independentbyteprobes; exactLinux1082 andcombined1170zero skips",
+      "PR49": "2b11fbf6c8a5d7933088283a9a7ab9cbd9f25578 independent scopedPASS;Linux1179zero skips;canonical signatures and strict options independently probed"
     },
     "candidate_combination": {
       "commit": "bfcc550ca25bd6cb79dc7ac3ad2b30c72f7b1033",
@@ -273,16 +274,6 @@
         "task": "Bounded raw transaction diagnostic capture on existing admitted investigation budget",
         "status": "DISPATCHED",
         "base_commit": "076c9ad87e019bd458a444b59973186565aea5fd"
-      },
-      {
-        "worker": "cloud_reviewer",
-        "thread_id": "01a11901-8b68-70f9-8672-5a731a149091",
-        "host_id": "durable",
-        "task": "Independent exact raw transaction RPC extension review",
-        "status": "REVIEWING",
-        "pr": 49,
-        "head": "2b11fbf6c8a5d7933088283a9a7ab9cbd9f25578",
-        "base_commit": "12ca1ed4a48547f8dd8acc59a8b1fcec940ffc9d"
       }
     ],
     "saved_launch_probe": {
@@ -335,7 +326,7 @@
       "result": "Linux combined975 PASS zero skips; reviewed",
       "integrated": true
     },
-    "test_platform_note": "Independent combinedLinux1170 zero skips; identical implementation/test tree desktop1097passed+73Linuxskips",
+    "test_platform_note": "Independent combinedLinux1179zero skips;Mac1106passed+73Linuxskips",
     "pending_reference_combination": {
       "commit": "8aa5938aeef5e96f22a54f80ff698d043f3a154d",
       "pr": 39,
@@ -443,8 +434,8 @@
       "pr": 49,
       "head": "2b11fbf6c8a5d7933088283a9a7ab9cbd9f25578",
       "scratch_commit": "10b60038ef4881e6c7639e1933630863760bc83c",
-      "integrated": false,
-      "review": "IN_PROGRESS",
+      "integrated": true,
+      "review": "Independent scopedPASS;combinedLinux1179zero skips;257 sourcehashes matched",
       "ci": "PASS",
       "mac_discovered": 1179,
       "mac_passed": 1106,
