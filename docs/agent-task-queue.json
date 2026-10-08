@@ -587,13 +587,24 @@
     "pending_trade_event_provenance": {
       "pr": 55,
       "head": "2732693c10aa948b66aa83c231bcede54da6f112",
-      "review": "IN_PROGRESS",
-      "integrated": false,
+      "review": "PASS independent cloud review at exact head",
+      "integrated": true,
       "mac_discovered": 1296,
       "mac_passed": 1204,
       "mac_skipped": 92,
       "mac_seconds": 25.342,
-      "ci": "PASS at exact head 2732693c10aa948b66aa83c231bcede54da6f112"
+      "ci": "PASS at exact head 2732693c10aa948b66aa83c231bcede54da6f112",
+      "integration_commit": "7e1d3e4",
+      "linux_passed": 1296,
+      "linux_skipped": 0,
+      "source_comparison": "273/275 exact scratch hashes matched; only coordinator queue/readiness documentation differed, no source/test/fixture mismatches",
+      "next_assignment": {
+        "worker": "03",
+        "thread_id": "01a118fc-9478-778a-b77a-8f8f6ec7e0ad",
+        "status": "DISPATCHED",
+        "task": "Versioned official TradeEvent schema; retain unresolved economic effects and fail-closed gates",
+        "base": "7e1d3e4"
+      }
     }
   }
 }
