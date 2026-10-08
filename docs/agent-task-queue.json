@@ -263,13 +263,76 @@
     "published_ci": "886fc96d404b9d3ffd99c0045f7231d563a5d946 successful",
     "active_claims": [
       {
+        "worker": "worker01",
+        "thread_id": "01a118fc-39bc-722c-b442-8bf5a749e0bb",
+        "host_id": "durable",
+        "task": "Ownership acquisition recovery",
+        "status": "DISPATCHED",
+        "base": "c578dbe"
+      },
+      {
+        "worker": "worker02",
+        "thread_id": "01a118fc-666c-70b6-9fa8-2c7520f0a0bb",
+        "host_id": "durable",
+        "task": "Classification contract coverage",
+        "status": "DISPATCHED",
+        "base": "c578dbe"
+      },
+      {
+        "worker": "worker03",
+        "thread_id": "01a118fc-9478-778a-b77a-8f8f6ec7e0ad",
+        "host_id": "durable",
+        "task": "Runtime log witness join",
+        "status": "DISPATCHED",
+        "base": "c578dbe"
+      },
+      {
+        "worker": "worker04",
+        "thread_id": "01a118fc-b862-7340-ab3a-e1115a3280a4",
+        "host_id": "durable",
+        "task": "Current-holder exposure correctness",
+        "status": "DISPATCHED",
+        "base": "c578dbe"
+      },
+      {
+        "worker": "worker05",
+        "thread_id": "01a118fc-dd83-7672-ac81-7445f85fe09f",
+        "host_id": "durable",
+        "task": "Pool evidence integration",
+        "status": "DISPATCHED",
+        "base": "c578dbe"
+      },
+      {
+        "worker": "worker06",
+        "thread_id": "01a118fc-f867-7233-8eec-c20659e70095",
+        "host_id": "durable",
+        "task": "Independent evidence feasibility review",
+        "status": "DISPATCHED",
+        "base": "c578dbe"
+      },
+      {
         "worker": "worker07",
         "thread_id": "01a118fd-0f1c-749c-b85b-5e730937d0a8",
         "host_id": "durable",
-        "task": "Minimal obtainable create_v2 acceptance evidence gap and bounded acquisition plan",
-        "status": "RESEARCHING",
-        "base": "745622f",
-        "scope": "review report only"
+        "task": "Signed-message witness validation",
+        "status": "DISPATCHED",
+        "base": "c578dbe"
+      },
+      {
+        "worker": "worker08",
+        "thread_id": "01a118fd-2563-7126-90d7-bd07693de0b2",
+        "host_id": "durable",
+        "task": "Paper ledger restart verification",
+        "status": "DISPATCHED",
+        "base": "c578dbe"
+      },
+      {
+        "worker": "worker09",
+        "thread_id": "01a118fd-3f90-77d9-9549-c4497f5b10a6",
+        "host_id": "durable",
+        "task": "Paper dashboard rejection clarity",
+        "status": "DISPATCHED",
+        "base": "c578dbe"
       },
       {
         "worker": "worker10",
@@ -649,5 +712,12 @@
     "independent_linux_skipped": 0,
     "source_comparison": "279/281 reviewed scratch hashes match; only coordinator queue/readiness differ",
     "finding_resolved": true
+  },
+  "parallel_readiness_policy": "User requests all ten existing workers used. Parallel preparation, implementation and regression permitted; ownership verification still gates live eligibility and strategy activation. Isolated scopes, no duplicate assignments, independent review required.",
+  "evidence_gap_review": {
+    "pr": 58,
+    "head": "38f456e940c071a0d50d5750021ef900ad79c67d",
+    "status": "REVIEWING",
+    "reviewer": "worker06"
   }
 }
