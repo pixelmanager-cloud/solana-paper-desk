@@ -349,6 +349,16 @@
         "pr": 62,
         "head": "9e35c2bce3b4aa47051418ce0d5793c9b872edcd",
         "base": "13853bf"
+      },
+      {
+        "worker": "worker03",
+        "thread_id": "01a118fc-9478-778a-b77a-8f8f6ec7e0ad",
+        "host_id": "durable",
+        "task": "Independent pool integration PR64 review",
+        "pr": 64,
+        "head": "75eaed53f3b6802dbfb06eded6f92559bc586bdf",
+        "status": "REVIEWING",
+        "base": "13853bf"
       }
     ],
     "saved_launch_probe": {
@@ -752,6 +762,12 @@
     "62": {
       "head": "9e35c2bce3b4aa47051418ce0d5793c9b872edcd",
       "reviewer": "cloud_reviewer",
+      "status": "REVIEWING",
+      "integrated": false
+    },
+    "64": {
+      "head": "75eaed53f3b6802dbfb06eded6f92559bc586bdf",
+      "reviewer": "worker03",
       "status": "REVIEWING",
       "integrated": false
     }
