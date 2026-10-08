@@ -198,13 +198,13 @@
       "worker02": "PR38 reviewed; available",
       "worker06": "PR34 integrated; available",
       "cloud_reviewer": "PR33 reviewed and integrated; available",
-      "worker10": "Independent PR39 provenance/negative assertion review",
+      "worker10": "Final Linux combined982 verification pending",
       "worker03": "PR39 published; reference-only fixture review pending",
       "worker04": "Implement guarded pool capture bridge on reviewed ledger,shared18counter",
       "worker05": "PR30 reviewed and integrated; available",
       "worker09": "PR35 reviewed and integrated; available",
       "worker01": "Reviewed PR36/37; available",
-      "worker07": "Reviewed PR36/37; available",
+      "worker07": "Implement narrow birth-control semantic profile; authentication/lifecycle acceptance remain false",
       "worker08": "PR31 reviewed and integrated; available"
     },
     "reviews": {
@@ -225,7 +225,8 @@
       "PR35": "ab41ed0a9b56bc0a1a96a9c10630b57425465f5d independent scoped PASS,814 exact-head and886 combined tests plus14 adversarial renderer cases; CI successful",
       "PR36": "1c87f2f2b37997bdb9291f0ae2184c5e5aad5f06 independent scoped PASS; identity repair,18-attempt budget,archive/recovery verified;902 exact and910 combined",
       "PR37": "8220f8baf0d84fc9905f39d2762664095cd6bba1 independent scoped PASS;14 probes/550 stack sequences;910 exact and918 combined; disconnected foundation only",
-      "PR38": "fabebccda9064cd8e69833ff7e9f588ab8e7d9e8 independent PASS,33 ledger and975 combined Linux zero skips; production issuer/bridge unfinished"
+      "PR38": "fabebccda9064cd8e69833ff7e9f588ab8e7d9e8 independent PASS,33 ledger and975 combined Linux zero skips; production issuer/bridge unfinished",
+      "PR39": "7651db1fa2842957fc15fb16a4e616c12ecef520 independent artifact PASS; upstream bytes/license/14positions verified; latest Linux combination pending"
     },
     "candidate_combination": {
       "commit": "bfcc550ca25bd6cb79dc7ac3ad2b30c72f7b1033",
@@ -250,7 +251,7 @@
         "worker": "worker10",
         "thread_id": "01a118fd-56d5-70b8-ad31-dba13e982082",
         "host_id": "durable",
-        "task": "independent public legacy reference fixture review",
+        "task": "Final Linux combined verification PR39 plus integrated poolledger",
         "pr": 39,
         "head": "7651db1fa2842957fc15fb16a4e616c12ecef520",
         "status": "REVIEWING"
@@ -260,6 +261,13 @@
         "thread_id": "01a118fc-b862-7340-ab3a-e1115a3280a4",
         "host_id": "durable",
         "task": "guarded shared-budget pool capture bridge",
+        "status": "IMPLEMENTING"
+      },
+      {
+        "worker": "worker07",
+        "thread_id": "01a118fd-0f1c-749c-b85b-5e730937d0a8",
+        "host_id": "durable",
+        "task": "narrow legacy birth-control semantic analyzer,disconnected research",
         "status": "IMPLEMENTING"
       }
     ],
@@ -313,6 +321,16 @@
       "result": "Linux combined975 PASS zero skips; reviewed",
       "integrated": true
     },
-    "test_platform_note": "Linux reviewer combined source975 pass zero skips; identical implementation/tests to desktop scratch942 executed+33 Linux skips"
+    "test_platform_note": "Linux reviewer combined source975 pass zero skips; identical implementation/tests to desktop scratch942 executed+33 Linux skips",
+    "pending_reference_combination": {
+      "commit": "8aa5938aeef5e96f22a54f80ff698d043f3a154d",
+      "pr": 39,
+      "head": "7651db1fa2842957fc15fb16a4e616c12ecef520",
+      "mac_discovered": 982,
+      "mac_executed": 949,
+      "mac_skipped": 33,
+      "linux_combined": "PENDING",
+      "published": false
+    }
   }
 }

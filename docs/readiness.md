@@ -368,3 +368,6 @@ Bounded public search found no finalized legacy fixture. A confirmed-source hist
 ### Protected pool ledger integrated
 
 PR38 fabebccd passed independent Linux review (975 combined tests,zero skips) and CI. Integrated source1effeccecf3ed305d5f253fca1d77fa6d292fd9d has identical implementation/test tree to the reviewed combination; Mac skips remain disclosed. It supplies receipt persistence only. Worker04 now builds the guarded shared-budget capture bridge, preserving complete contradictory observations and protected source configuration. PR39 historical reference7651db1 is under independent review; no live finality/ownership acceptance. No main merge or deployment.
+
+
+PR39 reference7651db1 passed independent provenance review, but final Linux combination with PR38 is pending. Local candidate8aa5938 has982 discovered tests:949 passed,33 Linux-only skips. Candidate is held locally until that final check. Worker07 begins narrow legacy birth-control structural semantics using reviewed unchanged reference and invocation trace; no runtime approval, finality or current-state claims. Pool capture bridge continues.
