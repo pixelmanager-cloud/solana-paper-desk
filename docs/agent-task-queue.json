@@ -267,10 +267,11 @@
         "thread_id": "01a118fd-2563-7126-90d7-bd07693de0b2",
         "host_id": "durable",
         "task": "PR65 standalone report missing checkpoint integrity repair, then distinct consumer diagnostics",
-        "status": "FIXING",
+        "status": "PUBLISHED_PENDING_REVIEW",
         "base": "e13d17b",
         "pr": 65,
-        "head": "30f70c4665b3c19a16636dcbdc378042d67c9db2"
+        "head": "ff201a6dacb979e8edfd541956e38167dcd66c8c",
+        "consumer_pr": 72
       },
       {
         "worker": "worker02",
@@ -297,6 +298,16 @@
         "status": "IMPLEMENTING",
         "task": "Exact declared outer message signer/writable privilege evidence and receipt binding",
         "base": "3f6b9c2"
+      },
+      {
+        "worker": "worker06",
+        "thread_id": "01a118fc-f867-7233-8eec-c20659e70095",
+        "host_id": "durable",
+        "task": "Independent recovery consumer review with PR65 repair",
+        "status": "REVIEWING",
+        "pr": 72,
+        "head": "f64144d4c583520666ca866c37dde3e8e81f2205",
+        "base": "2ef1071"
       }
     ],
     "saved_launch_probe": {
@@ -810,6 +821,15 @@
       "linux_skips": 0,
       "independent_probes": 56,
       "reviewed_tree": "bc0ec23315c260317a8ff465cd084af36be199b7"
+    },
+    "72": {
+      "head": "f64144d4c583520666ca866c37dde3e8e81f2205",
+      "reviewer": "worker06",
+      "status": "REVIEWING",
+      "integrated": false,
+      "depends_on": {
+        "65": "ff201a6dacb979e8edfd541956e38167dcd66c8c"
+      }
     }
   },
   "parallel_combined_regression": {
