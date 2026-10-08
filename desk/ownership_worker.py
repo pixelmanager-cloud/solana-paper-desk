@@ -29,6 +29,10 @@ def advance(source,evidence_db,scan_id,rpc,*,max_calls=2):
     mint_queries=[q for q in queries if q.get('address')==row['mint'] and q.get('token_accounts_filter')=='none']
     if len(mint_queries)!=1:raise ValueError('One request-bound mint query required')
     mint_key=progress.seed(scan_id,mint_queries[0]);spent=0;blocked=None
+    bank=progress.bank(scan_id)
+    if bank and bank['block_time_hash']:
+        slot=store.load(bank['snapshot_hash'])['result']['context']['slot']
+        mint_key=progress.create(scan_id,row['mint'],mint_queries[0]['start'],mint_queries[0]['end'],{'gte':0,'lt':slot+1})
     while spent<max_calls:
         current=progress.snapshot(mint_key)
         if current['status']!='DONE':
@@ -41,6 +45,19 @@ def advance(source,evidence_db,scan_id,rpc,*,max_calls=2):
         from .account_history import account_inventory
         inventory=account_inventory(row['mint'],observations,coverage)
         if not inventory['initialization_inventory_verified']:blocked='ACCOUNT_INVENTORY_UNVERIFIED';break
+        bank=progress.bank(scan_id)
+        if not bank or not bank['block_time_hash']:
+            captured=progress.capture_bank(scan_id,row['mint'],[a['address'] for a in inventory['accounts']],rpc)
+            spent+=int(captured['attempted'])
+            if captured.get('blocked'):blocked=captured['blocked'];break
+            bank=progress.bank(scan_id)
+            if bank['block_time_hash']:
+                slot=store.load(bank['snapshot_hash'])['result']['context']['slot']
+                mint_key=progress.create(scan_id,row['mint'],coverage['start'],coverage['end'],{'gte':0,'lt':slot+1})
+            continue
+        snapshot=store.load(bank['snapshot_hash'])
+        if set(snapshot['params'][0][1:])!={a['address'] for a in inventory['accounts']}:
+            blocked='SNAPSHOT_ACCOUNT_COVERAGE_MISMATCH';break
         keys=[]
         for account in inventory['accounts']:
             matches=[q for q in queries if q.get('address')==account['address'] and q.get('start')==coverage['start'] and q.get('end')==coverage['end'] and q.get('token_accounts_filter')=='none' and q.get('slot_range')==coverage.get('slot_range')]
@@ -58,10 +75,23 @@ def advance(source,evidence_db,scan_id,rpc,*,max_calls=2):
     # Preserve funding queries, replacing only exactly matching resumed queries.
     identities={(q['address'],q['start'],q['end'],q['token_accounts_filter']) for q in saved}
     combined=[q for q in queries if (q['address'],q['start'],q['end'],q['token_accounts_filter']) not in identities]+saved
+    bank=progress.bank(scan_id)
+    if bank and bank['block_time_hash']:
+        slot=store.load(bank['snapshot_hash'])['result']['context']['slot']
+        # The original timestamp queries remain immutable in the source report.
+        bounded=[q for q in combined if q.get('token_accounts_filter')!='none' or q.get('slot_range')=={'gte':0,'lt':slot+1}]
+        if any(q.get('address')==row['mint'] and q.get('token_accounts_filter')=='none' for q in bounded):combined=bounded
+        else:blocked=blocked or 'SNAPSHOT_BOUNDED_HISTORY_PENDING'
     updated={**report,'history_queries':combined}
     result={'scan_id':scan_id,'source_report_hash':claimed,'provider_calls':spent,
             'requests_used':progress.snapshot(mint_key)['requests_used'],'status':blocked or 'HISTORY_REPLAYED',
             'history':reconstruct_launch_history(updated,store),'eligible_for_trading':False}
+    if bank and bank['block_time_hash'] and any(q.get('address')==row['mint'] for q in combined):
+        from .ownership_snapshot import replay_snapshot
+        try:result['snapshot']=replay_snapshot(updated,store,bank['snapshot_hash'],bank['block_time_hash'])
+        except (ValueError,KeyError,TypeError,IndexError):
+            result['snapshot']={'reconciled':False,'reasons':['SNAPSHOT_ACCOUNT_COVERAGE_OR_REPLAY_INVALID'],'eligible_for_trading':False}
+    if bank:result['snapshot_evidence']=bank
     key=store.save({'kind':'ownership_progress_v1','source_hash':digest(dict(row)),'history_queries':combined,**result})
     with store.connect() as c:
         c.execute('CREATE TABLE IF NOT EXISTS ownership_heads(scan_id TEXT PRIMARY KEY,evidence_hash TEXT NOT NULL)')
