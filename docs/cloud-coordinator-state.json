@@ -1,6 +1,6 @@
 {
   "schema_version": 1,
-  "revision": 17,
+  "revision": 18,
   "repository": "pixelmanager-cloud/solana-paper-desk",
   "source_main_sha": "e298e15cd758932e81d2241130716632702f5bd0",
   "observed_date": "2026-10-08",
@@ -470,6 +470,43 @@
       "head_sha": "37441927f38f0b884d61fc2e1e563b6aa50a4355",
       "review_id": 5451192398,
       "result": "Prior replacement finding resolved within scoped trusted-local contract;1012+2 fixtures passed and CI success; no acceptance/integration/dispatch/live calls."
+    },
+    {
+      "kind": "COMBINED_FIXTURE_VALIDATION",
+      "policy_version": "cloud-independent-review-v1",
+      "base_sha": "d9c093b0f0be103ebdb11a826c1896be6b8f055b",
+      "pr": 40,
+      "head_sha": "37441927f38f0b884d61fc2e1e563b6aa50a4355",
+      "review_id": 5451246874,
+      "source_manifest": "docs/reviews/combined-d9c093b-3744192-hashes.json",
+      "source_manifest_sha256": "34448ef4fd547369da9af157f1f1729041f6878ac6d5e9961d343358c63f0b72",
+      "source_files": 244,
+      "report": "docs/reviews/combined-d9c093b-3744192.md",
+      "commands": [
+        "python -m unittest discover -s tests -v",
+        "python /workspace/work/review/combined-independent.py"
+      ],
+      "results": {
+        "full_suite": 1075,
+        "seconds": 49.775,
+        "supplemental": 2,
+        "supplemental_seconds": 0.367,
+        "failures": 0,
+        "linux_skips": 0,
+        "python": "3.12.14"
+      },
+      "status": "SCOPED_COMBINED_FIXTURE_NO_BLOCKER_OBSERVED",
+      "combined_commit": null,
+      "combined_ci": "NOT_RUN_SCRATCH_TREE_ONLY",
+      "accepted": false,
+      "live_acceptance": false,
+      "provider_calls": 0,
+      "limitations": [
+        "Trusted source/transport/clock provision not certified",
+        "BankS->T original request retained and rejected",
+        "Lifecycle/interval/chain authentication unverified",
+        "Desktop owns integration and resulting-commit CI"
+      ]
     }
   ],
   "artifact_pr": {
@@ -1224,6 +1261,13 @@
       "local_tests_this_run": "NOT_RUN",
       "accepted": false,
       "live_acceptance": false
+    },
+    {
+      "pr": 40,
+      "worker_agent": "02",
+      "status": "HISTORICAL_INCOMPLETE_AUTOMATED_FLAG_INTERRUPTION",
+      "tests_passed_claim": false,
+      "reason": "Desktop explicitly confirmed original worker02 automated flag interrupted review; separate cloud reviews5451192398/5451246874 do not certify that run."
     }
   ],
   "pending_reviews": [
@@ -1737,30 +1781,84 @@
     }
   ],
   "last_review_run": {
-    "run_id": "cloud-review-2026-10-08T04:00:07Z",
-    "cloud_executor_verified": true,
-    "hosted_last_run_time": "2026-10-08T03:58:47.779603+00:00",
-    "mode": "EXACT_HEAD_INDEPENDENT_FIXTURE_REVIEW",
-    "reviewed_prs": [
-      40
-    ],
-    "excluded_review_prs": [
-      31
-    ],
-    "dedupe_key": "40/37441927f38f0b884d61fc2e1e563b6aa50a4355/cloud-independent-review-v1",
-    "heads_history_rechecked_before_submission": true,
-    "review_ids": [
-      5451192398
-    ],
-    "local_test_commands": [
+    "mode": "COMBINED_FIXTURE_VALIDATION",
+    "kind": "COMBINED_FIXTURE_VALIDATION",
+    "policy_version": "cloud-independent-review-v1",
+    "base_sha": "d9c093b0f0be103ebdb11a826c1896be6b8f055b",
+    "pr": 40,
+    "head_sha": "37441927f38f0b884d61fc2e1e563b6aa50a4355",
+    "review_id": 5451246874,
+    "source_manifest": "docs/reviews/combined-d9c093b-3744192-hashes.json",
+    "source_manifest_sha256": "34448ef4fd547369da9af157f1f1729041f6878ac6d5e9961d343358c63f0b72",
+    "source_files": 244,
+    "report": "docs/reviews/combined-d9c093b-3744192.md",
+    "commands": [
       "python -m unittest discover -s tests -v",
-      "python /workspace/work/review/r40-independent.py"
+      "python /workspace/work/review/combined-independent.py"
     ],
-    "local_test_result": "1012 suite +2 independent supplemental tests passed,0skips",
-    "infrastructure_failures": [],
+    "results": {
+      "full_suite": 1075,
+      "seconds": 49.775,
+      "supplemental": 2,
+      "supplemental_seconds": 0.367,
+      "failures": 0,
+      "linux_skips": 0,
+      "python": "3.12.14"
+    },
+    "status": "SCOPED_COMBINED_FIXTURE_NO_BLOCKER_OBSERVED",
+    "combined_commit": null,
+    "combined_ci": "NOT_RUN_SCRATCH_TREE_ONLY",
+    "accepted": false,
+    "live_acceptance": false,
+    "provider_calls": 0,
+    "limitations": [
+      "Trusted source/transport/clock provision not certified",
+      "BankS->T original request retained and rejected",
+      "Lifecycle/interval/chain authentication unverified",
+      "Desktop owns integration and resulting-commit CI"
+    ],
     "production_edits": false,
     "merged_prs": 0,
     "dispatched_workers": 0,
     "accepted_tasks": []
-  }
+  },
+  "combined_validations": [
+    {
+      "kind": "COMBINED_FIXTURE_VALIDATION",
+      "policy_version": "cloud-independent-review-v1",
+      "base_sha": "d9c093b0f0be103ebdb11a826c1896be6b8f055b",
+      "pr": 40,
+      "head_sha": "37441927f38f0b884d61fc2e1e563b6aa50a4355",
+      "review_id": 5451246874,
+      "source_manifest": "docs/reviews/combined-d9c093b-3744192-hashes.json",
+      "source_manifest_sha256": "34448ef4fd547369da9af157f1f1729041f6878ac6d5e9961d343358c63f0b72",
+      "source_files": 244,
+      "report": "docs/reviews/combined-d9c093b-3744192.md",
+      "commands": [
+        "python -m unittest discover -s tests -v",
+        "python /workspace/work/review/combined-independent.py"
+      ],
+      "results": {
+        "full_suite": 1075,
+        "seconds": 49.775,
+        "supplemental": 2,
+        "supplemental_seconds": 0.367,
+        "failures": 0,
+        "linux_skips": 0,
+        "python": "3.12.14"
+      },
+      "status": "SCOPED_COMBINED_FIXTURE_NO_BLOCKER_OBSERVED",
+      "combined_commit": null,
+      "combined_ci": "NOT_RUN_SCRATCH_TREE_ONLY",
+      "accepted": false,
+      "live_acceptance": false,
+      "provider_calls": 0,
+      "limitations": [
+        "Trusted source/transport/clock provision not certified",
+        "BankS->T original request retained and rejected",
+        "Lifecycle/interval/chain authentication unverified",
+        "Desktop owns integration and resulting-commit CI"
+      ]
+    }
+  ]
 }
