@@ -838,7 +838,13 @@
       "head": "64c262a8e8593d848d042832d47b3a8c711a8a00",
       "reviewer": "worker02",
       "status": "REVIEWING",
-      "integrated": false
+      "integrated": false,
+      "mac_combined_with_pending_72": {
+        "discovered": 1468,
+        "passed": 1369,
+        "skips": 99,
+        "seconds": 30.046
+      }
     }
   },
   "parallel_combined_regression": {

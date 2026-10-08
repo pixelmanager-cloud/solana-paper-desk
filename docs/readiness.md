@@ -4,7 +4,7 @@ Last verified: 8 October 2026, Korea time. The user's requested end state is a u
 
 ## Current status — 2026-10-08 07:42 UTC
 
-Paper readiness is incomplete. Production still runs release886fc96; stagedf5eb854 passed1,385 service-user tests and copy-only replay of eight saved investigations, all rejected. The integration branch contains newer independently reviewed evidence and ledger fixes. Latest accepted combined Linux regression:1,442 tests without skips. Later PR72/73 candidates are not accepted by this checkpoint.
+Paper readiness is incomplete. Production still runs release 886fc96; staged f5eb854 passed 1,385 service-user tests and copy-only replay of eight saved investigations, all rejected. The integration branch contains newer independently reviewed evidence and ledger fixes. Latest accepted combined Linux regression: 1,442 tests without skips. Later PR72 and PR73 candidates are not accepted by this checkpoint.
 
 Remaining critical path: live complete ownership/exposure evidence for a supported candidate; authenticated route/effect and exact quantity/cost evidence; measured current strategy features and a trusted source-bound entry adapter; durable supervised entry/refresh/exit integration; forward observation. Signed messages, parsed events, zero balance residuals and diagnostic receipt coverage alone do not satisfy those gates. No eligible live entry has been demonstrated.
 
