@@ -262,14 +262,14 @@
     "published_ci": "Deployed d758bc529a7da1f74509117288740911f2ad6845: both CI runs successful",
     "active_claims": [
       {
-        "id": "COMMON-BANK-JOURNAL",
-        "worker": "02",
-        "thread_id": "01a118fc-666c-70b6-9fa8-2c7520f0a0bb",
+        "id": "PR84-INDEPENDENT-REVIEW",
+        "worker": "06",
+        "thread_id": "01a118fc-f867-7233-8eec-c20659e70095",
         "host_id": "durable",
-        "status": "ACTIVE",
-        "base": "b4cbfaf588412cbd49a94f66b12abfa3f5b1c9a1",
-        "scope": "Disconnected atomic shared-counter reservation and immutable pending intent journal",
-        "wait_cursor": "a2dcfb97-463d-4188-9da3-48a81e644d23:43"
+        "status": "REVIEWING",
+        "base": "99f53f46beec0329cce1a7a0e20b6428ba754906",
+        "pr": 84,
+        "head": "d1306c2072e260191b61e31e94e6adaa27518138"
       }
     ],
     "saved_launch_probe": {
@@ -652,6 +652,15 @@
       "ci": "Both exact-head checks PASS",
       "review_manifest_sha256": "ccabb9b497bce3c61e949ce194fbdb7ce97de41a47496583d93034fb54a65ae9",
       "deployed": false
+    },
+    "pending_common_bank_journal": {
+      "pr": 84,
+      "head": "d1306c2072e260191b61e31e94e6adaa27518138",
+      "review": "PENDING worker06",
+      "integrated": false,
+      "author_linux_tests": 1602,
+      "author_skips": 0,
+      "scope": "Initial genesis reservation/intent only; successful transitions and response/publication remain unimplemented"
     }
   },
   "native_reconciliation_review": {
