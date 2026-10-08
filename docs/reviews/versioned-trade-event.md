@@ -11,7 +11,8 @@ The earlier provenance report gives the complete captured field offsets.
 Manifest registration is explicitly `events_only: true`. Existing instruction
 schemas and historical schema files are unchanged. The existing loader already
 verifies all manifest digests and excludes events-only files from instruction
-registration, so `desk/programs.py` needs no change. Tests compare the complete
+registration. The repaired `desk/programs.py` additionally validates an explicit
+TradeEvent-only event allowlist to prevent broader event acceptance. Tests compare the complete
 registered Pump instruction map to the original pinned map, and exercise every
 new-only instruction discriminator to confirm UNKNOWN_DISCRIMINATOR.
 

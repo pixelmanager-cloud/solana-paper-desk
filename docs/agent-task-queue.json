@@ -270,15 +270,6 @@
         "status": "RESEARCHING",
         "base": "745622f",
         "scope": "review report only"
-      },
-      {
-        "worker": "cloud_reviewer",
-        "thread_id": "01a11901-8b68-70f9-8672-5a731a149091",
-        "host_id": "durable",
-        "task": "PR57 allowlist repair independent review",
-        "status": "REVIEWING",
-        "pr": 57,
-        "head": "4b0d9ba49a4ffadce82ad7a42178ab8b53372c31"
       }
     ],
     "saved_launch_probe": {
@@ -632,8 +623,8 @@
   "trade_event_schema_review": {
     "pr": 57,
     "head": "4b0d9ba49a4ffadce82ad7a42178ab8b53372c31",
-    "status": "RE_REVIEW_IN_PROGRESS",
-    "integrated": false,
+    "status": "PASS_INTEGRATED",
+    "integrated": true,
     "author_linux_tests": 1300,
     "combined_native_pr": 56,
     "mac_discovered": 1336,
@@ -643,6 +634,11 @@
     "finding": "P2 full events_only registration exposes new CreateEvent.depth to verified launch anchor; restrict new registration to TradeEvent",
     "fix_worker": "03",
     "author_combined_linux": 1336,
-    "ci": "PASS at repaired exact head 4b0d9ba"
+    "ci": "PASS at repaired exact head 4b0d9ba",
+    "integration_commit": "6477670",
+    "independent_linux_passed": 1336,
+    "independent_linux_skipped": 0,
+    "source_comparison": "279/281 reviewed scratch hashes match; only coordinator queue/readiness differ",
+    "finding_resolved": true
   }
 }
