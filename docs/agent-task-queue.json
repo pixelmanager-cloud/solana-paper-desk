@@ -266,11 +266,11 @@
         "worker": "worker08",
         "thread_id": "01a118fd-2563-7126-90d7-bd07693de0b2",
         "host_id": "durable",
-        "task": "PR65 standalone report missing checkpoint integrity repair, then distinct consumer diagnostics",
-        "status": "PUBLISHED_PENDING_REVIEW",
+        "task": "PR72 monitor preflight integrity race diagnostic repair",
+        "status": "FIXING",
         "base": "e13d17b",
-        "pr": 65,
-        "head": "ff201a6dacb979e8edfd541956e38167dcd66c8c",
+        "pr": 72,
+        "head": "f64144d4c583520666ca866c37dde3e8e81f2205",
         "consumer_pr": 72
       },
       {
@@ -286,7 +286,7 @@
         "thread_id": "01a118fc-f867-7233-8eec-c20659e70095",
         "host_id": "durable",
         "task": "Independent recovery consumer review with PR65 repair",
-        "status": "REVIEWING",
+        "status": "WAITING_REPAIR",
         "pr": 72,
         "head": "f64144d4c583520666ca866c37dde3e8e81f2205",
         "base": "2ef1071"
@@ -822,7 +822,7 @@
     "72": {
       "head": "f64144d4c583520666ca866c37dde3e8e81f2205",
       "reviewer": "worker06",
-      "status": "REVIEWING",
+      "status": "CHANGES_REQUESTED",
       "integrated": false,
       "depends_on": {
         "65": "ff201a6dacb979e8edfd541956e38167dcd66c8c"
@@ -832,7 +832,10 @@
         "passed": 1351,
         "skips": 99,
         "seconds": 30.191
-      }
+      },
+      "finding": "Monitor preflight/checkpoint corruption race leaks Ledger ValueError instead of recovery status",
+      "linux_tests": 1450,
+      "reviewed_tree": "716b04c52428830ad903375e0a54b9e807841b18"
     },
     "73": {
       "head": "64c262a8e8593d848d042832d47b3a8c711a8a00",
@@ -907,5 +910,17 @@
     "reviewed_tree": "7966bd99cc5dbe749cd198e215c4f36d49b7dca1",
     "integration_commit": "3e3a2e021feb17938e1eeb2e27a020a27fca5a28",
     "live_acceptance": false
+  },
+  "vps_stage_884e4ca": {
+    "status": "TESTING_SERVICE_USER",
+    "source": "884e4ca",
+    "archive_sha256": "39c95dc1d5c774e213e883997e3a42c298c9df4dd53e9a2df30770291b3f58d4",
+    "service_release": "886fc96",
+    "provider_calls": 0,
+    "excluded_pending_prs": [
+      72,
+      73
+    ],
+    "reason": "Deploy accepted evidence and ledger root fixes; future consumer diagnostic remains excluded"
   }
 }
