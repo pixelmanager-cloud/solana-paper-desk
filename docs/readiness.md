@@ -356,3 +356,10 @@ PR36 repair `1c87f2f2b37997bdb9291f0ae2184c5e5aad5f06` adds immutable setup rowi
 ### Reviewed acquisition and trace integration
 
 Exact PR36 repair1c87f2f and PR37 trace8220f8b passed independent review and CI before integration. Combined source8553ae7d7ed8f83d7b9da0d933f49b2f5b8122ca passes942 tests in24.051s with no skips. Explicit birth-inclusive acquisition is implemented; mainnet acceptance remains unverified. Trace foundation is disconnected research and does not authorize controls. Protected pool receipts, lifecycle semantics and current-holder exposure remain unfinished. Worker03 is searching bounded public sources for an unchanged legacy launch fixture without RPC. No main merge or VPS deployment.
+
+
+### Pool receipt candidate and historical reference
+
+PR38 fabebccda9064cd8e69833ff7e9f588ab8e7d9e8 implements protected coordinator receipt storage, with no capture/runtime wiring. Scratch c65a4af1670bd24c8992f75f046f2d262e73c40c discovers975 tests:942 executed successfully,33 Linux-only tests skipped on macOS. Worker02 must execute the combined Linux suite and review before integration.
+
+Bounded public search found no finalized legacy fixture. A confirmed-source historical legacy create+buy reference (mint B9Z9mKUoVy5k8KuL2HauUD1mhmfF3PPNnJoK83S1pump,slot282653703) has complete raw fields but current decoder key/event incompatibility and no finalized request binding. Worker03 will preserve it unchanged with explicit reference-only provenance and rejection tests. No provider calls or live acceptance.

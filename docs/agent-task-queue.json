@@ -195,12 +195,12 @@
     "live_verification": "BLOCKED_NO_SUPPORTED_BUDGET_FEASIBLE_PUBLIC_LEGACY_SEED; acquisition path in development",
     "blocker": "Live legacy evidence,protected pool receipt capture,lifecycle semantic approval and holder exposure integration unfinished",
     "followups": {
-      "worker02": "Reviewed PR36/37; available",
+      "worker02": "Independent PR38 ledger review incl Linux combined suite",
       "worker06": "PR34 integrated; available",
       "cloud_reviewer": "PR33 reviewed and integrated; available",
       "worker10": "Reviewed PR36/37; available",
-      "worker03": "Bounded public legacy raw launch fixture search active; no provider calls",
-      "worker04": "Implement protected pool receipt ledger; isolated module/tests, no provider or runtime wiring",
+      "worker03": "Found confirmed-source legacy reference; publish unchanged fixture with explicit finality/decoder blockers",
+      "worker04": "PR38 published fabebccd; Linux independent review active",
       "worker05": "PR30 reviewed and integrated; available",
       "worker09": "PR35 reviewed and integrated; available",
       "worker01": "Reviewed PR36/37; available",
@@ -246,18 +246,20 @@
     "published_ci": "e5d9f9b0e3210421aabe3a80efd519b0d122d340 successful",
     "active_claims": [
       {
-        "worker": "worker04",
-        "thread_id": "01a118fc-b862-7340-ab3a-e1115a3280a4",
-        "host_id": "durable",
-        "task": "protected pool receipt ledger foundation",
-        "status": "IMPLEMENTING"
-      },
-      {
         "worker": "worker03",
         "thread_id": "01a118fc-9478-778a-b77a-8f8f6ec7e0ad",
         "host_id": "durable",
-        "task": "bounded public legacy raw launch fixture search; no RPC",
-        "status": "RESEARCHING"
+        "task": "Publish unchanged legacy historical reference fixture; confirmed-source only",
+        "status": "IMPLEMENTING"
+      },
+      {
+        "worker": "worker02",
+        "thread_id": "01a118fc-666c-70b6-9fa8-2c7520f0a0bb",
+        "host_id": "durable",
+        "task": "independent protected pool ledger review on Linux",
+        "pr": 38,
+        "head": "fabebccda9064cd8e69833ff7e9f588ab8e7d9e8",
+        "status": "REVIEWING"
       }
     ],
     "saved_launch_probe": {
@@ -300,6 +302,15 @@
       "result": "PASS",
       "integrated": true,
       "review": "PASS"
+    },
+    "pending_pool_ledger": {
+      "pr": 38,
+      "head": "fabebccda9064cd8e69833ff7e9f588ab8e7d9e8",
+      "scratch_commit": "c65a4af1670bd24c8992f75f046f2d262e73c40c",
+      "mac_tests_discovered": 975,
+      "mac_skipped": 33,
+      "result": "942 executed PASS; Linux ledger verification pending",
+      "integrated": false
     }
   }
 }
