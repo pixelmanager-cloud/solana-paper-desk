@@ -113,58 +113,63 @@ class HeliusFinalizedSlotTransport:
 
     def __call__(self, request_bytes):
         request_id=validate_slot_request(request_bytes)  # Before secrets/network.
-        raw=None
-        code='CREDENTIAL_UNAVAILABLE'
-        try:
-            key=fixed.os.environ.get('HELIUS_API_KEY')
-            if type(key) is not str or not 1<=len(key)<=512 or any(not 33<=ord(c)<=126 for c in key):
+        return _exchange(request_bytes,request_id,MAX_RESPONSE_BYTES,_response_failure)
+
+
+def _exchange(request_bytes,request_id,response_limit,response_failure):
+    """Private shared fixed transport; validators and bounds are module-owned."""
+    raw=None
+    code='CREDENTIAL_UNAVAILABLE'
+    try:
+        key=fixed.os.environ.get('HELIUS_API_KEY')
+        if type(key) is not str or not 1<=len(key)<=512 or any(not 33<=ord(c)<=126 for c in key):
+            return SlotByteExchange(request_bytes,None,code)
+        code='TRANSPORT_ERROR'
+        request=fixed.Request(fixed._ENDPOINT+'?'+urlencode({'api-key':key}),
+            data=request_bytes,headers={'Content-Type':'application/json','Accept':'application/json'},method='POST')
+        # Reuse the accepted no-redirect handler and default verified TLS /
+        # proxy handling. No custom endpoint, opener, credentials or retry.
+        opener=fixed.build_opener(fixed._NoRedirect())
+        with opener.open(request,timeout=fixed._TIMEOUT_SECONDS) as response:
+            code='HTTP_REJECTED'
+            if type(response.status) is not int or response.status!=200:
                 return SlotByteExchange(request_bytes,None,code)
+            code='RESPONSE_HEADERS_INVALID'
+            # urllib's HTTPResponse can decode unsupported/ambiguous TE
+            # and tolerate incomplete chunk trailers. Reject every TE
+            # occurrence before reading; no chunked parser is supported.
+            if _header(response.headers,'Transfer-Encoding') is not None:
+                return SlotByteExchange(request_bytes,None,code)
+            encoding=_header(response.headers,'Content-Encoding','identity')
+            if encoding.lower()!='identity':return SlotByteExchange(request_bytes,None,code)
+            length=_header(response.headers,'Content-Length')
+            if length is not None:
+                if not 1<=len(length)<=20 or not length.isascii() or not length.isdecimal():
+                    return SlotByteExchange(request_bytes,None,code)
+                length=int(length)
+                if length>response_limit:return SlotByteExchange(request_bytes,None,'RESPONSE_OVERSIZED')
             code='TRANSPORT_ERROR'
-            request=fixed.Request(fixed._ENDPOINT+'?'+urlencode({'api-key':key}),
-                data=request_bytes,headers={'Content-Type':'application/json','Accept':'application/json'},method='POST')
-            # Reuse the accepted no-redirect handler and default verified TLS /
-            # proxy handling. No custom endpoint, opener, credentials or retry.
-            opener=fixed.build_opener(fixed._NoRedirect())
-            with opener.open(request,timeout=fixed._TIMEOUT_SECONDS) as response:
-                code='HTTP_REJECTED'
-                if type(response.status) is not int or response.status!=200:
-                    return SlotByteExchange(request_bytes,None,code)
-                code='RESPONSE_HEADERS_INVALID'
-                # urllib's HTTPResponse can decode unsupported/ambiguous TE
-                # and tolerate incomplete chunk trailers. Reject every TE
-                # occurrence before reading; no chunked parser is supported.
-                if _header(response.headers,'Transfer-Encoding') is not None:
-                    return SlotByteExchange(request_bytes,None,code)
-                encoding=_header(response.headers,'Content-Encoding','identity')
-                if encoding.lower()!='identity':return SlotByteExchange(request_bytes,None,code)
-                length=_header(response.headers,'Content-Length')
-                if length is not None:
-                    if not 1<=len(length)<=20 or not length.isascii() or not length.isdecimal():
-                        return SlotByteExchange(request_bytes,None,code)
-                    length=int(length)
-                    if length>MAX_RESPONSE_BYTES:return SlotByteExchange(request_bytes,None,'RESPONSE_OVERSIZED')
-                code='TRANSPORT_ERROR'
-                try:
-                    observed=response.read(MAX_RESPONSE_BYTES+1)
-                except IncompleteRead as error:
-                    partial=error.partial
-                    if type(partial) is not bytes:return SlotByteExchange(request_bytes,None,'RESPONSE_INVALID')
-                    if len(partial)>MAX_RESPONSE_BYTES:return SlotByteExchange(request_bytes,None,'RESPONSE_OVERSIZED')
-                    raw=partial
-                    return SlotByteExchange(request_bytes,raw,'RESPONSE_TRUNCATED')
-                if type(observed) is not bytes:return SlotByteExchange(request_bytes,None,'RESPONSE_INVALID')
-                if len(observed)>MAX_RESPONSE_BYTES:return SlotByteExchange(request_bytes,None,'RESPONSE_OVERSIZED')
-                raw=observed
-                if length is not None and len(raw)!=length:
-                    return SlotByteExchange(request_bytes,raw,'RESPONSE_TRUNCATED')
-            return SlotByteExchange(request_bytes,raw,_response_failure(raw,request_id))
-        except Exception as error:
-            if isinstance(error,HTTPError):
-                code='HTTP_REJECTED'
-                try:error.close()
-                except Exception:pass
-            elif isinstance(error,fixed.CoordinatorRPCError):code='HTTP_REJECTED'
-            # No exception text, headers, URL, credential or provider error data
-            # is copied into failure provenance. Captured bounded bytes remain
-            # opaque evidence, including invalid framing and RPC error bodies.
-            return SlotByteExchange(request_bytes,raw,code)
+            try:
+                observed=response.read(response_limit+1)
+            except IncompleteRead as error:
+                partial=error.partial
+                if type(partial) is not bytes:return SlotByteExchange(request_bytes,None,'RESPONSE_INVALID')
+                if len(partial)>response_limit:return SlotByteExchange(request_bytes,None,'RESPONSE_OVERSIZED')
+                raw=partial
+                return SlotByteExchange(request_bytes,raw,'RESPONSE_TRUNCATED')
+            if type(observed) is not bytes:return SlotByteExchange(request_bytes,None,'RESPONSE_INVALID')
+            if len(observed)>response_limit:return SlotByteExchange(request_bytes,None,'RESPONSE_OVERSIZED')
+            raw=observed
+            if length is not None and len(raw)!=length:
+                return SlotByteExchange(request_bytes,raw,'RESPONSE_TRUNCATED')
+        return SlotByteExchange(request_bytes,raw,response_failure(raw,request_id))
+    except Exception as error:
+        if isinstance(error,HTTPError):
+            code='HTTP_REJECTED'
+            try:error.close()
+            except Exception:pass
+        elif isinstance(error,fixed.CoordinatorRPCError):code='HTTP_REJECTED'
+        # No exception text, headers, URL, credential or provider error data
+        # is copied into failure provenance. Captured bounded bytes remain
+        # opaque evidence, including invalid framing and RPC error bodies.
+        return SlotByteExchange(request_bytes,raw,code)
