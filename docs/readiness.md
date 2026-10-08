@@ -374,3 +374,6 @@ PR39 reference7651db1 passed independent provenance review, but final Linux comb
 
 
 Final PR39 combination verified on Linux:982 tests,zero skips,40.311s. Independent combined tree95a17494b553ef37a9a1317adeeed988de1de3dc exactly matches local merge8aa5938. Reference integration publication gate cleared. PR10 records another hosted run03:02:11.926931Z; reviewer reconciled existing findings without duplicate reviews. Live capture/authority semantics/holder exposure still unfinished.
+
+
+PR40 capturebridge79e0352 is under independent Linux review. Desktop scratch34829a5 discovered1018 tests:36errors from Linux-only capture setUp lacking platform guard,33ledger skips. Author repair assigned; no safety guard mocking. Returned bank slot greater than request minContextSlot is also under usability review; no saved request may be rewritten to match response. Candidate not integrated/deployed.
