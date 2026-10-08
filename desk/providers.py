@@ -39,7 +39,7 @@ def fetch_json(url, payload=None, headers=None):
 
 
 def helius_rpc(method, params):
-    if method not in ("getTransactionsForAddress", "getMinimumBalanceForRentExemption", "getBlock", "getSlot", "getAccountInfo", "getTokenLargestAccounts", "getMultipleAccounts", "getTokenAccounts", "simulateTransaction", "simulateBundle", "getLatestBlockhash"):
+    if method not in ("getTransactionsForAddress", "getMinimumBalanceForRentExemption", "getBlock", "getBlockTime", "getSlot", "getAccountInfo", "getTokenLargestAccounts", "getMultipleAccounts", "getTokenAccounts", "simulateTransaction", "simulateBundle", "getLatestBlockhash"):
         raise ValueError("read-only RPC method allowlist")
     url = "https://mainnet.helius-rpc.com/?" + urlencode({"api-key": api_key("HELIUS_API_KEY")})
     result = fetch_json(url, {"jsonrpc": "2.0", "id": 1, "method": method, "params": params})

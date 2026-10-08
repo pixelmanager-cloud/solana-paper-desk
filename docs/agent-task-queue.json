@@ -189,13 +189,15 @@
   "integration": {
     "branch": "integration/cloud-wave1",
     "tested_commit": "e056ec5b016782a06a20590b3ca4e498f238ab4c",
-    "combined_tests": 662,
+    "combined_tests": 670,
     "result": "PASS",
     "live_verification": "NOT_STARTED_PENDING_RACE_FIX",
-    "blocker": "PR18 stale ownership_heads publication race; repair assigned to worker01",
+    "blocker": "Race fixed in 0e16a91, independent re-review pending; provider clock allowlist fixed on integration branch; trust adapter pending",
     "followups": {
-      "worker01": "Repair PR18 race and add unmocked replay fixture",
-      "worker02": "Separate trusted classification/exposure adapter PR"
+      "worker02": "Trusted classification/exposure adapter",
+      "worker06": "Token-control gap fixes",
+      "worker10": "Independent combined QA",
+      "cloud_reviewer": "Re-review PR18 fixed head"
     }
   }
 }
