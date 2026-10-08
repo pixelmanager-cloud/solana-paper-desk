@@ -275,7 +275,7 @@
         "worker": "01",
         "thread_id": "01a118fc-39bc-722c-b442-8bf5a749e0bb",
         "host_id": "durable",
-        "status": "RESERVED_PENDING_DISPATCH",
+        "status": "DISPATCHED",
         "base": "28e59ac3da521c032cec49a26b603088c78e78f1",
         "scope": "Disconnected guarded exact-format snapshot reader with independently supplied anchors; no migration, issuer or entry"
       }
