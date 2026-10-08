@@ -189,15 +189,15 @@
   ],
   "integration": {
     "branch": "integration/cloud-wave1",
-    "tested_commit": "e9e3a4f95e5156ffd8f7d4c7a5dc3e90b46de2f2",
-    "combined_tests": 1038,
+    "tested_commit": "18cb8460887bbce7db3d286fcbf58eefa68e8470",
+    "combined_tests": 1075,
     "result": "PASS",
     "live_verification": "BLOCKED_NO_SUPPORTED_BUDGET_FEASIBLE_PUBLIC_LEGACY_SEED; acquisition path in development",
     "blocker": "Live legacy evidence,protected pool receipt capture,lifecycle semantic approval and holder exposure integration unfinished",
     "followups": {
       "worker02": "PR40 review interrupted by automated cybersecurity-risk flag; no final acceptance",
       "worker06": "PR34 integrated; available",
-      "cloud_reviewer": "PR40 independently scheduled scoped review passed; combined Linux verification assigned",
+      "cloud_reviewer": "Combined PR40 validation passed; available",
       "worker10": "PR44 documentation/provenance PASS; available for upcoming parser review",
       "worker03": "Bounded newerlegacysearch found no matching authoritative event;available",
       "worker04": "PR40 repairs published3744192;review remains incomplete",
@@ -230,7 +230,8 @@
       "PR41": "69f556dce2012ab1e9b2963d3dd7f8c0e190a476 independent structural-scope PASS;1006Linux,1034malformed+11targeted probes;notruntimeapproval",
       "PR42": "c174c07c5bcfe7776003be7d011075ec333115fa independent scopedPASS;1024combinedLinux,330header combinations+45invalid+8malformed probes;no rawtoken/launch acceptance",
       "PR43": "77ed0fbc46ad3ce1f342d7f5b43c5cb3fa3063c9 independent scopedPASS;1038Linux,1137malformed/boundary checks;unresolved execution gates intact",
-      "PR44": "c121119589880ae143fbb2f34d65eec93749a5c2 independent scoped documentation PASS; proposed profile only, no runtime approval"
+      "PR44": "c121119589880ae143fbb2f34d65eec93749a5c2 independent scoped documentation PASS; proposed profile only, no runtime approval",
+      "PR40": "37441927f38f0b884d61fc2e1e563b6aa50a4355 independent scheduled review5451192398 and combinedLinux1075 PASS; original worker02 run remains incomplete"
     },
     "candidate_combination": {
       "commit": "bfcc550ca25bd6cb79dc7ac3ad2b30c72f7b1033",
@@ -270,13 +271,6 @@
         "base_commit": "d9c093b0f0be103ebdb11a826c1896be6b8f055b",
         "reference_pr": 44,
         "reference_head": "c121119589880ae143fbb2f34d65eec93749a5c2"
-      },
-      {
-        "worker": "cloud_reviewer",
-        "thread_id": "01a11901-8b68-70f9-8672-5a731a149091",
-        "host_id": "durable",
-        "task": "Combined Linux validation d9c093b plus PR40 3744192",
-        "status": "DISPATCHED"
       },
       {
         "worker": "worker05",
@@ -337,7 +331,7 @@
       "result": "Linux combined975 PASS zero skips; reviewed",
       "integrated": true
     },
-    "test_platform_note": "Independent combinedLinux1038zero skips;matching implementation/tests Mac1005passed+33Linuxskips",
+    "test_platform_note": "Independent combined Linux1075 zero skips; desktop1005 passed+70 Linux-only skips;244 source hashes match",
     "pending_reference_combination": {
       "commit": "8aa5938aeef5e96f22a54f80ff698d043f3a154d",
       "pr": 39,
@@ -355,8 +349,8 @@
       "mac_discovered": 1075,
       "mac_errors": 0,
       "mac_skips": 70,
-      "result": "Independent scheduled cloud review5451192398 PASS at3744192; original worker02 flagged review remains incomplete; combined Linux validation pending",
-      "integrated": false,
+      "result": "Independent combinedLinux1075 PASS zero skips;244 source file hashes match desktopcandidate; live transport not provisioned",
+      "integrated": true,
       "independent_review": "PR10 report at521dcee15f237592709a3cf8b1b3c3a4dd81f053",
       "mac_passed": 1005
     },
