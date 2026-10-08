@@ -183,3 +183,68 @@ class PaperConsumerRecoveryTests(unittest.TestCase):
         self.assertEqual(self.path.read_bytes(),before)
         with self.connection() as c:
             self.assertIsNone(c.execute("SELECT name FROM sqlite_master WHERE name='state'").fetchone())
+
+    def test_checkpoint_damage_after_read_only_preflight_is_recovery_without_fill(self):
+        for payload, reason in ((None,'CHECKPOINT_MISSING'), ('null','CHECKPOINT_INVALID'),
+                                ('{}','CHECKPOINT_INVALID')):
+            with self.subTest(payload=payload):
+                self.path = Path(self.tmp.name) / f'race-{reason}-{payload}.sqlite'
+                self.seed(event())
+                original = self.records()
+                damaged = []
+                def damage_then_open(path, **kwargs):
+                    with self.connection() as c:
+                        if payload is None:
+                            c.execute('DELETE FROM state')
+                        else:
+                            c.execute('UPDATE state SET payload=?', (payload,))
+                    damaged.append(self.records())
+                    return Ledger(path, **kwargs)
+                with patch('desk.monitor.Ledger', side_effect=damage_then_open):
+                    result = tick(self.path, self.cfg, now=T+self.cfg['price_ttl_seconds']+1)
+                self.assertEqual(result['status'], 'RECOVERY_REQUIRED')
+                self.assertEqual(result['recovery_reason'], reason)
+                self.assertFalse(result['automatic_entry_enabled'])
+                self.assertNotIn('outcomes', result)
+                self.assertEqual(self.records(), damaged[0])
+                for table in original:
+                    if table != 'state':
+                        self.assertEqual(damaged[0][table], original[table])
+                self.assertEqual(paper_status(self.path,now=T+11)['status'],'RECOVERY_REQUIRED')
+
+    def test_writable_boundary_database_errors_are_redacted_without_writes(self):
+        self.seed(event())
+        before = self.records()
+        for target in ('desk.monitor.Ledger','desk.ledger.Ledger.apply'):
+            with self.subTest(target=target):
+                with patch(target, side_effect=sqlite3.OperationalError('synthetic-private-detail')):
+                    result = tick(self.path, self.cfg, now=T+11)
+                self.assertEqual(result['status'],'LEDGER_UNAVAILABLE')
+                self.assertFalse(result['automatic_entry_enabled'])
+                self.assertNotIn('outcomes',result)
+                self.assertNotIn('synthetic-private-detail',json.dumps(result))
+                self.assertEqual(self.records(),before)
+
+    def test_unrelated_value_errors_at_apply_boundary_are_not_masked(self):
+        self.seed(event())
+        before = self.records()
+        for message in ('synthetic unrelated transition defect',
+                        'ledger checkpoint invalid: unexpected unrelated detail',
+                        'config changed or unversioned: use a new experiment database'):
+            with self.subTest(message=message):
+                with patch('desk.ledger.Ledger.apply', side_effect=ValueError(message)):
+                    with self.assertRaises(ValueError) as raised:
+                        tick(self.path,self.cfg,now=T+11)
+                self.assertEqual(str(raised.exception),message)
+                self.assertEqual(self.records(),before)
+
+    def test_sql_programming_and_constraint_defects_are_not_masked_at_writable_boundary(self):
+        self.seed(event())
+        before = self.records()
+        for target in ('desk.monitor.Ledger','desk.ledger.Ledger.apply'):
+            for error in (sqlite3.ProgrammingError,sqlite3.IntegrityError,sqlite3.DataError):
+                with self.subTest(target=target,error=error):
+                    with patch(target,side_effect=error('synthetic unrelated SQL defect')):
+                        with self.assertRaises(error):
+                            tick(self.path,self.cfg,now=T+11)
+                    self.assertEqual(self.records(),before)
