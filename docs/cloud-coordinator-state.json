@@ -1,6 +1,6 @@
 {
   "schema_version": 1,
-  "revision": 22,
+  "revision": 23,
   "repository": "pixelmanager-cloud/solana-paper-desk",
   "source_main_sha": "e298e15cd758932e81d2241130716632702f5bd0",
   "observed_date": "2026-10-08",
@@ -363,6 +363,14 @@
       "action": "Only pristine initialization allowed; any partially missing initialized schema fails closed; preserve original records/counters; explicit recovery/regressions required.",
       "resolved_head_sha": "0b57227a36dd47b75128c66385c8e50dc16ecf24",
       "resolution_review_id": 5451687035
+    },
+    {
+      "id": "PR52_WAL_PREFLIGHT_WRITES",
+      "pr": 52,
+      "head_sha": "ef58b4320db51517a53501a5b8073172adb74cd5",
+      "review_id": 5451847117,
+      "status": "OPEN",
+      "action": "Side-effect-free current-state preflight or pre-open unsupported-mode rejection; do not ignore active WAL via immutable flag; add file/content invariance regressions."
     }
   ],
   "events": [
@@ -760,6 +768,70 @@
         "Whole-journal rollback outside scope",
         "Trusted stable filesystem, lock symlinks followed, no inode replacement defense",
         "No source/chain/signature/lifecycle/entry/live acceptance"
+      ],
+      "accepted": false,
+      "live_acceptance": false
+    },
+    {
+      "kind": "PR52_INDEPENDENT_CLI_REVIEW",
+      "policy_version": "cloud-independent-review-v1",
+      "pr": 52,
+      "head_sha": "ef58b4320db51517a53501a5b8073172adb74cd5",
+      "base_sha": "82046ac576475d2db255a4d0591455cd8559ae75",
+      "worker_agent": "05",
+      "worker_thread_id": "01a118fc-dd83-7672-ac81-7445f85fe09f",
+      "branch": "codex/cloud-wave1-05-capture-cli",
+      "reviewer": "Independent cloud execution shared GitHub identity COMMENT only",
+      "review_id": 5451847117,
+      "review_action": "COMMENT",
+      "status": "CHANGES_REQUIRED_P2_WAL_PREFLIGHT_WRITES",
+      "findings": [
+        {
+          "priority": "P2",
+          "path": "desk/coordinator_capture_cli.py",
+          "line": 90,
+          "title": "Invalid admission read-only WAL preflight creates sidecar files before binding validation",
+          "reproduction": "Valid private WAL DB closed with no sidecars; unmocked CLI missing scan returns BLOCKED0RPC yet -wal/-shm created.",
+          "action": "Side-effect-free current-state preflight or pre-open unsupported-mode rejection; do not ignore active WAL via immutable flag; add file/content invariance regressions."
+        }
+      ],
+      "tests": {
+        "python": "3.12.14",
+        "full_suite_command": "python -m unittest discover -s tests -v",
+        "full_suite_passed": 1258,
+        "full_suite_seconds": 57.923,
+        "targeted_command": "python -m unittest tests.test_coordinator_capture_cli -q",
+        "targeted_passed": 14,
+        "targeted_seconds": 5.287,
+        "adversarial_command": "python /workspace/work/review/p52-independent.py",
+        "adversarial_passed": 3,
+        "adversarial_seconds": 0.723,
+        "wal_probe_command": "python /workspace/work/review/p52-wal-probe.py",
+        "wal_probe_result": "P2_REPRODUCED_IN_REAL_SQLITE_AND_UNMOCKED_SUBPROCESS",
+        "skipped": 0,
+        "provider_calls": 0
+      },
+      "ci": [
+        {
+          "id": 37731532050,
+          "name": "Tests",
+          "status": "completed",
+          "conclusion": "success",
+          "run_number": 332,
+          "jobs_url": "https://api.github.com/repos/pixelmanager-cloud/solana-paper-desk/actions/runs/37731532050/jobs",
+          "logs_url": "https://api.github.com/repos/pixelmanager-cloud/solana-paper-desk/actions/runs/37731532050/logs",
+          "workflow_id": 377958194
+        }
+      ],
+      "combined_ci": "NOT_RUN_SCRATCH_SOURCE_ONLY",
+      "proof_artifact": "docs/reviews/cloud-pr52-ef58b43.md",
+      "source_manifest": "docs/reviews/cloud-pr52-82046ac-ef58b43-hashes.json",
+      "source_manifest_sha256": "32cb55e1e1ef9865c5762878729659883f4e83b93e56ab3de6d96493ba32eb38",
+      "source_files": 266,
+      "limitations": [
+        "Trusted stable filesystem/UID not hostile replacement defense",
+        "No chain/source/lifecycle/ownership/live acceptance",
+        "Desktop VPS results external not cloud rerun"
       ],
       "accepted": false,
       "live_acceptance": false
@@ -1579,6 +1651,69 @@
       ],
       "accepted": false,
       "live_acceptance": false
+    },
+    {
+      "policy_version": "cloud-independent-review-v1",
+      "pr": 52,
+      "head_sha": "ef58b4320db51517a53501a5b8073172adb74cd5",
+      "base_sha": "82046ac576475d2db255a4d0591455cd8559ae75",
+      "worker_agent": "05",
+      "worker_thread_id": "01a118fc-dd83-7672-ac81-7445f85fe09f",
+      "branch": "codex/cloud-wave1-05-capture-cli",
+      "reviewer": "Independent cloud execution shared GitHub identity COMMENT only",
+      "review_id": 5451847117,
+      "review_action": "COMMENT",
+      "status": "CHANGES_REQUIRED_P2_WAL_PREFLIGHT_WRITES",
+      "findings": [
+        {
+          "priority": "P2",
+          "path": "desk/coordinator_capture_cli.py",
+          "line": 90,
+          "title": "Invalid admission read-only WAL preflight creates sidecar files before binding validation",
+          "reproduction": "Valid private WAL DB closed with no sidecars; unmocked CLI missing scan returns BLOCKED0RPC yet -wal/-shm created.",
+          "action": "Side-effect-free current-state preflight or pre-open unsupported-mode rejection; do not ignore active WAL via immutable flag; add file/content invariance regressions."
+        }
+      ],
+      "tests": {
+        "python": "3.12.14",
+        "full_suite_command": "python -m unittest discover -s tests -v",
+        "full_suite_passed": 1258,
+        "full_suite_seconds": 57.923,
+        "targeted_command": "python -m unittest tests.test_coordinator_capture_cli -q",
+        "targeted_passed": 14,
+        "targeted_seconds": 5.287,
+        "adversarial_command": "python /workspace/work/review/p52-independent.py",
+        "adversarial_passed": 3,
+        "adversarial_seconds": 0.723,
+        "wal_probe_command": "python /workspace/work/review/p52-wal-probe.py",
+        "wal_probe_result": "P2_REPRODUCED_IN_REAL_SQLITE_AND_UNMOCKED_SUBPROCESS",
+        "skipped": 0,
+        "provider_calls": 0
+      },
+      "ci": [
+        {
+          "id": 37731532050,
+          "name": "Tests",
+          "status": "completed",
+          "conclusion": "success",
+          "run_number": 332,
+          "jobs_url": "https://api.github.com/repos/pixelmanager-cloud/solana-paper-desk/actions/runs/37731532050/jobs",
+          "logs_url": "https://api.github.com/repos/pixelmanager-cloud/solana-paper-desk/actions/runs/37731532050/logs",
+          "workflow_id": 377958194
+        }
+      ],
+      "combined_ci": "NOT_RUN_SCRATCH_SOURCE_ONLY",
+      "proof_artifact": "docs/reviews/cloud-pr52-ef58b43.md",
+      "source_manifest": "docs/reviews/cloud-pr52-82046ac-ef58b43-hashes.json",
+      "source_manifest_sha256": "32cb55e1e1ef9865c5762878729659883f4e83b93e56ab3de6d96493ba32eb38",
+      "source_files": 266,
+      "limitations": [
+        "Trusted stable filesystem/UID not hostile replacement defense",
+        "No chain/source/lifecycle/ownership/live acceptance",
+        "Desktop VPS results external not cloud rerun"
+      ],
+      "accepted": false,
+      "live_acceptance": false
     }
   ],
   "infrastructure": {
@@ -2086,10 +2221,10 @@
   ],
   "review_assignments": {
     "cloud_coordinator": {
-      "exclusive_pr": 51,
-      "head_sha": "0b57227a36dd47b75128c66385c8e50dc16ecf24",
-      "status": "SCOPED_PRIOR_P2_PARTIAL_SCHEMA_DEFECT_RESOLVED",
-      "review_id": 5451687035
+      "exclusive_pr": 52,
+      "head_sha": "ef58b4320db51517a53501a5b8073172adb74cd5",
+      "status": "CHANGES_REQUIRED_P2_WAL_PREFLIGHT_WRITES",
+      "review_id": 5451847117
     },
     "pr31": {
       "owner": "worker02",
@@ -2279,62 +2414,65 @@
     }
   ],
   "last_review_run": {
-    "mode": "EXCLUSIVE_PR51_REPAIR_COMBINED_FIXTURE_REVIEW",
+    "mode": "PR52_EXCLUSIVE_COMBINED_FIXTURE_REVIEW",
     "policy_version": "cloud-independent-review-v1",
-    "pr": 51,
-    "head_sha": "0b57227a36dd47b75128c66385c8e50dc16ecf24",
-    "base_sha": "149bfabd1c288d1807fc0bdfacbb7a24dfd547f0",
-    "combined_integration_sha": "6f0f64b847fdfee5636bcb95f478e2a151fb4474",
-    "worker_agent": "01",
-    "worker_thread_id": "01a118fc-39bc-722c-b442-8bf5a749e0bb",
-    "branch": "codex/cloud-raw-transaction-capture",
+    "pr": 52,
+    "head_sha": "ef58b4320db51517a53501a5b8073172adb74cd5",
+    "base_sha": "82046ac576475d2db255a4d0591455cd8559ae75",
+    "worker_agent": "05",
+    "worker_thread_id": "01a118fc-dd83-7672-ac81-7445f85fe09f",
+    "branch": "codex/cloud-wave1-05-capture-cli",
     "reviewer": "Independent cloud execution shared GitHub identity COMMENT only",
-    "review_id": 5451687035,
+    "review_id": 5451847117,
     "review_action": "COMMENT",
-    "status": "SCOPED_PRIOR_P2_PARTIAL_SCHEMA_DEFECT_RESOLVED",
+    "status": "CHANGES_REQUIRED_P2_WAL_PREFLIGHT_WRITES",
     "findings": [
-      "96 partial-schema/rebinding probes fail closed with surviving schema/rows/pages/source/budget identical",
-      "Pristine init, actual crash, tamper and PR49 fixture transport composition pass"
+      {
+        "priority": "P2",
+        "path": "desk/coordinator_capture_cli.py",
+        "line": 90,
+        "title": "Invalid admission read-only WAL preflight creates sidecar files before binding validation",
+        "reproduction": "Valid private WAL DB closed with no sidecars; unmocked CLI missing scan returns BLOCKED0RPC yet -wal/-shm created.",
+        "action": "Side-effect-free current-state preflight or pre-open unsupported-mode rejection; do not ignore active WAL via immutable flag; add file/content invariance regressions."
+      }
     ],
     "tests": {
       "python": "3.12.14",
       "full_suite_command": "python -m unittest discover -s tests -v",
-      "full_suite_passed": 1201,
-      "full_suite_seconds": 50.526,
-      "targeted_command": "python -m unittest tests.test_raw_transaction_capture -q",
-      "targeted_passed": 22,
-      "targeted_seconds": 0.437,
-      "adversarial_commands": [
-        "python /workspace/work/review/fix51-independent.py",
-        "python /workspace/work/review/fix51-crash.py"
-      ],
-      "schema_checks": 96,
-      "crash_tests": 3,
-      "crash_seconds": 0.038,
+      "full_suite_passed": 1258,
+      "full_suite_seconds": 57.923,
+      "targeted_command": "python -m unittest tests.test_coordinator_capture_cli -q",
+      "targeted_passed": 14,
+      "targeted_seconds": 5.287,
+      "adversarial_command": "python /workspace/work/review/p52-independent.py",
+      "adversarial_passed": 3,
+      "adversarial_seconds": 0.723,
+      "wal_probe_command": "python /workspace/work/review/p52-wal-probe.py",
+      "wal_probe_result": "P2_REPRODUCED_IN_REAL_SQLITE_AND_UNMOCKED_SUBPROCESS",
       "skipped": 0,
       "provider_calls": 0
     },
     "ci": [
       {
-        "id": 37729918829,
+        "id": 37731532050,
         "name": "Tests",
         "status": "completed",
         "conclusion": "success",
-        "run_number": 314,
-        "jobs_url": "https://api.github.com/repos/pixelmanager-cloud/solana-paper-desk/actions/runs/37729918829/jobs",
-        "logs_url": "https://api.github.com/repos/pixelmanager-cloud/solana-paper-desk/actions/runs/37729918829/logs",
+        "run_number": 332,
+        "jobs_url": "https://api.github.com/repos/pixelmanager-cloud/solana-paper-desk/actions/runs/37731532050/jobs",
+        "logs_url": "https://api.github.com/repos/pixelmanager-cloud/solana-paper-desk/actions/runs/37731532050/logs",
         "workflow_id": 377958194
       }
     ],
     "combined_ci": "NOT_RUN_SCRATCH_SOURCE_ONLY",
-    "proof_artifact": "docs/reviews/cloud-pr51-0b57227.md",
-    "source_manifest": "docs/reviews/cloud-pr51-6f0f64b-0b57227-hashes.json",
-    "source_manifest_sha256": "1dd1ce2f7c494c5e759b5371e109d4a69251153904a1b95070c86e310384020c",
-    "source_files": 260,
+    "proof_artifact": "docs/reviews/cloud-pr52-ef58b43.md",
+    "source_manifest": "docs/reviews/cloud-pr52-82046ac-ef58b43-hashes.json",
+    "source_manifest_sha256": "32cb55e1e1ef9865c5762878729659883f4e83b93e56ab3de6d96493ba32eb38",
+    "source_files": 266,
     "limitations": [
-      "Whole-journal rollback outside scope",
-      "Trusted stable filesystem, lock symlinks followed, no inode replacement defense",
-      "No source/chain/signature/lifecycle/entry/live acceptance"
+      "Trusted stable filesystem/UID not hostile replacement defense",
+      "No chain/source/lifecycle/ownership/live acceptance",
+      "Desktop VPS results external not cloud rerun"
     ],
     "accepted": false,
     "live_acceptance": false,
