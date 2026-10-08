@@ -262,18 +262,6 @@
     "published_ci": "Deployed d758bc529a7da1f74509117288740911f2ad6845: both CI runs successful",
     "active_claims": [
       {
-        "id": "MIXED-RECEIPT-PROTECTED-READER",
-        "worker": "01",
-        "thread_id": "01a118fc-39bc-722c-b442-8bf5a749e0bb",
-        "host_id": "durable",
-        "status": "DEFINING_FORMAT_PREREQUISITE",
-        "base": "28e59ac3da521c032cec49a26b603088c78e78f1",
-        "scope": "Extend PR89 with exact physical format constants and adversarial proofs before independent review and reader implementation",
-        "wait_cursor": "5e651fc7-2996-4765-974d-5c852257a005:50",
-        "pr": 89,
-        "head": "bd9d2321bccc4efc11889b78b9382ec2df67f0db"
-      },
-      {
         "id": "COMMON-BANK-UNION-STAGE",
         "worker": "02",
         "thread_id": "01a118fc-666c-70b6-9fa8-2c7520f0a0bb",
@@ -281,6 +269,16 @@
         "status": "DISPATCHED",
         "base": "421a9ce1c92a737375b249e8fe83cb11e9295198",
         "scope": "Atomic original union getMultipleAccounts reservation and completion after audited finalized-slot DONE; no transport or publication"
+      },
+      {
+        "id": "PR89-INDEPENDENT-REVIEW",
+        "worker": "06",
+        "thread_id": "01a118fc-f867-7233-8eec-c20659e70095",
+        "host_id": "durable",
+        "status": "REVIEWING",
+        "pr": 89,
+        "head": "37ca9420c4fbc4ff1398a9662d1f184714e8ccc3",
+        "base": "1486397add274e91281c2f5991daa7241ced67b6"
       }
     ],
     "saved_launch_probe": {
@@ -755,9 +753,9 @@
     },
     "pending_protected_reader_format": {
       "pr": 89,
-      "head": "bd9d2321bccc4efc11889b78b9382ec2df67f0db",
+      "head": "37ca9420c4fbc4ff1398a9662d1f184714e8ccc3",
       "integrated": false,
-      "status": "Report identifies missing exact SQL, singleton, fence, fingerprint and physical bounds; author assigned concrete definition on same PR",
+      "status": "Concrete format published; independent review assigned worker06",
       "author_linux_tests": 1698,
       "author_skips": 0,
       "reader_implemented": false
