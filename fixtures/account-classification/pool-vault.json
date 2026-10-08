@@ -1,0 +1,20 @@
+{
+  "version": 1,
+  "label": "POOL_VAULT",
+  "account": "4vJ9JU1bJJE96FWSJKvHsmmFADCg4gpZQff4P3bkLKi",
+  "program": "TokenkegQfeZyiNwAJbNbGKPFXCWuBvf9Ss623VQ5DA",
+  "scope": {
+    "mint": "8qbHbw2BbbTHBW1sbeqakYXVKRQM8Ne7pLK7m6CVfeR",
+    "purpose": "holder_exclusion"
+  },
+  "observed_at": 100,
+  "expires_at": 200,
+  "observed_slot": 10,
+  "expires_slot": 20,
+  "provenance": {
+    "source": "synthetic fixture; no real service attribution",
+    "method": "synthetic exact pool-vault binding attestation; not a live pool proof",
+    "verifier": "offline-test-policy-v1",
+    "source_hash": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
+  }
+}
