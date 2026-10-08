@@ -128,15 +128,23 @@ class JobPersistence:
         descriptor = self._descriptor(uid, mint, created, kind, evidence_db)
         with self.connect() as c:
             c.execute('BEGIN IMMEDIATE')
-            if c.execute("SELECT count(*) FROM scans WHERE status IN ('QUEUED','RUNNING')").fetchone()[0] >= 3:
+            pending="status IN ('QUEUED','RUNNING') OR (status='INTERRUPTED' AND EXISTS(SELECT 1 FROM scan_jobs j WHERE j.scan_id=scans.id AND j.kind='BIRTH_ACQUISITION_V1'))"
+            if c.execute('SELECT count(*) FROM scans WHERE '+pending).fetchone()[0] >= 3:
                 raise ValueError('Queue full. Wait for the current scans to finish.')
             if c.execute('SELECT count(*) FROM scans WHERE created>?', (created-86400,)).fetchone()[0] >= 10:
                 raise ValueError('Daily budget reached: 10 scans per rolling 24 hours.')
-            if c.execute("SELECT 1 FROM scans WHERE mint=? AND status IN ('QUEUED','RUNNING')", (mint,)).fetchone():
+            if c.execute('SELECT 1 FROM scans WHERE mint=? AND ('+pending+')', (mint,)).fetchone():
                 raise ValueError('This token already has a pending scan.')
             c.execute('INSERT INTO scans VALUES(?,?,?,?,?)', (uid, mint, created, 'QUEUED', None))
             self._insert_descriptor(c, descriptor)
         return uid
+
+    def source(self, scan_id):
+        """Exact five-column scan projection used by immutable budget sealing."""
+        self.descriptor(scan_id)
+        with self.connect() as c:
+            row=c.execute('SELECT id,mint,created,status,result FROM scans WHERE id=?',(scan_id,)).fetchone()
+        return dict(row)
 
     def descriptor(self, scan_id):
         with self.connect() as c:
@@ -234,6 +242,55 @@ class _Worker:
                 return Claim(row['id'], row['mint'], self.token, generation)
         return None
 
+    def claim_acquisition(self, scan_id):
+        self._check()
+        descriptor=self.store.descriptor(scan_id)
+        if descriptor['kind']!=BIRTH_ACQUISITION_V1:raise ValueError('Acquisition job required')
+        with self.store.connect() as c:
+            c.execute('BEGIN IMMEDIATE')
+            row=c.execute('SELECT s.status,j.generation FROM scans s JOIN scan_jobs j ON j.scan_id=s.id WHERE s.id=?',(scan_id,)).fetchone()
+            if row['status'] not in ('QUEUED','INTERRUPTED'):raise ValueError('Acquisition is not resumable')
+            if type(row['generation']) is not int or not 0<=row['generation']<(1<<63)-1:raise ValueError('Invalid claim generation')
+            generation=row['generation']+1
+            c.execute('UPDATE scan_jobs SET claim_token=?,generation=? WHERE scan_id=?',(self.token,generation,scan_id))
+            c.execute("UPDATE scans SET status='RUNNING' WHERE id=?",(scan_id,))
+        return Claim(scan_id,descriptor['mint'],self.token,generation)
+
+    def _acquisition_claim(self,claim):
+        self._check()
+        descriptor=self.store.descriptor(claim.scan_id)
+        if descriptor['kind']!=BIRTH_ACQUISITION_V1 or descriptor['mint']!=claim.mint or claim.token!=self.token:
+            raise ValueError('Invalid acquisition claim')
+        with self.store.connect() as c:
+            live=c.execute("SELECT 1 FROM scans s JOIN scan_jobs j ON j.scan_id=s.id WHERE s.id=? AND s.status='RUNNING' AND j.claim_token=? AND j.generation=?",(claim.scan_id,claim.token,claim.generation)).fetchone()
+        if not live:raise ValueError('Stale acquisition claim')
+        return descriptor
+
+    def interrupt_acquisition(self,claim):
+        self._acquisition_claim(claim)
+        with self.store.connect() as c:
+            c.execute('BEGIN IMMEDIATE')
+            changed=c.execute("""UPDATE scans SET status='INTERRUPTED' WHERE id=? AND status='RUNNING'
+                AND EXISTS(SELECT 1 FROM scan_jobs j WHERE j.scan_id=scans.id AND j.claim_token=? AND j.generation=?)""",
+                (claim.scan_id,claim.token,claim.generation)).rowcount
+            if changed!=1:raise ValueError('Stale worker interruption')
+            c.execute('UPDATE scan_jobs SET claim_token=NULL WHERE scan_id=?',(claim.scan_id,))
+
+    def publish_acquisition(self,claim,source):
+        descriptor=self._acquisition_claim(claim)
+        if (set(source)!={'id','mint','created','status','result'} or source['id']!=claim.scan_id
+                or source['mint']!=claim.mint or source['created']!=descriptor['admitted_at']
+                or source['status']!='COMPLETE' or not isinstance(source['result'],str)
+                or canonical(json.loads(source['result']))!=source['result']):
+            raise ValueError('Exact canonical completed source required')
+        with self.store.connect() as c:
+            c.execute('BEGIN IMMEDIATE')
+            changed=c.execute("""UPDATE scans SET status='COMPLETE',result=? WHERE id=? AND status='RUNNING'
+                AND EXISTS(SELECT 1 FROM scan_jobs j WHERE j.scan_id=scans.id AND j.claim_token=? AND j.generation=?)""",
+                (source['result'],claim.scan_id,claim.token,claim.generation)).rowcount
+            if changed!=1:raise ValueError('Stale acquisition publication')
+            c.execute('UPDATE scan_jobs SET claim_token=NULL WHERE scan_id=?',(claim.scan_id,))
+
     def publish(self, claim, status, result):
         self._check()
         if status not in ('COMPLETE', 'FAILED') or claim.token != self.token:
@@ -241,7 +298,7 @@ class _Worker:
         payload = canonical(result)
         with self.store.connect() as c:
             c.execute('BEGIN IMMEDIATE')
-            self.store.descriptor(claim.scan_id)
+            if self.store.descriptor(claim.scan_id)['kind']!=SCREEN:raise ValueError('Use exact acquisition publication')
             changed = c.execute('''UPDATE scans SET status=?,result=? WHERE id=? AND status='RUNNING'
                 AND EXISTS(SELECT 1 FROM scan_jobs j WHERE j.scan_id=scans.id
                            AND j.claim_token=? AND j.generation=?)''',

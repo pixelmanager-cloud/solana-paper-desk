@@ -350,7 +350,7 @@ class JobPersistenceTests(unittest.TestCase):
                 uid = (self.jobs.submit(mint) if i % 2 else
                        self.jobs.submit_acquisition(mint, self.root/'evidence.sqlite'))
                 with self.jobs.connect() as c:
-                    c.execute('UPDATE scans SET status=? WHERE id=?', ('FAILED' if i % 2 else 'INTERRUPTED', uid))
+                    c.execute('UPDATE scans SET status=? WHERE id=?', ('INTERRUPTED' if i % 2 else 'FAILED', uid))
             for acquisition in (False, True):
                 with self.assertRaisesRegex(ValueError, 'Daily budget'):
                     if acquisition:
