@@ -263,24 +263,6 @@
     "published_ci": "886fc96d404b9d3ffd99c0045f7231d563a5d946 successful",
     "active_claims": [
       {
-        "worker": "worker07",
-        "thread_id": "01a118fd-0f1c-749c-b85b-5e730937d0a8",
-        "host_id": "durable",
-        "task": "Signed-message witness validation",
-        "status": "DISPATCHED",
-        "base": "c578dbe"
-      },
-      {
-        "worker": "cloud_reviewer",
-        "thread_id": "01a11901-8b68-70f9-8672-5a731a149091",
-        "host_id": "durable",
-        "task": "Independent signed-message witness PR69 review",
-        "status": "REVIEWING",
-        "pr": 69,
-        "head": "5d53e384f2aa6e35bdb6054e1362beb74d42f850",
-        "base": "13853bf"
-      },
-      {
         "worker": "worker01",
         "thread_id": "01a118fc-39bc-722c-b442-8bf5a749e0bb",
         "host_id": "durable",
@@ -308,16 +290,6 @@
         "status": "WAITING_REPAIR",
         "pr": 65,
         "head": "30f70c4665b3c19a16636dcbdc378042d67c9db2"
-      },
-      {
-        "worker": "worker06",
-        "thread_id": "01a118fc-f867-7233-8eec-c20659e70095",
-        "host_id": "durable",
-        "task": "Final signed-message combined Linux and composition review",
-        "status": "REVIEWING",
-        "pr": 69,
-        "head": "5d53e384f2aa6e35bdb6054e1362beb74d42f850",
-        "base": "e13d17b"
       },
       {
         "worker": "worker10",
@@ -789,14 +761,20 @@
     "69": {
       "head": "5d53e384f2aa6e35bdb6054e1362beb74d42f850",
       "reviewer": "cloud_reviewer",
-      "status": "PASS_PENDING_COORDINATOR_COMBINED_VALIDATION",
-      "integrated": false,
+      "status": "PASS_INTEGRATED",
+      "integrated": true,
       "mac_combined": {
         "discovered": 1419,
         "passed": 1320,
         "skips": 99,
         "seconds": 27.16
-      }
+      },
+      "integration_commit": "ec4c9a7567dbc3eab8d992caf57face4900cb209",
+      "reviewed_tree": "c325eef8d810bf0a96b87816e816d9b643a1726b",
+      "linux_tests": 1419,
+      "linux_skips": 0,
+      "ci": "SUCCESS exact head",
+      "review_manifest_files": 287
     },
     "70": {
       "head": "77248281830493666ccd4ac4ed2a14e4636f7b34",
