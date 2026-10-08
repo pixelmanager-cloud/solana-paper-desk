@@ -276,7 +276,7 @@
         "worker": "01",
         "thread_id": "01a118fc-39bc-722c-b442-8bf5a749e0bb",
         "host_id": "durable",
-        "status": "DISPATCH_PENDING",
+        "status": "DISPATCHED",
         "base": "5ab85134fd20af042153e950a9c64e6f353656f9",
         "scope": "Read-only bounded completion inventory prerequisite; no migration, semantic replay or authoritative quiescence assertion"
       }
