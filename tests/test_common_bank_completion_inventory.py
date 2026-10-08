@@ -231,6 +231,136 @@ class CompletionInventoryTests(unittest.TestCase):
         self.assertEqual(self.table(v,'coordinator_receipts'),f.snapshot.rows)
         self.pins=replace(self.pins,chain_anchor=None);self.refused()
 
+    def _collision_refused_before_introspection(self,statement,insert=None):
+        with sqlite3.connect(self.f.path) as c:
+            c.execute(statement)
+            if insert:c.execute(insert)
+        trace=[];original=m._connection
+        def traced(*args):
+            c=original(*args);c.set_trace_callback(trace.append);return c
+        before=self.files()
+        with patch.object(m,'_connection',side_effect=traced),patch.object(m,'_load',side_effect=AssertionError('body loaded')) as load:
+            self.refused();load.assert_not_called()
+        self.assertFalse(any('table_info' in q.lower() for q in trace),trace)
+        self.assertEqual(before,self.files())
+
+    def test_actual_table_trigger_collision_cannot_overwrite_journal_inventory(self):
+        self.f.create()
+        self._collision_refused_before_introspection('CREATE TABLE common_bank_runs_update(ignored TEXT)',
+            "INSERT INTO common_bank_runs_update VALUES('unreviewed')")
+
+    def test_actual_index_trigger_collision_cannot_overwrite_journal_inventory(self):
+        self.f.create()
+        self._collision_refused_before_introspection('CREATE INDEX common_bank_runs_update ON common_bank_runs(plan_hash)')
+
+    def _legacy(self):
+        fixture=json.loads((Path(__file__).resolve().parents[1]/'fixtures/pool-vault-admission-legacy.json').read_text())
+        bridge=PoolCaptureBridge(self.writer,CoordinatorTransport(self.f.source,FixtureRPC(fixture)),clock=lambda:fixture['query']['snapshot_time']+2)
+        d=self.f.progress.admission('multi')['descriptor_hash']
+        bridge.capture(capture_id='legacy',investigation=Investigation('multi',d,self.f.scan['mint']),pool=fixture['query']['pool'])
+        with sqlite3.connect(self.f.path) as c:head=c.execute('SELECT count,hash FROM pool_capture_head').fetchone()
+        self.pins=replace(self.pins,capture_head=head,ledger_head=self.head())
+
+    def test_actual_table_trigger_collision_cannot_overwrite_legacy_inventory(self):
+        self._legacy()
+        self._collision_refused_before_introspection('CREATE TABLE protect_pool_capture_events_update(ignored TEXT)',
+            "INSERT INTO protect_pool_capture_events_update VALUES('unreviewed')")
+
+    def test_actual_index_trigger_collision_cannot_overwrite_legacy_inventory(self):
+        self._legacy()
+        self._collision_refused_before_introspection('CREATE INDEX protect_pool_capture_events_update ON pool_capture_events(capture)')
+
+    def test_actual_ledger_table_trigger_collision_is_rejected_before_introspection(self):
+        with sqlite3.connect(self.writer.path) as c:c.execute('CREATE TABLE receipt_no_update(ignored TEXT)')
+        with patch.object(m,'_read_tables',side_effect=AssertionError('introspection')):self.refused()
+
+    def _replace_event(self,table,event):
+        with sqlite3.connect(self.f.path) as c:
+            row=c.execute(f'SELECT * FROM {table}').fetchone()
+            previous=row[3] if table=='common_bank_events' else row[2]
+            c.execute(f'DROP TRIGGER {table}_update')
+            c.execute(f'UPDATE {table} SET event_json=?,event_hash=?',(canonical(event),digest({'previous_hash':previous,'event':event})))
+            c.execute(m.TRUSTED_SQL[table+'_update'])
+
+    def test_four_rehashed_reported_pending_attacks_and_extra_fields_reject(self):
+        self.f.freeze();self.f.reserve()
+        with sqlite3.connect(self.f.path) as c:original=json.loads(c.execute('SELECT event_json FROM common_bank_events').fetchone()[0])
+        used=self.f.used()
+        for field,value in (('reserved_at','malformed'),('ordinal',True),('params',['unsupported']),('fence','0'*64),
+                            ('reserved_at',True),('reserved_at',-1),('reserved_at',2**63),('extra','unexpected')):
+            with self.subTest(field=field,value=value):
+                self._replace_event('common_bank_events',{**original,field:value})
+                before=self.files();self.refused();self.assertEqual(before,self.files());self.assertEqual(self.f.used(),used)
+        self._replace_event('common_bank_events',original);self.read()
+
+    def test_attachment_local_fields_rehash_does_not_hide_malformed_completion(self):
+        self.f.freeze()
+        with self.f.journal.locked() as s:
+            s.install_genesis_attachments();t=s.begin_genesis('capture',fence=self.f.fence,reserved_at=121)
+            s.attach_genesis_response(t,uf.wire(s.genesis_request(t),m.journal.GENESIS),completed_at=122)
+        with sqlite3.connect(self.f.path) as c:original=json.loads(c.execute('SELECT event_json FROM common_bank_attachments').fetchone()[0])
+        for field,value in (('completed_at',True),('completed_at',120),('completed_at',2**63),('reserved_at',True),
+                            ('fence','0'*64),('intent_hash','0'*64),('ordinal',True),('reason','unknown'),
+                            ('planned_source',{}),('eligible_for_trading',True),('extra','unreviewed')):
+            with self.subTest(field=field,value=value):
+                self._replace_event('common_bank_attachments',{**original,field:value});self.refused();self.assertEqual(self.f.used(),4)
+        self._replace_event('common_bank_attachments',original);self.read()
+
+    def test_slot_union_clock_rehashed_local_fields_enforced_without_semantic_session(self):
+        cf.setup(self.f);self.bind()
+        with self.f.journal.locked() as s:
+            s.install_clock_stage();t=s.begin_clock('capture',fence=s.resume_capture('multi')['clock_fence'],reserved_at=127)
+            s.attach_clock_response(t,uf.wire(s.clock_request(t),110),completed_at=128)
+        names=('common_bank_slot_intents','common_bank_union_intents','common_bank_clock_intents')
+        for table in names:
+            with sqlite3.connect(self.f.path) as c:original=json.loads(c.execute(f'SELECT event_json FROM {table}').fetchone()[0])
+            for field,value in (('params',['unsupported']),('fence','0'*64),('reserved_at',True),('ordinal',True),('extra','bad')):
+                with self.subTest(table=table,field=field):
+                    self._replace_event(table,{**original,field:value})
+                    reason='INTENT_TIME' if field=='reserved_at' else 'STAGE_CHAIN' if field=='ordinal' else 'INTENT_LOCAL_FIELDS'
+                    with self.assertRaisesRegex(m.InventoryUnavailable,reason):self.read()
+            self._replace_event(table,original)
+        for table,field,value in (('common_bank_slot_attachments','slot',True),
+            ('common_bank_union_attachments','request_floor',True),('common_bank_clock_attachments','block_time',True),
+            ('common_bank_clock_attachments','bank_captured_at',True)):
+            with sqlite3.connect(self.f.path) as c:original=json.loads(c.execute(f'SELECT event_json FROM {table}').fetchone()[0])
+            self._replace_event(table,{**original,field:value});self.refused();self._replace_event(table,original)
+        with patch.object(m.journal.CommonBankJournal,'locked',side_effect=AssertionError('writable session')):self.read()
+
+    def test_unstarted_descriptor_and_plan_extra_fields_rehashed_are_rejected(self):
+        self.f.create()
+        with sqlite3.connect(self.f.path) as c:original=c.execute('SELECT * FROM common_bank_runs').fetchone()
+        for index in (2,3):
+            changed=list(original);body=json.loads(changed[index]);body['unreviewed']='field';changed[index]=canonical(body)
+            changed[4]=digest(json.loads(changed[3]));changed[5]=digest({'descriptor':json.loads(changed[2]),'plan_hash':changed[4]})
+            with sqlite3.connect(self.f.path) as c:
+                c.execute('DROP TRIGGER common_bank_runs_update')
+                c.execute('UPDATE common_bank_runs SET descriptor_json=?,plan_json=?,plan_hash=?,seed_hash=?',changed[2:])
+                c.execute(m.journal.SCHEMA['common_bank_runs_update'])
+            self.refused()
+
+    def test_rehashed_legacy_times_and_pool_descriptor_cannot_hide_malformed_local_fields(self):
+        self._legacy()
+        with sqlite3.connect(self.f.path) as c:
+            original=tuple(c.execute('SELECT * FROM pool_capture_events ORDER BY seq'))
+            config=json.loads(c.execute('SELECT body FROM pool_capture_config').fetchone()[0])
+        for target,field,value in ((1,'captured_at',True),(1,'captured_at',-1),(1,'captured_at',2**63),(0,'pool',self.f.scan['mint'])):
+            rows=[];previous=digest(config)
+            for i,row in enumerate(original):
+                seq,cap,raw,_,_=row;event=json.loads(raw)
+                if i==target:
+                    if target==0:event['descriptor'][field]=value
+                    else:event[field]=value
+                key=digest({'seq':seq,'capture':cap,'event':event,'previous':previous})
+                rows.append((canonical(event),previous,key,seq));previous=key
+            with sqlite3.connect(self.f.path) as c:
+                c.execute('DROP TRIGGER protect_pool_capture_events_update')
+                c.executemany('UPDATE pool_capture_events SET body=?,previous=?,hash=? WHERE seq=?',rows)
+                c.execute(m.capture.SCHEMA['protect_pool_capture_events_update'])
+                c.execute('UPDATE pool_capture_head SET hash=?',(previous,))
+            self.pins=replace(self.pins,capture_head=(len(rows),previous))
+            self.refused();self.assertEqual(self.f.used(),7)
+
 
 class PortableInventoryTests(unittest.TestCase):
     def test_unsupported_platform_before_pins_files_or_sqlite(self):

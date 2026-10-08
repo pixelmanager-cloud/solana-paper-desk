@@ -9,6 +9,7 @@ import fcntl
 import hashlib
 import json
 import os
+import re
 from pathlib import Path
 import sqlite3
 import time
@@ -17,7 +18,7 @@ from . import common_bank_journal as journal
 from . import pool_capture_bridge as capture
 from . import pool_receipt_ledger as ledger
 from .common_bank_receipt_chain import ChainSnapshot, validate_receipt_chain
-from .common_bank_receipt_format import EXPECTED_INVENTORY, validate_header
+from .common_bank_receipt_format import EXPECTED_INVENTORY, FORMAT_SQL, validate_header
 from .common_bank_receipt_reader import _stat_ok, _stamp, _stable
 from .control_obligations import read_guard, read_platform_available
 from .model import canonical, digest
@@ -27,6 +28,39 @@ MAX_ROWS = 10000
 MAX_BYTES = 32 * 1024 * 1024
 MAX_FILE_BYTES = 256 * 1024 * 1024
 MAX_SECONDS = 10
+
+# Trusted constants only. No SQL, table name or column selection is taken from
+# candidate sqlite_master rows, even after validating that inventory.
+BASE_TABLE_SQL = {
+    'pages':'CREATE TABLE pages(hash TEXT PRIMARY KEY,payload BLOB NOT NULL,raw_bytes INTEGER NOT NULL)',
+    'ownership_budgets':'CREATE TABLE ownership_budgets(id TEXT PRIMARY KEY,source_hash TEXT NOT NULL,used INTEGER NOT NULL,ceiling INTEGER NOT NULL)',
+    'ownership_admissions':'CREATE TABLE ownership_admissions(id TEXT PRIMARY KEY,descriptor TEXT NOT NULL,state TEXT NOT NULL,prepared_source TEXT,prepared_used INTEGER,completed_source_hash TEXT)',
+    'scans':'CREATE TABLE scans(id TEXT PRIMARY KEY,mint TEXT,created INTEGER,status TEXT,result TEXT)',
+}
+TRUSTED_SQL = (BASE_TABLE_SQL | ledger.SCHEMA | dict(FORMAT_SQL) | capture.SCHEMA | journal.SCHEMA
+               | journal.ATTACHMENT_SCHEMA | journal.SLOT_SCHEMA | journal.UNION_SCHEMA | journal.CLOCK_SCHEMA)
+COLUMNS = {name:tuple(re.findall(r'(?:\(|,)([a-z_]+) (TEXT|INTEGER|BLOB)\b',sql))
+           for name,sql in TRUSTED_SQL.items() if sql.startswith('CREATE TABLE ')}
+COMMON_AUTOINDEXES = {'common_bank_runs':(2,3),'common_bank_events':(1,),
+    **{name:(2,) for name in ('common_bank_attachments','common_bank_slot_intents',
+       'common_bank_slot_attachments','common_bank_union_intents','common_bank_union_attachments',
+       'common_bank_clock_intents','common_bank_clock_attachments')}}
+
+
+def _objects(sqls, indexes):
+    """Parse literal accepted SQL, never candidate SQL; include autoindexes."""
+    objects=[]
+    for name,sql in sqls.items():
+        table=re.match(r'CREATE TABLE ([a-z_]+)\(',sql)
+        if table:objects.append(('table',name,table[1],sql))
+        else:
+            trigger=re.match(r'CREATE TRIGGER ([a-z_]+) BEFORE (?:INSERT|UPDATE|DELETE) ON ([a-z_]+)\b',sql)
+            need(trigger is not None and trigger[1]==name,'INVENTORY_CONSTANT_SCHEMA')
+            objects.append(('trigger',name,trigger[2],sql))
+    for table,ordinals in indexes.items():
+        if table in sqls:
+            objects.extend(('index',f'sqlite_autoindex_{table}_{i}',table,None) for i in ordinals)
+    return tuple(sorted(objects))
 
 
 class InventoryUnavailable(ValueError):
@@ -92,9 +126,10 @@ def _held(stack, path, identity, *, directory=False):
 
 
 def _schema(c):
-    metrics = c.execute("SELECT count(*),coalesce(max(length(CAST(name AS BLOB))),0),coalesce(max(length(CAST(sql AS BLOB))),0),coalesce(sum(length(CAST(sql AS BLOB))),0) FROM sqlite_master").fetchone()
+    metrics = c.execute("SELECT count(*),coalesce(max(length(CAST(name AS BLOB))),0),coalesce(max(length(CAST(sql AS BLOB))),0),coalesce(sum(coalesce(length(CAST(sql AS BLOB)),0)+length(CAST(name AS BLOB))+length(CAST(tbl_name AS BLOB))+length(CAST(type AS BLOB))),0),coalesce(max(length(CAST(tbl_name AS BLOB))),0),coalesce(max(length(CAST(type AS BLOB))),0),coalesce(sum(CASE WHEN typeof(name)!='text' OR typeof(tbl_name)!='text' OR typeof(type)!='text' OR typeof(sql) NOT IN ('text','null') THEN 1 ELSE 0 END),0) FROM sqlite_master").fetchone()
     need(all(type(x) is int for x in metrics) and metrics[0] <= 256 and metrics[1] <= 128
-         and metrics[2] <= 8192 and metrics[3] <= 256*1024, 'INVENTORY_SCHEMA_BOUND')
+         and metrics[2] <= 8192 and metrics[3] <= 256*1024 and metrics[4]<=128
+         and metrics[5]<=16 and metrics[6]==0, 'INVENTORY_SCHEMA_BOUND')
     rows = tuple(c.execute('SELECT type,name,tbl_name,sql FROM sqlite_master ORDER BY type,name').fetchmany(257))
     need(all(type(r[0]) is str and type(r[1]) is str and type(r[2]) is str
              and (r[3] is None or type(r[3]) is str) for r in rows), 'INVENTORY_SCHEMA_TYPES')
@@ -102,15 +137,24 @@ def _schema(c):
 
 
 def _family(schema, expected, prefix):
-    actual = {r[1]: r[3] for r in schema if r[1].startswith(prefix)
-              or (r[0] in ('trigger','index') and r[2].startswith(prefix) and r[3] is not None)}
-    need(actual == expected, 'INVENTORY_UNSUPPORTED_OR_PARTIAL_SCHEMA')
+    indexes=COMMON_AUTOINDEXES if prefix=='common_bank_' else {'pool_capture_events':(1,)}
+    wanted=_objects(expected,indexes)
+    names={row[1] for row in wanted};tables={row[1] for row in wanted if row[0]=='table'}
+    if prefix=='pool_capture_':
+        names.update(capture.SCHEMA)
+        tables.update(name for name,sql in capture.SCHEMA.items() if sql.startswith('CREATE TABLE '))
+    actual=tuple(row for row in schema if row[1] in names or row[2] in tables
+                 or row[1].startswith(prefix) or row[2].startswith(prefix))
+    # Cardinality, type, owning table and SQL all participate. A table/trigger
+    # or index/trigger name collision must never overwrite another object.
+    need(actual == wanted, 'INVENTORY_UNSUPPORTED_OR_PARTIAL_SCHEMA')
 
 
 def _read_tables(c, schema, names, budget):
     # SQL identifiers originate only in fixed module constants, never JSON.
     specs = []
     for name in names:
+        need(name in COLUMNS,'INVENTORY_CONSTANT_TABLE_REQUIRED')
         if name=='pages':
             count,bad=c.execute("SELECT count(*),coalesce(sum(CASE WHEN typeof(hash)!='text' OR length(CAST(hash AS BLOB))!=64 OR typeof(payload)!='blob' OR typeof(raw_bytes)!='integer' OR raw_bytes<0 OR raw_bytes>16777216 THEN 1 ELSE 0 END),0) FROM pages").fetchone()
             need(bad==0,'INVENTORY_PAGE_CATALOG_TYPES')
@@ -119,20 +163,21 @@ def _read_tables(c, schema, names, budget):
             specs.append((name,'hash',count));continue
         columns = c.execute(f'PRAGMA table_info({name})').fetchall()
         need(columns and len(columns) <= 16, 'INVENTORY_COLUMNS')
-        for col in columns:
-            key=col[1]
+        need(tuple((row[1],row[2]) for row in columns)==COLUMNS[name],'INVENTORY_CONSTANT_COLUMNS')
+        for index,(key,declared) in enumerate(COLUMNS[name]):
+            col=columns[index]
             limit = (2*1024*1024 if key in ('result','prepared_source') else
                      65536 if key in ('plan_json','response_bytes') else
                      16384 if key=='event_json' and name=='common_bank_union_intents' else
                      8192 if key in ('body','payload','descriptor','descriptor_json','event_json','request_bytes') else
                      2048 if key=='failure_json' else 128)
-            expected={'TEXT':'text','INTEGER':'integer','BLOB':'blob'}[col[2]]
+            expected={'TEXT':'text','INTEGER':'integer','BLOB':'blob'}[declared]
             nullable=not col[3] and not col[5]
             allowed=f"'{expected}'"+(",'null'" if nullable else '')
             need(c.execute(f'SELECT count(*) FROM "{name}" WHERE typeof("{key}") NOT IN ({allowed}) OR length(CAST("{key}" AS BLOB))>{limit}').fetchone()==(0,),
                  'INVENTORY_FIELD_PREFLIGHT')
-        size = '+'.join(f'coalesce(length(CAST("{r[1]}" AS BLOB)),0)' for r in columns)
-        invalid = ' OR '.join(f'(typeof("{r[1]}") NOT IN (\'null\',\'text\',\'integer\',\'blob\'))' for r in columns)
+        size = '+'.join(f'coalesce(length(CAST("{key}" AS BLOB)),0)' for key,_ in COLUMNS[name])
+        invalid = ' OR '.join(f'(typeof("{key}") NOT IN (\'null\',\'text\',\'integer\',\'blob\'))' for key,_ in COLUMNS[name])
         count, total, maximum, bad = c.execute(f'SELECT count(*),coalesce(sum({size}),0),coalesce(max({size}),0),coalesce(sum(CASE WHEN {invalid} THEN 1 ELSE 0 END),0) FROM "{name}"').fetchone()
         need(all(type(v) is int and v >= 0 for v in (count,total,maximum,bad))
              and bad == 0 and maximum <= 2*1024*1024, 'INVENTORY_SCALAR_BOUND')
@@ -140,7 +185,7 @@ def _read_tables(c, schema, names, budget):
             need(count<=journal.MAX_RUNS,'INVENTORY_STAGE_CAPACITY')
         budget[0] += count; budget[1] += total
         need(budget[0] <= MAX_ROWS and budget[1] <= MAX_BYTES, 'INVENTORY_SHARED_BOUND')
-        order = ','.join(f'"{r[1]}"' for r in columns if r[5]) or 'rowid'
+        order = ','.join(f'"{key}"' for i,(key,_) in enumerate(COLUMNS[name]) if columns[i][5]) or 'rowid'
         specs.append((name, order, count))
     return specs
 
@@ -148,7 +193,7 @@ def _read_tables(c, schema, names, budget):
 def _load(c, specs):
     result = {}
     for name, order, count in specs:
-        select='hash,raw_bytes,length(payload)' if name=='pages' else '*'
+        select='hash,raw_bytes,length(payload)' if name=='pages' else ','.join(f'"{key}"' for key,_ in COLUMNS[name])
         rows = tuple(c.execute(f'SELECT {select} FROM "{name}" ORDER BY {order} LIMIT {MAX_ROWS+1}').fetchmany(MAX_ROWS+1))
         need(len(rows) == count, 'INVENTORY_COUNT_CHANGED')
         for row in rows:
@@ -179,13 +224,97 @@ def _connection(stack, path, deadline):
     return c
 
 
+def _uint(value, ceiling=2**63):
+    return type(value) is int and 0<=value<ceiling
+
+
+def _plan_structure(plan, mint, source_hash):
+    fields={'kind','mint','F','U','pool_indices','ownership_indices','discovery_revision_hash',
+            'discovery_query_hashes','discovery_evidence_hashes'}
+    need(type(plan) is dict and set(plan)==fields and plan['kind']=='common_bank_plan_source_discovery_v1'
+         and plan['mint']==mint and plan['discovery_revision_hash']==source_hash,'INVENTORY_PLAN_VERSION_OR_BINDING')
+    frontier=plan['F'];union=plan['U']
+    need(type(frontier) is list and 1<=len(frontier)<=99 and all(type(a) is str for a in frontier)
+         and frontier==sorted(set(frontier)) and type(union) is list and len(union)<=100,
+         'INVENTORY_PLAN_COLLECTION')
+    pool=capture.canonical_accounts(mint)
+    for account in frontier:capture.address(account)
+    expected=pool+sorted(set(frontier)-set(pool))
+    need(pool[4] in frontier and not set(frontier).intersection(pool[:4]+pool[5:])
+         and mint not in frontier and union==expected,'INVENTORY_PLAN_LAYOUT')
+    need(canonical(plan['pool_indices'])==canonical(list(range(6)))
+         and canonical(plan['ownership_indices'])==canonical([union.index(mint)]+[union.index(a) for a in frontier]),
+         'INVENTORY_PLAN_INDICES')
+    for field,limit in (('discovery_query_hashes',18),('discovery_evidence_hashes',128)):
+        values=plan[field]
+        need(type(values) is list and 1<=len(values)<=limit and all(ledger._hash(v) for v in values)
+             and values==sorted(values),'INVENTORY_PLAN_REFERENCE_TYPES')
+    need(len(plan['discovery_evidence_hashes'])==len(set(plan['discovery_evidence_hashes'])),
+         'INVENTORY_PLAN_REFERENCE_DUPLICATE')
+
+
+def _attachment_structure(event, intent, request, response, failure, stage, records, source):
+    common={'kind','capture_id','budget_id','stage','ordinal','state','reason','intent_hash','fence',
+            'descriptor_hash','plan_hash','planned_source','used_after','reserved_at','completed_at',
+            'request_sha256','response_sha256','failure_hash','eligible_for_trading','ownership_approval','chain_authenticated'}
+    extra={'genesis':set(),'slot':{'slot'},'union':{'request_floor','slot'},
+           'clock':{'slot','block_time','bank_captured_at'}}[stage]
+    need(set(event)==common|extra and _uint(event['completed_at'])
+         and event['completed_at']>=intent['reserved_at']
+         and type(event['reserved_at']) is int and event['reserved_at']==intent['reserved_at']
+         and event['fence']==intent['fence'] and event['planned_source']==source
+         and event['intent_hash']==digest({'previous_hash':intent['fence'],'event':intent})
+         and all(event[name] is False for name in ('eligible_for_trading','ownership_approval','chain_authenticated')),
+         'INVENTORY_ATTACHMENT_LOCAL_FIELDS')
+    expected_request=canonical({'jsonrpc':'2.0','id':digest(intent),'method':intent['method'],'params':intent['params']}).encode()
+    limit=journal.MAX_UNION_REQUEST_BYTES if stage=='union' else journal.MAX_REQUEST_BYTES
+    need(type(request) is bytes and request==expected_request and len(request)<=limit,
+         'INVENTORY_ATTACHMENT_ORIGINAL_REQUEST')
+    need((type(response) is bytes and len(response)<=journal.MAX_RESPONSE_BYTES and failure is None)
+         or (response is None and type(failure) is str and len(failure.encode())<=journal.MAX_FAILURE_BYTES),
+         'INVENTORY_ATTACHMENT_EXCLUSIVE_OUTCOME')
+    success={'genesis':'EXACT_GENESIS','slot':'FINALIZED_SLOT_DECLARED','union':'UNION_RAW_SHAPE_VALID','clock':'BLOCK_TIME_DECLARED'}
+    errors={'RESPONSE_INVALID','RPC_ERROR','RESPONSE_OVERSIZED'}|set(journal.FAILURE_CATEGORIES)|{
+        'genesis':{'GENESIS_MISMATCH'},'slot':{'SLOT_INVALID'},'clock':{'CLOCK_TIME_INVALID'},
+        'union':{'UNION_RESULT_INVALID','UNION_CONTEXT_INVALID','UNION_CARDINALITY_INVALID','UNION_PARENT_BOUND',
+                 'UNION_REQUIRED_ACCOUNT_ABSENT','UNION_ACCOUNT_OR_RECORD_INVALID'}}[stage]
+    need(event['reason']==success[stage] if event['state']=='DONE' else event['reason'] in errors,
+         'INVENTORY_ATTACHMENT_REASON')
+    if failure is not None:
+        f=_json(failure);category=f.get('category')
+        need(category in journal.FAILURE_CATEGORIES or category=='RESPONSE_OVERSIZED','INVENTORY_FAILURE_CATEGORY')
+        expected={'kind':f'common_bank_{stage}_redacted_failure_v1' if stage in ('union','clock') else 'common_bank_redacted_failure_v1',
+                  'category':category,'method':intent['method']}
+        if stage in ('union','clock'):expected['request_sha256']=hashlib.sha256(request).hexdigest()
+        else:expected['params']=intent['params']
+        if category=='RESPONSE_OVERSIZED':
+            need(_uint(f.get('observed_bytes')) and f['observed_bytes']>journal.MAX_RESPONSE_BYTES,'INVENTORY_FAILURE_SIZE')
+            expected['observed_bytes']=f['observed_bytes']
+        need(f==expected and event['state']=='FAILED' and event['reason']==category,'INVENTORY_FAILURE_LOCAL_FIELDS')
+    if stage in ('slot','union'):
+        need((_uint(event['slot'],2**64 if stage=='slot' else 2**63) if event['state']=='DONE' else event['slot'] is None),
+             'INVENTORY_ATTACHMENT_SLOT_TYPE')
+    if stage=='union':
+        floor=records['slot']['slot']
+        need(type(event['request_floor']) is int and event['request_floor']==floor
+             and (event['state']!='DONE' or event['slot']>=floor),'INVENTORY_ATTACHMENT_FLOOR')
+    if stage=='clock':
+        union=records['union']
+        need(type(event['slot']) is int and event['slot']==union['slot']
+             and type(event['bank_captured_at']) is int and event['bank_captured_at']==union['reserved_at']
+             and (_uint(event['block_time']) if event['state']=='DONE' else event['block_time'] is None),
+             'INVENTORY_ATTACHMENT_CLOCK_FIELDS')
+
+
 def _journal_structure(tables, budgets, jd):
     runs = {}
     admissions={row[0]:row for row in tables['ownership_admissions']}
     for cap,budget,raw,plan,plan_hash,seed in tables.get('common_bank_runs',()):
         d = _json(raw); p = _json(plan)
-        need(type(p) is dict and p.get('kind')=='common_bank_plan_source_discovery_v1',
-             'INVENTORY_PLAN_VERSION')
+        need(type(d) is dict and set(d)=={'kind','capture_id','budget_id','admission_descriptor_hash',
+             'completed_source_hash','initial_used','planned_source','database_binding'}
+             and ledger._identity(cap) and ledger._identity(budget) and ledger._hash(plan_hash) and ledger._hash(seed),
+             'INVENTORY_RUN_LOCAL_FIELDS')
         need(budget in budgets and budget in admissions and d.get('kind')=='common_bank_run_v1'
              and d.get('capture_id')==cap and d.get('budget_id')==budget
              and d.get('admission_descriptor_hash')==budgets[budget][1]
@@ -195,11 +324,13 @@ def _journal_structure(tables, budgets, jd):
              and digest({'descriptor':d,'plan_hash':plan_hash})==seed, 'INVENTORY_RUN_BINDING')
         need(type(d.get('initial_used')) is int and admissions[budget][4]<=d['initial_used']<=budgets[budget][2],
              'INVENTORY_RUN_COUNTER')
+        _plan_structure(p,_json(admissions[budget][1])['mint'],admissions[budget][5])
         runs[cap]=(budget,seed,d,plan_hash)
     need(len(runs)<=journal.MAX_RUNS,'INVENTORY_RUN_BOUND')
     predecessors={cap:run[1] for cap,run in runs.items()}
     charges={cap:run[2]['initial_used'] for cap,run in runs.items()}
     ordinals={cap:0 for cap in runs};states={cap:None for cap in runs}
+    records={cap:{} for cap in runs};intents={cap:None for cap in runs}
     names=('common_bank_events','common_bank_attachments','common_bank_slot_intents',
            'common_bank_slot_attachments','common_bank_union_intents','common_bank_union_attachments',
            'common_bank_clock_intents','common_bank_clock_attachments')
@@ -215,7 +346,8 @@ def _journal_structure(tables, budgets, jd):
             kind=(('common_bank_pending_v1' if ordinal==1 else f'common_bank_{stage}_pending_v1')
                   if ordinal%2 else f'common_bank_{stage}_attachment_v1')
             need(type(event) is dict and event.get('capture_id')==cap and event.get('budget_id')==budget
-                 and event.get('kind')==kind and event.get('stage')==stage and event.get('ordinal')==ordinal
+                 and event.get('kind')==kind and event.get('stage')==stage and type(event.get('ordinal')) is int
+                 and event['ordinal']==ordinal
                  and ordinals[cap]==ordinal-1
                  and event.get('descriptor_hash')==digest(d) and event.get('plan_hash')==plan_hash
                  and prior==predecessors[cap] and key==digest({'previous_hash':prior,'event':event}),
@@ -227,6 +359,20 @@ def _journal_structure(tables, budgets, jd):
                 need(event.get('method')==('getGenesisHash','getSlot','getMultipleAccounts','getBlockTime')[(ordinal-1)//2],
                      'INVENTORY_STAGE_METHOD')
                 need(ordinal==1 or states[cap]=='DONE','INVENTORY_STAGE_PREDECESSOR')
+                at=event.get('reserved_at')
+                need(_uint(at) and (ordinal==1 or at>=records[cap][('genesis','slot','union','clock')[(ordinal-3)//2]]['completed_at']),
+                     'INVENTORY_INTENT_TIME')
+                params=[] if stage=='genesis' else [{'commitment':'finalized'}]
+                if stage=='union':
+                    floor=records[cap]['slot']['slot'];need(_uint(floor),'INVENTORY_UNION_FLOOR_TYPE')
+                    plan=_json(next(row[3] for row in tables['common_bank_runs'] if row[0]==cap))
+                    params=[plan['U'],{'encoding':'base64','commitment':'finalized','minContextSlot':floor}]
+                elif stage=='clock':params=[records[cap]['union']['slot']]
+                expected={'kind':kind,'capture_id':cap,'budget_id':budget,'stage':stage,'state':'PENDING',
+                          'method':event['method'],'params':params,'descriptor_hash':digest(d),'plan_hash':plan_hash,
+                          'fence':prior,'ordinal':ordinal,'used_after':used,'reserved_at':at}
+                need(set(event)==set(expected) and canonical(event)==canonical(expected),'INVENTORY_INTENT_LOCAL_FIELDS')
+                intents[cap]=event
                 charges[cap]=used
             else:
                 need(used==charges[cap] and event.get('state') in ('DONE','FAILED'),'INVENTORY_ATTACHMENT_STATE')
@@ -239,6 +385,8 @@ def _journal_structure(tables, budgets, jd):
                      and event.get('response_sha256')==(hashlib.sha256(response).hexdigest() if response is not None else None)
                      and event.get('failure_hash')==(digest(_json(failure)) if failure is not None else None),
                      'INVENTORY_ATTACHMENT_HASH')
+                _attachment_structure(event,intents[cap],request,response,failure,stage,records[cap],d['planned_source'])
+                records[cap][stage]=event
             predecessors[cap]=key
             ordinals[cap]=ordinal;states[cap]=event['state']
     return states
@@ -248,6 +396,7 @@ def _legacy_structure(tables, budgets, desc):
     runs={};admissions={row[0]:row for row in tables['ownership_admissions']}
     for seq,cap,body,prior,key in tables.get('pool_capture_events',()):
         event=_json(body)
+        need(capture.identity(cap),'INVENTORY_LEGACY_CAPTURE_ID')
         if cap not in runs:
             need(set(event)=={'descriptor'},'INVENTORY_LEGACY_DESCRIPTOR')
             d=event['descriptor'];inv=d.get('investigation')
@@ -256,14 +405,15 @@ def _legacy_structure(tables, budgets, desc):
                  and set(inv)=={'scan_id','descriptor_hash','mint'},'INVENTORY_LEGACY_VERSION_OR_SOURCE')
             identity=inv['scan_id']
             need(identity in budgets and identity in admissions and inv['descriptor_hash']==budgets[identity][1]
-                 and inv['mint']==d['mint'] and _json(admissions[identity][1])['mint']==d['mint'],
+                 and inv['mint']==d['mint'] and _json(admissions[identity][1])['mint']==d['mint']
+                 and d['pool']==capture.canonical_accounts(d['mint'])[0],
                  'INVENTORY_LEGACY_INVESTIGATION_BINDING')
             runs[cap]=[0,None]
         else:
             stage,state=runs[cap]
             need(set(event)=={'stage','state','record','captured_at'} and stage<4
                  and event['stage']==('genesis','slot','snapshot','time')[stage]
-                 and type(event['captured_at']) is int,'INVENTORY_LEGACY_STAGE')
+                 and _uint(event['captured_at']),'INVENTORY_LEGACY_STAGE')
             if event['state']=='PENDING':
                 need(state is None and event['record'] is None,'INVENTORY_LEGACY_PENDING')
                 runs[cap][1]='PENDING'
@@ -277,9 +427,38 @@ def _legacy_structure(tables, budgets, desc):
 def _inspect(pins, connections, schemas):
     e, l, r = connections; es, ls, rs = schemas
     desc = _json(pins.ledger_descriptor); jd = _json(pins.journal_descriptor)
-    need(desc.get('version') == 1 and desc.get('profile') == ledger.PROFILE, 'INVENTORY_LEDGER_VERSION')
+    need(type(desc) is dict and set(desc)=={'version','ledger_id','profile','root','root_identity','ledger_path',
+         'ledger_identity','lock_path','lock_identity','evidence_path','evidence_identity','sources',
+         'allow_synthetic_fixtures','max_age_seconds'} and type(desc.get('version')) is int
+         and desc['version']==1 and desc.get('profile') == ledger.PROFILE, 'INVENTORY_LEDGER_VERSION')
+    need(ledger._identity(desc['ledger_id']) and type(desc['allow_synthetic_fixtures']) is bool
+         and type(desc['max_age_seconds']) is int and 1<=desc['max_age_seconds']<=300
+         and type(desc['sources']) is list and 1<=len(desc['sources'])<=256,'INVENTORY_LEDGER_LOCAL_FIELDS')
+    ids=[]
+    for source in desc['sources']:
+        need(type(source) is dict and set(source)==set(ledger.ApprovedSource.__dataclass_fields__)
+             and ledger._identity(source['source_id']) and source['source_kind'] in ('coordinator_capture','synthetic_fixture')
+             and (source['network'],source['genesis_hash'],source['profile'])==(ledger.NETWORK,ledger.GENESIS,ledger.PROFILE)
+             and (source['source_kind']!='synthetic_fixture' or desc['allow_synthetic_fixtures']),
+             'INVENTORY_LEDGER_SOURCE_FIELDS')
+        ids.append(source['source_id'])
+    need(ids==sorted(set(ids)),'INVENTORY_LEDGER_SOURCE_IDENTITIES')
+    for field in ('root_identity','ledger_identity','evidence_identity','lock_identity'):
+        identity=desc[field]
+        need(type(identity) is list and len(identity)==(3 if field=='lock_identity' else 2)
+             and all(_uint(value,2**64) for value in identity),'INVENTORY_DESCRIPTOR_IDENTITY_TYPES')
     need(jd.get('kind') == 'common_bank_journal_v1' and jd.get('version') == 1,
          'INVENTORY_JOURNAL_VERSION')
+    need(set(jd)=={'kind','version','planned_source','research_path','research_identity','evidence_path','evidence_identity'}
+         and type(jd['version']) is int and type(jd['planned_source']) is dict
+         and set(jd['planned_source'])==set(ledger.ApprovedSource.__dataclass_fields__), 'INVENTORY_JOURNAL_LOCAL_FIELDS')
+    for key in ('research_identity','evidence_identity'):
+        need(type(jd[key]) is list and len(jd[key])==2 and all(_uint(value,2**64) for value in jd[key]),
+             'INVENTORY_JOURNAL_IDENTITY_TYPES')
+    source=jd['planned_source']
+    need(ledger._identity(source['source_id']) and source['source_kind'] in ('coordinator_capture','synthetic_fixture')
+         and (source['network'],source['genesis_hash'],source['profile'])==(ledger.NETWORK,ledger.GENESIS,ledger.PROFILE),
+         'INVENTORY_JOURNAL_SOURCE_FIELDS')
     version = e.execute('PRAGMA user_version').fetchone()[0]
     families = {0: journal.SCHEMA,
         journal.ATTACHMENT_VERSION: journal.SCHEMA | journal.ATTACHMENT_SCHEMA,
@@ -300,24 +479,24 @@ def _inspect(pins, connections, schemas):
     if format2:
         need(ls == EXPECTED_INVENTORY and pins.chain_anchor is not None, 'INVENTORY_FORMAT2_PIN')
     else:
-        need({x[1]:x[3] for x in ls if x[3] is not None} == ledger.SCHEMA
-             and {x[1] for x in ls if x[3] is None} == {'sqlite_autoindex_coordinator_receipts_1','sqlite_autoindex_coordinator_receipts_2'},
-             'INVENTORY_LEDGER_SCHEMA')
-    need([(x[1],x[2]) for x in r.execute('PRAGMA table_info(scans)')] ==
-         [('id','TEXT'),('mint','TEXT'),('created','INTEGER'),('status','TEXT'),('result','TEXT')],
-         'INVENTORY_RESEARCH_SCHEMA')
-    need(any(x[:3]==('table','scans','scans') for x in rs),'INVENTORY_RESEARCH_TABLE_REQUIRED')
+        need(ls==_objects(ledger.SCHEMA,{'coordinator_receipts':(1,2)}),'INVENTORY_LEDGER_SCHEMA')
+    for name in BASE_TABLE_SQL:
+        schema=rs if name=='scans' else es
+        wanted=_objects({name:BASE_TABLE_SQL[name]},{name:(1,)})
+        need(tuple(x for x in schema if x[1] in {y[1] for y in wanted} or x[2]==name)==wanted,
+             'INVENTORY_BASE_TYPED_SCHEMA')
     for name, expected in journal.EXISTING_COLUMNS.items():
         columns = e.execute(f'PRAGMA table_info({name})').fetchall()
         need([(x[1],x[2],x[3],x[5]) for x in columns] == expected and all(x[4] is None for x in columns),
              'INVENTORY_ADMISSION_SCHEMA')
     need(not any(x[0]=='trigger' and x[2] in journal.EXISTING_COLUMNS for x in es),
          'INVENTORY_UNSUPPORTED_ADMISSION_TRIGGER')
-    names = [x[1] for x in es if x[0] == 'table' and (x[1].startswith(('common_bank_','pool_capture_'))
-              or x[1] in ('ownership_budgets','ownership_admissions','pages'))]
+    selected=(families[version] if actual_common else {}) | (capture.SCHEMA if actual_capture else {})
+    names=['pages','ownership_budgets','ownership_admissions']+[name for name,sql in selected.items() if sql.startswith('CREATE TABLE ')]
     budget = [0,0]
     # All three preflights finish before any row body is loaded.
-    specs = (_read_tables(e,es,names,budget), _read_tables(l,ls,[x[1] for x in ls if x[0]=='table'],budget),
+    ledger_sql=FORMAT_SQL if format2 else ledger.SCHEMA
+    specs = (_read_tables(e,es,names,budget), _read_tables(l,ls,[name for name,sql in ledger_sql.items() if sql.startswith('CREATE TABLE ')],budget),
              _read_tables(r,rs,['scans'],budget))
     tables = tuple(_load(c,s) for c,s in zip(connections,specs))
     et,lt,rt = tables

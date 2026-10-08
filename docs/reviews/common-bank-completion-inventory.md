@@ -162,8 +162,9 @@ only. They do not provision trust or permit real-data migration/receipt issuance
 
 ## Validation
 
+Initial published head `714e1e915ae74b965150b8a234c89d92a03b8590`:
 Python 3.12.14 fixture-only targeted suite: 24 tests, zero skips, PASS in 5.290s.
-Full exact-source Linux suite: 1,841 tests, PASS in 135.092s, zero failures,
+Full Linux suite: 1,841 tests, PASS in 135.092s, zero failures,
 errors or skips. Commands: `python -m unittest tests.test_common_bank_completion_inventory -q`
 and `python -m unittest discover -q`. Logs are retained under local untracked
 `work/inventory-focused.log` and `work/inventory-full-suite.log`.
@@ -183,3 +184,63 @@ releasing POSIX locks; checksumming now occurs before the writer transaction.
 The mixed-profile fixture initially omitted its original source's v1 capability
 and correctly refused; that synthetic capability is now explicitly included.
 No production guard or gate was weakened to make those tests pass.
+
+## PR94 independent structural-review repair
+
+Independent06 comments [6062498707](https://github.com/pixelmanager-cloud/solana-paper-desk/pull/94#issuecomment-6062498707)
+and [6062553574](https://github.com/pixelmanager-cloud/solana-paper-desk/pull/94#issuecomment-6062553574)
+correctly identified two defects despite passing fixture suites. The original
+name-keyed family comparison collapsed a genuine table/trigger name collision;
+partial local intent validation accepted rehashed malformed timestamps, boolean
+ordinals, unsupported parameters and wrong fences. Both required structural
+repairs; deferred raw semantic replay was not a reason to accept them.
+
+The forward repair compares complete ordered `(type,name,tbl_name,sql)` tuples
+and cardinality against accepted constant inventories, including exact automatic
+indexes. Tables and triggers sharing a name cannot overwrite each other. Owned
+families include every object attached to their tables and every reserved object
+name, including legacy `protect_*` names. Legacy receipt comparison also uses
+complete typed tuples; no name-to-SQL candidate map remains. Fixed accepted SQL
+constants provide every selected table and column; candidate introspection
+confirms that fixed contract rather than selecting arbitrary columns/objects.
+Real table/trigger and index/trigger collisions on both common-bank and legacy
+families refuse before any `table_info` or row body loading. The ledger collision
+case is also covered. Schema scalar preflight now includes type/tbl_name storage
+types and UTF8 byte bounds and the full schema string aggregate, not SQL alone.
+
+Local records must have exact supported field sets. Descriptors bind exact
+source/seal/plan/database fields and typed identities/counters. Plans validate
+their local address arrays/order/indices and reference types while leaving raw
+discovery justification unverified. Intents enforce strict nonboolean integer
+ordinal/reservation time/charge types, monotonic local times, exact predecessor
+fence and supported method/parameters. Union/clock parameters bind stored prior
+slot declarations and the exact persisted plan union. Attachments enforce exact
+field sets, integer completion times, copied reservation/charge/fence/source
+bindings, original canonical request bytes, exclusive response/failure presence,
+bounded local failure categories, declared reason/slot/floor/clock field types
+and literal false permission flags. These checks do not replay raw response
+results or authenticate declared DONE. Legacy descriptors additionally bind
+their canonical pool identity and legacy timestamps use the existing strict
+integer range. No writable journal session, PR93 API, provider, recovery or
+schema installation is invoked by the inventory.
+
+New adversarial tests preserve charged counters and exact hash chains while
+mutating local records. They reproduce all four reported genesis-intent attacks,
+extra fields and range/type variants; rehash malformed local attachment fields,
+stage-specific slot/union/clock fields and unstarted descriptor/plan records;
+and rebuild a complete legacy chain around invalid timestamps/pool binding.
+Successful originals continue to pass with all diagnostic flags false.
+
+Original CI attempt `37794887536` at head714e1e9 failed on the existing dashboard
+Node BUSY harness ten-second timeout; its failure remains recorded. Independent
+review reported PR workflow `37794988759` PASS and a requested push rerun pending
+at its boundary. No timeout or unrelated harness code is changed, and no rerun
+success is inferred. Final corrected-head fixture results and source manifest
+are recorded in the PR repair comment; independent rereview remains required.
+
+Forward repair validation (Python 3.12.14, Linux, fixture-only): 34 dedicated
+tests PASS in 8.595s; full 1,851-test suite PASS in 135.654s, zero failures,
+errors or skips. `git diff --cached --check` passes. Exact logs are retained in
+`work/inventory-repair-focused.log` and `work/inventory-repair-full.log`.
+The repair appends to the original published commit; no rebase/force push,
+shared queue/readiness edits, provider calls, migration or approval occurs.
