@@ -1,6 +1,6 @@
 """Disconnected SEALED-source plan and atomic shared-charge/PENDING primitive.
 
-No provider, union/clock/publication, canonical bank/head or receipt API exists.
+No provider, clock/publication, canonical bank/head or receipt API exists.
 Reopened PENDING is terminal; only a same-session opaque in-flight handle
 can attach an observation. Trusted application configuration
 supplies the planned source identity; its type/hash never authenticates RPC.
@@ -17,6 +17,7 @@ import stat
 import threading
 
 from .control_obligations import ReplayView, read_guard
+from .common_bank_view import MAX_RECORD_BYTES
 from .entry_evidence import _validate_continuation_source
 from .history_progress import HistoryProgress, canonical_ownership_path, ownership_lock_path
 from .job_persistence import canonical_job_path
@@ -24,7 +25,8 @@ from .live_features import _BoundedStore
 from .model import canonical, digest
 from .pool_capture_bridge import canonical_accounts
 from .pool_receipt_ledger import ApprovedSource
-from .pool_vault_admission import GENESIS, NETWORK, PROFILE
+from .pool_vault_admission import GENESIS, NETWORK, PROFILE, _raw_account, _Reject
+from .providers import PUMPSWAP
 from .programs import address
 from .replay_history import reconstruct_launch_history
 from .security import TOKEN_PROGRAM, mint_policy
@@ -32,6 +34,8 @@ from .security import TOKEN_PROGRAM, mint_policy
 APPLICATION_ID = 0x43424A31
 ATTACHMENT_VERSION = 0x43424731
 SLOT_VERSION = 0x43425331
+UNION_VERSION = 0x43425531
+MAX_UNION_REQUEST_BYTES = 8192
 MAX_REQUEST_BYTES = 1024
 MAX_RESPONSE_BYTES = 65536
 MAX_FAILURE_BYTES = 2048
@@ -83,6 +87,19 @@ SLOT_SCHEMA.update({
     'common_bank_slot_meta_replace': "CREATE TRIGGER common_bank_slot_meta_replace BEFORE INSERT ON common_bank_slot_meta WHEN EXISTS(SELECT 1 FROM common_bank_slot_meta) BEGIN SELECT RAISE(ABORT,'Immutable slot metadata'); END",
     'common_bank_slot_intent_insert': "CREATE TRIGGER common_bank_slot_intent_insert BEFORE INSERT ON common_bank_slot_intents WHEN EXISTS(SELECT 1 FROM common_bank_slot_intents WHERE capture_id=NEW.capture_id OR event_hash=NEW.event_hash) OR NOT EXISTS(SELECT 1 FROM common_bank_attachments a JOIN common_bank_runs r ON r.capture_id=a.capture_id JOIN ownership_budgets b ON b.id=r.budget_id WHERE a.capture_id=NEW.capture_id AND a.event_hash=NEW.previous_hash AND json_extract(a.event_json,'$.state')='DONE' AND json_valid(NEW.event_json) AND json_extract(NEW.event_json,'$.used_after')=b.used AND json_extract(NEW.event_json,'$.state')='PENDING') BEGIN SELECT RAISE(ABORT,'Slot predecessor or charge mismatch'); END",
     'common_bank_slot_attachment_insert': "CREATE TRIGGER common_bank_slot_attachment_insert BEFORE INSERT ON common_bank_slot_attachments WHEN EXISTS(SELECT 1 FROM common_bank_slot_attachments WHERE capture_id=NEW.capture_id OR event_hash=NEW.event_hash) OR NOT EXISTS(SELECT 1 FROM common_bank_slot_intents i WHERE i.capture_id=NEW.capture_id AND i.event_hash=NEW.previous_hash) BEGIN SELECT RAISE(ABORT,'Slot attachment predecessor mismatch'); END",
+})
+UNION_SCHEMA = {
+    'common_bank_union_meta': 'CREATE TABLE common_bank_union_meta(id INTEGER PRIMARY KEY CHECK(id=1),descriptor TEXT NOT NULL) WITHOUT ROWID',
+    'common_bank_union_intents': 'CREATE TABLE common_bank_union_intents(capture_id TEXT PRIMARY KEY,event_json TEXT NOT NULL,previous_hash TEXT NOT NULL,event_hash TEXT UNIQUE NOT NULL,FOREIGN KEY(capture_id) REFERENCES common_bank_runs(capture_id)) WITHOUT ROWID',
+    'common_bank_union_attachments': 'CREATE TABLE common_bank_union_attachments(capture_id TEXT PRIMARY KEY,event_json TEXT NOT NULL,previous_hash TEXT NOT NULL,event_hash TEXT UNIQUE NOT NULL,request_bytes BLOB NOT NULL,response_bytes BLOB,failure_json TEXT,FOREIGN KEY(capture_id) REFERENCES common_bank_union_intents(capture_id)) WITHOUT ROWID',
+}
+for table in ('common_bank_union_meta','common_bank_union_intents','common_bank_union_attachments'):
+    for operation in ('UPDATE','DELETE'):
+        UNION_SCHEMA[table+'_'+operation.lower()] = f"CREATE TRIGGER {table}_{operation.lower()} BEFORE {operation} ON {table} BEGIN SELECT RAISE(ABORT,'Immutable common bank union'); END"
+UNION_SCHEMA.update({
+    'common_bank_union_meta_replace': "CREATE TRIGGER common_bank_union_meta_replace BEFORE INSERT ON common_bank_union_meta WHEN EXISTS(SELECT 1 FROM common_bank_union_meta) BEGIN SELECT RAISE(ABORT,'Immutable union metadata'); END",
+    'common_bank_union_intent_insert': "CREATE TRIGGER common_bank_union_intent_insert BEFORE INSERT ON common_bank_union_intents WHEN EXISTS(SELECT 1 FROM common_bank_union_intents WHERE capture_id=NEW.capture_id OR event_hash=NEW.event_hash) OR NOT EXISTS(SELECT 1 FROM common_bank_slot_attachments a JOIN common_bank_runs r ON r.capture_id=a.capture_id JOIN ownership_budgets b ON b.id=r.budget_id WHERE a.capture_id=NEW.capture_id AND a.event_hash=NEW.previous_hash AND json_extract(a.event_json,'$.state')='DONE' AND json_valid(NEW.event_json) AND json_extract(NEW.event_json,'$.used_after')=b.used AND json_extract(NEW.event_json,'$.state')='PENDING') BEGIN SELECT RAISE(ABORT,'Union predecessor or charge mismatch'); END",
+    'common_bank_union_attachment_insert': "CREATE TRIGGER common_bank_union_attachment_insert BEFORE INSERT ON common_bank_union_attachments WHEN EXISTS(SELECT 1 FROM common_bank_union_attachments WHERE capture_id=NEW.capture_id OR event_hash=NEW.event_hash) OR NOT EXISTS(SELECT 1 FROM common_bank_union_intents i WHERE i.capture_id=NEW.capture_id AND i.event_hash=NEW.previous_hash) BEGIN SELECT RAISE(ABORT,'Union attachment predecessor mismatch'); END",
 })
 FAILURE_CATEGORIES = frozenset(('TRANSPORT_TIMEOUT', 'TRANSPORT_ERROR', 'CANCELLED'))
 
@@ -203,7 +220,7 @@ class _Session:
         _need(not c.execute("SELECT 1 FROM sqlite_master WHERE type='trigger' AND tbl_name IN ('ownership_budgets','ownership_admissions','pages') LIMIT 1").fetchone(),
               'UNREVIEWED_EXISTING_ADMISSION_TRIGGER')
         marker = c.execute('PRAGMA application_id').fetchone()[0]
-        sql = "SELECT name,sql FROM sqlite_master WHERE name LIKE 'common_bank_%' OR (type='trigger' AND tbl_name IN ('common_bank_meta','common_bank_runs','common_bank_events','common_bank_attachment_meta','common_bank_attachments','common_bank_slot_meta','common_bank_slot_intents','common_bank_slot_attachments'))"
+        sql = "SELECT name,sql FROM sqlite_master WHERE name LIKE 'common_bank_%' OR (type='trigger' AND tbl_name IN ('common_bank_meta','common_bank_runs','common_bank_events','common_bank_attachment_meta','common_bank_attachments','common_bank_slot_meta','common_bank_slot_intents','common_bank_slot_attachments','common_bank_union_meta','common_bank_union_intents','common_bank_union_attachments'))"
         actual = dict(c.execute(sql))
         if not actual and marker == 0 and initialize:
             _need(c.execute("SELECT count(*) FROM sqlite_master WHERE name IN ('ownership_budgets','ownership_admissions','pages')").fetchone()[0] == 3,
@@ -213,9 +230,10 @@ class _Session:
             c.execute(f'PRAGMA application_id={APPLICATION_ID}')
             actual = dict(c.execute(sql))
         version = c.execute('PRAGMA user_version').fetchone()[0]
-        _need(version in (0, ATTACHMENT_VERSION, SLOT_VERSION), 'COMMON_BANK_ATTACHMENT_VERSION_UNKNOWN')
+        _need(version in (0, ATTACHMENT_VERSION, SLOT_VERSION, UNION_VERSION), 'COMMON_BANK_ATTACHMENT_VERSION_UNKNOWN')
         expected = SCHEMA | ATTACHMENT_SCHEMA if version != 0 else SCHEMA
-        if version == SLOT_VERSION: expected = expected | SLOT_SCHEMA
+        if version in (SLOT_VERSION,UNION_VERSION): expected = expected | SLOT_SCHEMA
+        if version == UNION_VERSION: expected = expected | UNION_SCHEMA
         _need(marker in (0, APPLICATION_ID) and actual == expected, 'COMMON_BANK_SCHEMA_OR_TRIGGER_MISMATCH')
         _need(c.execute('PRAGMA application_id').fetchone()[0] == APPLICATION_ID,
               'COMMON_BANK_INSTALLATION_MARKER_MISMATCH')
@@ -224,9 +242,12 @@ class _Session:
         if version != 0:
             _need(c.execute('SELECT id,descriptor FROM common_bank_attachment_meta').fetchall()
                   == [(1,canonical(self._attachment_descriptor()))], 'COMMON_BANK_ATTACHMENT_METADATA_MISMATCH')
-        if version == SLOT_VERSION:
+        if version in (SLOT_VERSION,UNION_VERSION):
             _need(c.execute('SELECT id,descriptor FROM common_bank_slot_meta').fetchall()
                   == [(1,canonical(self._slot_descriptor()))], 'COMMON_BANK_SLOT_METADATA_MISMATCH')
+        if version == UNION_VERSION:
+            _need(c.execute('SELECT id,descriptor FROM common_bank_union_meta').fetchall()
+                  == [(1,canonical(self._union_descriptor()))], 'COMMON_BANK_UNION_METADATA_MISMATCH')
 
     def _source(self, c, budget):
         size = c.execute('SELECT length(descriptor),length(prepared_source) FROM ownership_admissions WHERE id=?',(budget,)).fetchone()
@@ -314,7 +335,7 @@ class _Session:
                   and digest({'descriptor':descriptor,'plan_hash':plan_hash}) == seed,
                   'COMMON_BANK_PLAN_OR_SEED_MISMATCH')
             runs[capture] = dict(budget=budget,descriptor=descriptor,plan=plan,seed=seed,
-                                 used=admission['requests_used'],event=None,completion=None,slot_intent=None,slot_completion=None)
+                                 used=admission['requests_used'],event=None,completion=None,slot_intent=None,slot_completion=None,union_intent=None,union_completion=None)
         for capture, ordinal, event_json, previous, event_hash in events:
             _need(capture in runs and ordinal == 1 and runs[capture]['event'] is None,
                   'COMMON_BANK_EVENT_IDENTITY_INVALID')
@@ -330,6 +351,7 @@ class _Session:
             run['event'] = event
         self._audit_attachments(c,runs)
         self._audit_slots(c,runs)
+        self._audit_unions(c,runs)
         return runs
 
     @staticmethod
@@ -361,7 +383,7 @@ class _Session:
             c.execute('INSERT INTO common_bank_runs VALUES(?,?,?,?,?,?)',
                       (capture_id,budget_id,canonical(descriptor),canonical(plan),plan_hash,seed))
             run = dict(budget=budget_id,descriptor=descriptor,plan=plan,seed=seed,
-                       used=admission['requests_used'],event=None,completion=None,slot_intent=None,slot_completion=None)
+                       used=admission['requests_used'],event=None,completion=None,slot_intent=None,slot_completion=None,union_intent=None,union_completion=None)
             return self._status(run,capture_id)
 
     def reserve_stage(self,capture_id,stage,method,params,*,fence,reserved_at):
@@ -387,14 +409,19 @@ class _Session:
     def _status(self,run,capture):
         return {'capture_id':capture,'budget_id':run['budget'],'fence':run['seed'],
                 'plan':run['plan'],'requests_used':run['used'],
-                'state': ('SLOT_'+run['slot_completion']['state'] if run['slot_completion'] else
+                'state': ('UNION_'+run['union_completion']['state'] if run['union_completion'] else
+                          'UNION_IN_FLIGHT' if run['union_intent'] and any(v['capture']==capture and v['stage']=='union' for v in self._inflight.values()) else
+                          'TERMINAL_UNCERTAINTY' if run['union_intent'] else
+                          'SLOT_'+run['slot_completion']['state'] if run['slot_completion'] else
                           'SLOT_IN_FLIGHT' if run['slot_intent'] and any(v['capture']==capture and v['stage']=='slot' for v in self._inflight.values()) else
                           'TERMINAL_UNCERTAINTY' if run['slot_intent'] else
                           'GENESIS_'+run['completion']['state'] if run['completion'] else
                           'GENESIS_IN_FLIGHT' if any(v['capture']==capture for v in self._inflight.values()) else
                           'TERMINAL_UNCERTAINTY' if run['event'] else 'READY_GENESIS'),
                 'completion':run['completion'],'slot_intent':run['slot_intent'],
-                'slot_completion':run['slot_completion'],
+                'slot_completion':run['slot_completion'],'union_intent':run['union_intent'],
+                'union_completion':run['union_completion'],
+                'union_fence':self._slot_hash(run) if run['slot_completion'] and run['slot_completion']['state']=='DONE' else None,
                 'slot_fence':self._genesis_hash(run) if run['completion'] and run['completion']['state']=='DONE' else None,
                 'intent':run['event'],'provider_calls':0,'eligible_for_trading':False,
                 'ownership_approval':False,'chain_authenticated':False}
@@ -416,7 +443,7 @@ class _Session:
         """Explicit additive installation; never retrofits v1 PENDING authority."""
         with self._transaction() as c:
             self._audit(c)
-            if c.execute('PRAGMA user_version').fetchone()[0] in (ATTACHMENT_VERSION,SLOT_VERSION):
+            if c.execute('PRAGMA user_version').fetchone()[0] in (ATTACHMENT_VERSION,SLOT_VERSION,UNION_VERSION):
                 return
             for statement in ATTACHMENT_SCHEMA.values(): c.execute(statement)
             c.execute('INSERT INTO common_bank_attachment_meta VALUES(1,?)',
@@ -431,7 +458,7 @@ class _Session:
         must be sent unchanged by a future reviewed transport, not this module.
         """
         with self._transaction() as c:
-            _need(c.execute('PRAGMA user_version').fetchone()[0] in (ATTACHMENT_VERSION,SLOT_VERSION),
+            _need(c.execute('PRAGMA user_version').fetchone()[0] in (ATTACHMENT_VERSION,SLOT_VERSION,UNION_VERSION),
                   'EXPLICIT_GENESIS_ATTACHMENT_INSTALL_REQUIRED')
         intent = self.reserve_stage(capture_id,'genesis','getGenesisHash',[],
                                     fence=fence,reserved_at=reserved_at)
@@ -497,6 +524,7 @@ class _Session:
                 return 'FAILED','RPC_ERROR'
             if set(body) != {'jsonrpc','id','result'}:
                 return 'FAILED','RESPONSE_INVALID'
+            if stage == 'union': return 'DONE','UNION_FRAMING_VALID'
             if stage == 'slot':
                 return ('DONE','FINALIZED_SLOT_DECLARED') if type(body['result']) is int and 0 <= body['result'] < 2**64 else ('FAILED','SLOT_INVALID')
             return ('DONE','EXACT_GENESIS') if type(body['result']) is str and body['result'] == GENESIS else ('FAILED','GENESIS_MISMATCH')
@@ -558,7 +586,7 @@ class _Session:
     def _finish_genesis(self,token,response,failure,at):
         flight = self._flight(token)
         with self._transaction() as c:
-            _need(c.execute('PRAGMA user_version').fetchone()[0] in (ATTACHMENT_VERSION,SLOT_VERSION),
+            _need(c.execute('PRAGMA user_version').fetchone()[0] in (ATTACHMENT_VERSION,SLOT_VERSION,UNION_VERSION),
                   'EXPLICIT_GENESIS_ATTACHMENT_INSTALL_REQUIRED')
             runs = self._audit(c); capture = flight['capture']
             _need(capture in runs and canonical(runs[capture]['event']) == flight['intent'],
@@ -586,10 +614,10 @@ class _Session:
     def install_slot_stage(self):
         """Explicit additive upgrade after genesis attachment profile install."""
         with self._transaction() as c:
-            _need(c.execute('PRAGMA user_version').fetchone()[0] in (ATTACHMENT_VERSION,SLOT_VERSION),
+            _need(c.execute('PRAGMA user_version').fetchone()[0] in (ATTACHMENT_VERSION,SLOT_VERSION,UNION_VERSION),
                   'GENESIS_ATTACHMENT_PROFILE_REQUIRED')
             self._audit(c)
-            if c.execute('PRAGMA user_version').fetchone()[0] == SLOT_VERSION: return
+            if c.execute('PRAGMA user_version').fetchone()[0] in (SLOT_VERSION,UNION_VERSION): return
             for statement in SLOT_SCHEMA.values(): c.execute(statement)
             c.execute('INSERT INTO common_bank_slot_meta VALUES(1,?)',(canonical(self._slot_descriptor()),))
             c.execute(f'PRAGMA user_version={SLOT_VERSION}')
@@ -609,7 +637,7 @@ class _Session:
     def begin_slot(self,capture_id,*,fence,reserved_at):
         _need(_identity(capture_id), 'COMMON_BANK_QUERY_ID_INVALID')
         with self._transaction() as c:
-            _need(c.execute('PRAGMA user_version').fetchone()[0] == SLOT_VERSION,
+            _need(c.execute('PRAGMA user_version').fetchone()[0] in (SLOT_VERSION,UNION_VERSION),
                   'EXPLICIT_SLOT_INSTALL_REQUIRED')
             runs = self._audit(c)
             _need(capture_id in runs, 'COMMON_BANK_CAPTURE_MISSING'); run = runs[capture_id]
@@ -662,7 +690,7 @@ class _Session:
         return event,previous,digest({'previous_hash':previous,'event':event})
 
     def _audit_slots(self,c,runs):
-        if c.execute('PRAGMA user_version').fetchone()[0] != SLOT_VERSION: return
+        if c.execute('PRAGMA user_version').fetchone()[0] not in (SLOT_VERSION,UNION_VERSION): return
         _need(not c.execute('SELECT 1 FROM common_bank_slot_intents WHERE length(event_json)>8192 LIMIT 1').fetchone(),
               'COMMON_BANK_SLOT_INTENT_OVERSIZED')
         intents=c.execute('SELECT capture_id,event_json,previous_hash,event_hash FROM common_bank_slot_intents LIMIT ?',
@@ -719,4 +747,189 @@ class _Session:
             if existing is not None:
                 _need(existing==chosen,'COMMON_BANK_CONFLICTING_COMPLETION'); return event
             c.execute('INSERT INTO common_bank_slot_attachments VALUES(?,?,?,?,?,?,?)',(capture,)+chosen)
+            return event
+
+
+    def _union_descriptor(self):
+        return {'kind':'common_bank_union_profile_v1','database_binding':self.journal.descriptor,
+                'parent_schema_hash':digest(SCHEMA | ATTACHMENT_SCHEMA | SLOT_SCHEMA),
+                'request_limit':MAX_UNION_REQUEST_BYTES,'response_limit':MAX_RECORD_BYTES}
+
+    def install_union_stage(self):
+        with self._transaction() as c:
+            _need(c.execute('PRAGMA user_version').fetchone()[0] in (SLOT_VERSION,UNION_VERSION),
+                  'SLOT_PROFILE_REQUIRED')
+            self._audit(c)
+            if c.execute('PRAGMA user_version').fetchone()[0] == UNION_VERSION: return
+            for statement in UNION_SCHEMA.values(): c.execute(statement)
+            c.execute('INSERT INTO common_bank_union_meta VALUES(1,?)',(canonical(self._union_descriptor()),))
+            c.execute(f'PRAGMA user_version={UNION_VERSION}')
+            self._schema(c,False)
+
+    @staticmethod
+    def _slot_hash(run):
+        return digest({'previous_hash':run['slot_completion']['intent_hash'],'event':run['slot_completion']})
+
+    @staticmethod
+    def _union_intent(run,capture,used,at):
+        return {'kind':'common_bank_union_pending_v1','capture_id':capture,'budget_id':run['budget'],
+                'stage':'union','state':'PENDING','method':'getMultipleAccounts',
+                'params':[run['plan']['U'],{'encoding':'base64','commitment':'finalized',
+                                          'minContextSlot':run['slot_completion']['slot']}],
+                'descriptor_hash':digest(run['descriptor']),'plan_hash':digest(run['plan']),
+                'fence':_Session._slot_hash(run),'ordinal':5,'used_after':used,'reserved_at':at}
+
+    @staticmethod
+    def _union_request(intent):
+        return canonical({'jsonrpc':'2.0','id':digest(intent),'method':'getMultipleAccounts',
+                          'params':intent['params']}).encode()
+
+    def begin_union(self,capture_id,*,fence,reserved_at):
+        _need(_identity(capture_id),'COMMON_BANK_QUERY_ID_INVALID')
+        with self._transaction() as c:
+            _need(c.execute('PRAGMA user_version').fetchone()[0] == UNION_VERSION,'EXPLICIT_UNION_INSTALL_REQUIRED')
+            runs=self._audit(c);_need(capture_id in runs,'COMMON_BANK_CAPTURE_MISSING');run=runs[capture_id]
+            _need(run['slot_completion'] is not None and run['slot_completion']['state']=='DONE','AUDITED_SLOT_DONE_REQUIRED')
+            _need(run['union_intent'] is None,'COMMON_BANK_UNION_ALREADY_RESERVED_TERMINAL')
+            _need(0 <= run['slot_completion']['slot'] < 2**63,'COMMON_BANK_UNION_FLOOR_UNSUPPORTED')
+            previous=self._slot_hash(run)
+            _need(type(fence) is str and fence==previous,'COMMON_BANK_STALE_UNION_FENCE')
+            _need(type(reserved_at) is int and run['slot_completion']['completed_at'] <= reserved_at < 2**63,
+                  'COMMON_BANK_UNION_RESERVATION_TIME_INVALID')
+            _need(run['used']+3+len(run['plan']['F']) <= 18,'COMMON_BANK_LOWER_BOUND_EXCEEDS_18')
+            used=run['used']+1;intent=self._union_intent(run,capture_id,used,reserved_at)
+            request=self._union_request(intent)
+            _need(len(request)<=MAX_UNION_REQUEST_BYTES,'COMMON_BANK_UNION_REQUEST_OVERSIZED')
+            changed=c.execute('UPDATE ownership_budgets SET used=used+1 WHERE id=? AND source_hash=? AND ceiling=18 AND used<18',
+                              (run['budget'],run['descriptor']['admission_descriptor_hash'])).rowcount
+            _need(changed==1,'INVESTIGATION_REQUEST_BUDGET_EXHAUSTED')
+            c.execute('INSERT INTO common_bank_union_intents VALUES(?,?,?,?)',
+                      (capture_id,canonical(intent),previous,digest({'previous_hash':previous,'event':intent})))
+        token=object();self._inflight[token]={'capture':capture_id,'stage':'union','intent':canonical(intent),
+                                            'request':request,'chosen':None}
+        return token
+
+    def union_request(self,token):
+        return self._flight(token,'union')['request']
+
+    @staticmethod
+    def _union_failure(request,category,observed_bytes=None):
+        record={'kind':'common_bank_union_redacted_failure_v1','method':'getMultipleAccounts',
+                'request_sha256':_sha(request),'category':category}
+        if observed_bytes is not None:record['observed_bytes']=observed_bytes
+        return canonical(record)
+
+    @staticmethod
+    def _union_outcome(run,request,response,failure):
+        if failure is not None:
+            _need(type(failure) is str and len(failure.encode())<=MAX_FAILURE_BYTES,'COMMON_BANK_UNION_FAILURE_INVALID')
+            record=json.loads(failure);_need(type(record) is dict,'COMMON_BANK_UNION_FAILURE_INVALID')
+            category=record.get('category');size=record.get('observed_bytes')
+            _need((category in FAILURE_CATEGORIES and size is None
+                   and failure==_Session._union_failure(request,category)) or
+                  (category=='RESPONSE_OVERSIZED' and type(size) is int and MAX_RECORD_BYTES<size<2**63
+                   and failure==_Session._union_failure(request,category,size)), 'COMMON_BANK_UNION_FAILURE_INVALID')
+            _need(response is None,'COMMON_BANK_ATTACHMENT_PROVENANCE_AMBIGUOUS')
+            return 'FAILED',category,None
+        state,reason=_Session._outcome(request,response,None,'union')
+        if state!='DONE':return state,reason,None
+        try:
+            result=_strict_json(response)['result'];floor=run['slot_completion']['slot']
+            if type(result) is not dict or set(result)!={'context','value'}:return 'FAILED','UNION_RESULT_INVALID',None
+            context=result['context'];values=result['value']
+            if (type(context) is not dict or not {'slot'}<=set(context)<= {'slot','apiVersion'}
+                or type(context.get('slot')) is not int or not floor<=context['slot']<2**63
+                or ('apiVersion' in context and (type(context['apiVersion']) is not str or not 1<=len(context['apiVersion'])<=128))):
+                return 'FAILED','UNION_CONTEXT_INVALID',None
+            if type(values) is not list or len(values)!=len(run['plan']['U']):return 'FAILED','UNION_CARDINALITY_INVALID',None
+            # Match accepted full-parent canonical record bound without saving
+            # a manufactured/sliced RPC record. Only original wire bytes persist.
+            equivalent={'kind':'rpc_response_v1','method':'getMultipleAccounts',
+                        'params':run['union_intent']['params'],'result':result}
+            if len(canonical(equivalent).encode())>MAX_RECORD_BYTES:return 'FAILED','UNION_PARENT_BOUND',None
+            for index,value in enumerate(values):
+                if value is None:
+                    if index<6:return 'FAILED','UNION_REQUIRED_ACCOUNT_ABSENT',None
+                    continue  # Retained null does not establish closure or zero.
+                program=PUMPSWAP if index==0 else TOKEN_PROGRAM
+                lengths=(243,287,300,301) if index==0 else (82,) if index in (1,2,3) else (165,)
+                _raw_account(value,program,lengths)
+            return 'DONE','UNION_RAW_SHAPE_VALID',context['slot']
+        except (_Reject,ValueError,TypeError,KeyError,RecursionError):
+            return 'FAILED','UNION_ACCOUNT_OR_RECORD_INVALID',None
+
+    @staticmethod
+    def _union_attachment(run,capture,request,response,failure,at):
+        intent=run['union_intent']
+        _need(intent is not None and type(at) is int and intent['reserved_at']<=at<2**63,'COMMON_BANK_UNION_COMPLETION_TIME_INVALID')
+        _need(type(request) is bytes and len(request)<=MAX_UNION_REQUEST_BYTES and request==_Session._union_request(intent),
+              'COMMON_BANK_ORIGINAL_UNION_REQUEST_MISMATCH')
+        state,reason,slot=_Session._union_outcome(run,request,response,failure)
+        previous=digest({'previous_hash':intent['fence'],'event':intent})
+        event={'kind':'common_bank_union_attachment_v1','capture_id':capture,'budget_id':run['budget'],
+               'stage':'union','ordinal':6,'state':state,'reason':reason,'intent_hash':previous,
+               'fence':intent['fence'],'descriptor_hash':digest(run['descriptor']),'plan_hash':digest(run['plan']),
+               'planned_source':run['descriptor']['planned_source'],'used_after':intent['used_after'],
+               'reserved_at':intent['reserved_at'],'completed_at':at,'request_sha256':_sha(request),
+               'response_sha256':_sha(response) if response is not None else None,
+               'failure_hash':digest(json.loads(failure)) if failure is not None else None,
+               'request_floor':run['slot_completion']['slot'],'slot':slot,
+               'eligible_for_trading':False,'ownership_approval':False,'chain_authenticated':False}
+        return event,previous,digest({'previous_hash':previous,'event':event})
+
+    def _audit_unions(self,c,runs):
+        if c.execute('PRAGMA user_version').fetchone()[0]!=UNION_VERSION:return
+        _need(not c.execute('SELECT 1 FROM common_bank_union_intents WHERE length(event_json)>16384 LIMIT 1').fetchone(),
+              'COMMON_BANK_UNION_INTENT_OVERSIZED')
+        intents=c.execute('SELECT capture_id,event_json,previous_hash,event_hash FROM common_bank_union_intents LIMIT ?',
+                          (MAX_RUNS+1,)).fetchall();_need(len(intents)<=MAX_RUNS,'COMMON_BANK_UNION_CAPACITY')
+        for capture,raw,previous,key in intents:
+            _need(capture in runs,'COMMON_BANK_UNION_CAPTURE_MISSING');run=runs[capture]
+            _need(run['slot_completion'] is not None and run['slot_completion']['state']=='DONE','AUDITED_SLOT_DONE_REQUIRED')
+            _need(0<=run['slot_completion']['slot']<2**63,'COMMON_BANK_UNION_FLOOR_UNSUPPORTED')
+            intent=json.loads(raw)
+            _need(type(intent) is dict and type(intent.get('used_after')) is int
+                  and run['slot_completion']['used_after']<intent['used_after']<=run['used']
+                  and type(intent.get('reserved_at')) is int and run['slot_completion']['completed_at']<=intent['reserved_at']<2**63,
+                  'COMMON_BANK_UNION_INTENT_INVALID')
+            expected=self._union_intent(run,capture,intent['used_after'],intent['reserved_at'])
+            _need(raw==canonical(expected) and previous==self._slot_hash(run)
+                  and key==digest({'previous_hash':previous,'event':intent})
+                  and len(self._union_request(intent))<=MAX_UNION_REQUEST_BYTES,'COMMON_BANK_UNION_FENCE_OR_HASH_MISMATCH')
+            run['union_intent']=intent
+        _need(not c.execute('SELECT 1 FROM common_bank_union_attachments WHERE length(event_json)>8192 OR length(request_bytes)>? OR length(response_bytes)>? OR length(failure_json)>? LIMIT 1',
+                            (MAX_UNION_REQUEST_BYTES,MAX_RECORD_BYTES,MAX_FAILURE_BYTES)).fetchone(),'COMMON_BANK_UNION_ATTACHMENT_OVERSIZED')
+        rows=c.execute('SELECT capture_id,event_json,previous_hash,event_hash,request_bytes,response_bytes,failure_json FROM common_bank_union_attachments LIMIT ?',
+                       (MAX_RUNS+1,)).fetchall();_need(len(rows)<=MAX_RUNS,'COMMON_BANK_UNION_ATTACHMENT_CAPACITY')
+        for capture,raw,previous,key,request,response,failure in rows:
+            _need(capture in runs,'COMMON_BANK_UNION_CAPTURE_MISSING');run=runs[capture]
+            event=json.loads(raw);_need(type(event) is dict,'COMMON_BANK_UNION_ATTACHMENT_INVALID')
+            expected,prior,event_hash=self._union_attachment(run,capture,request,response,failure,event.get('completed_at'))
+            _need(raw==canonical(expected) and previous==prior and key==event_hash,'COMMON_BANK_UNION_ATTACHMENT_HASH_OR_BINDING_MISMATCH')
+            run['union_completion']=expected
+
+    def attach_union_response(self,token,response_bytes,*,completed_at):
+        _need(type(response_bytes) is bytes,'COMMON_BANK_RAW_RESPONSE_REQUIRED')
+        flight=self._flight(token,'union')
+        if len(response_bytes)>MAX_RECORD_BYTES:
+            return self._finish_union(token,None,self._union_failure(flight['request'],'RESPONSE_OVERSIZED',len(response_bytes)),completed_at)
+        return self._finish_union(token,response_bytes,None,completed_at)
+
+    def attach_union_failure(self,token,category,*,completed_at):
+        _need(type(category) is str and category in FAILURE_CATEGORIES,'COMMON_BANK_FAILURE_CATEGORY_INVALID')
+        flight=self._flight(token,'union')
+        return self._finish_union(token,None,self._union_failure(flight['request'],category),completed_at)
+
+    def _finish_union(self,token,response,failure,at):
+        flight=self._flight(token,'union')
+        with self._transaction() as c:
+            runs=self._audit(c);capture=flight['capture']
+            _need(capture in runs and canonical(runs[capture]['union_intent'])==flight['intent'],'COMMON_BANK_STALE_UNION_INTENT')
+            event,previous,key=self._union_attachment(runs[capture],capture,flight['request'],response,failure,at)
+            chosen=(canonical(event),previous,key,flight['request'],response,failure)
+            _need(flight['chosen'] is None or flight['chosen']==chosen,'COMMON_BANK_CONFLICTING_COMPLETION');flight['chosen']=chosen
+            existing=c.execute('SELECT event_json,previous_hash,event_hash,request_bytes,response_bytes,failure_json FROM common_bank_union_attachments WHERE capture_id=?',(capture,)).fetchone()
+            if existing is not None:
+                _need(existing==chosen,'COMMON_BANK_CONFLICTING_COMPLETION');return event
+            c.execute('INSERT INTO common_bank_union_attachments VALUES(?,?,?,?,?,?,?)',(capture,)+chosen)
             return event
