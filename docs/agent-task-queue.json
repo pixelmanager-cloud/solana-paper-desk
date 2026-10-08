@@ -269,16 +269,6 @@
         "status": "IMPLEMENTING",
         "base": "ae33013",
         "task": "Replay ownership control obligations into existing candidate snapshot diagnostics"
-      },
-      {
-        "worker": "worker06",
-        "thread_id": "01a118fc-f867-7233-8eec-c20659e70095",
-        "host_id": "durable",
-        "task": "Independent raw quantity witness review including PR74 integration",
-        "pr": 75,
-        "head": "3c4399af143380381a066b7a296067909384f8b1",
-        "base": "d758bc5",
-        "status": "REVIEWING"
       }
     ],
     "saved_launch_probe": {
@@ -876,8 +866,8 @@
     "75": {
       "head": "3c4399af143380381a066b7a296067909384f8b1",
       "reviewer": "worker06",
-      "status": "REVIEWING",
-      "integrated": false,
+      "status": "PASS_INTEGRATED",
+      "integrated": true,
       "mac_combined": {
         "base": "d758bc5",
         "tree": "613d5e3393e8a930cb15df979cf0c211fa89c037",
@@ -887,7 +877,14 @@
         "seconds": 30.439
       },
       "ci": "SUCCESS exact head",
-      "coordinator_diff_review": "Production wiring and complete tests/report read; independent review pending"
+      "coordinator_diff_review": "Full diff reviewed; independent exact combined review PASS",
+      "linux_tests": 1492,
+      "linux_skips": 0,
+      "linux_seconds": 80.718,
+      "independent_probes": 28,
+      "reviewed_tree": "613d5e3393e8a930cb15df979cf0c211fa89c037",
+      "tree_match": true,
+      "integration_commit": "ba854128bc5ece38f8d21dda688ed0c7e2341aba"
     }
   },
   "parallel_combined_regression": {
