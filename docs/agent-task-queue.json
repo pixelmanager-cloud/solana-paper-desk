@@ -262,25 +262,13 @@
     "published_ci": "Deployed d758bc529a7da1f74509117288740911f2ad6845: both CI runs successful",
     "active_claims": [
       {
-        "id": "PR86-INDEPENDENT-REVIEW",
-        "worker": "05",
-        "thread_id": "01a118fc-dd83-7672-ac81-7445f85fe09f",
+        "id": "PR87-INDEPENDENT-REVIEW",
+        "worker": "06",
+        "thread_id": "01a118fc-f867-7233-8eec-c20659e70095",
         "host_id": "durable",
         "status": "REVIEWING",
-        "base": "ac439cb54a5d709bbc41acc3986010e7fb522d5d",
-        "pr": 86,
-        "head": "a4d5b5a527c8fdc5592177c1c120a170dad5fadb",
-        "wait_cursor": "b9784eaf-f3e5-457f-a98d-a386c23b37ea:26"
-      },
-      {
-        "id": "MIXED-RECEIPT-VALIDATOR",
-        "worker": "01",
-        "thread_id": "01a118fc-39bc-722c-b442-8bf5a749e0bb",
-        "host_id": "durable",
-        "status": "ACTIVE",
-        "base": "ac439cb54a5d709bbc41acc3986010e7fb522d5d",
-        "scope": "Disconnected read-only typed chain/certificate dispatch; no migration or issuer",
-        "wait_cursor": "5e651fc7-2996-4765-974d-5c852257a005:47"
+        "pr": 87,
+        "head": "6561aa7a429f8f3db94668ad0da94005ee2cfb08"
       }
     ],
     "saved_launch_probe": {
@@ -697,8 +685,8 @@
     "pending_genesis_completion": {
       "pr": 86,
       "head": "a4d5b5a527c8fdc5592177c1c120a170dad5fadb",
-      "review": "PENDING worker05",
-      "integrated": false,
+      "review": "PASS worker05 Linux1657 zero skips101.227s;16 independent probes; exact tree matched",
+      "integrated": true,
       "author_linux_tests": 1646,
       "author_skips": 0,
       "mac_discovered": 1657,
@@ -706,7 +694,16 @@
       "mac_skipped": 215,
       "mac_seconds": 32.838,
       "combined_tree": "30e87c9335e2c665823e23fe57bbcd3730328d37",
-      "note": "Final combinedbase ac439cb includes acceptedPR85; independent review pending"
+      "note": "Final combinedbase ac439cb includes acceptedPR85; independent review pending",
+      "review_manifest_sha256": "668448e0be92eab4f1b598feb21aa7ba2b4661687e06f2f60f5adb0a580b839a",
+      "ci": "Both exact-head checks PASS",
+      "deployed": false
+    },
+    "pending_mixed_receipt_validator": {
+      "pr": 87,
+      "head": "6561aa7a429f8f3db94668ad0da94005ee2cfb08",
+      "review": "PENDING worker06",
+      "integrated": false
     }
   },
   "native_reconciliation_review": {
