@@ -74,6 +74,30 @@ class BankCollectionTests(unittest.TestCase):
             self.assertEqual(self.capture(lambda *a:self.fail('Concurrent I/O'))['blocked'],'BUSY')
         self.assertEqual(self.used(),7)
 
+    def test_symlink_alias_uses_real_request_lock_for_bank_and_history(self):
+        import fcntl
+        alias=self.store.path.parent/'alias.sqlite';alias.symlink_to(self.store.path)
+        aliased=HistoryProgress(EvidenceStore(alias))
+        key=aliased.create('scan',self.f.mint,90,110)
+        with open(str(self.store.path)+'.ownership.lock','a') as lock:
+            fcntl.flock(lock,fcntl.LOCK_EX|fcntl.LOCK_NB)
+            result=aliased.capture_bank('scan',self.f.mint,[self.f.key],lambda *a:self.fail('Alias bank I/O'))
+            self.assertEqual(result['blocked'],'BUSY');self.assertFalse(result['attempted'])
+            result=aliased.advance(key,lambda *a:self.fail('Alias history I/O'))
+            self.assertTrue(result['busy']);self.assertEqual(result['requests_used'],7)
+        self.assertFalse(Path(str(alias)+'.ownership.lock').exists())
+
+    def test_hardlink_created_after_progress_init_is_rejected_by_both_locks(self):
+        import os
+        alias=self.store.path.parent/'hardlink.sqlite'
+        key=self.progress.create('scan',self.f.mint,90,110)
+        os.link(self.store.path,alias)
+        with self.assertRaisesRegex(ValueError,'one hard link'):
+            self.capture(lambda *a:self.fail('Hardlink bank I/O'))
+        with self.assertRaisesRegex(ValueError,'one hard link'):
+            self.progress.advance(key,lambda *a:self.fail('Hardlink history I/O'))
+        self.assertEqual(self.used(),7)
+
     def test_exhausted_budget_prevents_snapshot_io(self):
         for _ in range(11):self.progress.reserve('scan')
         self.assertEqual(self.capture(lambda *a:self.fail('Over budget'))['blocked'],'INVESTIGATION_REQUEST_BUDGET_EXHAUSTED')
