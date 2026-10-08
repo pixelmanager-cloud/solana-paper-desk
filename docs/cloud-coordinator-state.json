@@ -1,6 +1,6 @@
 {
   "schema_version": 1,
-  "revision": 52,
+  "revision": 53,
   "repository": "pixelmanager-cloud/solana-paper-desk",
   "source_main_sha": "e298e15cd758932e81d2241130716632702f5bd0",
   "observed_date": "2026-10-08",
@@ -1707,6 +1707,79 @@
       "provider_calls": 0,
       "readiness": "BLOCKED_NO_SUPPORTED_BUDGET_FEASIBLE_PUBLIC_LEGACY_SEED; acquisition path in development",
       "schedule": "NOT_REPROBED_NO_DURABLE_BINDING_CLAIM"
+    },
+    {
+      "kind": "HOURLY_GITHUB_RECONCILIATION",
+      "at": "2026-10-08T17:57:02Z",
+      "status": "NO_NEW_UNASSIGNED_REVIEW_WORK",
+      "cloud_execution": {
+        "provider": "cloud",
+        "observations_current": true,
+        "observed_phase": "running",
+        "spec_revision": "71"
+      },
+      "queue_blob_sha": "3944f166312f413d97854b764055ca314b1d152c",
+      "external_claims": [
+        {
+          "id": "PR97-INDEPENDENT-REVIEW",
+          "worker": "05",
+          "thread_id": "01a118fc-dd83-7672-ac81-7445f85fe09f",
+          "host_id": "durable",
+          "status": "BLOCKED_PLATFORM_FILTER_ON_SCOPED_REVIEW",
+          "pr": 97,
+          "head": "c11bfad6f1a2debe323238ef746967310ba02349",
+          "base": "1a9f69595bf4c8c8814654a093fbba1bde93d5ad",
+          "wait_cursor": "b9784eaf-f3e5-457f-a98d-a386c23b37ea:48",
+          "turn_id": "01a11c6e-65ba-7787-b458-530144590287",
+          "scope": "Review changed code and existing regression tests only; earlier flagged custom probes not repeated; stop if blocked"
+        }
+      ],
+      "observed_prs": [
+        {
+          "pr": 97,
+          "head_sha": "c11bfad6f1a2debe323238ef746967310ba02349",
+          "base_sha": "1a9f69595bf4c8c8814654a093fbba1bde93d5ad",
+          "branch": "codex/cloud-presealed-slot-02",
+          "author_worker": "02",
+          "author_thread_id": "01a118fc-666c-70b6-9fa8-2c7520f0a0bb",
+          "existing_comment_ids": [
+            5459418438,
+            6063827066,
+            4221224769,
+            4221224781,
+            6063884883,
+            6063965120
+          ],
+          "status": "RESERVED_WORKER05_PLATFORM_BLOCK_REPORTED_NO_RETRY",
+          "tests_this_run": "NOT_RUN",
+          "limitations": "External results not reproduced by this run; no approval or acceptance inferred. PR97 blocked scope not retried."
+        },
+        {
+          "pr": 99,
+          "head_sha": "7350f46fe5fcc0be187f4935428ace4d0b6c7518",
+          "base_sha": "a4e15f34f78d2ca8752d40c6f5d53b1deebc7906",
+          "branch": "codex/cloud-common-bank-transport-outcomes-01",
+          "author_worker": "01",
+          "author_thread_id": "01a118fc-39bc-722c-b442-8bf5a749e0bb",
+          "existing_comment_ids": [
+            6065886293,
+            6065888156,
+            6065890483,
+            6065901698
+          ],
+          "status": "EXTERNAL_WORKER06_EXACT_HEAD_REVIEW_ALREADY_PUBLISHED",
+          "tests_this_run": "NOT_RUN",
+          "limitations": "External results not reproduced by this run; no approval or acceptance inferred. PR97 blocked scope not retried."
+        }
+      ],
+      "observed_codex_branch_count": 91,
+      "branch_pagination_complete": true,
+      "tests": "NOT_RUN_EXISTING_REVIEW_OR_RESERVED_BLOCKED_SCOPE",
+      "review_comments_posted": 0,
+      "infrastructure_failures": 0,
+      "provider_calls": 0,
+      "readiness": "BLOCKED_NO_SUPPORTED_BUDGET_FEASIBLE_PUBLIC_LEGACY_SEED; acquisition path in development",
+      "schedule": "NOT_REPROBED_NO_DURABLE_BINDING_CLAIM"
     }
   ],
   "artifact_pr": {
@@ -3404,6 +3477,42 @@
       "status": "REPAIRED_HEAD_RESERVED_WORKER05_REREVIEW",
       "tests_this_run": "NOT_RUN",
       "limitations": "No author tests or external reviewer claims certified by this run. Historical findings remain bound to original heads; repaired heads have no inferred acceptance."
+    },
+    {
+      "pr": 97,
+      "head_sha": "c11bfad6f1a2debe323238ef746967310ba02349",
+      "base_sha": "1a9f69595bf4c8c8814654a093fbba1bde93d5ad",
+      "branch": "codex/cloud-presealed-slot-02",
+      "author_worker": "02",
+      "author_thread_id": "01a118fc-666c-70b6-9fa8-2c7520f0a0bb",
+      "existing_comment_ids": [
+        5459418438,
+        6063827066,
+        4221224769,
+        4221224781,
+        6063884883,
+        6063965120
+      ],
+      "status": "RESERVED_WORKER05_PLATFORM_BLOCK_REPORTED_NO_RETRY",
+      "tests_this_run": "NOT_RUN",
+      "limitations": "External results not reproduced by this run; no approval or acceptance inferred. PR97 blocked scope not retried."
+    },
+    {
+      "pr": 99,
+      "head_sha": "7350f46fe5fcc0be187f4935428ace4d0b6c7518",
+      "base_sha": "a4e15f34f78d2ca8752d40c6f5d53b1deebc7906",
+      "branch": "codex/cloud-common-bank-transport-outcomes-01",
+      "author_worker": "01",
+      "author_thread_id": "01a118fc-39bc-722c-b442-8bf5a749e0bb",
+      "existing_comment_ids": [
+        6065886293,
+        6065888156,
+        6065890483,
+        6065901698
+      ],
+      "status": "EXTERNAL_WORKER06_EXACT_HEAD_REVIEW_ALREADY_PUBLISHED",
+      "tests_this_run": "NOT_RUN",
+      "limitations": "External results not reproduced by this run; no approval or acceptance inferred. PR97 blocked scope not retried."
     }
   ],
   "pending_reviews": [
@@ -3746,26 +3855,17 @@
     },
     "external_current": [
       {
-        "id": "PRESEALED-SLOT-INTENT-JOURNAL",
-        "worker": "02",
-        "thread_id": "01a118fc-666c-70b6-9fa8-2c7520f0a0bb",
+        "id": "PR97-INDEPENDENT-REVIEW",
+        "worker": "05",
+        "thread_id": "01a118fc-dd83-7672-ac81-7445f85fe09f",
         "host_id": "durable",
-        "status": "IN_PROGRESS",
-        "base": "893bf72ed79dee7be224bccf4c7ba3913f36d6b6",
-        "scope": "Fresh admitted acquisition slot intent and completion; atomic same18 charge before I/O; no transport or retrofit",
-        "wait_cursor": "a2dcfb97-463d-4188-9da3-48a81e644d23:63",
-        "turn_id": "01a11c26-ebdf-75e8-a64a-9063c0637615"
-      },
-      {
-        "id": "ORIGINAL-BYTE-SLOT-TRANSPORT",
-        "worker": "01",
-        "thread_id": "01a118fc-39bc-722c-b442-8bf5a749e0bb",
-        "host_id": "durable",
-        "status": "IN_PROGRESS",
-        "base": "893bf72ed79dee7be224bccf4c7ba3913f36d6b6",
-        "scope": "Separate bounded original-byte finalized-slot transport primitive; no acquisition/journal/allowlist expansion",
-        "wait_cursor": "5e651fc7-2996-4765-974d-5c852257a005:64",
-        "turn_id": "01a11c26-fcef-7341-a3c8-db3211a520d9"
+        "status": "BLOCKED_PLATFORM_FILTER_ON_SCOPED_REVIEW",
+        "pr": 97,
+        "head": "c11bfad6f1a2debe323238ef746967310ba02349",
+        "base": "1a9f69595bf4c8c8814654a093fbba1bde93d5ad",
+        "wait_cursor": "b9784eaf-f3e5-457f-a98d-a386c23b37ea:48",
+        "turn_id": "01a11c6e-65ba-7787-b458-530144590287",
+        "scope": "Review changed code and existing regression tests only; earlier flagged custom probes not repeated; stop if blocked"
       }
     ]
   },
@@ -4083,61 +4183,31 @@
   ],
   "last_reconciliation": {
     "kind": "HOURLY_GITHUB_RECONCILIATION",
-    "at": "2026-10-08T16:55:57Z",
+    "at": "2026-10-08T17:57:02Z",
     "status": "NO_NEW_UNASSIGNED_REVIEW_WORK",
     "cloud_execution": {
       "provider": "cloud",
       "observations_current": true,
       "observed_phase": "running",
-      "spec_revision": "67"
+      "spec_revision": "71"
     },
-    "queue_blob_sha": "b00575f7524ef4877fc454237a1367c9ae1be4bd",
-    "queue_claims_stale_relative_to_published_repairs": true,
+    "queue_blob_sha": "3944f166312f413d97854b764055ca314b1d152c",
     "external_claims": [
       {
-        "id": "PRESEALED-SLOT-INTENT-JOURNAL",
-        "worker": "02",
-        "thread_id": "01a118fc-666c-70b6-9fa8-2c7520f0a0bb",
+        "id": "PR97-INDEPENDENT-REVIEW",
+        "worker": "05",
+        "thread_id": "01a118fc-dd83-7672-ac81-7445f85fe09f",
         "host_id": "durable",
-        "status": "IN_PROGRESS",
-        "base": "893bf72ed79dee7be224bccf4c7ba3913f36d6b6",
-        "scope": "Fresh admitted acquisition slot intent and completion; atomic same18 charge before I/O; no transport or retrofit",
-        "wait_cursor": "a2dcfb97-463d-4188-9da3-48a81e644d23:63",
-        "turn_id": "01a11c26-ebdf-75e8-a64a-9063c0637615"
-      },
-      {
-        "id": "ORIGINAL-BYTE-SLOT-TRANSPORT",
-        "worker": "01",
-        "thread_id": "01a118fc-39bc-722c-b442-8bf5a749e0bb",
-        "host_id": "durable",
-        "status": "IN_PROGRESS",
-        "base": "893bf72ed79dee7be224bccf4c7ba3913f36d6b6",
-        "scope": "Separate bounded original-byte finalized-slot transport primitive; no acquisition/journal/allowlist expansion",
-        "wait_cursor": "5e651fc7-2996-4765-974d-5c852257a005:64",
-        "turn_id": "01a11c26-fcef-7341-a3c8-db3211a520d9"
+        "status": "BLOCKED_PLATFORM_FILTER_ON_SCOPED_REVIEW",
+        "pr": 97,
+        "head": "c11bfad6f1a2debe323238ef746967310ba02349",
+        "base": "1a9f69595bf4c8c8814654a093fbba1bde93d5ad",
+        "wait_cursor": "b9784eaf-f3e5-457f-a98d-a386c23b37ea:48",
+        "turn_id": "01a11c6e-65ba-7787-b458-530144590287",
+        "scope": "Review changed code and existing regression tests only; earlier flagged custom probes not repeated; stop if blocked"
       }
     ],
     "observed_prs": [
-      {
-        "pr": 96,
-        "head_sha": "cb2e795e472bee322ece86659ca30b58364d03e3",
-        "base_sha": "1a9f69595bf4c8c8814654a093fbba1bde93d5ad",
-        "branch": "codex/cloud-original-byte-slot-transport-01",
-        "author_worker": "01",
-        "author_thread_id": "01a118fc-39bc-722c-b442-8bf5a749e0bb",
-        "existing_comment_ids": [
-          6063740155,
-          6063807197,
-          6063969360,
-          6064782143,
-          6064858493,
-          6064860985,
-          6064863942
-        ],
-        "status": "EXTERNAL_WORKER06_SOURCE_REVIEW_FULL_COMBINED_VALIDATION_UNRESOLVED",
-        "tests_this_run": "NOT_RUN",
-        "limitations": "No author tests or external reviewer claims certified by this run. Historical findings remain bound to original heads; repaired heads have no inferred acceptance."
-      },
       {
         "pr": 97,
         "head_sha": "c11bfad6f1a2debe323238ef746967310ba02349",
@@ -4153,14 +4223,31 @@
           6063884883,
           6063965120
         ],
-        "status": "REPAIRED_HEAD_RESERVED_WORKER05_REREVIEW",
+        "status": "RESERVED_WORKER05_PLATFORM_BLOCK_REPORTED_NO_RETRY",
         "tests_this_run": "NOT_RUN",
-        "limitations": "No author tests or external reviewer claims certified by this run. Historical findings remain bound to original heads; repaired heads have no inferred acceptance."
+        "limitations": "External results not reproduced by this run; no approval or acceptance inferred. PR97 blocked scope not retried."
+      },
+      {
+        "pr": 99,
+        "head_sha": "7350f46fe5fcc0be187f4935428ace4d0b6c7518",
+        "base_sha": "a4e15f34f78d2ca8752d40c6f5d53b1deebc7906",
+        "branch": "codex/cloud-common-bank-transport-outcomes-01",
+        "author_worker": "01",
+        "author_thread_id": "01a118fc-39bc-722c-b442-8bf5a749e0bb",
+        "existing_comment_ids": [
+          6065886293,
+          6065888156,
+          6065890483,
+          6065901698
+        ],
+        "status": "EXTERNAL_WORKER06_EXACT_HEAD_REVIEW_ALREADY_PUBLISHED",
+        "tests_this_run": "NOT_RUN",
+        "limitations": "External results not reproduced by this run; no approval or acceptance inferred. PR97 blocked scope not retried."
       }
     ],
-    "observed_codex_branch_count": 89,
+    "observed_codex_branch_count": 91,
     "branch_pagination_complete": true,
-    "tests": "NOT_RUN_EXISTING_RESERVED_REREVIEW_SCOPES",
+    "tests": "NOT_RUN_EXISTING_REVIEW_OR_RESERVED_BLOCKED_SCOPE",
     "review_comments_posted": 0,
     "infrastructure_failures": 0,
     "provider_calls": 0,
