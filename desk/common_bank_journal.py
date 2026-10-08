@@ -1,12 +1,14 @@
 """Disconnected SEALED-source plan and atomic shared-charge/PENDING primitive.
 
-No provider, completion/publication, canonical bank/head or receipt API exists.
-An uncertain PENDING intent is terminal here. Trusted application configuration
+No provider, next-stage/publication, canonical bank/head or receipt API exists.
+Reopened PENDING is terminal; only a same-session opaque in-flight handle
+can attach an observation. Trusted application configuration
 supplies the planned source identity; its type/hash never authenticates RPC.
 """
 from contextlib import closing, contextmanager
 from dataclasses import asdict
 import fcntl
+import hashlib
 import json
 import os
 from pathlib import Path
@@ -28,6 +30,10 @@ from .replay_history import reconstruct_launch_history
 from .security import TOKEN_PROGRAM, mint_policy
 
 APPLICATION_ID = 0x43424A31
+ATTACHMENT_VERSION = 0x43424731
+MAX_REQUEST_BYTES = 1024
+MAX_RESPONSE_BYTES = 65536
+MAX_FAILURE_BYTES = 2048
 MAX_RUNS = 128
 EXISTING_COLUMNS = {
     'ownership_budgets': [('id','TEXT',0,1),('source_hash','TEXT',1,0),('used','INTEGER',1,0),('ceiling','INTEGER',1,0)],
@@ -48,6 +54,37 @@ SCHEMA.update({
     'common_bank_run_replace': "CREATE TRIGGER common_bank_run_replace BEFORE INSERT ON common_bank_runs WHEN EXISTS(SELECT 1 FROM common_bank_runs WHERE capture_id=NEW.capture_id OR budget_id=NEW.budget_id OR seed_hash=NEW.seed_hash) BEGIN SELECT RAISE(ABORT,'Common bank run already exists'); END",
     'common_bank_event_insert': "CREATE TRIGGER common_bank_event_insert BEFORE INSERT ON common_bank_events WHEN NEW.ordinal!=1 OR EXISTS(SELECT 1 FROM common_bank_events WHERE capture_id=NEW.capture_id OR event_hash=NEW.event_hash) OR NOT EXISTS(SELECT 1 FROM common_bank_runs r JOIN ownership_budgets b ON b.id=r.budget_id WHERE r.capture_id=NEW.capture_id AND r.seed_hash=NEW.previous_hash AND json_valid(NEW.event_json) AND json_extract(NEW.event_json,'$.used_after')=b.used AND json_extract(NEW.event_json,'$.state')='PENDING') BEGIN SELECT RAISE(ABORT,'Common bank intent fence or charge mismatch'); END",
 })
+
+
+# Explicit additive profile; the original v1 tables/triggers stay byte-for-byte.
+ATTACHMENT_SCHEMA = {
+    'common_bank_attachment_meta': 'CREATE TABLE common_bank_attachment_meta(id INTEGER PRIMARY KEY CHECK(id=1),descriptor TEXT NOT NULL) WITHOUT ROWID',
+    'common_bank_attachments': 'CREATE TABLE common_bank_attachments(capture_id TEXT PRIMARY KEY,event_json TEXT NOT NULL,previous_hash TEXT NOT NULL,event_hash TEXT UNIQUE NOT NULL,request_bytes BLOB NOT NULL,response_bytes BLOB,failure_json TEXT,FOREIGN KEY(capture_id) REFERENCES common_bank_runs(capture_id)) WITHOUT ROWID',
+}
+for table in ('common_bank_attachment_meta', 'common_bank_attachments'):
+    for operation in ('UPDATE', 'DELETE'):
+        name = table + '_' + operation.lower()
+        ATTACHMENT_SCHEMA[name] = f"CREATE TRIGGER {name} BEFORE {operation} ON {table} BEGIN SELECT RAISE(ABORT,'Immutable common bank attachment'); END"
+ATTACHMENT_SCHEMA.update({
+    'common_bank_attachment_meta_replace': "CREATE TRIGGER common_bank_attachment_meta_replace BEFORE INSERT ON common_bank_attachment_meta WHEN EXISTS(SELECT 1 FROM common_bank_attachment_meta) BEGIN SELECT RAISE(ABORT,'Immutable attachment metadata'); END",
+    'common_bank_attachment_insert': "CREATE TRIGGER common_bank_attachment_insert BEFORE INSERT ON common_bank_attachments WHEN EXISTS(SELECT 1 FROM common_bank_attachments WHERE capture_id=NEW.capture_id OR event_hash=NEW.event_hash) OR NOT EXISTS(SELECT 1 FROM common_bank_events e WHERE e.capture_id=NEW.capture_id AND e.ordinal=1 AND e.event_hash=NEW.previous_hash) BEGIN SELECT RAISE(ABORT,'Attachment predecessor or identity mismatch'); END",
+})
+FAILURE_CATEGORIES = frozenset(('TRANSPORT_TIMEOUT', 'TRANSPORT_ERROR', 'CANCELLED'))
+
+
+def _sha(raw):
+    return hashlib.sha256(raw).hexdigest()
+
+
+def _strict_json(raw):
+    def pairs(items):
+        result = {}
+        for key, value in items:
+            if key in result: raise ValueError('Duplicate JSON key')
+            result[key] = value
+        return result
+    def constant(value): raise ValueError('Nonfinite JSON')
+    return json.loads(raw.decode('utf-8'), object_pairs_hook=pairs, parse_constant=constant)
 
 
 class JournalBlocked(ValueError):
@@ -116,7 +153,9 @@ class CommonBankJournal:
                 yield session
                 self._guard()
         finally:
-            if session is not None: session.active = False
+            if session is not None:
+                session.active = False
+                session._inflight.clear()
             for fd in reversed(locks): os.close(fd)
 
 
@@ -124,6 +163,7 @@ class _Session:
     def __init__(self, journal):
         self.journal = journal; self.active = True
         self.owner = (os.getpid(), threading.get_ident())
+        self._inflight = {}
 
     @contextmanager
     def _transaction(self, *, initialize=False):
@@ -148,7 +188,7 @@ class _Session:
         _need(not c.execute("SELECT 1 FROM sqlite_master WHERE type='trigger' AND tbl_name IN ('ownership_budgets','ownership_admissions','pages') LIMIT 1").fetchone(),
               'UNREVIEWED_EXISTING_ADMISSION_TRIGGER')
         marker = c.execute('PRAGMA application_id').fetchone()[0]
-        sql = "SELECT name,sql FROM sqlite_master WHERE name LIKE 'common_bank_%' OR (type='trigger' AND tbl_name IN ('common_bank_meta','common_bank_runs','common_bank_events'))"
+        sql = "SELECT name,sql FROM sqlite_master WHERE name LIKE 'common_bank_%' OR (type='trigger' AND tbl_name IN ('common_bank_meta','common_bank_runs','common_bank_events','common_bank_attachment_meta','common_bank_attachments'))"
         actual = dict(c.execute(sql))
         if not actual and marker == 0 and initialize:
             _need(c.execute("SELECT count(*) FROM sqlite_master WHERE name IN ('ownership_budgets','ownership_admissions','pages')").fetchone()[0] == 3,
@@ -157,11 +197,17 @@ class _Session:
             c.execute('INSERT INTO common_bank_meta VALUES(1,?)',(canonical(self.journal.descriptor),))
             c.execute(f'PRAGMA application_id={APPLICATION_ID}')
             actual = dict(c.execute(sql))
-        _need(marker in (0, APPLICATION_ID) and actual == SCHEMA, 'COMMON_BANK_SCHEMA_OR_TRIGGER_MISMATCH')
+        version = c.execute('PRAGMA user_version').fetchone()[0]
+        _need(version in (0, ATTACHMENT_VERSION), 'COMMON_BANK_ATTACHMENT_VERSION_UNKNOWN')
+        expected = SCHEMA | ATTACHMENT_SCHEMA if version == ATTACHMENT_VERSION else SCHEMA
+        _need(marker in (0, APPLICATION_ID) and actual == expected, 'COMMON_BANK_SCHEMA_OR_TRIGGER_MISMATCH')
         _need(c.execute('PRAGMA application_id').fetchone()[0] == APPLICATION_ID,
               'COMMON_BANK_INSTALLATION_MARKER_MISMATCH')
         _need(c.execute('SELECT id,descriptor FROM common_bank_meta').fetchall()
               == [(1,canonical(self.journal.descriptor))], 'COMMON_BANK_METADATA_MISMATCH')
+        if version == ATTACHMENT_VERSION:
+            _need(c.execute('SELECT id,descriptor FROM common_bank_attachment_meta').fetchall()
+                  == [(1,canonical(self._attachment_descriptor()))], 'COMMON_BANK_ATTACHMENT_METADATA_MISMATCH')
 
     def _source(self, c, budget):
         size = c.execute('SELECT length(descriptor),length(prepared_source) FROM ownership_admissions WHERE id=?',(budget,)).fetchone()
@@ -249,7 +295,7 @@ class _Session:
                   and digest({'descriptor':descriptor,'plan_hash':plan_hash}) == seed,
                   'COMMON_BANK_PLAN_OR_SEED_MISMATCH')
             runs[capture] = dict(budget=budget,descriptor=descriptor,plan=plan,seed=seed,
-                                 used=admission['requests_used'],event=None)
+                                 used=admission['requests_used'],event=None,completion=None)
         for capture, ordinal, event_json, previous, event_hash in events:
             _need(capture in runs and ordinal == 1 and runs[capture]['event'] is None,
                   'COMMON_BANK_EVENT_IDENTITY_INVALID')
@@ -263,6 +309,7 @@ class _Session:
                   and digest({'previous_hash':previous,'event':event}) == event_hash,
                   'COMMON_BANK_PENDING_INTENT_INVALID')
             run['event'] = event
+        self._audit_attachments(c,runs)
         return runs
 
     @staticmethod
@@ -294,7 +341,7 @@ class _Session:
             c.execute('INSERT INTO common_bank_runs VALUES(?,?,?,?,?,?)',
                       (capture_id,budget_id,canonical(descriptor),canonical(plan),plan_hash,seed))
             run = dict(budget=budget_id,descriptor=descriptor,plan=plan,seed=seed,
-                       used=admission['requests_used'],event=None)
+                       used=admission['requests_used'],event=None,completion=None)
             return self._status(run,capture_id)
 
     def reserve_stage(self,capture_id,stage,method,params,*,fence,reserved_at):
@@ -317,11 +364,13 @@ class _Session:
                       (capture_id,1,canonical(event),run['seed'],digest({'previous_hash':run['seed'],'event':event})))
             return event
 
-    @staticmethod
-    def _status(run,capture):
+    def _status(self,run,capture):
         return {'capture_id':capture,'budget_id':run['budget'],'fence':run['seed'],
                 'plan':run['plan'],'requests_used':run['used'],
-                'state':'TERMINAL_UNCERTAINTY' if run['event'] else 'READY_GENESIS',
+                'state': ('GENESIS_'+run['completion']['state'] if run['completion'] else
+                          'GENESIS_IN_FLIGHT' if any(v['capture']==capture for v in self._inflight.values()) else
+                          'TERMINAL_UNCERTAINTY' if run['event'] else 'READY_GENESIS'),
+                'completion':run['completion'],
                 'intent':run['event'],'provider_calls':0,'eligible_for_trading':False,
                 'ownership_approval':False,'chain_authenticated':False}
 
@@ -332,3 +381,170 @@ class _Session:
             _need(len(matches) == 1, 'COMMON_BANK_CAPTURE_MISSING')
             key, run = matches[0]
             return self._status(run,key)
+
+
+    def _attachment_descriptor(self):
+        return {'kind':'common_bank_genesis_attachment_profile_v1',
+                'database_binding':self.journal.descriptor,'parent_schema_hash':digest(SCHEMA)}
+
+    def install_genesis_attachments(self):
+        """Explicit additive installation; never retrofits v1 PENDING authority."""
+        with self._transaction() as c:
+            self._audit(c)
+            if c.execute('PRAGMA user_version').fetchone()[0] == ATTACHMENT_VERSION:
+                return
+            for statement in ATTACHMENT_SCHEMA.values(): c.execute(statement)
+            c.execute('INSERT INTO common_bank_attachment_meta VALUES(1,?)',
+                      (canonical(self._attachment_descriptor()),))
+            c.execute(f'PRAGMA user_version={ATTACHMENT_VERSION}')
+            self._schema(c,False)
+
+    def begin_genesis(self,capture_id,*,fence,reserved_at):
+        """Mint an opaque handle only for this session's newly committed intent.
+
+        The returned object is not serializable recovery authority. Its request
+        must be sent unchanged by a future reviewed transport, not this module.
+        """
+        with self._transaction() as c:
+            _need(c.execute('PRAGMA user_version').fetchone()[0] == ATTACHMENT_VERSION,
+                  'EXPLICIT_GENESIS_ATTACHMENT_INSTALL_REQUIRED')
+        intent = self.reserve_stage(capture_id,'genesis','getGenesisHash',[],
+                                    fence=fence,reserved_at=reserved_at)
+        token = object()
+        request = self._request(intent)
+        self._inflight[token] = {'capture':capture_id,'intent':canonical(intent),
+                                 'request':request,'chosen':None}
+        return token
+
+    @staticmethod
+    def _request(intent):
+        return canonical({'jsonrpc':'2.0','id':digest(intent),
+                          'method':'getGenesisHash','params':[]}).encode('utf-8')
+
+    def _flight(self,token):
+        _need(self.active and self.owner == (os.getpid(),threading.get_ident()),
+              'COMMON_BANK_SESSION_EXPIRED_OR_WRONG_OWNER')
+        _need(type(token) is object and token in self._inflight,
+              'COMMON_BANK_UNKNOWN_INFLIGHT_CAPABILITY')
+        self.journal._guard()
+        return self._inflight[token]
+
+    def genesis_request(self,token):
+        """Original generated wire request, not a caller-provided summary."""
+        return self._flight(token)['request']
+
+    @staticmethod
+    def _failure(category,*,observed_bytes=None):
+        failure = {'kind':'common_bank_redacted_failure_v1','category':category,
+                   'method':'getGenesisHash','params':[]}
+        if observed_bytes is not None: failure['observed_bytes'] = observed_bytes
+        return canonical(failure)
+
+    @staticmethod
+    def _outcome(request,response,failure):
+        if failure is not None:
+            _need(type(failure) is str and len(failure.encode()) <= MAX_FAILURE_BYTES,
+                  'COMMON_BANK_FAILURE_PROVENANCE_INVALID')
+            decoded = json.loads(failure)
+            _need(type(decoded) is dict, 'COMMON_BANK_FAILURE_PROVENANCE_INVALID')
+            category = decoded.get('category')
+            if category == 'RESPONSE_OVERSIZED':
+                size = decoded.get('observed_bytes')
+                _need(type(size) is int and MAX_RESPONSE_BYTES < size < 2**63
+                      and failure == _Session._failure(category,observed_bytes=size),
+                      'COMMON_BANK_FAILURE_PROVENANCE_INVALID')
+            else:
+                _need(category in FAILURE_CATEGORIES and failure == _Session._failure(category),
+                      'COMMON_BANK_FAILURE_PROVENANCE_INVALID')
+            _need(response is None, 'COMMON_BANK_ATTACHMENT_PROVENANCE_AMBIGUOUS')
+            return 'FAILED',category
+        _need(type(response) is bytes and len(response) <= MAX_RESPONSE_BYTES,
+              'COMMON_BANK_RAW_RESPONSE_REQUIRED')
+        try:
+            body = _strict_json(response)
+            expected_id = _strict_json(request)['id']
+            if (type(body) is not dict or body.get('jsonrpc') != '2.0'
+                    or type(body.get('id')) is not str or body['id'] != expected_id):
+                return 'FAILED','RESPONSE_INVALID'
+            if set(body) == {'jsonrpc','id','error'}:
+                return 'FAILED','RPC_ERROR'
+            if set(body) != {'jsonrpc','id','result'}:
+                return 'FAILED','RESPONSE_INVALID'
+            return ('DONE','EXACT_GENESIS') if type(body['result']) is str and body['result'] == GENESIS else ('FAILED','GENESIS_MISMATCH')
+        except (ValueError,RecursionError):
+            return 'FAILED','RESPONSE_INVALID'
+
+    @staticmethod
+    def _attachment(run,capture,request,response,failure,completed_at):
+        intent = run['event']
+        _need(intent is not None and type(completed_at) is int
+              and intent['reserved_at'] <= completed_at < 2**63,
+              'COMMON_BANK_COMPLETION_TIME_OR_PREDECESSOR_INVALID')
+        _need(type(request) is bytes and len(request) <= MAX_REQUEST_BYTES
+              and request == _Session._request(intent), 'COMMON_BANK_ORIGINAL_REQUEST_MISMATCH')
+        state,reason = _Session._outcome(request,response,failure)
+        intent_hash = digest({'previous_hash':run['seed'],'event':intent})
+        event = {'kind':'common_bank_genesis_attachment_v1','capture_id':capture,
+                 'budget_id':run['budget'],'stage':'genesis','ordinal':2,'state':state,'reason':reason,
+                 'intent_hash':intent_hash,'fence':run['seed'],
+                 'descriptor_hash':digest(run['descriptor']),'plan_hash':digest(run['plan']),
+                 'planned_source':run['descriptor']['planned_source'],
+                 'used_after':intent['used_after'],'reserved_at':intent['reserved_at'],
+                 'completed_at':completed_at,'request_sha256':_sha(request),
+                 'response_sha256':_sha(response) if response is not None else None,
+                 'failure_hash':digest(json.loads(failure)) if failure is not None else None,
+                 'eligible_for_trading':False,'ownership_approval':False,'chain_authenticated':False}
+        return event,intent_hash,digest({'previous_hash':intent_hash,'event':event})
+
+    def _audit_attachments(self,c,runs):
+        if c.execute('PRAGMA user_version').fetchone()[0] == 0: return
+        _need(not c.execute('SELECT 1 FROM common_bank_attachments WHERE length(event_json)>8192 OR length(request_bytes)>? OR length(response_bytes)>? OR length(failure_json)>? LIMIT 1',
+                            (MAX_REQUEST_BYTES,MAX_RESPONSE_BYTES,MAX_FAILURE_BYTES)).fetchone(),
+              'COMMON_BANK_ATTACHMENT_RECORD_OVERSIZED')
+        rows = c.execute('SELECT capture_id,event_json,previous_hash,event_hash,request_bytes,response_bytes,failure_json FROM common_bank_attachments LIMIT ?',
+                         (MAX_RUNS+1,)).fetchall()
+        _need(len(rows) <= MAX_RUNS, 'COMMON_BANK_ATTACHMENT_CAPACITY')
+        for capture,event_json,previous,key,request,response,failure in rows:
+            _need(capture in runs, 'COMMON_BANK_ATTACHMENT_CAPTURE_MISSING')
+            run = runs[capture]; recorded = json.loads(event_json)
+            _need(type(recorded) is dict, 'COMMON_BANK_ATTACHMENT_INVALID')
+            expected,prior,event_hash = self._attachment(run,capture,request,response,failure,recorded.get('completed_at'))
+            _need(canonical(expected) == event_json and previous == prior and key == event_hash,
+                  'COMMON_BANK_ATTACHMENT_HASH_OR_BINDING_MISMATCH')
+            run['completion'] = expected
+
+    def attach_genesis_response(self,token,response_bytes,*,completed_at):
+        """Retain exact bounded bytes; derive DONE/FAILED, never accept summaries."""
+        _need(type(response_bytes) is bytes, 'COMMON_BANK_RAW_RESPONSE_REQUIRED')
+        if len(response_bytes) > MAX_RESPONSE_BYTES:
+            return self._finish_genesis(token,None,self._failure('RESPONSE_OVERSIZED',observed_bytes=len(response_bytes)),completed_at)
+        return self._finish_genesis(token,response_bytes,None,completed_at)
+
+    def attach_genesis_failure(self,token,category,*,completed_at):
+        """Fixed redacted categories only: no URL, exception text or secrets."""
+        _need(type(category) is str and category in FAILURE_CATEGORIES,
+              'COMMON_BANK_FAILURE_CATEGORY_INVALID')
+        return self._finish_genesis(token,None,self._failure(category),completed_at)
+
+    def _finish_genesis(self,token,response,failure,at):
+        flight = self._flight(token)
+        with self._transaction() as c:
+            _need(c.execute('PRAGMA user_version').fetchone()[0] == ATTACHMENT_VERSION,
+                  'EXPLICIT_GENESIS_ATTACHMENT_INSTALL_REQUIRED')
+            runs = self._audit(c); capture = flight['capture']
+            _need(capture in runs and canonical(runs[capture]['event']) == flight['intent'],
+                  'COMMON_BANK_STALE_INFLIGHT_INTENT')
+            event,previous,key = self._attachment(runs[capture],capture,flight['request'],response,failure,at)
+            chosen = (canonical(event),previous,key,flight['request'],response,failure)
+            _need(flight['chosen'] is None or flight['chosen'] == chosen,
+                  'COMMON_BANK_CONFLICTING_COMPLETION')
+            # Freeze the known observation before attempting commit. Only this
+            # same observation can be attached again after an SQL commit error;
+            # this never repeats I/O, and reopening cannot mint its capability.
+            flight['chosen'] = chosen
+            existing = c.execute('SELECT event_json,previous_hash,event_hash,request_bytes,response_bytes,failure_json FROM common_bank_attachments WHERE capture_id=?',(capture,)).fetchone()
+            if existing is not None:
+                _need(existing == chosen, 'COMMON_BANK_CONFLICTING_COMPLETION')
+                return event
+            c.execute('INSERT INTO common_bank_attachments VALUES(?,?,?,?,?,?,?)',(capture,)+chosen)
+            return event
