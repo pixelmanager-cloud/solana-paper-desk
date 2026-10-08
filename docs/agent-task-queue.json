@@ -275,7 +275,7 @@
         "worker": "01",
         "thread_id": "01a118fc-39bc-722c-b442-8bf5a749e0bb",
         "host_id": "durable",
-        "status": "RESERVED_PENDING_DISPATCH",
+        "status": "DISPATCHED",
         "base": "0ce2a333be6c149fc4ac2398815e7ab7f46abc79",
         "scope": "Implement guarded read-only physical format2 reader with independent anchors; no migration/issuer"
       }
