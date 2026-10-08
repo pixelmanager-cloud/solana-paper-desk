@@ -196,15 +196,15 @@
     "blocker": "Live legacy evidence,protected pool receipt capture,lifecycle semantic approval and holder exposure integration unfinished",
     "followups": {
       "worker02": "PR40 review interrupted by automated cybersecurity-risk flag; no final acceptance",
-      "worker06": "PR53 published; available",
+      "worker06": "PR54 independent review",
       "cloud_reviewer": "PR53 review passed; available",
       "worker10": "PR45 independent review complete;available",
-      "worker03": "Bounded newerlegacysearch found no matching authoritative event;available",
+      "worker03": "Bounded official TradeEvent schema research",
       "worker04": "PR47 accepted; available",
       "worker05": "PR52 WAL repair published; available",
       "worker09": "PR35 reviewed and integrated; available",
       "worker01": "Forward fix published; independent re-review pending; available",
-      "worker07": "Raw controls decode; repairing allocation-vs-transfer report mismatch",
+      "worker07": "PR54 published; available",
       "worker08": "PR31 reviewed and integrated; available"
     },
     "reviews": {
@@ -262,12 +262,21 @@
     "published_ci": "886fc96d404b9d3ffd99c0045f7231d563a5d946 successful",
     "active_claims": [
       {
-        "worker": "worker07",
-        "thread_id": "01a118fd-0f1c-749c-b85b-5e730937d0a8",
+        "worker": "worker06",
+        "thread_id": "01a118fc-f867-7233-8eec-c20659e70095",
         "host_id": "durable",
-        "task": "Raw public launch syntax/report gaps",
-        "status": "IMPLEMENTING",
-        "base": "d41fe29"
+        "task": "Independent raw report PR54 review",
+        "status": "REVIEWING",
+        "pr": 54,
+        "head": "2895fd6d42ab7dc1fcade284877b68fdf6e5efd7"
+      },
+      {
+        "worker": "worker03",
+        "thread_id": "01a118fc-9478-778a-b77a-8f8f6ec7e0ad",
+        "host_id": "durable",
+        "task": "Primary TradeEvent trailing-byte schema provenance",
+        "status": "RESEARCHING",
+        "base": "1e8cd72"
       }
     ],
     "saved_launch_probe": {
@@ -562,6 +571,15 @@
       "integrated": true,
       "mac_discovered": 1269,
       "mac_passed": 1177,
+      "mac_skipped": 92
+    },
+    "pending_raw_support": {
+      "pr": 54,
+      "head": "2895fd6d42ab7dc1fcade284877b68fdf6e5efd7",
+      "review": "IN_PROGRESS",
+      "integrated": false,
+      "mac_discovered": 1289,
+      "mac_passed": 1197,
       "mac_skipped": 92
     }
   }
