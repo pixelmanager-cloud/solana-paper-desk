@@ -267,9 +267,18 @@
         "thread_id": "01a118fc-dd83-7672-ac81-7445f85fe09f",
         "host_id": "durable",
         "status": "REVIEWING",
-        "base": "822079d0815571c558617e341758cc77a96a8b90",
+        "base": "ac439cb54a5d709bbc41acc3986010e7fb522d5d",
         "pr": 86,
         "head": "a4d5b5a527c8fdc5592177c1c120a170dad5fadb"
+      },
+      {
+        "id": "MIXED-RECEIPT-VALIDATOR",
+        "worker": "01",
+        "thread_id": "01a118fc-39bc-722c-b442-8bf5a749e0bb",
+        "host_id": "durable",
+        "status": "DISPATCHED",
+        "base": "ac439cb54a5d709bbc41acc3986010e7fb522d5d",
+        "scope": "Disconnected read-only typed chain/certificate dispatch; no migration or issuer"
       }
     ],
     "saved_launch_probe": {
@@ -689,7 +698,13 @@
       "review": "PENDING worker05",
       "integrated": false,
       "author_linux_tests": 1646,
-      "author_skips": 0
+      "author_skips": 0,
+      "mac_discovered": 1646,
+      "mac_passed": 1442,
+      "mac_skipped": 204,
+      "mac_seconds": 32.779,
+      "combined_tree": "c00141b7285ccbb679a9a6785e6d63798e1fad8b",
+      "note": "Initial base822079d; final combination with acceptedPR85 requested"
     }
   },
   "native_reconciliation_review": {
