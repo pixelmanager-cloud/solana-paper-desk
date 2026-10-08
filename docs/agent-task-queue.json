@@ -278,7 +278,7 @@
         "worker": "06",
         "thread_id": "01a118fc-f867-7233-8eec-c20659e70095",
         "host_id": "durable",
-        "status": "BLOCKED_USAGE_LIMIT",
+        "status": "RESUME_REQUESTED",
         "pr": 96,
         "head": "cb2e795e472bee322ece86659ca30b58364d03e3",
         "base": "1a9f69595bf4c8c8814654a093fbba1bde93d5ad",
@@ -1012,13 +1012,14 @@
       }
     },
     "coordination_blocker": {
-      "status": "PAUSE_REQUESTED_BY_STANDING_POLICY",
+      "status": "RESUMED_BY_USER",
       "observed_at": "2026-10-08T16:46:56Z",
       "reason": "Repeated unchanged independent-review infrastructure blockers; no dependency-ready implementation or permitted integration remains",
       "pr96": "worker06 usage allowance exhausted; final independent full test result/disposition missing",
       "pr97": "worker05 followup stopped by platform cybersecurity filter; final repaired-head review missing",
       "preserved": "Both repaired heads have successful CI; combined desktop1934tests passes with373skips. Neither merged/deployed.",
-      "resume_condition": "Review infrastructure restored or user supplies an approved review path; maintain exact-head gates"
+      "resume_condition": "Review infrastructure restored or user supplies an approved review path; maintain exact-head gates",
+      "resume_action": "Heartbeat active; one existing PR96 review continuation requested to recover already-running test output. PR97 filter gate unchanged."
     }
   },
   "native_reconciliation_review": {
