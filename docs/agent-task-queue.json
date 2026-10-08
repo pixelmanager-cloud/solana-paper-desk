@@ -271,14 +271,13 @@
         "scope": "Atomic original union getMultipleAccounts reservation and completion after audited finalized-slot DONE; no transport or publication"
       },
       {
-        "id": "PR89-INDEPENDENT-REVIEW",
-        "worker": "06",
-        "thread_id": "01a118fc-f867-7233-8eec-c20659e70095",
+        "id": "MIXED-RECEIPT-PROTECTED-READER",
+        "worker": "01",
+        "thread_id": "01a118fc-39bc-722c-b442-8bf5a749e0bb",
         "host_id": "durable",
-        "status": "REVIEWING",
-        "pr": 89,
-        "head": "37ca9420c4fbc4ff1398a9662d1f184714e8ccc3",
-        "base": "1486397add274e91281c2f5991daa7241ced67b6"
+        "status": "RESERVED_PENDING_DISPATCH",
+        "base": "0ce2a333be6c149fc4ac2398815e7ab7f46abc79",
+        "scope": "Implement guarded read-only physical format2 reader with independent anchors; no migration/issuer"
       }
     ],
     "saved_launch_probe": {
@@ -754,8 +753,8 @@
     "pending_protected_reader_format": {
       "pr": 89,
       "head": "37ca9420c4fbc4ff1398a9662d1f184714e8ccc3",
-      "integrated": false,
-      "status": "Concrete format published; independent review assigned worker06",
+      "integrated": true,
+      "status": "PASS_INTEGRATED",
       "author_linux_tests": 1722,
       "author_skips": 0,
       "reader_implemented": false,
@@ -765,7 +764,12 @@
       "mac_seconds": 33.942,
       "combined_base": "1486397add274e91281c2f5991daa7241ced67b6",
       "combined_tree": "c3034d5bff9a1127f2c55c8f32f87c3eb9717908",
-      "coordinator_diff_review": "Concrete physical format module reviewed; independent review pending"
+      "coordinator_diff_review": "Concrete physical format module reviewed; independent review pending",
+      "integration_commit": "0ce2a333be6c149fc4ac2398815e7ab7f46abc79",
+      "review": "PASS worker06 Linux1743 zero skips181.690s;23 independent probes; exact combined tree matched",
+      "review_manifest_sha256": "4822bf3365201383c59851f23c65002f96b46a356a6254e3c59b8b0ee006cb18",
+      "ci": "Both unchanged exact-head checks SUCCESS",
+      "deployed": false
     }
   },
   "native_reconciliation_review": {
