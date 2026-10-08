@@ -263,14 +263,6 @@
     "published_ci": "886fc96d404b9d3ffd99c0045f7231d563a5d946 successful",
     "active_claims": [
       {
-        "worker": "worker03",
-        "thread_id": "01a118fc-9478-778a-b77a-8f8f6ec7e0ad",
-        "host_id": "durable",
-        "task": "Versioned official TradeEvent schema with unresolved economic effects",
-        "status": "IMPLEMENTING",
-        "base": "7e1d3e4"
-      },
-      {
         "worker": "worker06",
         "thread_id": "01a118fc-f867-7233-8eec-c20659e70095",
         "host_id": "durable",
@@ -278,6 +270,15 @@
         "status": "REVIEWING",
         "pr": 56,
         "head": "db8b1554a40ea4505975b6cdfdbb49c98c26636d"
+      },
+      {
+        "worker": "cloud_reviewer",
+        "thread_id": "01a11901-8b68-70f9-8672-5a731a149091",
+        "host_id": "durable",
+        "task": "Independent versioned TradeEvent schema PR57 review",
+        "status": "REVIEWING",
+        "pr": 57,
+        "head": "70d1dfcaa20350a2a8126c8d47ce58a71e9b2e2b"
       }
     ],
     "saved_launch_probe": {
@@ -622,5 +623,12 @@
     "mac_skipped": 92,
     "mac_seconds": 25.608,
     "ci": "PASS exact PR head"
+  },
+  "trade_event_schema_review": {
+    "pr": 57,
+    "head": "70d1dfcaa20350a2a8126c8d47ce58a71e9b2e2b",
+    "status": "INDEPENDENT_REVIEW_IN_PROGRESS",
+    "integrated": false,
+    "author_linux_tests": 1300
   }
 }
