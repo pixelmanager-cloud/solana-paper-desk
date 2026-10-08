@@ -266,23 +266,24 @@
         "worker": "05",
         "thread_id": "01a118fc-dd83-7672-ac81-7445f85fe09f",
         "host_id": "durable",
-        "status": "FOLLOWUP_BLOCKED_PLATFORM_FILTER",
+        "status": "SCOPED_DEFENSIVE_REPAIR_REVIEW_REQUESTED",
         "pr": 97,
-        "head": "2de92b72fa972bfbf1a1299e608830050e5c06ca",
+        "head": "c11bfad6f1a2debe323238ef746967310ba02349",
         "base": "1a9f69595bf4c8c8814654a093fbba1bde93d5ad",
         "wait_cursor": "b9784eaf-f3e5-457f-a98d-a386c23b37ea:47",
-        "turn_id": "01a11c37-7fa2-77ad-acb5-1cfc502f2cce"
+        "turn_id": "01a11c37-7fa2-77ad-acb5-1cfc502f2cce",
+        "scope": "Review changed code and existing regression tests only; earlier flagged custom probes not repeated; stop if blocked"
       },
       {
         "id": "PR96-FINAL-INDEPENDENT-REVIEW",
         "worker": "06",
         "thread_id": "01a118fc-f867-7233-8eec-c20659e70095",
         "host_id": "durable",
-        "status": "RESUME_REQUESTED",
+        "status": "FULL_LINUX_VALIDATION_REQUESTED",
         "pr": 96,
         "head": "cb2e795e472bee322ece86659ca30b58364d03e3",
         "base": "1a9f69595bf4c8c8814654a093fbba1bde93d5ad",
-        "wait_cursor": "8f3328cf-bef6-441d-83f8-2d1f46b3b0df:68",
+        "wait_cursor": "8f3328cf-bef6-441d-83f8-2d1f46b3b0df:71",
         "turn_id": "01a11c45-08ec-7189-8553-0b1fb969545f"
       }
     ],
@@ -921,7 +922,7 @@
           "failures": 0,
           "seconds": 34.527
         },
-        "status": "FINAL_REVIEW_BLOCKED_USAGE_LIMIT",
+        "status": "INDEPENDENT_SECURITY_PASS_FULL_LINUX_PENDING",
         "review": "https://github.com/pixelmanager-cloud/solana-paper-desk/pull/96#issuecomment-6063807197",
         "linux_tests": {
           "total": 1906,
@@ -949,7 +950,7 @@
           "skipped": 373
         },
         "desktop_probe": "Unknown hidden_ignore BEFORE INSERT trigger using RAISE(IGNORE) accepted after reservation: attach_response returns DONE but inspect PENDING_TERMINAL. No durable attachment. Eligibility remains false.",
-        "status": "REPAIRED_FINAL_INDEPENDENT_REVIEW_BLOCKED",
+        "status": "SCOPED_DEFENSIVE_REPAIR_REVIEW_REQUESTED",
         "repair_scope": "Complete bounded typed schema preflight including base tables/all objects; verify exact attachment persisted after write; independent rereview required",
         "independent_review": {
           "url": "https://github.com/pixelmanager-cloud/solana-paper-desk/pull/97#pullrequestreview-5459418438",
