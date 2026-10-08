@@ -197,14 +197,14 @@
     "followups": {
       "worker02": "PR40 review interrupted by automated cybersecurity-risk flag; no final acceptance",
       "worker06": "PR48 review and combined45/46/47/48 Linux validation",
-      "cloud_reviewer": "Independent bounded coordinator transport review",
+      "cloud_reviewer": "PR46 scopedreview passed;available",
       "worker10": "PR45 independent review complete;available",
       "worker03": "Bounded newerlegacysearch found no matching authoritative event;available",
       "worker04": "PR47 published; under independent review",
       "worker05": "PR46 published; under independent review",
       "worker09": "PR35 reviewed and integrated; available",
-      "worker01": "Independent actual-bank point evidence review",
-      "worker07": "PR48 published; independent review underway",
+      "worker01": "PR47 scopedreview passed;available",
+      "worker07": "Implement disconnected structural lifecycle report; PR48 still pending; no runtime approval",
       "worker08": "PR31 reviewed and integrated; available"
     },
     "reviews": {
@@ -232,8 +232,8 @@
       "PR43": "77ed0fbc46ad3ce1f342d7f5b43c5cb3fa3063c9 independent scopedPASS;1038Linux,1137malformed/boundary checks;unresolved execution gates intact",
       "PR44": "c121119589880ae143fbb2f34d65eec93749a5c2 independent scoped documentation PASS; proposed profile only, no runtime approval",
       "PR40": "37441927f38f0b884d61fc2e1e563b6aa50a4355 independent scheduled review5451192398 and combinedLinux1075 PASS; original worker02 run remains incomplete",
-      "PR46": "5e47e972a53623c75e8ae7d485812ff1f6973a8f independent review IN_PROGRESS",
-      "PR47": "9e73e6c5a10cfae5fd3c25c02eb71b2bd4deb12b independent review IN_PROGRESS",
+      "PR46": "5e47e972a53623c75e8ae7d485812ff1f6973a8f independent scopedPASS; combinedLinux1089zero skips and399status paths; final four-PR combination pending",
+      "PR47": "9e73e6c5a10cfae5fd3c25c02eb71b2bd4deb12b independent scopedPASS; combinedLinux1091zero skips and102focused/probe tests; final combination pending",
       "PR45": "ad09535f8db8c736e8295e2df1988e0b79de12af scopedPASS; Linux1096zero skips;3832probes; combinedtreecbc8f932f3fbf4de957a8d85086f2f8ec23c76ce"
     },
     "candidate_combination": {
@@ -256,24 +256,6 @@
     "published_ci": "6267c94a3a861bebe1da10496032123ae8dbb125 successful",
     "active_claims": [
       {
-        "worker": "cloud_reviewer",
-        "thread_id": "01a11901-8b68-70f9-8672-5a731a149091",
-        "host_id": "durable",
-        "task": "Independent bounded coordinator transport review",
-        "status": "REVIEWING",
-        "pr": 46,
-        "head": "5e47e972a53623c75e8ae7d485812ff1f6973a8f"
-      },
-      {
-        "worker": "worker01",
-        "thread_id": "01a118fc-39bc-722c-b442-8bf5a749e0bb",
-        "host_id": "durable",
-        "task": "Independent actual-bank point evidence review",
-        "status": "REVIEWING",
-        "pr": 47,
-        "head": "9e73e6c5a10cfae5fd3c25c02eb71b2bd4deb12b"
-      },
-      {
         "worker": "worker06",
         "thread_id": "01a118fc-f867-7233-8eec-c20659e70095",
         "host_id": "durable",
@@ -281,6 +263,16 @@
         "status": "REVIEWING",
         "pr": 48,
         "head": "3ffe18674a2162257e5fd641f1fafb92e5ef40c4"
+      },
+      {
+        "worker": "worker07",
+        "thread_id": "01a118fd-0f1c-749c-b85b-5e730937d0a8",
+        "host_id": "durable",
+        "task": "Disconnected create_v2 structural lifecycle report; explicit pending PR48 dependency",
+        "status": "DISPATCHED",
+        "base_commit": "56e7aaf2c252cd6093a786e07072527ee4617d82",
+        "depends_on_pr": 48,
+        "dependency_head": "3ffe18674a2162257e5fd641f1fafb92e5ef40c4"
       }
     ],
     "saved_launch_probe": {
