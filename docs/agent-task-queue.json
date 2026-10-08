@@ -271,13 +271,14 @@
         "scope": "Immutable in-flight genesis success/failure attachment; no provider/next stage/publication; terminal uncertain PENDING preserved"
       },
       {
-        "id": "COMMON-BANK-RECEIPT-COMPATIBILITY",
-        "worker": "01",
-        "thread_id": "01a118fc-39bc-722c-b442-8bf5a749e0bb",
+        "id": "PR85-INDEPENDENT-REVIEW",
+        "worker": "06",
+        "thread_id": "01a118fc-f867-7233-8eec-c20659e70095",
         "host_id": "durable",
-        "status": "DISPATCHED",
-        "base": "335e086e18a9e514a4431b7429d69e865bc163e2",
-        "scope": "Mixed-profile protected receipt preservation/contradiction design and fixture proof only; no production migration or issuance"
+        "status": "REVIEWING",
+        "base": "5f2b92525e0737568de428f9d0804679fb934be6",
+        "pr": 85,
+        "head": "7a31d865cc227ef2ca0ff8cfa1f20b3b927afbed"
       }
     ],
     "saved_launch_probe": {
@@ -677,6 +678,12 @@
       "review_manifest_sha256": "fb16dccde2ddc0c3303cd32c8351df16b6afdbad2d893ba3730e421003c77c30",
       "ci": "Both exact-head checks PASS",
       "deployed": false
+    },
+    "pending_receipt_compatibility": {
+      "pr": 85,
+      "head": "7a31d865cc227ef2ca0ff8cfa1f20b3b927afbed",
+      "integrated": false,
+      "review": "PENDING worker06"
     }
   },
   "native_reconciliation_review": {
