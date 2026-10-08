@@ -280,8 +280,11 @@
         "thread_id": "01a118fc-39bc-722c-b442-8bf5a749e0bb",
         "host_id": "durable",
         "status": "IN_PROGRESS",
-        "base": "a4e15f3",
-        "scope": "Accepted commonbank stages preserve original bytes plus failure, coherent reader/version compatibility; no PR97 or runtime wiring"
+        "base": "a4e15f34f78d2ca8752d40c6f5d53b1deebc7906",
+        "scope": "Accepted commonbank stages preserve original bytes plus failure, coherent reader/version compatibility; no PR97 or runtime wiring",
+        "turn_id": "01a11c84-ce06-71d7-94a7-e6a888114ac0",
+        "wait_cursor": "5e651fc7-2996-4765-974d-5c852257a005:73",
+        "execution_observation": "Worker output now confirms implementation and tests across all four stages; valid-looking partial bodies stay FAILED with exact bytes, missing and empty distinct. Compatibility test setup being corrected. Worker-reported results, not independently accepted; branch/head not yet published."
       }
     ],
     "saved_launch_probe": {
