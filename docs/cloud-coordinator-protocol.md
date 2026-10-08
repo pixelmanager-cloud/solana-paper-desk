@@ -1,3 +1,15 @@
+# Current operating scope — supersedes initial dispatch plan
+
+The user delegated integration and dispatch exclusively to the original desktop coordinator (source thread 01a11793-598c-73d0-a711-089b8b46638b), which reports a ten-minute local heartbeat. This cloud role performs GitHub-only independent review. Do not acquire an integration lease, merge, close issues, dispatch successors, duplicate workers or contact worker chats. The initial broader protocol below remains a handoff reference for the integration owner, not authorization for this reviewer.
+
+An hourly hosted automation was created and independently looked up as enabled: 6ac6eaa238008191b06af7534c3b0cb9. It returned thread 01a11901-8b68-70f9-8672-5a731a149091 and conversation_id=null. Same-chat binding and cloud executor availability are unverified. The immediate-run probe returned 404 Action not found before invocation; last_run_time and next_run_time are null. Schedule existence is verified; execution is not. No desktop schedule was created here.
+
+Each review run searches actual worker branches/PRs, reads exact base/head diffs and provenance, and independently tests fixtures when a supported cloud executor is available. Persist review records keyed by repository/PR/head SHA/policy version (cloud-independent-review-v1), reviewer identity, test commands/results/limitations, CI and actionable comment IDs in docs/cloud-coordinator-state.json on this artifact branch until integrated. Recheck current head and existing comments before posting. Reconcile ambiguous writes before retry; use current blob SHA for updates. Coordinate concurrent reviewer writes using a dedicated fenced review lease or serialize through the single hosted automation; if exclusivity cannot be verified, stay read-only. Tests not executed remain NOT_RUN, never PASS. New head invalidates old review conclusions. Do not treat missing worker branches as failures or inactive workers.
+
+Post significant actionable findings on the relevant PR. Quiet when unchanged. Pause on user stop, verified readiness or three consecutive infrastructure failures; record blockers without busy-looping. No live/provider/VPS checks or production changes. The worker artifacts are to be published by the existing workers under desktop coordination. The artifact PR itself remains draft and unmerged.
+
+---
+
 # Cloud coordinator resume protocol
 
 This is a durable handoff protocol, not a running automation. Initial source: e298e15cd758932e81d2241130716632702f5bd0. The review ledger is docs/cloud-coordinator-state.json on this PR branch until reviewed and integrated. No acceptance is granted by this document.
