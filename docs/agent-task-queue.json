@@ -195,8 +195,8 @@
     "live_verification": "BLOCKED_NO_SUPPORTED_BUDGET_FEASIBLE_PUBLIC_LEGACY_SEED; acquisition path in development",
     "blocker": "No accepted provider-backed ownership candidate; historical-control semantics, complete route/effect policy, current measured features and trusted entry/refresh driver remain unfinished",
     "followups": {
-      "worker01": "PR76 independent review active; author platform repair pending",
-      "worker05": "PR76 platform repair published; independent review pending",
+      "worker01": "PR76 repaired exact combined review PASS; available",
+      "worker05": "PR76 repaired ownership diagnostics integrated; available",
       "worker06": "PR75 exact combined review PASS; available",
       "worker10": "PR75 integrated; available",
       "worker02": "PR74 integrated; available",
@@ -260,18 +260,7 @@
       "status": "SUPERSEDED_BY_PUBLISHED_TESTED_COMMIT"
     },
     "published_ci": "Deployed d758bc529a7da1f74509117288740911f2ad6845: both CI runs successful",
-    "active_claims": [
-      {
-        "worker": "worker01",
-        "thread_id": "01a118fc-39bc-722c-b442-8bf5a749e0bb",
-        "host_id": "durable",
-        "status": "RE_REVIEWING",
-        "pr": 76,
-        "head": "39b2e69cfe8ec1916bc1b60bc14484b9adbac472",
-        "base": "27de4d7",
-        "task": "Independent replay-bound control obligations and snapshot read-boundary review"
-      }
-    ],
+    "active_claims": [],
     "saved_launch_probe": {
       "source": "VPS saved raw launch events, read-only; no provider calls",
       "sample_size": 150,
@@ -892,8 +881,8 @@
     "76": {
       "head": "39b2e69cfe8ec1916bc1b60bc14484b9adbac472",
       "reviewer": "worker01",
-      "status": "RE_REVIEWING",
-      "integrated": false,
+      "status": "PASS_INTEGRATED",
+      "integrated": true,
       "finding": "Linux-only read guard breaks unguarded existing macOS live_features positive diagnostics/tests",
       "mac_combined": {
         "discovered": 1509,
@@ -913,7 +902,16 @@
         "skips": 112,
         "seconds": 30.644,
         "platform_limitation": "Guarded diagnostic replay explicitly unavailable on non-Linux;13 actual read-dependent cases individually gated; portable rejection tests pass"
-      }
+      },
+      "finding_resolved": true,
+      "linux_tests": 1513,
+      "linux_skips": 0,
+      "linux_seconds": 60.221,
+      "independent_probes": 21,
+      "reviewed_tree": "577bfdba722f171254c28b11d7c2fae92e8a38a8",
+      "tree_match": true,
+      "ci": "Both exact head CI runs SUCCESS",
+      "integration_commit": "d60cd4cf08434301bc75b2e331c4153a4612b2eb"
     }
   },
   "parallel_combined_regression": {
