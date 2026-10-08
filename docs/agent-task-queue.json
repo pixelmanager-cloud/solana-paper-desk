@@ -270,17 +270,18 @@
         "pr": 93,
         "head": "94a025d96f4ad22db2fb195b1df10a73537ac293",
         "base": "adb2118142bf8d40f8d8d41ee8b810b9366acf62",
-        "wait_cursor": "b9784eaf-f3e5-457f-a98d-a386c23b37ea:37"
+        "wait_cursor": "b9784eaf-f3e5-457f-a98d-a386c23b37ea:38"
       },
       {
         "id": "PR94-INDEPENDENT-REVIEW",
         "worker": "06",
         "thread_id": "01a118fc-f867-7233-8eec-c20659e70095",
         "host_id": "durable",
-        "status": "DISPATCHED",
+        "status": "REVIEWING",
         "pr": 94,
         "head": "714e1e915ae74b965150b8a234c89d92a03b8590",
-        "base": "07049e5"
+        "base": "07049e5",
+        "wait_cursor": "8f3328cf-bef6-441d-83f8-2d1f46b3b0df:58"
       }
     ],
     "saved_launch_probe": {
@@ -870,7 +871,7 @@
       "mac_passed": 1507,
       "mac_skipped": 334,
       "mac_seconds": 33.921,
-      "ci": "IN_PROGRESS",
+      "ci": "Run37794887536 failed: existing dashboard Node harness10s timeout,1841 tests203.911s,one error; failed-job rerun requested2026-10-08T14:48Z; no PASS inferred",
       "coordinator_diff_review": "Module inspected; independent security/full Linux pending"
     }
   },
