@@ -338,10 +338,19 @@
         "worker": "worker10",
         "thread_id": "01a118fd-56d5-70b8-ad31-dba13e982082",
         "host_id": "durable",
-        "task": "Live paper entry/exit adapter critical path audit excluding ownership evidence research",
-        "status": "RESEARCHING",
-        "base": "b449b92",
-        "scope": "review report only"
+        "task": "Read-only reject-only live feature snapshot builder",
+        "status": "IMPLEMENTING",
+        "base": "a8141f1",
+        "scope": "new desk/live_features.py and dedicated tests/report"
+      },
+      {
+        "worker": "cloud_reviewer",
+        "thread_id": "01a11901-8b68-70f9-8672-5a731a149091",
+        "host_id": "durable",
+        "task": "Independent live paper critical path report review",
+        "status": "REVIEWING",
+        "pr": 59,
+        "head": "c120beebbaa2aa028ad777e995eac03a566881bf"
       }
     ],
     "saved_launch_probe": {
@@ -719,5 +728,11 @@
     "head": "38f456e940c071a0d50d5750021ef900ad79c67d",
     "status": "REVIEWING",
     "reviewer": "worker06"
+  },
+  "live_demo_path_review": {
+    "pr": 59,
+    "head": "c120beebbaa2aa028ad777e995eac03a566881bf",
+    "status": "INDEPENDENT_REVIEW",
+    "integrated": false
   }
 }
