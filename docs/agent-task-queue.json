@@ -263,32 +263,12 @@
     "published_ci": "886fc96d404b9d3ffd99c0045f7231d563a5d946 successful",
     "active_claims": [
       {
-        "worker": "worker01",
-        "thread_id": "01a118fc-39bc-722c-b442-8bf5a749e0bb",
-        "host_id": "durable",
-        "task": "Independent PR60 review",
-        "status": "REVIEWING",
-        "base": "13853bf",
-        "pr": 60,
-        "head": "eb4432bbc614de775f510a1cfa86f917fb80abda"
-      },
-      {
         "worker": "worker04",
         "thread_id": "01a118fc-b862-7340-ab3a-e1115a3280a4",
         "host_id": "durable",
         "task": "Current-holder exposure correctness",
         "status": "DISPATCHED",
         "base": "c578dbe"
-      },
-      {
-        "worker": "worker05",
-        "thread_id": "01a118fc-dd83-7672-ac81-7445f85fe09f",
-        "host_id": "durable",
-        "task": "Independent token-control certificate proposal PR63 review",
-        "status": "REVIEWING",
-        "base": "c578dbe",
-        "pr": 63,
-        "head": "2efe5a0422380350a51e62bd3a08e4a7759ae1e5"
       },
       {
         "worker": "worker07",
@@ -310,20 +290,20 @@
         "worker": "cloud_reviewer",
         "thread_id": "01a11901-8b68-70f9-8672-5a731a149091",
         "host_id": "durable",
-        "task": "Independent PR62 review",
+        "task": "Independent signed-message witness PR69 review",
         "status": "REVIEWING",
-        "pr": 62,
-        "head": "9e35c2bce3b4aa47051418ce0d5793c9b872edcd",
+        "pr": 69,
+        "head": "5d53e384f2aa6e35bdb6054e1362beb74d42f850",
         "base": "13853bf"
       },
       {
         "worker": "worker03",
         "thread_id": "01a118fc-9478-778a-b77a-8f8f6ec7e0ad",
         "host_id": "durable",
-        "task": "Independent pool integration PR64 review",
-        "pr": 64,
-        "head": "75eaed53f3b6802dbfb06eded6f92559bc586bdf",
-        "status": "REVIEWING",
+        "task": "Repair classifier deeply nested candidate rejection",
+        "pr": null,
+        "head": null,
+        "status": "IMPLEMENTING",
         "base": "13853bf"
       },
       {
@@ -756,8 +736,9 @@
     "60": {
       "head": "eb4432bbc614de775f510a1cfa86f917fb80abda",
       "reviewer": "worker01",
-      "status": "REVIEWING",
-      "integrated": false
+      "status": "HELD_CLASSIFIER_DEPTH_FOLLOWUP",
+      "integrated": false,
+      "finding": "Pre-existing classify_account deep JSON RecursionError; separate repair assigned03"
     },
     "61": {
       "head": "bfff737c8c0ae8ce1428ae9f3fa022ec7ff280b9",
@@ -770,19 +751,21 @@
     "62": {
       "head": "9e35c2bce3b4aa47051418ce0d5793c9b872edcd",
       "reviewer": "cloud_reviewer",
-      "status": "REVIEWING",
-      "integrated": false
+      "status": "PASS_INTEGRATED",
+      "integrated": true,
+      "source_hashes_matched": 285,
+      "linux_tests": 1347
     },
     "64": {
       "head": "75eaed53f3b6802dbfb06eded6f92559bc586bdf",
       "reviewer": "worker03",
-      "status": "REVIEWING",
+      "status": "PASS_PENDING_INTEGRATION",
       "integrated": false
     },
     "63": {
       "head": "2efe5a0422380350a51e62bd3a08e4a7759ae1e5",
       "reviewer": "worker05",
-      "status": "REVIEWING",
+      "status": "PASS_PROPOSAL_ONLY_PENDING_INTEGRATION",
       "integrated": false
     },
     "65": {
@@ -806,6 +789,12 @@
     "68": {
       "head": "944d97cf1a0cebb6e309e62f9583e9a87cba42b9",
       "reviewer": "worker10",
+      "status": "REVIEWING",
+      "integrated": false
+    },
+    "69": {
+      "head": "5d53e384f2aa6e35bdb6054e1362beb74d42f850",
+      "reviewer": "cloud_reviewer",
       "status": "REVIEWING",
       "integrated": false
     }
