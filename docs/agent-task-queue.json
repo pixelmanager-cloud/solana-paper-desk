@@ -278,11 +278,11 @@
         "worker": "06",
         "thread_id": "01a118fc-f867-7233-8eec-c20659e70095",
         "host_id": "durable",
-        "status": "IN_PROGRESS",
+        "status": "BLOCKED_USAGE_LIMIT",
         "pr": 96,
         "head": "cb2e795e472bee322ece86659ca30b58364d03e3",
         "base": "1a9f69595bf4c8c8814654a093fbba1bde93d5ad",
-        "wait_cursor": "8f3328cf-bef6-441d-83f8-2d1f46b3b0df:65",
+        "wait_cursor": "8f3328cf-bef6-441d-83f8-2d1f46b3b0df:68",
         "turn_id": "01a11c45-08ec-7189-8553-0b1fb969545f"
       }
     ],
@@ -914,28 +914,34 @@
         "head": "cb2e795e472bee322ece86659ca30b58364d03e3",
         "author": "01",
         "candidate_tree": "3dfe803580f2828ef27af3f20cf7feeb89c88cdb",
-        "ci": "one SUCCESS; one pending",
+        "ci": "both SUCCESS at exact cb2e795e472bee322ece86659ca30b58364d03e3; final independent full Linux pending",
         "desktop_tests": {
           "total": 1910,
           "skipped": 373,
           "failures": 0,
           "seconds": 34.527
         },
-        "status": "REPAIRED_INDEPENDENT_REVIEW_PENDING",
+        "status": "FINAL_REVIEW_BLOCKED_USAGE_LIMIT",
         "review": "https://github.com/pixelmanager-cloud/solana-paper-desk/pull/96#issuecomment-6063807197",
         "linux_tests": {
           "total": 1906,
           "skipped": 0,
           "seconds": 278.778
         },
-        "manifest_sha256": "fa1ab5f86eebd2c2182bf6428e9bda051ffccc274a255d149a03bcc804b08e57"
+        "manifest_sha256": "fa1ab5f86eebd2c2182bf6428e9bda051ffccc274a255d149a03bcc804b08e57",
+        "review_interruption": {
+          "turn_id": "01a11c45-08ec-7189-8553-0b1fb969545f",
+          "reason": "Worker usage limit; final independent Linux result/disposition not obtained",
+          "reported_retry": "Oct 15th 2026 2:48 AM (tool did not specify timezone)",
+          "partial_evidence": "four original framing cases reject;38focused and22independent checks pass;369file manifest and desktop tree match; no final full Linux result"
+        }
       },
       "journal": {
         "pr": 97,
         "head": "c11bfad6f1a2debe323238ef746967310ba02349",
         "author": "02",
         "candidate_tree": "4ad86bfbacedc78447a1e8700721a8f8b6c92316",
-        "ci": "one SUCCESS; one pending",
+        "ci": "PR run SUCCESS; push run cancelled at10minute job timeout; one unchanged-head rerun requested 2026-10-08T16:36Z",
         "desktop_tests": {
           "total": 1910,
           "seconds": 35.113,
