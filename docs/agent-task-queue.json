@@ -200,7 +200,7 @@
       "cloud_reviewer": "PR33 reviewed and integrated; available",
       "worker10": "Independent review PR35 ab41ed0a9b56bc0a1a96a9c10630b57425465f5d assigned",
       "worker03": "Public legacy feasibility report c932cbf published/reviewed; idle",
-      "worker04": "PR26 reviewed; available",
+      "worker04": "Implement protected pool receipt ledger; isolated module/tests, no provider or runtime wiring",
       "worker05": "PR30 reviewed and integrated; available",
       "worker09": "PR35 published ab41ed0a9b56bc0a1a96a9c10630b57425465f5d; awaiting independent review",
       "worker01": "Implement birth-inclusive acquisition executor/CLI on reviewed queue and budget foundations; exact raw setup/pagination and prepare/seal/publish recovery",
@@ -257,6 +257,13 @@
         "pr": 35,
         "head": "ab41ed0a9b56bc0a1a96a9c10630b57425465f5d",
         "status": "REVIEWING"
+      },
+      {
+        "worker": "worker04",
+        "thread_id": "01a118fc-b862-7340-ab3a-e1115a3280a4",
+        "host_id": "durable",
+        "task": "protected pool receipt ledger foundation",
+        "status": "IMPLEMENTING"
       }
     ],
     "saved_launch_probe": {
