@@ -459,8 +459,8 @@ def report_create_v2_lifecycle(record, *, endpoint_states=None, source_context=N
                 result['unknowns'].append('BUY_NATIVE_RECIPIENT_AUTHORIZATION_AND_COST_UNVERIFIED:' + row['instruction_path'])
                 result['unresolved_effect_witnesses'].append(copy.deepcopy(inventory[row['instruction_path']]))
 
-        # Existing event decoding stays unchanged. Prefix-only rows retain opaque
-        # bytes and remain incomplete; they cannot establish inventory agreement.
+        # Complete TradeEvent syntax still has unresolved economic effects.
+        # Prefix-only rows retain opaque bytes and cannot establish agreement.
         create_events = []
         partial_trade_parents = set()
         for row in rows:
@@ -468,15 +468,21 @@ def report_create_v2_lifecycle(record, *, endpoint_states=None, source_context=N
                 decoded = instruction({'programId': PUMP, 'accounts': row['accounts'],
                                        'data': row['witness'].get('data', '')})
                 inventory[row['instruction_path']]['schema_witness'] = decoded
-                if decoded and decoded.get('status') == 'EVENT_PREFIX_DECODED' and decoded.get('name') == 'TradeEvent':
+                if decoded and decoded.get('status') in ('EVENT_PREFIX_DECODED', 'EVENT_DECODED') and decoded.get('name') == 'TradeEvent':
                     parent = one([p for p in buy_parents if direct(row, p)], 'TRADE_EVENT_DIRECT_BUY_PARENT_MISMATCH')
-                    require(row['accounts'] == [b['event_authority']] and decoded.get('schema_file') == 'pump.json'
+                    require(row['accounts'] == [b['event_authority']]
                             and decoded['fields'].get('mint') == mint and decoded['fields'].get('user') == payer
                             and decoded['fields'].get('is_buy') is True
                             and decoded['fields'].get('token_amount') == inventory[parent['instruction_path']]['schema_witness']['args']['amount'],
                             'TRADE_EVENT_PREFIX_BINDING_MISMATCH')
                     require(parent['instruction_path'] not in partial_trade_parents, 'DUPLICATE_PARTIAL_TRADE_EVENT')
                     partial_trade_parents.add(parent['instruction_path'])
+                    if decoded['status'] == 'EVENT_DECODED':
+                        require(decoded.get('schema_complete') is True, 'TRADE_EVENT_SCHEMA_INCOMPLETE')
+                        role(row, 'complete_trade_event_syntax_economic_effects_unresolved', complete=False)
+                        result['unknowns'].append('TRADE_EVENT_ECONOMIC_EFFECTS_UNVERIFIED:' + row['instruction_path'])
+                        result['unresolved_effect_witnesses'].append(copy.deepcopy(inventory[row['instruction_path']]))
+                        continue
                     role(row, 'known_trade_event_prefix_opaque_suffix_unresolved', complete=False)
                     result['unknowns'].append('TRADE_EVENT_SCHEMA_SUFFIX_UNRESOLVED:' + row['instruction_path'])
                     raw_event = _raw(row)

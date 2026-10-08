@@ -106,7 +106,7 @@ class CreateV2RawSupportTests(unittest.TestCase):
             self.assertEqual(syntax['raw_operation']['kind'],targets[row['instruction_path']])
             self.unapproved(syntax)
 
-    def test_raw_birth_roles_resolve_without_hiding_eight_incomplete_buy_rows(self):
+    def test_raw_birth_roles_resolve_without_approving_eight_buy_effects(self):
         record=raw_fixture();r=report(record)
         self.assertEqual(r['errors'],[])
         self.assertFalse(r['observed_inventory_agreement'])
@@ -117,11 +117,10 @@ class CreateV2RawSupportTests(unittest.TestCase):
             'ignored_instructions':0,'actual_execution_coverage_verified':False})
         self.assertIn('RAW_STATE_MISSING',r['unknowns'])
         self.assertEqual(r['endpoint_states'],[])
-        self.assertEqual(len(r['unresolved_effect_witnesses']),7)
+        self.assertEqual(len(r['unresolved_effect_witnesses']),8)
         self.assertEqual(r['birth_witnesses']['mint_revocation'],'2.13')
-        self.assertEqual(len(r['partial_event_witnesses']),1)
-        self.assertEqual(len(r['partial_event_witnesses'][0]['unknown_suffix_hex']),16)
-        self.assertFalse(r['partial_event_witnesses'][0]['schema_complete'])
+        self.assertEqual(r['partial_event_witnesses'],[])
+        self.assertIn('TRADE_EVENT_ECONOMIC_EFFECTS_UNVERIFIED:4.8',r['unknowns'])
         self.unapproved(r)
 
     def test_curve_allocation_is_distinct_from_later_curve_sol_transfer(self):
@@ -225,7 +224,7 @@ class CreateV2RawSupportTests(unittest.TestCase):
 
     def test_opaque_trade_event_bytes_retained_never_made_complete(self):
         r=raw_fixture();ix=instruction_at(r,'4.8');old=unbase58(ix['data'])
-        data(ix,old[:-8]+b'\xff'*8)
+        data(ix,old+b'\xff'*8)
         out=report(r)
         self.assertFalse(out['observed_inventory_agreement'])
         self.assertFalse(out['supported_sequence_agreement'])
