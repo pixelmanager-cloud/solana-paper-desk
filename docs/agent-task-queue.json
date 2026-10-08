@@ -189,23 +189,22 @@
   ],
   "integration": {
     "branch": "integration/cloud-wave1",
-    "tested_commit": "7568e4622d19b6eabe50b94b0b72b3ca53334017",
-    "combined_tests": 1289,
-    "result": "PASS",
+    "tested_commit": "27de4d7a28b2d360159dcea8275f3250048964d0",
+    "combined_tests": 1492,
+    "result": "PASS_FIXTURE_ONLY",
     "live_verification": "BLOCKED_NO_SUPPORTED_BUDGET_FEASIBLE_PUBLIC_LEGACY_SEED; acquisition path in development",
-    "blocker": "Live legacy evidence,protected pool receipt capture,lifecycle semantic approval and holder exposure integration unfinished",
+    "blocker": "No accepted provider-backed ownership candidate; historical-control semantics, complete route/effect policy, current measured features and trusted entry/refresh driver remain unfinished",
     "followups": {
-      "worker02": "PR40 review interrupted by automated cybersecurity-risk flag; no final acceptance",
-      "worker06": "PR72 repaired independent review PASS; available",
-      "cloud_reviewer": "PR55 source/schema provenance review",
-      "worker10": "PR45 independent review complete;available",
-      "worker03": "PR55 published; available",
-      "worker04": "PR47 accepted; available",
-      "worker05": "PR52 WAL repair published; available",
-      "worker09": "PR35 reviewed and integrated; available",
-      "worker01": "Forward fix published; independent re-review pending; available",
-      "worker07": "Native lamport reconciliation assigned",
-      "worker08": "PR72 repaired consumer accepted; available"
+      "worker01": "PR76 independent review active; author platform repair pending",
+      "worker05": "PR76 platform contract repair active",
+      "worker06": "PR75 exact combined review PASS; available",
+      "worker10": "PR75 integrated; available",
+      "worker02": "PR74 integrated; available",
+      "worker03": "PR70 integrated; available",
+      "worker04": "PR68 integrated; available",
+      "worker07": "PR69 integrated; available",
+      "worker08": "PR72 integrated; available",
+      "worker09": "PR66 integrated; available"
     },
     "reviews": {
       "PR18": "92e9c6104b411101e414c03774a1675cbbf1ac91: independent review no blocking scoped defect",
@@ -260,7 +259,7 @@
       "tests": 878,
       "status": "SUPERSEDED_BY_PUBLISHED_TESTED_COMMIT"
     },
-    "published_ci": "886fc96d404b9d3ffd99c0045f7231d563a5d946 successful",
+    "published_ci": "Deployed d758bc529a7da1f74509117288740911f2ad6845: both CI runs successful",
     "active_claims": [
       {
         "worker": "worker01",
@@ -608,7 +607,9 @@
         "task": "Versioned official TradeEvent schema; retain unresolved economic effects and fail-closed gates",
         "base": "7e1d3e4"
       }
-    }
+    },
+    "reviewed_combined_tree": "613d5e3393e8a930cb15df979cf0c211fa89c037",
+    "test_identity_note": "Exact d758bc5 + PR75 tree independently tested; accepted integration differs only in coordinator documentation."
   },
   "native_reconciliation_review": {
     "pr": 56,
