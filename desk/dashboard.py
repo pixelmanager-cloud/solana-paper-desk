@@ -2,57 +2,44 @@
 import json
 import sqlite3
 import threading
-import time
-import uuid
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
-from .programs import address
 from .screen import screen
+from .job_persistence import JobPersistence, BIRTH_ACQUISITION_V1
 
 
 class Jobs:
     def __init__(self, db, scanner=screen):
-        self.db, self.scanner = str(db), scanner
-        Path(db).parent.mkdir(parents=True, exist_ok=True)
-        with self.connect() as c:
-            c.execute('CREATE TABLE IF NOT EXISTS scans(id TEXT PRIMARY KEY,mint TEXT,created INTEGER,status TEXT,result TEXT)')
-            c.execute("UPDATE scans SET status='INTERRUPTED' WHERE status='RUNNING'")
+        self.persistence = JobPersistence(db)
+        self.db, self.scanner = str(self.persistence.path), scanner
+        self.persistence.recover()
         self.stopping = threading.Event()
     def connect(self):
-        c = sqlite3.connect(self.db,timeout=15); c.row_factory=sqlite3.Row
-        return c
+        return self.persistence.connect()
     def submit(self,mint):
-        address(mint)
-        with self.connect() as c:
-            c.execute('BEGIN IMMEDIATE')
-            if c.execute("SELECT count(*) FROM scans WHERE status IN ('QUEUED','RUNNING')").fetchone()[0]>=3:
-                raise ValueError('Queue full. Wait for the current scans to finish.')
-            if c.execute('SELECT count(*) FROM scans WHERE created>?',(int(time.time())-86400,)).fetchone()[0]>=10:
-                raise ValueError('Daily budget reached: 10 scans per rolling 24 hours.')
-            if c.execute("SELECT 1 FROM scans WHERE mint=? AND status IN ('QUEUED','RUNNING')",(mint,)).fetchone():
-                raise ValueError('This token already has a pending scan.')
-            uid=uuid.uuid4().hex
-            c.execute('INSERT INTO scans VALUES(?,?,?,?,?)',(uid,mint,int(time.time()),'QUEUED',None))
-            return uid
+        return self.persistence.admit(mint)
+    def submit_acquisition(self,mint,evidence_db):
+        """Admission only; no acquisition executor, CLI or request budget here."""
+        return self.persistence.admit(mint,kind=BIRTH_ACQUISITION_V1,evidence_db=evidence_db)
+    def descriptor(self,scan_id):
+        return self.persistence.descriptor(scan_id)
     def list(self):
         with self.connect() as c:
             rows=c.execute('SELECT * FROM scans ORDER BY created DESC,rowid DESC LIMIT 50').fetchall()
             return [{**dict(r),'result':json.loads(r['result']) if r['result'] else None} for r in rows]
     def once(self):
-        with self.connect() as c:
-            c.execute('BEGIN IMMEDIATE')
-            row=c.execute("SELECT * FROM scans WHERE status='QUEUED' ORDER BY rowid LIMIT 1").fetchone()
-            if not row:return False
-            c.execute("UPDATE scans SET status='RUNNING' WHERE id=?",(row['id'],))
-        try:
-            result=self.scanner(row['mint']); status='COMPLETE'
-        except Exception as exc:
-            # Never surface provider exceptions, credential paths or response bodies.
-            result={'error':'Scan failed; check provider access and retry within the daily budget.',
-                    'error_type':type(exc).__name__,'eligible_for_trading':False};status='FAILED'
-        with self.connect() as c:
-            c.execute('UPDATE scans SET status=?,result=? WHERE id=?',(status,json.dumps(result),row['id']))
-        return True
+        with self.persistence.worker() as worker:
+            if worker is None:return False
+            claim=worker.claim_screen()
+            if claim is None:return False
+            try:
+                result=self.scanner(claim.mint); status='COMPLETE'
+            except Exception as exc:
+                # Never surface provider exceptions, credential paths or response bodies.
+                result={'error':'Scan failed; check provider access and retry within the daily budget.',
+                        'error_type':type(exc).__name__,'eligible_for_trading':False};status='FAILED'
+            worker.publish(claim,status,result)
+            return True
     def run(self):
         while not self.stopping.is_set():
             if not self.once():self.stopping.wait(1)
