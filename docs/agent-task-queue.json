@@ -263,15 +263,6 @@
     "published_ci": "886fc96d404b9d3ffd99c0045f7231d563a5d946 successful",
     "active_claims": [
       {
-        "worker": "worker06",
-        "thread_id": "01a118fc-f867-7233-8eec-c20659e70095",
-        "host_id": "durable",
-        "task": "Independent native reconciliation PR56 review",
-        "status": "REVIEWING",
-        "pr": 56,
-        "head": "db8b1554a40ea4505975b6cdfdbb49c98c26636d"
-      },
-      {
         "worker": "cloud_reviewer",
         "thread_id": "01a11901-8b68-70f9-8672-5a731a149091",
         "host_id": "durable",
@@ -613,16 +604,21 @@
     "head": "db8b1554a40ea4505975b6cdfdbb49c98c26636d",
     "author_thread": "01a118fd-0f1c-749c-b85b-5e730937d0a8",
     "reviewer_thread": "01a118fc-f867-7233-8eec-c20659e70095",
-    "status": "INDEPENDENT_REVIEW_IN_PROGRESS",
+    "status": "PASS_INTEGRATED",
     "combined_base": "5bc3adfc230a221b0959c55084749633c11e909e",
-    "integrated": false,
+    "integrated": true,
     "author_linux_tests": 1322,
     "scope": "Disconnected conditional arithmetic only; all effect authentication and entry permissions false",
     "mac_discovered": 1329,
     "mac_passed": 1237,
     "mac_skipped": 92,
     "mac_seconds": 25.608,
-    "ci": "PASS exact PR head"
+    "ci": "PASS exact PR head",
+    "integration_commit": "745622f",
+    "independent_linux_passed": 1329,
+    "independent_probes": 1552,
+    "reviewed_tree": "76c5e1df4a3fbd997e1e4945bc775dbf0fd58c26",
+    "tree_match": true
   },
   "trade_event_schema_review": {
     "pr": 57,
