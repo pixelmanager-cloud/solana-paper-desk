@@ -266,18 +266,22 @@
         "worker": "02",
         "thread_id": "01a118fc-666c-70b6-9fa8-2c7520f0a0bb",
         "host_id": "durable",
-        "status": "DISPATCHED",
+        "status": "IN_PROGRESS",
         "base": "893bf72ed79dee7be224bccf4c7ba3913f36d6b6",
-        "scope": "Fresh admitted acquisition slot intent and completion; atomic same18 charge before I/O; no transport or retrofit"
+        "scope": "Fresh admitted acquisition slot intent and completion; atomic same18 charge before I/O; no transport or retrofit",
+        "wait_cursor": "a2dcfb97-463d-4188-9da3-48a81e644d23:63",
+        "turn_id": "01a11c26-ebdf-75e8-a64a-9063c0637615"
       },
       {
         "id": "ORIGINAL-BYTE-SLOT-TRANSPORT",
         "worker": "01",
         "thread_id": "01a118fc-39bc-722c-b442-8bf5a749e0bb",
         "host_id": "durable",
-        "status": "DISPATCHED",
+        "status": "IN_PROGRESS",
         "base": "893bf72ed79dee7be224bccf4c7ba3913f36d6b6",
-        "scope": "Separate bounded original-byte finalized-slot transport primitive; no acquisition/journal/allowlist expansion"
+        "scope": "Separate bounded original-byte finalized-slot transport primitive; no acquisition/journal/allowlist expansion",
+        "wait_cursor": "5e651fc7-2996-4765-974d-5c852257a005:64",
+        "turn_id": "01a11c26-fcef-7341-a3c8-db3211a520d9"
       }
     ],
     "saved_launch_probe": {
