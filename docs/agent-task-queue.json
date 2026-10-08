@@ -196,15 +196,15 @@
     "blocker": "Live legacy evidence,protected pool receipt capture,lifecycle semantic approval and holder exposure integration unfinished",
     "followups": {
       "worker02": "PR40 review interrupted by automated cybersecurity-risk flag; no final acceptance",
-      "worker06": "PR34 integrated; available",
-      "cloud_reviewer": "Combined PR40 validation passed; available",
-      "worker10": "PR44 documentation/provenance PASS; available for upcoming parser review",
+      "worker06": "PR48 review and combined45/46/47/48 Linux validation",
+      "cloud_reviewer": "Independent bounded coordinator transport review",
+      "worker10": "Independent PR45 syntax and combinedLinux review",
       "worker03": "Bounded newerlegacysearch found no matching authoritative event;available",
-      "worker04": "Separate bank-advancement point-capture repair; preserve original requests and reject unknowns",
-      "worker05": "Implement disconnected nonredirecting bounded coordinator RPC transport",
+      "worker04": "PR47 published; under independent review",
+      "worker05": "PR46 published; under independent review",
       "worker09": "PR35 reviewed and integrated; available",
-      "worker01": "Implement disconnected Token-2022 instruction syntax; PR43 already accepted",
-      "worker07": "Implement disconnected exact Token-2022 raw state decoder",
+      "worker01": "Independent actual-bank point evidence review",
+      "worker07": "PR48 published; independent review underway",
       "worker08": "PR31 reviewed and integrated; available"
     },
     "reviews": {
@@ -231,7 +231,9 @@
       "PR42": "c174c07c5bcfe7776003be7d011075ec333115fa independent scopedPASS;1024combinedLinux,330header combinations+45invalid+8malformed probes;no rawtoken/launch acceptance",
       "PR43": "77ed0fbc46ad3ce1f342d7f5b43c5cb3fa3063c9 independent scopedPASS;1038Linux,1137malformed/boundary checks;unresolved execution gates intact",
       "PR44": "c121119589880ae143fbb2f34d65eec93749a5c2 independent scoped documentation PASS; proposed profile only, no runtime approval",
-      "PR40": "37441927f38f0b884d61fc2e1e563b6aa50a4355 independent scheduled review5451192398 and combinedLinux1075 PASS; original worker02 run remains incomplete"
+      "PR40": "37441927f38f0b884d61fc2e1e563b6aa50a4355 independent scheduled review5451192398 and combinedLinux1075 PASS; original worker02 run remains incomplete",
+      "PR46": "5e47e972a53623c75e8ae7d485812ff1f6973a8f independent review IN_PROGRESS",
+      "PR47": "9e73e6c5a10cfae5fd3c25c02eb71b2bd4deb12b independent review IN_PROGRESS"
     },
     "candidate_combination": {
       "commit": "bfcc550ca25bd6cb79dc7ac3ad2b30c72f7b1033",
@@ -250,43 +252,44 @@
       "tests": 878,
       "status": "SUPERSEDED_BY_PUBLISHED_TESTED_COMMIT"
     },
-    "published_ci": "d9c093b0f0be103ebdb11a826c1896be6b8f055b successful",
+    "published_ci": "6267c94a3a861bebe1da10496032123ae8dbb125 successful",
     "active_claims": [
       {
-        "worker": "worker07",
-        "thread_id": "01a118fd-0f1c-749c-b85b-5e730937d0a8",
+        "worker": "worker10",
+        "thread_id": "01a118fd-56d5-70b8-ad31-dba13e982082",
         "host_id": "durable",
-        "task": "Disconnected Token-2022 raw state decoder",
-        "status": "DISPATCHED",
-        "base_commit": "d9c093b0f0be103ebdb11a826c1896be6b8f055b",
-        "reference_pr": 44,
-        "reference_head": "c121119589880ae143fbb2f34d65eec93749a5c2"
+        "task": "Independent PR45 syntax review and combined Linux tests",
+        "status": "REVIEWING",
+        "pr": 45,
+        "head": "ad09535f8db8c736e8295e2df1988e0b79de12af",
+        "base_commit": "6267c94a3a861bebe1da10496032123ae8dbb125"
+      },
+      {
+        "worker": "cloud_reviewer",
+        "thread_id": "01a11901-8b68-70f9-8672-5a731a149091",
+        "host_id": "durable",
+        "task": "Independent bounded coordinator transport review",
+        "status": "REVIEWING",
+        "pr": 46,
+        "head": "5e47e972a53623c75e8ae7d485812ff1f6973a8f"
       },
       {
         "worker": "worker01",
         "thread_id": "01a118fc-39bc-722c-b442-8bf5a749e0bb",
         "host_id": "durable",
-        "task": "Disconnected Token-2022 raw instruction syntax",
-        "status": "DISPATCHED",
-        "base_commit": "d9c093b0f0be103ebdb11a826c1896be6b8f055b",
-        "reference_pr": 44,
-        "reference_head": "c121119589880ae143fbb2f34d65eec93749a5c2"
+        "task": "Independent actual-bank point evidence review",
+        "status": "REVIEWING",
+        "pr": 47,
+        "head": "9e73e6c5a10cfae5fd3c25c02eb71b2bd4deb12b"
       },
       {
-        "worker": "worker05",
-        "thread_id": "01a118fc-dd83-7672-ac81-7445f85fe09f",
+        "worker": "worker06",
+        "thread_id": "01a118fc-f867-7233-8eec-c20659e70095",
         "host_id": "durable",
-        "task": "Dedicated nonredirecting single-request coordinator RPC transport; disconnected",
-        "status": "DISPATCHED",
-        "base_commit": "586bae86f8858f6c642be184b87c93d0995f7ceb"
-      },
-      {
-        "worker": "worker04",
-        "thread_id": "01a118fc-b862-7340-ab3a-e1115a3280a4",
-        "host_id": "durable",
-        "task": "Verify and repair minContextSlot floor versus returned bank for point-only capture",
-        "status": "DISPATCHED",
-        "base_commit": "36d5692"
+        "task": "Independent PR48 raw state review plus four-PR combined Linux verification",
+        "status": "REVIEWING",
+        "pr": 48,
+        "head": "3ffe18674a2162257e5fd641f1fafb92e5ef40c4"
       }
     ],
     "saved_launch_probe": {
@@ -405,6 +408,28 @@
       "review": "Independent documentation/provenance PASS; fixture facts and16 public references verified",
       "integrated": true,
       "limitation": "Proposed exact extension profile; no raw state or runtime admission proof"
+    },
+    "pending_token2022_instructions": {
+      "pr": 45,
+      "head": "ad09535f8db8c736e8295e2df1988e0b79de12af",
+      "ci": "PASS",
+      "review": "IN_PROGRESS",
+      "integrated": false,
+      "scratch_commit": "7cb54ca6a4efd1498bd239f884e13460c71e9c4a",
+      "mac_discovered": 1096,
+      "mac_passed": 1026,
+      "mac_skipped": 70
+    },
+    "pending_modern_combination": {
+      "prs": {
+        "45": "ad09535f8db8c736e8295e2df1988e0b79de12af",
+        "46": "5e47e972a53623c75e8ae7d485812ff1f6973a8f",
+        "47": "9e73e6c5a10cfae5fd3c25c02eb71b2bd4deb12b",
+        "48": "3ffe18674a2162257e5fd641f1fafb92e5ef40c4"
+      },
+      "scratch_commit": "68583298f6a6d22c65561c092f4820892aab2aeb",
+      "review": "Four separate independent reviews in progress",
+      "integrated": false
     }
   }
 }
