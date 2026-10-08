@@ -1,6 +1,6 @@
 {
   "schema_version": 1,
-  "revision": 19,
+  "revision": 20,
   "repository": "pixelmanager-cloud/solana-paper-desk",
   "source_main_sha": "e298e15cd758932e81d2241130716632702f5bd0",
   "observed_date": "2026-10-08",
@@ -562,6 +562,71 @@
         "Trusted provisioning and reserve-before-I/O/runtime wiring not certified",
         "Displayed chain suppressed, privileged debug internals not erased",
         "BankS->T/lifecycle/chain proof/readiness limitations retained"
+      ],
+      "accepted": false,
+      "live_acceptance": false
+    },
+    {
+      "kind": "PR49_NARROW_TRANSPORT_INDEPENDENT_REVIEW",
+      "policy_version": "cloud-independent-review-v1",
+      "pr": 49,
+      "head_sha": "2b11fbf6c8a5d7933088283a9a7ab9cbd9f25578",
+      "base_sha": "12ca1ed4a48547f8dd8acc59a8b1fcec940ffc9d",
+      "worker_agent": "05",
+      "worker_thread_id": "01a118fc-dd83-7672-ac81-7445f85fe09f",
+      "branch": "codex/cloud-wave1-05-transaction-rpc",
+      "author_login": "pixelmanager-cloud",
+      "reviewer": "Independent cloud execution; shared GitHub identity; COMMENT only",
+      "review_id": 5451499079,
+      "review_action": "COMMENT",
+      "status": "SCOPED_NARROW_GETTRANSACTION_NO_BLOCKER_FOUND",
+      "findings": [
+        "Canonical64byte signature and strict finalized/json/integer0 options verified",
+        "Six shared transport definitions unchanged",
+        "Opaque/null result remains capture responsibility"
+      ],
+      "tests": {
+        "python": "3.12.14",
+        "full_suite_command": "python -m unittest discover -s tests -v",
+        "full_suite_passed": 1179,
+        "full_suite_seconds": 52.876,
+        "targeted_command": "python -m unittest tests.test_coordinator_rpc tests.test_coordinator_transaction_rpc -q",
+        "targeted_passed": 23,
+        "targeted_seconds": 0.599,
+        "adversarial_command": "python /workspace/work/review/p49-independent.py",
+        "adversarial_passed": 3,
+        "adversarial_seconds": 0.189,
+        "boundaries": {
+          "canonical_accepted": 68,
+          "wrong_byte_length_rejected": 387,
+          "option_substitutions": 30,
+          "redirect_paths": 15
+        },
+        "skipped": 0,
+        "provider_calls": 0
+      },
+      "ci": [
+        {
+          "id": 37728550556,
+          "name": "Tests",
+          "status": "completed",
+          "conclusion": "success",
+          "run_number": 290,
+          "jobs_url": "https://api.github.com/repos/pixelmanager-cloud/solana-paper-desk/actions/runs/37728550556/jobs",
+          "logs_url": "https://api.github.com/repos/pixelmanager-cloud/solana-paper-desk/actions/runs/37728550556/logs",
+          "workflow_id": 377958194
+        }
+      ],
+      "combined_ci": "NOT_RUN_UNPUBLISHED_SCRATCH_TREE",
+      "source_manifest": "docs/reviews/cloud-pr49-12ca1ed-2b11fbf-hashes.json",
+      "source_manifest_sha256": "81acf26de4d69c2477e2d1c5485e8616a4e98e67cf4b4d53f46ffa5eaf68c9b3",
+      "source_files": 257,
+      "proof_artifact": "docs/reviews/cloud-pr49-2b11fbf.md",
+      "limitations": [
+        "Source provisioning/reserve-before-I/O/raw capture/lifecycle acceptance separate",
+        "No cryptographic signature/finality proof",
+        "Socket timeout not total deadline",
+        "Current integration accepts actual finalized pointT>=floorS with preserved original request; no interval atS"
       ],
       "accepted": false,
       "live_acceptance": false
@@ -1196,13 +1261,77 @@
       ],
       "accepted": false,
       "live_acceptance": false
+    },
+    {
+      "policy_version": "cloud-independent-review-v1",
+      "pr": 49,
+      "head_sha": "2b11fbf6c8a5d7933088283a9a7ab9cbd9f25578",
+      "base_sha": "12ca1ed4a48547f8dd8acc59a8b1fcec940ffc9d",
+      "worker_agent": "05",
+      "worker_thread_id": "01a118fc-dd83-7672-ac81-7445f85fe09f",
+      "branch": "codex/cloud-wave1-05-transaction-rpc",
+      "author_login": "pixelmanager-cloud",
+      "reviewer": "Independent cloud execution; shared GitHub identity; COMMENT only",
+      "review_id": 5451499079,
+      "review_action": "COMMENT",
+      "status": "SCOPED_NARROW_GETTRANSACTION_NO_BLOCKER_FOUND",
+      "findings": [
+        "Canonical64byte signature and strict finalized/json/integer0 options verified",
+        "Six shared transport definitions unchanged",
+        "Opaque/null result remains capture responsibility"
+      ],
+      "tests": {
+        "python": "3.12.14",
+        "full_suite_command": "python -m unittest discover -s tests -v",
+        "full_suite_passed": 1179,
+        "full_suite_seconds": 52.876,
+        "targeted_command": "python -m unittest tests.test_coordinator_rpc tests.test_coordinator_transaction_rpc -q",
+        "targeted_passed": 23,
+        "targeted_seconds": 0.599,
+        "adversarial_command": "python /workspace/work/review/p49-independent.py",
+        "adversarial_passed": 3,
+        "adversarial_seconds": 0.189,
+        "boundaries": {
+          "canonical_accepted": 68,
+          "wrong_byte_length_rejected": 387,
+          "option_substitutions": 30,
+          "redirect_paths": 15
+        },
+        "skipped": 0,
+        "provider_calls": 0
+      },
+      "ci": [
+        {
+          "id": 37728550556,
+          "name": "Tests",
+          "status": "completed",
+          "conclusion": "success",
+          "run_number": 290,
+          "jobs_url": "https://api.github.com/repos/pixelmanager-cloud/solana-paper-desk/actions/runs/37728550556/jobs",
+          "logs_url": "https://api.github.com/repos/pixelmanager-cloud/solana-paper-desk/actions/runs/37728550556/logs",
+          "workflow_id": 377958194
+        }
+      ],
+      "combined_ci": "NOT_RUN_UNPUBLISHED_SCRATCH_TREE",
+      "source_manifest": "docs/reviews/cloud-pr49-12ca1ed-2b11fbf-hashes.json",
+      "source_manifest_sha256": "81acf26de4d69c2477e2d1c5485e8616a4e98e67cf4b4d53f46ffa5eaf68c9b3",
+      "source_files": 257,
+      "proof_artifact": "docs/reviews/cloud-pr49-2b11fbf.md",
+      "limitations": [
+        "Source provisioning/reserve-before-I/O/raw capture/lifecycle acceptance separate",
+        "No cryptographic signature/finality proof",
+        "Socket timeout not total deadline",
+        "Current integration accepts actual finalized pointT>=floorS with preserved original request; no interval atS"
+      ],
+      "accepted": false,
+      "live_acceptance": false
     }
   ],
   "infrastructure": {
     "consecutive_failures": 0,
     "last_failure": "Historical immediate-run probe404; no current run infrastructure failure.",
     "retry_policy": "No busy polling; future supported review runs reconcile and pause after three consecutive execution/access failures.",
-    "last_success": "PR46 independent fixture review and combined Linux suite completed in verified cloud executor"
+    "last_success": "Verified cloud PR49 independent review completed;1179 combined tests zero Linux skips"
   },
   "review_lease": {
     "holder": null,
@@ -1703,10 +1832,10 @@
   ],
   "review_assignments": {
     "cloud_coordinator": {
-      "exclusive_pr": 46,
-      "head_sha": "5e47e972a53623c75e8ae7d485812ff1f6973a8f",
+      "exclusive_pr": 49,
+      "head_sha": "2b11fbf6c8a5d7933088283a9a7ab9cbd9f25578",
       "status": "REVIEW_COMPLETE_COMMENT_POSTED",
-      "review_id": 5451336546
+      "review_id": 5451499079
     },
     "pr31": {
       "owner": "worker02",
@@ -1896,66 +2025,69 @@
     }
   ],
   "last_review_run": {
-    "mode": "PR46_EXCLUSIVE_INDEPENDENT_COMBINED_FIXTURE_REVIEW",
+    "mode": "PR49_EXCLUSIVE_COMBINED_FIXTURE_REVIEW",
     "policy_version": "cloud-independent-review-v1",
-    "pr": 46,
-    "head_sha": "5e47e972a53623c75e8ae7d485812ff1f6973a8f",
-    "base_sha": "6267c94a3a861bebe1da10496032123ae8dbb125",
+    "pr": 49,
+    "head_sha": "2b11fbf6c8a5d7933088283a9a7ab9cbd9f25578",
+    "base_sha": "12ca1ed4a48547f8dd8acc59a8b1fcec940ffc9d",
     "worker_agent": "05",
     "worker_thread_id": "01a118fc-dd83-7672-ac81-7445f85fe09f",
-    "branch": "codex/cloud-wave1-05-coordinator-rpc",
+    "branch": "codex/cloud-wave1-05-transaction-rpc",
     "author_login": "pixelmanager-cloud",
-    "reviewer": "Independent cloud execution shared GitHub identity COMMENT only",
-    "review_id": 5451336546,
+    "reviewer": "Independent cloud execution; shared GitHub identity; COMMENT only",
+    "review_id": 5451499079,
     "review_action": "COMMENT",
-    "status": "SCOPED_DISCONNECTED_TRANSPORT_NO_BLOCKER_FOUND",
+    "status": "SCOPED_NARROW_GETTRANSACTION_NO_BLOCKER_FOUND",
     "findings": [
-      "Fixed HTTPS endpoint and four-method restriction; no redirects/retries/fallback/budget/runtime gate changes.",
-      "399 non200 status paths one fixture HTTP attempt and closed response; strict adversarial JSON cases rejected."
+      "Canonical64byte signature and strict finalized/json/integer0 options verified",
+      "Six shared transport definitions unchanged",
+      "Opaque/null result remains capture responsibility"
     ],
     "tests": {
       "python": "3.12.14",
       "full_suite_command": "python -m unittest discover -s tests -v",
-      "full_suite_passed": 1089,
-      "full_suite_seconds": 49.783,
-      "targeted_command": "python -m unittest discover -s tests -p test_coordinator_rpc.py -q",
-      "targeted_passed": 14,
-      "targeted_seconds": 0.416,
-      "adversarial_command": "python /workspace/work/review/p46-independent.py",
+      "full_suite_passed": 1179,
+      "full_suite_seconds": 52.876,
+      "targeted_command": "python -m unittest tests.test_coordinator_rpc tests.test_coordinator_transaction_rpc -q",
+      "targeted_passed": 23,
+      "targeted_seconds": 0.599,
+      "adversarial_command": "python /workspace/work/review/p49-independent.py",
       "adversarial_passed": 3,
-      "adversarial_seconds": 2.635,
+      "adversarial_seconds": 0.189,
+      "boundaries": {
+        "canonical_accepted": 68,
+        "wrong_byte_length_rejected": 387,
+        "option_substitutions": 30,
+        "redirect_paths": 15
+      },
       "skipped": 0,
       "provider_calls": 0
     },
     "ci": [
       {
-        "id": 37726961955,
+        "id": 37728550556,
         "name": "Tests",
         "status": "completed",
         "conclusion": "success",
-        "run_number": 267,
-        "jobs_url": "https://api.github.com/repos/pixelmanager-cloud/solana-paper-desk/actions/runs/37726961955/jobs",
-        "logs_url": "https://api.github.com/repos/pixelmanager-cloud/solana-paper-desk/actions/runs/37726961955/logs",
+        "run_number": 290,
+        "jobs_url": "https://api.github.com/repos/pixelmanager-cloud/solana-paper-desk/actions/runs/37728550556/jobs",
+        "logs_url": "https://api.github.com/repos/pixelmanager-cloud/solana-paper-desk/actions/runs/37728550556/logs",
         "workflow_id": 377958194
       }
     ],
     "combined_ci": "NOT_RUN_UNPUBLISHED_SCRATCH_TREE",
-    "source_manifest": "docs/reviews/p46-6267c94-5e47e97-hashes.json",
-    "source_manifest_sha256": "896f09cbb146969b1de939af397203ac5c3bba323f3177ff03490a4547a19a8d",
-    "source_files": 248,
-    "proof_artifact": "docs/reviews/cloud-pr46-5e47e97.md",
+    "source_manifest": "docs/reviews/cloud-pr49-12ca1ed-2b11fbf-hashes.json",
+    "source_manifest_sha256": "81acf26de4d69c2477e2d1c5485e8616a4e98e67cf4b4d53f46ffa5eaf68c9b3",
+    "source_files": 257,
+    "proof_artifact": "docs/reviews/cloud-pr49-2b11fbf.md",
     "limitations": [
-      "Socket timeout15s not total deadline",
-      "Trusted provisioning and reserve-before-I/O/runtime wiring not certified",
-      "Displayed chain suppressed, privileged debug internals not erased",
-      "BankS->T/lifecycle/chain proof/readiness limitations retained"
+      "Source provisioning/reserve-before-I/O/raw capture/lifecycle acceptance separate",
+      "No cryptographic signature/finality proof",
+      "Socket timeout not total deadline",
+      "Current integration accepts actual finalized pointT>=floorS with preserved original request; no interval atS"
     ],
     "accepted": false,
     "live_acceptance": false,
-    "excluded_review_prs": [
-      45,
-      47
-    ],
     "production_edits": false,
     "merged_prs": 0,
     "dispatched_workers": 0,
