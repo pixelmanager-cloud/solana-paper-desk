@@ -262,17 +262,6 @@
     "published_ci": "Deployed d758bc529a7da1f74509117288740911f2ad6845: both CI runs successful",
     "active_claims": [
       {
-        "id": "PR83-INDEPENDENT-REVIEW",
-        "worker": "06",
-        "thread_id": "01a118fc-f867-7233-8eec-c20659e70095",
-        "host_id": "durable",
-        "status": "REVIEWING",
-        "base": "fbef1706df86f776d87773ac86fe9a37e6b0e982",
-        "pr": 83,
-        "head": "2d61a6a5c78e89928982f07e4346af8af7dc545d",
-        "wait_cursor": "8f3328cf-bef6-441d-83f8-2d1f46b3b0df:41"
-      },
-      {
         "id": "COMMON-BANK-JOURNAL",
         "worker": "02",
         "thread_id": "01a118fc-666c-70b6-9fa8-2c7520f0a0bb",
@@ -280,7 +269,7 @@
         "status": "ACTIVE",
         "base": "b4cbfaf588412cbd49a94f66b12abfa3f5b1c9a1",
         "scope": "Disconnected atomic shared-counter reservation and immutable pending intent journal",
-        "wait_cursor": "a2dcfb97-463d-4188-9da3-48a81e644d23:42"
+        "wait_cursor": "a2dcfb97-463d-4188-9da3-48a81e644d23:43"
       }
     ],
     "saved_launch_probe": {
@@ -295,7 +284,7 @@
       "reported_last_run": "2026-10-08T03:58:47.779603+00:00",
       "limitation": "Reviewer-recorded execution evidence; desktop has not independently queried hosted scheduler; same-chat binding unverified.",
       "last_reconciliation": "2026-10-08T07:56:59Z",
-      "latest_protocol_head": "431d70a9af61a5424ed37f10b68a884b43bcaca6",
+      "latest_protocol_head": "9e2eddb9b32a58a94e94417ae6c130a8179691ac",
       "latest_reconciliation": "2026-10-08T11:02:15Z: revision45 confirms PR79/80 desktop integration, reserves OWN-2 source-bound admission to worker02, no unassigned review; durable schedule binding remains unverified"
     },
     "pending_ui_candidate": {
@@ -651,8 +640,8 @@
     "pending_common_bank_view": {
       "pr": 83,
       "head": "2d61a6a5c78e89928982f07e4346af8af7dc545d",
-      "integrated": false,
-      "review": "PENDING worker06",
+      "integrated": true,
+      "review": "PASS worker06 Linux1611 zero skips113.979s;21 probes; exact combinedtree matched",
       "author_linux_tests": 1611,
       "author_skips": 0,
       "mac_discovered": 1611,
@@ -660,7 +649,9 @@
       "mac_skipped": 169,
       "mac_seconds": 32.791,
       "combined_tree": "5ead8837af0fcbbdef1385daf0a22fbd2385a700",
-      "ci": "Both exact-head checks PASS"
+      "ci": "Both exact-head checks PASS",
+      "review_manifest_sha256": "ccabb9b497bce3c61e949ce194fbdb7ce97de41a47496583d93034fb54a65ae9",
+      "deployed": false
     }
   },
   "native_reconciliation_review": {
