@@ -273,6 +273,15 @@
         "wait_cursor": "b9784eaf-f3e5-457f-a98d-a386c23b37ea:48",
         "turn_id": "01a11c6e-65ba-7787-b458-530144590287",
         "scope": "Review changed code and existing regression tests only; earlier flagged custom probes not repeated; stop if blocked"
+      },
+      {
+        "id": "COMMONBANK-TRANSPORT-OUTCOME-PRESERVATION",
+        "worker": "01",
+        "thread_id": "01a118fc-39bc-722c-b442-8bf5a749e0bb",
+        "host_id": "durable",
+        "status": "IN_PROGRESS",
+        "base": "a4e15f3",
+        "scope": "Accepted commonbank stages preserve original bytes plus failure, coherent reader/version compatibility; no PR97 or runtime wiring"
       }
     ],
     "saved_launch_probe": {
