@@ -269,7 +269,8 @@
         "status": "REVIEWING",
         "base": "fbef1706df86f776d87773ac86fe9a37e6b0e982",
         "pr": 83,
-        "head": "2d61a6a5c78e89928982f07e4346af8af7dc545d"
+        "head": "2d61a6a5c78e89928982f07e4346af8af7dc545d",
+        "wait_cursor": "8f3328cf-bef6-441d-83f8-2d1f46b3b0df:41"
       },
       {
         "id": "COMMON-BANK-JOURNAL",
@@ -653,7 +654,13 @@
       "integrated": false,
       "review": "PENDING worker06",
       "author_linux_tests": 1611,
-      "author_skips": 0
+      "author_skips": 0,
+      "mac_discovered": 1611,
+      "mac_passed": 1442,
+      "mac_skipped": 169,
+      "mac_seconds": 32.791,
+      "combined_tree": "5ead8837af0fcbbdef1385daf0a22fbd2385a700",
+      "ci": "Both exact-head checks PASS"
     }
   },
   "native_reconciliation_review": {
