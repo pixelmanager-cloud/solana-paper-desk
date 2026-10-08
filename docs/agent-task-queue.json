@@ -189,18 +189,18 @@
   ],
   "integration": {
     "branch": "integration/cloud-wave1",
-    "tested_commit": "8553ae7d7ed8f83d7b9da0d933f49b2f5b8122ca",
-    "combined_tests": 942,
+    "tested_commit": "1effeccecf3ed305d5f253fca1d77fa6d292fd9d",
+    "combined_tests": 975,
     "result": "PASS",
     "live_verification": "BLOCKED_NO_SUPPORTED_BUDGET_FEASIBLE_PUBLIC_LEGACY_SEED; acquisition path in development",
     "blocker": "Live legacy evidence,protected pool receipt capture,lifecycle semantic approval and holder exposure integration unfinished",
     "followups": {
-      "worker02": "Independent PR38 ledger review incl Linux combined suite",
+      "worker02": "PR38 reviewed; available",
       "worker06": "PR34 integrated; available",
       "cloud_reviewer": "PR33 reviewed and integrated; available",
-      "worker10": "Reviewed PR36/37; available",
-      "worker03": "Found confirmed-source legacy reference; publish unchanged fixture with explicit finality/decoder blockers",
-      "worker04": "PR38 published fabebccd; Linux independent review active",
+      "worker10": "Independent PR39 provenance/negative assertion review",
+      "worker03": "PR39 published; reference-only fixture review pending",
+      "worker04": "Implement guarded pool capture bridge on reviewed ledger,shared18counter",
       "worker05": "PR30 reviewed and integrated; available",
       "worker09": "PR35 reviewed and integrated; available",
       "worker01": "Reviewed PR36/37; available",
@@ -224,7 +224,8 @@
       "PR34": "ae5a36bc0e8f6e6d33afea6292a64a2c6cc1e23e: independent PASS,823tests,54 focused,20 metadata interleaving runs",
       "PR35": "ab41ed0a9b56bc0a1a96a9c10630b57425465f5d independent scoped PASS,814 exact-head and886 combined tests plus14 adversarial renderer cases; CI successful",
       "PR36": "1c87f2f2b37997bdb9291f0ae2184c5e5aad5f06 independent scoped PASS; identity repair,18-attempt budget,archive/recovery verified;902 exact and910 combined",
-      "PR37": "8220f8baf0d84fc9905f39d2762664095cd6bba1 independent scoped PASS;14 probes/550 stack sequences;910 exact and918 combined; disconnected foundation only"
+      "PR37": "8220f8baf0d84fc9905f39d2762664095cd6bba1 independent scoped PASS;14 probes/550 stack sequences;910 exact and918 combined; disconnected foundation only",
+      "PR38": "fabebccda9064cd8e69833ff7e9f588ab8e7d9e8 independent PASS,33 ledger and975 combined Linux zero skips; production issuer/bridge unfinished"
     },
     "candidate_combination": {
       "commit": "bfcc550ca25bd6cb79dc7ac3ad2b30c72f7b1033",
@@ -246,20 +247,20 @@
     "published_ci": "e5d9f9b0e3210421aabe3a80efd519b0d122d340 successful",
     "active_claims": [
       {
-        "worker": "worker03",
-        "thread_id": "01a118fc-9478-778a-b77a-8f8f6ec7e0ad",
+        "worker": "worker10",
+        "thread_id": "01a118fd-56d5-70b8-ad31-dba13e982082",
         "host_id": "durable",
-        "task": "Publish unchanged legacy historical reference fixture; confirmed-source only",
-        "status": "IMPLEMENTING"
+        "task": "independent public legacy reference fixture review",
+        "pr": 39,
+        "head": "7651db1fa2842957fc15fb16a4e616c12ecef520",
+        "status": "REVIEWING"
       },
       {
-        "worker": "worker02",
-        "thread_id": "01a118fc-666c-70b6-9fa8-2c7520f0a0bb",
+        "worker": "worker04",
+        "thread_id": "01a118fc-b862-7340-ab3a-e1115a3280a4",
         "host_id": "durable",
-        "task": "independent protected pool ledger review on Linux",
-        "pr": 38,
-        "head": "fabebccda9064cd8e69833ff7e9f588ab8e7d9e8",
-        "status": "REVIEWING"
+        "task": "guarded shared-budget pool capture bridge",
+        "status": "IMPLEMENTING"
       }
     ],
     "saved_launch_probe": {
@@ -309,8 +310,9 @@
       "scratch_commit": "c65a4af1670bd24c8992f75f046f2d262e73c40c",
       "mac_tests_discovered": 975,
       "mac_skipped": 33,
-      "result": "942 executed PASS; Linux ledger verification pending",
-      "integrated": false
-    }
+      "result": "Linux combined975 PASS zero skips; reviewed",
+      "integrated": true
+    },
+    "test_platform_note": "Linux reviewer combined source975 pass zero skips; identical implementation/tests to desktop scratch942 executed+33 Linux skips"
   }
 }

@@ -363,3 +363,8 @@ Exact PR36 repair1c87f2f and PR37 trace8220f8b passed independent review and CI 
 PR38 fabebccda9064cd8e69833ff7e9f588ab8e7d9e8 implements protected coordinator receipt storage, with no capture/runtime wiring. Scratch c65a4af1670bd24c8992f75f046f2d262e73c40c discovers975 tests:942 executed successfully,33 Linux-only tests skipped on macOS. Worker02 must execute the combined Linux suite and review before integration.
 
 Bounded public search found no finalized legacy fixture. A confirmed-source historical legacy create+buy reference (mint B9Z9mKUoVy5k8KuL2HauUD1mhmfF3PPNnJoK83S1pump,slot282653703) has complete raw fields but current decoder key/event incompatibility and no finalized request binding. Worker03 will preserve it unchanged with explicit reference-only provenance and rejection tests. No provider calls or live acceptance.
+
+
+### Protected pool ledger integrated
+
+PR38 fabebccd passed independent Linux review (975 combined tests,zero skips) and CI. Integrated source1effeccecf3ed305d5f253fca1d77fa6d292fd9d has identical implementation/test tree to the reviewed combination; Mac skips remain disclosed. It supplies receipt persistence only. Worker04 now builds the guarded shared-budget capture bridge, preserving complete contradictory observations and protected source configuration. PR39 historical reference7651db1 is under independent review; no live finality/ownership acceptance. No main merge or deployment.
