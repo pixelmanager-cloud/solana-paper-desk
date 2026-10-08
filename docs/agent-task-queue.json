@@ -521,6 +521,17 @@
       "tests": 20,
       "skips": 0,
       "seconds": 11.772
+    },
+    "live_raw_diagnostic": {
+      "scan_id": "087c073fcc7d468f9a6f451b06486022",
+      "requests_used": 2,
+      "request_ceiling": 18,
+      "acquisition_status": "UNSUPPORTED_TOKEN",
+      "raw_state": "COMPLETE",
+      "response_hash": "2b49cd4c6fe24a121cb59894c8a6fe0e82e4cf51db28e88151612984ccc9a0c7",
+      "replay_rpc": 0,
+      "lifecycle_verified": false,
+      "eligible": false
     }
   }
 }

@@ -1,0 +1,15 @@
+{
+  "kind": "public_mainnet_diagnostic_reference",
+  "record_sha256": "2b49cd4c6fe24a121cb59894c8a6fe0e82e4cf51db28e88151612984ccc9a0c7",
+  "captured_utc": "2026-10-08T05:35Z",
+  "method": "getTransaction",
+  "encoding": "json",
+  "requested_commitment": "finalized",
+  "slot": 454321337,
+  "source": "helius-mainnet-single-request-v1",
+  "mint": "AoPfwh6vExgSrfzX2ALPBEpWS2wSjhcG2ZxKdN1Vpump",
+  "signature": "4PJardjqDqxr9Sek37eBGvcQahrkCT2GZ1p8aMxB5BLBHk4DRGkQNwobKxmbD7G4Vergu6eu9fSmbBZPoi1KK1NK",
+  "scope": "Original public RPC response retained unchanged. Provider-request provenance only; no independent finality/signature/CPI/lifecycle/ownership/entry approval. Endpoint state not captured. Same transaction as mainnet-launch.json notification.",
+  "provider_calls": 1,
+  "replay_provider_calls": 0
+}
