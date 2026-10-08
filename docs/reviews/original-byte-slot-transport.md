@@ -150,3 +150,28 @@ The mock opener is now built before the credential lookup patch. No live key,
 TLS bypass, transport timeout or production compatibility change was introduced
 to correct the harness. No unresolved fixture failure is claimed fixed by merely
 running unrelated tests.
+
+## PR96 transfer-framing forward repair
+
+Independent review of head `33ff34b15930989bc85337372c59f070eb0651f1`
+identified stdlib HTTPResponse acceptance of unsupported gzip transfer encoding,
+chunked plus Content-Length, duplicate chunked/gzip transfer encodings, and an
+incomplete final chunk trailer. This slice now rejects **every Transfer-Encoding
+header before body reading**, including empty/identity values and otherwise
+well-formed chunked bodies. Duplicate headers also reject. Chunked support is
+unavailable until a separately reviewed strict parser exists. Rejected framing
+returns fixed `RESPONSE_HEADERS_INVALID`, no response bytes, and retains the
+exact request bytes; no decoding or exception text is used as evidence.
+
+Four new tests use actual HTTPResponse objects over in-memory fake sockets,
+with a mocked opener and synthetic credential only. The four review attacks
+assert zero body reads and one POST. Additional controls cover mixed-case and
+empty encodings, ordinary exact-length/EOF bodies, truncation and duplicate
+Content-Length. The old result-only API and all disconnected/false approval
+contracts remain unchanged. Independent re-review is required before acceptance.
+
+Repair focused validation: 38 tests PASS in 0.891s, zero failures/errors/skips.
+Full Linux repair validation: 1,910 tests PASS in 149.426s, zero
+failures/errors/skips. Exact forward head/tree/manifest are published on PR96; repair logs are `work/transfer-framing-focused.log` and
+`work/transfer-framing-full.log`. Earlier validation above describes the original
+head and does not supersede the independent framing finding.

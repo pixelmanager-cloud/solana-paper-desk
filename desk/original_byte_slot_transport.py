@@ -130,6 +130,11 @@ class HeliusFinalizedSlotTransport:
                 if type(response.status) is not int or response.status!=200:
                     return SlotByteExchange(request_bytes,None,code)
                 code='RESPONSE_HEADERS_INVALID'
+                # urllib's HTTPResponse can decode unsupported/ambiguous TE
+                # and tolerate incomplete chunk trailers. Reject every TE
+                # occurrence before reading; no chunked parser is supported.
+                if _header(response.headers,'Transfer-Encoding') is not None:
+                    return SlotByteExchange(request_bytes,None,code)
                 encoding=_header(response.headers,'Content-Encoding','identity')
                 if encoding.lower()!='identity':return SlotByteExchange(request_bytes,None,code)
                 length=_header(response.headers,'Content-Length')

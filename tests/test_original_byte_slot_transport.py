@@ -1,7 +1,7 @@
 """Mock opener only; synthetic credentials, no listeners/provider or key reads."""
 from dataclasses import FrozenInstanceError
 from email.message import Message
-from http.client import IncompleteRead
+from http.client import HTTPResponse, IncompleteRead
 import io
 import json
 import ssl
@@ -224,3 +224,64 @@ class SlotTransportTests(unittest.TestCase):
         opener=self.opener(RESPONSE)
         with patch.object(m.fixed.os.environ,'get',return_value=KEY),patch.object(m.fixed,'build_opener',return_value=opener):
             with self.assertRaises(m.fixed.CoordinatorRPCError):old('getSlot',[{'commitment':'finalized'}])
+
+
+class RealHTTPFramingTests(unittest.TestCase):
+    """Real stdlib HTTP parser, in-memory socket only; never opens a socket."""
+    def invoke_wire(self, headers, body, reject=False):
+        wire=b'HTTP/1.1 200 OK\r\n'+headers+b'\r\n'+body
+        class MemorySocket:
+            def makefile(self, *args):return io.BytesIO(wire)
+        response=HTTPResponse(MemorySocket());response.begin()
+        opener=Mock();opener.open.return_value=response
+        with patch.object(response,'read',wraps=response.read) as read, \
+             patch.object(m.fixed.os.environ,'get',return_value=KEY), \
+             patch.object(m.fixed,'build_opener',return_value=opener):
+            result=m.HeliusFinalizedSlotTransport()(REQUEST)
+            if reject:read.assert_not_called()
+            else:read.assert_called_once_with(m.MAX_RESPONSE_BYTES+1)
+        opener.open.assert_called_once()
+        args,kwargs=opener.open.call_args
+        self.assertEqual(args[0].data,REQUEST)
+        self.assertEqual(args[0].get_method(),'POST')
+        self.assertEqual(kwargs,{'timeout':m.fixed._TIMEOUT_SECONDS})
+        self.assertTrue(response.isclosed())
+        self.assertNotIn(KEY,repr(result))
+        return result
+
+    def test_review_four_transfer_framing_reproductions(self):
+        chunked=f'{len(RESPONSE):x}\r\n'.encode()+RESPONSE+b'\r\n0\r\n\r\n'
+        cases=[
+            (b'Transfer-Encoding: gzip\r\n',RESPONSE),
+            (b'Transfer-Encoding: chunked\r\nContent-Length: '+str(len(RESPONSE)).encode()+b'\r\n',chunked),
+            (b'Transfer-Encoding: chunked\r\nTransfer-Encoding: gzip\r\n',chunked),
+            (b'Transfer-Encoding: chunked\r\n',chunked[:-2]),
+        ]
+        for headers,body in cases:
+            with self.subTest(headers=headers,body=body):
+                result=self.invoke_wire(headers,body,reject=True)
+                self.assertEqual(result.failure_code,'RESPONSE_HEADERS_INVALID')
+                self.assertIsNone(result.response_bytes)
+                self.assertEqual(result.request_bytes,REQUEST)
+
+    def test_all_transfer_encodings_rejected_even_valid_or_empty(self):
+        for encoding in [b'',b'identity',b'chunked',b'gzip, chunked',b'CHUNKED']:
+            with self.subTest(encoding=encoding):
+                result=self.invoke_wire(b'tRaNsFeR-EnCoDiNg: '+encoding+b'\r\n',b'not read',reject=True)
+                self.assertEqual(result.failure_code,'RESPONSE_HEADERS_INVALID')
+                self.assertIsNone(result.response_bytes)
+
+    def test_real_no_transfer_encoding_exact_length_and_eof_controls(self):
+        for headers in [b'Content-Length: '+str(len(RESPONSE)).encode()+b'\r\n',b'Connection: close\r\n']:
+            with self.subTest(headers=headers):
+                result=self.invoke_wire(headers,RESPONSE)
+                self.assertIsNone(result.failure_code)
+                self.assertEqual(result.response_bytes,RESPONSE)
+
+    def test_real_truncated_length_and_duplicate_length_controls(self):
+        result=self.invoke_wire(b'Content-Length: '+str(len(RESPONSE)+1).encode()+b'\r\n',RESPONSE)
+        self.assertEqual(result.failure_code,'RESPONSE_TRUNCATED')
+        self.assertEqual(result.response_bytes,RESPONSE)
+        result=self.invoke_wire(b'Content-Length: 1\r\nContent-Length: 2\r\n',RESPONSE,reject=True)
+        self.assertEqual(result.failure_code,'RESPONSE_HEADERS_INVALID')
+        self.assertIsNone(result.response_bytes)
