@@ -48,6 +48,8 @@ class JobPersistence:
         with self.connect() as c:
             c.execute('BEGIN IMMEDIATE')
             c.execute('CREATE TABLE IF NOT EXISTS scans(id TEXT PRIMARY KEY,mint TEXT,created INTEGER,status TEXT,result TEXT)')
+            had_job_table = c.execute(
+                "SELECT 1 FROM sqlite_master WHERE type='table' AND name='scan_jobs'").fetchone() is not None
             c.execute('''CREATE TABLE IF NOT EXISTS scan_jobs(
                 scan_id TEXT PRIMARY KEY REFERENCES scans(id), kind TEXT NOT NULL,
                 descriptor_version INTEGER NOT NULL, descriptor TEXT NOT NULL,
@@ -61,10 +63,32 @@ class JobPersistence:
                 WHEN EXISTS(SELECT 1 FROM scan_jobs
                             WHERE scan_id=NEW.scan_id OR rowid=NEW.rowid)
                 BEGIN SELECT RAISE(ABORT,'Immutable job descriptor identity'); END''')
-            # Separate table preserves the original scans schema and completed bytes.
-            for row in c.execute('SELECT id,mint,created FROM scans WHERE id NOT IN (SELECT scan_id FROM scan_jobs)').fetchall():
-                descriptor = self._descriptor(row['id'], row['mint'], row['created'], SCREEN)
-                self._insert_descriptor(c, descriptor)
+            c.execute('''CREATE TRIGGER IF NOT EXISTS immutable_scan_job_row_identity
+                BEFORE UPDATE ON scan_jobs WHEN NEW.rowid IS NOT OLD.rowid
+                BEGIN SELECT RAISE(ABORT,'Immutable job descriptor row identity'); END''')
+            # Backfill only a genuinely pre-dispatch database. Existing dispatch
+            # tables without metadata may have lost an acquisition descriptor;
+            # neither upgrade nor reopen may infer SCREEN for that admission.
+            c.execute('''CREATE TABLE IF NOT EXISTS scan_job_migrations(
+                name TEXT PRIMARY KEY,version INTEGER NOT NULL) WITHOUT ROWID''')
+            marker = c.execute("SELECT version FROM scan_job_migrations WHERE name='legacy_screen_descriptors'").fetchone()
+            if marker is not None and marker['version'] != 1:
+                raise ValueError('Unknown job descriptor migration version')
+            if marker is None:
+                if not had_job_table:
+                    for row in c.execute('SELECT id,mint,created FROM scans').fetchall():
+                        self._insert_descriptor(c, self._descriptor(row['id'], row['mint'], row['created'], SCREEN))
+                c.execute("INSERT INTO scan_job_migrations VALUES('legacy_screen_descriptors',1)")
+            c.execute('''CREATE TRIGGER IF NOT EXISTS immutable_scan_job_migration_update
+                BEFORE UPDATE ON scan_job_migrations
+                BEGIN SELECT RAISE(ABORT,'Immutable job migration marker'); END''')
+            c.execute('''CREATE TRIGGER IF NOT EXISTS immutable_scan_job_migration_delete
+                BEFORE DELETE ON scan_job_migrations
+                BEGIN SELECT RAISE(ABORT,'Immutable job migration marker'); END''')
+            c.execute('''CREATE TRIGGER IF NOT EXISTS immutable_scan_job_migration_insert
+                BEFORE INSERT ON scan_job_migrations
+                WHEN EXISTS(SELECT 1 FROM scan_job_migrations WHERE name=NEW.name)
+                BEGIN SELECT RAISE(ABORT,'Immutable job migration marker'); END''')
             c.execute('''CREATE TRIGGER IF NOT EXISTS immutable_scan_job_descriptor
                 BEFORE UPDATE OF scan_id,kind,descriptor_version,descriptor,descriptor_hash ON scan_jobs
                 BEGIN SELECT RAISE(ABORT,'Immutable job descriptor'); END''')
@@ -198,6 +222,10 @@ class _Worker:
                     self.store.descriptor(row['id'])
                 except (ValueError, TypeError, KeyError):
                     # Corrupt/unknown jobs remain pending and consume shared limits.
+                    continue
+                # Existing corrupt mutable checkpoints must not stop the worker
+                # or overflow SQLite's signed 64-bit integer on increment.
+                if type(row['generation']) is not int or not 0 <= row['generation'] < (1 << 63)-1:
                     continue
                 generation = row['generation']+1
                 c.execute('UPDATE scan_jobs SET claim_token=?,generation=? WHERE scan_id=?',
