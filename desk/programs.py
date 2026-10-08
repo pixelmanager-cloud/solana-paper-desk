@@ -79,7 +79,21 @@ def event_schemas():
         if hashlib.sha256(raw).hexdigest()!=record['sha256']:
             raise ValueError('Pinned event schema hash mismatch')
         data=json.loads(raw)
-        result.setdefault(data['address'],[]).append(({bytes(e['discriminator']):e['name'] for e in data.get('events',[])},
+        events = data.get('events', [])
+        scope = record.get('event_scope', 'all')
+        if scope not in ('all', 'allowlist'):
+            raise ValueError('Invalid event scope')
+        if scope == 'allowlist' or 'event_allowlist' in record:
+            allowed = record.get('event_allowlist')
+            if (scope != 'allowlist' or not isinstance(allowed, list) or not allowed
+                    or any(not isinstance(value, str) or not value for value in allowed)
+                    or len(set(allowed)) != len(allowed)):
+                raise ValueError('Invalid event allowlist')
+            names = [event['name'] for event in events]
+            if any(names.count(value) != 1 for value in allowed):
+                raise ValueError('Unknown or ambiguous event allowlist name')
+            events = [event for event in events if event['name'] in allowed]
+        result.setdefault(data['address'],[]).append(({bytes(e['discriminator']):e['name'] for e in events},
                                   {t['name']:t['type'] for t in data.get('types',[])},path.name))
     return result
 

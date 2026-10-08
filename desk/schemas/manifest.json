@@ -39,7 +39,11 @@
       "url": "https://raw.githubusercontent.com/pump-fun/pump-public-docs/8cda1fa30ea658b20909d8aedf002047119388d2/idl/pump.json",
       "commit": "8cda1fa30ea658b20909d8aedf002047119388d2",
       "sha256": "38b8abcc5b279bda85cf473e7c6f67bd15eb89df658cf93434687a43c88ad937",
-      "events_only": true
+      "events_only": true,
+      "event_scope": "allowlist",
+      "event_allowlist": [
+        "TradeEvent"
+      ]
     }
   }
 }

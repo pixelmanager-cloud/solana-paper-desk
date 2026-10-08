@@ -46,3 +46,28 @@ Remaining dependencies: native movement/state reconciliation, endpoint provenanc
 individual CPI/signature/finality authentication, ownership continuity and economic
 accounting still require their independently reviewed evidence. Syntactic source
 compatibility does not prove deployment identity or authorize a launch/entry.
+
+## PR57 review repair: explicit TradeEvent-only exposure
+
+Independent review reproduced that unrestricted events-only registration could
+consume appended CreateEvent.depth and verify a production launch anchor. The
+repair retains the literal official file/digest but sets event_scope=allowlist and
+event_allowlist=[TradeEvent]. The loader validates scope and a nonempty unique
+list of nonempty string names, each resolving exactly once in the pinned file.
+Missing, malformed, duplicated or unknown names raise ValueError; an allowlist
+without its explicit scope also rejects. Older manifest records without either
+key keep their existing event layouts. All type definitions remain available for
+the selected event's dependencies; unrelated event discriminators are excluded.
+
+Production decode/launch_anchor regressions establish that the original valid
+CreateEvent still verifies its existing creation component, but appending depth
+0, 1 or 255 remains prefix-only/incomplete and unverified. Four new-only event
+names remain EVENT_SCHEMA_MISMATCH. This does not approve any new CreateEvent
+profile. Dedicated repair tests also cover missing and malformed allowlists,
+unknown names and duplicate selection. The registration changes no launch gate.
+
+Repair validation (Python 3.12.14): dedicated suite 7 tests in 0.386s, OK;
+full repaired branch 1303 tests in 92.349s, OK, zero skips; full isolated combined
+checkout on accepted integration a03ad08b3174dbe752007063d3b39932d4c3816f
+(including PR56) plus this PR's patch: 1336 tests in 93.491s, OK, zero skips.
+Combined checkout is uncommitted validation only, not a merge or integration.
