@@ -270,6 +270,15 @@
         "status": "FIXING",
         "pr": 57,
         "head": "70d1dfcaa20350a2a8126c8d47ce58a71e9b2e2b"
+      },
+      {
+        "worker": "worker07",
+        "thread_id": "01a118fd-0f1c-749c-b85b-5e730937d0a8",
+        "host_id": "durable",
+        "task": "Minimal obtainable create_v2 acceptance evidence gap and bounded acquisition plan",
+        "status": "RESEARCHING",
+        "base": "745622f",
+        "scope": "review report only"
       }
     ],
     "saved_launch_probe": {
