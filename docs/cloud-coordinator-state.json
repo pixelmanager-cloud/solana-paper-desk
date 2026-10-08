@@ -1,6 +1,6 @@
 {
   "schema_version": 1,
-  "revision": 14,
+  "revision": 15,
   "repository": "pixelmanager-cloud/solana-paper-desk",
   "source_main_sha": "e298e15cd758932e81d2241130716632702f5bd0",
   "observed_date": "2026-10-08",
@@ -15,7 +15,7 @@
     "conversation_id": null,
     "same_chat_binding": "NOT_VERIFIED",
     "cloud_execution": "HOSTED_LAST_RUN_OBSERVED_AND_CURRENT_CLOUD_EXECUTOR_VERIFIED",
-    "last_run_time": "2026-10-08T02:01:01.779530+00:00",
+    "last_run_time": "2026-10-08T03:02:11.926931+00:00",
     "next_run_time": null,
     "immediate_run_probe": "404 Action not found before invocation",
     "scope": "GITHUB_ONLY_INDEPENDENT_REVIEW",
@@ -26,13 +26,14 @@
     ],
     "execution_evidence": {
       "automation_peek_enabled": true,
-      "observed_last_run_time": "2026-10-08T02:01:01.779530+00:00",
+      "observed_last_run_time": "2026-10-08T03:02:11.926931+00:00",
       "current_environment_provider": "cloud",
       "environment_id": "ccarenv_b64_Y2NhcmVudl9kNmVjYmYwM2FiZDg4MTkxYWI1YzM1ZjNiZWZjYTg1Mg",
       "observations_current": true,
       "observed_phase": "running",
       "executor_python": "3.12.14",
-      "limitation": "Same-chat and durable worker/environment binding still not independently verified; next_run_time null."
+      "limitation": "Same-chat and durable worker/environment binding still not independently verified; next_run_time null.",
+      "observed_spec_revision": "16"
     }
   },
   "coordinator_lock": {
@@ -344,7 +345,10 @@
       "pr": 31,
       "head_sha": "04a930172a088607b833017112e9d4721869e60c",
       "review_id": 5450556628,
-      "action": "Validate safe integral generation and quarantine invalid/exhausted claim metadata; later valid work must progress without mutating corrupt rows."
+      "action": "Worker02 owns latest PR31 disposition; old04a9301 cloud finding is historical, not a statement about successor. No duplicate re-review.",
+      "status": "SUPERSEDED_HEAD_EXTERNAL_REVIEW_REPORTED_NO_CLOUD_RECERTIFICATION",
+      "observed_successor_sha": "5a97f42a92a1691659dad60b0f4f61af41562f2d",
+      "external_disposition_comment_id": 5450608372
     },
     {
       "id": "AUTOMATION_BINDING",
@@ -453,6 +457,12 @@
       "head_sha": "5095a17557c7fb916d74e508a3e157b49abcd784",
       "excluded_pr": 31,
       "result": "PR33 already reviewed and posted. PR31 review overlapped worker02 ownership; retain actual prior findings/results as history, stop further PR31 review. Hosted run evidence remains separate schedule.execution_evidence; no merge/dispatch."
+    },
+    {
+      "kind": "HOSTED_REVIEW_RECONCILIATION",
+      "run_id": "cloud-review-2026-10-08T03:04:00Z",
+      "hosted_last_run_time": "2026-10-08T03:02:11.926931+00:00",
+      "result": "PR33 already reviewed exact head; PR31 excluded under worker02 ownership. PR34-38 published reviews and CI observed; PR39 exact-head artifact review already present, full diff read with reference-only authenticity/finality blockers preserved. No new significant finding; no tests executed or acceptance granted. Integration8871f0a has CI success but no full-suite independent execution claim by this run."
     }
   ],
   "artifact_pr": {
@@ -975,14 +985,15 @@
     "consecutive_failures": 0,
     "last_failure": "Historical immediate-run probe404; no current run infrastructure failure.",
     "retry_policy": "No busy polling; future supported review runs reconcile and pause after three consecutive execution/access failures.",
-    "last_success": "Hosted last-run observed; managed cloud executor and Python3.12 verified; exact-head PR31/33 reviews/tests and CI reconciled."
+    "last_success": "Current hosted/cloud run verified; published heads, review timelines and exact-head CI reconciled without duplicate reviews. No infrastructure failures this run."
   },
   "review_lease": {
-    "holder": "cloud-review-2026-10-08T03:04:00Z",
+    "holder": null,
     "fencing_token": 2,
-    "expires_at": "2026-10-08T03:14:00.000Z",
-    "status": "HELD",
-    "scope": "GITHUB_REVIEW_RECONCILIATION_ONLY"
+    "expires_at": null,
+    "status": "RELEASED",
+    "scope": "GITHUB_REVIEW_RECONCILIATION_ONLY",
+    "last_holder": "cloud-review-2026-10-08T03:04:00Z"
   },
   "external_review_observations": [
     {
@@ -998,6 +1009,156 @@
       "provenance": "Observed prior PR review; not re-executed or certified by this run",
       "head_sha": "8a6ab02298ba8a6cf1024e5938ccd6a95a06886a",
       "status": "PRIOR_TWO_P2_FINDINGS_REPORTED"
+    },
+    {
+      "pr": 31,
+      "id": 5450559168,
+      "url": "https://github.com/pixelmanager-cloud/solana-paper-desk/pull/31#pullrequestreview-5450559168",
+      "head_sha_claimed_in_comment": "04a930172a088607b833017112e9d4721869e60c",
+      "current_observed_head_sha": "5a97f42a92a1691659dad60b0f4f61af41562f2d",
+      "current_base_sha": "d24fc7f2910067254047b64e699f43aa1685130f",
+      "branch": "codex/cloud-wave1-08-queue-foundation",
+      "author_login": "pixelmanager-cloud",
+      "provenance": "EXTERNAL_PR_REVIEW_OR_COMMENT_OBSERVED_NOT_REEXECUTED_BY_CLOUD",
+      "review_body": "Independent exact-head repair review at 04a930172a088607b833017112e9d4721869e60c; remote head rechecked. Disposition: NON-OBJECT JSON FINDING RESOLVED; original INSERT/REPLACE reproduction resolved; IMMUTABLE REPLACEMENT/DISPATCH FINDING STILL REQUIRES CHANGES due to a related UPDATE OR REPLACE rowid collision reproduced below. Recording substantive changes-required disposition as COMMENT because GitHub's author-identity restriction prevents formal REQUEST_CHANGES from this connector.\n\n[P2] Rowid UPDATE replacement still deletes another immutable descriptor and reclassifies acquisition on reconstruction. The new BEFORE INSERT conflict trigger is not reached by UPDATE OR REPLACE, while the existing BEFORE UPDATE trigger protects only scan_id/kind/version/descriptor/hash columns. Fresh plain SQLite connection, recursive_triggers=0, no schema/trigger removal:\n1. Jobs.submit_acquisition admits A as BIRTH_ACQUISITION_V1; Jobs.submit admits B as SCREEN.\n2. SELECT rowid FROM scan_jobs WHERE scan_id=A yields target rowid.\n3. UPDATE OR REPLACE scan_jobs SET rowid=? WHERE scan_id=? with (A_rowid,B_id) succeeds. SQLite implicitly deletes A's descriptor; the delete trigger does not fire. Only B's SCREEN descriptor remains.\n4. Reopen Jobs at the same stable path. Legacy migration sees A's scan without a descriptor and inserts a SCREEN descriptor. Jobs.descriptor(A) returns SCREEN and Jobs.once invokes the ordinary synthetic scanner for A's acquisition mint.\nThis is the same immutable-kind/dispatch boundary as the original REPLACE finding, not runtime path replacement or schema tampering. Prevent storage-row identity changes/collisions for existing descriptors on UPDATE as well as INSERT, regardless of rowid alias spelling/conflict mode. Add a fresh plain-connection UPDATE OR REPLACE collision regression proving both original complete descriptor rows, kind/generation/token and acquisition dispatch isolation persist across constructor recovery. Scratch reproduction: /workspace/review-pr31-repaired/work/review_rowid_update_probe.py.\n\nConfirmed repairs and regression meaning:\n- Fresh sqlite3.connect(), recursive_triggers=0, original INSERT OR REPLACE / REPLACE INTO now raises IntegrityError. Independent probe compares the complete original scan_jobs row including rowid, descriptor, kind, generation and claim token; all retained. Acquisition remains queued outside SCREEN dispatch. New committed tests additionally exercise INSERT...SELECT, explicit rowid INSERT collision, plain INSERT and IGNORE via fresh connections.\n- Eight non-object shapes (empty/nonempty list, null, string, integer, float, true, false) now produce controlled ValueError. Independent plain-connection fixtures confirm original corrupt descriptor unchanged, remains QUEUED, blocks duplicate pending mint and counts toward queue=3, while a later valid SCREEN executes once. The committed regression exercises actual Jobs.run and proves the earlier AttributeError no longer terminates that worker loop. This closes my non-object JSON finding.\n\nExact-head Python 3.12.14 validation:\n- tests.test_job_persistence + tests.test_research.JobTests: 23 tests in 0.607s, OK.\n- Full unittest discovery: 737 tests in 14.568s, OK, no failures/errors/skips, with permission for existing private-loopback fixtures.\n- Independent original-repair probes passed; additional UPDATE OR REPLACE probe reproduces remaining boundary gap despite the green suite.\n- Full follow-up production/test diff read. No tracked modifications; git diff --check passed. Scratch probes under /workspace/review-pr31-repaired/work/.\n\nPrior reviewed live-worker constructor protection, stable canonical alias/hardlink behavior, stale publication fencing, old completed record preservation and shared queue/day limits remain unchanged by this repair. This review does not certify macOS, the separately reported combined CI merge candidate, durable acquisition request reservation/sealing or acquisition execution. No providers, code/shared-doc edits, VPS, secrets, signing, broadcasting, merge, deployment or readiness claim.",
+      "local_tests_this_run": "NOT_RUN",
+      "accepted": false,
+      "live_acceptance": false
+    },
+    {
+      "pr": 31,
+      "id": 5450608372,
+      "url": "https://github.com/pixelmanager-cloud/solana-paper-desk/pull/31#pullrequestreview-5450608372",
+      "head_sha_claimed_in_comment": "5a97f42a92a1691659dad60b0f4f61af41562f2d",
+      "current_observed_head_sha": "5a97f42a92a1691659dad60b0f4f61af41562f2d",
+      "current_base_sha": "d24fc7f2910067254047b64e699f43aa1685130f",
+      "branch": "codex/cloud-wave1-08-queue-foundation",
+      "author_login": "pixelmanager-cloud",
+      "provenance": "EXTERNAL_PR_REVIEW_OR_COMMENT_OBSERVED_NOT_REEXECUTED_BY_CLOUD",
+      "review_body": "Independent exact-head re-review at 5a97f42a92a1691659dad60b0f4f61af41562f2d; remote head rechecked. Disposition: MY REMAINING ROW-IDENTITY REPLACEMENT/DISPATCH AND MISSING-METADATA RE-MIGRATION FINDINGS ARE RESOLVED. No new blocking defect found in the scoped repair under the documented stable-path contract. This supersedes my previous changes-required disposition for those findings; the previously resolved non-object JSON finding remains resolved. Formal approval is not submitted through the shared PR-author connector identity.\n\nRead the complete helper/test follow-up diff. The new BEFORE UPDATE guard compares NEW.rowid and OLD.rowid for every update, so rowid alias spelling and conflict modes cannot bypass it. Independently exercised 18 attempts using fresh sqlite3.connect() connections with recursive_triggers=0: rowid/_rowid_/oid x UPDATE/UPDATE OR REPLACE/UPDATE OR IGNORE x colliding/unused destination. Every mutation raised IntegrityError. After each attempt, reopening Jobs retained the complete original descriptor rows including physical rowid, kind, generation and token, plus original scan admissions. Acquisition remained BIRTH_ACQUISITION_V1 and was never dispatched as SCREEN. No schema/trigger manipulation or helper-connection configuration was used.\n\nNormal mutable claim checkpoints still work: an independent SCREEN fixture beginning at generation 5 is claimed and completed at generation 6 with claim_token cleared; scanner is called once only for that SCREEN mint. Acquisition's original complete descriptor row remains unchanged. Committed tests additionally cover stale publication, fork cleanup, live constructor safety, killed-worker recovery, canonical aliases/hardlinks and shared queue/day admission limits.\n\nOne-time migration is meaningful, not merely an extra flag. Independent plain-SQLite pre-dispatch fixture with an exact original COMPLETE payload was backfilled once as SCREEN without changing any original scans/result bytes. A later QUEUED scan lacking metadata remained descriptor-missing and undispatched through three reopens, retained pending-mint capacity, and was never inferred as SCREEN. Independently tested an existing scan_jobs database without a migration marker: missing descriptor was not manufactured on upgrade or subsequent reopen. The protected WITHOUT ROWID marker and migration/backfill share the constructor transaction; committed regressions cover marker UPDATE/DELETE/REPLACE rejection and rollback/retry preserving legacy bytes.\n\nNon-object JSON and corrupted/exhausted generation regressions retain blocked pending rows while actual Jobs.run dispatches later valid SCREEN work. This avoids converting missing/corrupt metadata into approval or removing it from admission capacity. No ordinary claim, request reservation, acquisition execution or source-sealing behavior is invented.\n\nExact-head validation, Python 3.12.14:\n- tests.test_job_persistence + tests.test_research.JobTests: 29 tests in 0.669s, OK.\n- Full unittest discovery: 743 tests in 14.440s, OK, no failures/errors/skips; existing private-loopback fixtures permitted.\n- Independent 18-case fresh-connection matrix, exact-row/reopen checks, generation 5->6 terminal transition, legacy-byte preservation and both missing-metadata-state probes passed.\n- git diff --check passed; detached review checkout remains clean. Scratch independent script: /workspace/review-pr31-repair2/work/review_repair_probes.py.\n\nScope limits remain: Linux single-host stable canonical DB/lock paths; intentional schema/trigger removal, runtime file replacement/renaming and distributed leasing are outside this contract. This review is standalone head validation, not direct macOS validation or a rerun of the separately reported combined CI merge candidate. Durable acquisition budget/source sealing, executor and live acceptance remain coordinator dependencies. No code/shared-doc edits, providers, VPS, secrets, signing, broadcasting, merge, deployment or readiness claim.",
+      "local_tests_this_run": "NOT_RUN",
+      "accepted": false,
+      "live_acceptance": false
+    },
+    {
+      "pr": 34,
+      "id": 6050729247,
+      "url": "https://github.com/pixelmanager-cloud/solana-paper-desk/pull/34#issuecomment-6050729247",
+      "head_sha_claimed_in_comment": "ae5a36bc0e8f6e6d33afea6292a64a2c6cc1e23e",
+      "current_observed_head_sha": "ae5a36bc0e8f6e6d33afea6292a64a2c6cc1e23e",
+      "current_base_sha": "09e5d68e6f0727b003f29dd5eb0f4e3f81e7b2e8",
+      "branch": "codex/cloud-wave1-06-fix-sealed-consumer",
+      "author_login": "pixelmanager-cloud",
+      "provenance": "EXTERNAL_PR_REVIEW_OR_COMMENT_OBSERVED_NOT_REEXECUTED_BY_CLOUD",
+      "review_body": "Agent 10 independent exact-head review: ae5a36bc0e8f6e6d33afea6292a64a2c6cc1e23e, parent d0caa0f1262366ca541d052310d78fbfdc63722d. Reviewed the full two-file diff in a detached isolated worktree and rechecked current head before posting.\n\nPython 3.12.14 validation:\n- Full suite: 823 tests in 33.502s, OK, no skips/errors/failures. Existing ephemeral private-loopback fixture had socket permission; no provider calls.\n- Sealed + legacy continuation + ownership budget admission suites: 54 tests in 1.580s, OK.\n- Four additional independent probes: 4 tests in 0.166s, OK. Exact age boundary (observed_at=110; now=109/110/120/121), valid used=18 versus overbudget=19, legacy-looking budget hash with a malformed present seal, and missing raw bank. Valid historical component never refreshes observed_at or grants eligibility; invalid cases remain blocked.\n- WAL metadata interleaving test repeated 20 times: 0 failures in 0.627s. A writer changes admission state/counter after the first SELECT; current read retains the consistent old snapshot and next assessment rejects the altered metadata.\n- Read-only SQL trace/dump-equality test passes: metadata capture issues only BEGIN/SELECT/COMMIT; no writable HistoryProgress, schema repair or evidence mutation.\n- Exact diff whitespace check clean; review worktree clean. One focused command initially named a nonexistent test_history_admission module; corrected to test_ownership_budget_admission. No product failure or assertion change.\n\nAssessment: no blocking defect found in the scoped adapter. Head/budget/admission/bank/jobs are captured in one SQLite read transaction. SEALED is exact; descriptor binds kind/scan/mint/created/hash, prepared source binds the exact five-field projection and result bytes/completed hash, prepared_used equals original calls, and integer usage/ceiling plus raw-page/history charging checks remain mandatory. A malformed/present admission cannot fall back to legacy; true legacy source-bound budgets work with absent row/table. Matching seal still requires unchanged production raw history, bank/clock, ending balance/supply/control and cutoff replay. Policy v5 correctly allows a separate evaluation without rewriting original/v4 decisions. Remaining ownership/exposure/route/strategy gates and REJECT/eligibility=false are preserved.\n\nResidual limits: this is persisted binding/integrity validation, not cryptographic provider authentication under wholesale canonical database rewriting. Mutable metadata is snapshot-consistent, while later raw reads rely on the immutable content-addressed store contract. Historical component verification can coexist with stale original source age and is not current ownership/entry approval. Acquisition wiring, independent classification/exposure, route policy, bounded live legacy verification and forward observation remain separate gates. GitHub currently reports mergeable=false against the advancing integration base; coordinator must resolve integration independently and rerun the final combined tree rather than treating this exact-head PASS as combined acceptance.\n\nDisposition: scoped offline regression review PASS. No production/shared-document edits, providers/VPS, merge, deployment or readiness signoff by reviewer.",
+      "local_tests_this_run": "NOT_RUN",
+      "accepted": false,
+      "live_acceptance": false
+    },
+    {
+      "pr": 35,
+      "id": 6050885849,
+      "url": "https://github.com/pixelmanager-cloud/solana-paper-desk/pull/35#issuecomment-6050885849",
+      "head_sha_claimed_in_comment": "ab41ed0a9b56bc0a1a96a9c10630b57425465f5d",
+      "current_observed_head_sha": "ab41ed0a9b56bc0a1a96a9c10630b57425465f5d",
+      "current_base_sha": "5ebecd0444894ffddd77aba6ddd4019a1eabb311",
+      "branch": "codex/cloud-decision-ui",
+      "author_login": "pixelmanager-cloud",
+      "provenance": "EXTERNAL_PR_REVIEW_OR_COMMENT_OBSERVED_NOT_REEXECUTED_BY_CLOUD",
+      "review_body": "Agent 10 independent exact-head UI review: ab41ed0a9b56bc0a1a96a9c10630b57425465f5d, parent d81506380dfa14b350a07835cc3f7e0d72717b43. Reviewed all three changed files and the PR diff against integration/cloud-wave1. Head rechecked before posting. No implementation edits or branch merge.\n\nCommands/results (Python 3.12.14; Node v24.19.0):\n- node --check desk/static/app.js and node --check tests/cloud_decision_renderer_harness.js: pass.\n- /workspace/work/agent10-venv/bin/python -m unittest tests.test_cloud_decision_renderer -q: 8 tests in 1.499s, OK.\n- Exact-head /workspace/work/agent10-venv/bin/python -m unittest discover -q: 814 tests in 33.673s, OK, no skips/errors/failures.\n- Scratch combined-source full suite with integration 5ebecd0444894ffddd77aba6ddd4019a1eabb311 plus exact PR35 head: 886 tests in 34.807s, OK, no skips/errors/failures. Exported git merge-tree result def16317a1e8685cb05705485664accd1b644071 into scratch; no merge commit/ref change or publication. This is verification of those two fixed sources, not an advancing integration head.\n- 14 additional fixture-renderer cases pass: epoch-zero observation, absent/string/boolean/object/array/out-of-range values; malformed evaluation timestamps independent from observation age; injection strings in gate name/scope/reason. Shipped app.js executes unchanged, all refresh requests remain GET and original submit/refresh listeners remain attached.\n- Exact diff whitespace check passes; isolated review checkout clean. Full suites use permission for existing ephemeral private-loopback tests, no provider calls.\n\nAssessment: no blocking defect found. Numerical age derives from original observed_at plus valid browser clock, not evaluation timestamp or stored stale reasons. Missing/malformed/unsafe/out-of-range timestamps withhold age; future observation does not become a negative or zero/fresh age. Evaluation time and blocker reasons remain explicitly historical. VERIFIED_COMPONENT shows recorded scope (or explicit missing-scope warning), never current approval; overall REJECT and investigation controls remain present. Old journal rows are not represented as continuous evidence-health certification. Unavailable/malformed projections and failed fetches clear prior verified content. All untrusted labels/identity/scope/reasons flow through textContent, including independent injection cases.\n\nLimits: Node/minimal-DOM execution validates rendered text, escaping and listener/request contracts, not browser layout or a live workflow. Age updates when the existing 15-second decision refresh succeeds and depends on the viewer clock; it is not a freshness policy verdict. Future evaluation timestamps are displayed as recorded historical time rather than authorizing anything. No backend gate, entry/submission behavior or acquisition work is changed. OPS-1, live evidence health, ownership/route acceptance and forward observation remain separate requirements.\n\nDisposition: scoped offline UI regression PASS. Coordinator should retain exact-source combined checks when integrating. No provider/VPS access, implementation/shared-document edits, merge, deployment or readiness approval by reviewer.",
+      "local_tests_this_run": "NOT_RUN",
+      "accepted": false,
+      "live_acceptance": false
+    },
+    {
+      "pr": 36,
+      "id": 5450735708,
+      "url": "https://github.com/pixelmanager-cloud/solana-paper-desk/pull/36#pullrequestreview-5450735708",
+      "head_sha_claimed_in_comment": null,
+      "current_observed_head_sha": "1c87f2f2b37997bdb9291f0ae2184c5e5aad5f06",
+      "current_base_sha": "e5d9f9b0e3210421aabe3a80efd519b0d122d340",
+      "branch": "codex/cloud-ownership-acquisition",
+      "author_login": "pixelmanager-cloud",
+      "provenance": "EXTERNAL_PR_REVIEW_OR_COMMENT_OBSERVED_NOT_REEXECUTED_BY_CLOUD",
+      "review_body": "Independent exact-head review: CHANGES REQUIRED — confirmed setup immutability bypass in desk/ownership_acquisition.py:_Setup acquisition_setup_update. On a fresh plain sqlite3 connection with default PRAGMA recursive_triggers=0, UPDATE OR REPLACE ownership_acquisition_setup SET rowid=<first setup rowid> WHERE scan_id=<second scan> succeeds and silently deletes the first setup, bypassing its delete trigger. Reproduced with an interrupted acquisition that had already charged two requests and saved mint evidence. Reopening/resuming that original scan raises ValueError('Missing charged acquisition setup') before further RPC calls; the two charged attempts remain, but its immutable setup pointer and recovery path are lost. This is a persistent denial of recovery, not demonstrated entry acceptance or budget reset. Require BEFORE UPDATE protection for NEW.rowid IS NOT OLD.rowid (cover rowid/oid/_rowid_ aliases and replacement collisions), with fresh-connection and reopen adversarial tests.\n\nExact-head fixture tests currently pass: 52 focused tests and 901 full unittest tests. Archive concern independently tested through actual acquisition -> three production ownership continuations -> acquire retry: active checkpoints exist again, but public retry returns ALREADY_COMPLETE with zero extra calls; archived attempts and exact source remain unchanged, total counter 6. No public repeated-publication conflict reproduced in that completed path. Combined integration suite and remaining crash/budget probes are in progress. No implementation edits, providers, merge or deployment.",
+      "local_tests_this_run": "NOT_RUN",
+      "accepted": false,
+      "live_acceptance": false
+    },
+    {
+      "pr": 36,
+      "id": 5450745889,
+      "url": "https://github.com/pixelmanager-cloud/solana-paper-desk/pull/36#pullrequestreview-5450745889",
+      "head_sha_claimed_in_comment": "d184189654ddbae327d23dbca8e308cc2b0b83eb",
+      "current_observed_head_sha": "1c87f2f2b37997bdb9291f0ae2184c5e5aad5f06",
+      "current_base_sha": "e5d9f9b0e3210421aabe3a80efd519b0d122d340",
+      "branch": "codex/cloud-ownership-acquisition",
+      "author_login": "pixelmanager-cloud",
+      "provenance": "EXTERNAL_PR_REVIEW_OR_COMMENT_OBSERVED_NOT_REEXECUTED_BY_CLOUD",
+      "review_body": "Final independent disposition for exact head d184189654ddbae327d23dbca8e308cc2b0b83eb: CHANGES REQUIRED for the reproduced immutable-setup rowid replacement deletion at desk/ownership_acquisition.py:30. Fresh SQLite connections reproduce the same deletion using rowid, oid and _rowid_ aliases with recursive_triggers=0. Reopening acquisition after deleting a charged setup blocks permanently with Missing charged acquisition setup. Protect physical row identity in the UPDATE trigger and add fresh-connection/reopen regression coverage. The existing test that drops the delete trigger does not exercise this ordinary-SQL bypass. No schema triggers were removed in my reproducer.\n\nValidation, Python 3.12.14, synthetic/loopback fixtures only:\n- Exact head: python -m unittest tests.test_ownership_acquisition tests.test_job_persistence tests.test_research.JobTests -q — 52 tests, 1.527s, OK.\n- Exact head: python -m unittest discover -s tests -q — 901 tests, 34.508s, OK.\n- Combined GitHub test merge 21a81d563979ed8e1467751fa8c5ce9a48a33557 (parents integration e5d9f9b0e3210421aabe3a80efd519b0d122d340 and reviewed exact head): same full command — 909 tests, 35.623s, OK. Tested detached candidate only; no merge performed.\n- git diff --check HEAD^ HEAD — passed.\n\nIndependent API probes beyond the supplied tests: acquisition followed by repeated failing production ownership continuations stops at exactly 18 calls/charged attempts and reports INVESTIGATION_REQUEST_BUDGET_EXHAUSTED. Exact original source stays unchanged; terminal acquisition retry remains ALREADY_COMPLETE with counter 18. Crash immediately after the real archive handoff leaves PREPARED source; production continuation rejects it with Completed scan required and zero calls. Recovery returns RECOVERED_COMPLETE with only the original three total calls. Completed publication retry after three actual continuations and recreated active checkpoints returns ALREADY_COMPLETE with zero extra calls, unchanged archived attempt evidence and exact source. Therefore the coordinator's archive concern was not confirmed through these public lifecycle paths; directly invoking private handoff against an already continued checkpoint is outside the public terminal retry path.\n\nFull six-file diff and API report reviewed, including queue limits/kind separation, live generation fencing, research-before-evidence lock order, canonical path binding, setup/cutoff validation and atomic storage, four-attempt acquisition failure charging, and PREPARED/SEALED exact-source recovery. Passing tests do not resolve the confirmed SQL immutability gap or establish live/ownership acceptance, freshness, or paper readiness. No tracked edits, providers/VPS calls, merge or deployment.",
+      "local_tests_this_run": "NOT_RUN",
+      "accepted": false,
+      "live_acceptance": false
+    },
+    {
+      "pr": 36,
+      "id": 5450780050,
+      "url": "https://github.com/pixelmanager-cloud/solana-paper-desk/pull/36#pullrequestreview-5450780050",
+      "head_sha_claimed_in_comment": "1c87f2f2b37997bdb9291f0ae2184c5e5aad5f06",
+      "current_observed_head_sha": "1c87f2f2b37997bdb9291f0ae2184c5e5aad5f06",
+      "current_base_sha": "e5d9f9b0e3210421aabe3a80efd519b0d122d340",
+      "branch": "codex/cloud-ownership-acquisition",
+      "author_login": "pixelmanager-cloud",
+      "provenance": "EXTERNAL_PR_REVIEW_OR_COMMENT_OBSERVED_NOT_REEXECUTED_BY_CLOUD",
+      "review_body": "Independent repaired-head disposition: scoped ACCEPTABLE at exact head 1c87f2f2b37997bdb9291f0ae2184c5e5aad5f06. This supersedes my CHANGES REQUIRED disposition for d184189; the confirmed setup rowid replacement deletion is repaired. No remaining blocking finding identified in this fixture-based review.\n\nRepair verification beyond author tests: simulated an existing pre-repair database by removing only the new identity trigger, then reopened _Setup normally. The additive guard was installed without rewriting original rows. Twelve writes through fresh plain sqlite3 connections (recursive_triggers=0; rowid/oid/_rowid_ x UPDATE/UPDATE OR REPLACE x occupied/new rowid) each raised IntegrityError. Reopened reads retained both exact setup rows and budget rows. The interrupted scan with two previously charged attempts subsequently completed SEED_HISTORY_ACQUIRED at four total calls; recovery was preserved.\n\nPython 3.12.14 exact-head results:\n- python -m unittest tests.test_ownership_acquisition tests.test_job_persistence tests.test_research.JobTests -q: 53 tests, 1.430s, OK.\n- python -m unittest discover -s tests -q: 902 tests, 33.500s, OK.\n- git diff --check HEAD^ HEAD: passed.\nCombined detached GitHub test merge 82cbe884a1821ad6c52edb3996de1994ad0c9f6c, actual parents d34ed2c8463266752fa363cd8e633dcab46468ff and 1c87f2f2b37997bdb9291f0ae2184c5e5aad5f06: full suite 910 tests, 35.165s, OK. No integration merge performed.\n\nRe-ran independent production API probes on repaired head: acquisition plus repeated failed continuation calls stops at exactly 18 charged/provider attempts, with unchanged original source; completed retry makes zero new calls and retains counter 18. Crash after actual archive handoff blocks premature continuation with zero calls, then RECOVERED_COMPLETE publishes without recharge (three original calls total). After three successful continuations recreate active checkpoints, acquisition retry returns ALREADY_COMPLETE, retaining exact archived rows/source and six total calls. Thus no public repeated-publication archive conflict or lost attempt evidence was reproduced. Evidence hardlinks through either name and research/evidence same-db symlink alias reject before RPC.\n\nReviewed complete actual diff/API report and existing tests for four total acquisition attempts including failures, shared counter, setup/cutoff atomic binding, fenced claim/publication, lock ordering/live contention, queue3/10-day/kind separation, cross-database dispatch, and PREPARED/SEALED recovery. All transport was synthetic; full suites used local loopback fixtures. No code/shared-doc edits, live providers/VPS, signing, deployment or merge. This disposition establishes neither live acceptance, ownership completion, entry freshness nor paper readiness; those remain coordinator acceptance work.",
+      "local_tests_this_run": "NOT_RUN",
+      "accepted": false,
+      "live_acceptance": false
+    },
+    {
+      "pr": 37,
+      "id": 6051134465,
+      "url": "https://github.com/pixelmanager-cloud/solana-paper-desk/pull/37#issuecomment-6051134465",
+      "head_sha_claimed_in_comment": "8220f8baf0d84fc9905f39d2762664095cd6bba1",
+      "current_observed_head_sha": "8220f8baf0d84fc9905f39d2762664095cd6bba1",
+      "current_base_sha": "d34ed2c8463266752fa363cd8e633dcab46468ff",
+      "branch": "codex/cloud-wave1-07-execution-trace",
+      "author_login": "pixelmanager-cloud",
+      "provenance": "EXTERNAL_PR_REVIEW_OR_COMMENT_OBSERVED_NOT_REEXECUTED_BY_CLOUD",
+      "review_body": "Independent exact-head review: 8220f8baf0d84fc9905f39d2762664095cd6bba1 (parent 327385ddc41a5a043a9f3f83e154b9a4ecc44e10). Rechecked GitHub head after validation: unchanged.\n\nNo blocking defect found within the disconnected syntactic foundation scope. Reviewed the complete two-file/821-line diff. Runtime/package integration is absent; no evidence gate, request ceiling, authorization or original capture changed. `complete` means syntactic profile only: all authentication/ownership/lifecycle/trading flags remain false.\n\nValidation, Python 3.12.14, synthetic/public saved fixtures only:\n- Exact head: `/workspace/work/agent10-venv/bin/python -m unittest discover -s tests` — 910 tests, 33.551s, OK; zero skips.\n- Focused: `python -m unittest tests.test_execution_trace tests.test_legacy_controls -q` — 61 tests, 0.290s, OK.\n- Independent scratch probes: `PYTHONPATH=/workspace/work/agent10-pr37 /workspace/work/agent10-venv/bin/python /workspace/work/agent10-qa/pr37_probe.py` — 14 tests, 0.104s, OK (six new review probes plus eight imported key regressions). Enumerated 550 valid stack sequences against a separately implemented active-frame parent oracle. Tested missing-depth context clearing/local recovery, bool/float/string/negative/out-of-range compiled and lookup indices, exact 256-total/64-outer boundaries, unavailable traces, invalid parent programs, and forged approval flags.\n- Explicit unchanged-public-capture replay regression — 1 test, 0.005s, OK. Both captures remain unknown for absent raw instruction bytes; nested ATA/metadata direct parents are preserved without fabricating outer-prefix callers.\n- Combined latest fetched integration d34ed2c8463266752fa363cd8e633dcab46468ff + exact PR37 8220f8baf0d84fc9905f39d2762664095cd6bba1: `python -m unittest discover -s tests -q` — 918 tests, 34.574s, OK; zero skips. Scratch archive from conflict-free `git merge-tree --write-tree`, tree 5f451276dfabca62ec2b8e616dfda586e4cc18b1; no branch merge or production edits.\n- `git diff 327385d 8220f8b --check` passed; exact-head checkout remains clean.\n\nCross-checks: static/writable-loaded/readonly-loaded ordering, expanded parsed keys without double append, contradictory sources/flags/loaded keys, legal repeated account references, duplicate keys/group indices, numeric outer/CPI ordering (including 2 vs 10), stack-height nesting/return/siblings, impossible jumps, unsupported ambiguous index fields and raw/parsed control disagreement all fail or resolve as documented. Missing trace/depth and unsupported dual semantics remain unknown; malformed structure is rejected. A locally reconstructed direct parent after a gap does not recover missing ancestors or authenticate its authority.\n\nResidual acceptance gaps: invocation-start preorder is not caller state-write/return ordering; transaction success does not establish individual CPI success. Supplied key/stack witnesses and pinned format references do not establish response authenticity, finalized query/slot binding, lookup-table contents, deployed code or signer/PDA privileges. Raw-only syntactic completion is not semantic control validation. The two public captures are not a finalized supported legacy Pump ownership positive, and no lifecycle checker/runtime approval is supplied. Separate acquisition, architecture/lifecycle review and verified semantic evidence remain required before runtime use. Fixture success is not live acceptance or paper readiness. No provider/VPS calls, implementation edits, merge or deployment.",
+      "local_tests_this_run": "NOT_RUN",
+      "accepted": false,
+      "live_acceptance": false
+    },
+    {
+      "pr": 38,
+      "id": 5450840544,
+      "url": "https://github.com/pixelmanager-cloud/solana-paper-desk/pull/38#pullrequestreview-5450840544",
+      "head_sha_claimed_in_comment": "fabebccda9064cd8e69833ff7e9f588ab8e7d9e8",
+      "current_observed_head_sha": "fabebccda9064cd8e69833ff7e9f588ab8e7d9e8",
+      "current_base_sha": "dbcfd055f80bec17222c0b9a5a65701c72747642",
+      "branch": "codex/cloud-wave3-04-receipt-ledger",
+      "author_login": "pixelmanager-cloud",
+      "provenance": "EXTERNAL_PR_REVIEW_OR_COMMENT_OBSERVED_NOT_REEXECUTED_BY_CLOUD",
+      "review_body": "Independent exact-head disposition: scoped ACCEPTABLE for the protected local receipt persistence foundation at fabebccda9064cd8e69833ff7e9f588ab8e7d9e8. No blocking defect reproduced within its stated trusted-coordinator/UID/stable-filesystem boundary. This is not approval of a production capture issuer, source authentication, bridge wiring, OWN-2/3 completion, or live acceptance.\n\nReviewed the actual complete two-file diff (415-line module and 447-line tests), source-policy admission API, canonical identity guards, journal/schema auditing, transactional publication and context-bound reader. Candidate dictionaries/evidence assertions cannot publish through the exact typed receipt contract; default readers reject issuance. Types alone are not authentication: trusted code must supply the fixed boundary/source registry and hold the writer API outside candidate handlers. Same-UID/privileged rewriting, full ledger rollback and observations omitted before publication remain explicitly outside the ledger's detection claim.\n\nPython 3.12.14, Linux, synthetic/offline/loopback fixtures:\n- Exact head: python -m unittest tests.test_pool_receipt_ledger -q — 33 tests, 6.136s, OK, zero skips.\n- Exact head: python -m unittest discover -q — 911 tests, 40.760s, OK, zero failures/errors/skips.\n- Combined detached GitHub test merge 72f0a61ed1d4d904a6772e8955526f99476666c6, verified actual parents dbcfd055f80bec17222c0b9a5a65701c72747642 (requested latest integration including reviewed PR36+37) and fabebccda9064cd8e69833ff7e9f588ab8e7d9e8: dedicated ledger suite -v — 33 tests, 6.410s, all individually executed, zero skips; full discover -q — 975 tests, 41.885s, OK, zero failures/errors/skips.\n- git diff --check HEAD^ HEAD passed; no tracked changes.\n\nIndependent probes beyond author tests used actual guarded admit_pool_vault: a separately supplied harness coordinator receipt admits the point label and production-policy branch, while chain_authenticated remains false. Three candidate JSON/assertion forms were rejected without issuing receipts. Publishing a second stale malformed approved capture retained both scoped observations; selecting the healthy refs still returned ACQUISITION_CAPTURE_AMBIGUOUS. Fresh default sqlite3 connections (recursive_triggers=0) rejected 18 rowid/oid/_rowid_ identity moves across receipt/descriptor/head tables under UPDATE and UPDATE OR REPLACE; reopened dump remained exact. A receipt occupied-row replacement collision was also rejected. Supplied tests additionally execute both-direction contradictory-source admission, malformed/missing/time-conflicting observations, exact idempotent restart, concurrent threads/spawned processes, abrupt-process rollback, partial-read fencing, source/store alias rejection and protected policy-view publication serialization. Corruption aborts whole reconstruction rather than salvaging healthy rows.\n\nFilesystem verification: both actual checkout work directories resolve to the /workspace overlay mount, which is on the positive allowlist. Independent mount-policy probes accepted ext2/ext3/ext4/xfs/btrfs/zfs/overlay and rejected tmpfs/nfs/nfs4/fuse/fuse.sshfs/unknown. An allowed filesystem type does not prove an ephemeral container layer survives host/container replacement. Production provisioning must independently supply a genuinely persistent local Linux volume, fixed owned canonical 0700 root, single-link owned 0600 ledger/lock, owned non-group/world-writable evidence DB, stable path/inode identities and compatible evidence schema. Alias/hardlink/replacement/rotation and network/volatile mounts remain unsupported; orphan initialization or identity failures require operator recovery rather than reset. Mac skips are expected and do not count as ledger validation.\n\nBefore runtime use the coordinator still needs independently authenticated approved RPC/mainnet/genesis capture, real wall time and exact request/response refs, publication of EVERY approved observation, and a bridge that withholds policy on any error and admits inside a fresh policy_view. Detached policy() snapshots are explicitly unsafe to cache across later publication; Python does not revoke those snapshots. Existing 18-attempt charging remains the capture/ownership executor's responsibility: this ledger makes no requests and grants/resets no budget. No code/shared-doc edits, providers/VPS, signing, merge or deployment performed.",
+      "local_tests_this_run": "NOT_RUN",
+      "accepted": false,
+      "live_acceptance": false
+    },
+    {
+      "pr": 39,
+      "id": 6051279913,
+      "url": "https://github.com/pixelmanager-cloud/solana-paper-desk/pull/39#issuecomment-6051279913",
+      "head_sha_claimed_in_comment": "7651db1fa2842957fc15fb16a4e616c12ecef520",
+      "current_observed_head_sha": "7651db1fa2842957fc15fb16a4e616c12ecef520",
+      "current_base_sha": "d9061d6560805010bc42af7791e22e292e0bdc13",
+      "branch": "codex/legacy-public-reference",
+      "author_login": "pixelmanager-cloud",
+      "provenance": "EXTERNAL_PR_REVIEW_OR_COMMENT_OBSERVED_NOT_REEXECUTED_BY_CLOUD",
+      "review_body": "Independent artifact/test integrity review at exact head 7651db1fa2842957fc15fb16a4e616c12ecef520; GitHub head rechecked unchanged. No blocking finding within the reference-only scope.\n\nReviewed all four new files and complete diff; no implementation, schema, readiness, authorization or gate edits. Independently retrieved the fixture, LICENSE and documentation from DefaultPerson/solana-dex-parser-go at pinned commit 57ce4f643deec96b363d66778f220658df461497 using the GitHub connector; no provider/RPC calls or upstream source execution. Fixture content exactly matches the 12,523-byte source, SHA256 89dcc14ecad1432598e4937da2dfa9955af8637a5ae373418e9631c174991749, upstream Git blob 1ac869d4b9c02bf9b14a6ee4cc0914189470a840. LICENSE also matches source and Git blob 384bb4666678bba15804322055b40a3ceb92fe0e.\n\nIndependent raw inspection confirmed SHA256(global:create)[:8] discriminator 181ec828051c0777, all 14 compiled legacy create account positions against the pinned create mapping, valid transaction instruction key/index bindings, no loaded lookup accounts, and the historical three-string argument shape. Tokenkeg initialization/mint/revocation byte and saved balance assertions pass. These are saved-record facts, not independently authenticated execution/authority evidence.\n\nSource documentation explicitly uses commitment=confirmed. The fixture itself has no acquisition commitment/request binding, so CONFIRMED_SOURCE_NOT_FINALIZED is a documentation classification only: actual acquisition commitment remains unknown, finality/authenticity/eligibility remain false. Tests preserve original stack heights and source bytes. Compiled full-record decode still raises 'requires jsonParsed account keys'; the saved CreateEvent still returns EVENT_SCHEMA_MISMATCH without schema_complete/fields. IDENTIFIED on an index-resolved single-instruction view is instruction identification, not a verified creation anchor or approval. The negative tests characterize current decoder limitations and grant no new acceptance; future independently reviewed decoder support may deliberately update them while preserving provenance/finality gates.\n\nPython 3.12.14 validation:\n- `python -m unittest tests.test_legacy_pump_reference -v`: 7 tests, 0.045s, OK.\n- Exact head `/workspace/work/agent10-venv/bin/python -m unittest discover -s tests -q`: 949 tests, 35.850s, OK, zero skips.\n- Combined latest fetched integration d9061d6560805010bc42af7791e22e292e0bdc13 + exact PR39 7651db1fa2842957fc15fb16a4e616c12ecef520: same full command, 949 tests, 34.696s, OK, zero skips. Conflict-free scratch merge-tree/archive tree 8f75ef9e66f9e88d64101fb62217438487deb87b; no branch merge.\n- Independent inline fixture/blob/account/index checks passed; `git diff HEAD^ HEAD --check` passed; exact-head checkout clean. Existing private-loopback fixture tests only.\n\nResidual dependencies: independently bound finalized coordinator capture and reviewed normalization/semantic lifecycle work. This artifact can support future semantic development but supplies no ownership completeness, current candidate freshness, live acceptance or paper readiness. No implementation edits, merge, deployment or provider/VPS access.",
+      "local_tests_this_run": "NOT_RUN",
+      "accepted": false,
+      "live_acceptance": false
     }
   ],
   "pending_reviews": [
@@ -1068,6 +1229,62 @@
   ],
   "observed_pr_heads": [
     {
+      "pr": 39,
+      "branch": "codex/legacy-public-reference",
+      "head_sha": "7651db1fa2842957fc15fb16a4e616c12ecef520",
+      "base_sha": "d9061d6560805010bc42af7791e22e292e0bdc13",
+      "state": "open",
+      "merged": false
+    },
+    {
+      "pr": 38,
+      "branch": "codex/cloud-wave3-04-receipt-ledger",
+      "head_sha": "fabebccda9064cd8e69833ff7e9f588ab8e7d9e8",
+      "base_sha": "dbcfd055f80bec17222c0b9a5a65701c72747642",
+      "state": "closed",
+      "merged": true
+    },
+    {
+      "pr": 37,
+      "branch": "codex/cloud-wave1-07-execution-trace",
+      "head_sha": "8220f8baf0d84fc9905f39d2762664095cd6bba1",
+      "base_sha": "d34ed2c8463266752fa363cd8e633dcab46468ff",
+      "state": "closed",
+      "merged": true
+    },
+    {
+      "pr": 36,
+      "branch": "codex/cloud-ownership-acquisition",
+      "head_sha": "1c87f2f2b37997bdb9291f0ae2184c5e5aad5f06",
+      "base_sha": "e5d9f9b0e3210421aabe3a80efd519b0d122d340",
+      "state": "closed",
+      "merged": true
+    },
+    {
+      "pr": 35,
+      "branch": "codex/cloud-decision-ui",
+      "head_sha": "ab41ed0a9b56bc0a1a96a9c10630b57425465f5d",
+      "base_sha": "5ebecd0444894ffddd77aba6ddd4019a1eabb311",
+      "state": "closed",
+      "merged": true
+    },
+    {
+      "pr": 34,
+      "branch": "codex/cloud-wave1-06-fix-sealed-consumer",
+      "head_sha": "ae5a36bc0e8f6e6d33afea6292a64a2c6cc1e23e",
+      "base_sha": "09e5d68e6f0727b003f29dd5eb0f4e3f81e7b2e8",
+      "state": "closed",
+      "merged": true
+    },
+    {
+      "pr": 33,
+      "branch": "codex/cloud-wave1-07-legacy-control-normalizer",
+      "head_sha": "5095a17557c7fb916d74e508a3e157b49abcd784",
+      "base_sha": "d0caa0f1262366ca541d052310d78fbfdc63722d",
+      "state": "closed",
+      "merged": true
+    },
+    {
       "pr": 32,
       "branch": "codex/cloud-ownership-budget-foundation",
       "head_sha": "64765af62379fe4fbb185271c1d54405a527a0af",
@@ -1078,10 +1295,10 @@
     {
       "pr": 31,
       "branch": "codex/cloud-wave1-08-queue-foundation",
-      "head_sha": "04a930172a088607b833017112e9d4721869e60c",
+      "head_sha": "5a97f42a92a1691659dad60b0f4f61af41562f2d",
       "base_sha": "d24fc7f2910067254047b64e699f43aa1685130f",
-      "state": "open",
-      "merged": false
+      "state": "closed",
+      "merged": true
     },
     {
       "pr": 30,
@@ -1158,7 +1375,7 @@
     {
       "pr": 21,
       "branch": "integration/cloud-wave1",
-      "head_sha": "d0caa0f1262366ca541d052310d78fbfdc63722d",
+      "head_sha": "8871f0aaf1bf24b535306d58940cea744940a9a4",
       "base_sha": "9b9a27773b0f06ef80505a47d4ddaf9b72aa4481",
       "state": "open",
       "merged": false
@@ -1246,16 +1463,8 @@
     {
       "pr": 10,
       "branch": "codex/cloud-coordinator-protocol-20261008",
-      "head_sha": "0e33032856664fdc147ee53fa03cd77a6ab07624",
+      "head_sha": "9f46b445ed128bcc438fca991305bf4273dbc121",
       "base_sha": "e298e15cd758932e81d2241130716632702f5bd0",
-      "state": "open",
-      "merged": false
-    },
-    {
-      "pr": 33,
-      "branch": "codex/cloud-wave1-07-legacy-control-normalizer",
-      "head_sha": "5095a17557c7fb916d74e508a3e157b49abcd784",
-      "base_sha": "d0caa0f1262366ca541d052310d78fbfdc63722d",
       "state": "open",
       "merged": false
     }
@@ -1275,5 +1484,197 @@
       "reason": "Explicit coordination correction: worker02 owns PR31 re-review; cloud exclusively assigned PR33."
     },
     "priority_rule": "Explicit named/exclusive review assignments preempt generic hourly discovery. Do not review another worker's reserved PR."
+  },
+  "observed_branches": [
+    "codex/cloud-continuation-operations",
+    "codex/cloud-coordinator-protocol-20261008",
+    "codex/cloud-decision-ui",
+    "codex/cloud-history-integration",
+    "codex/cloud-ownership-acquisition",
+    "codex/cloud-ownership-birth-acquisition-design",
+    "codex/cloud-ownership-budget-foundation",
+    "codex/cloud-wave1-01",
+    "codex/cloud-wave1-02-adapter",
+    "codex/cloud-wave1-02",
+    "codex/cloud-wave1-03",
+    "codex/cloud-wave1-04",
+    "codex/cloud-wave1-05-continuation",
+    "codex/cloud-wave1-05-journal-init",
+    "codex/cloud-wave1-05",
+    "codex/cloud-wave1-06-fix-history-controls",
+    "codex/cloud-wave1-06-fix-sealed-consumer",
+    "codex/cloud-wave1-06-fix-token-controls",
+    "codex/cloud-wave1-06",
+    "codex/cloud-wave1-07-execution-trace",
+    "codex/cloud-wave1-07-legacy-control-normalizer",
+    "codex/cloud-wave1-07-ownership-control-plan",
+    "codex/cloud-wave1-07",
+    "codex/cloud-wave1-08-queue-foundation",
+    "codex/cloud-wave1-08",
+    "codex/cloud-wave1-09",
+    "codex/cloud-wave1-10",
+    "codex/cloud-wave2-04-pool-admission",
+    "codex/cloud-wave3-04-receipt-ledger",
+    "codex/legacy-live-feasibility",
+    "codex/legacy-public-reference"
+  ],
+  "observed_ci": [
+    {
+      "pr": 21,
+      "head_sha": "8871f0aaf1bf24b535306d58940cea744940a9a4",
+      "workflow_runs": [
+        {
+          "id": 37720537056,
+          "name": "Tests",
+          "status": "completed",
+          "conclusion": "success",
+          "run_number": 200,
+          "jobs_url": "https://api.github.com/repos/pixelmanager-cloud/solana-paper-desk/actions/runs/37720537056/jobs",
+          "logs_url": "https://api.github.com/repos/pixelmanager-cloud/solana-paper-desk/actions/runs/37720537056/logs",
+          "workflow_id": 377958194
+        }
+      ],
+      "local_suite_this_run": "NOT_RUN",
+      "accepted": false
+    },
+    {
+      "pr": 34,
+      "head_sha": "ae5a36bc0e8f6e6d33afea6292a64a2c6cc1e23e",
+      "workflow_runs": [
+        {
+          "id": 37716188377,
+          "name": "Tests",
+          "status": "completed",
+          "conclusion": "success",
+          "run_number": 150,
+          "jobs_url": "https://api.github.com/repos/pixelmanager-cloud/solana-paper-desk/actions/runs/37716188377/jobs",
+          "logs_url": "https://api.github.com/repos/pixelmanager-cloud/solana-paper-desk/actions/runs/37716188377/logs",
+          "workflow_id": 377958194
+        }
+      ],
+      "local_suite_this_run": "NOT_RUN",
+      "accepted": false
+    },
+    {
+      "pr": 35,
+      "head_sha": "ab41ed0a9b56bc0a1a96a9c10630b57425465f5d",
+      "workflow_runs": [
+        {
+          "id": 37717263980,
+          "name": "Tests",
+          "status": "completed",
+          "conclusion": "success",
+          "run_number": 172,
+          "jobs_url": "https://api.github.com/repos/pixelmanager-cloud/solana-paper-desk/actions/runs/37717263980/jobs",
+          "logs_url": "https://api.github.com/repos/pixelmanager-cloud/solana-paper-desk/actions/runs/37717263980/logs",
+          "workflow_id": 377958194
+        }
+      ],
+      "local_suite_this_run": "NOT_RUN",
+      "accepted": false
+    },
+    {
+      "pr": 36,
+      "head_sha": "1c87f2f2b37997bdb9291f0ae2184c5e5aad5f06",
+      "workflow_runs": [
+        {
+          "id": 37718990444,
+          "name": "Tests",
+          "status": "completed",
+          "conclusion": "success",
+          "run_number": 186,
+          "jobs_url": "https://api.github.com/repos/pixelmanager-cloud/solana-paper-desk/actions/runs/37718990444/jobs",
+          "logs_url": "https://api.github.com/repos/pixelmanager-cloud/solana-paper-desk/actions/runs/37718990444/logs",
+          "workflow_id": 377958194
+        }
+      ],
+      "local_suite_this_run": "NOT_RUN",
+      "accepted": false
+    },
+    {
+      "pr": 37,
+      "head_sha": "8220f8baf0d84fc9905f39d2762664095cd6bba1",
+      "workflow_runs": [
+        {
+          "id": 37719216998,
+          "name": "Tests",
+          "status": "completed",
+          "conclusion": "success",
+          "run_number": 188,
+          "jobs_url": "https://api.github.com/repos/pixelmanager-cloud/solana-paper-desk/actions/runs/37719216998/jobs",
+          "logs_url": "https://api.github.com/repos/pixelmanager-cloud/solana-paper-desk/actions/runs/37719216998/logs",
+          "workflow_id": 377958194
+        }
+      ],
+      "local_suite_this_run": "NOT_RUN",
+      "accepted": false
+    },
+    {
+      "pr": 38,
+      "head_sha": "fabebccda9064cd8e69833ff7e9f588ab8e7d9e8",
+      "workflow_runs": [
+        {
+          "id": 37719871987,
+          "name": "Tests",
+          "status": "completed",
+          "conclusion": "success",
+          "run_number": 194,
+          "jobs_url": "https://api.github.com/repos/pixelmanager-cloud/solana-paper-desk/actions/runs/37719871987/jobs",
+          "logs_url": "https://api.github.com/repos/pixelmanager-cloud/solana-paper-desk/actions/runs/37719871987/logs",
+          "workflow_id": 377958194
+        }
+      ],
+      "local_suite_this_run": "NOT_RUN",
+      "accepted": false
+    },
+    {
+      "pr": 39,
+      "head_sha": "7651db1fa2842957fc15fb16a4e616c12ecef520",
+      "workflow_runs": [
+        {
+          "id": 37720346732,
+          "name": "Tests",
+          "status": "completed",
+          "conclusion": "success",
+          "run_number": 198,
+          "jobs_url": "https://api.github.com/repos/pixelmanager-cloud/solana-paper-desk/actions/runs/37720346732/jobs",
+          "logs_url": "https://api.github.com/repos/pixelmanager-cloud/solana-paper-desk/actions/runs/37720346732/logs",
+          "workflow_id": 377958194
+        }
+      ],
+      "local_suite_this_run": "NOT_RUN",
+      "accepted": false
+    }
+  ],
+  "last_review_run": {
+    "run_id": "cloud-review-2026-10-08T03:04:00Z",
+    "hosted_last_run_time": "2026-10-08T03:02:11.926931+00:00",
+    "cloud_executor_verified": true,
+    "mode": "RECONCILIATION_ONLY",
+    "specific_assignment": {
+      "pr": 33,
+      "status": "EXACT_SHA_ALREADY_REVIEWED_AND_NOW_MERGED_NO_DUPLICATE",
+      "head_sha": "5095a17557c7fb916d74e508a3e157b49abcd784"
+    },
+    "excluded_review_prs": [
+      31
+    ],
+    "new_reference_pr": {
+      "pr": 39,
+      "head_sha": "7651db1fa2842957fc15fb16a4e616c12ecef520",
+      "base_sha": "d9061d6560805010bc42af7791e22e292e0bdc13",
+      "external_exact_head_review_comment_id": 6051279913,
+      "full_four_file_diff_read": true,
+      "worker_author_identity": "NOT_BOUND_BY_AVAILABLE_PROVENANCE",
+      "status": "EXTERNAL_REVIEW_ALREADY_PRESENT_NO_DUPLICATE_COMMENT_OR_TEST_CERTIFICATION"
+    },
+    "local_test_commands": [],
+    "local_test_result": "NOT_RUN_THIS_RECONCILIATION",
+    "new_findings": [],
+    "comment_writes": [],
+    "production_edits": false,
+    "merged_prs": 0,
+    "dispatched_workers": 0,
+    "accepted_tasks": []
   }
 }
