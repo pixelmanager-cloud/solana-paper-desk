@@ -68,6 +68,13 @@ def main():
     ownership.add_argument("--db",required=True)
     ownership.add_argument("--evidence-db",required=True)
     ownership.add_argument("--scan-id",required=True)
+    acquisition=commands.add_parser('ownership-acquire',help='Explicit birth-inclusive research seed; never entry approval')
+    acquisition.add_argument('--db',required=True)
+    acquisition.add_argument('--evidence-db',required=True)
+    target=acquisition.add_mutually_exclusive_group(required=True)
+    target.add_argument('--mint')
+    target.add_argument('--scan-id')
+    acquisition.add_argument('--output')
     report = commands.add_parser("report")
     report.add_argument("--db", required=True)
     report.add_argument("--output")
@@ -153,6 +160,11 @@ def main():
         if args.command == "consume-scans":
             from .decision_runner import consume
             write_json(consume(args.db,args.journal,evidence_db=args.evidence_db))
+            return
+        if args.command == 'ownership-acquire':
+            from .ownership_acquisition import acquire
+            from .providers import helius_rpc
+            write_json(acquire(args.db,args.evidence_db,helius_rpc,mint=args.mint,scan_id=args.scan_id),args.output)
             return
         if args.command == "ownership-advance":
             from .ownership_worker import advance
