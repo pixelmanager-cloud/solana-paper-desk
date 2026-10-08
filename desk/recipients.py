@@ -1,4 +1,5 @@
 """Token movement recipients for the narrow direct PumpSwap sell profile."""
+from .route_coverage import instruction_receipt
 import base64
 from .security import TOKEN_PROGRAM,TOKEN_2022
 from .providers import SOL
@@ -9,7 +10,7 @@ def check_sell_recipients(inventory,bindings,amount,minimum_out):
     if bindings.get('passed') is not True or inventory.get('stack_metadata_verified') is not True:
         return {**result,'reasons':['RECIPIENT_CALL_BINDINGS_UNVERIFIED']}
     if type(amount) is not int or type(minimum_out) is not int or not 0<amount<2**64 or not 0<minimum_out<2**64:raise ValueError('Invalid transfer policy amounts')
-    names=bindings['account_bindings'];parent=bindings['instruction'];reasons=result['reasons'];movements=[]
+    names=bindings['account_bindings'];parent=bindings['instruction'];reasons=result['reasons'];movements=[];checked_rows=[]
     incoming=0;outgoing=0;fees={'protocol':0,'creator':0,'buyback':0}
     destinations={names['user_quote_token_account']:'user',names['protocol_fee_recipient_token_account']:'protocol',names['coin_creator_vault_ata']:'creator'}
     expected_roles=3
@@ -38,10 +39,11 @@ def check_sell_recipients(inventory,bindings,amount,minimum_out):
             if role=='user':outgoing+=n
             else:fees[role]+=n
         else:reasons.append('AMM_TOKEN_RECIPIENT_OR_SOURCE_UNAPPROVED')
+        checked_rows.append(instruction_receipt(row))
         movements.append({'instruction':row['instruction'],'source':source,'destination':destination,'amount_raw':str(n),'role':role})
     if incoming!=amount:reasons.append('AMM_TRANSFER_INPUT_SUM_MISMATCH')
     if outgoing<minimum_out:reasons.append('AMM_TRANSFER_OUTPUT_BELOW_MINIMUM')
     result.update(passed=not reasons,reasons=sorted(set(reasons)),input_raw=str(incoming),user_output_raw=str(outgoing),
-        protocol_fee_raw=str(fees['protocol']),creator_fee_raw=str(fees['creator']),buyback_fee_raw=str(fees['buyback']),transfers=movements,
+        protocol_fee_raw=str(fees['protocol']),creator_fee_raw=str(fees['creator']),buyback_fee_raw=str(fees['buyback']),transfers=movements,checked_instructions=checked_rows if not reasons else [],
         notice='Transfer sources, recipients, caller context and user amounts only. Exact fee schedule and full instruction policy remain required.')
     return result

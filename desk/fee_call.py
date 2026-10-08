@@ -1,4 +1,5 @@
 """Bind the observed read-only fee-query CPI; not authorization for the whole program."""
+from .route_coverage import instruction_receipt
 import base64
 from .dynamic_fees import fee_schema,fee_address
 from .providers import PUMPSWAP,SOL
@@ -30,4 +31,5 @@ def check_fee_query(inventory,bindings,fee_totals):
         result['arguments']=fields
     except (ValueError,KeyError,TypeError):reasons.append('FEE_QUERY_LAYOUT_OR_ACCOUNTS_UNSUPPORTED')
     return {**result,'passed':not reasons,'reasons':sorted(set(reasons)),
+        'checked_instructions':[instruction_receipt(row)] if not reasons else [],
         'notice':'One exact fee query under the bound AMM sell only. Other fee-program instructions remain unsupported; full transaction policy is still required.'}
