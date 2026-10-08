@@ -1,0 +1,9 @@
+[Unit]
+Description=Consume completed investigations into the rejection journal
+[Timer]
+OnBootSec=30s
+OnUnitActiveSec=30s
+AccuracySec=1s
+Unit=desk-decisions.service
+[Install]
+WantedBy=timers.target

@@ -1,0 +1,55 @@
+{
+  "provenance": "PUBLIC_MAINNET_CAPTURE_NOT_TRADING_EVIDENCE",
+  "signature": "26PN3UfZDoM89KMtXXdRXHRzp4msLMuLeWvH4r2eW7xb5xFcbxWHSJkr9MKNKvR7wzaURd8y7uEiicosz8gauopN",
+  "slot": 454313568,
+  "instruction": {
+    "programId": "pAMMBay6oceH9fJKBRHGP5D4bD4sWpmSwMn52FMfXEA",
+    "accounts": [
+      "GS4CU59F31iL7aR2Q8zVS8DRrcRnXX1yjQ66TqNVQnaR"
+    ],
+    "data": "2rerrzSaKmbarSSaQantaMePBLZKa8cFDr5N7JAKw8GSUNamYvUwJ1Q7weMm58SBrfAtwvgA1aC3TUgdivicBx8kAgM3kKx3cA4orG5Jk4SrAXN6593Rwq9EZ9uHHyyGCGHtK9tE4VVEvbpDnQQbZ2yiP2YiZP2VeTwqw4wxjpN3BgQPGyotDVmgZk9eNJdMD8Tmad4EaPPHgvFoZzxmfpWygxQnVjQFGccsRoKeQn782s7dRjeGMffUd4uVmYiyPjqJF8GEtGBYwuaht57D4Nqw4r75uzYMdwEj3UWS5KTgA92UmWRuEh5r5EMJSvAaPhXWp926RtBgfAJPJudTFbNrxFk36KQER6VTDh8uwyyYZ4gCPKSMVvWE7DBDzmB819FL2jpGfaBM6KK4C665TFn9EEsKUCXacxNyU6WXaKncjUiBb656DzqkhzxPHrnsVobvbKKCFcrHhxP94ErQp359HoWwVHSfHjoJrBRwrPzsbPttQQxHEQcsVYoQH9kjH9P6si1k1rgQiQZdgPQ3jV2WcPvNe9Y1vzx8VaPZQ4iJ6P6qqLw152fbMKhv3hmcNw213THFVnz6Lzv1G9AtkMQdVCpXcM2c5u5a4F"
+  },
+  "decoded": {
+    "program": "pAMMBay6oceH9fJKBRHGP5D4bD4sWpmSwMn52FMfXEA",
+    "status": "EVENT_DECODED",
+    "name": "SellEvent",
+    "kind": "PROGRAM_EVENT",
+    "fields": {
+      "timestamp": 1791400494,
+      "base_amount_in": 4913954445609,
+      "min_quote_amount_out": 206386086,
+      "user_base_token_reserves": 4913954445609,
+      "user_quote_token_reserves": 0,
+      "pool_base_token_reserves": 570761464065428,
+      "pool_quote_token_reserves": 13365531110,
+      "quote_amount_out": 264175241,
+      "lp_fee_basis_points": 2,
+      "lp_fee": 52836,
+      "protocol_fee_basis_points": 93,
+      "protocol_fee": 2456830,
+      "quote_amount_out_without_lp_fee": 264122405,
+      "user_quote_amount_out": 260873049,
+      "pool": "HsMaMQeoXD8kL9enArPpNihRV8bVDRJ4vdSnUY3fs143",
+      "user": "JD97GumBpsNAVMGbpJgBbWeyA1wJjmjFCwJ6RGqHYyGf",
+      "user_base_token_account": "J3c25HX5TY2oFhKTS5rDRNF9svAMz2hfjdxSYsYz7Be5",
+      "user_quote_token_account": "7KBC2Aj24nmD9RsGm4oWT8sU9kjkc4pu5nUkufTrqreT",
+      "protocol_fee_recipient": "JCRGumoE9Qi5BBgULTgdgTLjSgkCMSbF62ZZfGs84JeU",
+      "protocol_fee_recipient_token_account": "DWpvfqzGWuVy9jVSKSShdM2733nrEsnnhsUStYbkj6Nn",
+      "coin_creator": "J6jcfm6vBsSQKnX2wXLZxyJeLcxqwkU72MmU7TRAMXj3",
+      "coin_creator_fee_basis_points": 30,
+      "coin_creator_fee": 792526,
+      "cashback_fee_basis_points": 0,
+      "cashback": 0,
+      "buyback_fee_basis_points": 5000,
+      "buyback_fee": 1228415,
+      "virtual_quote_reserves": 17582902421,
+      "can_boost": true,
+      "base_supply": 944288664264052,
+      "holder_rewards_bps": 0,
+      "holder_rewards": 0,
+      "creator_fee_unclaimed": 1504709
+    },
+    "schema_complete": true,
+    "schema_file": "pump_amm_sdk_2_1_0.json"
+  }
+}

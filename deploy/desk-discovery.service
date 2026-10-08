@@ -1,0 +1,20 @@
+[Unit]
+Description=Solana desk bounded launch sample
+After=network-online.target
+Wants=network-online.target
+[Service]
+Type=oneshot
+User=solana-desk
+Group=solana-desk
+WorkingDirectory=/opt/solana-desk
+LoadCredential=provider-keys.json:/etc/solana-desk/provider-keys.json
+ExecStart=/opt/solana-desk/.venv/bin/python -m desk --secrets-file %d/provider-keys.json record --address TSLvdd1pWpHVjahSpsvCXUbgwsL3JAcvokwaKt1eokM --db /var/lib/solana-desk/launches.sqlite --seconds 20 --max-records 5 --max-bytes 200000
+UMask=0077
+NoNewPrivileges=true
+PrivateTmp=true
+ProtectSystem=strict
+ProtectHome=true
+ReadWritePaths=/var/lib/solana-desk
+RestrictAddressFamilies=AF_INET AF_INET6 AF_UNIX
+TimeoutStartSec=60
+MemoryMax=256M

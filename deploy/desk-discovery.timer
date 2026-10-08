@@ -1,0 +1,8 @@
+[Unit]
+Description=Sample Solana launches every 15 minutes
+[Timer]
+OnBootSec=2min
+OnUnitActiveSec=15min
+Unit=desk-discovery.service
+[Install]
+WantedBy=timers.target

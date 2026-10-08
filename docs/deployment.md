@@ -1,0 +1,326 @@
+# Deployment verification — 8 October 2026 (Korea time)
+
+Installed on the user-provided VPS at /opt/solana-desk with a dedicated unprivileged solana-desk service account. Ubuntu 24.04 / Python 3.12. Source remains root-owned. Runtime data is in /var/lib/solana-desk; provider credentials are root-only at /etc/solana-desk/provider-keys.json, loaded by systemd credentials. No inbound application port was opened.
+
+## Verified
+
+- 43 tests passed locally and on the VPS.
+- Helius authenticated capture: 1,000 transactions, approximately 19 MB payload, slots 454313568–454313572. This is a bounded sample, not complete launch history.
+- Jupiter authenticated Swap V2 build: unsigned SOL-to-USDC route for 10,000,000 input lamports. Used a disposable unfunded public address; no signing or submission occurred. This verifies connectivity, not token sellability.
+- Offline synthetic replay hash: 79b972bf97cd22a7a8dd99b3b475e139ea04cfe237f6dfc6a59199438cdc2982.
+- Installed implementation hash: 2a5db69c1f02322ce17adb24d264041cd4e7fa429519180918d4e6d06ec5fb45.
+
+## Runtime state
+
+The desk-recorder.service is a bounded oneshot. It completed successfully and is inactive, with no timer or continuous trading process. Broad program capture reached 1,000 records within seconds. Narrow filters, credit budgets and retention must be implemented before continuous capture. API plan membership for Jupiter was not independently inspected; successful authentication is verified.
+
+Inspect with `systemctl status desk-recorder.service` and `journalctl -u desk-recorder.service`. A manually requested additional bounded sample can be collected with `systemctl start desk-recorder.service` (uses provider credits). Earlier logs include a fixed credential-permission failure; the latest run succeeded.
+
+## Remaining implementation
+
+Real transaction decoders, point-in-time launch/funding/holder evidence, multi-hop bundle tracing, pool and liquidity verification, actual sell simulation and instruction validation, and a continuous supervised paper scheduler are not complete. Existing security rules operate on normalized evidence. They must not be represented as a validated live scam detector. No live signer exists.
+
+Provider secrets and raw captures are excluded from the source deliverable. No wallet seed or private key is required for this milestone. Off-server backups and independent RPC comparison remain to be configured.
+
+## Decoder milestone
+
+The generic parsed-transaction observation decoder is now installed; 52 tests pass locally and remotely. All 1,000 recorded transactions decoded without quarantine: 2,955 explicit transfers and 9,421 balance records. There were no mint initializations; 99 transactions had one-sided token balances, retained as unknown deltas. All 1,000 include program-specific instructions not yet decoded.
+
+Observations: /var/lib/solana-desk/decoded-v2.jsonl. Summary: /var/lib/solana-desk/decoder-report.json. No additional provider calls were needed. Collection and trading remain inactive. The earlier implementation hash identifies the previous milestone; new code requires a new replay experiment database. The synthetic replay hash above remains historical verification, not a claim about current implementation identity.
+
+## Research dashboard and autonomous build milestone
+
+The loopback-only desk-dashboard.service is enabled on port 8765. Access from the configured Mac through the SSH tunnel at http://127.0.0.1:8765; the included Open Solana Desk.command recreates a disconnected tunnel. Investigations are persistent and capped at 10 per rolling day, with an 18-RPC request ceiling per scan plus up to 3 Jupiter quote requests. No scan is a trading approval.
+
+The desk-discovery.timer samples launches every 15 minutes with a 20-second / 5-record / 200-KB target. A received frame can exceed the byte target. The source filter is Pump's mint-authority PDA, derived from the official pinned create instruction schema. The initial launch trial captured 20 transactions in 586,178 payload bytes. Periodic sampling is incomplete launch coverage. Stop collection with `systemctl stop desk-discovery.timer desk-discovery.service`; stop the UI with `systemctl stop desk-dashboard`. These commands do not change stored evidence.
+
+An actual unsigned mainnet sell diagnostic succeeded for a representative public holder. No private key, signature or broadcast was used. This does not approve the user's wallet or satisfy the full transaction-effect policy. Schemas and data provenance are pinned in desk/schemas/manifest.json. Unknown appended event bytes are explicitly flagged.
+
+The current suite contains 114 passing tests locally and on the VPS. The app has a five-minute recovery continuation named Finish Solana paper trading desk; productive turns continue without waiting for that interval. Its scope is the outstanding checklist in readiness.md; it must stop short of real trading or paid upgrades and must not claim completion before end-to-end paper readiness is verified.
+
+
+## Account controls and capability inventory milestone
+
+Atomic simulation balance checks now require exact raw input debit, no unrelated token loss, positive net SOL proceeds and the route minimum after accounting for fees and rent. Returned account states are inspected across all transaction keys (maximum 64) for token delegation, freezing, owner changes, external close authority and payer control changes. An unsigned mainnet public-holder sell passed these checks; no transaction was signed or submitted. Full instruction policy and hypothetical pre-buy inventory simulation remain unfinished.
+
+Token-2022 extension names are pinned to official source commit d9ffb9787187b6bc29adda1a6b389b9931377e03. The diagnostic identifies relevant capabilities, duplicate/truncated/unknown extensions and invalid account type/padding. It does not approve extension payload semantics. All Token-2022 remains excluded. A mainnet mint returned MetadataPointer and TokenMetadata only and was still excluded.
+
+Holder enumeration, pool verification and simulation checks are recorded in readiness.md. Earlier sections above are historical checkpoints, not current test counts or complete feature descriptions.
+
+
+## History evidence and recovery milestone
+
+The suite now has 143 passing tests locally and on the VPS. The dashboard persists compressed raw history pages by SHA-256 in /var/lib/solana-desk/evidence.sqlite, capped at 256 MB. Coverage reports reference these hashes and flag pagination, duplication, time and decoding anomalies. Storage exhaustion leaves history unavailable and blocks eligibility. Backfill pages and cursors commit atomically. Raw observation identity conflicts raise errors instead of silently discarding changed payloads.
+
+A full live investigation saved and replayed two pages in six RPC calls and correctly returned SKIP with a high round-trip-cost finding. Simulation results now include explicit freshness, and the 50,000-lamport fee cap matches the current paper fee allowance. Paper exits require current exact-size sellability proof; missing proof records a blocked exit and leaves inventory/cash unchanged.
+
+Recovery checkpoint: /var/backups/solana-desk/20261007T203902Z contains consistent research, launch and raw-capture SQLite snapshots plus a checksum manifest. A verified off-server copy is in work/backups/20261007T203902Z in this chat workspace. A local restore recovered five investigations. Secrets are excluded. This is a verified manual checkpoint, not a scheduled backup/rotation service.
+
+Creation-anchor module deployed: finalized mainnet creation validated against instruction/event/mint initialization and PDAs. The sampled one-minute range reached 100 records, so overall range completeness stayed false despite the verified birth anchor. Launch, transfer and funding completeness remain separate gates.
+
+Exit-control and pool-layout regression milestone: 143 tests passed locally and remotely; dashboard/discovery timer active after deployment. Existing experiment databases remain historical because code fingerprints changed.
+
+
+## Instruction policy and scheduled recovery checkpoint
+
+370 tests pass locally and on the VPS. The dashboard and discovery timer remain private and active. New instruction inventory, pinned Jupiter V2 arguments and outer setup/cleanup checks still do not grant trading approval. The captured mainnet multihop route is explicitly outside the direct PumpSwap profile; no new network scan was needed for these regression tests.
+
+Jupiter interface provenance is in desk/schemas/jupiter_manifest.json. It records finalized program-owned IDL account C88XWfp26heEmDkmfSzeXP7Fd7GQJ2j9dDTUsyiZbUTa at slot 454337229 and the pinned digest. An interface schema does not prove deployed program behavior or complete recipient safety.
+
+The enabled desk-backup.timer runs daily around 03:30 UTC with up to five minutes jitter. It invokes desk-backup.service without credentials or network access and saves research.sqlite, launches.sqlite, raw.sqlite and evidence.sqlite under /var/backups/solana-desk/daily. Seven complete daily sets are retained; manual checkpoints are untouched. Each database is consistent independently. The initial verified service run produced daily-20261007T211406Z. Read status with systemctl status desk-backup.timer and journalctl -u desk-backup.service. Stop future backups with systemctl stop desk-backup.timer.
+
+The initial trial exposed a read-only WAL shared-memory lock restriction. The corrected service allows the data directory for SQLite lock maintenance, while source database connections remain mode=ro. Each snapshot now has a 30-second timeout, and errors leave earlier published backups intact. Interrupted hidden .daily-* staging directories are never treated as complete backups and may be removed after checking that the backup service is inactive. Automatic off-server replication is not yet configured.
+
+
+## Sequential simulation capability
+
+Helius simulateBundle is now in the read-only RPC allowlist. The sequence adapter only accepts null signatures and sends skipSigVerify=true; it cannot broadcast. A bounded mainnet capability probe verified dependent two-transaction state, with the second leg failing in isolation and the target account remaining absent on-chain. The capture is /var/lib/solana-desk/sequence-verification.json and fixtures/mainnet-sequence-simulation.json. No subscription change or wallet key was needed. This is not yet a token round-trip validation or entry approval.
+
+The Rust RPC definition uses simulationBank={"commitment":{"commitment":"confirmed"}}. The older TypeScript definition's string form was rejected with invalid params; the correct structured request passed. Sources: https://github.com/jito-foundation/jito-solana/blob/master/rpc-client-api/src/bundles.rs and https://github.com/jito-labs/jito-ts/blob/master/src/sdk/rpc/connection.ts. The adapter checks complete per-leg account snapshots, continuity, failures, freshness and null signatures. Next work is binding actual buy/sell instructions and their effects into the required policy.
+
+
+## Buy/partial-sell sequence checkpoint
+
+370 tests pass locally and on the VPS. The new desk.roundtrip.simulate_roundtrip function uses the existing credentials and null signatures to simulate a SOL buy followed by a sell of the guaranteed minimum quantity. Its return includes leftover token inventory and net native wealth change; neither is presented as a completed paper trade. The shared compiler is also used by the existing sell diagnostic. Jupiter sequence routes request maxAccounts=32 and forJitoBundle=true, documented at https://developers.jup.ag/docs/swap/build. Oversized routes fail before simulation rather than expanding the 64-account inspection budget.
+
+A mainnet MET diagnostic at slot 454342071 passed exact SOL debit, minimum token credit, exact sell debit, minimum net sale proceeds and account-control checks across the shared state. It spent 10,000,000 lamports, received 2,548,941 raw tokens and sold 2,523,452. The remaining 25,489 tokens were explicitly retained in simulated inventory; net native wealth changed by -143,010 lamports including reported network fees. Capture: /var/lib/solana-desk/roundtrip-verification.json and fixtures/mainnet-roundtrip-simulation.json. Full instruction policy and entry eligibility remain false. No funds moved on-chain.
+
+The successful four-database daily snapshot was copied to work/backups/daily-20261007T211406Z on the Mac, and all checksums and SQLite integrity checks passed. This copy was manual; automatic off-server replication remains unfinished.
+
+
+## Observed distribution checkpoint
+
+The dashboard's saved live investigation report now includes distribution_trace when a verified original launch anchor is present. It uses existing collected history and current holder accounts, adds no RPC calls, and preserves all scan limits. Same-transaction owner resolution rejects ambiguous token-account identities; exact verified vault accounts are excluded. Three-hop potential paths, split-transfer materiality and current reached holdings are reported as review evidence, never as proof of shared ownership or a safety pass. Cross-transaction order within the same slot stays unknown. Public fixture: fixtures/mainnet-distribution.json. The suite passes 370 tests locally and on the VPS; dashboard, discovery and backup services remain active. Complete funding/service labels and whole-token distribution coverage remain unfinished.
+
+
+## Historical accounts and evidence boundary checkpoint
+
+370 tests pass locally and remotely. Mint history now explicitly uses tokenAccounts=none; funding history keeps balanceChanged. The decoder records initializeAccount, initializeAccount2 and initializeAccount3, plus undecoded-token-instruction gaps. historical_token_accounts in new reports describes the historical account frontier, including emptied/closed accounts, but transfer_history_complete and trading eligibility remain false. Reference: https://www.helius.dev/docs/rpc/gettransactionsforaddress (historical/closed token account caveat and mint creation queries). No scan budget or network exposure changed.
+
+The engine now explicitly rejects real-data entry events until the trusted live adapter is finished. Setting completeness or successful-simulation booleans in JSON cannot unlock entries. Synthetic experiments remain available. Raw-event insertion also detects concurrent identity conflicts after an ignored duplicate insert. New code fingerprints require a new experiment database; existing historical experiments are preserved.
+
+
+Per-account history checkpoint: after a verified historical-account inventory, live investigations query at most two account histories (one page each), using tokenAccounts=none within the unchanged 18-RPC ceiling. Query hashes, exhausted ranges, unqueried accounts, conflicts and discovered missing endpoints remain explicit. Overlapping transactions are deduplicated; conflicting payloads are quarantined. No account-query result alone grants complete transfer history or entry eligibility.
+
+The decoder now records mint, burn and token-account closure instructions. Per-transaction raw balance reconciliation accounts for transfers, supply changes and witnessed account creation/closure. Replaying the saved 200-transaction sample produced 201 passing non-native token/mint checks without new provider calls. Wrapped SOL requires separate lamport/rent accounting and is explicitly unsupported by this token-movement checker. The normalized bundle audit also waits until aggregated split transfers reach the materiality floor before advancing a path. All 370 tests pass locally and on the VPS.
+
+
+Schema provenance check at finalized slot 454346803: program-owned Pump and PumpSwap Anchor IDL accounts were read and owner/address/checksum validated. Pump TradeEvent matches the pinned repository layout; PumpSwap's on-chain IDL has fewer instructions and omits the newer repository pool/fee fields. Neither explains the unknown bytes, so no layout restriction was relaxed and the pinned runtime schemas remain unchanged. Verification metadata is /var/lib/solana-desk/pump-idl-verification.json; local analysis copies are under work/. An on-chain IDL can lag the deployed interface and is not sufficient by itself to approve unknown account bytes.
+
+
+Single-bank holder snapshot checkpoint: missing/null delegated amounts no longer become zero, and indexed coverage explicitly reports snapshot_atomic=false. For a verified legacy holder enumeration of at most 99 accounts, the scanner reads the mint plus every account together in one getMultipleAccounts request. It checks current supply, amounts, owners, initialized/frozen state, delegated amounts and delegate presence, with bounded slot drift. Missing or changed records block verification. Larger sets remain unverified rather than being split into falsely atomic pages. The unchanged 18-RPC ceiling applies; unsupported token policies do not spend an extra snapshot call.
+
+Mainnet verification at slot 454347831 matched all 17 accounts for mint 7aN1pJGiMM93gjYgCqn9ReyexzzLLrFVotUcJG62JrbC and reconciled exactly 800017057543498 raw units to mint supply. No delegates were present. The public capture is fixtures/mainnet-holder-snapshot.json and /var/lib/solana-desk/holder-snapshot-verification.json. This verifies current holdings, not historical distribution coverage or token safety. All 370 tests pass locally and remotely.
+
+
+Account-lifetime continuity checkpoint: account-history collection now checks each observed account from initialization through closure/recreation, requiring previous post-balances to match subsequent pre-balances and preserving owner/program identity while open. Individually reconciled transfers cannot hide a balance gap. Separate transactions touching an account in the same slot remain unordered; signatures are never used as chain-order evidence. These checks grant neither history completeness nor trading eligibility. Replaying the existing 200-transaction evidence sample used no new provider calls: the primary mint still has unresolved same-slot ordering, while other incomplete histories explicitly lack birth or identity evidence. Eleven new regression cases cover missing activity, closure/recreation, ownership changes, failed transactions and ambiguous ordering. All 370 tests pass locally and on the VPS. Full live entry remains blocked pending the remaining readiness gates.
+
+
+Finalized transaction ordering: for ambiguous account histories, at most two getBlock requests retrieve signature-only finalized blocks within the existing 18-RPC investigation ceiling. History signatures and chain timestamps must match the block, and raw block evidence must be persisted before order is used. Missing blocks, conflicts and additional slots stay unknown. Mainnet probes verified ordering at slots 454310062 and 454310071; the broader saved history still exceeds the two-block budget and remains incomplete. A public finalized-block regression fixture is included. No entry gate was relaxed. Official RPC reference: https://solana.com/docs/rpc/http/getblock. All 370 tests pass locally and on the VPS.
+
+
+Distribution ordering checkpoint: observed transfer paths now consume the persisted finalized-block positions already collected for account history, with no extra RPC calls. A same-slot relay advances only after its incoming material transfer; split sends use the transaction in which the cumulative threshold is reached. Without a verified order, the path remains unknown. The graph also revisits a wallet when a later-discovered indirect path arrives earlier than its direct path, preserving the three-hop limit and preventing that earlier relay from being missed. Four new attack/regression cases cover these behaviors. All 370 tests pass locally and remotely. These are observed paths, not proof of common ownership or complete bundle exposure.
+
+
+Simulation consistency checkpoint: returned post-account lamports must agree with postBalances, and each postTokenBalances record must agree with account bytes for amount, mint, token owner, program and non-executable state. Wallet token accounts missing from metadata cannot pass control checks; closed accounts cannot retain token metadata. Both standalone sells and sequential buy/sell diagnostics now recheck the target mint policy after execution, including mint/freeze authority, program and layout. Saved mainnet roundtrip legs still pass these stricter checks. Eight new regressions reject altered state/metadata and a newly introduced mint authority. All 370 tests pass locally and on the VPS. This closes an evidence-consistency gap but does not complete inner instruction/recipient policy or enable entries.
+
+
+Holder evidence persistence checkpoint: current holder coverage cannot be promoted to verified unless its full getMultipleAccounts request/response is saved and the returned content hash matches. The live scanner uses the existing bounded evidence store; failure or lack of persistence leaves FULL_HOLDER_COVERAGE unresolved. Reports label the source and slot of holder percentages, including shared-funding candidates, early cohorts and distribution paths. The dashboard distinguishes a persisted single-bank snapshot from provisional indexed/largest-account data. Five new tests cover missing persistence, hash mismatch, raw replay and full scanner integration with the public holder fixture. All 370 tests pass locally and on the VPS. No new provider calls or trading approvals were added.
+
+
+Atomic pool snapshot checkpoint: the existing second pool RPC now reads the pool itself alongside both vaults and the LP mint. Changed discovery/second-read pool bytes, incomplete batches, duplicate identities and backward/excessively shifted slots cannot establish liquidity approval. The raw request/response and discovery record are persisted and checksum-linked; live vault exclusions require persisted identity evidence. This adds one account to the existing batch without increasing calls. A two-call mainnet probe at slot 454353707 verified the atomic pool identities but still rejected liquidity approval for unsupported vault extensions, unknown pool layout bytes and virtual reserves. Public replay fixture: fixtures/mainnet-pool-snapshot.json. Six new tests cover atomic membership, changes, missing persistence, slot regression, truncation and mainnet replay. All 370 tests pass locally and on the VPS. Full paper readiness remains incomplete.
+
+
+Paper-ledger visibility checkpoint: the loopback dashboard now has a read-only Paper portfolio panel and /api/paper endpoint. It reads only /var/lib/solana-desk/active-paper.sqlite, never creates or seeds it, and reads positions, state, config identity and the latest 50 outcomes in one SQLite read transaction. Missing, empty and unreadable ledgers are distinct from zero balances. Stale/future marks or blocked exits withhold aggregate equity and unrealized PnL; synthetic provenance remains visible. Automatic entry stays disabled and runner status is explicitly NOT_CONNECTED until the trusted driver is implemented. Eight new tests cover persistence/reopen, blocked exits, stale/future marks, missing/corrupt ledgers and read-only behavior. All 370 tests pass locally and on the VPS; JavaScript syntax checks pass. The deployed browser panel was inspected and correctly shows no active paper experiment. This panel is supporting work, not end-to-end paper readiness.
+
+
+Fragmented distribution checkpoint: both observed live tracing and normalized bundle screening now flag aggregate material outflows spread across multiple recipients whose individual transfers remain below the 0.5% floor. This prevents pair-wise thresholds alone from silently ignoring a material fanout. Only post-acquisition activity is counted; verified vault/service edges and aggregate dust are excluded. The finding is FRAGMENTED_DISTRIBUTION_REQUIRES_REVIEW, not a claim of common control. The normalized audit also revisits an earlier indirect arrival within its three-hop budget, matching the observed tracer's behavior. Six new regressions cover fanout, dust, timing, service exclusion and indirect arrival. All 370 tests pass locally and on the VPS. These heuristic flags can have false positives and do not establish complete rug detection.
+
+
+Gross sell-debit checkpoint: normalized outer/CPI inventory now retains account bindings and instruction bytes for further policy checks. Standalone sell diagnostics inspect gross debits from pre-existing wallet token accounts, require exact input from the expected holding, and reject unrelated gross token withdrawals even when refunded. Wallet native debits are restricted to bounded creation of its WSOL ATA with the expected owner/layout; direct native transfers and external rent recipients fail. This remains a partial policy: exact rent, AMM recipients and full route approval are unfinished. Offline replay of the public mainnet sell fixture matched 2,652,954 raw input and 1,488,440 setup lamports but remains unapproved because its broader route inventory is unsupported. Nine new tests cover excess debit/refund, unrelated-token cycling, wrong authority, extra signer accounts, native diversion, rent destination/budget and mainnet replay. All 370 tests pass locally and on the VPS. No new provider calls were needed.
+
+
+Exact sell-setup rent checkpoint: when a simulated sell creates the wallet's WSOL ATA, its creation debit must match getMinimumBalanceForRentExemption for 165 bytes, not merely fit the earlier maximum budget. Missing quotes, mismatches and repeated creations remain unapproved. The optional lookup is inside the existing 18-RPC scan ceiling and overall ten-second simulation freshness window; its response is included with captured simulation evidence. An independent mainnet lookup returned 1,488,440 lamports, consistent with the older public sell capture, but does not make that older simulation fresh. Metadata: /var/lib/solana-desk/rent-verification.json. Official RPC reference: https://solana.com/docs/rpc/http/getminimumbalanceforrentexemption. Three new regressions cover hidden extra rent, missing evidence and repeated creation. All 370 tests pass locally and on the VPS. Complete AMM recipient policy and paper integration remain unfinished.
+
+
+PumpSwap sell binding checkpoint: a narrow decoder uses the pinned sell schema to bind one exact-layout instruction to the persisted pool identity, user, source/destination token accounts, pool vaults, token programs, fixed program IDs, creator vault, fee-config PDA and protocol-fee ATA. It enforces exact input, minimum output and pool freshness/control evidence. Fee-recipient membership in the global configuration and full CPI policy remain explicitly unverified; passing these component bindings cannot approve a route. Ten new tests cover substitutions, stale/unapproved pools, amounts, extra bytes, duplicate sells and simulation capture.
+
+Live standalone sell investigations now persist raw simulation results, null-signature transaction bytes, instruction keys, quote minimum and rent lookup through the existing evidence store. Missing or mismatched persistence cannot resolve the sell-simulation evidence gate. Newly added gross-debit and AMM reasons are surfaced in the scan report. No extra RPC calls were introduced for these bindings. All 370 tests pass locally and on the VPS.
+
+
+Global fee-recipient checkpoint: the pinned create_config PDA and GlobalConfig account schema now decode the program-owned configuration with exact-length/type checks. Mainnet finalized slot 454360272 matched all current pinned fields. The pool's existing atomic batch now includes this configuration as a fifth account, with no additional RPC per pool verification. Refreshed mainnet pool snapshot at slot 454360444 still rejects unsupported vault/pool extensions and virtual reserves.
+
+Sell bindings require the named standard protocol-fee recipient to belong to the same-bank configuration, with sell enabled, complete schema and the non-mayhem profile. A correctly derived ATA alone cannot authorize an arbitrary fee recipient. Actual charged fee amounts, buyback/creator-tier behavior and complete CPI policy remain unfinished; full_route_policy_passed stays false. Nine new tests cover public configuration replay, malformed/unknown layouts, fee bounds, unlisted recipients, disabled sells, wrong context and unsupported mayhem mode. All 370 tests pass locally and on the VPS. Public fixtures include mainnet-fee-config.json and the refreshed mainnet-pool-snapshot.json.
+
+
+CPI caller checkpoint: instruction inventory now retains stack height, parent instruction and parent program for each inner call. Missing/invalid heights and jumps over an unobserved caller prevent verification; returning to a shallower sibling correctly resets ancestry. The narrow PumpSwap sell binding requires a depth-two call directly beneath Jupiter. Four new regressions cover nested/sibling ancestry, absent metadata, impossible jumps and wrong AMM callers. The saved mainnet simulation retains valid stack metadata but remains outside the supported route profile. All 370 tests pass locally and on the VPS. This provides the call context needed for remaining per-transfer recipient/fee validation; it does not approve the full transaction.
+
+
+AMM token-recipient checkpoint: after verified narrow sell bindings, token transfers must be direct children of that PumpSwap sell. Input moves only from the expected user holding to the base vault; quote transfers move only from the quote vault to the user's WSOL account or bound protocol/creator fee accounts, with the expected authorities and checked-transfer mints. Input sums and minimum user output are enforced. Recipient role aliases, external destinations and transfers under another caller are rejected. Protocol and creator fees are counted separately from proceeds, but fee_amounts_verified and full_route_policy_passed remain false until exact fee schedules and complete instruction policy are implemented. Eight new attack/regression tests pass. All 370 tests pass locally and on the VPS; no provider calls or entry permissions were added.
+
+
+Dynamic fee research/parser checkpoint: the official fee-program IDL is pinned separately by commit and checksum, leaving trade-event schemas unchanged. The new parser validates owner, discriminator, PDA bump, tier ordering, rates and exact data consumption. Integer-only standard-SOL tier selection is implemented and tested, but is not connected to fee approval. At finalized slot 454363800, the live fee account decoded 25 tiers and retained unknown trailing bytes; configuration_complete remains false. Public capture: fixtures/mainnet-dynamic-fees.json. Seven new tests cover the live rejection, synthetic exact-layout decoding, tier boundaries, noncanonical flat fees, unsupported virtual reserves, truncation and large-number precision. All 370 tests pass locally and on the VPS.
+
+Official sources reviewed: https://github.com/pump-fun/pump-public-docs/blob/cb188ce08b5069196eef1f3e4a0c43b70099793b/docs/FEE_PROGRAM_README.md and https://github.com/pump-fun/pump-public-docs/blob/cb188ce08b5069196eef1f3e4a0c43b70099793b/docs/BREAKING_FEE_RECIPIENT.md. The latter documents additional trailing fee-recipient accounts beyond the base sell IDL. The current narrow exact-account profile intentionally rejects those variants until their pool-v2/recipient roles and complete fee behavior are verified. Slippage limits were not increased.
+
+
+## Versioned fee and pool layout checkpoint
+
+The official @pump-fun/pump-swap-sdk 2.1.0 package (git 0bc59090bbd0b8d6c27b8df72d52e30bfc069c3b) documents allocation-length gates for FeeConfig: 2512, 4073 and 4097 bytes. Its registry SHA-512 integrity was checked before source inspection; no package installation or scripts were executed. Provenance and source/schema checksums are pinned in desk/schemas/fee_sdk_manifest.json. The parser now reads only the fields present in the selected version and recognizes zero unused capacity. Unknown allocations and nonzero reserved bytes still block approval, a deliberately narrower policy than the SDK. This supersedes the earlier unknown-suffix diagnosis: the public 4097-byte capture has 2097 active bytes and 2000 zero reserved bytes, and now decodes completely. Decoding does not establish exact charged fees.
+
+The SDK Pool schema adds protocol_fees and creator_fees. Both are now decoded; nonzero accrued fees block liquidity approval until reserve availability and swap accounting explicitly handle them. The parser recognizes the observed 300/301-byte zero-capacity profiles, while unknown/nonzero suffixes remain blocked. Existing trade-event schemas and the instruction allowlist were not expanded.
+
+The pool's atomic batch now reads seven accounts: both vaults, LP mint, pool, global configuration, dynamic fee configuration and base mint. Supply, token authorities and fee tiers therefore share the reserve snapshot slot. Invalid token policy, missing fee state or malformed schedules cannot approve liquidity. No additional RPC calls were added. A two-call mainnet probe at slot 454366117 persisted the complete snapshot and verified identity, while correctly rejecting Token-2022 vault extensions and virtual reserves. Public fixture: fixtures/mainnet-pool-fee-snapshot.json; earlier captures are preserved.
+
+All 380 tests pass locally and on the VPS. New regressions cover allocation versions, stale/unknown capacity, vector overruns, new accrued pool fees, atomic fee/mint membership, authority changes and missing fee accounts. Dashboard, bounded discovery timer and backup timer remain active. Full fee/CPI policy, trusted live features and the continuous paper driver remain incomplete; no automatic entries or real transactions are enabled.
+
+
+Standard sell trailing-account checkpoint: the pinned SDK's non-cashback sell profile now binds the optional creator pool-v2 PDA and mandatory buyback wallet/WSOL ATA. The buyback wallet must belong to the same-bank global configuration; substituted ATAs, unlisted recipients, unsupported cashback account lists and unknown reward profiles fail. Token-recipient checks separately account for buyback fees and reject aliases with user proceeds or other fee roles. Pool evidence now exposes reward flags and creator overrides, and unsupported nonzero settings explicitly block liquidity approval. Legacy base-account bindings remain diagnostics, never full transaction authorization.
+
+All 387 tests pass locally and remotely. Full_route_policy_passed and fee_amounts_verified remain false: exact rates/rounding, full CPI behavior and live paper integration are still required. Services remain active and /api/paper continues to report NOT_CONFIGURED / NOT_CONNECTED with automatic_entry_enabled=false. No active paper ledger was created or synthetic result presented as a live result. SDK provenance: https://registry.npmjs.org/@pump-fun/pump-swap-sdk/2.1.0 (source archive and checksums recorded in fee_sdk_manifest.json).
+
+
+## Standard sell aggregate-fee checkpoint
+
+The standalone unsigned sell diagnostic now computes standard legacy-SOL output and separately rounded LP, creator and combined protocol fees with integer arithmetic, following SDK 2.1.0 sellBaseInput/util.fee. It compares actual recipient totals against that calculation. The simulated vault pre-balances must match the persisted atomic pool snapshot, and returned dynamic/global fee configurations and mint supply must still match. Missing states, duplicate balance indices, changed reserves/supply/configuration, failed simulations, special reward/creator-override profiles, accrued fee buckets and mismatched proceeds block the component. It introduces no provider calls.
+
+The protocol/buyback subdivision is intentionally still unverified: matching combined fees does not prove correct split rounding or full CPI behavior. Both fee_amounts_verified and full_route_policy_passed remain false. These checks have synthetic adversarial coverage; no supported live PumpSwap sell has yet passed the complete policy. The older captured MET route remains outside the supported profile. Eleven tests cover exact rounding, dust, absent creator, large integers, diverted fees, underpayment, changed/missing/duplicate state and failed simulations. All 398 tests pass locally and on the VPS. Dashboard, discovery and backups remain active; continuous paper trading readiness is still incomplete.
+
+Source provenance remains the integrity-verified SDK archive identified in desk/schemas/fee_sdk_manifest.json. Its sell source computes user proceeds after LP/protocol/creator fees; its v2 documentation describes buyback as a slice of protocol fees. No undocumented split formula was inferred for approval. Official trailing-account reference: https://github.com/pump-fun/pump-public-docs/blob/cb188ce08b5069196eef1f3e4a0c43b70099793b/docs/BREAKING_FEE_RECIPIENT.md.
+
+
+## Paper outage watchdog checkpoint
+
+A local clock event now expires stale paper-position marks even when no new market event arrives. It preserves quantity, cash, cost basis, PnL and the daily loss baseline; marks become STALE, exits remain unverified and RUNNING switches to EXIT_ONLY. Existing stronger exit-block reasons are retained. No price, quote or sell fill is synthesized. A RESUME command cannot bypass unresolved positions. Clock messages cannot carry market assertions.
+
+The paper-monitor CLI opens only an existing ledger and preserves implementation/config fingerprint checks. Missing ledgers remain absent; empty/no-change ledgers do not get clock events. Seven tests cover TTL boundaries, outages across midnight, durable restart, repeat ticks, configuration-change rollback, clock regression, missing ledgers and invalid assertions. All 405 tests pass locally and on the VPS.
+
+The unprivileged desk-paper-monitor.timer is installed at five-second intervals. Its service has no network access or provider credentials, writes only the data directory, is bounded to 25 seconds/128 MB and is conditioned on /var/lib/solana-desk/active-paper.sqlite existing. That ledger does not yet exist: systemd correctly skips the service, and no synthetic ledger was seeded. The timer is only a mark watchdog, not the unfinished automatic entry/exit driver. Dashboard runner_status remains NOT_CONNECTED. Before activating a real-data paper experiment, complete the live adapter, full transaction policy, cost accounting and inclusion of its ledger in backups. Future code/config changes require a separate experiment, preserving the old ledger.
+
+Operations: inspect systemctl status desk-paper-monitor.timer and systemctl show desk-paper-monitor.service -p ConditionResult -p Result. Stop the timer with systemctl stop desk-paper-monitor.timer if needed. Repeated ticks make no provider requests and create no ledger events once all stale positions are already marked.
+
+
+## Paper-ledger backup and restart checkpoint
+
+Daily backups now include active-paper.sqlite whenever it exists. Its absence is explicitly recorded as not_configured in the manifest; no paper DB is created by backup. Broken symlinks are rejected, and paper-ledger appearance/disappearance during capture aborts publication. Retention recognizes both historical four-database sets and five-database sets with the paper ledger. Snapshot consistency remains per database, not atomic across all databases.
+
+A synthetic paper entry followed by watchdog expiry was backed up, hash/integrity verified, restored to a separate file and reopened through the monitor/ledger. Cash, quantities, PnL, outcomes, replay hash and EXIT_ONLY state survived unchanged; restart created no sell fill. Five new tests also cover optional absence, symlink rejection, retention and membership races. All 410 tests pass locally and on the VPS.
+
+The deployed backup service completed successfully at daily-20261007T232444Z. Its four current databases were copied off-server into work/backups/daily-20261007T232444Z and independently hash/SQLite-integrity checked. The manifest correctly records paper_ledger=not_configured. Automatic off-server replication remains unfinished; this was a manual verified checkpoint. No active paper experiment exists, and this restore test is synthetic operational validation, not live trading or profitability evidence.
+
+
+## Pre-buy funding ordering and fragmentation checkpoint
+
+Observed funding no longer uses second-resolution timestamps alone to establish pre-buy order. Only transfers in strictly earlier slots within the bounded one-hour window feed shared-source candidates. Later-slot transfers in the same second are excluded; same-slot transfers are explicitly retained as FUNDING_SAME_SLOT_ORDER_UNVERIFIED and cannot establish attribution. Same-source fragments are aggregated across the observed pre-buy window before applying the one-million-lamport diagnostic threshold. Identical transaction observations are deduplicated and conflicting signatures quarantined. Failed transactions, self-transfers, future timestamps and malformed amounts cannot create an edge.
+
+Every aggregated edge retains individual transfer witnesses, the history-query evidence hash, persistence and query-coverage status. Source classification remains unknown; these links cannot assert a private controller or complete bundle exposure. Reports now distinguish wallets selected from wallets successfully queried. Eight regressions cover timing, ambiguity, fragments, duplicates/conflicts and invalid/failed transfers. All 418 tests pass locally and on the VPS; no additional provider calls were introduced. Full live launch/funding completeness and automatic paper readiness remain unfinished.
+
+
+## Finalized funding-order checkpoint
+
+Funding diagnostics now reuse persisted finalized block-position proofs already collected during account-history verification. A same-slot transfer can be considered pre-buy only when both signatures are present, the block timestamp matches, proof metadata is valid and the transfer precedes every observed buy for that wallet in its earliest slot. Later transfers are excluded; missing/conflicting proof, same-transaction execution order and incomplete earliest-buy positions remain ambiguous. Funding observations and buy anchors must carry finalized-provider provenance. No additional RPC calls are made, and unknown source/service classification remains unknown.
+
+Six new regressions cover earlier/later positions, missing and conflicting proofs, same-transaction ambiguity, nonfinalized observations and multiple earliest-slot buys. All 424 tests pass locally and on the VPS. This improves ordering of bounded observed evidence; it does not establish complete funding history or a verified private controller. Automatic paper entry remains disabled.
+
+
+## Offline sell-evidence reconstruction checkpoint
+
+New standalone sell captures use evidence schema version 2 and retain the complete route, recent blockhash, compiler lookup-table response, holding address and linked pool-snapshot hash alongside null-signature bytes and simulation results. replay-sell reconstructs the unsigned transaction from the saved route and verified lookup accounts, requires exact transaction/key/instruction equality, reloads and re-verifies the raw pool snapshot when referenced, then reruns balance/control/debit/router/envelope/AMM/recipient/aggregate-fee checks. It does not trust a saved summary's passed flags. Missing or changed inputs and dangling pool references fail. Version-1 captures remain preserved but cannot claim complete reconstruction.
+
+The command uses a read-only evidence database and makes no provider calls. Historical replay always returns fresh=false, transaction_policy_ok=false and eligible_for_trading=false. Three new tests cover live-function versus offline-check parity using synthetic RPC responses, altered identities/keys/missing references, and read-only/missing-store behavior. All 427 tests pass locally and on the VPS. The older public mainnet sell fixture lacks full reconstruction inputs and was not relabeled as newly verified. No new mainnet simulation was made for this checkpoint.
+
+Usage: .venv/bin/python -m desk replay-sell --evidence-db /var/lib/solana-desk/evidence.sqlite --hash <saved-version-2-sell-evidence-hash>. This is diagnostic replay, not paper execution. Full live readiness remains incomplete.
+
+
+## Stale-risk baseline and mark-refresh checkpoint
+
+Daily rollover now waits until all open-position marks are current and have no unresolved exit block. A midnight control command cannot reset daily equity/loss baselines from stale or unverified inventory. Empty portfolios roll normally. Market updates now require matching full-position sellability evidence before refreshing an open position's mark, even when no stop/target currently fires; missing evidence preserves the prior mark timestamp/value, marks UNVERIFIED_EXIT and latches EXIT_ONLY. Fresh prices alone cannot conceal an unverified exit.
+
+Three new regressions cover midnight RESUME, missing sellability without an exit trigger, and normal empty-portfolio rollover. All 430 tests pass locally and on the VPS. This is paper-engine safety behavior; the complete live evidence adapter and continuous entry/exit driver remain unfinished. No active paper ledger or real transaction was created.
+
+
+## Fee-query CPI binding checkpoint
+
+Offline inspection of the existing 1,000-record mainnet capture found 502 successful fee-program calls using the 57-byte get_fees_with_quote_mint interface, including 449 directly beneath PumpSwap. No provider requests were needed. One public call is preserved as fixtures/mainnet-fee-call.json at slot 454313568. Its original depth is two (direct AMM outer call), so it remains outside the narrow Jupiter-to-AMM sell profile; tests distinguish its real shape from a synthetic depth-three router context.
+
+The new fee-query check requires exactly one current-layout call, direct parentage beneath the bound AMM sell, the pinned fee-config PDA and PumpSwap program accounts, legacy SOL quote mint and canonical/market-cap arguments matching independently calculated fee evidence. Wrong callers, account substitutions, multiple calls, unknown discriminators, invalid booleans and extra bytes fail. Live diagnostics and offline replay both run it. This does not add the entire fee program to the global instruction allowlist, verify protocol/buyback split rounding or enable full transaction approval.
+
+Seven new regression tests pass. All 437 tests pass locally and on the VPS; services remain active. Full paper readiness is still incomplete.
+
+
+## Sell-event callback checkpoint
+
+The integrity-pinned SDK 2.1.0 schema is now an events-only manifest entry: generic instruction recognition still uses the previous pinned instruction set. Its appended SellEvent.creator_fee_unclaimed field explains the prior partial decodes. Offline replay of the existing 1,000-record mainnet capture decoded all 284 observed successful PumpSwap sell events completely. One is preserved in fixtures/mainnet-sell-event.json. This used no new provider requests.
+
+A narrow callback check now requires one self-CPI event beneath the bound AMM sell, its exact event-authority account and a complete SellEvent layout. It compares pool/user/account identities, reserves, input, output, fees and minimum-output arguments against independently computed/bound data. Unknown bytes, missing current fields, extra callbacks/accounts, wrong callers and unsupported reward/boost/unclaimed-fee behavior fail. Event text cannot substitute for balance evidence or fee policy. Live diagnostics and saved replay both run the check; full_route_policy_passed stays false.
+
+Six new tests distinguish the real event schema from synthetic supported-profile bindings and reject identity, amount, authority, caller and layout changes. The manifest test also verifies that events-only support does not enable sell_v2 instruction recognition. All 443 tests pass locally and on the VPS. Complete fee split/CPI approval and live paper readiness remain unfinished.
+
+
+## Observed protocol/buyback split checkpoint
+
+All 284 decoded sell events in the preserved raw capture matched floor(protocol_fee * buyback_basis_points / 10000). The observed rate was 5000 basis points; 144 fractional cases distinguished floor from ceiling. A narrow diagnostic now checks the observed 50% profile against the same-bank global configuration and exact recipient totals, requiring the standard trailing-buyback account profile. It rejects redistribution between the two recipients even when their combined fee matches. Different rates, stale configuration, absent trailing accounts and unknown amounts remain unsupported.
+
+This is an empirical historical-event check, not independent verification of program internals. fee_amounts_verified and full_route_policy_passed remain false; no entry gate was relaxed. Five new tests cover rounding, same-total diversion, changed configuration, unsupported profiles and zero/even amounts. All 448 tests pass locally and on the VPS. Mainnet capture inspection made no provider requests. Complete CPI policy and trusted live paper integration remain unfinished.
+
+
+## Inner account-setup checkpoint
+
+Sell diagnostics and saved replay now bind non-transfer token/system setup operations to the wallet's single legacy WSOL ATA. Creation must have the wallet payer, expected address, 165-byte size and legacy token-program owner; initialization must have the correct mint/owner. Query-size and immutable-owner operations must reference the expected mint/account. Inner closes, unrelated accounts, wrong callers, repeated operations and incomplete creation/initialization pairs fail. Existing ATAs need no synthetic creation. Exact rent remains checked separately, and this component never grants full transaction approval.
+
+Seven regression tests cover these cases. All 455 tests pass locally and on the VPS. Full instruction coverage, independent complete route validation and live paper integration remain unfinished; no entries were enabled.
+
+
+## Full instruction-role coverage checkpoint
+
+Live sell diagnostics and offline replay now require every outer/CPI instruction to have a checked role: envelope, bound AMM sell, exact event callback, exact fee query, validated token movement or wallet-account setup. Unknown inner router calls, duplicate paths, unresolved instruction flags and missing component checks fail coverage. A fee-program inventory warning can be accounted for only by the exact fee-query check, never by globally allowing that program. Role coverage remains distinct from independent full transaction approval, which is still false.
+
+Five new tests and live/replay parity pass; all 460 tests pass locally and on the VPS. Four services/timers remain active. A bounded follow-up inspected three legacy sell candidates from saved capture, then found seven currently funded public holders for one legacy mint. Two unsigned build attempts for that asset failed with a sanitized provider HTTP error before transaction simulation (three RPCs each, including pool/account checks). A separate SOL/USDC control build succeeded, so there is no demonstrated general credential outage. No new successful mainnet combined-policy simulation or fresh replay was claimed, and no transaction was signed/submitted. The next independent route validation remains outstanding. Probe metadata/scripts are under /var/lib/solana-desk and /opt/solana-desk; secrets were neither printed nor copied into outputs.
+
+
+## Persistent investigation-consumer checkpoint
+
+A bounded reject-only decision consumer now reads terminal investigation rows from the research database through a read-only attachment and records source payload/hash, evaluation time and rejection reasons atomically in paper-decisions.sqlite. Restart does not duplicate decisions, and no rowid watermark skips an earlier job that finishes after later work. Batches are capped at 20 by default (50 maximum), each source report at 2 MB. Failed/interrupted and stale reports retain explicit rejection reasons. Caller-supplied eligible flags cannot authorize trading: LIVE_FEATURE_ADAPTER_NOT_READY remains mandatory. The consumer creates no positions, fills, equity or PnL.
+
+The unprivileged, network-disabled desk-decisions.timer runs every 30 seconds without provider requests. Deployment verification caught and corrected use of the nonexecuting desk.cli module in this service and the paper watchdog service; both now use python -m desk. A subprocess regression executes the actual unit-file command entrypoints. The consumer recorded six real saved investigations, all rejected, and a second service run preserved the exact rows and source hashes. The paper watchdog remains conditional on an active paper ledger, which still does not exist.
+
+Backups now include the decision journal when present, separately from the optional active paper ledger; retention accepts valid four-, five- and six-database sets. The deployed backup completed with five databases, decision_journal=included and paper_ledger=not_configured. Eight new tests cover consumer persistence, late completion, rollback, bounds, source hashes, optional journal backups and deployed entrypoints. All 468 tests pass locally and on the VPS. This establishes an investigation-to-decision stage, not a live buy-to-sell paper cycle. Trusted live features, complete route validation and automatic execution/exit integration remain outstanding.
+
+
+## Persisted entry-evidence connection — 8 October 2026
+
+The decision service now evaluates versioned entry gates against the read-only evidence store. It reconstructs token controls, same-bank positive holder supply coverage and pool/liquidity checks from content-addressed provider responses. Summary approval flags cannot pass these gates. Holder concentration is explicitly gross supply, not a private-wallet or bundle percentage. New investigations persist their initial mint response without adding provider requests.
+
+The decision journal preserves the original decisions and adds evaluations keyed by scan and policy version. Six existing investigations were evaluated on the VPS; all remain REJECT. Historical scans lacking the newly saved mint response remain blocked rather than being upgraded. The loopback dashboard exposes /api/decisions and shows component results, entry blockers and evaluation times. These are historical decisions, never current approval.
+
+Bundle/launch/transfer completeness, funding service classification, current-holder bundle exposure, full entry/exit route policy and live strategy/cost inputs are still explicit blockers. This connection does not enable entries or create positions. All 476 tests pass locally and remotely, including mainnet holder replay, missing/tampered/wrong-mint evidence, partial supply, versioned journal preservation and bounded dashboard projection. No new provider calls were made during deployment verification.
+
+The decision unit now supplies --evidence-db /var/lib/solana-desk/evidence.sqlite. Restarting it reevaluates only scans not yet recorded for this policy version. The Codex automated follow-up remains paused at the user's request.
+
+
+## Request-bound launch and transfer replay — 8 October 2026
+
+New finalized history pages persist a separate content-addressed request manifest binding the address, query window, token-account filter and pagination cursor to the saved response hash. The entry evaluator reconstructs coverage and decoded observations from these records rather than accepting summary completeness flags. Missing manifests, changed ranges, missing/reordered pages and false coverage flags fail closed. Existing unbound captures remain preserved and cannot pass this new gate.
+
+The evaluator now independently reports the creation anchor, mint-query coverage, historical account inventory and transfer-history gaps. Available individual account queries are replayed and merged with conflict quarantine; movement reconciliation, account continuity and saved finalized block ordering are recomputed. Same transaction observations across queries are deduplicated. Request/page replay is bounded to the scanner's 18-request ceiling and makes no provider calls itself. Transfer completeness remains false until historical ending balances are reconciled with current holdings and all other coverage requirements are met.
+
+Policy persisted-entry-evidence-v2 preserves prior decisions and writes a separate policy evaluation. All 487 tests pass locally and on the VPS. A fresh live investigation (62b4e79f37f74c309aceed3b91e6f49c) used seven RPC calls and persisted two history queries. Its saved responses replayed into four observations and one verified creation anchor. The two-page mint query was not exhausted, both discovered account histories remained unverified, and its Token-2022 policy was rejected. The deployed dashboard shows the verified anchor separately from blocked history; the final decision remains REJECT. No position or transaction was created.
+
+Remaining: resumable account-history collection and closure, reconciliation to the current holder snapshot, service/private funding classification and quantified current-holder bundle exposure. Automatic paper entries remain disabled. The user-requested Codex follow-up pause remains in effect.
+
+
+## Ownership continuation and snapshot boundary — 8 October 2026
+
+Ownership histories now have durable per-query cursors and shared per-investigation request accounting in evidence.sqlite. Continuation reserves each attempt before provider I/O; failures and interrupted processes cannot refund or reset usage. Each invocation performs at most two requests by default (four maximum), and original scans plus continuation remain capped at 18 RPC attempts. A process lock prevents concurrent cursor advancement. Content-addressed pages can survive a crash before the checkpoint; an orphan is harmless and its request remains charged. Exhaustion, corrupt coverage and cursor cycles remain explicit blockers.
+
+The ownership-advance CLI requires an immutable completed scan, persisted initial mint data and request-bound histories. Unsupported tokens are rejected without provider calls. It finishes mint pagination before resuming the discovered historical accounts. Missing initialization witnesses, conflicting records and incomplete account coverage remain blocked. Progress is saved separately; original investigations and decisions are preserved. Decision policy persisted-entry-evidence-v3 records a new revision when ownership evidence changes, replays the continued histories and retains the original observation timestamp. The dashboard displays the continued historical account counts and spent request budget without labeling them fresh entry approval.
+
+Funding replay reconstructs pre-buy native transfers for witnessed launch-cohort buyers from saved queries. Shared-source groups remain UNKNOWN_SERVICE_OR_PRIVATE_SOURCE, never verified controllers. Missing funding queries and ambiguous ordering remain explicit. Historical ending balances now have a separate finalized-snapshot reconciliation checker that verifies every historical account, closed accounts, account controls, total supply and an exact slot cutoff. The raw replay wrapper reconstructs history instead of accepting summary flags. Slot-filtered history queries and resume/replay preserve the cutoff in request hashes. Timestamp-only histories cannot pass snapshot-boundary reconciliation: Solana block timestamps are estimates.
+
+Validation: 513 tests locally and on the VPS, including cursor continuation, failures, shared budgets, source rebinding, concurrent workers, snapshot mismatches, funding ambiguity, exact slot filters, decision revisions, and restoring progress from a database backup. The deployed CLI rejected the latest Token-2022 scan with zero provider calls; seven deployed entry decisions remain REJECT. The ownership continuation positive path and snapshot match currently have fixture/test coverage, not a successful fresh live ownership approval.
+
+Ownership evidence is NOT complete. The finalized snapshot collection/requery stage still needs live integration, followed by service classification, current-holder distribution exposure and successful end-to-end forward verification. No periodic ownership continuation service was enabled; the bounded CLI is available for authorized development runs. Codex follow-up automation remains paused. Automatic paper entries remain disabled.
+
+Command: .venv/bin/python -m desk --secrets-file <existing-systemd-credential-path> ownership-advance --db /var/lib/solana-desk/research.sqlite --evidence-db /var/lib/solana-desk/evidence.sqlite --scan-id <completed-scan-id>. Do not print credentials or source reports containing provider errors.
+
+Sources checked: https://www.helius.dev/docs/api-reference/rpc/http/gettransactionsforaddress (slot gte/lt filtering); https://solana.com/docs/rpc/http/getblocktime (estimated block production time).

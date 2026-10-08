@@ -1,0 +1,473 @@
+{
+  "provenance": "PUBLIC_MAINNET_HOLDER_BANK_SNAPSHOT",
+  "enumeration": {
+    "mint": "7aN1pJGiMM93gjYgCqn9ReyexzzLLrFVotUcJG62JrbC",
+    "enumeration_complete": true,
+    "coverage_verified": true,
+    "snapshot_atomic": false,
+    "coverage_pct": "100",
+    "supply_raw": "800017057543498",
+    "observed_supply_raw": "800017057543498",
+    "account_count": 17,
+    "owner_count": 17,
+    "indexed_slot_min": 454347830,
+    "indexed_slot_max": 454347830,
+    "reasons": [],
+    "accounts": [
+      {
+        "address": "Qojv3Qa6rTMGPxF5PhZKt9vZF4ytq3nbDZVvbH5TJB1",
+        "wallet": "2WpevKDieGDw6fFq9UVktvU3pRSnWYS9GdofEq58p93t",
+        "amount_raw": "98028969",
+        "frozen": false,
+        "delegated_raw": "0"
+      },
+      {
+        "address": "fwCtUUA6GwVnuiiabh2MzA6AyBaS1E5zr6gERG3hnMD",
+        "wallet": "HLnpSz9h2S4hiLQ43rnSD9XkcUThA7B8hQMKmDaiTLcC",
+        "amount_raw": "204180204",
+        "frozen": false,
+        "delegated_raw": "0"
+      },
+      {
+        "address": "2ybJ4FsjwWNswTSNRpFzoftFTJdguydDiEqK9VmEthwy",
+        "wallet": "5YxQFdt3Tr9zJLvkFccqXVUwhdTWJQc1fFg2YPbxvxeD",
+        "amount_raw": "8185176101",
+        "frozen": false,
+        "delegated_raw": "0"
+      },
+      {
+        "address": "3zNc9TdbHoGAByHUrzfUEyxbLwbDG7w5gfdXtwfjZbGN",
+        "wallet": "FhVo3mqL8PW5pH5U2CN4XE33DokiyZnUwuGpH2hmHLuM",
+        "amount_raw": "800000134703334",
+        "frozen": false,
+        "delegated_raw": "0"
+      },
+      {
+        "address": "5t9RuoBVvXoQ3jrM63Mnb3wotQ9tTpyUmyAFxwK7HEk7",
+        "wallet": "D3iLRXBaBQxjUUvMupJumW16jsaLEFssbqFE1zJpTYDw",
+        "amount_raw": "668",
+        "frozen": false,
+        "delegated_raw": "0"
+      },
+      {
+        "address": "7PUMFCrCEC6Yazxc7xRo5hWWhcue8FXv46CmWqisBjS3",
+        "wallet": "HaPsc9LDT85bGKoygGET5HtcPfuxQf8nxa5aN5nDfK7z",
+        "amount_raw": "23631316",
+        "frozen": false,
+        "delegated_raw": "0"
+      },
+      {
+        "address": "7gMvyGYy3azKFia6tBKTkyJGh13xYe7Ux1cahQiQ4EcE",
+        "wallet": "7NNzakXLFv2VfhUuoZ9i4Uy4f63BDJcR96tMCucXa6KL",
+        "amount_raw": "47450964",
+        "frozen": false,
+        "delegated_raw": "0"
+      },
+      {
+        "address": "82EpooRtet3cu1nUy3XHBLE7rm8RZomjFfE9Y1QoCpq7",
+        "wallet": "62qc2CNXwrYqQScmEdiZFFAnJR262PxWEuNQtxfafNgV",
+        "amount_raw": "8173157171",
+        "frozen": false,
+        "delegated_raw": "0"
+      },
+      {
+        "address": "99aiERFyfjyC91DJ5wa88X5WzTW9NHqt9cCKxYE4w5n3",
+        "wallet": "EHAAiTxcdDwQ3U4bU6YcMsQGaekdzLS3B5SmYo46kJtL",
+        "amount_raw": "586746",
+        "frozen": false,
+        "delegated_raw": "0"
+      },
+      {
+        "address": "ASXH9YtPpXc7kmCota8TtJGg5mEfrN4Juy5Ti4bQn7u4",
+        "wallet": "FUCKsEYx2Di31LEwiC8oWdQ2YH2yymiHzj1fKdhzjqQv",
+        "amount_raw": "29656840",
+        "frozen": false,
+        "delegated_raw": "0"
+      },
+      {
+        "address": "AYNmJgSkM9tHzTSXMD6Q8F8hSfs9vyXpfgPffcqtMNZL",
+        "wallet": "Fn9n3ftUzjhcmoLwXbTqJdATzamCp3xPEu4LmLSS8ELr",
+        "amount_raw": "57788056",
+        "frozen": false,
+        "delegated_raw": "0"
+      },
+      {
+        "address": "AprzHTNg3dqjgdSpV7QYTYczmK5bFsfCM8NC34ZN3Pri",
+        "wallet": "9r2UQrgj4oGxWw76cgyiiLMyS9fmNGJuXCV7HoJ7Va2d",
+        "amount_raw": "448",
+        "frozen": false,
+        "delegated_raw": "0"
+      },
+      {
+        "address": "AukEN3CPwfiB3rMWPsVCBQapWnE1zLRDb3u2um8WqvEV",
+        "wallet": "7jUQAoDfjdqdMVSReQDc3CACWsaEjEuNz7g2VSB6FbHx",
+        "amount_raw": "54962791",
+        "frozen": false,
+        "delegated_raw": "0"
+      },
+      {
+        "address": "BUc94wt3pd6tLQyg8Q4TcAc1TjyRAPNe2dNKebpBv6rh",
+        "wallet": "Fs9RN3wAsuJKPbTmtX5eek1bhW5krNH8RkQxkFAtgNfR",
+        "amount_raw": "11868759",
+        "frozen": false,
+        "delegated_raw": "0"
+      },
+      {
+        "address": "DHUgn2gujY58gryy5zGADjBkU3WJtPYaKvCrRp3yDZJ5",
+        "wallet": "7hTckgnGnLQR6sdH7YkqFTAA7VwTfYFaZ6EhEsU3saCX",
+        "amount_raw": "12610714",
+        "frozen": false,
+        "delegated_raw": "0"
+      },
+      {
+        "address": "H9jznqTkNESeQ8SfS9pREUcyZC72HDkwtSv41K2Dayhs",
+        "wallet": "QNNJaw9rVRAYVrCJkKnX8BkyivoRxkdfHbAmr4Z7JNi",
+        "amount_raw": "2892",
+        "frozen": false,
+        "delegated_raw": "0"
+      },
+      {
+        "address": "Hisi4mmYpcgQm7hAteiC5238yjcJLST4hs2CCTyvqwnm",
+        "wallet": "27HFmP7ccLadGswvQfvea4o3juLw75cPF4V6jWpHM3MX",
+        "amount_raw": "23737525",
+        "frozen": false,
+        "delegated_raw": "0"
+      }
+    ],
+    "holders": [
+      {
+        "wallet": "FhVo3mqL8PW5pH5U2CN4XE33DokiyZnUwuGpH2hmHLuM",
+        "amount_raw": "800000134703334",
+        "gross_supply_pct": "99.99788469008198867278628451"
+      },
+      {
+        "wallet": "5YxQFdt3Tr9zJLvkFccqXVUwhdTWJQc1fFg2YPbxvxeD",
+        "amount_raw": "8185176101",
+        "gross_supply_pct": "0.001023125197621797082937631077"
+      },
+      {
+        "wallet": "62qc2CNXwrYqQScmEdiZFFAnJR262PxWEuNQtxfafNgV",
+        "amount_raw": "8173157171",
+        "gross_supply_pct": "0.001021622863404461158864269277"
+      },
+      {
+        "wallet": "HLnpSz9h2S4hiLQ43rnSD9XkcUThA7B8hQMKmDaiTLcC",
+        "amount_raw": "204180204",
+        "gross_supply_pct": "0.00002552198132211680356134226960"
+      },
+      {
+        "wallet": "2WpevKDieGDw6fFq9UVktvU3pRSnWYS9GdofEq58p93t",
+        "amount_raw": "98028969",
+        "gross_supply_pct": "0.00001225335985972649508516462715"
+      },
+      {
+        "wallet": "Fn9n3ftUzjhcmoLwXbTqJdATzamCp3xPEu4LmLSS8ELr",
+        "amount_raw": "57788056",
+        "gross_supply_pct": "0.000007223352984177838723012768226"
+      },
+      {
+        "wallet": "7jUQAoDfjdqdMVSReQDc3CACWsaEjEuNz7g2VSB6FbHx",
+        "amount_raw": "54962791",
+        "gross_supply_pct": "0.000006870202389029886323995008075"
+      },
+      {
+        "wallet": "7NNzakXLFv2VfhUuoZ9i4Uy4f63BDJcR96tMCucXa6KL",
+        "amount_raw": "47450964",
+        "gross_supply_pct": "0.000005931244034433606744678949516"
+      },
+      {
+        "wallet": "FUCKsEYx2Di31LEwiC8oWdQ2YH2yymiHzj1fKdhzjqQv",
+        "amount_raw": "29656840",
+        "gross_supply_pct": "0.000003707025959054319019732970170"
+      },
+      {
+        "wallet": "27HFmP7ccLadGswvQfvea4o3juLw75cPF4V6jWpHM3MX",
+        "amount_raw": "23737525",
+        "gross_supply_pct": "0.000002967127360119988309236144941"
+      },
+      {
+        "wallet": "HaPsc9LDT85bGKoygGET5HtcPfuxQf8nxa5aN5nDfK7z",
+        "amount_raw": "23631316",
+        "gross_supply_pct": "0.000002953851518186552374430993110"
+      },
+      {
+        "wallet": "7hTckgnGnLQR6sdH7YkqFTAA7VwTfYFaZ6EhEsU3saCX",
+        "amount_raw": "12610714",
+        "gross_supply_pct": "0.000001576305640122471835253278609"
+      },
+      {
+        "wallet": "Fs9RN3wAsuJKPbTmtX5eek1bhW5krNH8RkQxkFAtgNfR",
+        "amount_raw": "11868759",
+        "gross_supply_pct": "0.000001483563242569322299824487953"
+      },
+      {
+        "wallet": "EHAAiTxcdDwQ3U4bU6YcMsQGaekdzLS3B5SmYo46kJtL",
+        "amount_raw": "586746",
+        "gross_supply_pct": "7.334168621374649044039221021E-8"
+      },
+      {
+        "wallet": "QNNJaw9rVRAYVrCJkKnX8BkyivoRxkdfHbAmr4Z7JNi",
+        "amount_raw": "2892",
+        "gross_supply_pct": "3.614922922868751561214124543E-10"
+      },
+      {
+        "wallet": "D3iLRXBaBQxjUUvMupJumW16jsaLEFssbqFE1zJpTYDw",
+        "amount_raw": "668",
+        "gross_supply_pct": "8.349821965685774698793344381E-11"
+      },
+      {
+        "wallet": "9r2UQrgj4oGxWw76cgyiiLMyS9fmNGJuXCV7HoJ7Va2d",
+        "amount_raw": "448",
+        "gross_supply_pct": "5.599880599741357881825476471E-11"
+      }
+    ],
+    "notice": "Indexed enumeration, not an atomic chain snapshot. Verified coverage requires supply reconciliation and bounded slot drift."
+  },
+  "snapshot": {
+    "verified": true,
+    "snapshot_atomic": true,
+    "reasons": [],
+    "delegated_accounts": [],
+    "slot": 454347831,
+    "account_count": 17,
+    "observed_supply_raw": "800017057543498",
+    "notice": "Mint and enumerated legacy accounts read in one bank context; positive supply reconciliation supports current coverage, not historical completeness or wallet classification."
+  },
+  "rpc": {
+    "method": "getMultipleAccounts",
+    "params": [
+      [
+        "7aN1pJGiMM93gjYgCqn9ReyexzzLLrFVotUcJG62JrbC",
+        "Qojv3Qa6rTMGPxF5PhZKt9vZF4ytq3nbDZVvbH5TJB1",
+        "fwCtUUA6GwVnuiiabh2MzA6AyBaS1E5zr6gERG3hnMD",
+        "2ybJ4FsjwWNswTSNRpFzoftFTJdguydDiEqK9VmEthwy",
+        "3zNc9TdbHoGAByHUrzfUEyxbLwbDG7w5gfdXtwfjZbGN",
+        "5t9RuoBVvXoQ3jrM63Mnb3wotQ9tTpyUmyAFxwK7HEk7",
+        "7PUMFCrCEC6Yazxc7xRo5hWWhcue8FXv46CmWqisBjS3",
+        "7gMvyGYy3azKFia6tBKTkyJGh13xYe7Ux1cahQiQ4EcE",
+        "82EpooRtet3cu1nUy3XHBLE7rm8RZomjFfE9Y1QoCpq7",
+        "99aiERFyfjyC91DJ5wa88X5WzTW9NHqt9cCKxYE4w5n3",
+        "ASXH9YtPpXc7kmCota8TtJGg5mEfrN4Juy5Ti4bQn7u4",
+        "AYNmJgSkM9tHzTSXMD6Q8F8hSfs9vyXpfgPffcqtMNZL",
+        "AprzHTNg3dqjgdSpV7QYTYczmK5bFsfCM8NC34ZN3Pri",
+        "AukEN3CPwfiB3rMWPsVCBQapWnE1zLRDb3u2um8WqvEV",
+        "BUc94wt3pd6tLQyg8Q4TcAc1TjyRAPNe2dNKebpBv6rh",
+        "DHUgn2gujY58gryy5zGADjBkU3WJtPYaKvCrRp3yDZJ5",
+        "H9jznqTkNESeQ8SfS9pREUcyZC72HDkwtSv41K2Dayhs",
+        "Hisi4mmYpcgQm7hAteiC5238yjcJLST4hs2CCTyvqwnm"
+      ],
+      {
+        "encoding": "base64",
+        "commitment": "confirmed",
+        "minContextSlot": 454347830
+      }
+    ],
+    "response": {
+      "context": {
+        "slot": 454347831,
+        "apiVersion": "4.3.0-alpha.2"
+      },
+      "value": [
+        {
+          "lamports": 1066800,
+          "data": [
+            "AAAAANpjaB9yhrzIBnGeLCtQogFXJDv8lmixFSC8U4Q+3NsISnWHfJzXAgAGAQAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA==",
+            "base64"
+          ],
+          "owner": "TokenkegQfeZyiNwAJbNbGKPFXCWuBvf9Ss623VQ5DA",
+          "executable": false,
+          "rentEpoch": 18446744073709551615,
+          "space": 82
+        },
+        {
+          "lamports": 2039280,
+          "data": [
+            "YbIMhr1McdC48kLVYW9qswV0xD8yTxN+yF0Gt+68brsWf2mmCRfJHgV3pZEbcrdj3KO5p8WuQ3+gdCabfDRXj6nN1wUAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAQAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA",
+            "base64"
+          ],
+          "owner": "TokenkegQfeZyiNwAJbNbGKPFXCWuBvf9Ss623VQ5DA",
+          "executable": false,
+          "rentEpoch": 18446744073709551615,
+          "space": 165
+        },
+        {
+          "lamports": 1488440,
+          "data": [
+            "YbIMhr1McdC48kLVYW9qswV0xD8yTxN+yF0Gt+68brvyzNU1rKXxc2rIIt0Hc+TZL72KWbKUA1AClakBHHOp5eyKKwwAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAQAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA",
+            "base64"
+          ],
+          "owner": "TokenkegQfeZyiNwAJbNbGKPFXCWuBvf9Ss623VQ5DA",
+          "executable": false,
+          "rentEpoch": 18446744073709551615,
+          "space": 165
+        },
+        {
+          "lamports": 1488440,
+          "data": [
+            "YbIMhr1McdC48kLVYW9qswV0xD8yTxN+yF0Gt+68brtDnmUQwD1l+tkx6J0Evgu3DVGXH1HEFfs0TAfbQZ8hIiXg3+cBAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAQAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA",
+            "base64"
+          ],
+          "owner": "TokenkegQfeZyiNwAJbNbGKPFXCWuBvf9Ss623VQ5DA",
+          "executable": false,
+          "rentEpoch": 18446744073709551615,
+          "space": 165
+        },
+        {
+          "lamports": 1488440,
+          "data": [
+            "YbIMhr1McdC48kLVYW9qswV0xD8yTxN+yF0Gt+68brvaY2gfcoa8yAZxniwrUKIBVyQ7/JZosRUgvFOEPtzbCOZo2YuY1wIAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAQAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA",
+            "base64"
+          ],
+          "owner": "TokenkegQfeZyiNwAJbNbGKPFXCWuBvf9Ss623VQ5DA",
+          "executable": false,
+          "rentEpoch": 18446744073709551615,
+          "space": 165
+        },
+        {
+          "lamports": 1488440,
+          "data": [
+            "YbIMhr1McdC48kLVYW9qswV0xD8yTxN+yF0Gt+68bruy/iRo+mmdgZ1o9thhBTjcf5incoHkKh0fGiCFGgYlKpwCAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAQAAAAAAAAAAAAAAAAAAAAAAAAAAAQAAAI/o9gXW4cdVbDdi7b3RbB+gly1cW6jjaT4ferlk7Va0",
+            "base64"
+          ],
+          "owner": "TokenkegQfeZyiNwAJbNbGKPFXCWuBvf9Ss623VQ5DA",
+          "executable": false,
+          "rentEpoch": 18446744073709551615,
+          "space": 165
+        },
+        {
+          "lamports": 1488440,
+          "data": [
+            "YbIMhr1McdC48kLVYW9qswV0xD8yTxN+yF0Gt+68brv2SQUBtcnIyUL2ecpId8fzSyx1GFNodhIaKuhtcFLEbdSVaAEAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAQAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA",
+            "base64"
+          ],
+          "owner": "TokenkegQfeZyiNwAJbNbGKPFXCWuBvf9Ss623VQ5DA",
+          "executable": false,
+          "rentEpoch": 18446744073709551615,
+          "space": 165
+        },
+        {
+          "lamports": 1488440,
+          "data": [
+            "YbIMhr1McdC48kLVYW9qswV0xD8yTxN+yF0Gt+68brteoC+VpriMGbMmL0RqGnqHLkBVRh42ZbB+db+OjeswQ1QL1AIAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAQAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA",
+            "base64"
+          ],
+          "owner": "TokenkegQfeZyiNwAJbNbGKPFXCWuBvf9Ss623VQ5DA",
+          "executable": false,
+          "rentEpoch": 18446744073709551615,
+          "space": 165
+        },
+        {
+          "lamports": 1488440,
+          "data": [
+            "YbIMhr1McdC48kLVYW9qswV0xD8yTxN+yF0Gt+68brtKwvjQ3Vy8l+MonBl8tQYqVPPZVrnOblEV+WVnqlyz5jN7KOcBAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAQAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA",
+            "base64"
+          ],
+          "owner": "TokenkegQfeZyiNwAJbNbGKPFXCWuBvf9Ss623VQ5DA",
+          "executable": false,
+          "rentEpoch": 18446744073709551615,
+          "space": 165
+        },
+        {
+          "lamports": 1488440,
+          "data": [
+            "YbIMhr1McdC48kLVYW9qswV0xD8yTxN+yF0Gt+68brvFS5a1yTGUHkbqS+Lg4xEndE/Gt0z7RV7+r4vVcXks7frzCAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAQAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA",
+            "base64"
+          ],
+          "owner": "TokenkegQfeZyiNwAJbNbGKPFXCWuBvf9Ss623VQ5DA",
+          "executable": false,
+          "rentEpoch": 18446744073709551615,
+          "space": 165
+        },
+        {
+          "lamports": 1488440,
+          "data": [
+            "YbIMhr1McdC48kLVYW9qswV0xD8yTxN+yF0Gt+68brvW+xq2bPsoXdvRvn/7MFsuZAR2DU5032q3mrUyqVEkSwiHxAEAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAQAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA",
+            "base64"
+          ],
+          "owner": "TokenkegQfeZyiNwAJbNbGKPFXCWuBvf9Ss623VQ5DA",
+          "executable": false,
+          "rentEpoch": 18446744073709551615,
+          "space": 165
+        },
+        {
+          "lamports": 1488440,
+          "data": [
+            "YbIMhr1McdC48kLVYW9qswV0xD8yTxN+yF0Gt+68brvblK1bQtXcdaIDRSHq1YKJUAvg6r+cWzCZTjvoN8hHW5jGcQMAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAQAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA",
+            "base64"
+          ],
+          "owner": "TokenkegQfeZyiNwAJbNbGKPFXCWuBvf9Ss623VQ5DA",
+          "executable": false,
+          "rentEpoch": 18446744073709551615,
+          "space": 165
+        },
+        {
+          "lamports": 1488440,
+          "data": [
+            "YbIMhr1McdC48kLVYW9qswV0xD8yTxN+yF0Gt+68bruDbJ7Beynsx4okzcWZ1nOYFsw3E4F75tb47Bv2i2ot4sABAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAQAAAAAAAAAAAAAAAAAAAAAAAAAAAQAAAI/o9gXW4cdVbDdi7b3RbB+gly1cW6jjaT4ferlk7Va0",
+            "base64"
+          ],
+          "owner": "TokenkegQfeZyiNwAJbNbGKPFXCWuBvf9Ss623VQ5DA",
+          "executable": false,
+          "rentEpoch": 18446744073709551615,
+          "space": 165
+        },
+        {
+          "lamports": 1488440,
+          "data": [
+            "YbIMhr1McdC48kLVYW9qswV0xD8yTxN+yF0Gt+68brtkB38Hv2X7KFQDPyC4PGrZZ/L3iguN7nnl1FiqtBhTn2eqRgMAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAQAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA",
+            "base64"
+          ],
+          "owner": "TokenkegQfeZyiNwAJbNbGKPFXCWuBvf9Ss623VQ5DA",
+          "executable": false,
+          "rentEpoch": 18446744073709551615,
+          "space": 165
+        },
+        {
+          "lamports": 1488440,
+          "data": [
+            "YbIMhr1McdC48kLVYW9qswV0xD8yTxN+yF0Gt+68brvc3C2RsdYpMdgWnUGGKm+CBi4h07AQaTc1k23QgWNZkFcatQAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAQAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA",
+            "base64"
+          ],
+          "owner": "TokenkegQfeZyiNwAJbNbGKPFXCWuBvf9Ss623VQ5DA",
+          "executable": false,
+          "rentEpoch": 18446744073709551615,
+          "space": 165
+        },
+        {
+          "lamports": 1488440,
+          "data": [
+            "YbIMhr1McdC48kLVYW9qswV0xD8yTxN+yF0Gt+68brtjg3MADqIssmTTSv9koEte+r+7dN3NBImXsZgVR9fREJpswAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAQAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA",
+            "base64"
+          ],
+          "owner": "TokenkegQfeZyiNwAJbNbGKPFXCWuBvf9Ss623VQ5DA",
+          "executable": false,
+          "rentEpoch": 18446744073709551615,
+          "space": 165
+        },
+        {
+          "lamports": 1488440,
+          "data": [
+            "YbIMhr1McdC48kLVYW9qswV0xD8yTxN+yF0Gt+68brsF/ITIuOyOxMT0bMplSAQDsc0IpJtwCS2Cv6T+7x6RX0wLAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAQAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA",
+            "base64"
+          ],
+          "owner": "TokenkegQfeZyiNwAJbNbGKPFXCWuBvf9Ss623VQ5DA",
+          "executable": false,
+          "rentEpoch": 18446744073709551615,
+          "space": 165
+        },
+        {
+          "lamports": 1488440,
+          "data": [
+            "YbIMhr1McdC48kLVYW9qswV0xD8yTxN+yF0Gt+68brsQd40GwSe/OM1vgw798KKC9erezwwG3O6SLL319uF6rrU0agEAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAQAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA",
+            "base64"
+          ],
+          "owner": "TokenkegQfeZyiNwAJbNbGKPFXCWuBvf9Ss623VQ5DA",
+          "executable": false,
+          "rentEpoch": 18446744073709551615,
+          "space": 165
+        }
+      ]
+    }
+  },
+  "eligible_for_trading": false
+}

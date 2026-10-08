@@ -1,0 +1,8 @@
+[Unit]
+Description=Daily Solana desk database backup
+[Timer]
+OnCalendar=*-*-* 03:30:00 UTC
+RandomizedDelaySec=300
+Persistent=true
+[Install]
+WantedBy=timers.target

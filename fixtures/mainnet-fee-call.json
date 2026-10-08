@@ -1,0 +1,12 @@
+{
+  "provenance": "PUBLIC_CAPTURE_DIAGNOSTIC_NOT_TRADING_EVIDENCE",
+  "signature": "5gRDZ9xi3kXxWDw5xsNbxTUrxWmAMV3oFzzCTCG4kP2Wpu69dGWAWqvU3m5FpBEC1KAaBS7vdhkRhaYULLPzcsNo",
+  "slot": 454313568,
+  "parent_program": "pAMMBay6oceH9fJKBRHGP5D4bD4sWpmSwMn52FMfXEA",
+  "stack_height": 2,
+  "accounts": [
+    "5PHirr8joyTMp9JMm6nW7hNDVyEYdkzDqazxPD7RaTjx",
+    "pAMMBay6oceH9fJKBRHGP5D4bD4sWpmSwMn52FMfXEA"
+  ],
+  "data_base64": "mu2KXKICorsBRHISUnIAAAAAAAAAAAAAAAabiFf+q4GE+2h/Y0YYwDXaxDncGus7VZig8AAAAAAB"
+}

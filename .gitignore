@@ -1,0 +1,23 @@
+__pycache__/
+*.pyc
+.venv/
+.env
+var/
+*.sqlite*
+*.egg-info/
+dist/
+build/
+
+# Credentials, runtime state and local tools
+.env.*
+!.env.example
+provider-keys.json
+secrets/
+*.pem
+*.key
+*.db
+*.db-*
+*.lock
+.DS_Store
+work/
+backups/

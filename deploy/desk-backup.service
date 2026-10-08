@@ -1,0 +1,18 @@
+[Unit]
+Description=Solana desk verified database snapshots
+[Service]
+Type=oneshot
+User=solana-desk
+Group=solana-desk
+WorkingDirectory=/opt/solana-desk
+ExecStart=/opt/solana-desk/.venv/bin/python -m desk.backup --data /var/lib/solana-desk --root /var/backups/solana-desk/daily --keep 7
+UMask=0077
+NoNewPrivileges=true
+PrivateTmp=true
+ProtectSystem=strict
+ProtectHome=true
+ReadWritePaths=/var/backups/solana-desk/daily /var/lib/solana-desk
+# SQLite read-only connections still need writable WAL shared-memory locks.
+RestrictAddressFamilies=AF_UNIX
+TimeoutStartSec=180
+MemoryMax=256M

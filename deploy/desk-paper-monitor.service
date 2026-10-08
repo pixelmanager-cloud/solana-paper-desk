@@ -1,0 +1,20 @@
+[Unit]
+Description=Expire stale paper marks without prices or fills
+ConditionPathExists=/var/lib/solana-desk/active-paper.sqlite
+[Service]
+Type=oneshot
+User=solana-desk
+Group=solana-desk
+WorkingDirectory=/opt/solana-desk
+ExecStart=/opt/solana-desk/.venv/bin/python -m desk paper-monitor --db /var/lib/solana-desk/active-paper.sqlite --config /opt/solana-desk/config/paper.json
+UMask=0077
+NoNewPrivileges=true
+PrivateTmp=true
+ProtectSystem=strict
+ProtectHome=true
+ReadWritePaths=/var/lib/solana-desk
+RestrictAddressFamilies=AF_UNIX
+PrivateNetwork=true
+TimeoutStartSec=25
+MemoryMax=128M
+StandardOutput=null

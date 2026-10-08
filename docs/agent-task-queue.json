@@ -1,0 +1,176 @@
+{
+  "status": "PREPARED_NOT_DISPATCHED",
+  "repository": null,
+  "cloud_environment": null,
+  "proposed_max_concurrent_workers": 3,
+  "coordination": {
+    "controller": "One coordinator claims dependency-ready tickets, assigns isolated branches, tracks cloud tasks, reviews PRs and dispatches successors.",
+    "claim": "One active assignment per ticket; leases and task IDs survive coordinator restart.",
+    "integration": "Only coordinator integrates after required tests and independent review.",
+    "completion": "Stop only when QA-1 acceptance criteria are verified; stop on user request, usage cap or input blocker.",
+    "restrictions": [
+      "Paper only",
+      "No secrets or production databases in GitHub/cloud fixtures",
+      "No cloud worker VPS deployment credentials",
+      "Preserve API budgets and fail-closed gates",
+      "Ownership milestone precedes strategy/execution work"
+    ]
+  },
+  "tasks": [
+    {
+      "id": "OWN-1",
+      "title": "Finish finalized snapshot capture and slot-bounded history integration",
+      "status": "BACKLOG",
+      "depends_on": [],
+      "suggested_scope": [
+        "ownership_worker.py",
+        "history_progress.py",
+        "ownership_snapshot.py"
+      ],
+      "acceptance": [
+        "Persist snapshot and cutoff before replay; resume after interruption without changing cutoff.",
+        "Keep original 18-RPC ceiling; reject incomplete account coverage.",
+        "Verify matching and mismatching replay fixtures and one bounded live run."
+      ]
+    },
+    {
+      "id": "OWN-2",
+      "title": "Implement evidence-backed pool/service classification",
+      "status": "BACKLOG",
+      "depends_on": [],
+      "suggested_scope": [
+        "new classification module and fixtures"
+      ],
+      "acceptance": [
+        "Every non-unknown label has provenance, scope, expiry and exact address binding.",
+        "Never treat an ordinary system account or shared funder as proven private control.",
+        "Unknown or contradictory labels block ownership approval."
+      ]
+    },
+    {
+      "id": "OWN-3",
+      "title": "Quantify distribution exposure in current holdings",
+      "status": "BACKLOG",
+      "depends_on": [
+        "OWN-1",
+        "OWN-2"
+      ],
+      "suggested_scope": [
+        "distribution.py",
+        "ownership_signals.py"
+      ],
+      "acceptance": [
+        "Trace ordered transfers and split distributions with bounded traversal.",
+        "Exclude only validated service/pool accounts; report lower bounds and unresolved exposure separately.",
+        "Adversarial fixtures cover fanout, cycles, service hubs and missing paths."
+      ]
+    },
+    {
+      "id": "OWN-4",
+      "title": "Independent ownership integration review",
+      "status": "BACKLOG",
+      "depends_on": [
+        "OWN-3"
+      ],
+      "suggested_scope": [
+        "entry_evidence.py",
+        "decision_runner.py",
+        "ownership tests"
+      ],
+      "acceptance": [
+        "Attempt to bypass gates using stale, missing, forged or inconsistent evidence.",
+        "Show evidence provenance and gaps for every result.",
+        "Mark ownership milestone complete only after full replay and live integration verification."
+      ]
+    },
+    {
+      "id": "SELL-1",
+      "title": "Complete supported exact-size unsigned buy and exit validation",
+      "status": "BACKLOG",
+      "depends_on": [
+        "OWN-4"
+      ],
+      "suggested_scope": [
+        "roundtrip.py",
+        "route policy modules"
+      ],
+      "acceptance": [
+        "Validate every instruction, recipient, amount and account effect for a narrow supported route.",
+        "Reject unknown fees/extensions and unverified exits.",
+        "No signer or transaction broadcasting."
+      ]
+    },
+    {
+      "id": "PAPER-1",
+      "title": "Build trusted live strategy input adapter",
+      "status": "BACKLOG",
+      "depends_on": [
+        "OWN-4"
+      ],
+      "suggested_scope": [
+        "live adapter",
+        "strategy.py"
+      ],
+      "acceptance": [
+        "Derive rather than assert input completeness and freshness.",
+        "Use deterministic Python strategy and sizing; preserve hard safety gates.",
+        "Do not manufacture missing flow/momentum/cost data."
+      ]
+    },
+    {
+      "id": "PAPER-2",
+      "title": "Connect durable automatic paper entry and exit",
+      "status": "BACKLOG",
+      "depends_on": [
+        "SELL-1",
+        "PAPER-1"
+      ],
+      "suggested_scope": [
+        "engine.py",
+        "ledger.py",
+        "runner"
+      ],
+      "acceptance": [
+        "One accepted candidate produces a durable paper entry and verified exit.",
+        "Include costs and partial positions; replay is idempotent.",
+        "Outages and restarts cannot fabricate fills or conceal unsellable positions."
+      ]
+    },
+    {
+      "id": "OPS-1",
+      "title": "Finish paper dashboard and operating controls",
+      "status": "BACKLOG",
+      "depends_on": [
+        "PAPER-2"
+      ],
+      "suggested_scope": [
+        "dashboard.py",
+        "paper_view.py",
+        "static"
+      ],
+      "acceptance": [
+        "Display evidence reasons, positions, costs, net PnL and stale status.",
+        "Verify pause, exit-only and restart behavior.",
+        "Keep private loopback access."
+      ]
+    },
+    {
+      "id": "QA-1",
+      "title": "Run end-to-end forward paper readiness gate",
+      "status": "BACKLOG",
+      "depends_on": [
+        "OPS-1"
+      ],
+      "suggested_scope": [
+        "docs/readiness.md",
+        "integration fixtures",
+        "runbook"
+      ],
+      "acceptance": [
+        "Verify discovery through evidence, decision, entry, monitoring, exit, accounting and dashboard.",
+        "Exercise provider failures, restart and backup restore.",
+        "Report real-data observation duration and limitations; tests alone cannot establish readiness."
+      ]
+    }
+  ]
+}

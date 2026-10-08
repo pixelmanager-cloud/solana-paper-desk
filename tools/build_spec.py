@@ -1,0 +1,301 @@
+"""Build the versioned PDF and editable Markdown specification. Requires reportlab."""
+from pathlib import Path
+from xml.sax.saxutils import escape
+import json
+from reportlab.lib import colors
+from reportlab.lib.styles import getSampleStyleSheet, ParagraphStyle
+from reportlab.lib.enums import TA_LEFT
+from reportlab.lib.pagesizes import A4
+from reportlab.platypus import SimpleDocTemplate, Paragraph, Spacer, Table, TableStyle, PageBreak, KeepTogether
+
+ROOT = Path(__file__).resolve().parents[1]
+OUT = ROOT.parent
+pages = []
+def page(title, subtitle, blocks):
+    pages.append((title, subtitle, blocks))
+def p(text): return ('p', text)
+def h(text): return ('h', text)
+def table(headers, rows): return ('table', headers, rows)
+def note(text): return ('note', text)
+
+page('Solana Memecoin Trading Desk', 'Architecture and operating guidelines | Revision 2 | 8 October 2026', [
+    note('BUILD STATUS: RESEARCH PROTOTYPE. Solana only. Paper engine and read-only data tools are implemented. No wallet signing or real-money execution exists in this release.'),
+    h('Purpose'),
+    p('Build a selective, evidence-driven trading desk for graduated Solana memecoins. Avoiding suspected coordinated ownership and unsellable tokens takes precedence over finding entries. Unknown evidence blocks entry. No score, narrative or wallet label can override a hard safety gate.'),
+    h('Initial scope'),
+    p('Start with canonical PumpSwap pools after graduation, 5 minutes to 6 hours after migration, with market capitalization of $50,000-$2,000,000 and verified liquidity of at least $8,000. Monitor original token creation and bonding-curve activity to understand ownership before graduation. Raydium and Meteora are later adapters, not implicitly supported.'),
+    p('Initial token policy accepts only the standard SPL Token program with revoked mint and freeze authorities. Token-2022 and custom token programs are excluded until extension-specific behavior is implemented and reviewed. A pinned extension inventory now identifies dangerous capabilities without granting eligibility. This deliberately excludes some benign assets.'),
+    h('What this revision changes'),
+    p('Corrects the expectancy and sizing examples; updates provider interfaces and indicative costs; makes bundle, token-capability and sellability checks hard gates; separates entry halts from exits; requires durable accounting and explicit transaction reconciliation; and distinguishes implemented software from planned production controls.'),
+    h('Decision boundary'),
+    p('The architecture is feasible. Profitability and the effectiveness of heuristic scam detection are unproven. A small live pilot requires realistic forward testing, actual transaction simulation, a policy-enforcing signer, independent recovery and explicit operator configuration. The current synthetic demo cannot satisfy that gate.'),
+    p('This document supersedes the original 18-page plan as the implementation guide. The original file is preserved. Vendor facts were checked on 2026-10-08; research thresholds and budget allowances are project decisions, not vendor guarantees.'),
+])
+page('1. Corrections and deliberate scope changes', 'Resolve contradictions before connecting market data', [
+    table(['Original proposal', 'Revision 2 decision'], [
+        ['About +2% expectancy at 15% round-trip cost', '40% x 60% - 60% x 18% - 15% = -1.8% of initial notional. Costs require a consistent denominator.'],
+        ['3-5 SOL equity and 0.05 SOL minimum', 'At score 68, the capital cap is 0.4% of equity: 0.012-0.020 SOL. Paper minimum is 0.01 SOL, with a separate cost gate.'],
+        ['Holders refresh every 5 minutes but expire at 2 minutes', 'Target full refresh <=60 seconds plus event updates; invalidate at 120 seconds. Failure to refresh blocks entry.'],
+        ['Flow score described as 0-100 but tanh gives negative scores', 'Clamp positive smart-money net flow to 0-100. Suspect-wallet selling never becomes a positive signal.'],
+        ['Bundle cohort begins at migrated pool creation', 'Use original launch/bonding-curve history. Pool migration is not token birth.'],
+        ['HALT_ALL while exit bot should continue', 'Use RUNNING, ENTRY_PAUSED, EXIT_ONLY, LIQUIDATING and STOPPED with explicit authority.'],
+        ['Ignore slippage on danger exits', 'Use a finite emergency proceeds floor and escalation policy; impossible exits remain unresolved.'],
+        ['6-hour hold limit protects a dead server', 'No in-process rule runs during an outage. Independent execution recovery is a live prerequisite.'],
+        ['Twelve separate processes immediately', 'Keep logical roles; paper release uses one transactional worker. Split services only after reliable interfaces exist.'],
+    ]),
+    p('The original claim that live results are always worse, or reliably 10-20% worse, than paper is not an established bound. Measure live execution shortfall directly. Two hundred paper trades are a minimum operational sample, not evidence of durable alpha.'),
+    p('The raw collector is independent of the paper engine. Captured transactions are not automatically accepted as validated trading features. Parsed decoding and bounded live investigations are built; trusted strategy inputs remain an integration milestone.'),
+])
+page('2. Architecture and authority', 'Deterministic decisions; independent control of new risk and existing exposure', [
+    table(['Logical role', 'Responsibility and status'], [
+        ['Data layer', 'Read-only streaming/history/mint clients built. Raw storage and gaps recorded. Pinned instruction decoding built; trusted snapshot builder pending.'],
+        ['B1 Scout', 'Universe and hard-filter policy built on normalized snapshots. Bounded launch discovery built; canonical pool/vault verification built; complete liquidity controls pending.'],
+        ['B2 Holder / bundle auditor', 'Evidence gate and three-hop classified distribution screening built. Finalized birth anchors and hashed history pages built; complete funding/inventory coverage remains pending.'],
+        ['B3 Wallet flow', '0-100 score input contract; historical cost-basis and wallet-ranking pipeline pending.'],
+        ['B4 Momentum', 'Deterministic formula built; validated swap aggregation pending.'],
+        ['B5 Narrative', 'Disabled in baseline. Optional later, never authorized to clear safety gates.'],
+        ['B6 Judge / B7 Sizer', 'Gates, deterministic scoring, limits and cost checks implemented.'],
+        ['B8 Executor', 'Paper model, routes and unsigned sell diagnostics built. Live signer and executor not built.'],
+        ['B9 Exit monitor', 'Event-driven paper ladder, stops and position state built. Continuous real quote scheduler pending.'],
+        ['S1 / S2', 'Paper risk states and freshness gates built. Live supervisor isolation, comparison and failover pending.'],
+        ['S3 Review', 'Durable decision/fill reports built; statistical calibration and LLM review pending.'],
+    ]),
+    h('Target data flow'),
+    note('Chain capture -> finalized reconciliation -> normalized facts + coverage -> hard safety gates -> scores -> sizing -> exact-size sell validation -> executor -> reconciled positions -> exit monitor.'),
+    p('S1 can block entry, reduce risk or request liquidation. S2 can invalidate evidence and pause entries, but cannot suppress exit handling. S3 only proposes changes. Human-controlled reset must not silently clear unresolved transactions or evidence gaps.'),
+    p('A sub-100ms budget applies to deterministic decisions on cached, validated inputs. It excludes network requests, graph backfills, simulations, submission and confirmation. External calls stay behind data/execution adapters.'),
+])
+page('3. Rug-pull and scam threat model', 'Independent gates: a clean holder map is not a safety certificate', [
+    table(['Threat', 'Defense and residual limit'], [
+        ['Hidden common ownership / bundled purchases', 'Launch-to-current holdings, funding graph, coordination and material transfers. Skip concentrated clusters or incomplete coverage. Attribution remains uncertain.'],
+        ['Minting or frozen holdings', 'Check actual mint owner/bytes and token-account state. Reject active mint/freeze authority and frozen/delegated accounts.'],
+        ['Post-purchase seizure or burn', 'Exclude permanent-delegate capabilities and unexpected account delegations. Initial release rejects all Token-2022 assets.'],
+        ['Hooks, taxes, allowlists, pauses', 'Exclude unsupported transfer behavior; eventually decode extensions and all controlling authorities. A quote is insufficient.'],
+        ['Removable or unusable liquidity', 'Verify canonical pool, withdrawal authority and lock/burn coverage; estimate full exit depth. Locked LP does not prevent insider selling.'],
+        ['Insider dump / fake volume', 'Track cluster-held inventory, net selling and wash patterns. Do not equate unique wallets with independent buyers.'],
+        ['Malicious transaction / wallet drain', 'Validate programs, instructions, lookup tables, signers, recipients and balance deltas before any signature. Reject unrelated approvals or authority changes.'],
+        ['Lookalike asset / poisoned metadata', 'Use mint and program addresses, not name or ticker. Treat social text, URLs and descriptions as untrusted input.'],
+        ['MEV / execution failures / stale evidence', 'Minimum proceeds, bounded fees, exact-size simulation, independent RPC and durable reconciliation. No guarantee of landing or future liquidity.'],
+    ]),
+    h('Hooks and confiscation are different capabilities'),
+    p('A Solana transfer hook executes custom logic during a transfer and may restrict it. Initial transfer accounts become read-only inside the hook; sender signing privileges do not automatically propagate. A Token-2022 permanent delegate separately has authority to transfer or burn holdings across the mint. A previously approved account delegate is another risk. [6][7]'),
+    p('The prior incident on another chain cannot be diagnosed without its transactions. This desk uses Solana-specific account and program semantics, not assumptions imported from another chain.'),
+])
+page('4. Bundle-first screening', 'Priority workstream: find concentrated control and record uncertainty', [
+    h('Evidence collection design'),
+    p('Start at token creation and the original bonding curve. Identify early buyers and deployer funding, reconstruct their current holdings, and follow material transfers to new wallets. Preserve signature, instruction identity, slot, chain time, observed time, amount, owner and confidence for every edge. Do not assume a universal public Jito bundle-ID feed exists.'),
+    p('Combine private funding links, closely coordinated purchases, recurring groups across launches, material token transfers and synchronized exits. Same-slot timing alone is a cohort signal, not proof of a bundle. Shared exchange/bridge funding and dust transfers are not proof of common ownership. Bubblemaps distinguishes transfer-linked clusters from timing-based bundles. [8][9]'),
+    table(['Initial hard gate', 'Research policy'], [
+        ['Missing history or low holder coverage', 'Skip if launch/funding evidence is incomplete, holder snapshot is older than 120 seconds, or holder-supply coverage is below 95%.'],
+        ['Concentrated linked holdings', 'Skip a linked cluster at >=10% current holder supply, or an early-linked cluster at >=8%.'],
+        ['Large early cohort', 'Skip when first four-slot buyers still directly hold >=15%. This can reject legitimate launches.'],
+        ['Known bad or unresolved funding', 'Skip a currently holding known-bad wallet; skip observed unknown funding covering >=5% of holder supply.'],
+        ['Private funding link', 'Current implementation links recipients funded by the same verified private source within one hour before their recorded buys.'],
+        ['Material transfer link', 'Trace classified distribution through three hops; aggregate split transfers at >=0.5% of holder supply. Unknown material paths block entry.'],
+    ]),
+    p('Percentages must share a verified denominator: circulating holder supply excluding identified pool/burn balances. Coverage cannot be fabricated by dropping unknown accounts. Current fixtures normalize that supply to 100%; the trusted on-chain builder must establish the exclusions.'),
+    h('What is implemented versus next'),
+    p('Built: evidence gates, early cohorts, three-hop classified distribution, pinned decoding, bounded holder enumeration and pool identity checks. Complete launch-to-current funding/inventory coverage and source labels remain pending. Supplied completeness flags cannot establish trusted live coverage.'),
+])
+page('5. Token capabilities and sellability', 'A recent sell route is necessary, but it does not prove the wallet can sell', [
+    h('Initial token allowlist'),
+    p('Accept only the standard SPL Token program, an initialized 82-byte mint, positive supply and revoked mint/freeze authorities. Reject Token-2022, custom programs, malformed accounts and unknown states. Holding checks require the correct mint/owner, initialized unfrozen state, no account delegate and no external close authority. Standard authority revocation to None is permanent; mutable metadata alone is not a minting or seizure power. [10][11]'),
+    h('Before entry: production contract'),
+    p('1. Verify mint, canonical pool and ownership evidence. 2. Calculate proposed size. 3. Obtain buy and sell routes for actual token quantities, including the full liquidation size. 4. Validate instructions, recipient accounts, program IDs, resolved lookup tables and total fee budget. 5. Simulate the relevant wallet state and require positive net proceeds, correct token debit and no unrelated balance changes.'),
+    p('Bind proof to mint, wallet, exact quantity, route, transaction hash, slot, timestamp and policy version. Reject stale, mismatched, failed or missing proof. The current code implements this gate over normalized evidence; an unsigned diagnostic builder/simulator is implemented. Atomic exact debit/net proceeds and post-state delegation, freeze, owner and close-authority checks are implemented. Full instruction policy and wallet-specific approval remain pending.'),
+    h('Avoid fake simulation evidence'),
+    p('Independent simulateTransaction calls do not preserve a hypothetical buy for a later simulated sell. Before ownership exists, use a supported sequential-state simulator or fork. After a real buy, simulate against the actual holding account. A tiny real buy/sell canary, if later authorized for a live pilot, risks its own capital and proves only that size and moment. [12]'),
+    h('After entry'),
+    p('Reconcile raw tokens received, cost basis, rent/fees and account authority state. Recheck exit routes and relevant accounts continuously. A sellability pass expires. A supply/display change must be investigated using raw balances, not UI quantities alone.'),
+    note('No mechanism can guarantee a sale after liquidity vanishes or transfers become prohibited. Keep minimum proceeds finite, record unresolved exposure, and surface STUCK_POSITION instead of fabricating a fill.'),
+])
+page('6. Data sources and freshness', 'Helius supplies chain facts; Birdeye supplies processed market views', [
+    table(['Source', 'Use in this desk'], [
+        ['Helius', 'RPC account reads, filtered transaction capture and historical backfill. Reconstruct funding, token ownership, swaps and authorities. It does not label every scam for us. [1][2][3]'],
+        ['Birdeye', 'Processed prices, liquidity, trades, OHLCV, holder/security fields and independent comparisons. Optional during the first collection trial. It does not prove sellability. [4]'],
+        ['Bubblemaps', 'Additional transfer/cluster evidence and visual investigation. Coverage, labels, update times and B2B API access must be verified. A clean display does not prove independent wallets. [8][9][13]'],
+        ['Jupiter', 'Size-specific routes and unsigned build instructions. Current target is Swap V2 /build. A future executor builds, validates, simulates and signs separately. [5]'],
+        ['Jito', 'Future submission option with tip policy and explicit status reconciliation. Bundle acceptance is not confirmation. [14]'],
+    ]),
+    table(['Evidence', 'Target refresh / expiry'], [
+        ['Price / sell route / token policy proof', 'Refresh on events and before decisions; expire after 10 seconds.'],
+        ['Holder and funding snapshot', 'Full refresh <=60 seconds plus material events; expire after 120 seconds.'],
+        ['Wallet flow / momentum', 'Incremental transaction updates; expire at 30 / 15 seconds.'],
+        ['Wallet historical ranking', 'Incremental finalized accounting; point-in-time rank snapshots, no future PnL in replay.'],
+        ['Narrative', 'Disabled in the initial baseline; no network or LLM dependency in entry gates.'],
+    ]),
+    p('Persist raw messages before interpretation. Distinguish observed time from chain time. Deduplicate by signature plus instruction/event identity after decoding, reconcile confirmed observations with finalized history, and mark reconnect windows as incomplete until verified. Filtered streams can be idle, so silence alone is not proof that slots were lost.'),
+    p('Raw capture supports transaction versions through v1. Execution development will initially use explicitly supported v0 routes; version changes require separate decoding and signing tests. [2][5]'),
+])
+page('7. Decisions, units and position sizing', 'Paper defaults are hypotheses; do not tune on evaluation data', [
+    h('Entry policy'),
+    p('All safety, bundle, token and sellability gates must pass. Require Safety >=55, Momentum >=40 and wash score <=0.30. Entry score is (35 x Safety + 30 x Flow + 25 x Momentum) / 90, discounted by (1 - 0.6 x max manipulation). Enter at >=68, or >=60 with independently validated flow confirmation. Narrative is omitted and weights renormalized.'),
+    p('Safety retains concentration/fresh-wallet penalties but removes the sold-sniper bonus so it cannot wash away other risks. Flow input is 0-100; the future producer clamps positive eligible smart-money net flow and excludes suspect wallets from positive contributions. Cold-start ranks require documented history or the desk skips; labels alone cannot manufacture verified performance.'),
+    h('Sizing in SOL'),
+    p('Define equity as allocated strategy equity, cash as spendable strategy SOL, and exposure as remaining cost basis. Size is the minimum of: confidence-scaled 2% equity; 1.5% of two-sided pool value in SOL; 0.5% equity divided by a 30% stress loss; remaining daily risk after reservations divided by that stress loss; available cash after fee reserve; and remaining exposure allowance.'),
+    table(['Paper default', 'Meaning'], [
+        ['5 SOL / 0.3 SOL', 'Synthetic starting equity / fee reserve. No real wallet is required.'],
+        ['0.01 SOL minimum', 'Still rejected if modeled total execution cost exceeds 8% of notional.'],
+        ['4 positions / 8% exposure', 'Both limits enforced. One accepted entry per minute, in arrival order.'],
+        ['6% pause / 10% liquidate', 'Daily marked-equity drawdown thresholds, UTC day. Gross realized losses also consume new-risk budget.'],
+        ['4 losses / 6 losses', 'Halve new size / latch EXIT_ONLY. Explicit operator action is required to resume.'],
+    ]),
+    p('At score 68 with 5 SOL equity, the capital cap is 0.02 SOL. This clears the revised minimum, but a high fee estimate may still reject it. Units are explicit: percentages versus fractions, raw token units versus display units, and SOL versus USD are never interchangeable.'),
+    p('Concurrent production sizing must reserve cash, position slots and stress risk atomically until an intent is settled or safely cancelled. A single transactional paper worker avoids that distributed race in this release.'),
+])
+page('8. Execution, accounting and exit rules', 'Paper behavior is working; live transaction lifecycle is a separate milestone', [
+    h('Implemented paper model'),
+    p('A constant-product reserve model includes the supplied pool fee and price impact, then applies a configurable adverse-execution haircut. Default fixed fee is 0.00005 SOL per modeled fill; adverse haircut is 50 bps. These are assumptions, not measured network costs. The cost screen reserves fixed fees for an entry and four ladder exits.'),
+    p('Initial stop is -18% on modeled net liquidation value. Sell 30% of original tokens at +40%, 30% at +100%, and 20% at +200%; stop floors then move to entry, +40% and +100%. The remaining 20% uses a 30% trailing drawdown. One ladder step executes per observation so a quote is not reused for several fills.'),
+    p('Time stop: close after 45 minutes if net liquidation value never reached +15%. Maximum hold is six hours. Danger/liquidation outranks profit taking. A stop exit has a two-hour cooldown; other exits have 30 minutes. Missing/stale routes preserve the position and record a blocked exit.'),
+    h('Required live lifecycle'),
+    note('CREATED -> VALIDATED -> SIGNED_PERSISTED -> SUBMITTED -> CONFIRMED -> FINALIZED/RECONCILED. Separate terminal FAILED from unresolved UNKNOWN and expired-unobserved attempts.'),
+    p('Persist signed bytes, signature, intent, lastValidBlockHeight, fee policy and expected effects before sending. Resending identical bytes differs from signing a replacement. Check signature history, balances and provider status before replacement; a timeout is not proof of failure. Track validity using block height. [15]'),
+    p('The signer must enforce mint/route/recipient allowlists, maximum spend, minimum output, priority-fee and tip ceilings independently of the decision worker. Validate unexpected Approve, SetAuthority, Burn and CloseAccount effects. Pool and router programs can be upgradeable, so reviewed program state must be monitored. Public/private RPC fallback is a deliberate policy, not an unconditional retry.'),
+    p('After every confirmed fill, use actual balance deltas, all fees and lot allocation for accounting. Redis alone is not a ledger. On-chain balance alone cannot reconstruct entry cost, prior ladder sales or trailing state.'),
+])
+page('9. Persistence, outages and operating controls', 'Fail closed for new entries while preserving the ability to exit', [
+    table(['State', 'Permitted behavior'], [
+        ['RUNNING', 'Entries and exits allowed only when their own prerequisites pass.'],
+        ['ENTRY_PAUSED', 'Block new entries. Continue managing existing positions.'],
+        ['EXIT_ONLY', 'Latched risk stop for entries; exits remain enabled.'],
+        ['LIQUIDATING', 'Attempt to close every position under a finite emergency policy. No entries.'],
+        ['STOPPED', 'No open positions or pending intents after reconciliation; operator-controlled restart.'],
+    ]),
+    h('Paper persistence'),
+    p('SQLite WAL with synchronous FULL writes saves input, outcome and complete state atomically. Duplicate event IDs are ignored only when payloads match. Configuration and implementation hashes identify an experiment; changed code or parameters require a new database. Replaying the same ordered evidence must reproduce the same state and outcome digest.'),
+    h('Production upgrade'),
+    p('Move the durable ledger to PostgreSQL with transactional outbox/inbox semantics; Redis Streams is transport/cache. Retain finalized raw archives, schema versions, policy/evidence hashes, account provenance and parameter approvals. Consumer retries are idempotent, not assumed exactly-once delivery.'),
+    p('Use a second independent RPC and an independently hosted recovery executor before meaningful capital. One active executor lease must be enforced with fencing; failover cannot create a second simultaneous signer. Restore durable position metadata, then reconcile balances and pending transactions before resuming.'),
+    p('A missing exit-worker heartbeat cannot be solved by telling that same dead worker to stop. Independent alerts and a working recovery path are required. If the chain or liquidity itself is unavailable, recovery may still be unable to exit.'),
+    h('Operator authentication'),
+    p('Future Telegram control requires whitelisted user and chat IDs, signed/nonce-bound command records, short expiry and independently provisioned second-factor verification. A six-digit code sent in the same compromised chat is confirmation, not independent authentication. No messaging or operator bot is configured in this release.'),
+    p('The hot-wallet balance caps server-compromise exposure at everything accessible to that wallet, not automatically at the daily trading-loss budget. The initial paper build holds no wallet key.'),
+])
+page('10. Validation and release gates', 'Passing software tests does not establish profitable or safe trading', [
+    table(['Gate', 'Evidence required'], [
+        ['A: Local core', 'Deterministic replay; duplicate/restart/crash safety; accounting invariants; malicious/unknown evidence rejects. Synthetic fixtures only.'],
+        ['B: Data correctness', 'Real raw captures decoded against pinned IDLs; launch/holder/funding coverage measured; reconnect gaps backfilled; finalized reconciliation checked.'],
+        ['C: Forward paper', 'Real routes and stateful simulations at decision sizes; delays, failed attempts, rent and fees accounted for; untouched evaluation window.'],
+        ['D: Small live', 'Isolated signer policy, exact transaction reconciliation, second RPC, independent recovery, incident drills and bounded capital configuration.'],
+        ['E: Scale', 'Sustained observed net results across regimes; drawdown and stuck-position behavior within predefined limits; no unresolved accounting defects.'],
+    ]),
+    h('Adversarial test set'),
+    p('Include time-distributed common-funder wallets, early holders moving tokens, service-hub false links, dust poisoning, incomplete launch history, unknown funding, fake coverage flags, active freeze/mint authority, Token-2022, quote-only sell evidence, stale or wrong-size simulation, vanished routes and hostile transaction instructions.'),
+    p('Build historical scam/benign evaluation sets with point-in-time data. Report false negatives, false positives, skipped-unknown rate, exposure retained by missed clusters and confidence intervals. Include dead/rugged tokens and rejected candidates. Do not select only assets still listed today.'),
+    h('Economics'),
+    p('With a 40% win rate, +60% winner and -18% loser, gross expectancy is 13.2% of initial notional. Subtracting 15 percentage points of round-trip cost gives -1.8%. Equivalent break-even win rate under these simplified assumptions is approximately 42.3%. Measure real multi-exit fees and net returns instead of treating maximum slippage as an average cost.'),
+    p('Two hundred paper trades are a minimum observation milestone. Rare winners, correlated launches and market regimes reduce effective sample size. Use walk-forward splits; calibration snapshots cannot contain future wallet performance. Statistical code proposes changes; humans approve versioned updates.'),
+    note('Current release cannot pass Gate C: the trusted feature builder and wallet-specific simulation/effect gate are incomplete. Synthetic PnL is excluded from all strategy-performance claims.'),
+])
+page('11. Setup and cost envelope', 'VPS installed; Helius capture and Jupiter route probe verified', [
+    h('Services and access'),
+    p('The existing VPS was verified: Ubuntu 24.04, Python 3.12, 2 CPUs and approximately 4 GB RAM. The package and a dedicated unprivileged service user are installed under /opt/solana-desk. Clock synchronization is active. The bounded systemd capture completed successfully and is now inactive. No inbound application port is opened; manual off-server restore was verified; daily local snapshots now retain seven complete sets.'),
+    table(['Item', 'Current published fact / project allowance'], [
+        ['Helius', 'Developer $49/month; Business $499/month with mainnet gRPC. Dedicated nodes start at $2,900/month. Streaming is usage-metered. Start with Developer for a filtered trial. [1]'],
+        ['Birdeye', 'Published Lite $39/month, Premium $199/month with WebSockets; endpoint entitlements and overages vary. Optional initially. [4]'],
+        ['Bubblemaps', 'API access, coverage, limits and commercial terms must be confirmed. No assumed free production entitlement. [13]'],
+        ['Jupiter', 'Free: 1 request/second. Developer: $25/month, 10 requests/second, 25M credits; overages $1/M credits. Reserve capacity for exits. [5][16]'],
+        ['Narrow paper research', '$100-$250/month planning allowance; existing VPS may reduce incremental cost.'],
+        ['Filtered small live / wider live coverage', '$250-$600 / $800-$1,500+ monthly allowances, excluding capital, engineering and trading costs.'],
+    ]),
+    p('Provider prices are not all-in operating costs. Streaming volume, holder/funding backfills, quote polling and retention drive consumption. First record 60 seconds with record/byte caps, inspect coverage and usage, then expand. Set billing limits and alerts in the provider dashboard.'),
+    h('Credentials'),
+    p('HELIUS_API_KEY enables collection/history/mint reads. JUPITER_API_KEY enables the unsigned route probe. Keep secrets in a protected environment file or secret manager, outside source control. No seed phrase or private key is required for this milestone. Birdeye/Bubblemaps and a secondary RPC are later access decisions.'),
+    p('Both provider keys were validated on the VPS. Helius captured 1,000 transactions (about 19 MB); Jupiter returned an unsigned SOL-to-USDC route. The expanded suite has 468 tests. No transaction was signed or submitted. A narrow launch sampler and loopback research dashboard are deployed with request budgets.'),
+])
+page('12. Delivery and next engineering work', 'A concrete first milestone, with production gaps visible', [
+    h('Delivered source package'),
+    p('The solana-desk directory contains Python modules for scoring, sizing, bundle screening, token policy, sellability evidence, paper exits, transactional storage and read-only providers; a CLI; configuration; synthetic fixtures; tests; and a systemd collection template. README.md describes commands and limitations. docs/threat-model.md expands the scam-defense design.'),
+    h('Run the offline milestone'),
+    note('python3 -m unittest discover -s tests -v\npython3 -m desk replay --input fixtures/demo.jsonl --db var/demo.sqlite --report var/demo-report.json'),
+    p('Python 3.11+ is required. Core replay uses the standard library. The full test suite and simulation checks also need the pinned solders dependency; streaming needs websockets, both in requirements-live.txt. All demo tokens and evidence are explicitly synthetic.'),
+    h('Prioritized build sequence'),
+    p('1. Provider probes, pinned decoders, live research dashboard and unsigned sell diagnostics are built. 2. Complete launch/funding/holder evidence and pool classification. 3. Finish instruction policy and wallet-specific validation; atomic balance and account-control diagnostics are built. 4. Connect continuous paper trading and independent source comparisons. 5. Implement isolated signing and recovery only after earlier gates pass.'),
+    h('Indicative effort'),
+    p('The original engineering allowance remains approximately one week for provider/specification validation and several additional weeks for trustworthy data and forward-paper integration. Bundle forensics and transaction simulation can extend that substantially. Calendar time alone never promotes a gate; evidence does.'),
+    p('Pinned Jupiter V2 arguments and setup/cleanup recipients are checked; unsupported routes remain blocked. An unsigned buy/partial-sell simulation passed atomic effects and controls on Helius; surplus inventory is explicit. Daily verified snapshots retain seven sets. Full inner swap/rent policy and automated off-server recovery remain unfinished.'),
+    h('Known omissions in this release'),
+    p('No production wallet ranks, complete pool/control coverage, complete live multi-hop evidence, wallet-specific sell approval, continuous paper strategy scheduler, external alerts, LLM narrative/review, PostgreSQL/Redis deployment, failover or live transaction execution. The paper model also omits rent, failed-attempt fees and hypothetical market response. Each omission is tracked as a required next step rather than hidden behind a pass flag.'),
+])
+refs = [
+ ('1','Helius pricing','https://www.helius.dev/pricing'),
+ ('2','Helius transactionSubscribe','https://www.helius.dev/docs/rpc/websocket/transaction-subscribe'),
+ ('3','Helius historical address transactions','https://www.helius.dev/docs/rpc/gettransactionsforaddress'),
+ ('4','Birdeye pricing and market-data catalog','https://docs.birdeye.so/docs/pricing'),
+ ('5','Jupiter Swap V2 build','https://developers.jup.ag/docs/swap/build'),
+ ('6','Solana transfer hooks','https://solana.com/docs/tokens/extensions/transfer-hook'),
+ ('7','Solana permanent delegates','https://solana.com/docs/tokens/extensions/permanent-delegate'),
+ ('8','Bubblemaps links and supernodes','https://wiki.bubblemaps.io/bubblemaps-v2/how-does-it-work'),
+ ('9','Bubblemaps bundles versus clusters','https://blog.bubblemaps.io/whats-the-difference-between-bundle-cluster-2/'),
+ ('10','Solana authority revocation','https://solana.com/docs/tokens/basics/set-authority'),
+ ('11','Canonical SPL account layout','https://raw.githubusercontent.com/solana-program/token/main/interface/src/state.rs'),
+ ('12','Solana simulateTransaction','https://solana.com/docs/rpc/http/simulatetransaction'),
+ ('13','Bubblemaps B2B data API overview','https://docs.bubblemaps.io/introduction'),
+ ('14','Jito submission and limitations','https://docs.jito.wtf/lowlatencytxnsend/'),
+ ('15','Solana transaction confirmation and expiration','https://solana.com/developers/cookbook/transactions/confirmation'),
+ ('16','Jupiter rate limits','https://developers.jup.ag/docs/portal/rate-limits'),
+ ('17','Token-2022 extension guide','https://www.solana-program.com/docs/token-2022/extensions'),
+ ('18','Birdeye data types','https://birdeye.so/data-api/types-of-data'),
+]
+page('13. Sources and provenance', 'Primary documentation checked 8 October 2026', [
+    p('Bracketed references in this document identify the sources below. Source links are clickable. Service terms and APIs can change; validate entitlements and run a bounded integration probe before committing to recurring costs.'),
+    *[('link', num, label, url) for num,label,url in refs],
+    h('Source plan'),
+    p('Solana Memecoin Trading Desk Architecture, 18 pages, dated 8 October 2026, supplied by the user. Original preserved; this revision replaces inconsistent assumptions and adds the user-requested Solana scam and sellability defenses.'),
+    p('All numerical screening thresholds, software architecture choices, paper defaults and planning allowances are project design decisions. No vendor certifies this strategy or guarantees that these filters detect all scams.'),
+])
+
+styles=getSampleStyleSheet()
+styles.add(ParagraphStyle(name='DeskTitle',fontName='Helvetica-Bold',fontSize=22,leading=26,textColor=colors.HexColor('#122842'),spaceAfter=9))
+styles.add(ParagraphStyle(name='DeskSub',fontName='Helvetica',fontSize=10,leading=14,textColor=colors.HexColor('#52677a'),spaceAfter=16))
+styles.add(ParagraphStyle(name='DeskBody',fontName='Helvetica',fontSize=10,leading=14,spaceAfter=10,textColor=colors.HexColor('#263445')))
+styles.add(ParagraphStyle(name='DeskHead',fontName='Helvetica-Bold',fontSize=12,leading=16,spaceBefore=8,spaceAfter=7,textColor=colors.HexColor('#153e5b')))
+styles.add(ParagraphStyle(name='DeskCell',fontName='Helvetica',fontSize=9,leading=12,spaceAfter=0))
+styles.add(ParagraphStyle(name='DeskCellHead',fontName='Helvetica-Bold',fontSize=9,leading=12,textColor=colors.white))
+styles.add(ParagraphStyle(name='DeskNote',fontName='Helvetica-Bold',fontSize=10,leading=14,textColor=colors.HexColor('#174760'),spaceAfter=0))
+width,height=A4
+usable=width-100
+flow=[]
+md=['# Solana Memecoin Trading Desk - Architecture v2','', 'Updated 2026-10-08. Research prototype; Solana only.','']
+for i,(title,subtitle,blocks) in enumerate(pages):
+    if i: flow.append(PageBreak())
+    flow += [Paragraph(escape(title),styles['DeskTitle']),Paragraph(escape(subtitle),styles['DeskSub'])]
+    md += ['## '+title,'',subtitle,'']
+    for b in blocks:
+        kind=b[0]
+        if kind in ('p','h'):
+            flow.append(Paragraph(escape(b[1]),styles['DeskBody' if kind=='p' else 'DeskHead']))
+            md += [('### ' if kind=='h' else '')+b[1],'']
+        elif kind=='note':
+            t=Table([[Paragraph(escape(b[1]).replace('\n','<br/>'),styles['DeskNote'])]],colWidths=[usable])
+            t.setStyle(TableStyle([('BACKGROUND',(0,0),(-1,-1),colors.HexColor('#edf5f8')),('BOX',(0,0),(-1,-1),.5,colors.HexColor('#c9dfe9')),('LEFTPADDING',(0,0),(-1,-1),12),('RIGHTPADDING',(0,0),(-1,-1),12),('TOPPADDING',(0,0),(-1,-1),10),('BOTTOMPADDING',(0,0),(-1,-1),10)]))
+            flow += [t,Spacer(1,12)]
+            md += ['> '+b[1].replace('\n','\n> '),'']
+        elif kind=='table':
+            headers,rows=b[1:]
+            data=[[Paragraph(escape(c),styles['DeskCellHead']) for c in headers]]+[[Paragraph(escape(c),styles['DeskCell']) for c in row] for row in rows]
+            t=Table(data,colWidths=[usable*.30,usable*.70],hAlign='LEFT',repeatRows=1)
+            t.setStyle(TableStyle([('BACKGROUND',(0,0),(-1,0),colors.HexColor('#173b55')),('ROWBACKGROUNDS',(0,1),(-1,-1),[colors.HexColor('#f0f4f7'),colors.white]),('VALIGN',(0,0),(-1,-1),'TOP'),('LEFTPADDING',(0,0),(-1,-1),9),('RIGHTPADDING',(0,0),(-1,-1),9),('TOPPADDING',(0,0),(-1,-1),7),('BOTTOMPADDING',(0,0),(-1,-1),7),('LINEBELOW',(0,0),(-1,0),1,colors.HexColor('#173b55'))]))
+            flow += [t,Spacer(1,12)]
+            md += ['| '+' | '.join(headers)+' |','| '+' | '.join(['---']*len(headers))+' |']+['| '+' | '.join(row)+' |' for row in rows]+['']
+        elif kind=='link':
+            _,num,label,url=b
+            flow.append(Paragraph(f'[{num}] <link href="{escape(url)}" color="#12637a">{escape(label)}</link>',styles['DeskBody']))
+            md += [f'- [{num}: {label}]({url})']
+
+def footer(canvas,doc):
+    canvas.setStrokeColor(colors.HexColor('#cbd5dd'));canvas.setLineWidth(.5)
+    canvas.line(50,45,width-50,45)
+    canvas.setFont('Helvetica',8);canvas.setFillColor(colors.HexColor('#687a8a'))
+    canvas.drawString(50,31,'SOLANA DESK / V2 / RESEARCH & PAPER ONLY')
+    canvas.drawRightString(width-50,31,str(doc.page))
+    canvas.setTitle('Solana Memecoin Trading Desk - Architecture v2')
+    canvas.setAuthor('Prepared for Chang Kyu Hong')
+
+pdf=OUT/'solana-trading-desk-architecture-v2.pdf'
+doc=SimpleDocTemplate(str(pdf),pagesize=A4,rightMargin=50,leftMargin=50,topMargin=48,bottomMargin=62)
+doc.build(flow,onFirstPage=footer,onLaterPages=footer)
+(ROOT/'docs/architecture-v2.md').write_text('\n'.join(md)+'\n')
+(ROOT/'docs/spec-pages.json').write_text(json.dumps(pages,indent=2)+'\n')
+print(pdf)

@@ -1,0 +1,8 @@
+[Unit]
+Description=Check existing paper positions for stale marks every five seconds
+[Timer]
+OnCalendar=*-*-* *:*:0/5
+AccuracySec=1s
+Unit=desk-paper-monitor.service
+[Install]
+WantedBy=timers.target

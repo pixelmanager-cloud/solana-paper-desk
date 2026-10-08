@@ -1,0 +1,23 @@
+{
+  "package": "@pump-fun/pump-swap-sdk",
+  "version": "2.1.0",
+  "git_commit": "0bc59090bbd0b8d6c27b8df72d52e30bfc069c3b",
+  "tarball": "https://registry.npmjs.org/@pump-fun/pump-swap-sdk/-/pump-swap-sdk-2.1.0.tgz",
+  "tarball_integrity": "sha512-O0ulb5In/pMzxpcWIkzU17N27HQNZhGGof4fhgXZUkRj/vDbrZsDrViNoouhR52bvtfRf61e/bSvEg/h+35ueA==",
+  "source_file": "package/src/sdk/offlinePumpAmm.ts",
+  "source_sha256": "ac8312ce476d56f6ce9d47019ba779144fa4c3f3b9db2939693f4b12a727b50b",
+  "account_lengths": {
+    "pre_stable": 2512,
+    "post_stable": 4073,
+    "post_exotic": 4097
+  },
+  "policy": "Only these exact allocated lengths and zero unused capacity are supported. SDK accepts broader lengths and stale capacity; this desk intentionally rejects them. Allocation length gates trailing fields.",
+  "pool_schema_file": "pump_amm_sdk_2_1_0.json",
+  "pool_schema_sha256": "b7d8c57a4d9c4dd0109a9ab893052352333252d4eedced10ac091d4d66cab89b",
+  "additional_source_checksums": {
+    "pda.ts": "1f207494497a227cb4bdca62ba1142a7d63cb00e14083fee48476ee36ba4d543",
+    "fees.ts": "45d55d0faca9aec48aca2637f885973602182012ab9623c703f42fec9be164c1",
+    "sell.js": "d58c4479b5bdd605e0f6785fdcd80dd86b1f74496647c144db4309671e266515"
+  },
+  "sell_math_source": "package/dist/esm/sdk/sell.js (contains bundled src/sdk/util.ts and src/sdk/sell.ts)"
+}

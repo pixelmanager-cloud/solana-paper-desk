@@ -1,0 +1,196 @@
+{
+  "provenance": "UNSIGNED_UNSUBMITTED_MAINNET_SEQUENCE_CAPABILITY_PROBE",
+  "sequence": {
+    "kind": "unsigned_sequence_diagnostic",
+    "passed": true,
+    "reasons": [],
+    "slot": 454341016,
+    "observed_at": 1791407916,
+    "transaction_hashes": [
+      "3f9c0c01f434e3e96d3891a256458421d712fac553f5ae205da30f10a6646bb9",
+      "c803078df9d68b8e4f5f8160f0970aaccbbcc9e0b8c9ce5bd7fcbd5e81a993ac"
+    ],
+    "watch": [
+      "FzULv8pR9Rd7cyVKjVkzmJ1eqEmgwDnzjYyNUcEJtoG9",
+      "EYdvNoPGh4uk5mrcyWUmNu6N4cxygrocqfJJJWXAVM4v"
+    ],
+    "state_digests": "9018bad3d8b300770dcff5fbe6cd863bc98ef28241c77eee2b35c0534a7338ff",
+    "result": {
+      "context": {
+        "apiVersion": "4.3.0",
+        "slot": 454341016
+      },
+      "value": {
+        "summary": "succeeded",
+        "transactionResults": [
+          {
+            "err": null,
+            "fee": 5000,
+            "loadedAccountsDataSize": 149,
+            "loadedAddresses": {
+              "readonly": [],
+              "writable": []
+            },
+            "logs": [
+              "Program 11111111111111111111111111111111 invoke [1]",
+              "Program 11111111111111111111111111111111 success"
+            ],
+            "postBalances": [
+              349104557,
+              1000000,
+              1
+            ],
+            "postExecutionAccounts": [
+              {
+                "data": [
+                  "",
+                  "base64"
+                ],
+                "executable": false,
+                "lamports": 349104557,
+                "owner": "11111111111111111111111111111111",
+                "rentEpoch": 18446744073709551615,
+                "space": 0
+              },
+              {
+                "data": [
+                  "",
+                  "base64"
+                ],
+                "executable": false,
+                "lamports": 1000000,
+                "owner": "11111111111111111111111111111111",
+                "rentEpoch": 18446744073709551615,
+                "space": 0
+              }
+            ],
+            "postTokenBalances": [],
+            "preBalances": [
+              350109557,
+              0,
+              1
+            ],
+            "preExecutionAccounts": [
+              {
+                "data": [
+                  "",
+                  "base64"
+                ],
+                "executable": false,
+                "lamports": 350109557,
+                "owner": "11111111111111111111111111111111",
+                "rentEpoch": 18446744073709551615,
+                "space": 0
+              },
+              {
+                "data": [
+                  "",
+                  "base64"
+                ],
+                "executable": false,
+                "lamports": 0,
+                "owner": "11111111111111111111111111111111",
+                "rentEpoch": 0,
+                "space": 0
+              }
+            ],
+            "preTokenBalances": [],
+            "replacementBlockhash": {
+              "blockhash": "DeUpPijrC7FjBSWcZrjJvysrU99kDEinNuQb4RqzPbg2",
+              "lastValidBlockHeight": 432378673
+            },
+            "returnData": null,
+            "unitsConsumed": 150
+          },
+          {
+            "err": null,
+            "fee": 10000,
+            "loadedAccountsDataSize": 213,
+            "loadedAddresses": {
+              "readonly": [],
+              "writable": []
+            },
+            "logs": [
+              "Program 11111111111111111111111111111111 invoke [1]",
+              "Program 11111111111111111111111111111111 success"
+            ],
+            "postBalances": [
+              350094557,
+              0,
+              1
+            ],
+            "postExecutionAccounts": [
+              {
+                "data": [
+                  "",
+                  "base64"
+                ],
+                "executable": false,
+                "lamports": 350094557,
+                "owner": "11111111111111111111111111111111",
+                "rentEpoch": 18446744073709551615,
+                "space": 0
+              },
+              {
+                "data": [
+                  "",
+                  "base64"
+                ],
+                "executable": false,
+                "lamports": 0,
+                "owner": "11111111111111111111111111111111",
+                "rentEpoch": 18446744073709551615,
+                "space": 0
+              }
+            ],
+            "postTokenBalances": [],
+            "preBalances": [
+              349104557,
+              1000000,
+              1
+            ],
+            "preExecutionAccounts": [
+              {
+                "data": [
+                  "",
+                  "base64"
+                ],
+                "executable": false,
+                "lamports": 349104557,
+                "owner": "11111111111111111111111111111111",
+                "rentEpoch": 18446744073709551615,
+                "space": 0
+              },
+              {
+                "data": [
+                  "",
+                  "base64"
+                ],
+                "executable": false,
+                "lamports": 1000000,
+                "owner": "11111111111111111111111111111111",
+                "rentEpoch": 18446744073709551615,
+                "space": 0
+              }
+            ],
+            "preTokenBalances": [],
+            "replacementBlockhash": {
+              "blockhash": "DeUpPijrC7FjBSWcZrjJvysrU99kDEinNuQb4RqzPbg2",
+              "lastValidBlockHeight": 432378673
+            },
+            "returnData": null,
+            "unitsConsumed": 150
+          }
+        ]
+      }
+    },
+    "signed": false,
+    "submitted": false,
+    "eligible_for_trading": false,
+    "notice": "Sequential state and execution diagnostic only. Buy/sell effects, all account controls and route policies still required."
+  },
+  "second_leg_alone_failed": true,
+  "target_absent_before": true,
+  "target_absent_after": true,
+  "notice": "System transfer simulation proves provider state sequencing capability only; no token or trading approval."
+}

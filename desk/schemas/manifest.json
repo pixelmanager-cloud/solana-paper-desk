@@ -1,0 +1,39 @@
+{
+  "repository": "https://github.com/pump-fun/pump-public-docs",
+  "commit": "cb188ce08b5069196eef1f3e4a0c43b70099793b",
+  "files": {
+    "pump": {
+      "url": "https://raw.githubusercontent.com/pump-fun/pump-public-docs/cb188ce08b5069196eef1f3e4a0c43b70099793b/idl/pump.json",
+      "sha256": "ffe966c42f1af41652ee753fe2f1e3f7cd4077d7e6f49faf3138959c8b56064b"
+    },
+    "pump_amm": {
+      "url": "https://raw.githubusercontent.com/pump-fun/pump-public-docs/cb188ce08b5069196eef1f3e4a0c43b70099793b/idl/pump_amm.json",
+      "sha256": "2091433899b07d003d98118ae6cd3c628960fd393b40710b6e15bce6d0e7f2d1"
+    },
+    "pump_previous1": {
+      "url": "https://raw.githubusercontent.com/pump-fun/pump-public-docs/3c6721a67c0b206b39130b454c8ba22a83ce972e/idl/pump.json",
+      "sha256": "b90bc471327f671449271d5d1d42354d1fae6f5a06502f5834459a3108138e49",
+      "historical": true
+    },
+    "pump_previous2": {
+      "url": "https://raw.githubusercontent.com/pump-fun/pump-public-docs/91db6800e55bf341696564bd30a08ed4e3fc7491/idl/pump.json",
+      "sha256": "9c74bb906dbef3890082009e1fab2b80e26099385c697e6a1a87af817efadf7e",
+      "historical": true
+    },
+    "pump_amm_previous1": {
+      "url": "https://raw.githubusercontent.com/pump-fun/pump-public-docs/2c22246b670812e2392e5f94b9543f500d6c9e15/idl/pump_amm.json",
+      "sha256": "6b5c7ec4e5ef9742fa99dc57b0d75b1031b379bba02a7e1b3c5a4cad68d77e56",
+      "historical": true
+    },
+    "pump_amm_previous2": {
+      "url": "https://raw.githubusercontent.com/pump-fun/pump-public-docs/3c6721a67c0b206b39130b454c8ba22a83ce972e/idl/pump_amm.json",
+      "sha256": "cd5c58a5dded23632aedb993b08cc0d2ba91bda2bb084560913464274d3bee50",
+      "historical": true
+    },
+    "pump_amm_sdk_2_1_0": {
+      "sha256": "b7d8c57a4d9c4dd0109a9ab893052352333252d4eedced10ac091d4d66cab89b",
+      "events_only": true,
+      "source": "@pump-fun/pump-swap-sdk 2.1.0; provenance in fee_sdk_manifest.json"
+    }
+  }
+}

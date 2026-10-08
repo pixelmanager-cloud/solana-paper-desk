@@ -1,0 +1,20 @@
+[Unit]
+Description=Record reject-only paper candidate decisions from completed investigations
+ConditionPathExists=/var/lib/solana-desk/research.sqlite
+[Service]
+Type=oneshot
+User=solana-desk
+Group=solana-desk
+WorkingDirectory=/opt/solana-desk
+ExecStart=/opt/solana-desk/.venv/bin/python -m desk consume-scans --db /var/lib/solana-desk/research.sqlite --journal /var/lib/solana-desk/paper-decisions.sqlite --evidence-db /var/lib/solana-desk/evidence.sqlite
+UMask=0077
+NoNewPrivileges=true
+PrivateTmp=true
+ProtectSystem=strict
+ProtectHome=true
+ReadWritePaths=/var/lib/solana-desk
+RestrictAddressFamilies=AF_UNIX
+PrivateNetwork=true
+TimeoutStartSec=25
+MemoryMax=128M
+StandardOutput=null

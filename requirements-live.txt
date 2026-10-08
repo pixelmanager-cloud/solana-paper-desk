@@ -1,0 +1,4 @@
+# Streaming, chain-address validation, simulation and full regression dependencies.
+websockets==15.0.1
+
+solders==0.29.0

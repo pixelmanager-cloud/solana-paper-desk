@@ -1,0 +1,19 @@
+[build-system]
+requires = ["setuptools>=75"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "solana-desk"
+version = "0.2.0"
+description = "Deterministic paper-trading research desk; no signing or transaction submission"
+requires-python = ">=3.11"
+dependencies = []
+
+[project.scripts]
+solana-desk = "desk.cli:main"
+
+[tool.setuptools.packages.find]
+include = ["desk*"]
+
+[tool.setuptools.package-data]
+desk = ["schemas/*.json", "static/*"]

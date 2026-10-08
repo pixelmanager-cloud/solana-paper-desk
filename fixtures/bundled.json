@@ -1,0 +1,987 @@
+{
+  "as_of": 1791417600,
+  "launch_history_complete": true,
+  "funding_history_complete": true,
+  "holder_coverage_pct": "100",
+  "launch_slot": 1000,
+  "holders": [
+    {
+      "wallet": "w000",
+      "pct": "1"
+    },
+    {
+      "wallet": "w001",
+      "pct": "1"
+    },
+    {
+      "wallet": "w002",
+      "pct": "1"
+    },
+    {
+      "wallet": "w003",
+      "pct": "1"
+    },
+    {
+      "wallet": "w004",
+      "pct": "1"
+    },
+    {
+      "wallet": "w005",
+      "pct": "1"
+    },
+    {
+      "wallet": "w006",
+      "pct": "1"
+    },
+    {
+      "wallet": "w007",
+      "pct": "1"
+    },
+    {
+      "wallet": "w008",
+      "pct": "1"
+    },
+    {
+      "wallet": "w009",
+      "pct": "1"
+    },
+    {
+      "wallet": "w010",
+      "pct": "1"
+    },
+    {
+      "wallet": "w011",
+      "pct": "1"
+    },
+    {
+      "wallet": "w012",
+      "pct": "1"
+    },
+    {
+      "wallet": "w013",
+      "pct": "1"
+    },
+    {
+      "wallet": "w014",
+      "pct": "1"
+    },
+    {
+      "wallet": "w015",
+      "pct": "1"
+    },
+    {
+      "wallet": "w016",
+      "pct": "1"
+    },
+    {
+      "wallet": "w017",
+      "pct": "1"
+    },
+    {
+      "wallet": "w018",
+      "pct": "1"
+    },
+    {
+      "wallet": "w019",
+      "pct": "1"
+    },
+    {
+      "wallet": "w020",
+      "pct": "1"
+    },
+    {
+      "wallet": "w021",
+      "pct": "1"
+    },
+    {
+      "wallet": "w022",
+      "pct": "1"
+    },
+    {
+      "wallet": "w023",
+      "pct": "1"
+    },
+    {
+      "wallet": "w024",
+      "pct": "1"
+    },
+    {
+      "wallet": "w025",
+      "pct": "1"
+    },
+    {
+      "wallet": "w026",
+      "pct": "1"
+    },
+    {
+      "wallet": "w027",
+      "pct": "1"
+    },
+    {
+      "wallet": "w028",
+      "pct": "1"
+    },
+    {
+      "wallet": "w029",
+      "pct": "1"
+    },
+    {
+      "wallet": "w030",
+      "pct": "1"
+    },
+    {
+      "wallet": "w031",
+      "pct": "1"
+    },
+    {
+      "wallet": "w032",
+      "pct": "1"
+    },
+    {
+      "wallet": "w033",
+      "pct": "1"
+    },
+    {
+      "wallet": "w034",
+      "pct": "1"
+    },
+    {
+      "wallet": "w035",
+      "pct": "1"
+    },
+    {
+      "wallet": "w036",
+      "pct": "1"
+    },
+    {
+      "wallet": "w037",
+      "pct": "1"
+    },
+    {
+      "wallet": "w038",
+      "pct": "1"
+    },
+    {
+      "wallet": "w039",
+      "pct": "1"
+    },
+    {
+      "wallet": "w040",
+      "pct": "1"
+    },
+    {
+      "wallet": "w041",
+      "pct": "1"
+    },
+    {
+      "wallet": "w042",
+      "pct": "1"
+    },
+    {
+      "wallet": "w043",
+      "pct": "1"
+    },
+    {
+      "wallet": "w044",
+      "pct": "1"
+    },
+    {
+      "wallet": "w045",
+      "pct": "1"
+    },
+    {
+      "wallet": "w046",
+      "pct": "1"
+    },
+    {
+      "wallet": "w047",
+      "pct": "1"
+    },
+    {
+      "wallet": "w048",
+      "pct": "1"
+    },
+    {
+      "wallet": "w049",
+      "pct": "1"
+    },
+    {
+      "wallet": "w050",
+      "pct": "1"
+    },
+    {
+      "wallet": "w051",
+      "pct": "1"
+    },
+    {
+      "wallet": "w052",
+      "pct": "1"
+    },
+    {
+      "wallet": "w053",
+      "pct": "1"
+    },
+    {
+      "wallet": "w054",
+      "pct": "1"
+    },
+    {
+      "wallet": "w055",
+      "pct": "1"
+    },
+    {
+      "wallet": "w056",
+      "pct": "1"
+    },
+    {
+      "wallet": "w057",
+      "pct": "1"
+    },
+    {
+      "wallet": "w058",
+      "pct": "1"
+    },
+    {
+      "wallet": "w059",
+      "pct": "1"
+    },
+    {
+      "wallet": "w060",
+      "pct": "1"
+    },
+    {
+      "wallet": "w061",
+      "pct": "1"
+    },
+    {
+      "wallet": "w062",
+      "pct": "1"
+    },
+    {
+      "wallet": "w063",
+      "pct": "1"
+    },
+    {
+      "wallet": "w064",
+      "pct": "1"
+    },
+    {
+      "wallet": "w065",
+      "pct": "1"
+    },
+    {
+      "wallet": "w066",
+      "pct": "1"
+    },
+    {
+      "wallet": "w067",
+      "pct": "1"
+    },
+    {
+      "wallet": "w068",
+      "pct": "1"
+    },
+    {
+      "wallet": "w069",
+      "pct": "1"
+    },
+    {
+      "wallet": "w070",
+      "pct": "1"
+    },
+    {
+      "wallet": "w071",
+      "pct": "1"
+    },
+    {
+      "wallet": "w072",
+      "pct": "1"
+    },
+    {
+      "wallet": "w073",
+      "pct": "1"
+    },
+    {
+      "wallet": "w074",
+      "pct": "1"
+    },
+    {
+      "wallet": "w075",
+      "pct": "1"
+    },
+    {
+      "wallet": "w076",
+      "pct": "1"
+    },
+    {
+      "wallet": "w077",
+      "pct": "1"
+    },
+    {
+      "wallet": "w078",
+      "pct": "1"
+    },
+    {
+      "wallet": "w079",
+      "pct": "1"
+    },
+    {
+      "wallet": "w080",
+      "pct": "1"
+    },
+    {
+      "wallet": "w081",
+      "pct": "1"
+    },
+    {
+      "wallet": "w082",
+      "pct": "1"
+    },
+    {
+      "wallet": "w083",
+      "pct": "1"
+    },
+    {
+      "wallet": "w084",
+      "pct": "1"
+    },
+    {
+      "wallet": "w085",
+      "pct": "1"
+    },
+    {
+      "wallet": "w086",
+      "pct": "1"
+    },
+    {
+      "wallet": "w087",
+      "pct": "1"
+    },
+    {
+      "wallet": "w088",
+      "pct": "1"
+    },
+    {
+      "wallet": "w089",
+      "pct": "1"
+    },
+    {
+      "wallet": "w090",
+      "pct": "1"
+    },
+    {
+      "wallet": "w091",
+      "pct": "1"
+    },
+    {
+      "wallet": "w092",
+      "pct": "1"
+    },
+    {
+      "wallet": "w093",
+      "pct": "1"
+    },
+    {
+      "wallet": "w094",
+      "pct": "1"
+    },
+    {
+      "wallet": "w095",
+      "pct": "1"
+    },
+    {
+      "wallet": "w096",
+      "pct": "1"
+    },
+    {
+      "wallet": "w097",
+      "pct": "1"
+    },
+    {
+      "wallet": "w098",
+      "pct": "1"
+    },
+    {
+      "wallet": "w099",
+      "pct": "1"
+    }
+  ],
+  "early_buys": [
+    {
+      "wallet": "w000",
+      "slot": 1000,
+      "ts": 1791417300
+    },
+    {
+      "wallet": "w001",
+      "slot": 1001,
+      "ts": 1791417301
+    },
+    {
+      "wallet": "w002",
+      "slot": 1002,
+      "ts": 1791417302
+    },
+    {
+      "wallet": "w003",
+      "slot": 1003,
+      "ts": 1791417303
+    },
+    {
+      "wallet": "w004",
+      "slot": 1000,
+      "ts": 1791417304
+    },
+    {
+      "wallet": "w005",
+      "slot": 1001,
+      "ts": 1791417305
+    },
+    {
+      "wallet": "w006",
+      "slot": 1002,
+      "ts": 1791417306
+    },
+    {
+      "wallet": "w007",
+      "slot": 1003,
+      "ts": 1791417307
+    },
+    {
+      "wallet": "w008",
+      "slot": 1000,
+      "ts": 1791417308
+    },
+    {
+      "wallet": "w009",
+      "slot": 1001,
+      "ts": 1791417309
+    },
+    {
+      "wallet": "w010",
+      "slot": 1002,
+      "ts": 1791417310
+    },
+    {
+      "wallet": "w011",
+      "slot": 1003,
+      "ts": 1791417311
+    },
+    {
+      "wallet": "w012",
+      "slot": 1022,
+      "ts": 1791417312
+    },
+    {
+      "wallet": "w013",
+      "slot": 1023,
+      "ts": 1791417313
+    },
+    {
+      "wallet": "w014",
+      "slot": 1024,
+      "ts": 1791417314
+    },
+    {
+      "wallet": "w015",
+      "slot": 1025,
+      "ts": 1791417315
+    },
+    {
+      "wallet": "w016",
+      "slot": 1026,
+      "ts": 1791417316
+    },
+    {
+      "wallet": "w017",
+      "slot": 1027,
+      "ts": 1791417317
+    },
+    {
+      "wallet": "w018",
+      "slot": 1028,
+      "ts": 1791417318
+    },
+    {
+      "wallet": "w019",
+      "slot": 1029,
+      "ts": 1791417319
+    },
+    {
+      "wallet": "w020",
+      "slot": 1030,
+      "ts": 1791417320
+    },
+    {
+      "wallet": "w021",
+      "slot": 1031,
+      "ts": 1791417321
+    },
+    {
+      "wallet": "w022",
+      "slot": 1032,
+      "ts": 1791417322
+    },
+    {
+      "wallet": "w023",
+      "slot": 1033,
+      "ts": 1791417323
+    },
+    {
+      "wallet": "w024",
+      "slot": 1034,
+      "ts": 1791417324
+    },
+    {
+      "wallet": "w025",
+      "slot": 1035,
+      "ts": 1791417325
+    },
+    {
+      "wallet": "w026",
+      "slot": 1036,
+      "ts": 1791417326
+    },
+    {
+      "wallet": "w027",
+      "slot": 1037,
+      "ts": 1791417327
+    },
+    {
+      "wallet": "w028",
+      "slot": 1038,
+      "ts": 1791417328
+    },
+    {
+      "wallet": "w029",
+      "slot": 1039,
+      "ts": 1791417329
+    },
+    {
+      "wallet": "w030",
+      "slot": 1040,
+      "ts": 1791417330
+    },
+    {
+      "wallet": "w031",
+      "slot": 1041,
+      "ts": 1791417331
+    },
+    {
+      "wallet": "w032",
+      "slot": 1042,
+      "ts": 1791417332
+    },
+    {
+      "wallet": "w033",
+      "slot": 1043,
+      "ts": 1791417333
+    },
+    {
+      "wallet": "w034",
+      "slot": 1044,
+      "ts": 1791417334
+    },
+    {
+      "wallet": "w035",
+      "slot": 1045,
+      "ts": 1791417335
+    },
+    {
+      "wallet": "w036",
+      "slot": 1046,
+      "ts": 1791417336
+    },
+    {
+      "wallet": "w037",
+      "slot": 1047,
+      "ts": 1791417337
+    },
+    {
+      "wallet": "w038",
+      "slot": 1048,
+      "ts": 1791417338
+    },
+    {
+      "wallet": "w039",
+      "slot": 1049,
+      "ts": 1791417339
+    },
+    {
+      "wallet": "w040",
+      "slot": 1050,
+      "ts": 1791417340
+    },
+    {
+      "wallet": "w041",
+      "slot": 1051,
+      "ts": 1791417341
+    },
+    {
+      "wallet": "w042",
+      "slot": 1052,
+      "ts": 1791417342
+    },
+    {
+      "wallet": "w043",
+      "slot": 1053,
+      "ts": 1791417343
+    },
+    {
+      "wallet": "w044",
+      "slot": 1054,
+      "ts": 1791417344
+    },
+    {
+      "wallet": "w045",
+      "slot": 1055,
+      "ts": 1791417345
+    },
+    {
+      "wallet": "w046",
+      "slot": 1056,
+      "ts": 1791417346
+    },
+    {
+      "wallet": "w047",
+      "slot": 1057,
+      "ts": 1791417347
+    },
+    {
+      "wallet": "w048",
+      "slot": 1058,
+      "ts": 1791417348
+    },
+    {
+      "wallet": "w049",
+      "slot": 1059,
+      "ts": 1791417349
+    },
+    {
+      "wallet": "w050",
+      "slot": 1060,
+      "ts": 1791417350
+    },
+    {
+      "wallet": "w051",
+      "slot": 1061,
+      "ts": 1791417351
+    },
+    {
+      "wallet": "w052",
+      "slot": 1062,
+      "ts": 1791417352
+    },
+    {
+      "wallet": "w053",
+      "slot": 1063,
+      "ts": 1791417353
+    },
+    {
+      "wallet": "w054",
+      "slot": 1064,
+      "ts": 1791417354
+    },
+    {
+      "wallet": "w055",
+      "slot": 1065,
+      "ts": 1791417355
+    },
+    {
+      "wallet": "w056",
+      "slot": 1066,
+      "ts": 1791417356
+    },
+    {
+      "wallet": "w057",
+      "slot": 1067,
+      "ts": 1791417357
+    },
+    {
+      "wallet": "w058",
+      "slot": 1068,
+      "ts": 1791417358
+    },
+    {
+      "wallet": "w059",
+      "slot": 1069,
+      "ts": 1791417359
+    },
+    {
+      "wallet": "w060",
+      "slot": 1070,
+      "ts": 1791417360
+    },
+    {
+      "wallet": "w061",
+      "slot": 1071,
+      "ts": 1791417361
+    },
+    {
+      "wallet": "w062",
+      "slot": 1072,
+      "ts": 1791417362
+    },
+    {
+      "wallet": "w063",
+      "slot": 1073,
+      "ts": 1791417363
+    },
+    {
+      "wallet": "w064",
+      "slot": 1074,
+      "ts": 1791417364
+    },
+    {
+      "wallet": "w065",
+      "slot": 1075,
+      "ts": 1791417365
+    },
+    {
+      "wallet": "w066",
+      "slot": 1076,
+      "ts": 1791417366
+    },
+    {
+      "wallet": "w067",
+      "slot": 1077,
+      "ts": 1791417367
+    },
+    {
+      "wallet": "w068",
+      "slot": 1078,
+      "ts": 1791417368
+    },
+    {
+      "wallet": "w069",
+      "slot": 1079,
+      "ts": 1791417369
+    },
+    {
+      "wallet": "w070",
+      "slot": 1080,
+      "ts": 1791417370
+    },
+    {
+      "wallet": "w071",
+      "slot": 1081,
+      "ts": 1791417371
+    },
+    {
+      "wallet": "w072",
+      "slot": 1082,
+      "ts": 1791417372
+    },
+    {
+      "wallet": "w073",
+      "slot": 1083,
+      "ts": 1791417373
+    },
+    {
+      "wallet": "w074",
+      "slot": 1084,
+      "ts": 1791417374
+    },
+    {
+      "wallet": "w075",
+      "slot": 1085,
+      "ts": 1791417375
+    },
+    {
+      "wallet": "w076",
+      "slot": 1086,
+      "ts": 1791417376
+    },
+    {
+      "wallet": "w077",
+      "slot": 1087,
+      "ts": 1791417377
+    },
+    {
+      "wallet": "w078",
+      "slot": 1088,
+      "ts": 1791417378
+    },
+    {
+      "wallet": "w079",
+      "slot": 1089,
+      "ts": 1791417379
+    },
+    {
+      "wallet": "w080",
+      "slot": 1090,
+      "ts": 1791417380
+    },
+    {
+      "wallet": "w081",
+      "slot": 1091,
+      "ts": 1791417381
+    },
+    {
+      "wallet": "w082",
+      "slot": 1092,
+      "ts": 1791417382
+    },
+    {
+      "wallet": "w083",
+      "slot": 1093,
+      "ts": 1791417383
+    },
+    {
+      "wallet": "w084",
+      "slot": 1094,
+      "ts": 1791417384
+    },
+    {
+      "wallet": "w085",
+      "slot": 1095,
+      "ts": 1791417385
+    },
+    {
+      "wallet": "w086",
+      "slot": 1096,
+      "ts": 1791417386
+    },
+    {
+      "wallet": "w087",
+      "slot": 1097,
+      "ts": 1791417387
+    },
+    {
+      "wallet": "w088",
+      "slot": 1098,
+      "ts": 1791417388
+    },
+    {
+      "wallet": "w089",
+      "slot": 1099,
+      "ts": 1791417389
+    },
+    {
+      "wallet": "w090",
+      "slot": 1100,
+      "ts": 1791417390
+    },
+    {
+      "wallet": "w091",
+      "slot": 1101,
+      "ts": 1791417391
+    },
+    {
+      "wallet": "w092",
+      "slot": 1102,
+      "ts": 1791417392
+    },
+    {
+      "wallet": "w093",
+      "slot": 1103,
+      "ts": 1791417393
+    },
+    {
+      "wallet": "w094",
+      "slot": 1104,
+      "ts": 1791417394
+    },
+    {
+      "wallet": "w095",
+      "slot": 1105,
+      "ts": 1791417395
+    },
+    {
+      "wallet": "w096",
+      "slot": 1106,
+      "ts": 1791417396
+    },
+    {
+      "wallet": "w097",
+      "slot": 1107,
+      "ts": 1791417397
+    },
+    {
+      "wallet": "w098",
+      "slot": 1108,
+      "ts": 1791417398
+    },
+    {
+      "wallet": "w099",
+      "slot": 1109,
+      "ts": 1791417399
+    }
+  ],
+  "funding": [
+    {
+      "source": "private-funder",
+      "destination": "w000",
+      "ts": 1791417200,
+      "source_kind": "private_verified"
+    },
+    {
+      "source": "private-funder",
+      "destination": "w001",
+      "ts": 1791417200,
+      "source_kind": "private_verified"
+    },
+    {
+      "source": "private-funder",
+      "destination": "w002",
+      "ts": 1791417200,
+      "source_kind": "private_verified"
+    },
+    {
+      "source": "private-funder",
+      "destination": "w003",
+      "ts": 1791417200,
+      "source_kind": "private_verified"
+    },
+    {
+      "source": "private-funder",
+      "destination": "w004",
+      "ts": 1791417200,
+      "source_kind": "private_verified"
+    },
+    {
+      "source": "private-funder",
+      "destination": "w005",
+      "ts": 1791417200,
+      "source_kind": "private_verified"
+    },
+    {
+      "source": "private-funder",
+      "destination": "w006",
+      "ts": 1791417200,
+      "source_kind": "private_verified"
+    },
+    {
+      "source": "private-funder",
+      "destination": "w007",
+      "ts": 1791417200,
+      "source_kind": "private_verified"
+    },
+    {
+      "source": "private-funder",
+      "destination": "w008",
+      "ts": 1791417200,
+      "source_kind": "private_verified"
+    },
+    {
+      "source": "private-funder",
+      "destination": "w009",
+      "ts": 1791417200,
+      "source_kind": "private_verified"
+    },
+    {
+      "source": "private-funder",
+      "destination": "w010",
+      "ts": 1791417200,
+      "source_kind": "private_verified"
+    },
+    {
+      "source": "private-funder",
+      "destination": "w011",
+      "ts": 1791417200,
+      "source_kind": "private_verified"
+    }
+  ],
+  "transfers": [],
+  "known_bad_wallets": []
+}

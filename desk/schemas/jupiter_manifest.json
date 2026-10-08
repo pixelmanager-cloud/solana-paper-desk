@@ -1,0 +1,10 @@
+{
+  "source_type": "finalized_program_owned_anchor_idl",
+  "program": "JUP6LkbZbjS1jKKwapdHNy74zcZ3tLUZoi5QNyVTaV4",
+  "account": "C88XWfp26heEmDkmfSzeXP7Fd7GQJ2j9dDTUsyiZbUTa",
+  "observed_slot": 454337229,
+  "file": "jupiter_v6.json",
+  "sha256": "068a705a24074aecfb2a165910cfed946e8ac5998286320066004ee6babeed74",
+  "account_owner_verified": true,
+  "notice": "Interface schema only; not program code verification or trading approval."
+}
