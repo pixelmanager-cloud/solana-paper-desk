@@ -4,6 +4,8 @@ import sqlite3
 import threading
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
+from urllib.parse import parse_qs, urlsplit
+from .dashboard_diagnostics import DashboardDiagnostics
 from .screen import screen
 from .job_persistence import JobPersistence, BIRTH_ACQUISITION_V1
 
@@ -45,7 +47,9 @@ class Jobs:
             if not self.once():self.stopping.wait(1)
 
 
-def handler(jobs,port):
+def handler(jobs,port,*,evidence_db=None):
+    diagnostics = DashboardDiagnostics(jobs.db, evidence_db if evidence_db is not None
+                                       else Path(jobs.db).parent/'evidence.sqlite')
     class Handler(BaseHTTPRequestHandler):
         def log_message(self,*args):pass
         def respond(self,status,data,ctype='application/json'):
@@ -62,6 +66,20 @@ def handler(jobs,port):
             return self.headers.get('Host') in allowed and self.headers.get('Origin') in (None,*('http://'+h for h in allowed))
         def do_GET(self):
             if not self.trusted():return self.respond(403,{'error':'Local access only'})
+            if self.path.split('?',1)[0]=='/api/evidence-diagnostics':
+                try:
+                    if len(self.path)>512:raise ValueError('Oversized query')
+                    parsed=urlsplit(self.path)
+                    if parsed.fragment:raise ValueError('Invalid query')
+                    query=parse_qs(parsed.query,keep_blank_values=True,
+                                   strict_parsing=True,max_num_fields=1)
+                    if set(query)!={'scan_id'} or len(query['scan_id'])!=1:
+                        raise ValueError('Only scan ID is accepted')
+                except ValueError:
+                    return self.respond(400,{'status':'UNAVAILABLE','decision':'REJECT',
+                        'eligible_for_trading':False,'diagnostics':None,'reasons':['INVALID_DIAGNOSTIC_QUERY']})
+                status,body=diagnostics.inspect(query['scan_id'][0])
+                return self.respond(status,body)
             if self.path=='/api/paper':
                 from .paper_view import paper_status
                 return self.respond(200,paper_status(Path(jobs.db).parent/'active-paper.sqlite'))
@@ -111,7 +129,7 @@ def serve(db,port=8765):
     from .evidence import EvidenceStore
     evidence=EvidenceStore(Path(db).parent/'evidence.sqlite')
     jobs=Jobs(db,scanner=lambda mint:screen(mint,history_capture=evidence.save))
-    server=ThreadingHTTPServer(('127.0.0.1',port),handler(jobs,port))
+    server=ThreadingHTTPServer(('127.0.0.1',port),handler(jobs,port,evidence_db=evidence.path))
     worker=threading.Thread(target=jobs.run,daemon=True);worker.start()
     try:server.serve_forever()
     finally:jobs.stopping.set();server.server_close()
