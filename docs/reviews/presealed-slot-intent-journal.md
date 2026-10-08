@@ -66,7 +66,12 @@ This is local failure recording, not authenticated proof of network activity.
 A reopened PENDING is terminal. Inspection can show the old intent/attachment
 under a subsequently valid job claim but cannot recreate its completion handle.
 Unknown, expired, forked, wrong-source, stale-fence or conflicting completions
-reject. A known result is frozen in the live handle before any persistence
+reject. Completion also verifies the exact expected attachment body/hash/original bytes
+actually exists after INSERT before acknowledgment; a suppressed insert cannot
+report DONE. Handle types are rejected before any user-defined hash/equality
+dispatch, retaining exact plain-object identity.
+
+A known result is frozen in the live handle before any persistence
 attempt: only identical byte/result persistence acknowledgment may be retried.
 There is no request retry, refund, reset, rebind, caller ID selection or new-run
 API. The job remains pending and existing queue mint deduplication prevents
@@ -89,11 +94,24 @@ always false, even for a syntactically valid synthetic DONE result.
 
 One job, one intent, one attachment; no run enumeration or page decompression.
 Request 1 KiB, response 64 KiB, redacted failure 2 KiB, each metadata/body 8 KiB.
-Every audit queries all three tables' cardinalities and serialized lengths and
+Each fresh admission and installed audit first preflights the COMPLETE typed
+SQLite catalog using scalar count and serialized name/type/table/SQL byte
+statistics in the same guarded transaction. At most 64 objects, 128-byte names,
+16-byte types, 4 KiB SQL per object and 64 KiB total catalog bytes are allowed.
+The entire exact typed list (including known automatic indexes and all original
+base table SQL) must match; no name-keyed dictionary, prefix filter, unknown
+trigger/view/index or altered base table is allowed. SQL/name bodies are fetched
+only after reservation; no invalid prefix or contradictory suffix is salvaged.
+These limits bound application materialization, not SQLite engine internal
+schema parsing/allocation when opening a corrupt file.
+
+Every audit then queries all three tables' cardinalities and serialized lengths and
 reserves the whole 83 KiB aggregate limit BEFORE any journal body/BLOB fetch.
 The conservative aggregate allows metadata + intent/event bodies + originals;
 actual three metadata bodies are individually bounded, and the aggregate can
-reject their combined maximum. Existing admission descriptor is separately
+reject their combined maximum. Catalog plus journal serialized materialization is at most 147 KiB per audit
+pass (64 + 83), with up to two such passes per attachment operation.
+Existing admission descriptor is separately
 preflighted at 8 KiB with no prepared source. An attachment operation performs
 one pre-write and one post-write audit (up to two complete bounded passes),
 plus its incoming response and frozen known-result reference; it does not claim
@@ -109,7 +127,18 @@ worker-lock contention; reservation lost acknowledgment; completion commit-befor
 after ambiguity; identical-only persistence; restart terminal behavior; exact
 original bytes; strict integer/overflow; framing attacks; source/fence/request
 substitution; caps before body fetch; unknown schema; hardlink/replace pins;
-default-recursive-triggers SQL REPLACE/rowid/deletion attacks; exhausted shared18;
+default-recursive-triggers SQL REPLACE/rowid/deletion attacks; complete typed catalog/capacity attacks and exact persisted-insert postconditions; exhausted shared18;
 legacy setup and admission refusal. No provider was called.
 
 Exact test results are recorded in the PR description after the final run.
+
+Forward repair: the initial catalog reader checked only table names and
+presealed-prefixed SQL; independent worker05 confirmed unknown schema acceptance,
+a hidden IGNORE trigger falsely acknowledging DONE, oversized SQL fetched before
+refusal, and an equal/hash-alias handle discrepancy. This forward reader repair
+preserves every original schema/row/version while rejecting these cases. The
+separate test portability commit resolves canonical paths in injection hooks;
+all real process-death/commit-failure checks remain active without added skips.
+Future transport MUST record a transport failure even when returned prefix bytes
+would parse as a valid slot reply; syntax-DONE alone is never transport success
+or source authentication. No transport wiring is included here.

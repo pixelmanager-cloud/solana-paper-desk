@@ -8,6 +8,7 @@ from contextlib import closing, contextmanager
 from dataclasses import asdict
 import fcntl
 import os
+import re
 from pathlib import Path
 import sqlite3
 import threading
@@ -25,6 +26,16 @@ MAX_REQUEST_BYTES = 1024
 MAX_RESPONSE_BYTES = 65536
 MAX_FAILURE_BYTES = 2048
 MAX_METADATA_BYTES = 8192
+MAX_CATALOG_RECORDS = 64
+MAX_CATALOG_NAME_BYTES = 128
+MAX_CATALOG_SQL_BYTES = 4096
+MAX_CATALOG_BYTES = 65536
+BASE_SCHEMA = {
+ 'pages': 'CREATE TABLE pages(hash TEXT PRIMARY KEY,payload BLOB NOT NULL,raw_bytes INTEGER NOT NULL)',
+ 'ownership_budgets': 'CREATE TABLE ownership_budgets(id TEXT PRIMARY KEY,source_hash TEXT NOT NULL,used INTEGER NOT NULL,ceiling INTEGER NOT NULL)',
+ 'ownership_history': 'CREATE TABLE ownership_history(id TEXT PRIMARY KEY,budget TEXT NOT NULL,query TEXT NOT NULL,coverage TEXT,status TEXT NOT NULL,attempts INTEGER NOT NULL DEFAULT 0)',
+ 'ownership_admissions': 'CREATE TABLE ownership_admissions(id TEXT PRIMARY KEY,descriptor TEXT NOT NULL,state TEXT NOT NULL,prepared_source TEXT,prepared_used INTEGER,completed_source_hash TEXT)',
+}
 # Each operation audits at most one intent and one attachment, then writes one
 # bounded attachment. No store/page decompression or selected second load.
 MAX_AUDIT_BYTES = 2 * MAX_METADATA_BYTES + MAX_REQUEST_BYTES + MAX_RESPONSE_BYTES + MAX_FAILURE_BYTES
@@ -58,6 +69,45 @@ SCHEMA['presealed_intent_admission']="""CREATE TRIGGER presealed_intent_admissio
 SCHEMA['presealed_attachment_predecessor']="""CREATE TRIGGER presealed_attachment_predecessor BEFORE INSERT ON presealed_slot_attachment
  WHEN NOT EXISTS(SELECT 1 FROM presealed_slot_intent i JOIN ownership_budgets b WHERE b.used=1 AND json_extract(NEW.body,'$.previous_hash')=i.hash)
  BEGIN SELECT RAISE(ABORT,'Presealed attachment predecessor'); END"""
+
+def _expected_catalog(installed):
+    # Type is part of identity: SQLite permits a trigger and table with the
+    # same name. A dict keyed only by name would silently overwrite one.
+    rows = [('table', name, name, sql) for name, sql in BASE_SCHEMA.items()]
+    rows += [('index', 'sqlite_autoindex_'+name+'_1', name, None) for name in BASE_SCHEMA]
+    if installed:
+        for name, sql in SCHEMA.items():
+            kind = 'table' if sql.startswith('CREATE TABLE ') else 'trigger'
+            table = name if kind == 'table' else re.search(r'\bON ([a-z_]+)', sql).group(1)
+            rows.append((kind, name, table, sql))
+        rows += [('index', 'sqlite_autoindex_'+name+'_1', name, None)
+                 for name in ('presealed_slot_intent', 'presealed_slot_attachment')]
+    return sorted(rows)
+
+
+def _catalog(c, *, installed):
+    """Full typed set under the caller's guarded transaction, before body I/O.
+
+    Only scalar count/byte statistics are fetched before aggregate reservation.
+    No names or SQL bodies, including a contradictory suffix, are selected early.
+    """
+    prefix = 'PRESEALED_SCHEMA' if installed else 'FRESH_ADMITTED_DATABASE_ONLY:SCHEMA'
+    expected = _expected_catalog(installed)
+    stats = c.execute("""SELECT count(*),
+        max(length(CAST(type AS BLOB))),max(length(CAST(name AS BLOB))),
+        max(length(CAST(tbl_name AS BLOB))),max(length(CAST(sql AS BLOB))),
+        coalesce(sum(length(CAST(type AS BLOB))+length(CAST(name AS BLOB))+
+          length(CAST(tbl_name AS BLOB))+coalesce(length(CAST(sql AS BLOB)),0)),0)
+        FROM sqlite_master""").fetchone()
+    _need(stats[0] == len(expected) and stats[0] <= MAX_CATALOG_RECORDS, prefix+'_CATALOG_COUNT')
+    _need(all(type(n) is int and 0 < n <= limit for n, limit in
+              zip(stats[1:5], (16, MAX_CATALOG_NAME_BYTES, MAX_CATALOG_NAME_BYTES, MAX_CATALOG_SQL_BYTES))),
+          prefix+'_CATALOG_RECORD_LIMIT')
+    _need(type(stats[5]) is int and 0 < stats[5] <= MAX_CATALOG_BYTES, prefix+'_CATALOG_AGGREGATE_LIMIT')
+    # A bounded list of complete typed records; never overwrite equal names.
+    rows = c.execute('SELECT type,name,tbl_name,sql FROM sqlite_master').fetchall()
+    _need(len(rows) == len(expected) and sorted(rows) == expected, prefix+'_CATALOG_MISMATCH')
+
 
 class SlotJournalBlocked(ValueError):
     pass
@@ -142,8 +192,7 @@ class _Session:
 
     def _fresh(self,c):
         _need(c.execute('PRAGMA application_id').fetchone()[0]==0 and c.execute('PRAGMA user_version').fetchone()[0]==0,'UNKNOWN_OR_EXISTING_PROFILE')
-        names={r[0] for r in c.execute("SELECT name FROM sqlite_master WHERE type='table'")}
-        _need(names=={'pages','ownership_budgets','ownership_history','ownership_admissions'},'FRESH_ADMITTED_DATABASE_ONLY')
+        _catalog(c, installed=False)
         _need(c.execute('SELECT count(*) FROM ownership_budgets').fetchone()[0]==1
               and c.execute('SELECT count(*) FROM ownership_admissions').fetchone()[0]==1
               and c.execute('SELECT count(*) FROM pages').fetchone()[0]==0
@@ -164,10 +213,7 @@ class _Session:
 
     def _audit(self,c):
         _need((c.execute('PRAGMA application_id').fetchone()[0],c.execute('PRAGMA user_version').fetchone()[0])==(APPLICATION_ID,VERSION),'UNKNOWN_PRESEALED_VERSION')
-        tables={r[0] for r in c.execute("SELECT name FROM sqlite_master WHERE type='table'")}
-        _need(tables=={'pages','ownership_budgets','ownership_history','ownership_admissions','presealed_slot_meta','presealed_slot_intent','presealed_slot_attachment'},'PRESEALED_TABLE_PROFILE_MISMATCH')
-        actual=dict(c.execute("SELECT name,sql FROM sqlite_master WHERE name LIKE 'presealed_%'"))
-        _need(actual==SCHEMA,'PRESEALED_SCHEMA_MISMATCH')
+        _catalog(c, installed=True)
         # Length/count preflight occurs before ANY journal body fetch.
         total=0
         for table in ('presealed_slot_meta','presealed_slot_intent','presealed_slot_attachment'):
@@ -230,7 +276,7 @@ class _Session:
         return handle
 
     def _handle(self,handle):
-        self._check();_need(handle in self.handles,'UNKNOWN_OR_REOPENED_PENDING_TERMINAL')
+        self._check();_need(type(handle) is object and handle in self.handles,'UNKNOWN_OR_REOPENED_PENDING_TERMINAL')
         state=self.handles[handle]
         _need(state['binding']['fence']=={'generation':self.claim.generation,'token':self.claim.token},'STALE_COMPLETION_FENCE')
         return state
@@ -268,7 +314,9 @@ class _Session:
                 _need((old[0],old[2],old[3])==chosen,'CONFLICTING_PERSISTED_RESULT')
             else:
                 c.execute('INSERT INTO presealed_slot_attachment VALUES(1,?,?,?,?)',(chosen[0],digest(event),response,failure))
-                self._audit(c)
+                _,_,persisted=self._audit(c)
+                _need(persisted is not None and (persisted[0],persisted[1],persisted[2],persisted[3])
+                      == (chosen[0],digest(event),response,failure),'EXPECTED_ATTACHMENT_NOT_PERSISTED')
         return event
 
     def attach_response(self,handle,request_bytes,response_bytes):

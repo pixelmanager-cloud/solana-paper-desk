@@ -313,3 +313,123 @@ class PresealedSlotJournalTests(unittest.TestCase):
             finally:os.close(readfd)
             self.assertEqual(s.attach_failure(h,s.request_bytes(h),'CANCELLED')['state'],'FAILED')
         self.assertEqual(self.count(),(1,18))
+
+    def test_fresh_full_typed_catalog_rejects_unknown_objects_and_base_mutation(self):
+        attacks=[
+            "CREATE TRIGGER hidden_ignore BEFORE INSERT ON ownership_budgets BEGIN SELECT RAISE(IGNORE); END",
+            "CREATE VIEW hidden_view AS SELECT 1",
+            "CREATE INDEX hidden_index ON ownership_budgets(used)",
+            "CREATE TRIGGER pages BEFORE INSERT ON ownership_history BEGIN SELECT RAISE(IGNORE); END",
+            "ALTER TABLE pages ADD COLUMN unexpected TEXT",
+            "DROP TABLE pages",
+        ]
+        for sql in attacks:
+            other=PresealedSlotJournalTests();other.setUp()
+            try:
+                with sqlite3.connect(other.evidence) as c:
+                    c.execute(sql)
+                    if sql=='DROP TABLE pages':c.execute('CREATE TABLE pages(hash TEXT,payload TEXT,raw_bytes TEXT,unexpected TEXT)')
+                with other.session() as s:
+                    before=other.evidence.read_bytes()
+                    with self.assertRaisesRegex(ValueError,'SCHEMA'):s.begin_slot()
+                    self.assertEqual(before,other.evidence.read_bytes())
+                self.assertEqual(other.count(),(0,18))
+            finally:other.doCleanups()
+
+    def test_hidden_completion_ignore_never_acknowledges_done_or_failure(self):
+        with self.session() as s:
+            h=s.begin_slot();q=s.request_bytes(h)
+            with sqlite3.connect(self.evidence) as c:
+                c.execute('CREATE TRIGGER hidden_ignore BEFORE INSERT ON presealed_slot_attachment BEGIN SELECT RAISE(IGNORE); END')
+            before=self.evidence.read_bytes()
+            with self.assertRaisesRegex(ValueError,'SCHEMA'):s.attach_response(h,q,_reply(q))
+            with self.assertRaisesRegex(ValueError,'SCHEMA'):s.inspect()
+            with sqlite3.connect(self.evidence) as c:
+                self.assertEqual(c.execute('SELECT count(*) FROM presealed_slot_attachment').fetchone()[0],0)
+            self.assertEqual(before,self.evidence.read_bytes());self.assertEqual(self.count(),(1,18))
+        other=PresealedSlotJournalTests();other.setUp()
+        try:
+            with other.session() as s:
+                h=s.begin_slot();q=s.request_bytes(h)
+                with sqlite3.connect(other.evidence) as c:
+                    c.execute('CREATE TRIGGER hidden_ignore BEFORE INSERT ON presealed_slot_attachment BEGIN SELECT RAISE(IGNORE); END')
+                with self.assertRaisesRegex(ValueError,'SCHEMA'):s.attach_failure(h,q,'TRANSPORT_ERROR')
+                with sqlite3.connect(other.evidence) as c:self.assertEqual(c.execute('SELECT count(*) FROM presealed_slot_attachment').fetchone()[0],0)
+        finally:other.doCleanups()
+
+    def test_installed_catalog_unknown_views_indexes_and_type_name_collisions(self):
+        attacks=["CREATE VIEW hidden_view AS SELECT 1",
+                 "CREATE INDEX hidden_index ON ownership_budgets(used)",
+                 "CREATE TRIGGER presealed_slot_intent BEFORE INSERT ON presealed_slot_attachment BEGIN SELECT RAISE(IGNORE); END"]
+        for sql in attacks:
+            other=PresealedSlotJournalTests();other.setUp()
+            try:
+                with other.session() as s:
+                    s.begin_slot()
+                    with sqlite3.connect(other.evidence) as c:c.execute(sql)
+                    with self.assertRaisesRegex(ValueError,'SCHEMA'):s.inspect()
+            finally:other.doCleanups()
+
+    def test_catalog_preflight_count_name_sql_and_aggregate_before_materialization(self):
+        from desk.presealed_slot_journal import MAX_CATALOG_SQL_BYTES,MAX_CATALOG_BYTES
+        for installed,kind in ((False,'count'),(True,'count'),(False,'name'),(True,'name'),(False,'sql'),(True,'sql'),(True,'aggregate')):
+            other=PresealedSlotJournalTests();other.setUp()
+            try:
+                with other.session() as s:
+                    if installed:s.begin_slot()
+                    with sqlite3.connect(other.evidence) as c:
+                        if kind=='count':
+                            for i in range(65):c.execute('CREATE VIEW extra_'+str(i)+' AS SELECT 1')
+                        elif kind=='name':
+                            # Keep count exact to exercise the length preflight.
+                            if installed:c.execute('DROP TRIGGER presealed_slot_meta_update')
+                            else:c.execute('DROP TABLE pages')
+                            c.execute('CREATE VIEW '+('x'*129)+' AS SELECT 1' if installed else 'CREATE TABLE '+('x'*129)+'(hash TEXT PRIMARY KEY)')
+                        elif kind=='sql':
+                            if installed:c.execute('DROP TRIGGER presealed_slot_meta_update')
+                            else:c.execute('DROP TABLE pages')
+                            padding='/*'+('x'*(4*1024*1024))+'*/'
+                            c.execute('CREATE VIEW huge AS SELECT '+padding+' 1' if installed else 'CREATE TABLE huge(hash TEXT '+padding+' PRIMARY KEY)')
+                        else:
+                            names=[r[0] for r in c.execute("SELECT name FROM sqlite_master WHERE type='trigger'")]
+                            # All individual SQL rows fit, but whole-set >64 KiB.
+                            for name in names:
+                                c.execute('DROP TRIGGER '+name)
+                                c.execute('CREATE TRIGGER '+name+' BEFORE INSERT ON presealed_slot_attachment BEGIN SELECT 1 /*'+('x'*(MAX_CATALOG_SQL_BYTES-200))+'*/; END')
+                    seen=[];original=sqlite3.connect
+                    def connect(*a,**kw):
+                        c=original(*a,**kw)
+                        if Path(a[0]).resolve()==other.evidence.resolve():c.set_trace_callback(seen.append)
+                        return c
+                    with patch('desk.presealed_slot_journal.sqlite3.connect',side_effect=connect):
+                        with self.assertRaisesRegex(ValueError,'CATALOG_'+{'count':'COUNT','name':'RECORD_LIMIT','sql':'RECORD_LIMIT','aggregate':'AGGREGATE_LIMIT'}[kind]):
+                            s.inspect() if installed else s.begin_slot()
+                    self.assertFalse(any(sql.startswith('SELECT type,name,tbl_name,sql') or sql.startswith('SELECT body') for sql in seen),seen)
+                    self.assertEqual(other.count(),(int(installed),18))
+            finally:other.doCleanups()
+
+    def test_attachment_postcondition_detects_suppressed_insert_independently(self):
+        with self.session() as s:
+            h=s.begin_slot();q=s.request_bytes(h);original=sqlite3.connect
+            class IgnoreConnection(sqlite3.Connection):
+                def execute(self,sql,*args):
+                    if sql.startswith('INSERT INTO presealed_slot_attachment'):
+                        return super().execute('SELECT 1 WHERE 0')
+                    return super().execute(sql,*args)
+            def connect(*a,**kw):
+                if Path(a[0]).resolve()==self.evidence.resolve():kw['factory']=IgnoreConnection
+                return original(*a,**kw)
+            with patch('desk.presealed_slot_journal.sqlite3.connect',side_effect=connect):
+                with self.assertRaisesRegex(ValueError,'EXPECTED_ATTACHMENT_NOT_PERSISTED'):s.attach_response(h,q,_reply(q))
+            self.assertEqual(s.inspect()['state'],'PENDING_TERMINAL')
+            self.assertEqual(s.attach_response(h,q,_reply(q))['state'],'DONE')
+
+    def test_handle_alias_cannot_dispatch_equality_or_hash(self):
+        with self.session() as s:
+            h=s.begin_slot();q=s.request_bytes(h);calls=[]
+            class Forged:
+                def __hash__(self):calls.append('hash');return hash(h)
+                def __eq__(self,other):calls.append('eq');return other is h
+            with self.assertRaisesRegex(ValueError,'UNKNOWN'):s.attach_response(Forged(),q,_reply(q))
+            self.assertFalse(calls)
+            self.assertEqual(s.attach_response(h,q,_reply(q))['state'],'DONE')
