@@ -64,6 +64,49 @@ def _path(supplied):
     return path, (parent.st_dev, parent.st_ino, info.st_dev, info.st_ino)
 
 
+def _preflight_guard(path, identity):
+    """Nonmutating rollback-only snapshot; active WAL/writers fail closed.
+
+    Linux OFD locks conflict with SQLite's POSIX locks, but cannot be released
+    by SQLite closing another descriptor in this process. Hold shared locks on
+    SQLite's pending/reserved/shared bytes so no conforming writer can change
+    the header, journal mode or committed data during admission validation.
+    """
+    from contextlib import contextmanager
+    import ctypes
+    import fcntl
+
+    @contextmanager
+    def guard():
+        class Flock(ctypes.Structure):
+            _fields_ = [('type', ctypes.c_short), ('whence', ctypes.c_short),
+                        ('start', ctypes.c_longlong), ('length', ctypes.c_longlong),
+                        ('pid', ctypes.c_int)]
+        # This command's lock ABI is intentionally limited to Linux LP64.
+        _need(ctypes.sizeof(ctypes.c_long) == 8 and ctypes.sizeof(Flock) == 32
+              and Flock.start.offset == 8 and Flock.pid.offset == 24)
+        fd = os.open(path, os.O_RDONLY | os.O_NOFOLLOW | os.O_CLOEXEC)
+        try:
+            info = os.fstat(fd)
+            _need((info.st_dev, info.st_ino) == identity[2:])
+            # Nonblocking: an existing reserved/pending/exclusive writer blocks
+            # preflight. No lock file, journal, retry or open-ended wait.
+            lock = Flock(fcntl.F_RDLCK, os.SEEK_SET, 1073741824, 512, 0)
+            # Python may omit this constant even on an OFD-capable kernel.
+            # 37 is Linux UAPI F_OFD_SETLK; unsupported kernels fail closed.
+            fcntl.fcntl(fd, getattr(fcntl, 'F_OFD_SETLK', 37), bytes(lock))
+            header = os.pread(fd, 100, 0)
+            _need(len(header) == 100 and header[:16] == b'SQLite format 3\x00'
+                  and header[18:20] == b'\x01\x01')
+            for suffix in ('-wal', '-shm', '-journal'):
+                sidecar = Path(str(path) + suffix)
+                _need(not sidecar.exists() and not sidecar.is_symlink())
+            yield
+        finally:
+            os.close(fd)
+    return guard()
+
+
 def _run(args):
     # Strict supplied binding is checked before any database/credential I/O.
     from .coordinator_rpc import HeliusMainnetRPC, _params
@@ -97,12 +140,13 @@ def _run(args):
             self.store = store  # Read-only preflight; no CREATE TABLE calls.
 
     store = ExistingEvidence(path, read_only=True)
-    with closing(store.connect()) as c:
-        tables = {r[0] for r in c.execute("SELECT name FROM sqlite_master WHERE type='table'")}
-        _need({'pages', 'ownership_admissions', 'ownership_budgets', 'ownership_history'} <= tables)
-    admission = AdmissionReader(store).admission(args.scan_id)
-    _need(admission is not None and admission['descriptor_hash'] == args.descriptor_hash
-          and admission['descriptor']['mint'] == args.mint and admission['request_ceiling'] == 18)
+    with _preflight_guard(path, identity):
+        with closing(store.connect()) as c:
+            tables = {r[0] for r in c.execute("SELECT name FROM sqlite_master WHERE type='table'")}
+            _need({'pages', 'ownership_admissions', 'ownership_budgets', 'ownership_history'} <= tables)
+        admission = AdmissionReader(store).admission(args.scan_id)
+        _need(admission is not None and admission['descriptor_hash'] == args.descriptor_hash
+              and admission['descriptor']['mint'] == args.mint and admission['request_ceiling'] == 18)
     store.read_only = False
     transport = HeliusMainnetRPC()
     binding = TransactionBinding(args.scan_id, args.descriptor_hash, args.mint, args.signature)

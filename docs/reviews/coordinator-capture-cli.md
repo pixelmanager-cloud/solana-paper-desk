@@ -25,6 +25,34 @@ not protection against a hostile process with the coordinator's UID. Connections
 use SQLite `mode=ro` for preflight and `mode=rw` afterward, so disappearance does
 not recreate a database. New lock files use a private umask.
 
+## P2 repair: nonmutating preflight
+
+The original `mode=ro` preflight was insufficient: opening a WAL-mode database
+and selecting its schema can create WAL/SHM sidecars even for a missing scan.
+This repair rejects WAL **before opening SQLite**, including closed/checkpointed
+WAL databases with absent sidecars and active WAL databases containing committed
+newer evidence. It does not use `immutable=1`, copy the main database, checkpoint,
+change journal mode, or read a stale snapshot that omits WAL.
+
+The supported preflight is Linux LP64 with kernel OFD lock support, SQLite's
+standard POSIX locking VFS, a rollback-format database header (both file format
+versions 1), and no existing WAL, SHM or rollback journal. Persistent journal
+files, unsupported headers/lock ABIs/kernels and active writers fail closed.
+Operators must quiesce a database with unsupported journal state outside this
+command; this CLI never repairs or converts it.
+
+Before reading the header, the command opens the existing database read-only and
+takes a nonblocking shared Linux OFD byte-range lock across SQLite's pending,
+reserved and shared lock bytes. This conflicts with conforming writers and
+journal-mode transitions. It persists across SQLite connection closes in the
+same process, and is held through all admission preflight connections. Existing
+readers may coexist; writer contention returns BLOCKED without retry or SQLite
+open. Consequently schema and admission lookup see a consistent committed
+rollback snapshot. After binding validation, the guard is released and the
+accepted capture component revalidates the admission/budget under its existing
+transaction rules. Nonconforming writers, nonstandard VFSs and hostile same-UID
+file mutation are outside the explicitly trusted stable-path contract.
+
 Import, help and argument errors do not open a database or transport. Binding
 syntax is validated before database access; preflight reads the existing
 admission and requires the exact supplied scan, descriptor hash and mint and the
@@ -64,11 +92,21 @@ and original rows, signature rebinding, exhausted and final-call budgets, null
 results, secret-bearing response and exception text, failed terminal journal
 writes, partial journals, and process death before reservation.
 
+New regressions snapshot names, bytes, inodes, modes and modification times for
+missing/wrong/valid bindings on closed WAL and active WAL with a committed
+budget update. All are blocked with no mutations or transport invocation. Other
+tests prove active rollback writers are rejected, a separate process cannot
+reserve/write or switch to WAL while the guard survives a SQLite reader close,
+capture succeeds after lock release, existing journals are not recovered, and
+unsupported OFD locking has no SQLite fallback.
+
 Python 3.12.14: focused suite `python -m unittest
-tests.test_coordinator_capture_cli -q`: **14 tests passed**.
-Full Linux suite `python -m unittest discover -q`: **1,258 tests passed in
-49.739 seconds**, with no failures or skips. Existing loopback tests required
-the approved sandbox execution exception; all provider tests remained fixtures.
+tests.test_coordinator_capture_cli -q`: **20 tests passed in 6.256 seconds**.
+The real subprocess writer/journal-mode lock test was additionally repeated
+**20 times, all passed in 3.653 seconds**. Full Linux suite `python -m unittest
+discover -q`: **1,264 tests passed in 52.761 seconds**, no failures or skips.
+Existing loopback tests require the approved sandbox
+execution exception; all provider tests remain fixtures.
 
 Dependencies and limits: accepted PR50/51 capture and transport are prerequisites;
 worker01 continues to own persistence and budgets. Independent review and trusted

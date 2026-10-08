@@ -8,6 +8,7 @@ import subprocess
 import sys
 import tempfile
 import unittest
+from unittest.mock import patch
 
 from desk.evidence import EvidenceStore
 from desk.history_progress import HistoryProgress
@@ -122,6 +123,95 @@ class CoordinatorCaptureCLITests(unittest.TestCase):
 
     def calls(self):
         return [json.loads(line) for line in self.log.read_text().splitlines()] if self.log.exists() else []
+
+    def file_snapshot(self):
+        return {p.name: (p.read_bytes(), p.stat().st_ino, p.stat().st_mode,
+                         p.stat().st_mtime_ns) for p in self.root.iterdir() if p.is_file()}
+
+    def test_closed_wal_missing_wrong_and_valid_binding_never_open_sqlite_or_mutate(self):
+        from desk.coordinator_capture_cli import _parser, _run
+        with closing(self.store.connect()) as c:
+            self.assertEqual(c.execute('PRAGMA journal_mode=WAL').fetchone()[0], 'wal')
+        self.assertFalse(Path(str(self.path)+'-wal').exists())
+        before = self.file_snapshot()
+        for changes in ({'scan-id':'missing'}, {'descriptor-hash':'0'*64},
+                        {'mint':fixtures.OWNER}, {}):
+            with self.subTest(changes=changes):
+                # Real CLI subprocess reproduces the original sidecar-creation bug.
+                self.assertEqual(self.run_cli(args=self.args(**changes))[1]['state'], 'BLOCKED')
+                self.assertEqual(self.file_snapshot(), before)
+                with patch('sqlite3.connect', side_effect=AssertionError('SQLite opened')) as connect:
+                    with self.assertRaises(ValueError):
+                        _run(_parser().parse_args(self.args(**changes)))
+                    connect.assert_not_called()
+        self.assertEqual(self.calls(), [])
+
+    def test_active_wal_committed_evidence_not_ignored_or_mutated(self):
+        with closing(self.store.connect()) as writer:
+            writer.execute('PRAGMA journal_mode=WAL')
+            writer.execute('PRAGMA wal_autocheckpoint=0')
+            # Committed current budget exists only in WAL, not a stale DB copy.
+            writer.execute("UPDATE ownership_budgets SET used=18 WHERE id='scan'")
+            self.assertGreater(Path(str(self.path)+'-wal').stat().st_size, 0)
+            before = self.file_snapshot()
+            for changes in ({'scan-id':'missing'}, {'descriptor-hash':'0'*64},
+                            {'mint':fixtures.OWNER}, {}):
+                self.assertEqual(self.run_cli(args=self.args(**changes))[1]['state'], 'BLOCKED')
+                self.assertEqual(self.file_snapshot(), before)
+            self.assertEqual(writer.execute("SELECT used FROM ownership_budgets WHERE id='scan'").fetchone()[0],18)
+        self.assertEqual(self.calls(), [])
+
+    def test_rollback_writer_in_progress_blocks_without_writes(self):
+        with closing(self.store.connect()) as writer:
+            writer.execute('BEGIN IMMEDIATE')
+            writer.execute("UPDATE ownership_budgets SET used=18 WHERE id='scan'")
+            before = self.file_snapshot()
+            for changes in ({'scan-id':'missing'}, {}):
+                self.assertEqual(self.run_cli(args=self.args(**changes))[1]['state'], 'BLOCKED')
+                self.assertEqual(self.file_snapshot(), before)
+            writer.rollback()
+        self.assertEqual(self.calls(), [])
+
+    def test_preflight_guard_blocks_writer_and_mode_transition_across_sqlite_close(self):
+        from desk.coordinator_capture_cli import _path, _preflight_guard
+        path, identity = _path(str(self.path))
+        with _preflight_guard(path, identity):
+            # Closing a real same-process reader must not drop the OFD guard.
+            with closing(sqlite3.connect(path.as_uri()+'?mode=ro', uri=True)) as reader:
+                self.assertEqual(reader.execute('SELECT count(*) FROM ownership_admissions').fetchone()[0],1)
+            code = '''
+import sqlite3,sys
+c=sqlite3.connect(sys.argv[1],timeout=0)
+for statement in ('BEGIN IMMEDIATE','PRAGMA journal_mode=WAL'):
+    try:c.execute(statement)
+    except sqlite3.OperationalError as e:
+        assert 'locked' in str(e)
+    else:raise AssertionError('Writer bypassed preflight lock')
+c.close()
+'''
+            result=subprocess.run([sys.executable,'-c',code,str(path)],capture_output=True,text=True,timeout=5)
+            self.assertEqual(result.returncode,0,result.stderr)
+        # The lock is released rather than leaving the admission permanently frozen.
+        self.assertEqual(self.run_cli()[1]['state'],'COMPLETE')
+
+    def test_existing_rollback_journal_blocks_before_sqlite_open(self):
+        from desk.coordinator_capture_cli import _parser, _run
+        journal=Path(str(self.path)+'-journal');journal.write_bytes(b'fixture hot or stale journal')
+        journal.chmod(0o600);before=self.file_snapshot()
+        with patch('sqlite3.connect', side_effect=AssertionError('SQLite opened')) as connect:
+            with self.assertRaises(ValueError):_run(_parser().parse_args(self.args()))
+            connect.assert_not_called()
+        self.assertEqual(self.run_cli()[1]['state'],'BLOCKED')
+        self.assertEqual(self.file_snapshot(),before);self.assertEqual(self.calls(),[])
+
+    def test_unsupported_lock_fails_closed_without_sqlite_fallback(self):
+        from desk.coordinator_capture_cli import _parser, _run
+        before=self.file_snapshot()
+        with patch('fcntl.fcntl', side_effect=OSError('unsupported OFD lock')), \
+             patch('sqlite3.connect', side_effect=AssertionError('SQLite opened')) as connect:
+            with self.assertRaises(OSError):_run(_parser().parse_args(self.args()))
+            connect.assert_not_called()
+        self.assertEqual(self.file_snapshot(),before);self.assertEqual(self.calls(),[])
 
     def test_success_replay_and_original_admission_preserved(self):
         admission=self.progress.admission('scan')
