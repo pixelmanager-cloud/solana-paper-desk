@@ -268,8 +268,10 @@
         "head": "94a025d96f4ad22db2fb195b1df10a73537ac293",
         "thread_id": "01a118fc-666c-70b6-9fa8-2c7520f0a0bb",
         "host_id": "durable",
-        "status": "DISPATCHED",
-        "scope": "Reserve selected second-pass aggregate before fetching bodies"
+        "status": "IN_PROGRESS",
+        "scope": "Reserve selected second-pass aggregate before fetching bodies",
+        "wait_cursor": "a2dcfb97-463d-4188-9da3-48a81e644d23:59",
+        "turn_id": "01a11c01-a964-7291-a255-286d5bcd16b1"
       },
       {
         "id": "PR94-REVIEW-FIX",
@@ -278,8 +280,10 @@
         "head": "714e1e915ae74b965150b8a234c89d92a03b8590",
         "thread_id": "01a118fc-39bc-722c-b442-8bf5a749e0bb",
         "host_id": "durable",
-        "status": "DISPATCHED",
-        "scope": "Reject schema typed-name collisions and malformed/rebound local intent fields"
+        "status": "IN_PROGRESS",
+        "scope": "Reject schema typed-name collisions and malformed/rebound local intent fields",
+        "wait_cursor": "5e651fc7-2996-4765-974d-5c852257a005:61",
+        "turn_id": "01a11c01-b8e2-72d4-b87c-13ae7c27aeba"
       }
     ],
     "saved_launch_probe": {
@@ -297,9 +301,9 @@
       "latest_protocol_head": "9e2eddb9b32a58a94e94417ae6c130a8179691ac",
       "latest_reconciliation": "2026-10-08T11:02:15Z: revision45 confirms PR79/80 desktop integration, reserves OWN-2 source-bound admission to worker02, no unassigned review; durable schedule binding remains unverified",
       "latest_protocol_check": {
-        "head": "b4a1aa8c9aea1bd7052645257765c7bbcad687b0",
-        "observed_run": "2026-10-08T14:01:01Z",
-        "result": "No unassigned review; respects existing claims, no merge; execution observed, durable binding not reprobed"
+        "head": "d871f7620491da8488f5d2ee30e83e7df898a007",
+        "observed_run": "2026-10-08T14:55:25Z",
+        "result": "Revision62 no new unassigned review; respects PR93/94 author repair claims; no merge; durable binding not reprobed"
       }
     },
     "pending_ui_candidate": {
@@ -872,7 +876,7 @@
       "mac_passed": 1507,
       "mac_skipped": 334,
       "mac_seconds": 33.921,
-      "ci": "Run37794887536 failed: existing dashboard Node harness10s timeout,1841 tests203.911s,one error; failed-job rerun requested2026-10-08T14:48Z; no PASS inferred",
+      "ci": "Original dashboard Node10s timeout retained; unchanged head714e1e9 rerun37794887536 SUCCESS14:53:35Z and PRrun37794988759 SUCCESS; structural review blockers remain",
       "coordinator_diff_review": "Module inspected; independent security/full Linux pending",
       "independent_linux_tests": 1841,
       "independent_linux_seconds": 261.463,
