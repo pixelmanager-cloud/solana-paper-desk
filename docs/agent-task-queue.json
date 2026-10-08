@@ -739,7 +739,14 @@
       "integrated": false,
       "review": "PENDING worker05",
       "author_linux_tests": 1678,
-      "author_skips": 0
+      "author_skips": 0,
+      "mac_discovered": 1712,
+      "mac_passed": 1475,
+      "mac_skipped": 237,
+      "mac_seconds": 32.873,
+      "combined_base": "d45b65952c82d2c79d122df17d0202a53a8f31a9",
+      "combined_tree": "27f9becc86f2757cba34bef18cdfa26f9b3f5fcd",
+      "coordinator_diff_review": "Journal diff reviewed; independent Linux and security review pending"
     }
   },
   "native_reconciliation_review": {
