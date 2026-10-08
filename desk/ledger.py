@@ -3,7 +3,7 @@ import json
 import sqlite3
 from pathlib import Path
 
-from .model import canonical, digest
+from .model import canonical, digest, decimal
 
 
 class Ledger:
@@ -32,6 +32,76 @@ class Ledger:
     def close(self):
         self.db.close()
 
+    def _has_experiment_records(self):
+        """Raw observations/health are fresh; any accounting identity is not."""
+        return bool(self.db.execute('SELECT 1 FROM events LIMIT 1').fetchone()
+                    or self.db.execute('SELECT 1 FROM outcomes LIMIT 1').fetchone()
+                    or self.db.execute('SELECT 1 FROM state LIMIT 1').fetchone()
+                    or self.db.execute("SELECT 1 FROM metadata WHERE key IN "
+                                       "('implementation_hash','config_hash','config') LIMIT 1").fetchone()
+                    or self.db.execute("SELECT 1 FROM sqlite_sequence WHERE name IN "
+                                       "('events','outcomes') AND seq>0 LIMIT 1").fetchone())
+
+    def _checkpoint(self, payload):
+        """Validate persisted engine state without rebuilding or changing it."""
+        try:
+            state = json.loads(payload)
+            required = {'cash', 'realized_pnl', 'positions', 'cooldowns', 'mode',
+                        'last_ts', 'day', 'day_start_equity', 'day_gross_losses',
+                        'peak_equity', 'max_drawdown', 'last_entry_minute', 'loss_streak'}
+            if not isinstance(state, dict) or not required <= state.keys():
+                raise ValueError('missing state fields')
+            if state['mode'] not in ('RUNNING', 'ENTRY_PAUSED', 'EXIT_ONLY', 'LIQUIDATING', 'STOPPED'):
+                raise ValueError('invalid mode')
+            for key in ('cash', 'realized_pnl', 'day_start_equity', 'day_gross_losses',
+                        'peak_equity', 'max_drawdown'):
+                if not isinstance(state[key], str):
+                    raise ValueError('invalid decimal field')
+                decimal(state[key])
+            for key in ('last_ts', 'last_entry_minute', 'loss_streak'):
+                if type(state[key]) is not int:
+                    raise ValueError('invalid integer field')
+            if state['last_ts'] < 0 or state['loss_streak'] < 0 or state['last_entry_minute'] < -1:
+                raise ValueError('invalid counter')
+            if state['day'] is not None and not isinstance(state['day'], str):
+                raise ValueError('invalid day')
+            if not isinstance(state['positions'], dict) or not isinstance(state['cooldowns'], dict):
+                raise ValueError('invalid position/cooldown mapping')
+            for mint, until in state['cooldowns'].items():
+                if not mint or type(until) is not int or until < 0:
+                    raise ValueError('invalid cooldown')
+            position_fields = {'qty', 'initial_qty', 'cost_left', 'initial_cost', 'trade_pnl',
+                               'opened_at', 'exit_blocked', 'mark_status', 'stage', 'stop_ratio',
+                               'peak_ratio', 'touched_15', 'mark_value', 'mark_at', 'pool',
+                               'entry_scores', 'provenance', 'taker'}
+            for mint, position in state['positions'].items():
+                if not mint or not isinstance(position, dict) or not position_fields <= position.keys():
+                    raise ValueError('missing position fields')
+                for key in ('qty', 'initial_qty', 'cost_left', 'initial_cost', 'trade_pnl',
+                            'stop_ratio', 'peak_ratio', 'mark_value'):
+                    if not isinstance(position[key], str):
+                        raise ValueError('invalid position decimal')
+                    decimal(position[key])
+                if decimal(position['qty']) <= 0 or decimal(position['qty']) > decimal(position['initial_qty']):
+                    raise ValueError('invalid remaining quantity')
+                for key in ('opened_at', 'mark_at', 'stage'):
+                    if type(position[key]) is not int or position[key] < 0:
+                        raise ValueError('invalid position integer')
+                if (type(position['touched_15']) is not bool or position['stage'] > 3
+                        or position['mark_status'] not in ('MODEL_ESTIMATE', 'STALE', 'UNVERIFIED_EXIT')
+                        or not isinstance(position['entry_scores'], dict)
+                        or not isinstance(position['pool'], str) or not position['pool']
+                        or not isinstance(position['provenance'], str) or not position['provenance']
+                        or (position['taker'] is not None and not isinstance(position['taker'], str))
+                        or (position['exit_blocked'] is not None and not isinstance(position['exit_blocked'], str))):
+                    raise ValueError('invalid position identity/shape')
+            latest = self.db.execute('SELECT MAX(ts) FROM events').fetchone()[0]
+            if latest is None or state['last_ts'] != latest:
+                raise ValueError('checkpoint journal timestamp mismatch')
+            return state
+        except (ValueError, TypeError, KeyError) as exc:
+            raise ValueError('ledger checkpoint invalid: recovery required; original records preserved') from exc
+
     def apply(self, event, cfg, transition, initial_state):
         """Idempotency, transition and checkpoint share one durable transaction."""
         self.db.execute("BEGIN IMMEDIATE")
@@ -42,12 +112,27 @@ class Ledger:
                                      if p.is_file() and p.suffix in (".py", ".json")})
             old_code = self.db.execute("SELECT value FROM metadata WHERE key='implementation_hash'").fetchone()
             has_events = self.db.execute("SELECT 1 FROM events LIMIT 1").fetchone()
-            if (old_code and old_code[0] != implementation) or (has_events and not old_code):
+            checkpoint = self.db.execute("SELECT payload FROM state WHERE id=1").fetchone()
+            nonfresh = self._has_experiment_records()
+            # A previously committed ledger cannot be treated as a new experiment
+            # when a damaged/partial restore has lost its checkpoint. Reject even
+            # duplicate delivery rather than acknowledge an unrecoverable state.
+            if nonfresh and not checkpoint:
+                raise ValueError("ledger checkpoint missing: recovery required; original records preserved")
+            if nonfresh and (not has_events or self.db.execute(
+                    "SELECT 1 FROM outcomes o LEFT JOIN events e ON e.event_id=o.event_id "
+                    "WHERE e.event_id IS NULL LIMIT 1").fetchone()):
+                raise ValueError("ledger event journal incomplete: recovery required; original records preserved")
+            if (old_code and old_code[0] != implementation) or (nonfresh and not old_code):
                 raise ValueError("implementation changed or unversioned: use a new experiment database")
-            self.db.execute("INSERT OR IGNORE INTO metadata VALUES('implementation_hash',?)", (implementation,))
             row = self.db.execute("SELECT value FROM metadata WHERE key='config_hash'").fetchone()
-            if row and row[0] != fingerprint:
-                raise ValueError("config changed: use a new experiment database")
+            if (row and row[0] != fingerprint) or (nonfresh and not row):
+                raise ValueError("config changed or unversioned: use a new experiment database")
+            saved_config = self.db.execute("SELECT value FROM metadata WHERE key='config'").fetchone()
+            if (saved_config and saved_config[0] != canonical(cfg)) or (nonfresh and not saved_config):
+                raise ValueError("config changed or unversioned: use a new experiment database")
+            state = self._checkpoint(checkpoint[0]) if checkpoint else initial_state(cfg)
+            self.db.execute("INSERT OR IGNORE INTO metadata VALUES('implementation_hash',?)", (implementation,))
             self.db.execute("INSERT OR IGNORE INTO metadata VALUES('config_hash',?)", (fingerprint,))
             self.db.execute("INSERT OR IGNORE INTO metadata VALUES('config',?)", (canonical(cfg),))
             row = self.db.execute("SELECT payload_hash FROM events WHERE event_id=?", (event["event_id"],)).fetchone()
@@ -56,8 +141,6 @@ class Ledger:
                     raise ValueError("event_id collision with different payload")
                 self.db.execute("COMMIT")
                 return []
-            row = self.db.execute("SELECT payload FROM state WHERE id=1").fetchone()
-            state = json.loads(row[0]) if row else initial_state(cfg)
             new_state, outcomes = transition(state, event, cfg)
             self.db.execute("INSERT INTO events(event_id,ts,payload,payload_hash) VALUES(?,?,?,?)",
                             (event["event_id"], event["ts"], canonical(event), digest(event)))
@@ -91,7 +174,9 @@ class Ledger:
 
     def report(self):
         row = self.db.execute("SELECT payload FROM state WHERE id=1").fetchone()
-        state = json.loads(row[0]) if row else None
+        if not row and self._has_experiment_records():
+            raise ValueError("ledger checkpoint missing: recovery required; original records preserved")
+        state = self._checkpoint(row[0]) if row else None
         outcomes = [json.loads(r[0]) for r in self.db.execute("SELECT payload FROM outcomes ORDER BY seq")]
         counts = {}
         for outcome in outcomes:
