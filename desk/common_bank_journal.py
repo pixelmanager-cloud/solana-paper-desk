@@ -288,7 +288,7 @@ class _Session:
                   'CANONICAL_BANK_ALREADY_FIXED')
         return admission, scan, report
 
-    def _plan(self, c, budget, view):
+    def _plan(self, c, budget, view, *, details=None):
         admission, scan, report = self._source(c,budget)
         # Track this plan's refs separately while sharing the aggregate bounded
         # physical cache across every audited run.
@@ -322,9 +322,11 @@ class _Session:
             'discovery_revision_hash':admission['completed_source_hash'],
             'discovery_query_hashes':sorted(digest(q) for q in report['history_queries']),
             'discovery_evidence_hashes':sorted(reads.requested)}
+        if details is not None and budget == details[0]:
+            details[1].update(admission=admission,scan=scan,report=report,history=history)
         return admission, plan
 
-    def _audit(self,c):
+    def _audit(self,c, *, view=None, details=None):
         _need(not c.execute('SELECT 1 FROM common_bank_runs WHERE length(descriptor_json)>8192 OR length(plan_json)>65536 LIMIT 1').fetchone()
               and not c.execute('SELECT 1 FROM common_bank_events WHERE length(event_json)>8192 LIMIT 1').fetchone(),
               'COMMON_BANK_JOURNAL_RECORD_OVERSIZED')
@@ -334,10 +336,11 @@ class _Session:
         events = c.execute('SELECT capture_id,ordinal,event_json,previous_hash,event_hash FROM common_bank_events LIMIT ?',
                            (MAX_RUNS+1,)).fetchall()
         _need(len(events) <= MAX_RUNS, 'COMMON_BANK_EVENT_CAPACITY')
-        view = ReplayView(_BoundedStore(self.journal.path)); runs = {}
+        if view is None: view = ReplayView(_BoundedStore(self.journal.path))
+        runs = {}
         for capture, budget, desc_json, plan_json, plan_hash, seed in rows:
             _need(_identity(capture) and _identity(budget), 'COMMON_BANK_RUN_ID_INVALID')
-            admission, plan = self._plan(c,budget,view)
+            admission, plan = self._plan(c,budget,view,details=details)
             descriptor = json.loads(desc_json)
             _need(type(descriptor) is dict and set(descriptor) == {'kind','capture_id','budget_id','admission_descriptor_hash','completed_source_hash','initial_used','planned_source','database_binding'},
                   'COMMON_BANK_DESCRIPTOR_INVALID')
@@ -1118,3 +1121,8 @@ class _Session:
                 _need(existing==chosen,'COMMON_BANK_CONFLICTING_COMPLETION');return event
             c.execute('INSERT INTO common_bank_clock_attachments VALUES(?,?,?,?,?,?,?)',(capture,)+chosen)
             return event
+
+    def replay_semantics(self,capture_id,*,observed_at):
+        """Bounded guarded read-only diagnostic, never capture completion/approval."""
+        from .common_bank_journal_replay import replay_semantics
+        return replay_semantics(self,capture_id,observed_at=observed_at)
