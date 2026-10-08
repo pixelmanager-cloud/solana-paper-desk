@@ -270,16 +270,6 @@
         "base": "822079d0815571c558617e341758cc77a96a8b90",
         "pr": 86,
         "head": "a4d5b5a527c8fdc5592177c1c120a170dad5fadb"
-      },
-      {
-        "id": "PR85-INDEPENDENT-REVIEW",
-        "worker": "06",
-        "thread_id": "01a118fc-f867-7233-8eec-c20659e70095",
-        "host_id": "durable",
-        "status": "REVIEWING",
-        "base": "5f2b92525e0737568de428f9d0804679fb934be6",
-        "pr": 85,
-        "head": "7a31d865cc227ef2ca0ff8cfa1f20b3b927afbed"
       }
     ],
     "saved_launch_probe": {
@@ -683,14 +673,15 @@
     "pending_receipt_compatibility": {
       "pr": 85,
       "head": "7a31d865cc227ef2ca0ff8cfa1f20b3b927afbed",
-      "integrated": false,
-      "review": "PENDING worker06",
+      "integrated": true,
+      "review": "PASS design only worker06 Linux1638 zero skips128.795s;10 probes including2 process deaths; exact tree matched",
       "mac_discovered": 1638,
       "mac_passed": 1442,
       "mac_skipped": 196,
       "mac_seconds": 32.709,
       "combined_tree": "68be796f21069a65c4f1b63a587b6f00778a491b",
-      "ci": "PENDING"
+      "ci": "Both exact-head checks PASS",
+      "review_manifest_sha256": "0558b2d92a44a815bdfac162f54952501265de95a8be0f112983d50e7814736f"
     },
     "pending_genesis_completion": {
       "pr": 86,
