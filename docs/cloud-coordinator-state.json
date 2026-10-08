@@ -1,6 +1,6 @@
 {
   "schema_version": 1,
-  "revision": 31,
+  "revision": 32,
   "repository": "pixelmanager-cloud/solana-paper-desk",
   "source_main_sha": "e298e15cd758932e81d2241130716632702f5bd0",
   "observed_date": "2026-10-08",
@@ -1008,6 +1008,12 @@
       "head_sha": "70d1dfcaa20350a2a8126c8d47ce58a71e9b2e2b",
       "review_id": 5452419572,
       "accepted": false
+    },
+    {
+      "kind": "PR57_ACCEPTED_PR56_COMBINED_VALIDATION",
+      "comment_id": 6053795748,
+      "full_suite_passed": 1333,
+      "status": "P2_REMAINS_UNRESOLVED_COMBINED_FIXTURES_PASS"
     }
   ],
   "artifact_pr": {
@@ -2136,7 +2142,33 @@
       "merged_prs": 0,
       "dispatched_workers": 0,
       "accepted_tasks": [],
-      "infrastructure_failures": []
+      "infrastructure_failures": [],
+      "combined_addendum": {
+        "pr": 57,
+        "head_sha": "70d1dfcaa20350a2a8126c8d47ce58a71e9b2e2b",
+        "combined_baseline_sha": "1beeed0994f052bb03e3583235b603ea826b1eb6",
+        "accepted_pr56_integration_sha": "745622f4d178f1483c25237745d04a4fe4805ecc",
+        "review_id": 5452419572,
+        "addendum_comment_id": 6053795748,
+        "status": "P2_REMAINS_UNRESOLVED_COMBINED_FIXTURES_PASS",
+        "full_suite_command": "python -m unittest discover -q",
+        "python": "3.12.14",
+        "full_suite_passed": 1333,
+        "seconds": 61.306,
+        "skipped": 0,
+        "independent_pr57_probes": 49,
+        "createevent_regression": "REPRODUCED",
+        "native_independent_review": "NOT_REPEATED_WORKER06_OWNS",
+        "source_files": 281,
+        "source_manifest_sha256": "6c5be02b478abc975b75c1a19b3a96f31a31468dc60166380d60c6c22b6aad35",
+        "source_manifest": "docs/reviews/cloud-pr57-1beeed0-70d1dfc-hashes.json",
+        "proof_artifact": "docs/reviews/cloud-pr57-accepted-pr56-combined.md",
+        "combined_ci": "NOT_RUN_SOURCE_SNAPSHOT_ONLY",
+        "infrastructure_failures": [],
+        "provider_calls": 0,
+        "accepted": false,
+        "live_acceptance": false
+      }
     }
   ],
   "infrastructure": {
@@ -2146,11 +2178,12 @@
     "last_success": "PR57 hosted independent1300tests zero skips; P2 separately reproduced"
   },
   "review_lease": {
-    "holder": "cloud-pr57-plus56-validation",
+    "holder": null,
     "fencing_token": 6,
-    "status": "HELD",
+    "status": "RELEASED",
     "scope": "PR57_COMBINED_FIXTURE_ADDENDUM_ONLY",
-    "expires_at": "2026-10-08T07:15:00Z"
+    "expires_at": null,
+    "last_holder": "cloud-pr57-plus56-validation"
   },
   "external_review_observations": [
     {
@@ -2907,7 +2940,33 @@
     "merged_prs": 0,
     "dispatched_workers": 0,
     "accepted_tasks": [],
-    "infrastructure_failures": []
+    "infrastructure_failures": [],
+    "combined_addendum": {
+      "pr": 57,
+      "head_sha": "70d1dfcaa20350a2a8126c8d47ce58a71e9b2e2b",
+      "combined_baseline_sha": "1beeed0994f052bb03e3583235b603ea826b1eb6",
+      "accepted_pr56_integration_sha": "745622f4d178f1483c25237745d04a4fe4805ecc",
+      "review_id": 5452419572,
+      "addendum_comment_id": 6053795748,
+      "status": "P2_REMAINS_UNRESOLVED_COMBINED_FIXTURES_PASS",
+      "full_suite_command": "python -m unittest discover -q",
+      "python": "3.12.14",
+      "full_suite_passed": 1333,
+      "seconds": 61.306,
+      "skipped": 0,
+      "independent_pr57_probes": 49,
+      "createevent_regression": "REPRODUCED",
+      "native_independent_review": "NOT_REPEATED_WORKER06_OWNS",
+      "source_files": 281,
+      "source_manifest_sha256": "6c5be02b478abc975b75c1a19b3a96f31a31468dc60166380d60c6c22b6aad35",
+      "source_manifest": "docs/reviews/cloud-pr57-1beeed0-70d1dfc-hashes.json",
+      "proof_artifact": "docs/reviews/cloud-pr57-accepted-pr56-combined.md",
+      "combined_ci": "NOT_RUN_SOURCE_SNAPSHOT_ONLY",
+      "infrastructure_failures": [],
+      "provider_calls": 0,
+      "accepted": false,
+      "live_acceptance": false
+    }
   },
   "combined_validations": [
     {
@@ -2946,6 +3005,32 @@
         "Lifecycle/interval/chain authentication unverified",
         "Desktop owns integration and resulting-commit CI"
       ]
+    },
+    {
+      "pr": 57,
+      "head_sha": "70d1dfcaa20350a2a8126c8d47ce58a71e9b2e2b",
+      "combined_baseline_sha": "1beeed0994f052bb03e3583235b603ea826b1eb6",
+      "accepted_pr56_integration_sha": "745622f4d178f1483c25237745d04a4fe4805ecc",
+      "review_id": 5452419572,
+      "addendum_comment_id": 6053795748,
+      "status": "P2_REMAINS_UNRESOLVED_COMBINED_FIXTURES_PASS",
+      "full_suite_command": "python -m unittest discover -q",
+      "python": "3.12.14",
+      "full_suite_passed": 1333,
+      "seconds": 61.306,
+      "skipped": 0,
+      "independent_pr57_probes": 49,
+      "createevent_regression": "REPRODUCED",
+      "native_independent_review": "NOT_REPEATED_WORKER06_OWNS",
+      "source_files": 281,
+      "source_manifest_sha256": "6c5be02b478abc975b75c1a19b3a96f31a31468dc60166380d60c6c22b6aad35",
+      "source_manifest": "docs/reviews/cloud-pr57-1beeed0-70d1dfc-hashes.json",
+      "proof_artifact": "docs/reviews/cloud-pr57-accepted-pr56-combined.md",
+      "combined_ci": "NOT_RUN_SOURCE_SNAPSHOT_ONLY",
+      "infrastructure_failures": [],
+      "provider_calls": 0,
+      "accepted": false,
+      "live_acceptance": false
     }
   ],
   "last_reconciliation": {
