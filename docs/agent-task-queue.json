@@ -260,7 +260,18 @@
       "status": "SUPERSEDED_BY_PUBLISHED_TESTED_COMMIT"
     },
     "published_ci": "Deployed d758bc529a7da1f74509117288740911f2ad6845: both CI runs successful",
-    "active_claims": [],
+    "active_claims": [
+      {
+        "id": "OWN-1-COMMON-BANK-CONTRACT",
+        "worker": "01",
+        "thread_id": "01a118fc-39bc-722c-b442-8bf5a749e0bb",
+        "host_id": "durable",
+        "base": "11bd94462aa24053d95b77b5ba9336b374ea8444",
+        "status": "DISPATCHED",
+        "scope": "Common raw bank acquisition contract and fixture feasibility; no production change before independent review",
+        "assigned_at": "2026-10-08T11:20:25Z"
+      }
+    ],
     "saved_launch_probe": {
       "source": "VPS saved raw launch events, read-only; no provider calls",
       "sample_size": 150,
