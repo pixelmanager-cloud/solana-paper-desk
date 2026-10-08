@@ -1,6 +1,6 @@
 {
   "schema_version": 1,
-  "revision": 11,
+  "revision": 12,
   "repository": "pixelmanager-cloud/solana-paper-desk",
   "source_main_sha": "e298e15cd758932e81d2241130716632702f5bd0",
   "observed_date": "2026-10-08",
@@ -14,8 +14,8 @@
     "thread_id": "01a11901-8b68-70f9-8672-5a731a149091",
     "conversation_id": null,
     "same_chat_binding": "NOT_VERIFIED",
-    "cloud_execution": "NOT_VERIFIED",
-    "last_run_time": null,
+    "cloud_execution": "HOSTED_LAST_RUN_OBSERVED_AND_CURRENT_CLOUD_EXECUTOR_VERIFIED",
+    "last_run_time": "2026-10-08T02:01:01.779530+00:00",
     "next_run_time": null,
     "immediate_run_probe": "404 Action not found before invocation",
     "scope": "GITHUB_ONLY_INDEPENDENT_REVIEW",
@@ -23,7 +23,17 @@
       "USER_STOP",
       "VERIFIED_READINESS",
       "THREE_CONSECUTIVE_INFRASTRUCTURE_FAILURES"
-    ]
+    ],
+    "execution_evidence": {
+      "automation_peek_enabled": true,
+      "observed_last_run_time": "2026-10-08T02:01:01.779530+00:00",
+      "current_environment_provider": "cloud",
+      "environment_id": "ccarenv_b64_Y2NhcmVudl9kNmVjYmYwM2FiZDg4MTkxYWI1YzM1ZjNiZWZjYTg1Mg",
+      "observations_current": true,
+      "observed_phase": "running",
+      "executor_python": "3.12.14",
+      "limitation": "Same-chat and durable worker/environment binding still not independently verified; next_run_time null."
+    }
   },
   "coordinator_lock": {
     "holder": null,
@@ -38,7 +48,7 @@
     "commit_write": "VERIFIED",
     "pr_create": "VERIFIED",
     "worker_chat_read": "UNAVAILABLE_NO_SUPPORTED_TOOL",
-    "worker_diff_recovery": "BLOCKED_NO_REMOTE_WORKER_BRANCHES_OR_PRS_FOUND",
+    "worker_diff_recovery": "VERIFIED_PUBLISHED_GITHUB_PRS_ONLY_UNPUSHED_CHATS_UNAVAILABLE",
     "worker_followup": "UNAVAILABLE_NO_SUPPORTED_TOOL",
     "durable_successor_same_environment": "UNAVAILABLE_NO_SUPPORTED_TOOL",
     "local_execution": "VERIFIED",
@@ -330,12 +340,15 @@
   ],
   "blockers": [
     {
-      "id": "WORKER_ARTIFACTS",
-      "action": "Existing workers must publish their actual commits/PRs; coordinator cannot retrieve unpushed changes from their isolated environments."
+      "id": "PR31_INVALID_GENERATION",
+      "pr": 31,
+      "head_sha": "04a930172a088607b833017112e9d4721869e60c",
+      "review_id": 5450556628,
+      "action": "Validate safe integral generation and quarantine invalid/exhausted claim metadata; later valid work must progress without mutating corrupt rows."
     },
     {
-      "id": "AUTOMATION_EXECUTION_VERIFICATION",
-      "action": "Observe actual hosted run and environment evidence; run_now returned 404; no last/next run available. Do not claim tested execution or same-chat environment binding."
+      "id": "AUTOMATION_BINDING",
+      "action": "Hosted last_run_time now observed and current cloud executor verified; same-chat/durable environment binding unverified and next_run_time null. Do not infer durable worker access."
     }
   ],
   "events": [
@@ -419,6 +432,19 @@
       "provider": "cloud",
       "hosted_last_run_time": "2026-10-08T02:01:01.779530+00:00",
       "result": "Hosted automation last-run observed; current managed cloud executor verified. Same-chat binding not independently proven. Review-only lease via current-blob CAS."
+    },
+    {
+      "kind": "HOSTED_GITHUB_REVIEW_RUN_COMPLETE",
+      "run_id": "cloud-review-2026-10-08T02:02:08Z",
+      "prs": [
+        31,
+        33
+      ],
+      "review_ids": [
+        5450556628,
+        5450574412
+      ],
+      "result": "PR31 new P2 generation corruption reproduced; PR33 scoped foundation no blocker; heads/history rechecked, fixture suites/CI pass; no merge/dispatch/acceptance."
     }
   ],
   "artifact_pr": {
@@ -834,19 +860,397 @@
       "proof_artifact": "docs/reviews/cloud-pr32-64765af.md",
       "accepted": false,
       "live_acceptance": false
+    },
+    {
+      "policy_version": "cloud-independent-review-v1",
+      "pr": 31,
+      "head_sha": "04a930172a088607b833017112e9d4721869e60c",
+      "base_sha": "d24fc7f2910067254047b64e699f43aa1685130f",
+      "worker_agent": "08",
+      "worker_thread_id": "01a118fd-2563-7126-90d7-bd07693de0b2",
+      "branch": "codex/cloud-wave1-08-queue-foundation",
+      "author_login": "pixelmanager-cloud",
+      "reviewer": "Independent cloud coordinator execution; shared GitHub account pixelmanager-cloud; COMMENT not author self-approval",
+      "review_id": 5450556628,
+      "review_action": "COMMENT",
+      "status": "FINDING_P2_INVALID_GENERATION_BLOCKS_LATER_JOBS",
+      "findings": [
+        "Prior REPLACE/non-object descriptor defects repaired.",
+        "Invalid or exhausted mutable claim generation raises uncaught error; negative/fractional values accepted. Request controlled quarantine preserving shared admission limits."
+      ],
+      "tests": {
+        "python": "3.12.14",
+        "targeted_command": "python -m unittest tests.test_job_persistence tests.test_research.JobTests -q",
+        "targeted_passed": 23,
+        "full_suite_command": "python -m unittest discover -q",
+        "full_suite_passed": 737,
+        "skipped": 0,
+        "full_suite_seconds": 14.849,
+        "adversarial_command": "python review_independent.py",
+        "adversarial_result": "PASS_ORIGINAL_REPLACE_REJECTED_AND_NEW_GENERATION_DEFECT_REPRODUCED",
+        "exact_changed_blobs_verified": 52,
+        "official_source_pins_verified": null,
+        "provider_calls": 0
+      },
+      "ci": [
+        {
+          "id": 37715825908,
+          "name": "Tests",
+          "status": "completed",
+          "conclusion": "success",
+          "run_number": 141,
+          "jobs_url": "https://api.github.com/repos/pixelmanager-cloud/solana-paper-desk/actions/runs/37715825908/jobs",
+          "logs_url": "https://api.github.com/repos/pixelmanager-cloud/solana-paper-desk/actions/runs/37715825908/logs",
+          "workflow_id": 377958194
+        }
+      ],
+      "limitations": [
+        "Linux stable single-host paths; acquisition budget/source seal and fenced publication are external.",
+        "Corrupt generation stops worker; no acceptance or dependent completion."
+      ],
+      "proof_artifact": "docs/reviews/cloud-pr31-04a9301.md",
+      "accepted": false,
+      "live_acceptance": false
+    },
+    {
+      "policy_version": "cloud-independent-review-v1",
+      "pr": 33,
+      "head_sha": "5095a17557c7fb916d74e508a3e157b49abcd784",
+      "base_sha": "d0caa0f1262366ca541d052310d78fbfdc63722d",
+      "worker_agent": "07",
+      "worker_thread_id": "01a118fd-0f1c-749c-b85b-5e730937d0a8",
+      "branch": "codex/cloud-wave1-07-legacy-control-normalizer",
+      "author_login": "pixelmanager-cloud",
+      "reviewer": "Independent cloud coordinator execution; shared GitHub account pixelmanager-cloud; COMMENT not author self-approval",
+      "review_id": 5450574412,
+      "review_action": "COMMENT",
+      "status": "SCOPED_REVIEW_NO_BLOCKING_DEFECT_FOUND_FOUNDATION_ONLY",
+      "findings": [
+        "Raw exact syntax/parsed presence and representation binding verified; all proof flags false; module not imported by runtime consumers."
+      ],
+      "tests": {
+        "python": "3.12.14",
+        "targeted_command": "python -m unittest tests.test_legacy_controls -q",
+        "targeted_passed": 29,
+        "full_suite_command": "python -m unittest discover -q",
+        "full_suite_passed": 746,
+        "skipped": 0,
+        "full_suite_seconds": 14.319,
+        "adversarial_command": "python review_independent.py",
+        "adversarial_result": "PASS_43445_BYTE_PARSED_PROGRAM_WITNESS_PROBES",
+        "exact_changed_blobs_verified": 51,
+        "official_source_pins_verified": 6,
+        "provider_calls": 0
+      },
+      "ci": [
+        {
+          "id": 37715870671,
+          "name": "Tests",
+          "status": "completed",
+          "conclusion": "success",
+          "run_number": 142,
+          "jobs_url": "https://api.github.com/repos/pixelmanager-cloud/solana-paper-desk/actions/runs/37715870671/jobs",
+          "logs_url": "https://api.github.com/repos/pixelmanager-cloud/solana-paper-desk/actions/runs/37715870671/logs",
+          "workflow_id": 377958194
+        }
+      ],
+      "limitations": [
+        "Syntax only, not deployed code/signers/caller/lifecycle authentication.",
+        "Genuine finalized legacy Pump birth fixture/lifecycle admission remain absent."
+      ],
+      "proof_artifact": "docs/reviews/cloud-pr33-5095a17.md",
+      "accepted": false,
+      "live_acceptance": false
     }
   ],
   "infrastructure": {
     "consecutive_failures": 0,
-    "last_failure": "Immediate automation run action unavailable (404); creation and peek succeeded.",
+    "last_failure": "Historical immediate-run probe404; no current run infrastructure failure.",
     "retry_policy": "No busy polling; future supported review runs reconcile and pause after three consecutive execution/access failures.",
-    "last_success": "Immediate independent GitHub review and fixture-only tests completed in current managed cloud executor; scheduled execution remains unverified."
+    "last_success": "Hosted last-run observed; managed cloud executor and Python3.12 verified; exact-head PR31/33 reviews/tests and CI reconciled."
   },
   "review_lease": {
-    "holder": "cloud-review-2026-10-08T02:02:08Z",
+    "holder": null,
     "fencing_token": 1,
-    "expires_at": "2026-10-08T02:32:08.000Z",
-    "status": "HELD",
-    "scope": "GITHUB_REVIEW_ONLY_NO_DISPATCH_MERGE"
-  }
+    "expires_at": null,
+    "status": "RELEASED",
+    "scope": "GITHUB_REVIEW_ONLY_NO_DISPATCH_MERGE",
+    "last_holder": "cloud-review-2026-10-08T02:02:08Z"
+  },
+  "external_review_observations": [
+    {
+      "pr": 31,
+      "id": 5450513616,
+      "provenance": "Observed prior PR review; not re-executed or certified by this run",
+      "head_sha": "988e5ef5478c8b310bd3f461daa560d1eb09c328",
+      "status": "PRIOR_TWO_P2_FINDINGS_REPORTED"
+    },
+    {
+      "pr": 31,
+      "id": 5450523127,
+      "provenance": "Observed prior PR review; not re-executed or certified by this run",
+      "head_sha": "8a6ab02298ba8a6cf1024e5938ccd6a95a06886a",
+      "status": "PRIOR_TWO_P2_FINDINGS_REPORTED"
+    }
+  ],
+  "pending_reviews": [
+    {
+      "pr": 11,
+      "head_sha": "7816cdbfad1216e97472d1140f3b412b05232c8f",
+      "base_sha": "e298e15cd758932e81d2241130716632702f5bd0",
+      "branch": "codex/cloud-wave1-05",
+      "status": "AWAITING_SCOPED_REVIEW_NOT_ACCEPTED",
+      "note": "Design/test-only preparatory PR; no independent cloud review posted yet. Fixture results not claimed."
+    },
+    {
+      "pr": 13,
+      "head_sha": "b622438092122f6339537e5998502f37ceef5d94",
+      "base_sha": "e298e15cd758932e81d2241130716632702f5bd0",
+      "branch": "codex/cloud-wave1-09",
+      "status": "AWAITING_SCOPED_REVIEW_NOT_ACCEPTED",
+      "note": "Design/test-only preparatory PR; no independent cloud review posted yet. Fixture results not claimed."
+    },
+    {
+      "pr": 14,
+      "head_sha": "490bf366590b16e7f1de6f75d2e25fae156a4c20",
+      "base_sha": "e298e15cd758932e81d2241130716632702f5bd0",
+      "branch": "codex/cloud-wave1-10",
+      "status": "AWAITING_SCOPED_REVIEW_NOT_ACCEPTED",
+      "note": "Design/test-only preparatory PR; no independent cloud review posted yet. Fixture results not claimed."
+    },
+    {
+      "pr": 15,
+      "head_sha": "e3a7e33707581eb12f707a1422c76da28f68d6fb",
+      "base_sha": "e298e15cd758932e81d2241130716632702f5bd0",
+      "branch": "codex/cloud-wave1-06",
+      "status": "AWAITING_SCOPED_REVIEW_NOT_ACCEPTED",
+      "note": "Design/test-only preparatory PR; no independent cloud review posted yet. Fixture results not claimed."
+    },
+    {
+      "pr": 16,
+      "head_sha": "49edcb7064773f8f8ac6051be2fe08874dd3e0e3",
+      "base_sha": "e298e15cd758932e81d2241130716632702f5bd0",
+      "branch": "codex/cloud-wave1-08",
+      "status": "AWAITING_SCOPED_REVIEW_NOT_ACCEPTED",
+      "note": "Design/test-only preparatory PR; no independent cloud review posted yet. Fixture results not claimed."
+    },
+    {
+      "pr": 17,
+      "head_sha": "fee8a9693016cbff8858d170dd20df251d624950",
+      "base_sha": "e298e15cd758932e81d2241130716632702f5bd0",
+      "branch": "codex/cloud-wave1-03",
+      "status": "AWAITING_SCOPED_REVIEW_NOT_ACCEPTED",
+      "note": "Design/test-only preparatory PR; no independent cloud review posted yet. Fixture results not claimed."
+    },
+    {
+      "pr": 20,
+      "head_sha": "cccef7355709667499d386be995f067843eae17a",
+      "base_sha": "9b9a27773b0f06ef80505a47d4ddaf9b72aa4481",
+      "branch": "codex/cloud-wave1-07",
+      "status": "AWAITING_SCOPED_REVIEW_NOT_ACCEPTED",
+      "note": "Design/test-only preparatory PR; no independent cloud review posted yet. Fixture results not claimed."
+    },
+    {
+      "pr": 29,
+      "head_sha": "a297fcc11f1eac202de8ae248f4fcacfc30b20e8",
+      "base_sha": "9b9a27773b0f06ef80505a47d4ddaf9b72aa4481",
+      "branch": "codex/cloud-ownership-birth-acquisition-design",
+      "status": "AWAITING_SCOPED_REVIEW_NOT_ACCEPTED",
+      "note": "Design/test-only preparatory PR; no independent cloud review posted yet. Fixture results not claimed."
+    }
+  ],
+  "observed_pr_heads": [
+    {
+      "pr": 32,
+      "branch": "codex/cloud-ownership-budget-foundation",
+      "head_sha": "64765af62379fe4fbb185271c1d54405a527a0af",
+      "base_sha": "d24fc7f2910067254047b64e699f43aa1685130f",
+      "state": "closed",
+      "merged": true
+    },
+    {
+      "pr": 31,
+      "branch": "codex/cloud-wave1-08-queue-foundation",
+      "head_sha": "04a930172a088607b833017112e9d4721869e60c",
+      "base_sha": "d24fc7f2910067254047b64e699f43aa1685130f",
+      "state": "open",
+      "merged": false
+    },
+    {
+      "pr": 30,
+      "branch": "codex/cloud-wave1-05-journal-init",
+      "head_sha": "e1b22f0d7b55181a97f1eebe4338c0db0b700f70",
+      "base_sha": "d24fc7f2910067254047b64e699f43aa1685130f",
+      "state": "closed",
+      "merged": true
+    },
+    {
+      "pr": 29,
+      "branch": "codex/cloud-ownership-birth-acquisition-design",
+      "head_sha": "a297fcc11f1eac202de8ae248f4fcacfc30b20e8",
+      "base_sha": "9b9a27773b0f06ef80505a47d4ddaf9b72aa4481",
+      "state": "open",
+      "merged": false
+    },
+    {
+      "pr": 28,
+      "branch": "codex/cloud-continuation-operations",
+      "head_sha": "e81d9be392bef4d29b70490ef2354bf3ec966f99",
+      "base_sha": "d7b93e19c369585731da87343f332d4d4f52e1e3",
+      "state": "closed",
+      "merged": true
+    },
+    {
+      "pr": 27,
+      "branch": "codex/cloud-wave1-06-fix-history-controls",
+      "head_sha": "dbffb7551ce2925156b1c8a173f4b0c38ad4f6c9",
+      "base_sha": "bcb464eae57aad91e0cf6dd9aa2188e87e2796f5",
+      "state": "closed",
+      "merged": true
+    },
+    {
+      "pr": 26,
+      "branch": "codex/cloud-wave2-04-pool-admission",
+      "head_sha": "aa4626fec148c244f841f0614abc4d18c52274dd",
+      "base_sha": "22e1dae7c8f6a1adaca2690c14b13aabc663e729",
+      "state": "closed",
+      "merged": true
+    },
+    {
+      "pr": 25,
+      "branch": "codex/cloud-wave1-05-continuation",
+      "head_sha": "28e04362e426e50fc5cceca232bb227f38a3707c",
+      "base_sha": "22e1dae7c8f6a1adaca2690c14b13aabc663e729",
+      "state": "closed",
+      "merged": true
+    },
+    {
+      "pr": 24,
+      "branch": "codex/cloud-history-integration",
+      "head_sha": "b5911a6fece35f83af87b89a14537de2d7c11dec",
+      "base_sha": "22e1dae7c8f6a1adaca2690c14b13aabc663e729",
+      "state": "closed",
+      "merged": true
+    },
+    {
+      "pr": 23,
+      "branch": "codex/cloud-wave1-06-fix-token-controls",
+      "head_sha": "11bf7d168200f7945a36493f763378b4a8a5ca39",
+      "base_sha": "e3a7e33707581eb12f707a1422c76da28f68d6fb",
+      "state": "open",
+      "merged": false
+    },
+    {
+      "pr": 22,
+      "branch": "codex/cloud-wave1-02-adapter",
+      "head_sha": "c50b7aa5e690fb2a3517c7f9afd7a75f3908384b",
+      "base_sha": "0a2cea9a1e255915f49831a3c7d467e4afb77c05",
+      "state": "open",
+      "merged": false
+    },
+    {
+      "pr": 21,
+      "branch": "integration/cloud-wave1",
+      "head_sha": "d0caa0f1262366ca541d052310d78fbfdc63722d",
+      "base_sha": "9b9a27773b0f06ef80505a47d4ddaf9b72aa4481",
+      "state": "open",
+      "merged": false
+    },
+    {
+      "pr": 20,
+      "branch": "codex/cloud-wave1-07",
+      "head_sha": "cccef7355709667499d386be995f067843eae17a",
+      "base_sha": "9b9a27773b0f06ef80505a47d4ddaf9b72aa4481",
+      "state": "open",
+      "merged": false
+    },
+    {
+      "pr": 19,
+      "branch": "codex/cloud-wave1-02",
+      "head_sha": "0a2cea9a1e255915f49831a3c7d467e4afb77c05",
+      "base_sha": "e298e15cd758932e81d2241130716632702f5bd0",
+      "state": "open",
+      "merged": false
+    },
+    {
+      "pr": 18,
+      "branch": "codex/cloud-wave1-01",
+      "head_sha": "92e9c6104b411101e414c03774a1675cbbf1ac91",
+      "base_sha": "e298e15cd758932e81d2241130716632702f5bd0",
+      "state": "open",
+      "merged": false
+    },
+    {
+      "pr": 17,
+      "branch": "codex/cloud-wave1-03",
+      "head_sha": "fee8a9693016cbff8858d170dd20df251d624950",
+      "base_sha": "e298e15cd758932e81d2241130716632702f5bd0",
+      "state": "open",
+      "merged": false
+    },
+    {
+      "pr": 16,
+      "branch": "codex/cloud-wave1-08",
+      "head_sha": "49edcb7064773f8f8ac6051be2fe08874dd3e0e3",
+      "base_sha": "e298e15cd758932e81d2241130716632702f5bd0",
+      "state": "open",
+      "merged": false
+    },
+    {
+      "pr": 15,
+      "branch": "codex/cloud-wave1-06",
+      "head_sha": "e3a7e33707581eb12f707a1422c76da28f68d6fb",
+      "base_sha": "e298e15cd758932e81d2241130716632702f5bd0",
+      "state": "open",
+      "merged": false
+    },
+    {
+      "pr": 14,
+      "branch": "codex/cloud-wave1-10",
+      "head_sha": "490bf366590b16e7f1de6f75d2e25fae156a4c20",
+      "base_sha": "e298e15cd758932e81d2241130716632702f5bd0",
+      "state": "open",
+      "merged": false
+    },
+    {
+      "pr": 13,
+      "branch": "codex/cloud-wave1-09",
+      "head_sha": "b622438092122f6339537e5998502f37ceef5d94",
+      "base_sha": "e298e15cd758932e81d2241130716632702f5bd0",
+      "state": "open",
+      "merged": false
+    },
+    {
+      "pr": 12,
+      "branch": "codex/cloud-wave1-04",
+      "head_sha": "0b4fbdb108cb00ac2927071812ed725c6469f1ea",
+      "base_sha": "e298e15cd758932e81d2241130716632702f5bd0",
+      "state": "open",
+      "merged": false
+    },
+    {
+      "pr": 11,
+      "branch": "codex/cloud-wave1-05",
+      "head_sha": "7816cdbfad1216e97472d1140f3b412b05232c8f",
+      "base_sha": "e298e15cd758932e81d2241130716632702f5bd0",
+      "state": "open",
+      "merged": false
+    },
+    {
+      "pr": 10,
+      "branch": "codex/cloud-coordinator-protocol-20261008",
+      "head_sha": "0e33032856664fdc147ee53fa03cd77a6ab07624",
+      "base_sha": "e298e15cd758932e81d2241130716632702f5bd0",
+      "state": "open",
+      "merged": false
+    },
+    {
+      "pr": 33,
+      "branch": "codex/cloud-wave1-07-legacy-control-normalizer",
+      "head_sha": "5095a17557c7fb916d74e508a3e157b49abcd784",
+      "base_sha": "d0caa0f1262366ca541d052310d78fbfdc63722d",
+      "state": "open",
+      "merged": false
+    }
+  ]
 }
