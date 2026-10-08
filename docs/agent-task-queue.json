@@ -814,7 +814,13 @@
       "review": "PENDING worker05",
       "author_linux_tests": 1783,
       "author_skips": 0,
-      "combined_base": "94eb463c58d08cfe6c5ac470ae41b4b6a3ef077e"
+      "combined_base": "94eb463c58d08cfe6c5ac470ae41b4b6a3ef077e",
+      "mac_discovered": 1783,
+      "mac_passed": 1505,
+      "mac_skipped": 278,
+      "mac_seconds": 33.804,
+      "combined_tree": "2fec0fcf045a51e024db41d4331cb0707de229d0",
+      "coordinator_diff_review": "Clock implementation reviewed; independent Linux review pending"
     }
   },
   "native_reconciliation_review": {
