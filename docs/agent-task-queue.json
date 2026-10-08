@@ -188,16 +188,17 @@
   ],
   "integration": {
     "branch": "integration/cloud-wave1",
-    "tested_commit": "7027033b0783851b84125c989731e014e1e7344c",
-    "combined_tests": 682,
+    "tested_commit": "f4d51d4950b6f0736551d38c2e61c39d8b518d25",
+    "combined_tests": 687,
     "result": "PASS",
     "live_verification": "NOT_STARTED_PENDING_REVIEW_AND_LEGACY_CAPTURE",
-    "blocker": "PR18 alias-path race repair pending; PR22/23 independent review pending; positive pool admission and continuation-to-entry wiring remain incomplete",
+    "blocker": "PR18 canonical alias-path repair integrated, independent re-review pending; PR22/23 review pending; positive pool admission and continuation-to-entry wiring incomplete",
     "followups": {
-      "worker01": "Repair canonical lock identity, symlink/hardlink regressions",
+      "worker01": "Canonical path fix 92e9c61 published; pending review",
       "worker04": "Narrow raw pool-vault admission verifier",
       "cloud_reviewer": "Review PR22/23 and repaired PR18",
-      "worker10": "Re-review final combined head after fixes"
+      "worker10": "Re-review final combined head after fixes",
+      "worker05": "Trusted raw continuation-to-entry component wiring, separate PR"
     }
   }
 }
