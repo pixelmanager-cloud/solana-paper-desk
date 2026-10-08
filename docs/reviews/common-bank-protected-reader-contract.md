@@ -1,178 +1,228 @@
-# Protected mixed-receipt reader: concrete format blocker
+# Exact physical mixed-receipt format specification
 
-Base `28e59ac3da521c032cec49a26b603088c78e78f1`. Exclusive successor:
-MIXED-RECEIPT-PROTECTED-READER. PR85 and PR87 were read, including independent
-review comment 6060373059. This is the assignment's explicit missing-contract
-fallback, not a protected reader implementation or acceptance claim.
+Exclusive MIXED-RECEIPT-PROTECTED-READER prerequisite, extending PR89 append-only.
+Base remains `28e59ac3da521c032cec49a26b603088c78e78f1`. PR85, PR87 and review
+6060373059 require an exact physical format before protected reader/migration
+code. The five previously missing choices are now concrete in
+`desk/common_bank_receipt_format.py`. This defines a reviewable format, not an
+installation, migration, issuer or production reader. Existing v1 code is unchanged.
 
-## Finding before implementation
+## Exact schema and immutable certificate
 
-The accepted code defines the typed JSON chain/certificate, but does NOT define
-an exact protected format-2 SQLite schema. `ChainAnchor.schema_hash` is opaque:
-`validate_receipt_chain` compares the certificate against the supplied pin; it
-never inspects SQLite. The review explicitly states: "No filesystem/schema/fence
-authenticity is established by the schema hash alone." It lists "protected
-exact-format snapshot access/schema-fence audit with independent pin provisioning"
-as the next slice. PR85 gives an example of changing `receipt_no_replace`, not
-reviewed replacement SQL or a certificate table layout. PR87 explicitly leaves
-"exact SQL/schema fence" and protected format-2 snapshot access as dependencies.
+Format ID: `pool_receipt_physical_format_v2`.
+`FORMAT_SQL` is a read-only mapping of exact SQL strings. All v1 schema objects
+remain byte-identical except REQUIRED `receipt_no_replace`, defined below.
+There is exactly one added table and three added guards:
 
-Inspection of current production sources finds only v1 `PoolReceiptLedger.SCHEMA`.
-There is no accepted certificate table/query/cardinality, format-2 object inventory,
-fingerprint algorithm, required fence SQL or installed-format marker. A reader
-cannot honestly audit an EXACT format by selecting any convenient table name,
-trusting a matching candidate hash, accepting caller-selected SQL or normalizing
-an arbitrary fence into equivalence. Doing that would define the migration/issuer
-format implicitly within a read-only task.
+```sql
+CREATE TABLE receipt_transition_certificate(id INTEGER PRIMARY KEY CHECK(id=1),body TEXT NOT NULL,hash TEXT NOT NULL)
+CREATE TRIGGER certificate_no_update BEFORE UPDATE ON receipt_transition_certificate BEGIN SELECT RAISE(ABORT,'Immutable format2 certificate'); END
+CREATE TRIGGER certificate_no_delete BEFORE DELETE ON receipt_transition_certificate BEGIN SELECT RAISE(ABORT,'Immutable format2 certificate'); END
+CREATE TRIGGER certificate_no_replace BEFORE INSERT ON receipt_transition_certificate WHEN EXISTS(SELECT 1 FROM receipt_transition_certificate) BEGIN SELECT RAISE(ABORT,'Immutable format2 certificate'); END
+```
 
-The assignment explicitly says: "If reviewed format/provisioning is not defined
-enough, identify concrete missing contract before implementing assumptions."
-Therefore no production reader module is added. Seven new fixture proofs and
-this scoped report make the blocker reviewable. No existing production file,
-journal, schema, shared queue or readiness record changes.
+Certificate table cardinality is exactly one, id/rowid=1, TEXT body and hash.
+The body is the exact canonical PR87 certificate; hash is its canonical SHA256,
+externally pinned, not authority derived from candidate storage. Body <=8 KiB
+UTF-8; hash exactly 64 bytes and lowercase hexadecimal via typed dispatch.
+Unconditional UPDATE rejects every field change and rowid/_rowid_/oid/id alias,
+including UPDATE OR REPLACE. DELETE rejects. BEFORE INSERT rejects any existing
+row even under INSERT OR REPLACE, avoiding implicit replacement deletion.
+The CHECK forbids alternate singleton IDs; the collision guard remains protective
+even in the deliberately corrupt fixture with CHECK disabled. No SQL idempotent
+replacement path exists. Future migration retry must audit and return the exact
+existing result outside mutation, or refuse mismatches.
 
-Independent anchor inputs ARE already defined by PR87. Supplying reviewed pins
-explicitly, as requested, does not require default trust provisioning. The blocker
-is the physical exact-format contract, not routine user approval, missing live
-credentials, or a need to access worker02's completion API. The following choices
-must be frozen in an independently reviewed format specification before a reader
-implements them. Candidate data may never select these choices.
+## Required-object old-binary fence
 
-## Smallest concrete contract to freeze
+The exact new `receipt_no_replace` is:
 
-1. **Physical certificate representation.** Specify one table name, exact CREATE
-   TABLE SQL, columns/storage classes, singleton key/cardinality and exact immutable
-   INSERT/UPDATE/DELETE/REPLACE/rowid protections. Proposed review input: one
-   `receipt_transition_certificate(id INTEGER PRIMARY KEY CHECK(id=1), body TEXT
-   NOT NULL, hash TEXT NOT NULL)` table with all singleton mutation guards.
-   This name/layout is a proposal, NOT an accepted format or installed schema.
-   Define explicit refusal on missing/extra rows, wrong id/rowid aliases or hash.
-   Certificate JSON/type/bytes remain exactly PR87, never reconstructed from
-   transition payload alone or an external unprotected file.
-2. **Old-binary fence.** Specify the exact SQL replacing a REQUIRED v1 object,
-   preserving every original collision and mutation protection. Additional tables
-   cannot fence v1. One reviewed replacement for `receipt_no_replace` is sufficient
-   only if it differs byte-exactly from v1 while retaining seq/publication/payload
-   collision rejection and all immutable guard semantics. The reader must compare
-   this SQL exactly, not infer safety by searching for a token or SQL prefix.
-3. **Full schema inventory/fingerprint.** Specify exact `(type,name,tbl_name,sql)`
-   inventory including unavoidable autoindexes with NULL SQL. Decide one canonical
-   encoding and digest used by migration certificate AND reader. Rootpage numbers
-   are physical allocation, not portable schema identity; do not silently include
-   them. Reject all unexpected tables/views/triggers/indexes/virtual objects,
-   altered required SQL, partial installations and unknown format versions.
-   Freeze schema/hash in reviewed code/config, never derive the expected value
-   from candidate sqlite_master. The existing opaque schema pin is insufficient
-   without knowing precisely what it fingerprints.
-4. **Atomic installed-format discriminator.** Specify whether the exact certificate
-   singleton itself denotes format 2 or an additional immutable singleton exists.
-   All discriminator/certificate/fence/transition/head installation must be one
-   migration transaction. Reader must refuse a fence without a certificate, a
-   certificate without its fence/transition, duplicate transitions, or old/new
-   mixed DDL. No schema creation/repair, partial-state initialization or v1 fallback.
-5. **Protected read resource envelope.** Freeze physical-file/header limits and
-   bounded SQL scalar preflight in addition to PR87's 10,000 rows/8-KiB fields/
-   aggregate 32-MiB limits. SQL UTF-8 byte preflight must use BLOB length, not
-   character length. Specify count/cardinality/storage class checks and aggregate
-   byte accounting BEFORE fetching full payload/descriptor/certificate values.
-   Account for pinned prefix duplication as PR87 does. A reviewed maximum database
-   file size/page count prevents a corrupt oversized file from forcing an unbounded
-   schema scan before row limits apply. Do not invent a permissive value in code.
+```sql
+CREATE TRIGGER receipt_no_replace BEFORE INSERT ON coordinator_receipts WHEN EXISTS(SELECT 1 FROM coordinator_receipts WHERE seq=NEW.seq OR publication_id=NEW.publication_id OR payload_hash=NEW.payload_hash) BEGIN SELECT RAISE(ABORT,'Format2 receipt identity already exists'); END
+```
 
-These are format decisions shared with the future offline migration/issuer,
-not changes to the finalized-slot journal. No dependency on worker02's completion
-schema or authority is assumed. Completion remains independently unresolved.
+Only the error message differs from v1. All seq/publication/payload collision
+predicates and ABORT behavior remain unchanged. INTEGER PRIMARY KEY seq aliases
+rowid/_rowid_/oid, so collisions through those aliases are rejected too. Original
+receipt/descriptor UPDATE/DELETE/REPLACE guards and head protections are unchanged.
+V1 `_audit` compares required SQL byte-exactly, so both already-open reader and
+writer reject before returning policy or publishing. Extra metadata alone is not
+a fence. Tests prove the actual protected v1 API refuses while original receipt
+rows, descriptor, head and every other original SQL object remain unchanged.
 
-## Reader API and algorithm once those choices are accepted
+## Full object inventory and fingerprint
 
-Suggested disconnected entry point: a context-managed `read_protected_chain`
-accepting an explicitly supplied local CoordinatorBoundary, independently supplied
-ChainAnchor, and the frozen reviewed format identifier. No defaults from candidate
-DB, certificate, evidence JSON, dashboard arguments or environment discovery.
-The reviewed implementation owns its SQL statements; callers never supply SQL.
-The boundary pins canonical root/ledger/lock/evidence identities and policy options;
-the anchor pins byte-exact legacy descriptor/prefix/old head, reviewed certificate/
-schema and independently supplied current head. All must agree with protected data.
+`EXPECTED_INVENTORY` is exactly 17 `(type,name,tbl_name,sql)` tuples ordered by
+SQLite BINARY type then name. It includes all four tables, all eleven triggers,
+and BOTH implicit indexes:
 
-Fail unsupported Linux/LP64 capability before path/DB access. Reuse accepted guard
-semantics without weaker fallbacks: stable allowlisted durable local filesystem,
-canonical no-alias paths, no symlink/hardlink/rotation, owned regular single-link
-files, private root 0700, ledger/lock 0600 and evidence without group/world writes.
-Validate ancestors/parents and no-follow opens before SQLite; guard opened inode
-identities and canonical names throughout. Read-only calls MUST NOT create lock
-files or databases, recover journals, checkpoint WAL or change permissions.
-A same-UID hostile whole-file rewrite/rollback/omission remains outside the original
-coordinator contract; do not promote POSIX/hash integrity into remote authenticity.
+* `sqlite_autoindex_coordinator_receipts_1`, table coordinator_receipts, SQL NULL;
+* `sqlite_autoindex_coordinator_receipts_2`, table coordinator_receipts, SQL NULL.
 
-Lock order is evidence nonmutating read guard, then existing coordinator shared
-lock, then protected ledger nonmutating read guard. Match established acquisition
-ordering and preserve private loopback. Accepted OFD guard blocks SQLite writers
-and rejects WAL/hot/stale journals, contention and unsupported VFS/platform before
-SQLite open. Root/evidence/ledger/lock identities must agree with both trusted
-boundary and original descriptor, checked on entry/exit and connection close.
-Do not use immutable=1, copied files or an fd alias as an unreviewed bypass.
+INTEGER PRIMARY KEY does not add an autoindex. No other objects are permitted.
+Full object names/SQL are literal immutable module constants, not a partial
+required-object subset. Views, extra/altered tables/indexes/triggers, missing
+entries, nonempty TEMP/attached schemas, virtual tables and unknown formats must
+refuse. No SQL whitespace/case normalization or CREATE-prefix inference is allowed.
+The future reader uses a pristine connection, no ATTACH/TEMP/extension/arbitrary SQL.
 
-Use mode=ro/query_only with a single bounded transaction, no arbitrary SQL,
-extensions or repair. Audit exact reviewed schema/fence and the installed singleton
-shape before decoding data. Preflight byte/storage classes/counts before fetching
-all rows. Read descriptor/certificate/head and ALL rows in that same transaction
-under both guards; no separate per-profile query, freshness/source filter or
-caller-supplied row subset. Bound BEGIN/read/lock duration and contention; an
-unavailable read returns no usable policy or prior success.
+Fingerprint is exactly:
 
-Build one complete immutable ChainSnapshot and pass the independent anchor to
-`validate_receipt_chain`. Preserve every original TEXT/hash/index tuple, all
-legacy and typed rows and all markers. Revalidate exact identities/schema/head
-before yielding and at guard exit; do not cache a successful object as current.
-Every new use needs a fresh guarded full read. The output is diagnostic REJECT,
-not a v1 TrustedSourcePolicy, issuer token or raw conflict proof. Keep source/
-finality/history/interval/private-control/ownership/entry flags false. Raw replay
-under one shared128-ref/32-MiB view is a separate consumer slice, not this reader.
+```
+digest({'format': FORMAT_ID, 'inventory': EXPECTED_INVENTORY})
+```
 
-## Seven fixture proofs and honest limits
+`desk.model.digest` uses SHA256 of canonical UTF-8 JSON: sorted object keys,
+compact separators, tuple arrays and SQL NULL as JSON null. Rootpages/file inode/
+allocation and query order variants are NOT included. Expected fingerprint:
+`186fde57edcf2d53007f6972c66484f64a156d319d4814cec3db062397e687e8`.
+This value must match independently supplied ChainAnchor.schema_hash AND the
+certificate. It cannot be provisioned by fingerprinting a candidate layout.
+A hard-coded hash regression freezes this exact inventory against accidental
+future v1/schema changes. Unknown fingerprint is unsupported, not auto-upgraded.
 
-`tests/test_mixed_receipt_reader_contract.py` constructs fresh explicitly SYNTHETIC
-in-memory SQL layouts, with metadata fixtures from PR87. It does NOT open an
-operator ledger, create a migration, issue receipts, provision trusted anchors,
-assert protected storage or fabricate union RPC responses. All diagnostics REJECT.
+Before fetching inventory TEXT, fixed schema scalar SQL requires exactly 17
+objects, correct TEXT/NULL storage classes, <=128 UTF-8 bytes for type/name/table,
+<=2,048 bytes per SQL string and <=32 KiB aggregate inventory. Then the complete
+ordered inventory must equal the literal expected tuple. All autoindexes remain
+visible despite their NULL SQL; no `WHERE sql IS NOT NULL` pruning.
 
-* A matching candidate schema hash can bind a layout missing receipt_no_update;
-  pure dispatch still validates metadata and leaves protected-read approval false.
-* A candidate-selected certificate table is not an independently defined/provisioned
-  table. Metadata can validate even with NO physical certificate table at all.
-* An added certificate table with unchanged required v1 schema has no reviewed
-  required-object old-binary fence; metadata cannot certify that missing fence.
-* Two different certificate table layouts, separately repinned synthetically, both
-  pass pure dispatch. The opaque hash does not choose the approved physical format.
-* Multibyte TEXT fits a character limit while violating the 8-KiB byte limit;
-  SQL BLOB length sees the violation without fetching the large payload.
-* Head and rows from interleaved states cannot be salvaged as one complete snapshot;
-  the existing typed validator refuses rather than returning a prefix.
+## Atomic discriminator and transition
 
-These reproduce CURRENT accepted limitations and preflight requirements; they are
-not tests of a nonexistent protected reader. Existing v1 schema/metadata behavior
-and all request budgets/original records remain unchanged.
+The exact certificate singleton is the ONLY installed-format discriminator;
+no new mutable marker table or application_id/user_version switch is introduced.
+Format 2 exists only when its full schema/fence, singleton and exact PR87 transition
+are simultaneously present and consistent with externally supplied pins.
+Certificate alone, fence alone, missing/multiple singleton, extra/misplaced
+transition, inconsistent old/current head or partial DDL is UNAVAILABLE. No v1
+fallback, schema initialization, repair or prefix salvage is allowed.
 
-## Remaining authority and completion dependencies
+Future migration (not implemented here) must lock the stable evidence then ledger
+in established order and audit the exact original v1 identities/descriptor/prefix/
+old head, reviewed source capabilities and authoritative offline quiescence.
+Within ONE `BEGIN IMMEDIATE`/DELETE-journal/FULL transaction: replace the required
+fence, create exact certificate table/guards, insert exact canonical certificate,
+append the exact PR87 transition at old count+1 and update head atomically.
+Original descriptor body/hash and every old row/byte/hash/sequence/publication
+remain unchanged. No copying, rotation, reseeding, refund, VACUUM or normalization.
+Crash before COMMIT leaves old v1; after COMMIT leaves complete format 2, or read
+refusal. A retry may return only the exactly audited same transition/certificate;
+unknown/partial/mismatched state refuses without issuing new IDs or resetting spend.
+No downgrade or automatic restore to a less complete backup.
 
-A reviewable exact-format specification covering the five choices above unblocks
-the reader. Afterwards independent review must validate no-follow/identity races,
-permissions and SQL preflight, actual contention/hot journal handling, no writes,
-atomic schema/head/certificate consistency, all rows/markers and corruption after
-previous success. Protected format provisioning/offline migration, issuer
-permissions, authoritative completion/quiescence and marker publication/resolution,
-raw source/seal/revision/budget/common-bank replay and mixed conflict comparison
-remain separate dependencies. None is inferred from syntax/hash flags.
-No provider/VPS/secrets/signing/shared docs edits, merge/deployment or live acceptance.
+PR87 defines all typed dispatch, sentinel columns, certificate/old-head/current-
+head bindings and source version/profile capabilities; this module reuses that
+validator unchanged. Expired/disabled-source observations and all unresolved
+markers are retained; no type/profile/source/time filtering is introduced.
+Signed invalid semantic times remain visible for later rejection. Marker resolution
+is unsupported; later successful observations do not erase failed attempts.
 
-Linux/Python 3.12.14 fixture validation:
+## Concrete file/header and UTF-8 SQL preflight limits
 
-* `python -m unittest tests.test_mixed_receipt_reader_contract -q`: seven tests,
-  0.010 seconds, OK, zero skips/failures/errors.
-* `python -m unittest discover -q`: 1,698 tests, 86.962 seconds, OK,
-  zero skips/failures/errors. Existing private-loopback fixtures only.
+Supported physical profile is SQLite format3, EXACT 4,096-byte pages, rollback
+read/write version=1, reserved-byte count=0, payload fractions64/32/32, schema
+format4, UTF-8 encoding1, user_version/application_id=0 and zero expansion bytes.
+This preserves conventional v1 headers; different page size/header profile is
+explicitly unsupported, never converted. Header change counter must equal
+version-valid-for, and valid header page count must match no-follow fstat size.
+Freelist count/trunk range must be internally plausible, never repaired.
+
+Maximum file size is 128 MiB: 32,768 pages, size page-aligned, >=one page.
+Header input is exactly 100 bytes. Future protected reader checks owned stable
+file identity/size before SQLite/schema scan and reads only this header first.
+The physical envelope is four times the accepted 32-MiB serialized bound, allowing
+B-tree pages, overflow pages and two indexes while bounding any schema/count scan
+and physical I/O. The real 10,000-record fixture fits comfortably inside it.
+This is a resource ceiling, not a guarantee that every bloated/freelist-heavy file
+fits; otherwise valid but oversized files honestly refuse. No VACUUM/rewrite or
+larger limit is used to recover them. Physical size does not enlarge logical spend
+or byte budgets. The same logical 10,000 rows/8-KiB/32-MiB limits remain authoritative.
+
+`PREFLIGHT_SQL` contains fixed READ-ONLY scalar SELECTs, never executed by this
+module. It inspects complete tables, no source/profile/freshness filters. It uses
+`length(CAST(value AS BLOB))`, not character length. `FormatMetrics` captures only
+bounded integer tuples from those SELECTs. Checks before full body/row fetch:
+
+* Descriptor/certificate: exactly one id1 INTEGER row, TEXT fields, body1..8,192
+  UTF-8 bytes, hash64 bytes, exact aggregate body+hash bytes.
+* Head: exactly one id1 INTEGER row/count, TEXT hash64 bytes, count1..10,000
+  (format2 includes at least transition), agreeing with rows and external current
+  count pin. Actual hash agrees with independently pinned current head in dispatch.
+* Rows: count1..10,000 including transition/markers; integer seq1..count,
+  all nine remaining fields TEXT, payload1..8,192 bytes, other fields1..128 bytes,
+  complete aggregate bytes. PK uniqueness plus exact min/max/count rules out gaps.
+* Schema: complete inventory scalar bounds above, followed by exact ordered audit.
+
+Shared serialized aggregate is EXACTLY row-string bytes + externally pinned
+legacy-prefix string bytes + actual descriptor body + actual certificate body +
+externally pinned descriptor body, <=32 MiB, matching accepted chain accounting.
+Hashes outside body and schema metadata have separate small fixed bounds; no
+per-profile expansion. Prefix duplication is charged honestly. Preflight invalid
+UTF-8/type/shape or bounds fails before JSON/row materialization. Invalid UTF-8
+TEXT discovered on later fetching also refuses; scalar length alone is not JSON
+or decoding authentication. Full snapshot dispatch rechecks all original bounds.
+
+`validate_inventory`, `validate_header`, `validate_preflight` and
+`validate_format_snapshot` are pure specifications/validators: no filesystem,
+SQLite open/execute, locks, installation or providers. The combined validator
+runs header/preflight/inventory then unchanged full chain dispatch, and verifies
+loaded snapshot/inventory numeric metrics equal the preflight image. No cached
+success or partial result. All malformed helper inputs become ChainUnavailable.
+Supplying valid scalars/header does NOT authenticate physical storage or prove a
+guarded read: all existing diagnostic protected-read/source/finality/raw-conflict/
+ownership/entry flags remain false, decision REJECT.
+
+## Reader boundary and remaining dependencies
+
+The five choices are concrete; implementation is no longer blocked on undefined
+format. Independent review of this exact specification precedes the protected
+reader. Reader remains unimplemented. It must accept explicitly external boundary
+and anchor pins, never derive trusted pins from candidate DB/certificate. Use
+Linux/LP64 capability refusal before access, canonical no-alias/no-follow stable
+owned single-link files, private root0700, ledger/lock0600, safe evidence permissions,
+accepted durable filesystem and guarded inode identities throughout.
+
+One complete read must hold evidence nonmutating guard then existing coordinator
+shared lock then ledger nonmutating guard and one mode=ro/query_only transaction.
+Reject WAL/hot/stale journals, contention, unsupported VFS/platform, replacements,
+partial schema/heads and SQL/encoding errors without weaker fallback or recovery.
+No creation of lock/database, repair/checkpoint, immutable=1, copies or cached
+policy. Full bounded schema/scalar/descriptor/certificate/head/row read is one
+consistent image; revalidate identities/schema/head before yield and guard exit.
+Every use needs fresh revalidation. Same-UID whole rewrite/rollback/omission remains
+outside the original coordinator threat model; local integrity is not provenance.
+
+Offline migration/issuer implementation, authoritative journal completion and
+quiescence, issuer permission enforcement, protected marker publication/resolution,
+source/seal/revision/budget/raw replay and all-profile raw conflict comparison
+remain separate dependencies. No unfinished slot-journal API is assumed or edited.
+Request budgets remain unchanged, no provider/VPS/secrets/signing, shared queue/
+readiness edits, merges, deployment or live acceptance.
+
+## Fixture proofs
+
+`tests/test_common_bank_receipt_format.py` provisions only fresh synthetic scratch
+SQL fixtures. It tests exact inventory/fingerprint, original v1 SQL preservation,
+certificate mutation/REPLACE/rowid guards, all collision paths, actual v1 API fence
+refusal without row/descriptor/head rewrite, every missing/changed inventory entry,
+extra object kinds, original/weakened fences, partial singleton/schema, external
+pins, header/pages/freelist/file bounds, UTF-8/scalar/cardinality/shared byte limits,
+loaded/preflight consistency, corrupted state after earlier success and real
+10,000 accepted/10,001 refused records before dispatch. Raw witness references
+remain explicit synthetic placeholders; no union RPC, source or completion proof.
+
+The seven original PR89 contract proofs remain as historical regression evidence:
+opaque candidate schema hashes alone still cannot select or authenticate a format.
+The new spec closes the physical-definition gap without changing that limitation.
+
+Linux/Python 3.12.14 validation of this exact specification:
+
+* `python -m unittest tests.test_common_bank_receipt_format tests.test_mixed_receipt_reader_contract -q`:
+  31 tests, 1.516 seconds, OK, zero skips/failures/errors (24 new format proofs and
+  seven retained original contract proofs).
+* `python -m unittest discover -q`: 1,722 tests, 91.379 seconds, OK,
+  zero skips/failures/errors; existing private-loopback fixtures only.
 * `git diff --check`: clean. No known failing tests remain.
 
-Reader implementation remains BLOCKED on the exact physical format specification,
-not on test failures. This report/test PR is the explicit conditional deliverable;
-no protected reader, migration or authority acceptance is claimed.
+The exact-format prerequisite is implemented for independent review; protected
+reader/migration/issuer/raw replay and live acceptance remain unimplemented.
