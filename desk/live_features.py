@@ -3,12 +3,13 @@ import json
 import re
 import sqlite3
 import zlib
-from contextlib import closing
+from contextlib import closing, ExitStack
 from pathlib import Path
 
 from .decision_runner import assess
 from .evidence import EvidenceStore
 from .model import canonical, digest
+from .control_obligations import ReadUnavailable, ReplayView, inventory, read_guard, unknown_inventory
 
 MAX_SOURCE_BYTES = 2 * 1024 * 1024
 MAX_LOADS = 128
@@ -82,9 +83,14 @@ def candidate_snapshot(research_db, evidence_db, scan_id, *, revision_hash, now)
               'scan_id': scan_id, 'revision_hash': revision_hash, 'source_hash': None,
               'scope': 'Historical local evidence; no current entry attestation',
               'provider_authenticity': 'UNVERIFIED', 'fields': fields,
+              'read_status': 'UNAVAILABLE',
               'components': {}, 'evidence_hashes': [],
+              'control_obligations': unknown_inventory(revision_hash=revision_hash, now=now),
               'reasons': ['LIVE_FEATURE_ADAPTER_NOT_READY']}
+    guards = ExitStack()
     try:
+        guards.enter_context(read_guard(research_db))
+        guards.enter_context(read_guard(evidence_db))
         with closing(sqlite3.connect(Path(research_db).resolve().as_uri() + '?mode=ro',
                                     uri=True, timeout=2)) as c:
             c.row_factory = sqlite3.Row
@@ -103,8 +109,11 @@ def candidate_snapshot(research_db, evidence_db, scan_id, *, revision_hash, now)
         if type(observed) is int and 0 <= observed <= 2**63 - 1:
             result['observed_at'] = observed
         result['source_hash'] = digest(scan)
-        decision = assess(scan, now, _BoundedStore(evidence_db),
+        store = ReplayView(_BoundedStore(evidence_db))
+        decision = assess(scan, now, store,
                           progress={'evidence_hash': revision_hash})
+        result['control_obligations'] = inventory(scan, store, revision_hash=revision_hash, now=now)
+        result['read_status'] = 'AVAILABLE'
         gates = decision['entry_evidence']['gates']
         # A pinned raw historical reconciliation also validates source/seal/budget.
         bound = gates['history_snapshot']['status'] == 'VERIFIED_COMPONENT'
@@ -122,6 +131,7 @@ def candidate_snapshot(research_db, evidence_db, scan_id, *, revision_hash, now)
                 else sorted(set(['COMPONENT_OR_SOURCE_REVISION_UNVERIFIED'] + [
                     r for r in gate.get('reasons', [])
                     if isinstance(r, str) and re.fullmatch('[A-Z0-9_]{1,128}', r)][:32]))}
+        hashes.update(result['control_obligations']['evidence_hashes'])
         if len(hashes) > MAX_HASHES:
             raise ValueError('Unbounded evidence manifest')
         result['evidence_hashes'] = sorted(hashes)
@@ -137,10 +147,20 @@ def candidate_snapshot(research_db, evidence_db, scan_id, *, revision_hash, now)
             result['reasons'].append('SOURCE_REVISION_RAW_REPLAY_UNVERIFIED')
         if result['observed_at'] is None or not 0 <= now - result['observed_at'] <= 10:
             result['reasons'].append('INVESTIGATION_NOT_FRESH_FOR_ENTRY')
-    except (ValueError, TypeError, KeyError, sqlite3.Error, OverflowError, RecursionError, zlib.error, UnicodeError):
+    except ReadUnavailable:
+        result['control_obligations'] = unknown_inventory(
+            revision_hash=revision_hash, now=now,
+            unavailable_reason='DIAGNOSTIC_READ_PLATFORM_UNAVAILABLE')
+        result['reasons'].extend(['DIAGNOSTIC_READ_PLATFORM_UNAVAILABLE',
+                                  'DIAGNOSTIC_SOURCE_OR_REPLAY_UNAVAILABLE'])
+    except (ValueError, TypeError, KeyError, sqlite3.Error, OverflowError, RecursionError, zlib.error, UnicodeError, OSError):
         result['components'] = {}
         result['evidence_hashes'] = []
+        result['read_status'] = 'UNAVAILABLE'
+        result['control_obligations'] = unknown_inventory(revision_hash=revision_hash, now=now)
         result['reasons'].append('DIAGNOSTIC_SOURCE_OR_REPLAY_UNAVAILABLE')
+    finally:
+        guards.close()
     result['reasons'] = sorted(set(result['reasons']))
     result['manifest_hash'] = digest(result)
     return result

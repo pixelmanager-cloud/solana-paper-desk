@@ -5,8 +5,13 @@ import unittest
 from unittest.mock import patch
 
 from desk.live_features import candidate_snapshot
+from desk.control_obligations import read_platform_available
 from desk.model import canonical, digest
 from tests import test_sealed_continuation_entry_evidence as fixtures
+
+
+requires_linux_reads = unittest.skipUnless(
+    read_platform_available(), 'Diagnostic component replay requires approved Linux LP64 OFD read contract')
 
 
 class LiveFeatureDiagnosticTests(unittest.TestCase):
@@ -27,6 +32,7 @@ class LiveFeatureDiagnosticTests(unittest.TestCase):
         self.assertNotIn('kind', result)
         return result
 
+    @requires_linux_reads
     def test_unmocked_raw_replay_is_historical_not_strategy_approval(self):
         result = self.snapshot()
         self.assertEqual(result['components']['history_snapshot']['status'], 'VERIFIED_COMPONENT')
@@ -36,6 +42,7 @@ class LiveFeatureDiagnosticTests(unittest.TestCase):
             self.assertTrue(result['fields'][name]['unknown_reasons'])
         self.assertLess(len(canonical(result)), 65536)
 
+    @requires_linux_reads
     def test_raw_gross_concentration_never_populates_private_concentration(self):
         original = fixtures.fixtures.OwnershipIntegrationTests.setUp
         def with_holder(case):
@@ -66,6 +73,7 @@ class LiveFeatureDiagnosticTests(unittest.TestCase):
         self.assertEqual(key, digest(first))
         self.assertEqual(first['evidence_hashes'], sorted(set(first['evidence_hashes'])))
 
+    @requires_linux_reads
     def test_historical_age_is_not_refreshed_by_replay_or_now(self):
         for now in (109, 121, 1000):
             result = self.snapshot(now)
@@ -73,12 +81,14 @@ class LiveFeatureDiagnosticTests(unittest.TestCase):
             self.assertIn('INVESTIGATION_NOT_FRESH_FOR_ENTRY', result['reasons'])
         self.assertNotIn('INVESTIGATION_NOT_FRESH_FOR_ENTRY', self.snapshot(120)['reasons'])
 
+    @requires_linux_reads
     def test_rebound_revision_suppresses_components(self):
         result = self.snapshot(revision='f' * 64)
         self.assertIn('SOURCE_REVISION_RAW_REPLAY_UNVERIFIED', result['reasons'])
         self.assertTrue(all(v['status'] == 'BLOCKED' for v in result['components'].values()))
         self.assertNotIn('gross_top10_supply_pct', result['fields'])
 
+    @requires_linux_reads
     def test_forged_summary_cannot_supply_strategy_fields_or_approval(self):
         report = dict(self.report, top10_pct=0, reserve_sol=999, eligible_for_trading=True,
                       mint_revoked=True, observed_at=1000)
@@ -89,6 +99,7 @@ class LiveFeatureDiagnosticTests(unittest.TestCase):
         self.assertTrue(all(v['status'] == 'UNKNOWN' for v in result['fields'].values()))
         self.assertIn('SOURCE_REVISION_RAW_REPLAY_UNVERIFIED', result['reasons'])
 
+    @requires_linux_reads
     def test_seal_budget_and_raw_page_attacks_remain_blocked(self):
         with self.store.connect() as c:
             c.execute("UPDATE ownership_admissions SET state='PREPARED'")
