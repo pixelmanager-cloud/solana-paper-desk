@@ -269,6 +269,15 @@
         "status": "DISPATCHED",
         "base": "335e086e18a9e514a4431b7429d69e865bc163e2",
         "scope": "Immutable in-flight genesis success/failure attachment; no provider/next stage/publication; terminal uncertain PENDING preserved"
+      },
+      {
+        "id": "COMMON-BANK-RECEIPT-COMPATIBILITY",
+        "worker": "01",
+        "thread_id": "01a118fc-39bc-722c-b442-8bf5a749e0bb",
+        "host_id": "durable",
+        "status": "DISPATCHED",
+        "base": "335e086e18a9e514a4431b7429d69e865bc163e2",
+        "scope": "Mixed-profile protected receipt preservation/contradiction design and fixture proof only; no production migration or issuance"
       }
     ],
     "saved_launch_probe": {
