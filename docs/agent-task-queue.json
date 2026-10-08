@@ -196,7 +196,7 @@
     "blocker": "Live legacy evidence,protected pool receipt capture,lifecycle semantic approval and holder exposure integration unfinished",
     "followups": {
       "worker02": "PR40 review interrupted by automated cybersecurity-risk flag; no final acceptance",
-      "worker06": "PR50 review with record/context slot probes",
+      "worker06": "PR50 independent changes requested; available for corrected exact-head review",
       "cloud_reviewer": "PR51 changes required; available",
       "worker10": "PR45 independent review complete;available",
       "worker03": "Bounded newerlegacysearch found no matching authoritative event;available",
@@ -238,7 +238,7 @@
       "PR48": "3ffe18674a2162257e5fd641f1fafb92e5ef40c4 scopedPASS;6013 independentbyteprobes; exactLinux1082 andcombined1170zero skips",
       "PR49": "2b11fbf6c8a5d7933088283a9a7ab9cbd9f25578 independent scopedPASS;Linux1179zero skips;canonical signatures and strict options independently probed",
       "PR51": "5bd4cd0854fa95470489cbbef00a3b8cb620c8db CHANGES_REQUIRED: partial claims-table loss after ambiguous charged attempt permits duplicate RPC; independent Linux1199 zero skips does not cover defect",
-      "PR50": "1706dddc4850d7ea8d23ab9a6b8cf08a99f3e9c0 HELD: coordinator reproduced record/context slot mismatch, missing context signature and out-of-u64 slots yielding structural agreement; independent review ongoing"
+      "PR50": "1706dddc4850d7ea8d23ab9a6b8cf08a99f3e9c0 independent CHANGES_REQUIRED: record/context slot mismatch and u64 overflow; source signature contract must be explicit. Linux1215 zero skips and1452 mutations do not resolve defects."
     },
     "candidate_combination": {
       "commit": "bfcc550ca25bd6cb79dc7ac3ad2b30c72f7b1033",
@@ -259,15 +259,6 @@
     },
     "published_ci": "d6c710bcf95a6c61fd0f786489be4b458bf7b6da successful",
     "active_claims": [
-      {
-        "worker": "worker06",
-        "thread_id": "01a118fc-f867-7233-8eec-c20659e70095",
-        "host_id": "durable",
-        "task": "Independent create_v2 structural lifecycle review",
-        "status": "REVIEWING",
-        "pr": 50,
-        "head": "1706dddc4850d7ea8d23ab9a6b8cf08a99f3e9c0"
-      },
       {
         "worker": "worker01",
         "thread_id": "01a118fc-39bc-722c-b442-8bf5a749e0bb",
@@ -463,6 +454,19 @@
       "mac_discovered": 1235,
       "mac_passed": 1162,
       "mac_skipped": 73
+    },
+    "vps_read_only_preflight": {
+      "observed_utc": "2026-10-08T04:57Z",
+      "dashboard": "active",
+      "discovery_timer": "active",
+      "decisions_timer": "active",
+      "backup_timer": "active",
+      "listener": "127.0.0.1:8765",
+      "data_root": "solana-desk 0755",
+      "evidence_db": "solana-desk 0600",
+      "disk_available": "55G",
+      "provider_calls": 0,
+      "production_changes": false
     }
   }
 }

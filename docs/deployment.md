@@ -334,3 +334,7 @@ Read-only server check confirmed dashboard, discovery and decision timers active
 ### Protected pool receipt storage prerequisite
 
 Read-only VPS check on2026-10-08: `/var/lib/solana-desk` is on ext4, owned by `solana-desk`,mode0755; dashboard runs as `solana-desk` and was active. The reviewed receipt ledger requires a dedicated canonical directory owned by its coordinator UID with mode0700, plus0600 single-link ledger/lock files and stable owned evidence DB identity. Do not use the existing0755 data root directly or change existing data ownership wholesale. Provision a dedicated directory when the capture bridge is reviewed, then verify persistence/backup identity handling before live use. No directory was created or production service changed in this preflight.
+
+### Current preflight — 8 October 2026, 04:57 UTC
+
+Read-only SSH check: dashboard, discovery, decisions and backup timer/service checks all active; port8765 listens only on127.0.0.1. Evidence DB remains solana-desk0600, data root0755;55GB disk available. No provider calls or service/data changes. Cloud integration remains staged on integration/cloud-wave1, not deployed or merged to main. Accepted combined Linux suite1179 tests; PR50/51 still held for review defects. The historical automation-paused statements above describe earlier checkpoints; desktop coordination has since been explicitly reauthorized. Paper-entry readiness remains unverified.
