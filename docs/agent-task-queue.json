@@ -269,8 +269,9 @@
         "status": "IN_PROGRESS",
         "base": "a2afb0075e2d1d33672027b71b9ff066ce6aa76c",
         "scope": "Bounded diagnostic semantic replay of original completed journal bytes against accepted common bank view; no publication/transport",
-        "wait_cursor": "a2dcfb97-463d-4188-9da3-48a81e644d23:56",
-        "turn_id": "01a11bdb-9210-7306-a85b-0bbf62481f63"
+        "wait_cursor": "a2dcfb97-463d-4188-9da3-48a81e644d23:57",
+        "turn_id": "01a11bdb-9210-7306-a85b-0bbf62481f63",
+        "last_observation": "2026-10-08T14:32Z: worker reports 51 targeted and96 existing journal tests passed; full Linux suite starting. No published head or independent acceptance yet; no infrastructure blocker reported."
       },
       {
         "id": "COMMON-BANK-COMPLETION-INVENTORY",
