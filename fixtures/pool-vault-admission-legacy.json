@@ -1,0 +1,149 @@
+{
+  "provenance": {
+    "kind": "SYNTHETIC_TEST_ONLY",
+    "construction": "Deterministic canonical PumpSwap PDA/legacy SPL layouts; no RPC used. Addresses are derived from mint bytes [7]*32. This file supplies no trusted source policy and is not chain evidence.",
+    "schema": "desk/schemas/pump_amm_sdk_2_1_0.json"
+  },
+  "query": {
+    "pool": "3GVnYDHddtPRfxyn6MrwQbw2uPd4pgNniHAN7ve2Zrc1",
+    "mint": "US517G5965aydkZ46HS38QLi7UQiSojurfbQfKCELFx",
+    "base_vault": "BQBJsBTJcZJZ2mDbyqAkwCQPewyy3M1vnQR7fX5fgMCJ",
+    "quote_vault": "GDz25iqN87bW5y2oFQZyGPqNfCe6LapCWRwvXonjykZh",
+    "snapshot_slot": 100,
+    "snapshot_time": 1700000000
+  },
+  "evidence": {
+    "3aea34cb0bf07cfd2d3ef426a696a085268eb49fd6ce6d27a59b8aa05d44675a": {
+      "kind": "rpc_response_v1",
+      "method": "getMultipleAccounts",
+      "params": [
+        [
+          "3GVnYDHddtPRfxyn6MrwQbw2uPd4pgNniHAN7ve2Zrc1",
+          "US517G5965aydkZ46HS38QLi7UQiSojurfbQfKCELFx",
+          "So11111111111111111111111111111111111111112",
+          "kfqijD4EypLnp5o3Ax6D9HgybhT24CjnMjXFtvHMhTd",
+          "BQBJsBTJcZJZ2mDbyqAkwCQPewyy3M1vnQR7fX5fgMCJ",
+          "GDz25iqN87bW5y2oFQZyGPqNfCe6LapCWRwvXonjykZh"
+        ],
+        {
+          "encoding": "base64",
+          "commitment": "finalized",
+          "minContextSlot": 100
+        }
+      ],
+      "result": {
+        "context": {
+          "slot": 100
+        },
+        "value": [
+          {
+            "owner": "pAMMBay6oceH9fJKBRHGP5D4bD4sWpmSwMn52FMfXEA",
+            "executable": false,
+            "lamports": 2039280,
+            "space": 301,
+            "data": [
+              "8ZptBBGxbbz/AABa0vwPWKLhPf8c4AlsxJseTsGhiU4wvYSa9+JZcGxaUgcHBwcHBwcHBwcHBwcHBwcHBwcHBwcHBwcHBwcHBwcHBpuIV/6rgYT7aH9jRhjANdrEOdwa6ztVmKDwAAAAAAELL+QsuIffzYD8EJHPk44QtRtpxy2ebB99VwRqEnj1qJqE4hia3hdQ1CYl+SxrxdcTPFcPKW4k5BqaNZTO4sDX4jK+qqcdLFFH9XnACCecIGNUoFApT4vawksFQKVPanToAwAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA==",
+              "base64"
+            ]
+          },
+          {
+            "owner": "TokenkegQfeZyiNwAJbNbGKPFXCWuBvf9Ss623VQ5DA",
+            "executable": false,
+            "lamports": 2039280,
+            "space": 82,
+            "data": [
+              "AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAECcAAAAAAAAGAQAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA==",
+              "base64"
+            ]
+          },
+          {
+            "owner": "TokenkegQfeZyiNwAJbNbGKPFXCWuBvf9Ss623VQ5DA",
+            "executable": false,
+            "lamports": 2039280,
+            "space": 82,
+            "data": [
+              "AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAJAQAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA==",
+              "base64"
+            ]
+          },
+          {
+            "owner": "TokenkegQfeZyiNwAJbNbGKPFXCWuBvf9Ss623VQ5DA",
+            "executable": false,
+            "lamports": 2039280,
+            "space": 82,
+            "data": [
+              "AQAAACGvoinTAcdfcNy2HGYcAloTLcQMM8hgarMdKh+yVn9C6AMAAAAAAAAJAQAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA==",
+              "base64"
+            ]
+          },
+          {
+            "owner": "TokenkegQfeZyiNwAJbNbGKPFXCWuBvf9Ss623VQ5DA",
+            "executable": false,
+            "lamports": 2039280,
+            "space": 165,
+            "data": [
+              "BwcHBwcHBwcHBwcHBwcHBwcHBwcHBwcHBwcHBwcHBwchr6Ip0wHHX3DcthxmHAJaEy3EDDPIYGqzHSofslZ/QnAXAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAQAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA",
+              "base64"
+            ]
+          },
+          {
+            "owner": "TokenkegQfeZyiNwAJbNbGKPFXCWuBvf9Ss623VQ5DA",
+            "executable": false,
+            "lamports": 9039280,
+            "space": 165,
+            "data": [
+              "BpuIV/6rgYT7aH9jRhjANdrEOdwa6ztVmKDwAAAAAAEhr6Ip0wHHX3DcthxmHAJaEy3EDDPIYGqzHSofslZ/QsDPagAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAQEAAADwHR8AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA",
+              "base64"
+            ]
+          }
+        ]
+      }
+    },
+    "19a29a5d09bc8568f89abc94e4a827b4a5950e082be3cd823c86c5719b65a576": {
+      "kind": "pool_vault_request_v1",
+      "network": "mainnet-beta",
+      "genesis_hash": "5eykt4UsFv8P8NJdTREpY1vzqKqZKvdpKuc147dw2N9d",
+      "method": "getMultipleAccounts",
+      "params": [
+        [
+          "3GVnYDHddtPRfxyn6MrwQbw2uPd4pgNniHAN7ve2Zrc1",
+          "US517G5965aydkZ46HS38QLi7UQiSojurfbQfKCELFx",
+          "So11111111111111111111111111111111111111112",
+          "kfqijD4EypLnp5o3Ax6D9HgybhT24CjnMjXFtvHMhTd",
+          "BQBJsBTJcZJZ2mDbyqAkwCQPewyy3M1vnQR7fX5fgMCJ",
+          "GDz25iqN87bW5y2oFQZyGPqNfCe6LapCWRwvXonjykZh"
+        ],
+        {
+          "encoding": "base64",
+          "commitment": "finalized",
+          "minContextSlot": 100
+        }
+      ],
+      "response_hash": "3aea34cb0bf07cfd2d3ef426a696a085268eb49fd6ce6d27a59b8aa05d44675a"
+    },
+    "eda18ccbdce4b139b37e6d0200ae834098aadfcb5c0659d7bd2e647b58a929ea": {
+      "kind": "rpc_response_v1",
+      "method": "getBlockTime",
+      "params": [
+        100
+      ],
+      "result": 1700000000
+    },
+    "78e231984a87fde4b23502331ac5191834a731e87bc5533ebed15040f5a8fb0e": {
+      "kind": "pool_vault_request_v1",
+      "network": "mainnet-beta",
+      "genesis_hash": "5eykt4UsFv8P8NJdTREpY1vzqKqZKvdpKuc147dw2N9d",
+      "method": "getBlockTime",
+      "params": [
+        100
+      ],
+      "response_hash": "eda18ccbdce4b139b37e6d0200ae834098aadfcb5c0659d7bd2e647b58a929ea"
+    }
+  },
+  "refs": {
+    "snapshot": "3aea34cb0bf07cfd2d3ef426a696a085268eb49fd6ce6d27a59b8aa05d44675a",
+    "snapshot_request": "19a29a5d09bc8568f89abc94e4a827b4a5950e082be3cd823c86c5719b65a576",
+    "block_time": "eda18ccbdce4b139b37e6d0200ae834098aadfcb5c0659d7bd2e647b58a929ea",
+    "block_time_request": "78e231984a87fde4b23502331ac5191834a731e87bc5533ebed15040f5a8fb0e"
+  }
+}

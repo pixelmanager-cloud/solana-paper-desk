@@ -14,6 +14,8 @@ def reconcile_movements(mint,observation):
     if observation.get('status')!='OBSERVED' or observation.get('commitment')!='finalized_provider_response':reasons.append('MOVEMENTS_NOT_FINALIZED')
     if {'INNER_INSTRUCTIONS_UNAVAILABLE','UNDECODED_TOKEN_INSTRUCTION','TOKEN_BALANCES_MISSING'}&set(observation.get('limitations',[])):
         reasons.append('MOVEMENT_DECODING_INCOMPLETE')
+    if observation.get('token_control_operations'):
+        reasons.append('UNSUPPORTED_TOKEN_CONTROL_OPERATION')
     initialized={x['account'] for x in observation.get('token_account_initializations',[]) if x['mint']==mint}
     closed={x['account'] for x in observation.get('token_account_closures',[])}
     for row in observation.get('token_deltas',[]):

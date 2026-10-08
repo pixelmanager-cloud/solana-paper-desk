@@ -8,7 +8,7 @@ class AccountHistoryTests(unittest.TestCase):
     def coverage(self):return {'address':self.mint,'token_accounts_filter':'none','query_coverage_verified':True,'raw_pages_persisted':True,'start':self.d['block_time']-1,'end':self.d['block_time']+1}
     def test_birth_fixture_discovers_initialized_accounts(self):
         r=account_inventory(self.mint,[self.d],self.coverage())
-        self.assertTrue(r['initialization_inventory_verified']);self.assertGreater(r['account_count'],0);self.assertFalse(r['transfer_history_complete']);self.assertFalse(r['eligible_for_trading'])
+        self.assertFalse(r['initialization_inventory_verified']);self.assertIn('ACCOUNT_INITIALIZATION_DECODING_INCOMPLETE',r['reasons']);self.assertGreater(r['account_count'],0);self.assertFalse(r['transfer_history_complete']);self.assertFalse(r['eligible_for_trading'])
     def test_closed_zero_balance_account_retained(self):
         key=base58(bytes([31])*32)
         self.d['token_account_initializations'].append({'mint':self.mint,'account':key,'owner':self.mint,'program':TOKEN_PROGRAM,'instruction':'0.99'})

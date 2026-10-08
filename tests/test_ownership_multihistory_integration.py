@@ -273,8 +273,8 @@ class OwnershipMultiHistoryIntegrationTests(unittest.TestCase):
         self.assertEqual(history['block_ordering']['proofs'][0]['positions'],
                          {signature: i for i, signature in enumerate(block['signatures'])})
 
-    def test_unsupported_authority_normalization_is_explicit_test_gap(self):
-        # Characterize the gap; do not manufacture a decoded control event.
+    def test_unsupported_authority_normalization_blocks_history(self):
+        # Inventory the unsupported operation without claiming lifecycle support.
         raw = copy.deepcopy(self.records[-1])
         raw['transaction']['message']['instructions'].append({
             'programId': raw['transaction']['message']['instructions'][0]['programId'],
@@ -283,8 +283,17 @@ class OwnershipMultiHistoryIntegrationTests(unittest.TestCase):
                 'authority': self.f['owners'][self.f['accounts'][0]],
                 'newAuthority': self.f['owners'][self.f['accounts'][1]]}}})
         observation = decode(raw)
-        self.assertNotIn('UNDECODED_TOKEN_INSTRUCTION', observation['limitations'])
+        self.assertIn('UNDECODED_TOKEN_INSTRUCTION', observation['limitations'])
+        self.assertIn('UNSUPPORTED_TOKEN_CONTROL_OPERATION', observation['limitations'])
+        self.assertEqual(observation['token_control_operations'][0]['type'], 'setAuthority')
         self.assertNotIn('token_authority_changes', observation)
-        # The history checker lacks that normalization. Keep entry/control claims
-        # blocked; the separate captured bank policy remains authoritative.
+        # Transfer witnesses survive, but a matching final bank cannot approve
+        # ignored authority lifecycle changes.
         self.assertEqual(observation['transfers'], decode(self.records[-1])['transfers'])
+
+        self.records[-1] = raw
+        history, snapshot = self.replay(self.capture_report())
+        self.assertFalse(history['inventory']['initialization_inventory_verified'])
+        self.assertFalse(history['observed_movements']['passed'])
+        self.assertFalse(history['account_continuity']['passed'])
+        self.assertFalse(snapshot['reconciled'])

@@ -31,12 +31,14 @@ def _advance_locked(source,evidence_db,scan_id,rpc,*,max_calls):
     calls=report.get('calls')
     if type(calls) is not int or not 0<=calls<=18:raise ValueError('Original request usage missing')
     store=EvidenceStore(evidence_db);progress=HistoryProgress(store)
+    # Admission budgets require the exact prepared source to be sealed. Legacy
+    # source-bound rows retain their original identity and counter unchanged.
+    progress.budget(scan_id,digest(dict(row)),calls)
     mint_record=store.load(report['mint_evidence_hash'])
     if mint_record['method']!='getAccountInfo' or mint_record['params']!=[row['mint'],{'encoding':'base64','commitment':'confirmed'}]:raise ValueError('Mint evidence mismatch')
     policy=mint_policy(mint_record['result']['value'])
     if policy['decision']!='PASS_TOKEN_POLICY':
         return {'scan_id':scan_id,'status':'UNSUPPORTED_TOKEN','reasons':policy['reasons'],'provider_calls':0,'eligible_for_trading':False}
-    progress.budget(scan_id,digest(dict(row)),calls)
     queries=report.get('history_queries',[])
     mint_queries=[q for q in queries if q.get('address')==row['mint'] and q.get('token_accounts_filter')=='none']
     if len(mint_queries)!=1:raise ValueError('One request-bound mint query required')

@@ -11,6 +11,19 @@ TOKENS = {'TokenkegQfeZyiNwAJbNbGKPFXCWuBvf9Ss623VQ5DA',
           'TokenzQdBNbLqP5VEhdkAS6EPFLC1PHnBqCXEpPxuEb'}
 
 
+# Only these parsed operations have normalized accounting/lifetime witnesses.
+# Recognition is not full instruction or authority-policy approval.
+TOKEN_HISTORY_OPERATIONS = {
+    'transfer', 'transferChecked', 'mintTo', 'mintToChecked', 'burn', 'burnChecked',
+    'closeAccount', 'initializeAccount', 'initializeAccount2', 'initializeAccount3',
+    'initializeMint', 'initializeMint2',
+}
+TOKEN_CONTROL_OPERATIONS = {
+    'setAuthority', 'approve', 'approveChecked', 'revoke', 'freezeAccount',
+    'thawAccount', 'initializeMultisig', 'initializeMultisig2', 'initializeImmutableOwner',
+}
+
+
 def integer(value):
     if isinstance(value, bool) or not isinstance(value, (int, str)):
         raise ValueError('invalid integer')
@@ -37,7 +50,7 @@ def decode(payload):
               'block_time': envelope.get('blockTime'), 'payload_hash': digest(payload),
               'commitment': 'confirmed' if notification else 'unverified',
               'status': 'FAILED' if meta['err'] is not None else 'OBSERVED',
-              'token_deltas': [], 'transfers': [], 'mint_initializations': [], 'token_account_initializations': [], 'token_supply_changes': [], 'token_account_closures': [], 'program_observations': [],
+              'token_deltas': [], 'transfers': [], 'mint_initializations': [], 'token_account_initializations': [], 'token_supply_changes': [], 'token_account_closures': [], 'token_control_operations': [], 'program_observations': [],
               'limitations': ['HISTORY_INCOMPLETE', 'NOT_TRADE_EVIDENCE']}
     if meta['err'] is not None:
         return result  # Failed instructions must never create funding links.
@@ -88,6 +101,18 @@ def decode(payload):
             continue
         kind, info = parsed.get('type'), parsed.get('info', {})
         event = {'instruction': path, 'program': program, 'type': kind}
+        if program in TOKENS:
+            if isinstance(kind, str) and kind in TOKEN_CONTROL_OPERATIONS:
+                # Inventory only: do not infer authority semantics from parser info,
+                # balances, or restored end-state. Raw payload remains hash-bound.
+                result['token_control_operations'].append(event)
+                result['limitations'].append('UNSUPPORTED_TOKEN_CONTROL_OPERATION')
+            if (not isinstance(kind, str) or kind not in TOKEN_HISTORY_OPERATIONS
+                    or not isinstance(info, dict)):
+                result['limitations'].append('UNDECODED_TOKEN_INSTRUCTION')
+                if not isinstance(kind, str) or not isinstance(info, dict):
+                    result['limitations'].append('MALFORMED_TOKEN_INSTRUCTION')
+                continue
         if program == SYSTEM and kind in ('transfer', 'transferWithSeed'):
             result['transfers'].append({**event, 'asset': 'SOL', 'source': info['source'],
                 'destination': info['destination'], 'amount_raw': str(integer(info['lamports'])),

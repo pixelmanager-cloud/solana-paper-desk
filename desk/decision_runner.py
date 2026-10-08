@@ -3,6 +3,43 @@ import json,sqlite3,time
 from pathlib import Path
 from .model import canonical,digest
 
+_JOURNAL_INIT_TIMEOUT = 5.0
+
+
+def _initialize_journal(c):
+    """Bound WAL/schema contention before the normal writer transaction.
+
+    SQLite's journal-mode switch can return BUSY immediately despite the
+    connection timeout. Retry only BUSY/LOCKED, with a shared monotonic deadline
+    and short SQLite busy waits. Schema creation is one serialized transaction.
+    """
+    deadline = time.monotonic() + _JOURNAL_INIT_TIMEOUT
+    try:
+        for attempt in range(50):
+            remaining = max(0, deadline - time.monotonic())
+            c.execute(f'PRAGMA busy_timeout={min(100, int(remaining * 1000))}')
+            try:
+                mode = c.execute('PRAGMA journal_mode=WAL').fetchone()
+                if mode is None or mode[0] != 'wal':
+                    raise sqlite3.OperationalError('Decision journal WAL unavailable')
+                c.execute('PRAGMA synchronous=FULL')
+                c.execute('BEGIN IMMEDIATE')
+                c.execute('CREATE TABLE IF NOT EXISTS decisions(scan_id TEXT PRIMARY KEY,source_hash TEXT NOT NULL,source_payload TEXT NOT NULL,decision TEXT NOT NULL)')
+                c.execute('CREATE TABLE IF NOT EXISTS decision_evaluations(scan_id TEXT NOT NULL,policy TEXT NOT NULL,source_hash TEXT NOT NULL,source_payload TEXT NOT NULL,decision TEXT NOT NULL,PRIMARY KEY(scan_id,policy))')
+                c.execute('COMMIT')
+                return
+            except sqlite3.Error as error:
+                if c.in_transaction:
+                    c.execute('ROLLBACK')
+                code = getattr(error, 'sqlite_errorcode', 0) & 0xff
+                remaining = deadline - time.monotonic()
+                if code not in (sqlite3.SQLITE_BUSY, sqlite3.SQLITE_LOCKED) or remaining <= 0 or attempt == 49:
+                    raise
+                time.sleep(min(0.025, remaining))
+    finally:
+        # Preserve the existing bounded writer timeout for the consumer batch.
+        c.execute('PRAGMA busy_timeout=15000')
+
 
 def assess(scan,now,store=None,progress=None):
     report=json.loads(scan['result']) if scan['result'] else {}
@@ -43,9 +80,7 @@ def consume(source,destination,*,now=None,limit=20,evidence_db=None):
     destination.parent.mkdir(parents=True,exist_ok=True)
     c=sqlite3.connect(destination.as_uri(),uri=True,timeout=15,isolation_level=None);c.row_factory=sqlite3.Row
     try:
-        c.execute('PRAGMA journal_mode=WAL');c.execute('PRAGMA synchronous=FULL')
-        c.execute('CREATE TABLE IF NOT EXISTS decisions(scan_id TEXT PRIMARY KEY,source_hash TEXT NOT NULL,source_payload TEXT NOT NULL,decision TEXT NOT NULL)')
-        c.execute('CREATE TABLE IF NOT EXISTS decision_evaluations(scan_id TEXT NOT NULL,policy TEXT NOT NULL,source_hash TEXT NOT NULL,source_payload TEXT NOT NULL,decision TEXT NOT NULL,PRIMARY KEY(scan_id,policy))')
+        _initialize_journal(c)
         c.execute('ATTACH DATABASE ? AS research',(source.as_uri()+'?mode=ro',))
         c.execute('BEGIN IMMEDIATE')
         try:

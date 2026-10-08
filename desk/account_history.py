@@ -15,7 +15,7 @@ def account_inventory(mint,observations,coverage):
         if obs.get('commitment')!='finalized_provider_response':reasons.append('ACCOUNT_DISCOVERY_NOT_FINALIZED')
         if obs['signature'] in signatures:reasons.append('ACCOUNT_DISCOVERY_DUPLICATE_TRANSACTION')
         signatures.add(obs['signature'])
-        if {'INNER_INSTRUCTIONS_UNAVAILABLE','UNDECODED_TOKEN_INSTRUCTION'}&set(obs.get('limitations',[])):
+        if obs.get('token_control_operations') or {'INNER_INSTRUCTIONS_UNAVAILABLE','UNDECODED_TOKEN_INSTRUCTION'}&set(obs.get('limitations',[])):
             reasons.append('ACCOUNT_INITIALIZATION_DECODING_INCOMPLETE')
         if any(x.get('mint')==mint for x in obs.get('mint_initializations',[])):
             anchor=launch_anchor(obs,mint)
@@ -67,7 +67,7 @@ def collect_account_histories(inventory,seed_observations,rpc,*,capture=None,max
             seen[key]=obs
             if any(row['mint']==mint and row['account'] not in frontier for row in obs.get('token_deltas',[])):
                 reasons.append('HISTORICAL_ACCOUNT_FRONTIER_NOT_CLOSED')
-            if {'INNER_INSTRUCTIONS_UNAVAILABLE','UNDECODED_TOKEN_INSTRUCTION'}&set(obs.get('limitations',[])):
+            if obs.get('token_control_operations') or {'INNER_INSTRUCTIONS_UNAVAILABLE','UNDECODED_TOKEN_INSTRUCTION'}&set(obs.get('limitations',[])):
                 reasons.append('ACCOUNT_HISTORY_TOKEN_DECODING_INCOMPLETE')
     merge(seed_observations)
     for key in frontier[:max_accounts]:
