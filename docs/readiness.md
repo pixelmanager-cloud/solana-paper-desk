@@ -383,3 +383,6 @@ PR40 review interrupted by automated cybersecurity-risk flag; it is not a passed
 
 
 PR41 birth structural analyzer69f556d passed independentLinux1006 tests,zero skips andCI. Integrated30c8b197 has identical implementation/test tree to reviewed combination; this remains offline structural research,not lifecycle acceptance. Worker01 now adds narrow production compiled-JSON key resolution preserving original evidence and control/schema rejections. PR40 repairs3744192 are published by author but independent capture review remains incomplete after external safety flag; candidate remains excluded.
+
+
+PR42 compiledJSON resolverc174c07 is under independent review,CI passed. Desktop scratchb6b3d93 discovers1024 tests:991passed,33Linux-only skips,23.881s. This candidate resolves message keys only,retaining undecoded token/event/authority blockers. No integration/deployment pending independent combinedLinux review.

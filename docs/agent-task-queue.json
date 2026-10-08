@@ -198,12 +198,12 @@
       "worker02": "PR40 review interrupted by automated cybersecurity-risk flag; no final acceptance",
       "worker06": "PR34 integrated; available",
       "cloud_reviewer": "PR33 reviewed and integrated; available",
-      "worker10": "PR41 reviewed;available",
+      "worker10": "PR42 compiledJSON resolver review active",
       "worker03": "PR39 published; reference-only fixture review pending",
       "worker04": "PR40 repairs published3744192;review remains incomplete",
       "worker05": "PR30 reviewed and integrated; available",
       "worker09": "PR35 reviewed and integrated; available",
-      "worker01": "Implement compiled JSON decoder key/privilege resolution",
+      "worker01": "PR42 publishedc174c07;independentreview pending",
       "worker07": "PR41 published69f556d,scoped reviewpending",
       "worker08": "PR31 reviewed and integrated; available"
     },
@@ -249,11 +249,13 @@
     "published_ci": "e5d9f9b0e3210421aabe3a80efd519b0d122d340 successful",
     "active_claims": [
       {
-        "worker": "worker01",
-        "thread_id": "01a118fc-39bc-722c-b442-8bf5a749e0bb",
+        "worker": "worker10",
+        "thread_id": "01a118fd-56d5-70b8-ad31-dba13e982082",
         "host_id": "durable",
-        "task": "compiled JSON production decoder account resolution,preserve evidencegates",
-        "status": "IMPLEMENTING"
+        "task": "independent compiledJSON resolver review",
+        "pr": 42,
+        "head": "c174c07c5bcfe7776003be7d011075ec333115fa",
+        "status": "REVIEWING"
       }
     ],
     "saved_launch_probe": {
@@ -336,6 +338,16 @@
       "mac_skips": 33,
       "result": "Scoped independentPASS andLinux1006zero skips",
       "integrated": true
+    },
+    "pending_compiled_keys": {
+      "pr": 42,
+      "head": "c174c07c5bcfe7776003be7d011075ec333115fa",
+      "scratch_commit": "b6b3d93a627855b2d58d71c90cbe8daa425f22ef",
+      "mac_discovered": 1024,
+      "mac_passed": 991,
+      "mac_skipped": 33,
+      "independent_review": "PENDING",
+      "integrated": false
     }
   }
 }
