@@ -123,9 +123,19 @@ class LegacyPumpReferenceTests(unittest.TestCase):
         self.assertIn('Program ' + TOKEN_PROGRAM + ' success', self.raw['meta']['logMessages'])
         self.assertIn('Program ' + PUMP + ' success', self.raw['meta']['logMessages'])
 
-    def test_production_decode_keeps_compiled_raw_reference_rejected(self):
-        with self.assertRaisesRegex(ValueError, 'requires jsonParsed account keys'):
-            decode(self.raw)
+    def test_production_compiled_resolution_keeps_downstream_evidence_unverified(self):
+        from desk.account_history import account_inventory
+        observation=decode(self.raw)
+        self.assertEqual(observation['commitment'],'unverified')
+        self.assertIn('UNDECODED_TOKEN_INSTRUCTION',observation['limitations'])
+        self.assertTrue(any(p['status']=='EVENT_SCHEMA_MISMATCH' for p in observation['program_observations']))
+        self.assertEqual(observation['mint_initializations'],[])
+        inventory=account_inventory(MINT,[observation],{'address':MINT,'token_accounts_filter':'none'})
+        self.assertFalse(inventory['initialization_inventory_verified'])
+        self.assertFalse(inventory['eligible_for_trading'])
+        self.assertIn('ACCOUNT_DISCOVERY_NOT_FINALIZED',inventory['reasons'])
+        self.assertIn('ACCOUNT_INITIALIZATION_DECODING_INCOMPLETE',inventory['reasons'])
+        self.assertIn('ACCOUNT_DISCOVERY_LAUNCH_ANCHOR_REQUIRED',inventory['reasons'])
         self.assertEqual(hashlib.sha256(self.bytes).hexdigest(), SOURCE_SHA)
 
     def test_original_create_event_remains_schema_mismatch(self):

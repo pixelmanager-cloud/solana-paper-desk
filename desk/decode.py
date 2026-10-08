@@ -55,10 +55,20 @@ def decode(payload):
     if meta['err'] is not None:
         return result  # Failed instructions must never create funding links.
     message = tx['message']
-    keys = [k['pubkey'] if isinstance(k, dict) else k for k in message['accountKeys']]
-    # Compiled messages need a different account-index resolver. Reject rather than guess.
-    if not all(isinstance(k, dict) for k in message['accountKeys']):
-        raise ValueError('requires jsonParsed account keys')
+    from .account_keys import compiled_keys, compiled_instruction
+    values = message.get('accountKeys')
+    if not isinstance(values,list):raise ValueError('Missing account keys')
+    compiled = (bool(values) or 'header' in message) and all(isinstance(k,str) for k in values)
+    version = container.get('version')
+    if 'version' in container and version != 'legacy' and not (type(version) is int and version == 0):
+        raise ValueError('Unsupported transaction version')
+    if compiled:
+        keys, privileges = compiled_keys(message,meta,version,signatures)
+        result['outer_message_privileges'] = privileges
+        result['limitations'].append('COMPILED_PRIVILEGES_NOT_CPI_AUTHORITY')
+    elif all(isinstance(k,dict) for k in values):
+        keys = [k['pubkey'] for k in values]
+    else:raise ValueError('Mixed account key encoding')
     balances = {}
     for side in ('pre', 'post'):
         entries = meta.get(side + 'TokenBalances')
@@ -68,6 +78,9 @@ def decode(payload):
         seen = set()
         for b in entries:
             idx = integer(b['accountIndex'])
+            if compiled:
+                from .account_keys import index
+                idx = index(b['accountIndex'],len(keys))
             if idx >= len(keys) or idx in seen:
                 raise ValueError('invalid or duplicate token account index')
             seen.add(idx)
@@ -86,9 +99,16 @@ def decode(payload):
     inner = meta.get('innerInstructions')
     if inner is None:
         result['limitations'].append('INNER_INSTRUCTIONS_UNAVAILABLE')
+    inner_parents = set()
     for group in inner or []:
+        if compiled:
+            from .account_keys import index
+            parent=index(group['index'],len(message.get('instructions',[])))
+            if parent in inner_parents:raise ValueError('Duplicate compiled inner instruction group')
+            inner_parents.add(parent)
         instructions.extend((f"{group['index']}.{i}", ix) for i, ix in enumerate(group['instructions']))
     for path, ix in instructions:
+        if compiled:ix = compiled_instruction(ix,keys)
         parsed, program = ix.get('parsed'), ix.get('programId')
         if not isinstance(parsed, dict):
             if program in TOKENS:result['limitations'].append('UNDECODED_TOKEN_INSTRUCTION')
