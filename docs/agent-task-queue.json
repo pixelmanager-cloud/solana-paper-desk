@@ -189,11 +189,11 @@
   ],
   "integration": {
     "branch": "integration/cloud-wave1",
-    "tested_commit": "c61f088eff19c952e434df64a08a75215a3b5cd4",
-    "combined_tests": 852,
+    "tested_commit": "a24c88dd238d887b94ada69c4bd5be6de4265ce6",
+    "combined_tests": 878,
     "result": "PASS",
     "live_verification": "BLOCKED_NO_SUPPORTED_BUDGET_FEASIBLE_PUBLIC_LEGACY_SEED; acquisition path in development",
-    "blocker": "PR31 remaining rowid replacement repair; acquisition executor; live legacy acceptance; exposure integration unfinished",
+    "blocker": "Acquisition executor, live legacy evidence, lifecycle semantic approval and exposure integration unfinished",
     "followups": {
       "worker02": "Re-review PR31 latest5a97f42 rowid identity and one-time migration fix",
       "worker06": "PR34 integrated; available",
@@ -203,9 +203,9 @@
       "worker04": "PR26 reviewed; available",
       "worker05": "PR30 e1b22f0d7b55181a97f1eebe4338c0db0b700f70 published; independent repeated-concurrency review active",
       "worker09": "Implement static decision UI original observation age and explicit historical scope; no backend changes",
-      "worker01": "PR32 reviewed and integrated; acquisition executor awaits queue repair",
+      "worker01": "Implement birth-inclusive acquisition executor/CLI on reviewed queue and budget foundations; exact raw setup/pagination and prepare/seal/publish recovery",
       "worker07": "PR33 integrated; no runtime control lifecycle approval",
-      "worker08": "PR31 5a97f42a92a1691659dad60b0f4f61af41562f2d published; re-review active"
+      "worker08": "PR31 reviewed and integrated; available"
     },
     "reviews": {
       "PR18": "92e9c6104b411101e414c03774a1675cbbf1ac91: independent review no blocking scoped defect",
@@ -219,7 +219,7 @@
       "PR28": "e81d9be392bef4d29b70490ef2354bf3ec966f99: independent correction PASS,724 tests; union bound corrected",
       "PR30": "e1b22f0d7b55181a97f1eebe4338c0db0b700f70: independent PASS, 726 tests,100 threaded startups,120 spawned consumers, bounded5s lock timeout",
       "PR32": "64765af62379fe4fbb185271c1d54405a527a0af: independent scoped PASS,737 tests,53 focused; successor locking/fencing/publication mandatory",
-      "PR31": "04a9301 re-review: non-object JSON fixed, INSERT replacement blocked, remaining UPDATE OR REPLACE rowid deletion permits constructor to reclassify acquisition as SCREEN; held",
+      "PR31": "5a97f42a92a1691659dad60b0f4f61af41562f2d independent re-review PASS; rowid replacements and one-time migration resolved,743 tests",
       "PR33": "5095a17557c7fb916d74e508a3e157b49abcd784: independent syntax-only PASS,746tests,43445 adversarial checks; no lifecycle approval",
       "PR34": "ae5a36bc0e8f6e6d33afea6292a64a2c6cc1e23e: independent PASS,823tests,54 focused,20 metadata interleaving runs"
     },

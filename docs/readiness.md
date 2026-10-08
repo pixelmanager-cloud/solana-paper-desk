@@ -323,3 +323,6 @@ Reviewed source checkpoint 40c6a25 integrates PR26 repaired pool receipt conflic
 
 
 Source checkpoint c61f088eff19c952e434df64a08a75215a3b5cd4 adds independently reviewed PR33 pure legacy control syntax normalization and PR34 read-only sealed admission validation. Combined suite:852 tests passed,zero skips. The normalizer does not remove runtime control blockers or prove lifecycle safety. Admission-derived histories now require exact sealed source/descriptor metadata before raw replay; missing/unsealed/rebound records remain blocked. Latest PR31 queue repair is still excluded pending independent review. Acquisition execution and live ownership acceptance remain unfinished; no main merge or deployment.
+
+
+Queue foundation PR31 at5a97f42 independently passed re-review after replacement identity/migration repairs. Integrated source a24c88dd238d887b94ada69c4bd5be6de4265ce6 passes878 combined tests,zero skips. Existing rows migrate only once, acquisition descriptors cannot be reclassified by ordinary replacement SQL, and canonical worker locks/fenced publication preserve active scans. This enables the acquisition executor implementation; it does not yet supply that executor or positive live evidence. Before VPS upgrade, stop old unfenced dashboard workers; no production deployment occurred.
