@@ -1,6 +1,6 @@
 {
   "schema_version": 1,
-  "revision": 43,
+  "revision": 44,
   "repository": "pixelmanager-cloud/solana-paper-desk",
   "source_main_sha": "e298e15cd758932e81d2241130716632702f5bd0",
   "observed_date": "2026-10-08",
@@ -1269,6 +1269,38 @@
       "accepted_tasks": [],
       "live_acceptance": false,
       "new_review_comments": 0,
+      "schedule": "Notreprobed/modified;nobinding/durabilityclaim"
+    },
+    {
+      "kind": "HOURLY_REVIEW_RECONCILIATION",
+      "observed_at_utc": "2026-10-08T10:01:15Z",
+      "policy_version": "cloud-independent-review-v1",
+      "hosted_execution": {
+        "provider": "cloud",
+        "observations_current": true,
+        "observed_phase": "running",
+        "durable_schedule_binding_verified": false
+      },
+      "status": "NO_NEW_UNASSIGNED_REVIEW_WORK",
+      "observed_prs": [
+        {
+          "pr": 79,
+          "head_sha": "b3c527be544f25ea5d8d0329f181e74fdae46785",
+          "base_sha": "b96a0c5443431772258389fa050da10c9e779164",
+          "branch": "codex/cloud-wave1-05-legacy-control-inventory",
+          "owner": "worker01",
+          "thread_id": "01a118fc-39bc-722c-b442-8bf5a749e0bb",
+          "status": "RESERVED_EXTERNAL_REVIEW"
+        }
+      ],
+      "branches_checked": 71,
+      "branch_pagination_complete": true,
+      "integration_queue_blob": "8528a40775c8b3d533cab0ca66589ff9ed403da6",
+      "tests": "NOT_RUN_NO_NEW_UNASSIGNED_WORK",
+      "infrastructure_failures": [],
+      "new_review_comments": 0,
+      "accepted_tasks": [],
+      "live_acceptance": false,
       "schedule": "Notreprobed/modified;nobinding/durabilityclaim"
     }
   ],
@@ -3207,20 +3239,14 @@
     },
     "external_current": [
       {
-        "worker": "worker07",
-        "thread_id": "01a118fd-0f1c-749c-b85b-5e730937d0a8",
+        "worker": "worker01",
+        "thread_id": "01a118fc-39bc-722c-b442-8bf5a749e0bb",
         "host_id": "durable",
-        "status": "IMPLEMENTING",
-        "base": "19e3527",
-        "task": "Exact pool-vault token and WSOL conservation diagnostic wired into sell/replay"
-      },
-      {
-        "worker": "worker09",
-        "thread_id": "01a118fd-3f90-77d9-9549-c4497f5b10a6",
-        "host_id": "durable",
-        "status": "IMPLEMENTING",
-        "base": "e23027f",
-        "task": "On-demand guarded ownership diagnostic dashboard endpoint and scan UI, no provider or entry actions"
+        "status": "REVIEWING",
+        "base": "b96a0c5",
+        "pr": 79,
+        "head": "b3c527be544f25ea5d8d0329f181e74fdae46785",
+        "task": "Independent persisted historical control inventory review"
       }
     ]
   },
@@ -3538,7 +3564,7 @@
   ],
   "last_reconciliation": {
     "kind": "HOURLY_REVIEW_RECONCILIATION",
-    "observed_at_utc": "2026-10-08T08:56:38Z",
+    "observed_at_utc": "2026-10-08T10:01:15Z",
     "policy_version": "cloud-independent-review-v1",
     "hosted_execution": {
       "provider": "cloud",
@@ -3546,59 +3572,26 @@
       "observed_phase": "running",
       "durable_schedule_binding_verified": false
     },
-    "status": "NO_NEW_OPEN_UNASSIGNED_REVIEW_WORK",
+    "status": "NO_NEW_UNASSIGNED_REVIEW_WORK",
     "observed_prs": [
       {
-        "pr": 75,
-        "head_sha": "3c4399af143380381a066b7a296067909384f8b1",
-        "base_sha": "d758bc529a7da1f74509117288740911f2ad6845",
-        "branch": "codex/cloud-wave1-10-quantity-witness",
-        "merged": true,
-        "status": "DESKTOP_INTEGRATED_EXTERNAL_REVIEW_NOT_REPEATED"
-      },
-      {
-        "pr": 76,
-        "head_sha": "39b2e69cfe8ec1916bc1b60bc14484b9adbac472",
-        "base_sha": "27de4d7a28b2d360159dcea8275f3250048964d0",
-        "branch": "codex/cloud-wave1-05-control-obligations",
-        "merged": true,
-        "status": "DESKTOP_INTEGRATED_EXTERNAL_REVIEW_NOT_REPEATED"
-      },
-      {
-        "pr": 69,
-        "head_sha": "5d53e384f2aa6e35bdb6054e1362beb74d42f850",
-        "base_sha": "a9f34861771eac7cd51fbafc380c92528dd90ccb",
-        "branch": "codex/cloud-wave1-07-signed-message-witness",
-        "merged": true,
-        "status": "ALREADY_EXACT_HEAD_REVIEWED"
+        "pr": 79,
+        "head_sha": "b3c527be544f25ea5d8d0329f181e74fdae46785",
+        "base_sha": "b96a0c5443431772258389fa050da10c9e779164",
+        "branch": "codex/cloud-wave1-05-legacy-control-inventory",
+        "owner": "worker01",
+        "thread_id": "01a118fc-39bc-722c-b442-8bf5a749e0bb",
+        "status": "RESERVED_EXTERNAL_REVIEW"
       }
     ],
-    "branches_checked": 69,
+    "branches_checked": 71,
     "branch_pagination_complete": true,
-    "integration_queue_blob": "6d82edabe024b8f6b0c4def41344d9e5f855dcc5",
-    "active_claims": [
-      {
-        "worker": "worker07",
-        "thread_id": "01a118fd-0f1c-749c-b85b-5e730937d0a8",
-        "host_id": "durable",
-        "status": "IMPLEMENTING",
-        "base": "19e3527",
-        "task": "Exact pool-vault token and WSOL conservation diagnostic wired into sell/replay"
-      },
-      {
-        "worker": "worker09",
-        "thread_id": "01a118fd-3f90-77d9-9549-c4497f5b10a6",
-        "host_id": "durable",
-        "status": "IMPLEMENTING",
-        "base": "e23027f",
-        "task": "On-demand guarded ownership diagnostic dashboard endpoint and scan UI, no provider or entry actions"
-      }
-    ],
-    "tests": "NOT_RUN_NO_NEW_OPEN_UNASSIGNED_WORK",
+    "integration_queue_blob": "8528a40775c8b3d533cab0ca66589ff9ed403da6",
+    "tests": "NOT_RUN_NO_NEW_UNASSIGNED_WORK",
     "infrastructure_failures": [],
+    "new_review_comments": 0,
     "accepted_tasks": [],
     "live_acceptance": false,
-    "new_review_comments": 0,
     "schedule": "Notreprobed/modified;nobinding/durabilityclaim"
   }
 }
