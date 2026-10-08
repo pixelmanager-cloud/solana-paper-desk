@@ -263,11 +263,11 @@
     "published_ci": "886fc96d404b9d3ffd99c0045f7231d563a5d946 successful",
     "active_claims": [
       {
-        "worker": "cloud_reviewer",
-        "thread_id": "01a11901-8b68-70f9-8672-5a731a149091",
+        "worker": "worker03",
+        "thread_id": "01a118fc-9478-778a-b77a-8f8f6ec7e0ad",
         "host_id": "durable",
-        "task": "Independent versioned TradeEvent schema PR57 review",
-        "status": "REVIEWING",
+        "task": "PR57 P2 restrict new event schema to TradeEvent and regress launch consumer",
+        "status": "FIXING",
         "pr": 57,
         "head": "70d1dfcaa20350a2a8126c8d47ce58a71e9b2e2b"
       }
@@ -623,13 +623,15 @@
   "trade_event_schema_review": {
     "pr": 57,
     "head": "70d1dfcaa20350a2a8126c8d47ce58a71e9b2e2b",
-    "status": "INDEPENDENT_REVIEW_IN_PROGRESS",
+    "status": "CHANGES_REQUESTED",
     "integrated": false,
     "author_linux_tests": 1300,
     "combined_native_pr": 56,
     "mac_discovered": 1333,
     "mac_passed": 1241,
     "mac_skipped": 92,
-    "mac_seconds": 25.646
+    "mac_seconds": 25.646,
+    "finding": "P2 full events_only registration exposes new CreateEvent.depth to verified launch anchor; restrict new registration to TradeEvent",
+    "fix_worker": "03"
   }
 }
