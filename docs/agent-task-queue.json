@@ -606,5 +606,16 @@
         "base": "7e1d3e4"
       }
     }
+  },
+  "native_reconciliation_review": {
+    "pr": 56,
+    "head": "db8b1554a40ea4505975b6cdfdbb49c98c26636d",
+    "author_thread": "01a118fd-0f1c-749c-b85b-5e730937d0a8",
+    "reviewer_thread": "01a118fc-f867-7233-8eec-c20659e70095",
+    "status": "INDEPENDENT_REVIEW_IN_PROGRESS",
+    "combined_base": "5bc3adfc230a221b0959c55084749633c11e909e",
+    "integrated": false,
+    "author_linux_tests": 1322,
+    "scope": "Disconnected conditional arithmetic only; all effect authentication and entry permissions false"
   }
 }
