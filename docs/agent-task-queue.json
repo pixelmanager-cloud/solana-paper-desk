@@ -269,16 +269,18 @@
         "status": "REVIEWING",
         "base": "ac439cb54a5d709bbc41acc3986010e7fb522d5d",
         "pr": 86,
-        "head": "a4d5b5a527c8fdc5592177c1c120a170dad5fadb"
+        "head": "a4d5b5a527c8fdc5592177c1c120a170dad5fadb",
+        "wait_cursor": "b9784eaf-f3e5-457f-a98d-a386c23b37ea:26"
       },
       {
         "id": "MIXED-RECEIPT-VALIDATOR",
         "worker": "01",
         "thread_id": "01a118fc-39bc-722c-b442-8bf5a749e0bb",
         "host_id": "durable",
-        "status": "DISPATCHED",
+        "status": "ACTIVE",
         "base": "ac439cb54a5d709bbc41acc3986010e7fb522d5d",
-        "scope": "Disconnected read-only typed chain/certificate dispatch; no migration or issuer"
+        "scope": "Disconnected read-only typed chain/certificate dispatch; no migration or issuer",
+        "wait_cursor": "5e651fc7-2996-4765-974d-5c852257a005:47"
       }
     ],
     "saved_launch_probe": {
@@ -699,12 +701,12 @@
       "integrated": false,
       "author_linux_tests": 1646,
       "author_skips": 0,
-      "mac_discovered": 1646,
+      "mac_discovered": 1657,
       "mac_passed": 1442,
-      "mac_skipped": 204,
-      "mac_seconds": 32.779,
-      "combined_tree": "c00141b7285ccbb679a9a6785e6d63798e1fad8b",
-      "note": "Initial base822079d; final combination with acceptedPR85 requested"
+      "mac_skipped": 215,
+      "mac_seconds": 32.838,
+      "combined_tree": "30e87c9335e2c665823e23fe57bbcd3730328d37",
+      "note": "Final combinedbase ac439cb includes acceptedPR85; independent review pending"
     }
   },
   "native_reconciliation_review": {
