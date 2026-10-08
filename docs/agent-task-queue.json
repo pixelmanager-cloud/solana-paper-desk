@@ -196,7 +196,7 @@
     "blocker": "No accepted provider-backed ownership candidate; historical-control semantics, complete route/effect policy, current measured features and trusted entry/refresh driver remain unfinished",
     "followups": {
       "worker01": "PR76 independent review active; author platform repair pending",
-      "worker05": "PR76 platform contract repair active",
+      "worker05": "PR76 platform repair published; independent review pending",
       "worker06": "PR75 exact combined review PASS; available",
       "worker10": "PR75 integrated; available",
       "worker02": "PR74 integrated; available",
@@ -265,20 +265,11 @@
         "worker": "worker01",
         "thread_id": "01a118fc-39bc-722c-b442-8bf5a749e0bb",
         "host_id": "durable",
-        "status": "REVIEWING",
+        "status": "RE_REVIEWING",
         "pr": 76,
-        "head": "99c2731f84ace772ad6315d1452e31670c5bc43a",
+        "head": "39b2e69cfe8ec1916bc1b60bc14484b9adbac472",
         "base": "27de4d7",
         "task": "Independent replay-bound control obligations and snapshot read-boundary review"
-      },
-      {
-        "worker": "worker05",
-        "thread_id": "01a118fc-dd83-7672-ac81-7445f85fe09f",
-        "host_id": "durable",
-        "status": "REPAIRING",
-        "pr": 76,
-        "head": "99c2731f84ace772ad6315d1452e31670c5bc43a",
-        "task": "Explicit read guard platform contract and precise capability-gated tests"
       }
     ],
     "saved_launch_probe": {
@@ -899,9 +890,9 @@
       "integration_commit": "ba854128bc5ece38f8d21dda688ed0c7e2341aba"
     },
     "76": {
-      "head": "99c2731f84ace772ad6315d1452e31670c5bc43a",
+      "head": "39b2e69cfe8ec1916bc1b60bc14484b9adbac472",
       "reviewer": "worker01",
-      "status": "HOLD_PLATFORM_REPAIR",
+      "status": "RE_REVIEWING",
       "integrated": false,
       "finding": "Linux-only read guard breaks unguarded existing macOS live_features positive diagnostics/tests",
       "mac_combined": {
@@ -911,7 +902,9 @@
         "skips": 99,
         "seconds": 31.191,
         "tree": "024eca54045e66f1f8f430cff959c68c9c67436c"
-      }
+      },
+      "original_linux_tests": 1509,
+      "original_independent_probes": 17
     }
   },
   "parallel_combined_regression": {
