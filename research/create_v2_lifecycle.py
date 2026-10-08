@@ -15,6 +15,7 @@ from desk.security import TOKEN_PROGRAM
 from research.execution_trace import reconstruct_execution_trace
 from research.token2022_instructions import normalize_token2022_instruction, TOKEN_2022
 from research.token2022_state import decode_token2022_state
+from research.create_v2_auxiliary import normalize_create_v2_auxiliary, COMPUTE, FEES
 
 PROFILE = 'create-v2-observed-structural-lifecycle-report-v1'
 PUMP = '6EF8rrecthR5Dkzon8Nwu78hRvfCKubJ14M5uBEwF6P'
@@ -96,6 +97,7 @@ def report_create_v2_lifecycle(record, *, endpoint_states=None, source_context=N
                              'review_status': 'accepted_per_coordinator_handoff_not_runtime_admission'},
               'bindings': None, 'create_arguments': None, 'signer_witness': None,
               'inventory': [], 'birth_witnesses': {}, 'adverse_control_witnesses': [],
+              'unresolved_effect_witnesses': [], 'partial_event_witnesses': [],
               'distributions': [], 'endpoint_states': [], 'endpoint_amount_comparison': None,
               'opaque_accounts': [], 'errors': list(trace['errors']),
               'unknowns': list(trace['reasons']),
@@ -112,8 +114,12 @@ def report_create_v2_lifecycle(record, *, endpoint_states=None, source_context=N
     inventory = {}
     for row in rows:
         item = {'instruction': copy.deepcopy(row), 'role': 'unresolved',
+                'structural_role_complete': False, 'auxiliary_syntax': None,
                 'syntax': None, 'schema_witness': None, 'effect_verified': False,
                 'cpi_success': 'unknown', 'adverse_control_candidate': False}
+        if row['program'] in (SYSTEM, COMPUTE, FEES):
+            item['auxiliary_syntax'] = normalize_create_v2_auxiliary(
+                row['program'], raw=_raw(row), accounts=row['accounts'])
         if row['program'] == PUMP and row['raw_complete']:
             try:
                 item['schema_witness'] = instruction({'programId': PUMP, 'accounts': row['accounts'],
@@ -153,8 +159,13 @@ def report_create_v2_lifecycle(record, *, endpoint_states=None, source_context=N
         return (row['direct_parent_path'] == parent['instruction_path']
                 and row['caller_program'] == parent['program'])
 
-    def role(row, name):
+    def role(row, name, complete=True):
         inventory[row['instruction_path']]['role'] = name
+        inventory[row['instruction_path']]['structural_role_complete'] = complete
+
+    def auxiliary(row):
+        syntax = inventory[row['instruction_path']]['auxiliary_syntax']
+        return syntax['operation'] if syntax and syntax['syntax_complete'] else None
 
     def operation(row):
         syntax = inventory[row['instruction_path']]['syntax']
@@ -167,14 +178,13 @@ def report_create_v2_lifecycle(record, *, endpoint_states=None, source_context=N
         return one(op_rows(kind), kind.upper() + '_MISSING_OR_DUPLICATE')
 
     def allocation(row, target, size, owner, parent):
-        data = _raw(row)
+        decoded = auxiliary(row)
         require(row['program'] == SYSTEM and row['accounts'] == [payer, target]
-                and direct(row, parent) and data is not None and len(data) == 52
-                and data[:4] == bytes(4) and int.from_bytes(data[4:12], 'little') > 0
-                and int.from_bytes(data[12:20], 'little') == size
-                and data[20:] == unbase58(owner), 'ALLOCATION_ROLE_OR_LAYOUT_MISMATCH')
+                and direct(row, parent) and decoded and decoded['kind'] == 'createAccount'
+                and int(decoded['lamports_raw']) > 0 and decoded['space'] == size
+                and decoded['program_owner'] == owner, 'ALLOCATION_ROLE_OR_LAYOUT_MISMATCH')
         inventory[row['instruction_path']]['allocation_witness'] = {
-            'lamports': str(int.from_bytes(data[4:12], 'little')), 'space': size,
+            'lamports': decoded['lamports_raw'], 'space': size,
             'program_owner': owner, 'fresh_prestate_verified': False, 'rent_verified': False}
 
     b = text = create = payer = None
@@ -286,7 +296,8 @@ def report_create_v2_lifecycle(record, *, endpoint_states=None, source_context=N
                 and direct(init, create), 'MINT_INIT_ROLE_OR_CALLER_MISMATCH')
         role(init, 'birth_mint_init_no_freeze')
         curve_alloc = one([row for row in rows if row['program'] == SYSTEM and
-                           row['accounts'] == [payer, curve]], 'CURVE_ALLOCATION_MISSING_OR_DUPLICATE')
+                           row['accounts'] == [payer, curve] and auxiliary(row)
+                           and auxiliary(row)['kind'] == 'createAccount'], 'CURVE_ALLOCATION_MISSING_OR_DUPLICATE')
         allocation(curve_alloc, curve, 141, PUMP, create)
         role(curve_alloc, 'curve_allocation_141_observed_profile_opaque_state')
         require(mint_alloc['invocation_ordinal'] < pointer['invocation_ordinal'] < init['invocation_ordinal']
@@ -409,13 +420,71 @@ def report_create_v2_lifecycle(record, *, endpoint_states=None, source_context=N
         require(sum(int(d['amount_raw']) for d in result['distributions']) <= SUPPLY,
                 'DISTRIBUTION_EXCEEDS_ISSUANCE')
 
-        # Events use existing exact decoding. Prefix/extra bytes never accepted.
+        # Exact auxiliary syntax is not a permission shortcut. Buy-side native
+        # effects/state remain incomplete and therefore block inventory agreement.
+        seen_compute = set()
+        for row in rows:
+            op = auxiliary(row)
+            if row['program'] == COMPUTE:
+                require(op is not None and row['inner_index'] is None
+                        and row['outer_index'] < create['outer_index'], 'COMPUTE_CONTEXT_OR_SYNTAX_UNSUPPORTED')
+                require(op['kind'] not in seen_compute, 'DUPLICATE_COMPUTE_OPERATION')
+                seen_compute.add(op['kind'])
+                role(row, 'exact_compute_budget_syntax_not_fee_approval')
+                result['unknowns'].append('COMPUTE_BUDGET_COST_EFFECTS_UNVERIFIED')
+            parent = next((p for p in buy_parents if direct(row, p)), None)
+            if parent is None or op is None:
+                continue
+            mapping = inventory[parent['instruction_path']]['schema_witness']['accounts']
+            if row['program'] == FEES:
+                expected_config = _pda(FEES, b'fee_config', unbase58(PUMP))
+                require(op['kind'] == 'getFeesWithQuoteMint' and op['fee_config'] == expected_config
+                        and op['fee_config'] == mapping['fee_config'] and op['config_program'] == PUMP
+                        and op['is_pump_pool'] is True and op['quote_mint'] == SYSTEM,
+                        'PUMP_FEE_QUERY_ROLE_OR_ARGUMENT_MISMATCH')
+                role(row, 'exact_pump_fee_query_syntax_return_and_schedule_unverified', complete=False)
+                result['unknowns'].append('PUMP_FEE_QUERY_RETURN_SCHEDULE_AND_MARKET_CAP_UNVERIFIED:' + row['instruction_path'])
+                result['unresolved_effect_witnesses'].append(copy.deepcopy(inventory[row['instruction_path']]))
+            elif row['program'] == SYSTEM and op['kind'] == 'createAccount' and op['target'] == mapping['user_volume_accumulator']:
+                require(op['payer'] == payer and op['program_owner'] == PUMP and op['space'] == 137
+                        and int(op['lamports_raw']) > 0 and op['target'] == _pda(PUMP, b'user_volume_accumulator', unbase58(payer)),
+                        'BUY_VOLUME_ALLOCATION_ROLE_MISMATCH')
+                role(row, 'buy_volume_allocation_syntax_state_effects_unresolved', complete=False)
+                result['unknowns'].append('BUY_VOLUME_ACCOUNT_STATE_AND_RENT_UNVERIFIED:' + row['instruction_path'])
+                result['unresolved_effect_witnesses'].append(copy.deepcopy(inventory[row['instruction_path']]))
+            elif row['program'] == SYSTEM and op['kind'] == 'transfer' and op['destination'] in {
+                    mapping['creator_vault'], curve, mapping['fee_recipient'], mapping['buyback_fee_recipient']}:
+                require(op['source'] == payer and int(op['lamports_raw']) > 0, 'BUY_NATIVE_TRANSFER_ROLE_MISMATCH')
+                role(row, 'buy_native_transfer_syntax_recipients_and_cost_effects_unresolved', complete=False)
+                result['unknowns'].append('BUY_NATIVE_RECIPIENT_AUTHORIZATION_AND_COST_UNVERIFIED:' + row['instruction_path'])
+                result['unresolved_effect_witnesses'].append(copy.deepcopy(inventory[row['instruction_path']]))
+
+        # Existing event decoding stays unchanged. Prefix-only rows retain opaque
+        # bytes and remain incomplete; they cannot establish inventory agreement.
         create_events = []
+        partial_trade_parents = set()
         for row in rows:
             if row['program'] == PUMP and row['inner_index'] is not None:
                 decoded = instruction({'programId': PUMP, 'accounts': row['accounts'],
                                        'data': row['witness'].get('data', '')})
                 inventory[row['instruction_path']]['schema_witness'] = decoded
+                if decoded and decoded.get('status') == 'EVENT_PREFIX_DECODED' and decoded.get('name') == 'TradeEvent':
+                    parent = one([p for p in buy_parents if direct(row, p)], 'TRADE_EVENT_DIRECT_BUY_PARENT_MISMATCH')
+                    require(row['accounts'] == [b['event_authority']] and decoded.get('schema_file') == 'pump.json'
+                            and decoded['fields'].get('mint') == mint and decoded['fields'].get('user') == payer
+                            and decoded['fields'].get('is_buy') is True
+                            and decoded['fields'].get('token_amount') == inventory[parent['instruction_path']]['schema_witness']['args']['amount'],
+                            'TRADE_EVENT_PREFIX_BINDING_MISMATCH')
+                    require(parent['instruction_path'] not in partial_trade_parents, 'DUPLICATE_PARTIAL_TRADE_EVENT')
+                    partial_trade_parents.add(parent['instruction_path'])
+                    role(row, 'known_trade_event_prefix_opaque_suffix_unresolved', complete=False)
+                    result['unknowns'].append('TRADE_EVENT_SCHEMA_SUFFIX_UNRESOLVED:' + row['instruction_path'])
+                    raw_event = _raw(row)
+                    result['partial_event_witnesses'].append({'instruction_path': row['instruction_path'],
+                        'decoded_prefix': copy.deepcopy(decoded), 'raw_hex': raw_event.hex(),
+                        'unknown_suffix_hex': raw_event[-decoded['unknown_trailing_bytes']:].hex(),
+                        'schema_complete': False, 'effects_verified': False})
+                    continue
                 require(decoded and decoded['status'] == 'EVENT_DECODED' and decoded.get('schema_complete') is True
                         and decoded.get('schema_file') == 'pump.json'
                         and decoded['name'] == 'CreateEvent' and direct(row, create)
@@ -544,7 +613,12 @@ def report_create_v2_lifecycle(record, *, endpoint_states=None, source_context=N
             if not amounts_match:
                 error('ENDPOINT_AMOUNT_OR_SUPPLY_DISAGREEMENT')
     result['observed_inventory_agreement'] = (trace['syntax_complete'] and bool(result['inventory'])
-                                            and all(i['role'] != 'unresolved' for i in result['inventory']))
+                                            and all(i['structural_role_complete'] for i in result['inventory']))
+    result['inventory_summary'] = {'total_observed': len(result['inventory']),
+        'raw_complete': sum(i['instruction']['raw_complete'] for i in result['inventory']),
+        'unresolved_role_paths': [i['instruction']['instruction_path'] for i in result['inventory'] if i['role'] == 'unresolved'],
+        'incomplete_structural_role_paths': [i['instruction']['instruction_path'] for i in result['inventory'] if not i['structural_role_complete']],
+        'ignored_instructions': 0, 'actual_execution_coverage_verified': False}
     result['supported_sequence_agreement'] = (result['observed_inventory_agreement'] and not result['errors']
         and result['create_arguments'] is not None and result['create_arguments'].get('observed_suffix_bytes_agree') is True
         and result['endpoint_amount_comparison'] is not None and result['endpoint_amount_comparison']['amounts_agree']
