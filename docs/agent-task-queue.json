@@ -268,7 +268,8 @@
         "host_id": "durable",
         "status": "REVIEWING",
         "pr": 87,
-        "head": "6561aa7a429f8f3db94668ad0da94005ee2cfb08"
+        "head": "6561aa7a429f8f3db94668ad0da94005ee2cfb08",
+        "wait_cursor": "8f3328cf-bef6-441d-83f8-2d1f46b3b0df:47"
       },
       {
         "id": "COMMON-BANK-SLOT-STAGE",
@@ -712,7 +713,14 @@
       "pr": 87,
       "head": "6561aa7a429f8f3db94668ad0da94005ee2cfb08",
       "review": "PENDING worker06",
-      "integrated": false
+      "integrated": false,
+      "mac_discovered": 1691,
+      "mac_passed": 1475,
+      "mac_skipped": 216,
+      "mac_seconds": 33.384,
+      "combined_base": "072f654478dd7a73563cfbc5b18092f1ed92829d",
+      "combined_tree": "5cb5647e98e1a958a78b1509e3f3f69e64a2cadf",
+      "ci": "Both exact-head checks PASS"
     }
   },
   "native_reconciliation_review": {
