@@ -294,10 +294,28 @@
         "worker": "worker08",
         "thread_id": "01a118fd-2563-7126-90d7-bd07693de0b2",
         "host_id": "durable",
-        "task": "PR65 malformed checkpoint duplicate acknowledgment repair",
-        "status": "AUTHOR_COMPLETE_PENDING_REVIEW",
+        "task": "Consumer missing-checkpoint recovery diagnostics; no ledger.py edits",
+        "status": "IMPLEMENTING",
+        "base": "e13d17b"
+      },
+      {
+        "worker": "worker02",
+        "thread_id": "01a118fc-666c-70b6-9fa8-2c7520f0a0bb",
+        "host_id": "durable",
+        "task": "Independent PR65 second repair review",
+        "status": "REVIEWING",
         "pr": 65,
         "head": "30f70c4665b3c19a16636dcbdc378042d67c9db2"
+      },
+      {
+        "worker": "worker06",
+        "thread_id": "01a118fc-f867-7233-8eec-c20659e70095",
+        "host_id": "durable",
+        "task": "Final signed-message combined Linux and composition review",
+        "status": "REVIEWING",
+        "pr": 69,
+        "head": "5d53e384f2aa6e35bdb6054e1362beb74d42f850",
+        "base": "e13d17b"
       }
     ],
     "saved_launch_probe": {
