@@ -203,7 +203,7 @@
       "worker04": "PR40 repairs published3744192;review remains incomplete",
       "worker05": "PR30 reviewed and integrated; available",
       "worker09": "PR35 reviewed and integrated; available",
-      "worker01": "PR42 publishedc174c07;independentreview pending",
+      "worker01": "Implement rawlegacy accounting decoding on reviewed compiledresolver",
       "worker07": "PR41 published69f556d,scoped reviewpending",
       "worker08": "PR31 reviewed and integrated; available"
     },
@@ -248,7 +248,15 @@
       "status": "SUPERSEDED_BY_PUBLISHED_TESTED_COMMIT"
     },
     "published_ci": "e5d9f9b0e3210421aabe3a80efd519b0d122d340 successful",
-    "active_claims": [],
+    "active_claims": [
+      {
+        "worker": "worker01",
+        "thread_id": "01a118fc-39bc-722c-b442-8bf5a749e0bb",
+        "host_id": "durable",
+        "task": "raw legacy SPL accounting decoding,preserve unresolved controls",
+        "status": "IMPLEMENTING"
+      }
+    ],
     "saved_launch_probe": {
       "source": "VPS saved raw launch events, read-only; no provider calls",
       "sample_size": 150,
@@ -341,8 +349,8 @@
       "integrated": true
     },
     "infrastructure": {
-      "cloud_chat_host": "UNAVAILABLE_2026-10-08T03:37Z",
-      "consecutive_checks": 1,
+      "cloud_chat_host": "RECOVERED_SAME_TURN",
+      "consecutive_checks": 0,
       "github": "ACCESSIBLE",
       "impact": "New dispatch unavailable;existing posted review retrieved from GitHub;not paperreadiness"
     }
