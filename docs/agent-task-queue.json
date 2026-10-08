@@ -266,11 +266,11 @@
         "worker": "05",
         "thread_id": "01a118fc-dd83-7672-ac81-7445f85fe09f",
         "host_id": "durable",
-        "status": "IN_PROGRESS",
+        "status": "FOLLOWUP_BLOCKED_PLATFORM_FILTER",
         "pr": 97,
         "head": "2de92b72fa972bfbf1a1299e608830050e5c06ca",
         "base": "1a9f69595bf4c8c8814654a093fbba1bde93d5ad",
-        "wait_cursor": "b9784eaf-f3e5-457f-a98d-a386c23b37ea:45",
+        "wait_cursor": "b9784eaf-f3e5-457f-a98d-a386c23b37ea:47",
         "turn_id": "01a11c37-7fa2-77ad-acb5-1cfc502f2cce"
       },
       {
@@ -283,7 +283,7 @@
         "head": "524dfbc42debd74c29382ce3d1754d5f0a691655",
         "scope": "Complete bounded typed schema preflight including base tables/all objects; verify exact attachment persisted after write; independent rereview required",
         "turn_id": "01a11c39-4e83-72e9-9a00-a44a16617836",
-        "wait_cursor": "a2dcfb97-463d-4188-9da3-48a81e644d23:65"
+        "wait_cursor": "a2dcfb97-463d-4188-9da3-48a81e644d23:66"
       },
       {
         "id": "PR96-HTTP-FRAMING-REPAIR",
@@ -295,7 +295,7 @@
         "head": "33ff34b15930989bc85337372c59f070eb0651f1",
         "scope": "Reject transfer coding before body read; real in-memory HTTP parser regression fixtures; no runtime wiring",
         "turn_id": "01a11c3a-c894-70cb-a8df-e967468a1b95",
-        "wait_cursor": "5e651fc7-2996-4765-974d-5c852257a005:67"
+        "wait_cursor": "5e651fc7-2996-4765-974d-5c852257a005:68"
       }
     ],
     "saved_launch_probe": {
@@ -956,7 +956,25 @@
         },
         "desktop_probe": "Unknown hidden_ignore BEFORE INSERT trigger using RAISE(IGNORE) accepted after reservation: attach_response returns DONE but inspect PENDING_TERMINAL. No durable attachment. Eligibility remains false.",
         "status": "BLOCKED_SCHEMA_AND_FALSE_COMPLETION",
-        "repair_scope": "Complete bounded typed schema preflight including base tables/all objects; verify exact attachment persisted after write; independent rereview required"
+        "repair_scope": "Complete bounded typed schema preflight including base tables/all objects; verify exact attachment persisted after write; independent rereview required",
+        "independent_review": {
+          "url": "https://github.com/pixelmanager-cloud/solana-paper-desk/pull/97#pullrequestreview-5459418438",
+          "head": "2de92b72fa972bfbf1a1299e608830050e5c06ca",
+          "status": "CHANGES_REQUIRED",
+          "findings": [
+            "Incomplete typed catalog permits false durable completion",
+            "Catalog SQL materialized before size preflight",
+            "Handle equality dispatch contradicts exact identity contract"
+          ],
+          "probe_count": 7
+        },
+        "review_followup_blocker": {
+          "thread_id": "01a118fc-dd83-7672-ac81-7445f85fe09f",
+          "turn_id": "01a11c3d-1a90-740e-887b-31b0f8c3cff8",
+          "status": "PLATFORM_CYBERSECURITY_FILTER",
+          "consecutive_observed": 1,
+          "action": "No retry or alternate-route circumvention. Final exact-head independent review remains required."
+        }
       },
       "desktop_concerns": [
         "PR97 complete initial and journal schema validation and bounded cardinality preflight require independent probes.",
