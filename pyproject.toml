@@ -15,5 +15,8 @@ solana-desk = "desk.cli:main"
 [tool.setuptools.packages.find]
 include = ["desk*"]
 
+[tool.setuptools]
+py-modules = ["research.pumpswap_vault_effects"]
+
 [tool.setuptools.package-data]
 desk = ["schemas/*.json", "static/*"]
