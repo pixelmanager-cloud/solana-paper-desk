@@ -881,7 +881,15 @@
       "head": "6fbeba4edf9f8a98a05e65eda9f2469edb7f4f07",
       "integrated": false,
       "review": "PENDING worker05; confirmed author fixture gap requires independent reproduction",
-      "author_linux_tests": 1852
+      "author_linux_tests": 1852,
+      "combined_base": "b3e2516df345eb79bbedfbb597be46c1f5947eab",
+      "combined_tree": "f00ad8f24f351d5d5ef55b5ab8d1909e91f4389e",
+      "mac_discovered": 1886,
+      "mac_passed": 1513,
+      "mac_skipped": 373,
+      "mac_seconds": 34.278,
+      "ci": "Both unchanged exact-head checks SUCCESS",
+      "coordinator_diff_review": "Full tests/report inspected; real death gap reproduced by dedicated test, no production change"
     }
   },
   "native_reconciliation_review": {
