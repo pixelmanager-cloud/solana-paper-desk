@@ -266,25 +266,21 @@
         "worker": "worker01",
         "thread_id": "01a118fc-39bc-722c-b442-8bf5a749e0bb",
         "host_id": "durable",
-        "task": "Ownership acquisition recovery",
-        "status": "DISPATCHED",
-        "base": "c578dbe"
+        "task": "Independent PR60 review",
+        "status": "REVIEWING",
+        "base": "13853bf",
+        "pr": 60,
+        "head": "eb4432bbc614de775f510a1cfa86f917fb80abda"
       },
       {
         "worker": "worker02",
         "thread_id": "01a118fc-666c-70b6-9fa8-2c7520f0a0bb",
         "host_id": "durable",
-        "task": "Classification contract coverage",
-        "status": "DISPATCHED",
-        "base": "c578dbe"
-      },
-      {
-        "worker": "worker03",
-        "thread_id": "01a118fc-9478-778a-b77a-8f8f6ec7e0ad",
-        "host_id": "durable",
-        "task": "Runtime log witness join",
-        "status": "DISPATCHED",
-        "base": "c578dbe"
+        "task": "Independent PR61 review",
+        "status": "REVIEWING",
+        "base": "13853bf",
+        "pr": 61,
+        "head": "bfff737c8c0ae8ce1428ae9f3fa022ec7ff280b9"
       },
       {
         "worker": "worker04",
@@ -348,10 +344,11 @@
         "worker": "cloud_reviewer",
         "thread_id": "01a11901-8b68-70f9-8672-5a731a149091",
         "host_id": "durable",
-        "task": "Independent live paper critical path report review",
+        "task": "Independent PR62 review",
         "status": "REVIEWING",
-        "pr": 59,
-        "head": "c120beebbaa2aa028ad777e995eac03a566881bf"
+        "pr": 62,
+        "head": "9e35c2bce3b4aa47051418ce0d5793c9b872edcd",
+        "base": "13853bf"
       }
     ],
     "saved_launch_probe": {
@@ -736,7 +733,27 @@
   "live_demo_path_review": {
     "pr": 59,
     "head": "c120beebbaa2aa028ad777e995eac03a566881bf",
-    "status": "INDEPENDENT_REVIEW",
+    "status": "PASS_REPORT_ONLY_PENDING_INTEGRATION",
     "integrated": false
+  },
+  "parallel_pending_reviews": {
+    "60": {
+      "head": "eb4432bbc614de775f510a1cfa86f917fb80abda",
+      "reviewer": "worker01",
+      "status": "REVIEWING",
+      "integrated": false
+    },
+    "61": {
+      "head": "bfff737c8c0ae8ce1428ae9f3fa022ec7ff280b9",
+      "reviewer": "worker02",
+      "status": "REVIEWING",
+      "integrated": false
+    },
+    "62": {
+      "head": "9e35c2bce3b4aa47051418ce0d5793c9b872edcd",
+      "reviewer": "cloud_reviewer",
+      "status": "REVIEWING",
+      "integrated": false
+    }
   }
 }
