@@ -260,7 +260,18 @@
       "status": "SUPERSEDED_BY_PUBLISHED_TESTED_COMMIT"
     },
     "published_ci": "Deployed d758bc529a7da1f74509117288740911f2ad6845: both CI runs successful",
-    "active_claims": [],
+    "active_claims": [
+      {
+        "id": "OWN-2-SOURCE-BOUND-ADMISSION",
+        "worker": "02",
+        "thread_id": "01a118fc-666c-70b6-9fa8-2c7520f0a0bb",
+        "host_id": "durable",
+        "base": "2ab25cbb8472fd29072da078e2fa7e049e0c65ea",
+        "status": "DISPATCHED",
+        "scope": "Smallest missing source-bound pool-vault classification prerequisite; implement only justified raw/source/bank binding; otherwise report precise blocking inputs. No admission or entry guard relaxation.",
+        "assigned_at": "2026-10-08T10:55:25Z"
+      }
+    ],
     "saved_launch_probe": {
       "source": "VPS saved raw launch events, read-only; no provider calls",
       "sample_size": 150,
