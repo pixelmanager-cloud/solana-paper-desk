@@ -281,16 +281,6 @@
         "base": "13853bf"
       },
       {
-        "worker": "worker03",
-        "thread_id": "01a118fc-9478-778a-b77a-8f8f6ec7e0ad",
-        "host_id": "durable",
-        "task": "Repair classifier deeply nested candidate rejection",
-        "pr": null,
-        "head": null,
-        "status": "IMPLEMENTING",
-        "base": "13853bf"
-      },
-      {
         "worker": "worker08",
         "thread_id": "01a118fd-2563-7126-90d7-bd07693de0b2",
         "pr": 65,
@@ -306,6 +296,16 @@
         "host_id": "durable",
         "task": "Accepted f5eb854 combined Linux integration regression",
         "status": "VERIFYING",
+        "base": "f5eb854"
+      },
+      {
+        "worker": "worker01",
+        "thread_id": "01a118fc-39bc-722c-b442-8bf5a749e0bb",
+        "host_id": "durable",
+        "task": "Independent combined PR60+70 classifier repair review",
+        "pr": 70,
+        "head": "77248281830493666ccd4ac4ed2a14e4636f7b34",
+        "status": "REVIEWING",
         "base": "f5eb854"
       }
     ],
@@ -765,6 +765,12 @@
       "reviewer": "cloud_reviewer",
       "status": "REVIEWING",
       "integrated": false
+    },
+    "70": {
+      "head": "77248281830493666ccd4ac4ed2a14e4636f7b34",
+      "reviewer": "worker01",
+      "status": "REVIEWING",
+      "integrated": false
     }
   },
   "parallel_combined_regression": {
@@ -783,5 +789,13 @@
     "seconds": 27.26,
     "integrated": false,
     "scope": "Scratch includes still-unmerged PR60; accepted source rerun underway"
+  },
+  "accepted_wave_regression": {
+    "commit": "f5eb854",
+    "mac_discovered": 1385,
+    "mac_passed": 1286,
+    "mac_skipped": 99,
+    "seconds": 27.307,
+    "linux_status": "worker06 running"
   }
 }
