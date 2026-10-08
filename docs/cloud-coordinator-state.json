@@ -1,6 +1,6 @@
 {
   "schema_version": 1,
-  "revision": 58,
+  "revision": 59,
   "repository": "pixelmanager-cloud/solana-paper-desk",
   "source_main_sha": "e298e15cd758932e81d2241130716632702f5bd0",
   "observed_date": "2026-10-08",
@@ -2006,6 +2006,60 @@
         "observations_current": true,
         "observed_phase": "running",
         "spec_revision": "84"
+      },
+      "queue_blob_sha": "5bd003408494c60e22207a2568d079dcc653873c",
+      "external_claims": [
+        {
+          "id": "PR97-INDEPENDENT-REVIEW",
+          "worker": "05",
+          "thread_id": "01a118fc-dd83-7672-ac81-7445f85fe09f",
+          "host_id": "durable",
+          "status": "BLOCKED_PLATFORM_FILTER_ON_SCOPED_REVIEW",
+          "pr": 97,
+          "head": "c11bfad6f1a2debe323238ef746967310ba02349",
+          "base": "1a9f69595bf4c8c8814654a093fbba1bde93d5ad",
+          "wait_cursor": "b9784eaf-f3e5-457f-a98d-a386c23b37ea:48",
+          "turn_id": "01a11c6e-65ba-7787-b458-530144590287",
+          "scope": "Review changed code and existing regression tests only; earlier flagged custom probes not repeated; stop if blocked"
+        }
+      ],
+      "observed_prs": [
+        {
+          "pr": 97,
+          "head_sha": "c11bfad6f1a2debe323238ef746967310ba02349",
+          "base_sha": "1a9f69595bf4c8c8814654a093fbba1bde93d5ad",
+          "branch": "codex/cloud-presealed-slot-02",
+          "author_worker": "02",
+          "author_thread_id": "01a118fc-666c-70b6-9fa8-2c7520f0a0bb",
+          "comment_ids": [
+            5459418438,
+            6063827066,
+            4221224769,
+            4221224781,
+            6063884883,
+            6063965120
+          ],
+          "status": "UNCHANGED_RESERVED_WORKER05_PLATFORM_BLOCK_REPORTED_NO_RETRY"
+        }
+      ],
+      "observed_codex_branch_count": 91,
+      "branch_pagination_complete": true,
+      "tests": "NOT_RUN_NO_NEW_UNASSIGNED_SCOPE",
+      "review_comments_posted": 0,
+      "infrastructure_failures": 0,
+      "provider_calls": 0,
+      "readiness": "BLOCKED_NO_SUPPORTED_BUDGET_FEASIBLE_PUBLIC_LEGACY_SEED; acquisition path in development",
+      "schedule": "NOT_REPROBED_NO_DURABLE_BINDING_CLAIM"
+    },
+    {
+      "kind": "HOURLY_GITHUB_RECONCILIATION",
+      "at": "2026-10-08T23:59:32Z",
+      "status": "UNCHANGED_NO_NEW_UNASSIGNED_REVIEW_WORK",
+      "cloud_execution": {
+        "provider": "cloud",
+        "observations_current": true,
+        "observed_phase": "running",
+        "spec_revision": "87"
       },
       "queue_blob_sha": "5bd003408494c60e22207a2568d079dcc653873c",
       "external_claims": [
@@ -4453,13 +4507,13 @@
   ],
   "last_reconciliation": {
     "kind": "HOURLY_GITHUB_RECONCILIATION",
-    "at": "2026-10-08T22:56:19Z",
+    "at": "2026-10-08T23:59:32Z",
     "status": "UNCHANGED_NO_NEW_UNASSIGNED_REVIEW_WORK",
     "cloud_execution": {
       "provider": "cloud",
       "observations_current": true,
       "observed_phase": "running",
-      "spec_revision": "84"
+      "spec_revision": "87"
     },
     "queue_blob_sha": "5bd003408494c60e22207a2568d079dcc653873c",
     "external_claims": [
