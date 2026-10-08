@@ -386,3 +386,6 @@ PR41 birth structural analyzer69f556d passed independentLinux1006 tests,zero ski
 
 
 PR42 compiledJSON resolverc174c07 is under independent review,CI passed. Desktop scratchb6b3d93 discovers1024 tests:991passed,33Linux-only skips,23.881s. This candidate resolves message keys only,retaining undecoded token/event/authority blockers. No integration/deployment pending independent combinedLinux review.
+
+
+PR42 c174c07 independent exact-head review retrieved from GitHub despite cloudchat host unavailability. Linux combined1024 tests zero skips;CI successful. Integrated0b1a4c2 implementation/test tree matches tested candidate. Compiled observations retain undecoded-token,event-schema,finality and launch-anchor blockers. Cloudchat unavailable on first check03:37Z;GitHub accessible;no new duplicate worker dispatch. No main merge or deployment.

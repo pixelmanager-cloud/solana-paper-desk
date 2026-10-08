@@ -189,8 +189,8 @@
   ],
   "integration": {
     "branch": "integration/cloud-wave1",
-    "tested_commit": "30c8b197cf44989962ea1b4880fb36e31e0704a4",
-    "combined_tests": 1006,
+    "tested_commit": "0b1a4c2aab8c46ad3e20459e6492dbc7ce39cd65",
+    "combined_tests": 1024,
     "result": "PASS",
     "live_verification": "BLOCKED_NO_SUPPORTED_BUDGET_FEASIBLE_PUBLIC_LEGACY_SEED; acquisition path in development",
     "blocker": "Live legacy evidence,protected pool receipt capture,lifecycle semantic approval and holder exposure integration unfinished",
@@ -198,7 +198,7 @@
       "worker02": "PR40 review interrupted by automated cybersecurity-risk flag; no final acceptance",
       "worker06": "PR34 integrated; available",
       "cloud_reviewer": "PR33 reviewed and integrated; available",
-      "worker10": "PR42 compiledJSON resolver review active",
+      "worker10": "PR42 review complete retrieved from GitHub;cloudchat host unavailable",
       "worker03": "PR39 published; reference-only fixture review pending",
       "worker04": "PR40 repairs published3744192;review remains incomplete",
       "worker05": "PR30 reviewed and integrated; available",
@@ -227,7 +227,8 @@
       "PR37": "8220f8baf0d84fc9905f39d2762664095cd6bba1 independent scoped PASS;14 probes/550 stack sequences;910 exact and918 combined; disconnected foundation only",
       "PR38": "fabebccda9064cd8e69833ff7e9f588ab8e7d9e8 independent PASS,33 ledger and975 combined Linux zero skips; production issuer/bridge unfinished",
       "PR39": "7651db1fa2842957fc15fb16a4e616c12ecef520 independent provenance PASS; final Linux982 zero skips; no finality/acceptance",
-      "PR41": "69f556dce2012ab1e9b2963d3dd7f8c0e190a476 independent structural-scope PASS;1006Linux,1034malformed+11targeted probes;notruntimeapproval"
+      "PR41": "69f556dce2012ab1e9b2963d3dd7f8c0e190a476 independent structural-scope PASS;1006Linux,1034malformed+11targeted probes;notruntimeapproval",
+      "PR42": "c174c07c5bcfe7776003be7d011075ec333115fa independent scopedPASS;1024combinedLinux,330header combinations+45invalid+8malformed probes;no rawtoken/launch acceptance"
     },
     "candidate_combination": {
       "commit": "bfcc550ca25bd6cb79dc7ac3ad2b30c72f7b1033",
@@ -247,17 +248,7 @@
       "status": "SUPERSEDED_BY_PUBLISHED_TESTED_COMMIT"
     },
     "published_ci": "e5d9f9b0e3210421aabe3a80efd519b0d122d340 successful",
-    "active_claims": [
-      {
-        "worker": "worker10",
-        "thread_id": "01a118fd-56d5-70b8-ad31-dba13e982082",
-        "host_id": "durable",
-        "task": "independent compiledJSON resolver review",
-        "pr": 42,
-        "head": "c174c07c5bcfe7776003be7d011075ec333115fa",
-        "status": "REVIEWING"
-      }
-    ],
+    "active_claims": [],
     "saved_launch_probe": {
       "source": "VPS saved raw launch events, read-only; no provider calls",
       "sample_size": 150,
@@ -308,7 +299,7 @@
       "result": "Linux combined975 PASS zero skips; reviewed",
       "integrated": true
     },
-    "test_platform_note": "Independent combinedLinux1006 zero skips; implementation/tests match desktop scratch973passed+33Linuxskips",
+    "test_platform_note": "IndependentLinux1024zero skips;implementation/tests identical desktop scratch991passed+33Linuxskips",
     "pending_reference_combination": {
       "commit": "8aa5938aeef5e96f22a54f80ff698d043f3a154d",
       "pr": 39,
@@ -346,8 +337,14 @@
       "mac_discovered": 1024,
       "mac_passed": 991,
       "mac_skipped": 33,
-      "independent_review": "PENDING",
-      "integrated": false
+      "independent_review": "PASS via postedGitHub exactheadreview",
+      "integrated": true
+    },
+    "infrastructure": {
+      "cloud_chat_host": "UNAVAILABLE_2026-10-08T03:37Z",
+      "consecutive_checks": 1,
+      "github": "ACCESSIBLE",
+      "impact": "New dispatch unavailable;existing posted review retrieved from GitHub;not paperreadiness"
     }
   }
 }
