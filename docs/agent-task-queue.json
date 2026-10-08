@@ -219,15 +219,14 @@
       "PR28": "674b268a2162230cea3aaf30381d5c4e3b7ae3b1: independent scope pass; total assessed may exceed50, report/test correction requested. Inherited WAL race confirmed 5/20."
     },
     "candidate_combination": {
-      "commit": "57a51245c85ba50d11fe782612a443131ffaa934",
-      "location": "local detached worktree work/cloud-next",
-      "tests": 750,
-      "result": "PASS",
+      "commit": "28ec1ed64d2cd196728215960c06630bdddad09a",
+      "location": "local detached worktree work/cloud-controls",
+      "tests": 770,
+      "result": "PASS_SINGLE_RUN_KNOWN_WAL_RACE_PENDING",
       "published": false,
       "prs": {
-        "24": "b5911a6fece35f83af87b89a14537de2d7c11dec",
-        "25": "28e04362e426e50fc5cceca232bb227f38a3707c",
-        "26": "f873c52cfab48ebb203377d0e3548cfc38c477bf"
+        "26": "aa4626fec148c244f841f0614abc4d18c52274dd",
+        "27": "dbffb7551ce2925156b1c8a173f4b0c38ad4f6c9"
       }
     }
   }
