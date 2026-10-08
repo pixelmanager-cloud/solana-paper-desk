@@ -260,19 +260,7 @@
       "status": "SUPERSEDED_BY_PUBLISHED_TESTED_COMMIT"
     },
     "published_ci": "Deployed d758bc529a7da1f74509117288740911f2ad6845: both CI runs successful",
-    "active_claims": [
-      {
-        "id": "PR81-INDEPENDENT-REVIEW",
-        "worker": "06",
-        "thread_id": "01a118fc-f867-7233-8eec-c20659e70095",
-        "host_id": "durable",
-        "status": "REVIEWING",
-        "base": "a557decf642f4408c6532ebd3ab24661503f916c",
-        "pr": 81,
-        "head": "7385abd0104b7e2b5f955f865e4a5b9569a5d24f",
-        "wait_cursor": "8f3328cf-bef6-441d-83f8-2d1f46b3b0df:37"
-      }
-    ],
+    "active_claims": [],
     "saved_launch_probe": {
       "source": "VPS saved raw launch events, read-only; no provider calls",
       "sample_size": 150,
@@ -610,15 +598,17 @@
       "author": "02",
       "author_linux_tests": 1576,
       "author_linux_skips": 0,
-      "integrated": false,
-      "review": "PENDING worker06",
+      "integrated": true,
+      "review": "PASS worker06 exact head; Linux1576 zero skips103.959s;19 independent probes; combinedtree matched",
       "scope": "Source/revision-bound pool-vault point prerequisite only; history/exclusion/entry remain false",
       "mac_discovered": 1576,
       "mac_passed": 1432,
       "mac_skipped": 144,
       "mac_seconds": 32.743,
       "combined_tree": "e30ab4370b1f9104cc049dd61812305d45189454",
-      "ci": "Both exact-head checks PASS"
+      "ci": "Both exact-head checks PASS",
+      "review_manifest_sha256": "c6bc15e29ceab77ea96203c75b05dfc120ddeb9480915010de38f147643952b0",
+      "deployed": false
     }
   },
   "native_reconciliation_review": {
