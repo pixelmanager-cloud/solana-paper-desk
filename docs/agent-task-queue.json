@@ -198,13 +198,13 @@
       "worker02": "Independent PR36 exact-head review active; budget/archive/fencing/setup immutability",
       "worker06": "PR34 integrated; available",
       "cloud_reviewer": "PR33 reviewed and integrated; available",
-      "worker10": "PR35 reviewed and integrated; available",
+      "worker10": "Independent PR37 trace review active",
       "worker03": "Public legacy feasibility report c932cbf published/reviewed; idle",
       "worker04": "Implement protected pool receipt ledger; isolated module/tests, no provider or runtime wiring",
       "worker05": "PR30 reviewed and integrated; available",
       "worker09": "PR35 reviewed and integrated; available",
-      "worker01": "Repair PR36 setup UPDATE OR REPLACE rowid collision; append-only",
-      "worker07": "Implement raw execution trace ordering/caller reconstruction prerequisite; no runtime gate relaxation",
+      "worker01": "PR36 repair1c87f2f published; independent re-review pending",
+      "worker07": "PR37 trace8220f8b published; independent review pending",
       "worker08": "PR31 reviewed and integrated; available"
     },
     "reviews": {
@@ -251,29 +251,22 @@
         "status": "IMPLEMENTING"
       },
       {
-        "worker": "worker07",
-        "thread_id": "01a118fd-0f1c-749c-b85b-5e730937d0a8",
-        "host_id": "durable",
-        "task": "raw execution trace reconstruction",
-        "status": "IMPLEMENTING"
-      },
-      {
         "worker": "worker02",
         "thread_id": "01a118fc-666c-70b6-9fa8-2c7520f0a0bb",
         "host_id": "durable",
         "task": "independent acquisition executor review",
         "pr": 36,
-        "head": "d184189654ddbae327d23dbca8e308cc2b0b83eb",
+        "head": "1c87f2f2b37997bdb9291f0ae2184c5e5aad5f06",
         "status": "REVIEWING"
       },
       {
-        "worker": "worker01",
-        "thread_id": "01a118fc-39bc-722c-b442-8bf5a749e0bb",
+        "worker": "worker10",
+        "thread_id": "01a118fd-56d5-70b8-ad31-dba13e982082",
         "host_id": "durable",
-        "task": "PR36 immutable setup rowid collision fix",
-        "pr": 36,
-        "head": "d184189654ddbae327d23dbca8e308cc2b0b83eb",
-        "status": "FIXING"
+        "task": "independent raw invocation trace review",
+        "pr": 37,
+        "head": "8220f8baf0d84fc9905f39d2762664095cd6bba1",
+        "status": "REVIEWING"
       }
     ],
     "saved_launch_probe": {
@@ -299,12 +292,23 @@
     },
     "pending_acquisition_candidate": {
       "pr": 36,
-      "head": "d184189654ddbae327d23dbca8e308cc2b0b83eb",
+      "head": "1c87f2f2b37997bdb9291f0ae2184c5e5aad5f06",
       "scratch_merge": "ec5d5104e5ceae3f9ef1c64135ccb9f23b0527d2",
       "combined_tests": 909,
       "result": "PASS",
-      "independent_review": "IN_PROGRESS; coordinator confirmed setup rowid collision deletion",
+      "independent_review": "REPAIR_REVIEW_PENDING",
       "integrated": false
+    },
+    "pending_combination": {
+      "scratch_commit": "10345dfa9d9ea1e685756a3151dff97a1719fb77",
+      "prs": {
+        "36": "1c87f2f2b37997bdb9291f0ae2184c5e5aad5f06",
+        "37": "8220f8baf0d84fc9905f39d2762664095cd6bba1"
+      },
+      "tests": 942,
+      "result": "PASS",
+      "integrated": false,
+      "review": "PENDING"
     }
   }
 }

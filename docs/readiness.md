@@ -348,3 +348,6 @@ PR36 `d184189654ddbae327d23dbca8e308cc2b0b83eb` implements explicit birth-inclus
 
 
 PR36 coordinator probe confirmed setup identity defect: default SQLite `UPDATE OR REPLACE` changing one setup rowid to another deletes the second setup despite current triggers. Author repair assigned; independent review continues. Candidate remains excluded from integration/deployment despite passing909 tests.
+
+
+PR36 repair `1c87f2f2b37997bdb9291f0ae2184c5e5aad5f06` adds immutable setup rowid protection. PR37 `8220f8baf0d84fc9905f39d2762664095cd6bba1` adds offline invocation trace reconstruction, explicitly not instruction effect ordering or authority authentication. Both are in independent review. Scratch combination `10345dfa9d9ea1e685756a3151dff97a1719fb77` passes942 tests in23.575s, no skips; neither candidate is integrated/deployed.
