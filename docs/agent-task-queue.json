@@ -195,17 +195,17 @@
     "live_verification": "BLOCKED_NO_SUPPORTED_BUDGET_FEASIBLE_PUBLIC_LEGACY_SEED; acquisition path in development",
     "blocker": "PR31 immutable-kind and malformed-descriptor fixes; acquisition executor and live legacy acceptance; exposure integration unfinished",
     "followups": {
-      "worker02": "PR31 two P2 findings await repair; PR28 correction reviewed",
+      "worker02": "Re-review PR31 repaired04a9301",
       "worker06": "Implement read-only SEALED admission descriptor/prepared source verification in entry_evidence; legacy compatibility, raw replay and rejection preserved",
-      "cloud_reviewer": "PR32 independent review passed; available",
+      "cloud_reviewer": "Independent PR33 raw legacy control normalizer review",
       "worker10": "PR30 independent review passed; available",
       "worker03": "Public legacy feasibility report c932cbf published/reviewed; idle",
       "worker04": "PR26 reviewed; available",
       "worker05": "PR30 e1b22f0d7b55181a97f1eebe4338c0db0b700f70 published; independent repeated-concurrency review active",
       "worker09": "PR28 correction e81d9be392bef4d29b70490ef2354bf3ec966f99 published; review active",
       "worker01": "PR32 reviewed and integrated; acquisition executor awaits queue repair",
-      "worker07": "Implement pure raw legacy control normalizer; retain runtime rejection pending separate semantic approval",
-      "worker08": "Repair PR31 REPLACE identity bypass and non-object JSON worker failure; append-only"
+      "worker07": "PR33 5095a17557c7fb916d74e508a3e157b49abcd784 raw control normalizer published",
+      "worker08": "PR31 repaired04a930172a088607b833017112e9d4721869e60c; independent re-review active"
     },
     "reviews": {
       "PR18": "92e9c6104b411101e414c03774a1675cbbf1ac91: independent review no blocking scoped defect",
@@ -235,6 +235,7 @@
         "32": "64765af62379fe4fbb185271c1d54405a527a0af"
       },
       "tests": 823
-    }
+    },
+    "published_ci": "d0caa0f1262366ca541d052310d78fbfdc63722d successful"
   }
 }
