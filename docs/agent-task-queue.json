@@ -683,7 +683,13 @@
       "pr": 85,
       "head": "7a31d865cc227ef2ca0ff8cfa1f20b3b927afbed",
       "integrated": false,
-      "review": "PENDING worker06"
+      "review": "PENDING worker06",
+      "mac_discovered": 1638,
+      "mac_passed": 1442,
+      "mac_skipped": 196,
+      "mac_seconds": 32.709,
+      "combined_tree": "68be796f21069a65c4f1b63a587b6f00778a491b",
+      "ci": "PENDING"
     }
   },
   "native_reconciliation_review": {
