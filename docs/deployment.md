@@ -329,3 +329,8 @@ Sources checked: https://www.helius.dev/docs/api-reference/rpc/http/gettransacti
 ## Pre-deployment ownership verification — 8 October 2026
 
 Read-only server check confirmed dashboard, discovery and decision timers active. Seven investigations exist in the rolling 24-hour window, leaving at most three new investigations under the existing ten-scan limit at that observation. Only the latest scan has the required persisted initial mint response; it is the previously identified unsupported Token-2022 case. Older records must not be patched to invent missing acquisition evidence. No provider call or production change was made in this check. Positive legacy launch capture feasibility is being checked against committed public data before consuming the remaining budget. Integration remains staged locally until exact-head reviews and decoder completeness repair pass.
+
+
+### Protected pool receipt storage prerequisite
+
+Read-only VPS check on2026-10-08: `/var/lib/solana-desk` is on ext4, owned by `solana-desk`,mode0755; dashboard runs as `solana-desk` and was active. The reviewed receipt ledger requires a dedicated canonical directory owned by its coordinator UID with mode0700, plus0600 single-link ledger/lock files and stable owned evidence DB identity. Do not use the existing0755 data root directly or change existing data ownership wholesale. Provision a dedicated directory when the capture bridge is reviewed, then verify persistence/backup identity handling before live use. No directory was created or production service changed in this preflight.
