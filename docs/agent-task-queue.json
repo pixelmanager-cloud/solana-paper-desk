@@ -193,19 +193,19 @@
     "combined_tests": 806,
     "result": "PASS",
     "live_verification": "BLOCKED_NO_SUPPORTED_BUDGET_FEASIBLE_PUBLIC_LEGACY_SEED; acquisition path in development",
-    "blocker": "PR31 immutable-kind and malformed-descriptor fixes; acquisition executor and live legacy acceptance; exposure integration unfinished",
+    "blocker": "PR31 remaining rowid replacement repair; acquisition executor; live legacy acceptance; exposure integration unfinished",
     "followups": {
       "worker02": "Re-review PR31 repaired04a9301",
-      "worker06": "Implement read-only SEALED admission descriptor/prepared source verification in entry_evidence; legacy compatibility, raw replay and rejection preserved",
-      "cloud_reviewer": "Independent PR33 raw legacy control normalizer review",
-      "worker10": "PR30 independent review passed; available",
+      "worker06": "PR34 published; independent review active",
+      "cloud_reviewer": "PR33 exclusive normalizer review; redirected from duplicate automated PR31 review",
+      "worker10": "Independent PR34 ae5a36bc0e8f6e6d33afea6292a64a2c6cc1e23e sealed consumer review",
       "worker03": "Public legacy feasibility report c932cbf published/reviewed; idle",
       "worker04": "PR26 reviewed; available",
       "worker05": "PR30 e1b22f0d7b55181a97f1eebe4338c0db0b700f70 published; independent repeated-concurrency review active",
       "worker09": "PR28 correction e81d9be392bef4d29b70490ef2354bf3ec966f99 published; review active",
       "worker01": "PR32 reviewed and integrated; acquisition executor awaits queue repair",
       "worker07": "PR33 5095a17557c7fb916d74e508a3e157b49abcd784 raw control normalizer published",
-      "worker08": "PR31 repaired04a930172a088607b833017112e9d4721869e60c; independent re-review active"
+      "worker08": "Repair UPDATE OR REPLACE rowid/oid aliases and recurring missing-descriptor migration risk, samePR append-only"
     },
     "reviews": {
       "PR18": "92e9c6104b411101e414c03774a1675cbbf1ac91: independent review no blocking scoped defect",
@@ -219,7 +219,7 @@
       "PR28": "e81d9be392bef4d29b70490ef2354bf3ec966f99: independent correction PASS,724 tests; union bound corrected",
       "PR30": "e1b22f0d7b55181a97f1eebe4338c0db0b700f70: independent PASS, 726 tests,100 threaded startups,120 spawned consumers, bounded5s lock timeout",
       "PR32": "64765af62379fe4fbb185271c1d54405a527a0af: independent scoped PASS,737 tests,53 focused; successor locking/fencing/publication mandatory",
-      "PR31": "988e5ef review: two P2s also present in8a6ab02: INSERT OR REPLACE can replace immutable kind; non-object JSON stops worker. Fix assigned"
+      "PR31": "04a9301 re-review: non-object JSON fixed, INSERT replacement blocked, remaining UPDATE OR REPLACE rowid deletion permits constructor to reclassify acquisition as SCREEN; held"
     },
     "candidate_combination": {
       "commit": "f17a9aa219e76710da42fc6542d4c4eefdc99891",
