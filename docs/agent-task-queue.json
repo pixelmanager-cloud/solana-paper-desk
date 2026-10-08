@@ -295,9 +295,9 @@
         "thread_id": "01a118fd-2563-7126-90d7-bd07693de0b2",
         "host_id": "durable",
         "task": "PR65 malformed checkpoint duplicate acknowledgment repair",
-        "status": "FIXING",
+        "status": "AUTHOR_COMPLETE_PENDING_REVIEW",
         "pr": 65,
-        "head": "052f4a47cc0740622a9d68406a898316e802c3c5"
+        "head": "30f70c4665b3c19a16636dcbdc378042d67c9db2"
       }
     ],
     "saved_launch_probe": {
@@ -689,9 +689,14 @@
     "60": {
       "head": "eb4432bbc614de775f510a1cfa86f917fb80abda",
       "reviewer": "worker01",
-      "status": "HELD_CLASSIFIER_DEPTH_FOLLOWUP",
-      "integrated": false,
-      "finding": "Pre-existing classify_account deep JSON RecursionError; separate repair assigned03"
+      "status": "PASS_INTEGRATED",
+      "integrated": true,
+      "finding": "Pre-existing classify_account deep JSON RecursionError; separate repair assigned03",
+      "integration_commit": "3e3a2e021feb17938e1eeb2e27a020a27fca5a28",
+      "reviewed_tree": "7966bd99cc5dbe749cd198e215c4f36d49b7dca1",
+      "linux_tests": 1397,
+      "linux_skips": 0,
+      "ci": "SUCCESS exact head"
     },
     "61": {
       "head": "bfff737c8c0ae8ce1428ae9f3fa022ec7ff280b9",
@@ -723,9 +728,9 @@
       "integrated": false
     },
     "65": {
-      "head": "052f4a47cc0740622a9d68406a898316e802c3c5",
+      "head": "30f70c4665b3c19a16636dcbdc378042d67c9db2",
       "reviewer": "worker02",
-      "status": "CHANGES_REQUESTED",
+      "status": "RE_REVIEWING",
       "integrated": false,
       "finding": "Duplicate acknowledgment accepts malformed null/empty checkpoint",
       "repair_worker": "worker08"
@@ -754,14 +759,19 @@
     "69": {
       "head": "5d53e384f2aa6e35bdb6054e1362beb74d42f850",
       "reviewer": "cloud_reviewer",
-      "status": "REVIEWING",
+      "status": "PASS_PENDING_COORDINATOR_COMBINED_VALIDATION",
       "integrated": false
     },
     "70": {
       "head": "77248281830493666ccd4ac4ed2a14e4636f7b34",
       "reviewer": "worker01",
-      "status": "REVIEWING",
-      "integrated": false
+      "status": "PASS_INTEGRATED",
+      "integrated": true,
+      "integration_commit": "3e3a2e021feb17938e1eeb2e27a020a27fca5a28",
+      "reviewed_tree": "7966bd99cc5dbe749cd198e215c4f36d49b7dca1",
+      "linux_tests": 1397,
+      "linux_skips": 0,
+      "ci": "SUCCESS exact head"
     }
   },
   "parallel_combined_regression": {
@@ -794,10 +804,24 @@
     "tree": "995671cfaee993af46217b903ff866d07a6c68cf"
   },
   "vps_stage_f5eb854": {
-    "status": "TESTING_SERVICE_USER",
+    "status": "STAGED_SERVICE_USER_TESTS_PASS_NOT_DEPLOYED",
     "archive_sha256": "fe0e6e4c22f0783b8c53f7769f92040819468477142364fb286b4cb4bf1e3ac5",
     "service_release": "886fc96",
     "source": "f5eb854",
-    "provider_calls": 0
+    "provider_calls": 0,
+    "tests": 1385,
+    "skips": 0,
+    "seconds": 120.026,
+    "reason_not_switched": "Await ledger repair review and final release compatibility checks"
+  },
+  "classification_combined_regression": {
+    "discovered": 1397,
+    "mac_passed": 1298,
+    "mac_skips": 99,
+    "mac_seconds": 27.094,
+    "independent_linux_passed": 1397,
+    "reviewed_tree": "7966bd99cc5dbe749cd198e215c4f36d49b7dca1",
+    "integration_commit": "3e3a2e021feb17938e1eeb2e27a020a27fca5a28",
+    "live_acceptance": false
   }
 }
