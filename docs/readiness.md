@@ -389,3 +389,6 @@ PR42 compiledJSON resolverc174c07 is under independent review,CI passed. Desktop
 
 
 PR42 c174c07 independent exact-head review retrieved from GitHub despite cloudchat host unavailability. Linux combined1024 tests zero skips;CI successful. Integrated0b1a4c2 implementation/test tree matches tested candidate. Compiled observations retain undecoded-token,event-schema,finality and launch-anchor blockers. Cloudchat unavailable on first check03:37Z;GitHub accessible;no new duplicate worker dispatch. No main merge or deployment.
+
+
+PR43 rawlegacy accounting77ed0fb in independent review,CIpass. Desktop scratch7aea8e8:1005 executedPASS+33Linuxskips,1038discovered,23.953s. No integration pending review. Historical event search checked17 officialIDL revisions/sevenlayouts;all require creator+timestamp missing from203byte2024reference. No trusted historical schema established;production rejection retained. Worker03 searches bounded newerlegacy publicreference matching existing authoritative schema,noRPC.

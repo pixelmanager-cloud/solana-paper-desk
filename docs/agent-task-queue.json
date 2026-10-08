@@ -198,12 +198,12 @@
       "worker02": "PR40 review interrupted by automated cybersecurity-risk flag; no final acceptance",
       "worker06": "PR34 integrated; available",
       "cloud_reviewer": "PR33 reviewed and integrated; available",
-      "worker10": "PR42 review complete retrieved from GitHub;cloudchat host unavailable",
-      "worker03": "Resolve historical event schema provenance offline;no inferred production approval",
+      "worker10": "PR43 independent review active",
+      "worker03": "Oldschema unsupported after17officialrevision checks;searchnewer matching legacyreference",
       "worker04": "PR40 repairs published3744192;review remains incomplete",
       "worker05": "PR30 reviewed and integrated; available",
       "worker09": "PR35 reviewed and integrated; available",
-      "worker01": "Implement rawlegacy accounting decoding on reviewed compiledresolver",
+      "worker01": "PR43 published77ed0fb;reviewpending",
       "worker07": "PR41 published69f556d,scoped reviewpending",
       "worker08": "PR31 reviewed and integrated; available"
     },
@@ -250,18 +250,20 @@
     "published_ci": "e5d9f9b0e3210421aabe3a80efd519b0d122d340 successful",
     "active_claims": [
       {
-        "worker": "worker01",
-        "thread_id": "01a118fc-39bc-722c-b442-8bf5a749e0bb",
-        "host_id": "durable",
-        "task": "raw legacy SPL accounting decoding,preserve unresolved controls",
-        "status": "IMPLEMENTING"
-      },
-      {
         "worker": "worker03",
         "thread_id": "01a118fc-9478-778a-b77a-8f8f6ec7e0ad",
         "host_id": "durable",
-        "task": "bounded authoritative historical CreateEvent schema research",
+        "task": "Bounded newer legacy raw reference search matching official pinned schema",
         "status": "RESEARCHING"
+      },
+      {
+        "worker": "worker10",
+        "thread_id": "01a118fd-56d5-70b8-ad31-dba13e982082",
+        "host_id": "durable",
+        "task": "independent rawlegacy accounting review",
+        "pr": 43,
+        "head": "77ed0fbc46ad3ce1f342d7f5b43c5cb3fa3063c9",
+        "status": "REVIEWING"
       }
     ],
     "saved_launch_probe": {
@@ -360,6 +362,16 @@
       "consecutive_checks": 0,
       "github": "ACCESSIBLE",
       "impact": "New dispatch unavailable;existing posted review retrieved from GitHub;not paperreadiness"
+    },
+    "pending_raw_token": {
+      "pr": 43,
+      "head": "77ed0fbc46ad3ce1f342d7f5b43c5cb3fa3063c9",
+      "scratch_commit": "7aea8e8cbde7de175a6be96e4c57d14c7cc97874",
+      "mac_discovered": 1038,
+      "mac_passed": 1005,
+      "mac_skipped": 33,
+      "review": "PENDING",
+      "integrated": false
     }
   }
 }
