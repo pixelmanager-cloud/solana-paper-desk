@@ -275,13 +275,14 @@
         "scope": "Review changed code and existing regression tests only; earlier flagged custom probes not repeated; stop if blocked"
       },
       {
-        "id": "OWN1-ORIGINAL-BYTE-READ-TRANSPORT",
-        "worker": "01",
-        "thread_id": "01a118fc-39bc-722c-b442-8bf5a749e0bb",
+        "id": "PR98-INDEPENDENT-REVIEW",
+        "worker": "06",
+        "thread_id": "01a118fc-f867-7233-8eec-c20659e70095",
         "host_id": "durable",
         "status": "IN_PROGRESS",
-        "base": "6bf9d1d",
-        "scope": "Strict existing read-method original-byte transport for producer; no PR97 or runtime wiring"
+        "pr": 98,
+        "head": "802f9f03a18a871c9617876d6eb666a84819ac4e",
+        "base": "bc5b8d0b85d72e47f85c08dc74b0e6919dd2bed7"
       }
     ],
     "saved_launch_probe": {
@@ -945,7 +946,15 @@
           "manifest_sha256": "a7dfa7aab955cea36cb0275caa1fab496cbcf97c69c46a03c59b35d22ad64f82"
         },
         "source_identity": "Integration index differs from independently tested tree only in coordinator queue JSON",
-        "deployment": "not deployed; disconnected transport"
+        "deployment": "not deployed; disconnected transport",
+        "integration_ci": {
+          "head": "bc5b8d0b85d72e47f85c08dc74b0e6919dd2bed7",
+          "runs": [
+            37812885177,
+            37812873683
+          ],
+          "conclusion": "SUCCESS"
+        }
       },
       "journal": {
         "pr": 97,
@@ -1046,6 +1055,22 @@
       "minimum_calls": "6+H discovery pages; not completeness guarantee",
       "blocked_on": "PR97 final independent review; producer state handoff and wire outcome contract",
       "ready_parallel_work": "Strict original-byte read transport coverage assigned01; uses accepted code only"
+    },
+    "pending_read_transport": {
+      "pr": 98,
+      "head": "802f9f03a18a871c9617876d6eb666a84819ac4e",
+      "candidate_tree": "ca6c108f6c82eddf0e7234dff4b28b23c4cebbc5",
+      "author": "01",
+      "reviewer": "06",
+      "status": "INDEPENDENT_AND_DESKTOP_REVIEW",
+      "desktop_tests": {
+        "total": 1934,
+        "skipped": 373,
+        "failures": 0,
+        "seconds": 34.423
+      },
+      "source_review": "Strict enumerated6methods; fixed _exchange extracted from accepted slot module; no runtime wiring. Pinned genesis fixture passes local response grammar.",
+      "live_acceptance": false
     }
   },
   "native_reconciliation_review": {
