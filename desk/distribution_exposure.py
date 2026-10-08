@@ -187,7 +187,7 @@ def trace_exposure(snapshot: ValidatedSnapshot, transfers: tuple[Transfer, ...],
     state = {a: [r.amount, 0, 0, 0] for a, r in initial.items()}
     seeded = set()
     for seed in seeds:
-        _integer(seed.amount); _text(seed.account)
+        _integer(seed.amount, 1); _text(seed.account)
         if seed.account in seeded or seed.account not in state or seed.amount > state[seed.account][0]:
             raise ValueError('Invalid or duplicate seed')
         seeded.add(seed.account)
