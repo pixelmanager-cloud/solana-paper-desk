@@ -1,6 +1,6 @@
 {
   "schema_version": 1,
-  "revision": 21,
+  "revision": 22,
   "repository": "pixelmanager-cloud/solana-paper-desk",
   "source_main_sha": "e298e15cd758932e81d2241130716632702f5bd0",
   "observed_date": "2026-10-08",
@@ -359,8 +359,10 @@
       "pr": 51,
       "head_sha": "5bd4cd0854fa95470489cbbef00a3b8cb620c8db",
       "review_id": 5451587196,
-      "status": "OPEN",
-      "action": "Only pristine initialization allowed; any partially missing initialized schema fails closed; preserve original records/counters; explicit recovery/regressions required."
+      "status": "RESOLVED_SCOPED_REPAIR_REVIEW",
+      "action": "Only pristine initialization allowed; any partially missing initialized schema fails closed; preserve original records/counters; explicit recovery/regressions required.",
+      "resolved_head_sha": "0b57227a36dd47b75128c66385c8e50dc16ecf24",
+      "resolution_review_id": 5451687035
     }
   ],
   "events": [
@@ -697,6 +699,67 @@
         "Lockfile open follows symlinks; stable trusted local filesystem assumption not replacement/identity defense",
         "Source/chain/signature/CPI/lifecycle/ownership approval false",
         "Full suite pass not acceptance"
+      ],
+      "accepted": false,
+      "live_acceptance": false
+    },
+    {
+      "kind": "PR51_PARTIAL_SCHEMA_REPAIR_REVIEW",
+      "policy_version": "cloud-independent-review-v1",
+      "pr": 51,
+      "head_sha": "0b57227a36dd47b75128c66385c8e50dc16ecf24",
+      "base_sha": "149bfabd1c288d1807fc0bdfacbb7a24dfd547f0",
+      "combined_integration_sha": "6f0f64b847fdfee5636bcb95f478e2a151fb4474",
+      "worker_agent": "01",
+      "worker_thread_id": "01a118fc-39bc-722c-b442-8bf5a749e0bb",
+      "branch": "codex/cloud-raw-transaction-capture",
+      "reviewer": "Independent cloud execution shared GitHub identity COMMENT only",
+      "review_id": 5451687035,
+      "review_action": "COMMENT",
+      "status": "SCOPED_PRIOR_P2_PARTIAL_SCHEMA_DEFECT_RESOLVED",
+      "findings": [
+        "96 partial-schema/rebinding probes fail closed with surviving schema/rows/pages/source/budget identical",
+        "Pristine init, actual crash, tamper and PR49 fixture transport composition pass"
+      ],
+      "tests": {
+        "python": "3.12.14",
+        "full_suite_command": "python -m unittest discover -s tests -v",
+        "full_suite_passed": 1201,
+        "full_suite_seconds": 50.526,
+        "targeted_command": "python -m unittest tests.test_raw_transaction_capture -q",
+        "targeted_passed": 22,
+        "targeted_seconds": 0.437,
+        "adversarial_commands": [
+          "python /workspace/work/review/fix51-independent.py",
+          "python /workspace/work/review/fix51-crash.py"
+        ],
+        "schema_checks": 96,
+        "crash_tests": 3,
+        "crash_seconds": 0.038,
+        "skipped": 0,
+        "provider_calls": 0
+      },
+      "ci": [
+        {
+          "id": 37729918829,
+          "name": "Tests",
+          "status": "completed",
+          "conclusion": "success",
+          "run_number": 314,
+          "jobs_url": "https://api.github.com/repos/pixelmanager-cloud/solana-paper-desk/actions/runs/37729918829/jobs",
+          "logs_url": "https://api.github.com/repos/pixelmanager-cloud/solana-paper-desk/actions/runs/37729918829/logs",
+          "workflow_id": 377958194
+        }
+      ],
+      "combined_ci": "NOT_RUN_SCRATCH_SOURCE_ONLY",
+      "proof_artifact": "docs/reviews/cloud-pr51-0b57227.md",
+      "source_manifest": "docs/reviews/cloud-pr51-6f0f64b-0b57227-hashes.json",
+      "source_manifest_sha256": "1dd1ce2f7c494c5e759b5371e109d4a69251153904a1b95070c86e310384020c",
+      "source_files": 260,
+      "limitations": [
+        "Whole-journal rollback outside scope",
+        "Trusted stable filesystem, lock symlinks followed, no inode replacement defense",
+        "No source/chain/signature/lifecycle/entry/live acceptance"
       ],
       "accepted": false,
       "live_acceptance": false
@@ -1456,13 +1519,73 @@
       ],
       "accepted": false,
       "live_acceptance": false
+    },
+    {
+      "policy_version": "cloud-independent-review-v1",
+      "pr": 51,
+      "head_sha": "0b57227a36dd47b75128c66385c8e50dc16ecf24",
+      "base_sha": "149bfabd1c288d1807fc0bdfacbb7a24dfd547f0",
+      "combined_integration_sha": "6f0f64b847fdfee5636bcb95f478e2a151fb4474",
+      "worker_agent": "01",
+      "worker_thread_id": "01a118fc-39bc-722c-b442-8bf5a749e0bb",
+      "branch": "codex/cloud-raw-transaction-capture",
+      "reviewer": "Independent cloud execution shared GitHub identity COMMENT only",
+      "review_id": 5451687035,
+      "review_action": "COMMENT",
+      "status": "SCOPED_PRIOR_P2_PARTIAL_SCHEMA_DEFECT_RESOLVED",
+      "findings": [
+        "96 partial-schema/rebinding probes fail closed with surviving schema/rows/pages/source/budget identical",
+        "Pristine init, actual crash, tamper and PR49 fixture transport composition pass"
+      ],
+      "tests": {
+        "python": "3.12.14",
+        "full_suite_command": "python -m unittest discover -s tests -v",
+        "full_suite_passed": 1201,
+        "full_suite_seconds": 50.526,
+        "targeted_command": "python -m unittest tests.test_raw_transaction_capture -q",
+        "targeted_passed": 22,
+        "targeted_seconds": 0.437,
+        "adversarial_commands": [
+          "python /workspace/work/review/fix51-independent.py",
+          "python /workspace/work/review/fix51-crash.py"
+        ],
+        "schema_checks": 96,
+        "crash_tests": 3,
+        "crash_seconds": 0.038,
+        "skipped": 0,
+        "provider_calls": 0
+      },
+      "ci": [
+        {
+          "id": 37729918829,
+          "name": "Tests",
+          "status": "completed",
+          "conclusion": "success",
+          "run_number": 314,
+          "jobs_url": "https://api.github.com/repos/pixelmanager-cloud/solana-paper-desk/actions/runs/37729918829/jobs",
+          "logs_url": "https://api.github.com/repos/pixelmanager-cloud/solana-paper-desk/actions/runs/37729918829/logs",
+          "workflow_id": 377958194
+        }
+      ],
+      "combined_ci": "NOT_RUN_SCRATCH_SOURCE_ONLY",
+      "proof_artifact": "docs/reviews/cloud-pr51-0b57227.md",
+      "source_manifest": "docs/reviews/cloud-pr51-6f0f64b-0b57227-hashes.json",
+      "source_manifest_sha256": "1dd1ce2f7c494c5e759b5371e109d4a69251153904a1b95070c86e310384020c",
+      "source_files": 260,
+      "limitations": [
+        "Whole-journal rollback outside scope",
+        "Trusted stable filesystem, lock symlinks followed, no inode replacement defense",
+        "No source/chain/signature/lifecycle/entry/live acceptance"
+      ],
+      "accepted": false,
+      "live_acceptance": false
     }
   ],
   "infrastructure": {
     "consecutive_failures": 0,
     "last_failure": "Historical immediate-run probe404; no current run infrastructure failure.",
     "retry_policy": "No busy polling; future supported review runs reconcile and pause after three consecutive execution/access failures.",
-    "last_success": "Verified cloud PR49 independent review completed;1179 combined tests zero Linux skips"
+    "last_success": "PR51 partial-schema repair independent re-review completed in verified cloud executor"
   },
   "review_lease": {
     "holder": null,
@@ -1964,9 +2087,9 @@
   "review_assignments": {
     "cloud_coordinator": {
       "exclusive_pr": 51,
-      "head_sha": "5bd4cd0854fa95470489cbbef00a3b8cb620c8db",
-      "status": "CHANGES_REQUIRED",
-      "review_id": 5451587196
+      "head_sha": "0b57227a36dd47b75128c66385c8e50dc16ecf24",
+      "status": "SCOPED_PRIOR_P2_PARTIAL_SCHEMA_DEFECT_RESOLVED",
+      "review_id": 5451687035
     },
     "pr31": {
       "owner": "worker02",
@@ -2156,69 +2279,65 @@
     }
   ],
   "last_review_run": {
-    "mode": "PR51_EXCLUSIVE_COMBINED_FIXTURE_REVIEW",
+    "mode": "EXCLUSIVE_PR51_REPAIR_COMBINED_FIXTURE_REVIEW",
     "policy_version": "cloud-independent-review-v1",
     "pr": 51,
-    "head_sha": "5bd4cd0854fa95470489cbbef00a3b8cb620c8db",
+    "head_sha": "0b57227a36dd47b75128c66385c8e50dc16ecf24",
     "base_sha": "149bfabd1c288d1807fc0bdfacbb7a24dfd547f0",
+    "combined_integration_sha": "6f0f64b847fdfee5636bcb95f478e2a151fb4474",
     "worker_agent": "01",
     "worker_thread_id": "01a118fc-39bc-722c-b442-8bf5a749e0bb",
     "branch": "codex/cloud-raw-transaction-capture",
-    "author_login": "pixelmanager-cloud",
-    "reviewer": "Independent cloud execution; COMMENT only; shared GitHub identity",
-    "review_id": 5451587196,
+    "reviewer": "Independent cloud execution shared GitHub identity COMMENT only",
+    "review_id": 5451687035,
     "review_action": "COMMENT",
-    "status": "CHANGES_REQUIRED_P2_PARTIAL_SCHEMA_RECAPTURE",
+    "status": "SCOPED_PRIOR_P2_PARTIAL_SCHEMA_DEFECT_RESOLVED",
     "findings": [
-      {
-        "priority": "P2",
-        "path": "desk/raw_transaction_capture.py",
-        "line": 138,
-        "title": "Missing claims table silently rebuilt allows second charged RPC after ambiguous attempt",
-        "reproduction": "After one RPC/raw save and failed terminal write, DROP only raw_transaction_claims. Reopen same binding -> COMPLETE second RPC spent2, not pending blocked. Missing protection trigger silently recreated; missing results table yields pending.",
-        "action": "Only pristine initialization allowed; any partially missing initialized schema fails closed; preserve original records/counters; explicit recovery/regressions required."
-      }
+      "96 partial-schema/rebinding probes fail closed with surviving schema/rows/pages/source/budget identical",
+      "Pristine init, actual crash, tamper and PR49 fixture transport composition pass"
     ],
     "tests": {
       "python": "3.12.14",
       "full_suite_command": "python -m unittest discover -s tests -v",
-      "full_suite_passed": 1199,
-      "full_suite_seconds": 50.82,
-      "adversarial_command": "python /workspace/work/review/p51-independent.py",
-      "adversarial_passed": 3,
-      "adversarial_seconds": 0.053,
-      "schema_probe_command": "python /workspace/work/review/p51-schema-probe.py",
-      "schema_probe_result": "P2_REPRODUCED_SECOND_RPC_AFTER_ONLY_CLAIMS_LOSS",
+      "full_suite_passed": 1201,
+      "full_suite_seconds": 50.526,
+      "targeted_command": "python -m unittest tests.test_raw_transaction_capture -q",
+      "targeted_passed": 22,
+      "targeted_seconds": 0.437,
+      "adversarial_commands": [
+        "python /workspace/work/review/fix51-independent.py",
+        "python /workspace/work/review/fix51-crash.py"
+      ],
+      "schema_checks": 96,
+      "crash_tests": 3,
+      "crash_seconds": 0.038,
       "skipped": 0,
       "provider_calls": 0
     },
     "ci": [
       {
-        "id": 37729316532,
+        "id": 37729918829,
         "name": "Tests",
         "status": "completed",
         "conclusion": "success",
-        "run_number": 304,
-        "jobs_url": "https://api.github.com/repos/pixelmanager-cloud/solana-paper-desk/actions/runs/37729316532/jobs",
-        "logs_url": "https://api.github.com/repos/pixelmanager-cloud/solana-paper-desk/actions/runs/37729316532/logs",
+        "run_number": 314,
+        "jobs_url": "https://api.github.com/repos/pixelmanager-cloud/solana-paper-desk/actions/runs/37729918829/jobs",
+        "logs_url": "https://api.github.com/repos/pixelmanager-cloud/solana-paper-desk/actions/runs/37729918829/logs",
         "workflow_id": 377958194
       }
     ],
-    "combined_ci": "NOT_RUN_SCRATCH_TREE",
-    "source_manifest": "docs/reviews/cloud-pr51-149bfab-5bd4cd0-hashes.json",
-    "source_manifest_sha256": "157ccf22c874616e0cb5f74f3a00f9911d0fbcbea4cb9cde51e69e112b4640d0",
+    "combined_ci": "NOT_RUN_SCRATCH_SOURCE_ONLY",
+    "proof_artifact": "docs/reviews/cloud-pr51-0b57227.md",
+    "source_manifest": "docs/reviews/cloud-pr51-6f0f64b-0b57227-hashes.json",
+    "source_manifest_sha256": "1dd1ce2f7c494c5e759b5371e109d4a69251153904a1b95070c86e310384020c",
     "source_files": 260,
-    "proof_artifact": "docs/reviews/cloud-pr51-5bd4cd0.md",
     "limitations": [
-      "Lockfile open follows symlinks; stable trusted local filesystem assumption not replacement/identity defense",
-      "Source/chain/signature/CPI/lifecycle/ownership approval false",
-      "Full suite pass not acceptance"
+      "Whole-journal rollback outside scope",
+      "Trusted stable filesystem, lock symlinks followed, no inode replacement defense",
+      "No source/chain/signature/lifecycle/entry/live acceptance"
     ],
     "accepted": false,
     "live_acceptance": false,
-    "excluded_review_prs": [
-      50
-    ],
     "production_edits": false,
     "merged_prs": 0,
     "dispatched_workers": 0,
