@@ -54,13 +54,15 @@ def replay_sell(store,key):
     bindings=check_sell_bindings(instructions,pool,mint,wallet,holding,amount,minimum,slot)
     recipients=check_sell_recipients(instructions,bindings,amount,minimum)
     fees=check_sell_fee_totals(pool,bindings,recipients,value,keys,amount)
+    from research.pumpswap_vault_effects import check_pumpswap_vault_effects
+    vault_effects = check_pumpswap_vault_effects(instructions, bindings, value, keys)
     from .quantity import diagnostic_quantity
     quantity = diagnostic_quantity(mint, wallet, amount, mint_source=record.get('mint_lookup'),
         simulation=value, keys=keys, transaction_hash=hashlib.sha256(compiled['raw']).hexdigest())
     if 'quantity_witness' in record and record['quantity_witness'] != quantity:
         raise ValueError('Saved quantity witness differs from original raw inputs')
     result={'quantity_witness':quantity,'kind':'historical_sell_replay','evidence_hash':key,'fresh':False,'eligible_for_trading':False,'transaction_policy_ok':False,
-        'balance_effects':effects,'account_controls':controls,'instruction_inventory':instructions,'wallet_debit_checks':debits,
+        'vault_effects':vault_effects,'balance_effects':effects,'account_controls':controls,'instruction_inventory':instructions,'wallet_debit_checks':debits,
         'router_checks':check_sell_route(response['swapInstruction'],mint,wallet,holding,amount,minimum),
         'envelope_checks':check_sell_envelope(outer,wallet),'amm_bindings':bindings,'recipient_checks':recipients,'setup_checks':check_sell_setup(instructions,wallet),'fee_split_checks':check_protocol_split(pool,bindings,fees,recipients),'sell_event_checks':check_sell_event(instructions,bindings,fees,recipients,pool),'fee_query':check_fee_query(instructions,bindings,fees),'fee_checks':fees,
         'notice':'Reconstructed from saved raw inputs without network access. Historical replay is never fresh sellability or trading approval.'}

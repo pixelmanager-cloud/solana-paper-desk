@@ -85,6 +85,8 @@ def simulate_sell(mint, wallet, holding, amount, rpc=helius_rpc, quote=jupiter_p
     recipient_checks=check_sell_recipients(instruction_inventory,amm_checks,amount,minimum_out)
     from .sell_fees import check_sell_fee_totals
     fee_checks=check_sell_fee_totals(pool_snapshot,amm_checks,recipient_checks,value,resolved_keys,amount)
+    from research.pumpswap_vault_effects import check_pumpswap_vault_effects
+    vault_effects = check_pumpswap_vault_effects(instruction_inventory, amm_checks, value, resolved_keys)
     from .fee_call import check_fee_query
     fee_query=check_fee_query(instruction_inventory,amm_checks,fee_checks)
     from .fee_split import check_protocol_split
@@ -103,7 +105,7 @@ def simulate_sell(mint, wallet, holding, amount, rpc=helius_rpc, quote=jupiter_p
     return {'kind':'diagnostic_sell_simulation','mint':mint,'wallet':wallet,'holding':holding,
         'amount_raw':str(amount),'quantity_witness':quantity,'observed_at':completed_at,'started_at':started_at,'fresh':fresh,'slot':outcome['context']['slot'],
         'simulation_ok':ok,'simulation_error':value.get('err'),'units_consumed':value.get('unitsConsumed'),
-        'holding_after':post_policy,'balance_effects':effects,'account_controls':controls,'instruction_inventory':instruction_inventory,'route_coverage':coverage_checks,'setup_checks':setup_checks,'fee_split_checks':split_checks,'sell_event_checks':event_checks,'fee_query':fee_query,'fee_checks':fee_checks,'recipient_checks':recipient_checks,'amm_bindings':amm_checks,'wallet_debit_checks':debit_checks,'router_checks':router_checks,'envelope_checks':envelope_checks,'before_slot':before['context']['slot'],
+        'vault_effects':vault_effects,'holding_after':post_policy,'balance_effects':effects,'account_controls':controls,'instruction_inventory':instruction_inventory,'route_coverage':coverage_checks,'setup_checks':setup_checks,'fee_split_checks':split_checks,'sell_event_checks':event_checks,'fee_query':fee_query,'fee_checks':fee_checks,'recipient_checks':recipient_checks,'amm_bindings':amm_checks,'wallet_debit_checks':debit_checks,'router_checks':router_checks,'envelope_checks':envelope_checks,'before_slot':before['context']['slot'],
         'raw_evidence_persisted':evidence_hash is not None,'evidence_hash':evidence_hash,'transaction_hash':hashlib.sha256(raw).hexdigest(),'route_hash':digest(route),
         'signed':False,'submitted':False,'eligible_for_trading':False,'transaction_policy_ok':False,
         'notice':'Public-holder diagnostic only. Balance and authority checks are diagnostics; full instruction policy and wallet-specific evidence remain required; not a wallet-specific trading approval.'}

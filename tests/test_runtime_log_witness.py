@@ -129,6 +129,12 @@ class RuntimeLogWitnessTests(unittest.TestCase):
                 if isinstance(node, ast.Import):
                     self.assertFalse(any(n.name.startswith('research') for n in node.names))
                 elif isinstance(node, ast.ImportFrom):
+                    # Coordinator-authorized read-only vault diagnostic only;
+                    # runtime log witnesses and all other research stay isolated.
+                    if (node.module == 'research.pumpswap_vault_effects' and
+                            path in (ROOT/'desk'/'simulate.py', ROOT/'desk'/'replay_sell.py')):
+                        self.assertEqual([n.name for n in node.names], ['check_pumpswap_vault_effects'])
+                        continue
                     self.assertFalse((node.module or '').startswith('research'))
 
     def test_unclassified_log_is_unknown_not_an_ignored_runtime_extension(self):
