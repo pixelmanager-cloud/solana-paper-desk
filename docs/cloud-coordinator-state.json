@@ -1,6 +1,6 @@
 {
   "schema_version": 1,
-  "revision": 49,
+  "revision": 50,
   "repository": "pixelmanager-cloud/solana-paper-desk",
   "source_main_sha": "e298e15cd758932e81d2241130716632702f5bd0",
   "observed_date": "2026-10-08",
@@ -1463,6 +1463,81 @@
       "tests": "NOT_RUN_NO_NEW_UNASSIGNED_PR",
       "review_comments_posted": 0,
       "acceptance_claims": 0,
+      "provider_calls": 0,
+      "infrastructure_failures": 0,
+      "schedule": "NOT_REPROBED_NO_NEW_DURABLE_BINDING_CLAIM",
+      "readiness": "BLOCKED_NO_SUPPORTED_BUDGET_FEASIBLE_PUBLIC_LEGACY_SEED; acquisition path in development"
+    },
+    {
+      "kind": "HOURLY_GITHUB_RECONCILIATION",
+      "at": "2026-10-08T14:55:25Z",
+      "status": "NO_NEW_UNASSIGNED_REVIEW_WORK",
+      "cloud_execution": {
+        "provider": "cloud",
+        "observations_current": true,
+        "observed_phase": "running",
+        "spec_revision": "62"
+      },
+      "queue_blob_sha": "dc402a46f368ef540fffe8cb853961fd993ea89a",
+      "external_claims": [
+        {
+          "id": "PR93-REVIEW-FIX",
+          "worker": "02",
+          "pr": 93,
+          "head": "94a025d96f4ad22db2fb195b1df10a73537ac293",
+          "thread_id": "01a118fc-666c-70b6-9fa8-2c7520f0a0bb",
+          "host_id": "durable",
+          "status": "DISPATCHED",
+          "scope": "Reserve selected second-pass aggregate before fetching bodies"
+        },
+        {
+          "id": "PR94-REVIEW-FIX",
+          "worker": "01",
+          "pr": 94,
+          "head": "714e1e915ae74b965150b8a234c89d92a03b8590",
+          "thread_id": "01a118fc-39bc-722c-b442-8bf5a749e0bb",
+          "host_id": "durable",
+          "status": "DISPATCHED",
+          "scope": "Reject schema typed-name collisions and malformed/rebound local intent fields"
+        }
+      ],
+      "observed_prs": [
+        {
+          "pr": 93,
+          "head_sha": "94a025d96f4ad22db2fb195b1df10a73537ac293",
+          "base_sha": "adb2118142bf8d40f8d8d41ee8b810b9366acf62",
+          "branch": "codex/cloud-common-bank-semantic-replay-02",
+          "author_worker": "02",
+          "author_thread_id": "01a118fc-666c-70b6-9fa8-2c7520f0a0bb",
+          "existing_comment_ids": [
+            4220470018,
+            5458476813
+          ],
+          "status": "EXTERNAL_FINDINGS_PUBLISHED_AUTHOR_REPAIR_RESERVED",
+          "independent_tests_this_run": "NOT_RUN",
+          "limitations": "Existing reviewers' findings/results are external evidence; not reproduced or certified by this run."
+        },
+        {
+          "pr": 94,
+          "head_sha": "714e1e915ae74b965150b8a234c89d92a03b8590",
+          "base_sha": "adb2118142bf8d40f8d8d41ee8b810b9366acf62",
+          "branch": "codex/cloud-completion-inventory-01",
+          "author_worker": "01",
+          "author_thread_id": "01a118fc-39bc-722c-b442-8bf5a749e0bb",
+          "existing_comment_ids": [
+            6062498707,
+            6062553574
+          ],
+          "status": "EXTERNAL_FINDINGS_PUBLISHED_AUTHOR_REPAIR_RESERVED",
+          "independent_tests_this_run": "NOT_RUN",
+          "limitations": "Existing reviewers' findings/results are external evidence; not reproduced or certified by this run."
+        }
+      ],
+      "observed_codex_branch_count": 86,
+      "branch_pagination_complete": true,
+      "protocol_blob_sha": "89d0e2fdcb1bc96313c4e48b139386e37380e5c8",
+      "tests": "NOT_RUN_RESERVED_AUTHOR_REPAIRS_EXISTING_INDEPENDENT_REVIEWERS",
+      "review_comments_posted": 0,
       "provider_calls": 0,
       "infrastructure_failures": 0,
       "schedule": "NOT_REPROBED_NO_NEW_DURABLE_BINDING_CLAIM",
@@ -3062,6 +3137,36 @@
       "status": "HISTORICAL_INCOMPLETE_AUTOMATED_FLAG_INTERRUPTION",
       "tests_passed_claim": false,
       "reason": "Desktop explicitly confirmed original worker02 automated flag interrupted review; separate cloud reviews5451192398/5451246874 do not certify that run."
+    },
+    {
+      "pr": 93,
+      "head_sha": "94a025d96f4ad22db2fb195b1df10a73537ac293",
+      "base_sha": "adb2118142bf8d40f8d8d41ee8b810b9366acf62",
+      "branch": "codex/cloud-common-bank-semantic-replay-02",
+      "author_worker": "02",
+      "author_thread_id": "01a118fc-666c-70b6-9fa8-2c7520f0a0bb",
+      "existing_comment_ids": [
+        4220470018,
+        5458476813
+      ],
+      "status": "EXTERNAL_FINDINGS_PUBLISHED_AUTHOR_REPAIR_RESERVED",
+      "independent_tests_this_run": "NOT_RUN",
+      "limitations": "Existing reviewers' findings/results are external evidence; not reproduced or certified by this run."
+    },
+    {
+      "pr": 94,
+      "head_sha": "714e1e915ae74b965150b8a234c89d92a03b8590",
+      "base_sha": "adb2118142bf8d40f8d8d41ee8b810b9366acf62",
+      "branch": "codex/cloud-completion-inventory-01",
+      "author_worker": "01",
+      "author_thread_id": "01a118fc-39bc-722c-b442-8bf5a749e0bb",
+      "existing_comment_ids": [
+        6062498707,
+        6062553574
+      ],
+      "status": "EXTERNAL_FINDINGS_PUBLISHED_AUTHOR_REPAIR_RESERVED",
+      "independent_tests_this_run": "NOT_RUN",
+      "limitations": "Existing reviewers' findings/results are external evidence; not reproduced or certified by this run."
     }
   ],
   "pending_reviews": [
@@ -3404,22 +3509,24 @@
     },
     "external_current": [
       {
-        "id": "MIXED-RECEIPT-PROTECTED-READER",
-        "worker": "01",
-        "thread_id": "01a118fc-39bc-722c-b442-8bf5a749e0bb",
-        "host_id": "durable",
-        "status": "DISPATCHED",
-        "base": "0ce2a333be6c149fc4ac2398815e7ab7f46abc79",
-        "scope": "Implement guarded read-only physical format2 reader with independent anchors; no migration/issuer"
-      },
-      {
-        "id": "COMMON-BANK-CLOCK-STAGE",
+        "id": "PR93-REVIEW-FIX",
         "worker": "02",
+        "pr": 93,
+        "head": "94a025d96f4ad22db2fb195b1df10a73537ac293",
         "thread_id": "01a118fc-666c-70b6-9fa8-2c7520f0a0bb",
         "host_id": "durable",
         "status": "DISPATCHED",
-        "base": "32417a5965b6d92aeefd05ffbb54a0a20dede891",
-        "scope": "Atomic original clock request/completion bound to actual union T; no transport/publication"
+        "scope": "Reserve selected second-pass aggregate before fetching bodies"
+      },
+      {
+        "id": "PR94-REVIEW-FIX",
+        "worker": "01",
+        "pr": 94,
+        "head": "714e1e915ae74b965150b8a234c89d92a03b8590",
+        "thread_id": "01a118fc-39bc-722c-b442-8bf5a749e0bb",
+        "host_id": "durable",
+        "status": "DISPATCHED",
+        "scope": "Reject schema typed-name collisions and malformed/rebound local intent fields"
       }
     ]
   },
@@ -3737,58 +3844,74 @@
   ],
   "last_reconciliation": {
     "kind": "HOURLY_GITHUB_RECONCILIATION",
-    "at": "2026-10-08T14:01:01Z",
+    "at": "2026-10-08T14:55:25Z",
     "status": "NO_NEW_UNASSIGNED_REVIEW_WORK",
     "cloud_execution": {
       "provider": "cloud",
       "observations_current": true,
       "observed_phase": "running",
-      "spec_revision": "60"
+      "spec_revision": "62"
     },
-    "queue_blob_sha": "16260025b79ec04e8e72c382073f5ecc34ab01f4",
+    "queue_blob_sha": "dc402a46f368ef540fffe8cb853961fd993ea89a",
     "external_claims": [
       {
-        "id": "MIXED-RECEIPT-PROTECTED-READER",
-        "worker": "01",
-        "thread_id": "01a118fc-39bc-722c-b442-8bf5a749e0bb",
-        "host_id": "durable",
-        "status": "DISPATCHED",
-        "base": "0ce2a333be6c149fc4ac2398815e7ab7f46abc79",
-        "scope": "Implement guarded read-only physical format2 reader with independent anchors; no migration/issuer"
-      },
-      {
-        "id": "COMMON-BANK-CLOCK-STAGE",
+        "id": "PR93-REVIEW-FIX",
         "worker": "02",
+        "pr": 93,
+        "head": "94a025d96f4ad22db2fb195b1df10a73537ac293",
         "thread_id": "01a118fc-666c-70b6-9fa8-2c7520f0a0bb",
         "host_id": "durable",
         "status": "DISPATCHED",
-        "base": "32417a5965b6d92aeefd05ffbb54a0a20dede891",
-        "scope": "Atomic original clock request/completion bound to actual union T; no transport/publication"
+        "scope": "Reserve selected second-pass aggregate before fetching bodies"
+      },
+      {
+        "id": "PR94-REVIEW-FIX",
+        "worker": "01",
+        "pr": 94,
+        "head": "714e1e915ae74b965150b8a234c89d92a03b8590",
+        "thread_id": "01a118fc-39bc-722c-b442-8bf5a749e0bb",
+        "host_id": "durable",
+        "status": "DISPATCHED",
+        "scope": "Reject schema typed-name collisions and malformed/rebound local intent fields"
       }
     ],
-    "open_pr_numbers": [
-      21,
-      10,
-      29,
-      18,
-      23,
-      22,
-      12,
-      19,
-      20,
-      17,
-      16,
-      15,
-      14,
-      13,
-      11
+    "observed_prs": [
+      {
+        "pr": 93,
+        "head_sha": "94a025d96f4ad22db2fb195b1df10a73537ac293",
+        "base_sha": "adb2118142bf8d40f8d8d41ee8b810b9366acf62",
+        "branch": "codex/cloud-common-bank-semantic-replay-02",
+        "author_worker": "02",
+        "author_thread_id": "01a118fc-666c-70b6-9fa8-2c7520f0a0bb",
+        "existing_comment_ids": [
+          4220470018,
+          5458476813
+        ],
+        "status": "EXTERNAL_FINDINGS_PUBLISHED_AUTHOR_REPAIR_RESERVED",
+        "independent_tests_this_run": "NOT_RUN",
+        "limitations": "Existing reviewers' findings/results are external evidence; not reproduced or certified by this run."
+      },
+      {
+        "pr": 94,
+        "head_sha": "714e1e915ae74b965150b8a234c89d92a03b8590",
+        "base_sha": "adb2118142bf8d40f8d8d41ee8b810b9366acf62",
+        "branch": "codex/cloud-completion-inventory-01",
+        "author_worker": "01",
+        "author_thread_id": "01a118fc-39bc-722c-b442-8bf5a749e0bb",
+        "existing_comment_ids": [
+          6062498707,
+          6062553574
+        ],
+        "status": "EXTERNAL_FINDINGS_PUBLISHED_AUTHOR_REPAIR_RESERVED",
+        "independent_tests_this_run": "NOT_RUN",
+        "limitations": "Existing reviewers' findings/results are external evidence; not reproduced or certified by this run."
+      }
     ],
-    "observed_codex_branch_count": 84,
+    "observed_codex_branch_count": 86,
     "branch_pagination_complete": true,
     "protocol_blob_sha": "89d0e2fdcb1bc96313c4e48b139386e37380e5c8",
-    "tests": "NOT_RUN_NO_NEW_UNASSIGNED_PR",
+    "tests": "NOT_RUN_RESERVED_AUTHOR_REPAIRS_EXISTING_INDEPENDENT_REVIEWERS",
     "review_comments_posted": 0,
-    "acceptance_claims": 0,
     "provider_calls": 0,
     "infrastructure_failures": 0,
     "schedule": "NOT_REPROBED_NO_NEW_DURABLE_BINDING_CLAIM",
