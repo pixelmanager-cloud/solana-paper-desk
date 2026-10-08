@@ -36,7 +36,7 @@ function renderPaper(data){
   const box=$('#paper');
   box.replaceChildren(node('p','Paper-only simulated accounting. Research evidence and rejected candidates are not paper positions.','muted'));
   if(data.notice)box.append(node('p',data.notice,'muted'));
-  const missing={NOT_CONFIGURED:'No active simulated paper ledger configured.',EMPTY_LEDGER:'Simulated ledger has no saved checkpoint.',LEDGER_UNAVAILABLE:'Simulated ledger unavailable.'};
+  const missing={NOT_CONFIGURED:'No active simulated paper ledger configured.',EMPTY_LEDGER:'Simulated ledger has no saved checkpoint.',LEDGER_UNAVAILABLE:'Simulated ledger unavailable.',RECOVERY_REQUIRED:'Simulated ledger recovery required; saved accounting cannot be confirmed.'};
   if(data.status!=='LEDGER_PRESENT'){
     box.append(node('p',(missing[data.status]||'Paper status unavailable.')+' No balances or positions can be confirmed.'));
     return;
