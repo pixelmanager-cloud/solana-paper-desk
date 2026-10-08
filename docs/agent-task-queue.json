@@ -267,10 +267,10 @@
         "thread_id": "01a118fd-2563-7126-90d7-bd07693de0b2",
         "host_id": "durable",
         "task": "PR72 monitor preflight integrity race diagnostic repair",
-        "status": "FIXING",
+        "status": "AUTHOR_COMPLETE_PENDING_REVIEW",
         "base": "e13d17b",
         "pr": 72,
-        "head": "f64144d4c583520666ca866c37dde3e8e81f2205",
+        "head": "f40d4edae7783d5dcbb6d9200879febd455edbf9",
         "consumer_pr": 72
       },
       {
@@ -286,10 +286,10 @@
         "thread_id": "01a118fc-f867-7233-8eec-c20659e70095",
         "host_id": "durable",
         "task": "Independent recovery consumer review with PR65 repair",
-        "status": "WAITING_REPAIR",
+        "status": "REVIEWING",
         "pr": 72,
-        "head": "f64144d4c583520666ca866c37dde3e8e81f2205",
-        "base": "2ef1071"
+        "head": "f40d4edae7783d5dcbb6d9200879febd455edbf9",
+        "base": "9f6adea"
       },
       {
         "worker": "worker10",
@@ -818,9 +818,9 @@
       "reviewed_tree": "bc0ec23315c260317a8ff465cd084af36be199b7"
     },
     "72": {
-      "head": "f64144d4c583520666ca866c37dde3e8e81f2205",
+      "head": "f40d4edae7783d5dcbb6d9200879febd455edbf9",
       "reviewer": "worker06",
-      "status": "CHANGES_REQUESTED",
+      "status": "RE_REVIEWING",
       "integrated": false,
       "depends_on": {
         "65": "ff201a6dacb979e8edfd541956e38167dcd66c8c"
