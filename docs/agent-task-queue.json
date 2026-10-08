@@ -262,16 +262,22 @@
     "published_ci": "Deployed d758bc529a7da1f74509117288740911f2ad6845: both CI runs successful",
     "active_claims": [
       {
-        "id": "PR95-INDEPENDENT-REVIEW",
-        "worker": "05",
-        "pr": 95,
-        "head": "6fbeba4edf9f8a98a05e65eda9f2469edb7f4f07",
-        "base": "b3e2516df345eb79bbedfbb597be46c1f5947eab",
-        "thread_id": "01a118fc-dd83-7672-ac81-7445f85fe09f",
+        "id": "PRESEALED-SLOT-INTENT-JOURNAL",
+        "worker": "02",
+        "thread_id": "01a118fc-666c-70b6-9fa8-2c7520f0a0bb",
         "host_id": "durable",
-        "status": "REVIEWING",
-        "wait_cursor": "b9784eaf-f3e5-457f-a98d-a386c23b37ea:42",
-        "turn_id": "01a11c1d-796c-70ec-b853-1af2fa5464c5"
+        "status": "DISPATCH_PENDING",
+        "base": "893bf72ed79dee7be224bccf4c7ba3913f36d6b6",
+        "scope": "Fresh admitted acquisition slot intent and completion; atomic same18 charge before I/O; no transport or retrofit"
+      },
+      {
+        "id": "ORIGINAL-BYTE-SLOT-TRANSPORT",
+        "worker": "01",
+        "thread_id": "01a118fc-39bc-722c-b442-8bf5a749e0bb",
+        "host_id": "durable",
+        "status": "DISPATCH_PENDING",
+        "base": "893bf72ed79dee7be224bccf4c7ba3913f36d6b6",
+        "scope": "Separate bounded original-byte finalized-slot transport primitive; no acquisition/journal/allowlist expansion"
       }
     ],
     "saved_launch_probe": {
@@ -881,8 +887,8 @@
     "pending_cutoff_contract": {
       "pr": 95,
       "head": "6fbeba4edf9f8a98a05e65eda9f2469edb7f4f07",
-      "integrated": false,
-      "review": "PENDING worker05; confirmed author fixture gap requires independent reproduction",
+      "integrated": true,
+      "review": "PASS tests/report worker05; Linux1886 zero skips187.562s;4 independent probes including real process death. Production cutoff defect remains",
       "author_linux_tests": 1852,
       "combined_base": "b3e2516df345eb79bbedfbb597be46c1f5947eab",
       "combined_tree": "f00ad8f24f351d5d5ef55b5ab8d1909e91f4389e",
@@ -891,7 +897,9 @@
       "mac_skipped": 373,
       "mac_seconds": 34.278,
       "ci": "Both unchanged exact-head checks SUCCESS",
-      "coordinator_diff_review": "Full tests/report inspected; real death gap reproduced by dedicated test, no production change"
+      "coordinator_diff_review": "Full tests/report inspected; real death gap reproduced by dedicated test, no production change",
+      "integration_commit": "893bf72ed79dee7be224bccf4c7ba3913f36d6b6",
+      "review_manifest_sha256": "6a62317fc780ab9c7647fa50cb4befb0a3ba4b363baaf2f5a43ab55a948584c7"
     }
   },
   "native_reconciliation_review": {
