@@ -189,15 +189,15 @@
   ],
   "integration": {
     "branch": "integration/cloud-wave1",
-    "tested_commit": "f3987e58f9a39de2a69451aa08798fc4c16271f5",
-    "combined_tests": 1264,
+    "tested_commit": "eae935a8b6d6b04148e0355aaa4ddbf55df103d6",
+    "combined_tests": 1269,
     "result": "PASS",
     "live_verification": "BLOCKED_NO_SUPPORTED_BUDGET_FEASIBLE_PUBLIC_LEGACY_SEED; acquisition path in development",
     "blocker": "Live legacy evidence,protected pool receipt capture,lifecycle semantic approval and holder exposure integration unfinished",
     "followups": {
       "worker02": "PR40 review interrupted by automated cybersecurity-risk flag; no final acceptance",
       "worker06": "PR53 published; available",
-      "cloud_reviewer": "PR53 independent review",
+      "cloud_reviewer": "PR53 review passed; available",
       "worker10": "PR45 independent review complete;available",
       "worker03": "Bounded newerlegacysearch found no matching authoritative event;available",
       "worker04": "PR47 accepted; available",
@@ -239,7 +239,8 @@
       "PR49": "2b11fbf6c8a5d7933088283a9a7ab9cbd9f25578 independent scopedPASS;Linux1179zero skips;canonical signatures and strict options independently probed",
       "PR51": "0b57227a36dd47b75128c66385c8e50dc16ecf24 scopedPASS;96 partial-schema/rebinding probes+3 crash/tamper/transport probes;Linux1201 zero skips",
       "PR50": "3c00d9679b997e2d92a317fbc0b9f469b76ef171 scopedPASS;1514 independent probes;combinedLinux1244 zero skips; no trusted lifecycle approval",
-      "PR52": "4f3573330b1b193579d733afab19b259297fa5df scopedPASS rollback-only contract; independent WAL/hot-journal/OFD locking probes;Linux1264 zero skips;266 sourcehashes matched"
+      "PR52": "4f3573330b1b193579d733afab19b259297fa5df scopedPASS rollback-only contract; independent WAL/hot-journal/OFD locking probes;Linux1264 zero skips;266 sourcehashes matched",
+      "PR53": "ff4aadf41b158ca841d2ae9a3d1cc1841e8772bf scopedPASS;270 source hashes matched;Linux1269 zero skips;40 independent mutations; provider provenance not authenticated chain evidence"
     },
     "candidate_combination": {
       "commit": "bfcc550ca25bd6cb79dc7ac3ad2b30c72f7b1033",
@@ -267,15 +268,6 @@
         "task": "Raw public launch syntax/report gaps",
         "status": "IMPLEMENTING",
         "base": "d41fe29"
-      },
-      {
-        "worker": "cloud_reviewer",
-        "thread_id": "01a11901-8b68-70f9-8672-5a731a149091",
-        "host_id": "durable",
-        "task": "Independent raw fixture provenance PR53 review",
-        "status": "REVIEWING",
-        "pr": 53,
-        "head": "ff4aadf41b158ca841d2ae9a3d1cc1841e8772bf"
       }
     ],
     "saved_launch_probe": {
@@ -328,7 +320,7 @@
       "result": "Linux combined975 PASS zero skips; reviewed",
       "integrated": true
     },
-    "test_platform_note": "Independent Linux1264 zero skips;Mac1172 passed+92 Linux skips",
+    "test_platform_note": "Independent Linux1269 zero skips;Mac1177 passed+92 skips",
     "pending_reference_combination": {
       "commit": "8aa5938aeef5e96f22a54f80ff698d043f3a154d",
       "pr": 39,
@@ -566,8 +558,8 @@
     "pending_raw_provenance": {
       "pr": 53,
       "head": "ff4aadf41b158ca841d2ae9a3d1cc1841e8772bf",
-      "review": "IN_PROGRESS",
-      "integrated": false,
+      "review": "PASS",
+      "integrated": true,
       "mac_discovered": 1269,
       "mac_passed": 1177,
       "mac_skipped": 92
