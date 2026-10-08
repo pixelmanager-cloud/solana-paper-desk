@@ -193,18 +193,19 @@
     "combined_tests": 717,
     "result": "PASS",
     "live_verification": "BLOCKED_NO_SUPPORTED_BUDGET_FEASIBLE_PUBLIC_LEGACY_SEED; acquisition path in development",
-    "blocker": "PR26 contradiction fix/re-review and decoder authority gap repair active; live legacy acceptance and exposure integration unfinished",
+    "blocker": "Concurrent journal initialization race fix; PR26 re-review; acquisition foundations; live legacy acceptance and exposure integration unfinished",
     "followups": {
-      "worker02": "PR24 exact-head review complete; idle",
+      "worker02": "Independent exact-head PR28 operating tests review",
       "worker06": "PR27 idle; confirmed prohibited force-with-lease history rewrite, instructed future append-only. No integration until new exact-head independent review.",
-      "cloud_reviewer": "Independent exact-head PR26 point-in-time pool admission review",
-      "worker10": "Independent exact-head PR27 authority control rejection review",
+      "cloud_reviewer": "Re-review PR26 repair aa4626fec148c244f841f0614abc4d18c52274dd",
+      "worker10": "PR27 latest-head review passed decoder scope; inherited WAL race found and assigned worker05",
       "worker03": "Public legacy feasibility report c932cbf published/reviewed; idle",
-      "worker04": "Repair PR26 same-scope contradictory trusted receipt conflict handling; both ref directions and source variants",
-      "worker05": "PR25 published; idle pending review",
+      "worker04": "PR26 repair aa4626f published; re-review active",
+      "worker05": "Repair concurrent decision journal WAL initialization race, repeated fresh-db/multiprocess tests",
       "worker09": "Measure 50-scan repeated continuation replay, idempotence and dashboard historical-component projection; tests/report only",
-      "worker01": "Implement bounded birth-inclusive acquisition seed with durable scan limits and shared 18-request accounting; fixture-only",
-      "worker07": "Read-only minimum safe control-lifecycle semantics plan; no gate changes"
+      "worker01": "PR29 design-only; now implement durable admission descriptor and one-time source seal in history_progress/ownership_worker, latest integration",
+      "worker07": "Read-only minimum safe control-lifecycle semantics plan; no gate changes",
+      "worker08": "Implement shared Jobs kind/descriptor, exclusive recovery/claim fencing, existing admission limits; no budget/CLI changes"
     },
     "reviews": {
       "PR18": "92e9c6104b411101e414c03774a1675cbbf1ac91: independent review no blocking scoped defect",
@@ -214,7 +215,7 @@
       "PR25": "28e04362e426e50fc5cceca232bb227f38a3707c: independent scoped PASS; known silent authority-operation omission prevents interval-control acceptance",
       "PR24": "b5911a6fece35f83af87b89a14537de2d7c11dec: independent test/fixture review passed, 700 tests, no scoped blocking defect; lifetime authority gap remains",
       "PR26": "f873c52cfab48ebb203377d0e3548cfc38c477bf: independent P2 contradictory same-slot capture admission; NOT integrated",
-      "PR27": "dbffb7551ce2925156b1c8a173f4b0c38ad4f6c9: local 727 tests pass; independent latest-head review required. Worker rebased/force-with-lease from f87178b contrary to policy; original-head review cannot approve replacement."
+      "PR27": "dbffb7551ce2925156b1c8a173f4b0c38ad4f6c9: independent decoder scope passed. Full suite first failed inherited WAL init race then 727 passed; repeat race 11/40 failures. Hold combined reliability claim until repair."
     },
     "candidate_combination": {
       "commit": "57a51245c85ba50d11fe782612a443131ffaa934",
