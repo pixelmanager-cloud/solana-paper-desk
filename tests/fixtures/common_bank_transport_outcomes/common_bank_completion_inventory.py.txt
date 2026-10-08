@@ -253,7 +253,7 @@ def _plan_structure(plan, mint, source_hash):
          'INVENTORY_PLAN_REFERENCE_DUPLICATE')
 
 
-def _attachment_structure(event, intent, request, response, failure, stage, records, source, *, transport=False):
+def _attachment_structure(event, intent, request, response, failure, stage, records, source):
     common={'kind','capture_id','budget_id','stage','ordinal','state','reason','intent_hash','fence',
             'descriptor_hash','plan_hash','planned_source','used_after','reserved_at','completed_at',
             'request_sha256','response_sha256','failure_hash','eligible_for_trading','ownership_approval','chain_authenticated'}
@@ -270,37 +270,26 @@ def _attachment_structure(event, intent, request, response, failure, stage, reco
     limit=journal.MAX_UNION_REQUEST_BYTES if stage=='union' else journal.MAX_REQUEST_BYTES
     need(type(request) is bytes and request==expected_request and len(request)<=limit,
          'INVENTORY_ATTACHMENT_ORIGINAL_REQUEST')
-    if transport:
-        need((response is None or type(response) is bytes and len(response)<=journal.MAX_RESPONSE_BYTES)
-             and (failure is None or type(failure) is str and len(failure.encode())<=journal.MAX_FAILURE_BYTES)
-             and (response is not None or failure is not None),'INVENTORY_TRANSPORT_OUTCOME_FIELDS')
-    else:
-        need((type(response) is bytes and len(response)<=journal.MAX_RESPONSE_BYTES and failure is None)
-             or (response is None and type(failure) is str and len(failure.encode())<=journal.MAX_FAILURE_BYTES),
-             'INVENTORY_ATTACHMENT_EXCLUSIVE_OUTCOME')
+    need((type(response) is bytes and len(response)<=journal.MAX_RESPONSE_BYTES and failure is None)
+         or (response is None and type(failure) is str and len(failure.encode())<=journal.MAX_FAILURE_BYTES),
+         'INVENTORY_ATTACHMENT_EXCLUSIVE_OUTCOME')
     success={'genesis':'EXACT_GENESIS','slot':'FINALIZED_SLOT_DECLARED','union':'UNION_RAW_SHAPE_VALID','clock':'BLOCK_TIME_DECLARED'}
     errors={'RESPONSE_INVALID','RPC_ERROR','RESPONSE_OVERSIZED'}|set(journal.FAILURE_CATEGORIES)|{
         'genesis':{'GENESIS_MISMATCH'},'slot':{'SLOT_INVALID'},'clock':{'CLOCK_TIME_INVALID'},
         'union':{'UNION_RESULT_INVALID','UNION_CONTEXT_INVALID','UNION_CARDINALITY_INVALID','UNION_PARENT_BOUND',
                  'UNION_REQUIRED_ACCOUNT_ABSENT','UNION_ACCOUNT_OR_RECORD_INVALID'}}[stage]
-    if transport: errors |= set(journal.TRANSPORT_FAILURE_CODES)
     need(event['reason']==success[stage] if event['state']=='DONE' else event['reason'] in errors,
          'INVENTORY_ATTACHMENT_REASON')
     if failure is not None:
         f=_json(failure);category=f.get('category')
-        if transport:
-            need(type(category) is str and category in journal.TRANSPORT_FAILURE_CODES,'INVENTORY_TRANSPORT_FAILURE_CODE')
-            expected={'kind':'common_bank_transport_failure_v2','stage':stage,'category':category,
-                      'method':intent['method'],'request_sha256':hashlib.sha256(request).hexdigest()}
-        else:
-            need(category in journal.FAILURE_CATEGORIES or category=='RESPONSE_OVERSIZED','INVENTORY_FAILURE_CATEGORY')
-            expected={'kind':f'common_bank_{stage}_redacted_failure_v1' if stage in ('union','clock') else 'common_bank_redacted_failure_v1',
-                      'category':category,'method':intent['method']}
-            if stage in ('union','clock'):expected['request_sha256']=hashlib.sha256(request).hexdigest()
-            else:expected['params']=intent['params']
-            if category=='RESPONSE_OVERSIZED':
-                need(_uint(f.get('observed_bytes')) and f['observed_bytes']>journal.MAX_RESPONSE_BYTES,'INVENTORY_FAILURE_SIZE')
-                expected['observed_bytes']=f['observed_bytes']
+        need(category in journal.FAILURE_CATEGORIES or category=='RESPONSE_OVERSIZED','INVENTORY_FAILURE_CATEGORY')
+        expected={'kind':f'common_bank_{stage}_redacted_failure_v1' if stage in ('union','clock') else 'common_bank_redacted_failure_v1',
+                  'category':category,'method':intent['method']}
+        if stage in ('union','clock'):expected['request_sha256']=hashlib.sha256(request).hexdigest()
+        else:expected['params']=intent['params']
+        if category=='RESPONSE_OVERSIZED':
+            need(_uint(f.get('observed_bytes')) and f['observed_bytes']>journal.MAX_RESPONSE_BYTES,'INVENTORY_FAILURE_SIZE')
+            expected['observed_bytes']=f['observed_bytes']
         need(f==expected and event['state']=='FAILED' and event['reason']==category,'INVENTORY_FAILURE_LOCAL_FIELDS')
     if stage in ('slot','union'):
         need((_uint(event['slot'],2**64 if stage=='slot' else 2**63) if event['state']=='DONE' else event['slot'] is None),
@@ -317,7 +306,7 @@ def _attachment_structure(event, intent, request, response, failure, stage, reco
              'INVENTORY_ATTACHMENT_CLOCK_FIELDS')
 
 
-def _journal_structure(tables, budgets, jd, *, allow_transport=False):
+def _journal_structure(tables, budgets, jd):
     runs = {}
     admissions={row[0]:row for row in tables['ownership_admissions']}
     for cap,budget,raw,plan,plan_hash,seed in tables.get('common_bank_runs',()):
@@ -356,9 +345,8 @@ def _journal_structure(tables, budgets, jd, *, allow_transport=False):
             stage=('genesis','slot','union','clock')[(ordinal-1)//2]
             kind=(('common_bank_pending_v1' if ordinal==1 else f'common_bank_{stage}_pending_v1')
                   if ordinal%2 else f'common_bank_{stage}_attachment_v1')
-            kinds=(kind, f'common_bank_{stage}_attachment_v2') if allow_transport and not ordinal%2 else (kind,)
             need(type(event) is dict and event.get('capture_id')==cap and event.get('budget_id')==budget
-                 and event.get('kind') in kinds and event.get('stage')==stage and type(event.get('ordinal')) is int
+                 and event.get('kind')==kind and event.get('stage')==stage and type(event.get('ordinal')) is int
                  and event['ordinal']==ordinal
                  and ordinals[cap]==ordinal-1
                  and event.get('descriptor_hash')==digest(d) and event.get('plan_hash')==plan_hash
@@ -397,8 +385,7 @@ def _journal_structure(tables, budgets, jd, *, allow_transport=False):
                      and event.get('response_sha256')==(hashlib.sha256(response).hexdigest() if response is not None else None)
                      and event.get('failure_hash')==(digest(_json(failure)) if failure is not None else None),
                      'INVENTORY_ATTACHMENT_HASH')
-                _attachment_structure(event,intents[cap],request,response,failure,stage,records[cap],d['planned_source'],
-                                      transport=event['kind'].endswith('_v2'))
+                _attachment_structure(event,intents[cap],request,response,failure,stage,records[cap],d['planned_source'])
                 records[cap][stage]=event
             predecessors[cap]=key
             ordinals[cap]=ordinal;states[cap]=event['state']
@@ -477,8 +464,7 @@ def _inspect(pins, connections, schemas):
         journal.ATTACHMENT_VERSION: journal.SCHEMA | journal.ATTACHMENT_SCHEMA,
         journal.SLOT_VERSION: journal.SCHEMA | journal.ATTACHMENT_SCHEMA | journal.SLOT_SCHEMA,
         journal.UNION_VERSION: journal.SCHEMA | journal.ATTACHMENT_SCHEMA | journal.SLOT_SCHEMA | journal.UNION_SCHEMA,
-        journal.CLOCK_VERSION: journal.SCHEMA | journal.ATTACHMENT_SCHEMA | journal.SLOT_SCHEMA | journal.UNION_SCHEMA | journal.CLOCK_SCHEMA,
-        journal.TRANSPORT_VERSION: journal.SCHEMA | journal.ATTACHMENT_SCHEMA | journal.SLOT_SCHEMA | journal.UNION_SCHEMA | journal.CLOCK_SCHEMA}
+        journal.CLOCK_VERSION: journal.SCHEMA | journal.ATTACHMENT_SCHEMA | journal.SLOT_SCHEMA | journal.UNION_SCHEMA | journal.CLOCK_SCHEMA}
     actual_common = any(x[1].startswith('common_bank_') for x in es)
     if actual_common:
         need(version in families and e.execute('PRAGMA application_id').fetchone()[0] == journal.APPLICATION_ID,
@@ -569,7 +555,7 @@ def _inspect(pins, connections, schemas):
             prepared=_json(row[3])
             if saved is None or dict(zip(('id','mint','created','status','result'),saved))!=prepared:
                 blockers.add('ORIGINAL_SCAN_SOURCE_MISMATCH_OR_MISSING')
-    states=_journal_structure(et,budgets,jd,allow_transport=version==journal.TRANSPORT_VERSION)
+    states=_journal_structure(et,budgets,jd)
     legacy_states=_legacy_structure(et,budgets,desc)
     if any(stage!=4 or state is not None for stage,state in legacy_states.values()):
         blockers.add('UNRESOLVED_LEGACY_CAPTURE')

@@ -10,7 +10,7 @@ import threading
 import struct
 import zlib
 
-from .common_bank_journal import (ATTACHMENT_SCHEMA, CLOCK_SCHEMA, CLOCK_VERSION,
+from .common_bank_journal import (ATTACHMENT_SCHEMA, CLOCK_SCHEMA, CLOCK_VERSION, TRANSPORT_VERSION,
     SCHEMA, SLOT_SCHEMA, UNION_SCHEMA, JournalBlocked, _Session, _identity, _need, _sha,
     _strict_json)
 from .common_bank_view import CommonBankError, _validate_account_semantics
@@ -23,7 +23,7 @@ MAX_REFERENCES = 128
 MAX_LOADS = 128
 MAX_SCHEMA_OBJECTS = 128
 MAX_BYTES = 32 * 1024 * 1024
-# Existing schemas are preserved. No migration or new journal profile exists.
+# Existing SQL is preserved; the explicit transport marker permits v1/v2 completions.
 TABLES = tuple(name for name,sql in (SCHEMA|ATTACHMENT_SCHEMA|SLOT_SCHEMA|UNION_SCHEMA|CLOCK_SCHEMA).items()
                if sql.startswith('CREATE TABLE'))
 ATTACHMENTS = {'genesis':'common_bank_attachments','slot':'common_bank_slot_attachments',
@@ -151,7 +151,7 @@ def replay_semantics(session,capture_id,*,observed_at):
                 session.journal.path.as_uri()+'?mode=ro',uri=True,timeout=0,isolation_level=None)) as c:
             c.execute('PRAGMA query_only=ON');c.execute('BEGIN')
             budget=_Budget();_preflight(session,c,budget);session._schema(c,False)
-            _need(c.execute('PRAGMA user_version').fetchone()[0]==CLOCK_VERSION,'COMMON_BANK_SEMANTIC_CLOCK_PROFILE_REQUIRED')
+            _need(c.execute('PRAGMA user_version').fetchone()[0] in (CLOCK_VERSION,TRANSPORT_VERSION),'COMMON_BANK_SEMANTIC_CLOCK_PROFILE_REQUIRED')
             selected=c.execute('SELECT budget_id FROM common_bank_runs WHERE capture_id=?',(capture_id,)).fetchone()
             _need(selected is not None,'COMMON_BANK_CAPTURE_MISSING')
             details={};view=ReplayView(_Store(session.journal.path,c,budget))
