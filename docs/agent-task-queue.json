@@ -275,7 +275,7 @@
         "worker": "02",
         "thread_id": "01a118fc-666c-70b6-9fa8-2c7520f0a0bb",
         "host_id": "durable",
-        "status": "RESERVED_PENDING_DISPATCH",
+        "status": "DISPATCHED",
         "base": "32417a5965b6d92aeefd05ffbb54a0a20dede891",
         "scope": "Atomic original clock request/completion bound to actual union T; no transport/publication"
       }
