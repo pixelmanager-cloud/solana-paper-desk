@@ -269,6 +269,15 @@
         "status": "REVIEWING",
         "pr": 87,
         "head": "6561aa7a429f8f3db94668ad0da94005ee2cfb08"
+      },
+      {
+        "id": "COMMON-BANK-SLOT-STAGE",
+        "worker": "02",
+        "thread_id": "01a118fc-666c-70b6-9fa8-2c7520f0a0bb",
+        "host_id": "durable",
+        "status": "DISPATCHED",
+        "base": "072f654478dd7a73563cfbc5b18092f1ed92829d",
+        "scope": "Disconnected finalized-slot atomic reservation/completion after genesis; no transport or publication"
       }
     ],
     "saved_launch_probe": {
