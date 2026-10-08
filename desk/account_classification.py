@@ -19,6 +19,11 @@ PURPOSES = frozenset({'holder_exclusion', 'funding_source', 'distribution_endpoi
 MAX_RECORD_DEPTH = 64
 MAX_RECORD_NODES = 4096
 MAX_RECORD_BYTES = 65536
+# Per-query references count before deduplication. The stricter 4 MiB retained
+# canonical-record/hash profile fits below the 32 MiB diagnostic replay ceiling;
+# 128 maximum-size records must not all be copied into one evaluation.
+MAX_EVIDENCE_REFERENCES = 128
+MAX_RETAINED_EVIDENCE_BYTES = 4 * 1024 * 1024
 
 
 def _bounded_record(record):
@@ -54,8 +59,10 @@ def _bounded_record(record):
                 raise ValueError('Classification integer exceeds inspection profile')
         elif value is not None and type(value) not in (bool, float):
             raise ValueError('Classification record requires JSON values')
-    if len(canonical(record).encode('utf-8')) > MAX_RECORD_BYTES:
+    size = len(canonical(record).encode('utf-8'))
+    if size > MAX_RECORD_BYTES:
         raise ValueError('Classification record byte budget exceeded')
+    return size
 
 
 
@@ -68,7 +75,7 @@ def _text(value):
 
 
 def _hash(value):
-    return (isinstance(value, str) and len(value) == 64
+    return (type(value) is str and len(value) == 64
             and all(c in '0123456789abcdef' for c in value))
 
 
@@ -107,9 +114,17 @@ def classify_account(account: str, program: str, *, mint: str, purpose: str,
     `program` is the observed chain account owner, not the token authority wallet.
     Scope is exact: no wildcard mints, program-wide labels or funding propagation.
     Every supplied candidate must validate; even a stale contradictory candidate
-    blocks resolution. Duplicate hashes are harmless. Empty evidence is unknown.
+    blocks resolution. Duplicate hashes count toward the reference ceiling but
+    are loaded/retained once. Empty evidence is unknown.
     Untrusted input/loader failures return unresolved; invalid query/policy raises.
-    Records must fit the bounded JSON depth/node/byte/integer profile above.
+    Candidates must be a plain list, with at most 128 supplied references; the
+    independently admitted immutable policy must be a plain frozenset with at
+    most 128 hashes for this query. Oversized policy/candidate collections are
+    unresolved without traversal. Invalid policy type or bounded policy hashes
+    still raise; resource rejection does not admit or select policy hashes.
+    Records must fit the bounded JSON depth/node/byte/integer profile above and
+    the aggregate 4 MiB canonical record plus hash budget. Overflow discards
+    every retained copy and rejects the entire evaluation, never a prefix.
     `exclusion_allowed` applies only to this query's scope and point in time. It
     is never token eligibility, history completeness or ownership approval.
     """
@@ -117,18 +132,30 @@ def classify_account(account: str, program: str, *, mint: str, purpose: str,
         address(key)
     if purpose not in PURPOSES or not _integer(now) or not _integer(slot):
         raise ValueError('Exact supported scope, time and slot required')
-    if not isinstance(trusted_hashes, frozenset) or not all(_hash(h) for h in trusted_hashes):
-        raise ValueError('Explicit immutable trusted evidence hash policy required')
     result = {'account': account, 'program': program, 'scope': {'mint': mint, 'purpose': purpose},
               'evaluated_at': now, 'evaluated_slot': slot, 'label': 'UNKNOWN',
               'classification_resolved': False, 'exclusion_allowed': False,
               'private_control_proven': False, 'ownership_approval': False,
               'evidence': [], 'reasons': []}
-    if not isinstance(evidence_hashes, list) or not evidence_hashes:
+    if type(trusted_hashes) is not frozenset:
+        raise ValueError('Explicit immutable trusted evidence hash policy required')
+    if len(trusted_hashes) > MAX_EVIDENCE_REFERENCES:
+        result['reasons'] = ['CLASSIFICATION_POLICY_REFERENCE_LIMIT']
+        return result
+    if not all(_hash(h) for h in trusted_hashes):
+        raise ValueError('Explicit immutable trusted evidence hash policy required')
+    if type(evidence_hashes) is not list:
+        result['reasons'] = ['CLASSIFICATION_EVIDENCE_LIST_MALFORMED']
+        return result
+    if len(evidence_hashes) > MAX_EVIDENCE_REFERENCES:
+        result['reasons'] = ['CLASSIFICATION_EVIDENCE_REFERENCE_LIMIT']
+        return result
+    if not evidence_hashes:
         result['reasons'] = ['CLASSIFICATION_EVIDENCE_MISSING']
         return result
     reasons = set()
     seen = set()
+    retained_bytes = 0
     for key in evidence_hashes:
         if not _hash(key):
             reasons.add('CLASSIFICATION_HASH_MALFORMED')
@@ -141,7 +168,11 @@ def classify_account(account: str, program: str, *, mint: str, purpose: str,
             continue
         try:
             record = load(key)
-            _bounded_record(record)
+            record_bytes = _bounded_record(record)
+            if retained_bytes + record_bytes + len(key) > MAX_RETAINED_EVIDENCE_BYTES:
+                result['evidence'] = []
+                result['reasons'] = sorted(reasons | {'CLASSIFICATION_RETAINED_EVIDENCE_LIMIT'})
+                return result
             if digest(record) != key:
                 reasons.add('CLASSIFICATION_HASH_MISMATCH')
                 continue
@@ -152,6 +183,7 @@ def classify_account(account: str, program: str, *, mint: str, purpose: str,
             reasons.add('CLASSIFICATION_EVIDENCE_UNREADABLE')
             continue
         result['evidence'].append({'hash': key, 'record': detached})
+        retained_bytes += record_bytes + len(key)
         if reason:
             reasons.add(reason)
     labels = {e['record'].get('label') for e in result['evidence']
