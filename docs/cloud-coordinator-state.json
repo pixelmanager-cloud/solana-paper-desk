@@ -1,6 +1,6 @@
 {
   "schema_version": 1,
-  "revision": 4,
+  "revision": 5,
   "repository": "pixelmanager-cloud/solana-paper-desk",
   "source_main_sha": "e298e15cd758932e81d2241130716632702f5bd0",
   "observed_date": "2026-10-08",
@@ -57,11 +57,11 @@
       "host_id": "durable",
       "assignment": "OWN-1 finalized snapshot integration",
       "expected_branch": "codex/cloud-wave1-01",
-      "branch_sha": "87f7bc7a2a01c89b33d870748a35f919cd0c4ff7",
+      "branch_sha": "0e16a91b994191ea95e98bf7803bdc1284a3c922",
       "pr": 18,
       "activity": "UNKNOWN_LAST_DISPATCH_ACTIVE",
       "claim": "RESERVED_UNRESOLVED",
-      "review_status": "FINDING_P2_FIX_REQUESTED",
+      "review_status": "FINDING_P2_DATABASE_ALIAS_LOCK_FIX_REQUESTED",
       "acceptance": "NOT_ACCEPTED",
       "followup_delivery": "BLOCKED",
       "requested_followup": "Return a pushed reviewable branch or PR, exact base/head SHAs, changed files, full test result, provenance, limitations and unresolved dependencies. Preserve assigned scope; do not integrate or claim live acceptance."
@@ -368,6 +368,12 @@
         5450226914
       ],
       "result": "Reviews posted; heads unchanged at submission; full fixture suites pass; PR18 publication race reproduced; no acceptance/merge/dispatch."
+    },
+    {
+      "kind": "PR18_REVISION_REVIEW",
+      "head_sha": "0e16a91b994191ea95e98bf7803bdc1284a3c922",
+      "review_id": 5450263660,
+      "result": "Same-path lock and real synthetic replay verified; alias lock race remains reproduced. No merge or acceptance."
     }
   ],
   "artifact_pr": {
@@ -507,6 +513,49 @@
         }
       ],
       "proof_artifact": "docs/reviews/cloud-independent-20261008-wave1.md",
+      "accepted": false,
+      "live_acceptance": false
+    },
+    {
+      "policy_version": "cloud-independent-review-v1",
+      "pr": 18,
+      "worker_agent": "01",
+      "head_sha": "0e16a91b994191ea95e98bf7803bdc1284a3c922",
+      "base_sha": "e298e15cd758932e81d2241130716632702f5bd0",
+      "review_id": 5450263660,
+      "review_action": "COMMENT",
+      "status": "FINDING_P2_DATABASE_ALIAS_LOCK_FIX_REQUESTED",
+      "supersedes_head": "87f7bc7a2a01c89b33d870748a35f919cd0c4ff7",
+      "resolved": [
+        "Same-path whole-invocation serialization",
+        "Unmocked positive/missing-query/new-frontier/balance-mismatch synthetic replay"
+      ],
+      "findings": [
+        "Real path and symlink to same SQLite DB derive different sidecar lock names; stale head overwrite still reproduced. Normalize database paths consistently across invocation/request/bank locks and test aliases."
+      ],
+      "tests": {
+        "python": "3.12.14",
+        "targeted_passed": 16,
+        "full_suite_passed": 529,
+        "command": "python -m unittest discover -q",
+        "independent_process_death": "PASS: SIGTERM releases lock; bank/cutoff/budget retained; recovered reconciled replay with zero RPC",
+        "independent_symlink_alias": "REPRODUCED remaining stale publication: published budget 11->8 and clock ref lost; durable budget/bank unchanged",
+        "exact_changed_blobs_verified": true,
+        "combined_integration_suite": "NOT_RUN_PR21_NOT_IN_REVIEW_SCOPE"
+      },
+      "ci": [
+        {
+          "id": 37711606250,
+          "name": "Tests",
+          "status": "completed",
+          "conclusion": "success",
+          "run_number": 42,
+          "jobs_url": "https://api.github.com/repos/pixelmanager-cloud/solana-paper-desk/actions/runs/37711606250/jobs",
+          "logs_url": "https://api.github.com/repos/pixelmanager-cloud/solana-paper-desk/actions/runs/37711606250/logs",
+          "workflow_id": 377958194
+        }
+      ],
+      "proof_artifact": "docs/reviews/cloud-pr18-0e16a91.md",
       "accepted": false,
       "live_acceptance": false
     }
