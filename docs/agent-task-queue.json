@@ -316,6 +316,14 @@
         "pr": 69,
         "head": "5d53e384f2aa6e35bdb6054e1362beb74d42f850",
         "base": "e13d17b"
+      },
+      {
+        "worker": "worker10",
+        "thread_id": "01a118fd-56d5-70b8-ad31-dba13e982082",
+        "host_id": "durable",
+        "task": "Separate full valuation and exact partial-action evidence in paper engine; keep live gates disabled",
+        "status": "IMPLEMENTING",
+        "base": "c9b9356"
       }
     ],
     "saved_launch_probe": {
@@ -700,8 +708,8 @@
   "live_demo_path_review": {
     "pr": 59,
     "head": "c120beebbaa2aa028ad777e995eac03a566881bf",
-    "status": "PASS_REPORT_ONLY_PENDING_INTEGRATION",
-    "integrated": false
+    "status": "PASS_REPORT_ONLY_INTEGRATED",
+    "integrated": true
   },
   "parallel_pending_reviews": {
     "60": {
@@ -742,8 +750,9 @@
     "63": {
       "head": "2efe5a0422380350a51e62bd3a08e4a7759ae1e5",
       "reviewer": "worker05",
-      "status": "PASS_PROPOSAL_ONLY_PENDING_INTEGRATION",
-      "integrated": false
+      "status": "PASS_PROPOSAL_ONLY_INTEGRATED",
+      "integrated": true,
+      "positive_contract_approved": false
     },
     "65": {
       "head": "30f70c4665b3c19a16636dcbdc378042d67c9db2",
@@ -778,7 +787,13 @@
       "head": "5d53e384f2aa6e35bdb6054e1362beb74d42f850",
       "reviewer": "cloud_reviewer",
       "status": "PASS_PENDING_COORDINATOR_COMBINED_VALIDATION",
-      "integrated": false
+      "integrated": false,
+      "mac_combined": {
+        "discovered": 1419,
+        "passed": 1320,
+        "skips": 99,
+        "seconds": 27.16
+      }
     },
     "70": {
       "head": "77248281830493666ccd4ac4ed2a14e4636f7b34",
