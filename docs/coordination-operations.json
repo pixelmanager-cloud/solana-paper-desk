@@ -1,12 +1,43 @@
 {
   "integration_owner": "desktop:01a11793-598c-73d0-a711-089b8b46638b",
-  "desktop_automation": {"id":"finish-solana-paper-trading-desk","status":"ACTIVE","interval_minutes":10,"requires":"Mac awake and Codex app running"},
-  "cloud_reviewer": {"thread_id":"01a11901-8b68-70f9-8672-5a731a149091","host":"durable","automation_id":"6ac6eaa238008191b06af7534c3b0cb9","enabled":true,"interval_minutes":60,"first_execution_verified":false,"scope":"GitHub-only independent review; no merge or dispatch"},
-  "cloud_limitations": ["No worker-chat read/follow-up tool", "No successor-cloud-worker creation tool", "No supported 10-minute hosted schedule", "Immediate hosted execution probe returned 404"],
-  "worker_handoff": "All ten workers were instructed to publish unique branches and draft PRs; publication is pending verification.",
+  "desktop_automation": {
+    "id": "finish-solana-paper-trading-desk",
+    "status": "ACTIVE",
+    "interval_minutes": 10,
+    "requires": "Mac awake and Codex app running"
+  },
+  "cloud_reviewer": {
+    "thread_id": "01a11901-8b68-70f9-8672-5a731a149091",
+    "host": "durable",
+    "automation_id": "6ac6eaa238008191b06af7534c3b0cb9",
+    "enabled": true,
+    "interval_minutes": 60,
+    "first_execution_verified": false,
+    "scope": "GitHub-only independent review; no merge or dispatch"
+  },
+  "cloud_limitations": [
+    "No worker-chat read/follow-up tool",
+    "No successor-cloud-worker creation tool",
+    "No supported 10-minute hosted schedule",
+    "Immediate hosted execution probe returned 404"
+  ],
+  "worker_handoff": "All ten initial workers published draft PRs #11\u201320. Follow-ups #22 and #23 are combined only on the integration branch; review pending.",
   "review_protocol_pr": "https://github.com/pixelmanager-cloud/solana-paper-desk/pull/10",
-  "integration_gates": ["Exact diff review", "Independent review for evidence/entry security", "Full combined tests and successful CI", "Dependency acceptance", "Live criteria verified separately by desktop coordinator"],
-  "limits": {"max_active_workers":10,"additional_cloud_reviewer":1},
+  "integration_gates": [
+    "Exact diff review",
+    "Independent review for evidence/entry security",
+    "Full combined tests and successful CI",
+    "Dependency acceptance",
+    "Live criteria verified separately by desktop coordinator"
+  ],
+  "limits": {
+    "max_active_workers": 10,
+    "additional_cloud_reviewer": 1
+  },
   "notifications": "Quiet unless meaningful milestone, important failure, genuine input blocker or readiness",
-  "stop_conditions": ["User stop", "Verified paper readiness", "Repeated infrastructure blocker preventing useful work"]
+  "stop_conditions": [
+    "User stop",
+    "Verified paper readiness",
+    "Repeated infrastructure blocker preventing useful work"
+  ]
 }
