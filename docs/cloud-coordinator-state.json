@@ -1,6 +1,6 @@
 {
   "schema_version": 1,
-  "revision": 10,
+  "revision": 11,
   "repository": "pixelmanager-cloud/solana-paper-desk",
   "source_main_sha": "e298e15cd758932e81d2241130716632702f5bd0",
   "observed_date": "2026-10-08",
@@ -410,6 +410,15 @@
       "head_sha": "64765af62379fe4fbb185271c1d54405a527a0af",
       "review_id": 5450508179,
       "result": "Scoped foundation review found no blocker; 737 suite/53 focused and independent crash/rebinding/reservation/ceiling checks plus CI pass; successor lock/fence/publication dependencies explicit. No merge/dispatch/providers."
+    },
+    {
+      "kind": "CLOUD_REVIEW_RUN_START",
+      "run_id": "cloud-review-2026-10-08T02:02:08Z",
+      "cloud_environment_id": "ccarenv_b64_Y2NhcmVudl9kNmVjYmYwM2FiZDg4MTkxYWI1YzM1ZjNiZWZjYTg1Mg",
+      "observations_current": true,
+      "provider": "cloud",
+      "hosted_last_run_time": "2026-10-08T02:01:01.779530+00:00",
+      "result": "Hosted automation last-run observed; current managed cloud executor verified. Same-chat binding not independently proven. Review-only lease via current-blob CAS."
     }
   ],
   "artifact_pr": {
@@ -832,5 +841,12 @@
     "last_failure": "Immediate automation run action unavailable (404); creation and peek succeeded.",
     "retry_policy": "No busy polling; future supported review runs reconcile and pause after three consecutive execution/access failures.",
     "last_success": "Immediate independent GitHub review and fixture-only tests completed in current managed cloud executor; scheduled execution remains unverified."
+  },
+  "review_lease": {
+    "holder": "cloud-review-2026-10-08T02:02:08Z",
+    "fencing_token": 1,
+    "expires_at": "2026-10-08T02:32:08.000Z",
+    "status": "HELD",
+    "scope": "GITHUB_REVIEW_ONLY_NO_DISPATCH_MERGE"
   }
 }
