@@ -274,28 +274,16 @@
         "turn_id": "01a11c37-7fa2-77ad-acb5-1cfc502f2cce"
       },
       {
-        "id": "PR97-SCHEMA-COMPLETION-REPAIR",
-        "worker": "02",
-        "thread_id": "01a118fc-666c-70b6-9fa8-2c7520f0a0bb",
-        "host_id": "durable",
-        "status": "IN_PROGRESS",
-        "pr": 97,
-        "head": "524dfbc42debd74c29382ce3d1754d5f0a691655",
-        "scope": "Complete bounded typed schema preflight including base tables/all objects; verify exact attachment persisted after write; independent rereview required",
-        "turn_id": "01a11c39-4e83-72e9-9a00-a44a16617836",
-        "wait_cursor": "a2dcfb97-463d-4188-9da3-48a81e644d23:66"
-      },
-      {
-        "id": "PR96-HTTP-FRAMING-REPAIR",
-        "worker": "01",
-        "thread_id": "01a118fc-39bc-722c-b442-8bf5a749e0bb",
+        "id": "PR96-FINAL-INDEPENDENT-REVIEW",
+        "worker": "06",
+        "thread_id": "01a118fc-f867-7233-8eec-c20659e70095",
         "host_id": "durable",
         "status": "IN_PROGRESS",
         "pr": 96,
-        "head": "33ff34b15930989bc85337372c59f070eb0651f1",
-        "scope": "Reject transfer coding before body read; real in-memory HTTP parser regression fixtures; no runtime wiring",
-        "turn_id": "01a11c3a-c894-70cb-a8df-e967468a1b95",
-        "wait_cursor": "5e651fc7-2996-4765-974d-5c852257a005:68"
+        "head": "cb2e795e472bee322ece86659ca30b58364d03e3",
+        "base": "1a9f69595bf4c8c8814654a093fbba1bde93d5ad",
+        "wait_cursor": "8f3328cf-bef6-441d-83f8-2d1f46b3b0df:65",
+        "turn_id": "01a11c45-08ec-7189-8553-0b1fb969545f"
       }
     ],
     "saved_launch_probe": {
@@ -923,17 +911,17 @@
       "status": "INDEPENDENT_AND_DESKTOP_REVIEW",
       "transport": {
         "pr": 96,
-        "head": "33ff34b15930989bc85337372c59f070eb0651f1",
+        "head": "cb2e795e472bee322ece86659ca30b58364d03e3",
         "author": "01",
-        "candidate_tree": "8b9c52448e9ee9a1b5d6f97dc9090abafa862122",
-        "ci": "both SUCCESS",
+        "candidate_tree": "3dfe803580f2828ef27af3f20cf7feeb89c88cdb",
+        "ci": "one SUCCESS; one pending",
         "desktop_tests": {
-          "total": 1906,
+          "total": 1910,
           "skipped": 373,
           "failures": 0,
-          "seconds": 34.731
+          "seconds": 34.527
         },
-        "status": "BLOCKED_HTTP_TRANSFER_FRAMING",
+        "status": "REPAIRED_INDEPENDENT_REVIEW_PENDING",
         "review": "https://github.com/pixelmanager-cloud/solana-paper-desk/pull/96#issuecomment-6063807197",
         "linux_tests": {
           "total": 1906,
@@ -944,18 +932,18 @@
       },
       "journal": {
         "pr": 97,
-        "head": "524dfbc42debd74c29382ce3d1754d5f0a691655",
+        "head": "c11bfad6f1a2debe323238ef746967310ba02349",
         "author": "02",
-        "candidate_tree": "a1ee3cf9c55e1aab72925e4dea3eb100c763ba55",
-        "ci": "both SUCCESS; does not resolve desktop failures or schema concerns",
+        "candidate_tree": "4ad86bfbacedc78447a1e8700721a8f8b6c92316",
+        "ci": "one SUCCESS; one pending",
         "desktop_tests": {
-          "total": 1904,
-          "skipped": 373,
+          "total": 1910,
+          "seconds": 35.113,
           "failures": 0,
-          "seconds": 34.534
+          "skipped": 373
         },
         "desktop_probe": "Unknown hidden_ignore BEFORE INSERT trigger using RAISE(IGNORE) accepted after reservation: attach_response returns DONE but inspect PENDING_TERMINAL. No durable attachment. Eligibility remains false.",
-        "status": "BLOCKED_SCHEMA_AND_FALSE_COMPLETION",
+        "status": "REPAIRED_FINAL_INDEPENDENT_REVIEW_BLOCKED",
         "repair_scope": "Complete bounded typed schema preflight including base tables/all objects; verify exact attachment persisted after write; independent rereview required",
         "independent_review": {
           "url": "https://github.com/pixelmanager-cloud/solana-paper-desk/pull/97#pullrequestreview-5459418438",
@@ -974,6 +962,12 @@
           "status": "PLATFORM_CYBERSECURITY_FILTER",
           "consecutive_observed": 1,
           "action": "No retry or alternate-route circumvention. Final exact-head independent review remains required."
+        },
+        "author_linux_tests": {
+          "total": 1910,
+          "skipped": 0,
+          "failures": 0,
+          "seconds": 196.252
         }
       },
       "desktop_concerns": [
