@@ -1,6 +1,6 @@
 {
   "schema_version": 1,
-  "revision": 12,
+  "revision": 13,
   "repository": "pixelmanager-cloud/solana-paper-desk",
   "source_main_sha": "e298e15cd758932e81d2241130716632702f5bd0",
   "observed_date": "2026-10-08",
@@ -445,6 +445,14 @@
         5450574412
       ],
       "result": "PR31 new P2 generation corruption reproduced; PR33 scoped foundation no blocker; heads/history rechecked, fixture suites/CI pass; no merge/dispatch/acceptance."
+    },
+    {
+      "kind": "EXCLUSIVE_REVIEW_COORDINATION_CORRECTION",
+      "source_thread_id": "01a11793-598c-73d0-a711-089b8b46638b",
+      "exclusive_pr": 33,
+      "head_sha": "5095a17557c7fb916d74e508a3e157b49abcd784",
+      "excluded_pr": 31,
+      "result": "PR33 already reviewed and posted. PR31 review overlapped worker02 ownership; retain actual prior findings/results as history, stop further PR31 review. Hosted run evidence remains separate schedule.execution_evidence; no merge/dispatch."
     }
   ],
   "artifact_pr": {
@@ -1252,5 +1260,21 @@
       "state": "open",
       "merged": false
     }
-  ]
+  ],
+  "review_assignments": {
+    "cloud_coordinator": {
+      "exclusive_pr": 33,
+      "head_sha": "5095a17557c7fb916d74e508a3e157b49abcd784",
+      "status": "REVIEW_COMPLETE_COMMENT_POSTED",
+      "review_id": 5450574412
+    },
+    "pr31": {
+      "owner": "worker02",
+      "status": "EXCLUDED_FROM_CLOUD_REVIEW",
+      "repair_owner": "worker08",
+      "source_thread_id": "01a11793-598c-73d0-a711-089b8b46638b",
+      "reason": "Explicit coordination correction: worker02 owns PR31 re-review; cloud exclusively assigned PR33."
+    },
+    "priority_rule": "Explicit named/exclusive review assignments preempt generic hourly discovery. Do not review another worker's reserved PR."
+  }
 }
