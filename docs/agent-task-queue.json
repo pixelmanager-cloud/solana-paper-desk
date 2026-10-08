@@ -270,7 +270,7 @@
         "pr": 91,
         "head": "ce5928225a40a4d32ff5c53781631c0fa010a414",
         "base": "94eb463c58d08cfe6c5ac470ae41b4b6a3ef077e",
-        "wait_cursor": "8f3328cf-bef6-441d-83f8-2d1f46b3b0df:54",
+        "wait_cursor": "8f3328cf-bef6-441d-83f8-2d1f46b3b0df:55",
         "final_base": "a2afb0075e2d1d33672027b71b9ff066ce6aa76c"
       },
       {
@@ -278,9 +278,10 @@
         "worker": "02",
         "thread_id": "01a118fc-666c-70b6-9fa8-2c7520f0a0bb",
         "host_id": "durable",
-        "status": "DISPATCHED",
+        "status": "IN_PROGRESS",
         "base": "a2afb0075e2d1d33672027b71b9ff066ce6aa76c",
-        "scope": "Bounded diagnostic semantic replay of original completed journal bytes against accepted common bank view; no publication/transport"
+        "scope": "Bounded diagnostic semantic replay of original completed journal bytes against accepted common bank view; no publication/transport",
+        "wait_cursor": "a2dcfb97-463d-4188-9da3-48a81e644d23:56"
       }
     ],
     "saved_launch_probe": {
@@ -796,18 +797,27 @@
       "pr": 91,
       "head": "ce5928225a40a4d32ff5c53781631c0fa010a414",
       "integrated": false,
-      "review": "PENDING worker06",
+      "review": "Initial independent PASS; final combination Linux validation pending worker06",
       "author_linux_tests": 1777,
       "author_skips": 0,
-      "combined_base": "94eb463c58d08cfe6c5ac470ae41b4b6a3ef077e",
-      "mac_discovered": 1797,
+      "combined_base": "a2afb0075e2d1d33672027b71b9ff066ce6aa76c",
+      "mac_discovered": 1817,
       "mac_passed": 1506,
-      "mac_skipped": 291,
-      "mac_seconds": 33.889,
-      "combined_tree": "83dc34013c41f09462e603abb426d324157d2c98",
+      "mac_skipped": 311,
+      "mac_seconds": 33.882,
+      "combined_tree": "5bf99a13d438d13ba6368a2c5037c7b9f50ff00a",
       "coordinator_diff_review": "Full reader implementation reviewed; independent Linux review pending",
       "ci": "Both unchanged exact-head checks SUCCESS",
-      "review_infrastructure": "Worker06 reports Git proxy unreachable; continuing authorized GitHub connector source inspection; no PASS inferred"
+      "review_infrastructure": "RESOLVED: authorized network access enabled Git fetch and loopback test rerun; no persistent blocker",
+      "initial_independent_review": {
+        "result": "PASS",
+        "linux_tests": 1797,
+        "skips": 0,
+        "seconds": 212.569,
+        "probes": 22,
+        "review_url": "https://github.com/pixelmanager-cloud/solana-paper-desk/pull/91#issuecomment-6061749318",
+        "tree": "83dc34013c41f09462e603abb426d324157d2c98"
+      }
     },
     "pending_clock_stage": {
       "pr": 92,
