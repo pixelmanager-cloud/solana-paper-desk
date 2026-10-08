@@ -1,4 +1,4 @@
-"""Agent 05 preliminary adversarial review; public captures and local SQLite only."""
+"""Adversarial review; synthetic control-normalized captures and local SQLite only."""
 import base64
 import copy
 import json
@@ -26,6 +26,12 @@ class CloudEntryGateTests(unittest.TestCase):
         fixtures = Path(__file__).resolve().parents[1] / 'fixtures'
         fixture = json.loads((fixtures / 'mainnet-holder-snapshot.json').read_text())
         e, r = fixture['enumeration'], fixture['rpc']['response']
+        # Synthetic positive control: original public bytes contain external close
+        # authorities now correctly rejected by PR23. Preserve the file unchanged.
+        for value in r['value'][1:]:
+            raw = bytearray(base64.b64decode(value['data'][0]))
+            raw[129:165] = bytes(36)
+            value['data'][0] = base64.b64encode(raw).decode()
         self.holder = {'method': 'getMultipleAccounts', 'params': [[e['mint'], *[x['address'] for x in e['accounts']]],
                        {'encoding': 'base64', 'commitment': 'confirmed', 'minContextSlot': e['indexed_slot_max']}], 'result': r}
         self.mint = {'method': 'getAccountInfo', 'params': [e['mint'], {'encoding': 'base64', 'commitment': 'confirmed'}],
@@ -150,7 +156,7 @@ class CloudEntryGateTests(unittest.TestCase):
         self.assertEqual(stale['entry_evidence']['gates'], refreshed['entry_evidence']['gates'])
         self.blocked(refreshed)
 
-    def test_old_public_snapshot_is_verified_component_without_age_binding(self):
+    def test_old_synthetic_snapshot_is_verified_component_without_age_binding(self):
         r = evaluate(self.signed(), self.store)
         self.assertEqual(r['gates']['holder_snapshot']['status'], 'VERIFIED_COMPONENT')
         self.assertEqual(r['gates']['token_controls']['status'], 'VERIFIED_COMPONENT')

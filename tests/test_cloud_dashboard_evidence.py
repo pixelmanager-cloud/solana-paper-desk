@@ -1,4 +1,5 @@
 """GET contract fixtures: temporary SQLite only; never submit or run scans."""
+import base64
 import http.client
 import json
 import sqlite3
@@ -162,6 +163,12 @@ class CloudDashboardEvidenceTests(unittest.TestCase):
     def test_hash_bound_fixture_component_keeps_gross_supply_scope(self):
         capture = json.loads((Path(__file__).resolve().parents[1] / 'fixtures/mainnet-holder-snapshot.json').read_text())
         enumeration, response = capture['enumeration'], capture['rpc']['response']
+        # Synthetic positive control isolates gross-supply projection from the
+        # external close authorities in the unchanged public source capture.
+        for value in response['value'][1:]:
+            raw = bytearray(base64.b64decode(value['data'][0]))
+            raw[129:165] = bytes(36)
+            value['data'][0] = base64.b64encode(raw).decode()
         store = EvidenceStore(self.root / 'evidence.sqlite')
         holder_hash = store.save({'method': 'getMultipleAccounts', 'params':
             [[enumeration['mint'], *[r['address'] for r in enumeration['accounts']]],
