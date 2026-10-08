@@ -199,7 +199,7 @@
       "worker05": "PR79 integrated; available",
       "worker06": "PR75 exact combined review PASS; available",
       "worker10": "PR75 integrated; available",
-      "worker02": "PR77 repaired exact combined independent PASS; available",
+      "worker02": "Verify and fix aggregate classification resource bound",
       "worker03": "PR70 integrated; available",
       "worker04": "PR68 integrated; available",
       "worker07": "PR77 repair published; available",
@@ -260,7 +260,16 @@
       "status": "SUPERSEDED_BY_PUBLISHED_TESTED_COMMIT"
     },
     "published_ci": "Deployed d758bc529a7da1f74509117288740911f2ad6845: both CI runs successful",
-    "active_claims": [],
+    "active_claims": [
+      {
+        "worker": "worker02",
+        "thread_id": "01a118fc-666c-70b6-9fa8-2c7520f0a0bb",
+        "host_id": "durable",
+        "status": "INVESTIGATING_AND_FIXING",
+        "base": "e130c8c",
+        "task": "Bound aggregate classification evidence traversal/retention without accepting prefixes"
+      }
+    ],
     "saved_launch_probe": {
       "source": "VPS saved raw launch events, read-only; no provider calls",
       "sample_size": 150,
