@@ -660,7 +660,12 @@
       "integrated": false,
       "author_linux_tests": 1602,
       "author_skips": 0,
-      "scope": "Initial genesis reservation/intent only; successful transitions and response/publication remain unimplemented"
+      "scope": "Initial genesis reservation/intent only; successful transitions and response/publication remain unimplemented",
+      "mac_discovered": 1627,
+      "mac_passed": 1442,
+      "mac_skipped": 185,
+      "mac_seconds": 32.82,
+      "combined_tree": "848f772fe527acd240c79379e0b23ebe39dea292"
     }
   },
   "native_reconciliation_review": {
