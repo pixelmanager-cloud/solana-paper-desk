@@ -196,10 +196,10 @@
     "blocker": "Live legacy evidence,protected pool receipt capture,lifecycle semantic approval and holder exposure integration unfinished",
     "followups": {
       "worker02": "PR40 review interrupted by automated cybersecurity-risk flag; no final acceptance",
-      "worker06": "PR54 review passed; publishing evidence",
-      "cloud_reviewer": "PR53 review passed; available",
+      "worker06": "PR54 review published; available",
+      "cloud_reviewer": "PR55 source/schema provenance review",
       "worker10": "PR45 independent review complete;available",
-      "worker03": "Bounded official TradeEvent schema research",
+      "worker03": "PR55 published; available",
       "worker04": "PR47 accepted; available",
       "worker05": "PR52 WAL repair published; available",
       "worker09": "PR35 reviewed and integrated; available",
@@ -263,20 +263,21 @@
     "published_ci": "886fc96d404b9d3ffd99c0045f7231d563a5d946 successful",
     "active_claims": [
       {
-        "worker": "worker03",
-        "thread_id": "01a118fc-9478-778a-b77a-8f8f6ec7e0ad",
-        "host_id": "durable",
-        "task": "Primary TradeEvent trailing-byte schema provenance",
-        "status": "RESEARCHING",
-        "base": "1e8cd72"
-      },
-      {
         "worker": "worker07",
         "thread_id": "01a118fd-0f1c-749c-b85b-5e730937d0a8",
         "host_id": "durable",
         "task": "Disconnected native lamport reconciliation",
         "status": "IMPLEMENTING",
         "base": "7568e4622d19b6eabe50b94b0b72b3ca53334017"
+      },
+      {
+        "worker": "cloud_reviewer",
+        "thread_id": "01a11901-8b68-70f9-8672-5a731a149091",
+        "host_id": "durable",
+        "task": "Independent official TradeEvent field provenance PR55 review",
+        "status": "REVIEWING",
+        "pr": 55,
+        "head": "2732693c10aa948b66aa83c231bcede54da6f112"
       }
     ],
     "saved_launch_probe": {
@@ -576,12 +577,23 @@
     "pending_raw_support": {
       "pr": 54,
       "head": "2895fd6d42ab7dc1fcade284877b68fdf6e5efd7",
-      "review": "PASS;worker06 durable review, GitHub publication requested",
+      "review": "PASS; published GitHub independent review",
       "integrated": true,
       "mac_discovered": 1289,
       "mac_passed": 1197,
       "mac_skipped": 92,
       "reviewed_tree": "449258e108938596b4f1b4b5900cd11e19100d6d"
+    },
+    "pending_trade_event_provenance": {
+      "pr": 55,
+      "head": "2732693c10aa948b66aa83c231bcede54da6f112",
+      "review": "IN_PROGRESS",
+      "integrated": false,
+      "mac_discovered": 1296,
+      "mac_passed": 1204,
+      "mac_skipped": 92,
+      "mac_seconds": 25.342,
+      "ci": "PASS at exact head 2732693c10aa948b66aa83c231bcede54da6f112"
     }
   }
 }
