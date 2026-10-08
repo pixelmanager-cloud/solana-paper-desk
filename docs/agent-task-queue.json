@@ -203,7 +203,7 @@
       "worker04": "PR47 published; under independent review",
       "worker05": "PR46 published; under independent review",
       "worker09": "PR35 reviewed and integrated; available",
-      "worker01": "PR47 scopedreview passed;available",
+      "worker01": "Implement raw transaction diagnostic capture; no gate widening or new budget",
       "worker07": "Implement disconnected structural lifecycle report; PR48 still pending; no runtime approval",
       "worker08": "PR31 reviewed and integrated; available"
     },
@@ -265,6 +265,14 @@
         "base_commit": "56e7aaf2c252cd6093a786e07072527ee4617d82",
         "depends_on_pr": 48,
         "dependency_head": "3ffe18674a2162257e5fd641f1fafb92e5ef40c4"
+      },
+      {
+        "worker": "worker01",
+        "thread_id": "01a118fc-39bc-722c-b442-8bf5a749e0bb",
+        "host_id": "durable",
+        "task": "Bounded raw transaction diagnostic capture on existing admitted investigation budget",
+        "status": "DISPATCHED",
+        "base_commit": "076c9ad87e019bd458a444b59973186565aea5fd"
       }
     ],
     "saved_launch_probe": {
