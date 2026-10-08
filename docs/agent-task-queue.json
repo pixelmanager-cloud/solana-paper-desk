@@ -281,16 +281,6 @@
         "base": "13853bf"
       },
       {
-        "worker": "worker08",
-        "thread_id": "01a118fd-2563-7126-90d7-bd07693de0b2",
-        "pr": 65,
-        "head": "209826064b770b67b9c528c763b7d0e0ba55f10d",
-        "host_id": "durable",
-        "task": "PR65 partial restore identity repair",
-        "status": "FIXING",
-        "base": "13853bf"
-      },
-      {
         "worker": "worker06",
         "thread_id": "01a118fc-f867-7233-8eec-c20659e70095",
         "host_id": "durable",
@@ -305,6 +295,16 @@
         "task": "Independent combined PR60+70 classifier repair review",
         "pr": 70,
         "head": "77248281830493666ccd4ac4ed2a14e4636f7b34",
+        "status": "REVIEWING",
+        "base": "f5eb854"
+      },
+      {
+        "worker": "worker02",
+        "thread_id": "01a118fc-666c-70b6-9fa8-2c7520f0a0bb",
+        "host_id": "durable",
+        "task": "PR65 repaired partial restore independent re-review",
+        "pr": 65,
+        "head": "052f4a47cc0740622a9d68406a898316e802c3c5",
         "status": "REVIEWING",
         "base": "f5eb854"
       }
@@ -732,9 +732,9 @@
       "integrated": false
     },
     "65": {
-      "head": "209826064b770b67b9c528c763b7d0e0ba55f10d",
+      "head": "052f4a47cc0740622a9d68406a898316e802c3c5",
       "reviewer": "worker02",
-      "status": "CHANGES_REQUESTED",
+      "status": "RE_REVIEW_IN_PROGRESS",
       "integrated": false,
       "finding": "Partial restore missing events can bypass incomplete checkpoint/config guards",
       "repair_worker": "worker08"
