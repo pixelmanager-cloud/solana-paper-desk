@@ -1,6 +1,6 @@
 {
   "schema_version": 1,
-  "revision": 5,
+  "revision": 6,
   "repository": "pixelmanager-cloud/solana-paper-desk",
   "source_main_sha": "e298e15cd758932e81d2241130716632702f5bd0",
   "observed_date": "2026-10-08",
@@ -374,6 +374,18 @@
       "head_sha": "0e16a91b994191ea95e98bf7803bdc1284a3c922",
       "review_id": 5450263660,
       "result": "Same-path lock and real synthetic replay verified; alias lock race remains reproduced. No merge or acceptance."
+    },
+    {
+      "kind": "PR22_PR23_REVIEWS",
+      "prs": [
+        22,
+        23
+      ],
+      "review_ids": [
+        5450300745,
+        5450301585
+      ],
+      "result": "Scoped reviews posted with positive-authentication gaps explicit; exact-head CI success; no merge/acceptance."
     }
   ],
   "artifact_pr": {
@@ -556,6 +568,76 @@
         }
       ],
       "proof_artifact": "docs/reviews/cloud-pr18-0e16a91.md",
+      "accepted": false,
+      "live_acceptance": false
+    },
+    {
+      "policy_version": "cloud-independent-review-v1",
+      "pr": 22,
+      "head_sha": "c50b7aa5e690fb2a3517c7f9afd7a75f3908384b",
+      "base_sha": "0a2cea9a1e255915f49831a3c7d467e4afb77c05",
+      "review_id": 5450300745,
+      "review_action": "COMMENT",
+      "status": "SCOPED_REVIEW_NO_BLOCKING_DEFECT_FOUND",
+      "limitations": [
+        "Reject-only scaffold; authenticated positive source admission and interval continuity absent.",
+        "One exact-head suite skip; optional core test separately run against exact PR12 blob."
+      ],
+      "tests": {
+        "full_suite_run": 535,
+        "full_suite_passed": 534,
+        "skipped": 1,
+        "composed_adapter_tests_passed": 10,
+        "composed_core_sha": "0b4fbdb108cb00ac2927071812ed725c6469f1ea",
+        "independent_mutation_variants": 19,
+        "exact_blobs_matched": true
+      },
+      "ci": [
+        {
+          "id": 37711837319,
+          "name": "Tests",
+          "status": "completed",
+          "conclusion": "success",
+          "run_number": 48,
+          "jobs_url": "https://api.github.com/repos/pixelmanager-cloud/solana-paper-desk/actions/runs/37711837319/jobs",
+          "logs_url": "https://api.github.com/repos/pixelmanager-cloud/solana-paper-desk/actions/runs/37711837319/logs",
+          "workflow_id": 377958194
+        }
+      ],
+      "proof_artifact": "docs/reviews/cloud-pr22-pr23-independent.md",
+      "accepted": false,
+      "live_acceptance": false
+    },
+    {
+      "policy_version": "cloud-independent-review-v1",
+      "pr": 23,
+      "head_sha": "11bf7d168200f7945a36493f763378b4a8a5ca39",
+      "base_sha": "e3a7e33707581eb12f707a1422c76da28f68d6fb",
+      "review_id": 5450301585,
+      "review_action": "COMMENT",
+      "status": "SCOPED_REVIEW_NO_BLOCKING_DEFECT_FOUND",
+      "limitations": [
+        "Legacy authority-policy correction only; source authentication and ownership completeness unverified."
+      ],
+      "tests": {
+        "full_suite_passed": 531,
+        "skipped": 0,
+        "independent_authority_matrix_cases": 150,
+        "exact_blobs_matched": true
+      },
+      "ci": [
+        {
+          "id": 37712033090,
+          "name": "Tests",
+          "status": "completed",
+          "conclusion": "success",
+          "run_number": 54,
+          "jobs_url": "https://api.github.com/repos/pixelmanager-cloud/solana-paper-desk/actions/runs/37712033090/jobs",
+          "logs_url": "https://api.github.com/repos/pixelmanager-cloud/solana-paper-desk/actions/runs/37712033090/logs",
+          "workflow_id": 377958194
+        }
+      ],
+      "proof_artifact": "docs/reviews/cloud-pr22-pr23-independent.md",
       "accepted": false,
       "live_acceptance": false
     }
