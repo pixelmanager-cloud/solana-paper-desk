@@ -636,12 +636,13 @@
     "integrated": false,
     "author_linux_tests": 1300,
     "combined_native_pr": 56,
-    "mac_discovered": 1333,
-    "mac_passed": 1241,
+    "mac_discovered": 1336,
+    "mac_passed": 1244,
     "mac_skipped": 92,
-    "mac_seconds": 25.646,
+    "mac_seconds": 25.993,
     "finding": "P2 full events_only registration exposes new CreateEvent.depth to verified launch anchor; restrict new registration to TradeEvent",
     "fix_worker": "03",
-    "author_combined_linux": 1336
+    "author_combined_linux": 1336,
+    "ci": "PASS at repaired exact head 4b0d9ba"
   }
 }
