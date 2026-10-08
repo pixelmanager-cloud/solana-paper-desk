@@ -9,11 +9,54 @@ No live service registry or private-controller inference is implemented here.
 from collections.abc import Callable, Mapping
 from copy import deepcopy
 
-from .model import digest
+from .model import canonical, digest
 from .programs import address
 
 LABELS = frozenset({'POOL', 'POOL_VAULT', 'SERVICE'})
 PURPOSES = frozenset({'holder_exclusion', 'funding_source', 'distribution_endpoint'})
+
+# Candidate records are bounded JSON evidence, not arbitrary Python graphs.
+MAX_RECORD_DEPTH = 64
+MAX_RECORD_NODES = 4096
+MAX_RECORD_BYTES = 65536
+
+
+def _bounded_record(record):
+    # Iterative preflight precedes recursive encoding/copying. Width, cycles and
+    # excessive scalars stop within the same finite inspection budget.
+    if type(record) is not dict:
+        raise ValueError('Classification record requires a JSON object')
+    pending = [(record, 0)]
+    nodes = 0
+    text_chars = 0
+    while pending:
+        value, depth = pending.pop()
+        nodes += 1
+        if depth > MAX_RECORD_DEPTH or nodes > MAX_RECORD_NODES:
+            raise ValueError('Classification record inspection budget exceeded')
+        if type(value) in (dict, list):
+            children = len(value) * (2 if type(value) is dict else 1)
+            if nodes + len(pending) + children > MAX_RECORD_NODES:
+                raise ValueError('Classification record inspection budget exceeded')
+            if type(value) is dict:
+                for key, child in value.items():
+                    if type(key) is not str:
+                        raise ValueError('Classification record requires JSON keys')
+                    pending.extend(((key, depth + 1), (child, depth + 1)))
+            else:
+                pending.extend((child, depth + 1) for child in value)
+        elif type(value) is str:
+            text_chars += len(value)
+            if text_chars > MAX_RECORD_BYTES:
+                raise ValueError('Classification record byte budget exceeded')
+        elif type(value) is int:
+            if value.bit_length() > 256:
+                raise ValueError('Classification integer exceeds inspection profile')
+        elif value is not None and type(value) not in (bool, float):
+            raise ValueError('Classification record requires JSON values')
+    if len(canonical(record).encode('utf-8')) > MAX_RECORD_BYTES:
+        raise ValueError('Classification record byte budget exceeded')
+
 
 
 def _integer(value):
@@ -66,6 +109,7 @@ def classify_account(account: str, program: str, *, mint: str, purpose: str,
     Every supplied candidate must validate; even a stale contradictory candidate
     blocks resolution. Duplicate hashes are harmless. Empty evidence is unknown.
     Untrusted input/loader failures return unresolved; invalid query/policy raises.
+    Records must fit the bounded JSON depth/node/byte/integer profile above.
     `exclusion_allowed` applies only to this query's scope and point in time. It
     is never token eligibility, history completeness or ownership approval.
     """
@@ -97,15 +141,17 @@ def classify_account(account: str, program: str, *, mint: str, purpose: str,
             continue
         try:
             record = load(key)
+            _bounded_record(record)
             if digest(record) != key:
                 reasons.add('CLASSIFICATION_HASH_MISMATCH')
                 continue
             reason = _validate(record, account, program, mint, purpose, now, slot)
+            detached = deepcopy(record)
         except Exception:
             # Reader/encoding failures cannot become a positive label.
             reasons.add('CLASSIFICATION_EVIDENCE_UNREADABLE')
             continue
-        result['evidence'].append({'hash': key, 'record': deepcopy(record)})
+        result['evidence'].append({'hash': key, 'record': detached})
         if reason:
             reasons.add(reason)
     labels = {e['record'].get('label') for e in result['evidence']
