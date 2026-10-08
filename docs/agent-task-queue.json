@@ -268,7 +268,8 @@
         "host_id": "durable",
         "status": "DISPATCHED",
         "base": "072f654478dd7a73563cfbc5b18092f1ed92829d",
-        "scope": "Disconnected finalized-slot atomic reservation/completion after genesis; no transport or publication"
+        "scope": "Disconnected finalized-slot atomic reservation/completion after genesis; no transport or publication",
+        "wait_cursor": "a2dcfb97-463d-4188-9da3-48a81e644d23:47"
       },
       {
         "id": "MIXED-RECEIPT-PROTECTED-READER",
@@ -277,7 +278,8 @@
         "host_id": "durable",
         "status": "DISPATCHED",
         "base": "28e59ac3da521c032cec49a26b603088c78e78f1",
-        "scope": "Disconnected guarded exact-format snapshot reader with independently supplied anchors; no migration, issuer or entry"
+        "scope": "Disconnected guarded exact-format snapshot reader with independently supplied anchors; no migration, issuer or entry",
+        "wait_cursor": "5e651fc7-2996-4765-974d-5c852257a005:48"
       }
     ],
     "saved_launch_probe": {
@@ -293,7 +295,13 @@
       "limitation": "Reviewer-recorded execution evidence; desktop has not independently queried hosted scheduler; same-chat binding unverified.",
       "last_reconciliation": "2026-10-08T07:56:59Z",
       "latest_protocol_head": "9e2eddb9b32a58a94e94417ae6c130a8179691ac",
-      "latest_reconciliation": "2026-10-08T11:02:15Z: revision45 confirms PR79/80 desktop integration, reserves OWN-2 source-bound admission to worker02, no unassigned review; durable schedule binding remains unverified"
+      "latest_reconciliation": "2026-10-08T11:02:15Z: revision45 confirms PR79/80 desktop integration, reserves OWN-2 source-bound admission to worker02, no unassigned review; durable schedule binding remains unverified",
+      "latest_protocol_check": {
+        "head": "a06d36ccc99c416e49c70a6f6ed189eb7fdc9cbb",
+        "revision": 48,
+        "observed_run": "2026-10-08T12:57:42Z",
+        "result": "No unassigned review work; respects desktop exclusive integration and worker06 claim; hosted execution observed, durable schedule binding not reprobed"
+      }
     },
     "pending_ui_candidate": {
       "pr": 35,
