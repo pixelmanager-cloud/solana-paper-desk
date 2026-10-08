@@ -189,8 +189,8 @@
   ],
   "integration": {
     "branch": "integration/cloud-wave1",
-    "tested_commit": "a24c88dd238d887b94ada69c4bd5be6de4265ce6",
-    "combined_tests": 878,
+    "tested_commit": "4f80ea330fde7f2105f8f4e19f2bc85f8fc1b4b3",
+    "combined_tests": 886,
     "result": "PASS",
     "live_verification": "BLOCKED_NO_SUPPORTED_BUDGET_FEASIBLE_PUBLIC_LEGACY_SEED; acquisition path in development",
     "blocker": "Acquisition executor, live legacy evidence, lifecycle semantic approval and exposure integration unfinished",
@@ -198,13 +198,13 @@
       "worker02": "PR31 independent re-review PASS; available",
       "worker06": "PR34 integrated; available",
       "cloud_reviewer": "PR33 reviewed and integrated; available",
-      "worker10": "Independent review PR35 ab41ed0a9b56bc0a1a96a9c10630b57425465f5d assigned",
+      "worker10": "PR35 reviewed and integrated; available",
       "worker03": "Public legacy feasibility report c932cbf published/reviewed; idle",
       "worker04": "Implement protected pool receipt ledger; isolated module/tests, no provider or runtime wiring",
       "worker05": "PR30 reviewed and integrated; available",
-      "worker09": "PR35 published ab41ed0a9b56bc0a1a96a9c10630b57425465f5d; awaiting independent review",
+      "worker09": "PR35 reviewed and integrated; available",
       "worker01": "Implement birth-inclusive acquisition executor/CLI on reviewed queue and budget foundations; exact raw setup/pagination and prepare/seal/publish recovery",
-      "worker07": "PR33 integrated; no runtime control lifecycle approval",
+      "worker07": "Implement raw execution trace ordering/caller reconstruction prerequisite; no runtime gate relaxation",
       "worker08": "PR31 reviewed and integrated; available"
     },
     "reviews": {
@@ -221,7 +221,8 @@
       "PR32": "64765af62379fe4fbb185271c1d54405a527a0af: independent scoped PASS,737 tests,53 focused; successor locking/fencing/publication mandatory",
       "PR31": "5a97f42a92a1691659dad60b0f4f61af41562f2d independent re-review PASS; rowid replacements and one-time migration resolved,743 tests",
       "PR33": "5095a17557c7fb916d74e508a3e157b49abcd784: independent syntax-only PASS,746tests,43445 adversarial checks; no lifecycle approval",
-      "PR34": "ae5a36bc0e8f6e6d33afea6292a64a2c6cc1e23e: independent PASS,823tests,54 focused,20 metadata interleaving runs"
+      "PR34": "ae5a36bc0e8f6e6d33afea6292a64a2c6cc1e23e: independent PASS,823tests,54 focused,20 metadata interleaving runs",
+      "PR35": "ab41ed0a9b56bc0a1a96a9c10630b57425465f5d independent scoped PASS,814 exact-head and886 combined tests plus14 adversarial renderer cases; CI successful"
     },
     "candidate_combination": {
       "commit": "bfcc550ca25bd6cb79dc7ac3ad2b30c72f7b1033",
@@ -250,19 +251,17 @@
         "status": "IMPLEMENTING"
       },
       {
-        "worker": "worker10",
-        "thread_id": "01a118fd-56d5-70b8-ad31-dba13e982082",
-        "host_id": "durable",
-        "task": "independent historical UI review",
-        "pr": 35,
-        "head": "ab41ed0a9b56bc0a1a96a9c10630b57425465f5d",
-        "status": "REVIEWING"
-      },
-      {
         "worker": "worker04",
         "thread_id": "01a118fc-b862-7340-ab3a-e1115a3280a4",
         "host_id": "durable",
         "task": "protected pool receipt ledger foundation",
+        "status": "IMPLEMENTING"
+      },
+      {
+        "worker": "worker07",
+        "thread_id": "01a118fd-0f1c-749c-b85b-5e730937d0a8",
+        "host_id": "durable",
+        "task": "raw execution trace reconstruction",
         "status": "IMPLEMENTING"
       }
     ],
@@ -284,8 +283,8 @@
       "combined_tests": 886,
       "elapsed_seconds": 23.218,
       "result": "PASS",
-      "independent_review": "PENDING",
-      "integrated": false
+      "independent_review": "PASS",
+      "integrated": true
     }
   }
 }
