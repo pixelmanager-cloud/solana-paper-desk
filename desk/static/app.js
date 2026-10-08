@@ -7,4 +7,64 @@ async function launches(){try{const r=await fetch('/api/launches');if(!r.ok)retu
 
 async function paper(){try{const response=await fetch('/api/paper');if(!response.ok)throw Error('Paper ledger unavailable');const data=await response.json();const box=$('#paper');box.replaceChildren();if(data.status!=='LEDGER_PRESENT'){box.append(node('p',data.status==='NOT_CONFIGURED'?'No active paper experiment yet. Research collection is running; automatic paper trading is not ready.':human(data.status)));return}box.append(node('p',`Strategy state: ${human(data.strategy_mode)} · automatic runner: ${human(data.runner_status)}`));box.append(node('p',`Paper cash: ${data.cash_sol} SOL · simulated realized PnL: ${data.realized_pnl_sol} SOL`));box.append(node('p',data.estimated_equity_sol===null?'Equity estimate withheld: marks are stale or an exit is unverified.':`Model equity estimate: ${data.estimated_equity_sol} SOL`));if(!data.positions.length)box.append(node('p','No open paper positions.'));for(const position of data.positions){const row=node('article','');row.append(node('code',position.mint));row.append(node('p',`${position.quantity} tokens · cost remaining ${position.cost_left_sol} SOL · ${human(position.provenance)}`));row.append(node('p',`${human(position.mark_status)}${position.exit_blocked?' · '+human(position.exit_blocked):''}`));if(position.unrealized_pnl_sol!==null)row.append(node('p',`Model unrealized PnL: ${position.unrealized_pnl_sol} SOL`));box.append(row)}const details=node('details','');details.append(node('summary','Recent paper decisions and ledger identity'));details.append(node('pre',JSON.stringify({last_event_at:data.last_event_at,config_hash:data.config_hash,implementation_hash:data.implementation_hash,recent_outcomes:data.recent_outcomes},null,2)));box.append(details)}catch{$('#paper').textContent='Paper status unavailable; no current balance can be confirmed.'}}paper();setInterval(paper,15000);
 
-async function decisions(){try{const r=await fetch('/api/decisions');if(!r.ok)return;const data=await r.json();let box=$('#entry-decisions');if(!box){box=node('section','');box.id='entry-decisions';$('#paper').after(box)}box.replaceChildren(node('h3','Entry evidence decisions'));for(const decision of data.decisions){const row=node('details','');row.append(node('summary',`${decision.decision} · ${decision.mint}`));for(const [name,gate] of Object.entries(decision.entry_evidence.gates)){row.append(node('p',`${human(name)}: ${human(gate.status)}${gate.reasons.length?' — '+gate.reasons.map(human).join('; '):''}`))}if(decision.entry_evidence.continued_ownership_history){const h=decision.entry_evidence.continued_ownership_history;row.append(node('p',`Continued ownership history: ${h.observed_transaction_count} transactions; ${h.account_queries.verified}/${h.account_queries.required} account queries verified; ${decision.entry_evidence.ownership_requests_used}/18 investigation RPC requests used. Historical evidence only.`))}row.append(node('p','Entry blockers: '+decision.reasons.map(human).join('; ')));row.append(node('p','Evaluated '+new Date(decision.evaluated_at*1000).toLocaleString()+' · historical decision, not current approval'));box.append(row)}if(!data.decisions.length)box.append(node('p','No evidence decisions available yet.'))}catch{const box=$('#entry-decisions');if(box)box.textContent='Entry decisions unavailable.'}}decisions();setInterval(decisions,15000);
+function decisionDate(value){
+  if(!Number.isSafeInteger(value)||value<0)return null;
+  const date=new Date(value*1000);
+  return Number.isFinite(date.getTime())?date:null;
+}
+function decisionTime(value){
+  const date=decisionDate(value);
+  return date?date.toLocaleString(undefined,{timeZoneName:'short'}):'Unavailable (missing or invalid timestamp)';
+}
+function decisionAge(observedAt,displayedAt){
+  if(!decisionDate(observedAt))return 'Unavailable (missing or invalid observation time)';
+  if(!Number.isSafeInteger(displayedAt)||displayedAt<0||!Number.isFinite(new Date(displayedAt).getTime()))return 'Unavailable (invalid browser clock)';
+  const age=Math.floor(displayedAt/1000)-observedAt;
+  if(age<0)return 'Unavailable (observation time is in the future relative to this browser clock)';
+  return age.toLocaleString()+' seconds; calculated from the original observation and this browser clock';
+}
+function decisionBox(){
+  let box=$('#entry-decisions');
+  if(!box){box=node('section','');box.id='entry-decisions';$('#paper').after(box)}
+  return box;
+}
+function renderDecisions(data,displayedAt=Date.now()){
+  if(!Array.isArray(data.decisions))throw Error('Invalid decision projection');
+  const box=decisionBox();
+  box.replaceChildren(node('h3','Entry evidence decisions'),node('p','Immutable historical evaluations. Current evidence health is not continuously certified; these records do not grant current entry approval.','muted'));
+  if(data.status!=='EVIDENCE_GATES_CONNECTED'){
+    box.append(node('p',data.status==='NOT_CONFIGURED'?'No decision journal configured.':'Historical evaluations unavailable.'));
+    return;
+  }
+  for(const decision of data.decisions){
+    const row=node('details','');
+    row.append(node('summary',`${decision.decision} · ${decision.mint} · historical evaluation`));
+    row.append(node('p','Original observation time: '+decisionTime(decision.observed_at)));
+    row.append(node('p','Observation age at display: '+decisionAge(decision.observed_at,displayedAt)));
+    row.append(node('p','Historical evaluation time: '+decisionTime(decision.evaluated_at)));
+    for(const [name,gate] of Object.entries(decision.entry_evidence.gates)){
+      const verified=gate.status==='VERIFIED_COMPONENT';
+      const scope=typeof gate.scope==='string'&&gate.scope.trim()?gate.scope:'No scope recorded; no broader verification is implied.';
+      const label=verified?'VERIFIED_COMPONENT (historical component only)':human(gate.status);
+      const reasons=gate.reasons.length?' — '+gate.reasons.map(human).join('; '):'';
+      row.append(node('p',`${human(name)}: ${label}${reasons}${verified||gate.scope?' · Scope: '+scope:''}`));
+    }
+    if(decision.entry_evidence.continued_ownership_history){
+      const h=decision.entry_evidence.continued_ownership_history;
+      row.append(node('p',`Continued ownership history: ${h.observed_transaction_count} transactions; ${h.account_queries.verified}/${h.account_queries.required} account queries verified; ${decision.entry_evidence.ownership_requests_used}/18 investigation RPC requests used. Historical evidence only.`));
+    }
+    row.append(node('p','Historical entry blockers: '+decision.reasons.map(human).join('; ')));
+    box.append(row);
+  }
+  if(!data.decisions.length)box.append(node('p','No historical evaluations available yet.'));
+}
+async function decisions(){
+  try{
+    const response=await fetch('/api/decisions');
+    if(!response.ok)throw Error('Historical decisions unavailable');
+    renderDecisions(await response.json());
+  }catch{
+    decisionBox().replaceChildren(node('h3','Entry evidence decisions'),node('p','Historical decisions unavailable. Current evidence health is not continuously certified.'));
+  }
+}
+decisions();setInterval(decisions,15000);
