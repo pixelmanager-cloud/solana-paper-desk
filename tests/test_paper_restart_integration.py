@@ -391,5 +391,51 @@ with patch('desk.monitor.time.time',return_value=now):
                 self.assertEqual(self.records(), before)
 
 
+    def test_standalone_report_refuses_missing_committed_checkpoint_without_mutation(self):
+        self.apply(event())
+        self.ledger.db.execute('DELETE FROM state')
+        self.restart()
+        before = self.records()
+        with self.assertRaisesRegex(ValueError, 'checkpoint missing'):
+            self.ledger.report()
+        self.assertEqual(self.records(), before)
+        result = subprocess.run([sys.executable, '-m', 'desk', 'report', '--db', str(self.path)],
+                                cwd=ROOT, env=self.env, capture_output=True, text=True, timeout=30)
+        self.assertNotEqual(result.returncode, 0)
+        self.assertIn('checkpoint missing', result.stderr)
+        self.assertEqual(result.stdout.strip(), '')
+        self.restart()
+        self.assertEqual(self.records(), before)
+        # Each surviving nonfresh evidence category independently blocks report.
+        for survivor in ('events', 'outcomes', 'metadata', 'sequence'):
+            with self.subTest(survivor=survivor):
+                self.ledger.close()
+                self.path = self.root / f'report-{survivor}.sqlite'
+                self.ledger = Ledger(self.path)
+                self.apply(event())
+                for table in ('state', 'events', 'outcomes', 'metadata'):
+                    if table != survivor:
+                        self.ledger.db.execute(f'DELETE FROM {table}')
+                if survivor != 'sequence':
+                    self.ledger.db.execute("DELETE FROM sqlite_sequence WHERE name IN ('events','outcomes')")
+                self.restart()
+                before = self.records()
+                with self.assertRaisesRegex(ValueError, 'checkpoint missing'):
+                    self.ledger.report()
+                self.assertEqual(self.records(), before)
+
+    def test_fresh_and_raw_only_standalone_reports_remain_valid_and_read_only(self):
+        for raw in (False, True):
+            if raw:
+                self.ledger.record_raw('synthetic-original', T, 1, {'fixture': 'original'})
+                self.ledger.health(T, 'SYNTHETIC_TEST_ONLY', {'provider_calls': 0})
+            self.restart()
+            before = self.records()
+            report = self.ledger.report()
+            self.assertIsNone(report['state'])
+            self.assertEqual(report['outcomes'], [])
+            self.assertEqual(self.records(), before)
+
+
 if __name__ == '__main__':
     unittest.main()

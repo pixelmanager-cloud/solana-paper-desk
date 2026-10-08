@@ -32,6 +32,16 @@ class Ledger:
     def close(self):
         self.db.close()
 
+    def _has_experiment_records(self):
+        """Raw observations/health are fresh; any accounting identity is not."""
+        return bool(self.db.execute('SELECT 1 FROM events LIMIT 1').fetchone()
+                    or self.db.execute('SELECT 1 FROM outcomes LIMIT 1').fetchone()
+                    or self.db.execute('SELECT 1 FROM state LIMIT 1').fetchone()
+                    or self.db.execute("SELECT 1 FROM metadata WHERE key IN "
+                                       "('implementation_hash','config_hash','config') LIMIT 1").fetchone()
+                    or self.db.execute("SELECT 1 FROM sqlite_sequence WHERE name IN "
+                                       "('events','outcomes') AND seq>0 LIMIT 1").fetchone())
+
     def _checkpoint(self, payload):
         """Validate persisted engine state without rebuilding or changing it."""
         try:
@@ -103,12 +113,7 @@ class Ledger:
             old_code = self.db.execute("SELECT value FROM metadata WHERE key='implementation_hash'").fetchone()
             has_events = self.db.execute("SELECT 1 FROM events LIMIT 1").fetchone()
             checkpoint = self.db.execute("SELECT payload FROM state WHERE id=1").fetchone()
-            has_outcomes = self.db.execute("SELECT 1 FROM outcomes LIMIT 1").fetchone()
-            identity = self.db.execute(
-                "SELECT 1 FROM metadata WHERE key IN ('implementation_hash','config_hash','config') LIMIT 1").fetchone()
-            journal_sequence = self.db.execute(
-                "SELECT 1 FROM sqlite_sequence WHERE name IN ('events','outcomes') AND seq>0 LIMIT 1").fetchone()
-            nonfresh = bool(has_events or has_outcomes or checkpoint or identity or journal_sequence)
+            nonfresh = self._has_experiment_records()
             # A previously committed ledger cannot be treated as a new experiment
             # when a damaged/partial restore has lost its checkpoint. Reject even
             # duplicate delivery rather than acknowledge an unrecoverable state.
@@ -169,6 +174,8 @@ class Ledger:
 
     def report(self):
         row = self.db.execute("SELECT payload FROM state WHERE id=1").fetchone()
+        if not row and self._has_experiment_records():
+            raise ValueError("ledger checkpoint missing: recovery required; original records preserved")
         state = self._checkpoint(row[0]) if row else None
         outcomes = [json.loads(r[0]) for r in self.db.execute("SELECT payload FROM outcomes ORDER BY seq")]
         counts = {}
