@@ -262,27 +262,14 @@
     "published_ci": "Deployed d758bc529a7da1f74509117288740911f2ad6845: both CI runs successful",
     "active_claims": [
       {
-        "id": "REQUEST-BOUND-DISCOVERY-CUTOFF",
-        "worker": "02",
-        "thread_id": "01a118fc-666c-70b6-9fa8-2c7520f0a0bb",
+        "id": "PR95-INDEPENDENT-REVIEW",
+        "worker": "05",
+        "pr": 95,
+        "head": "6fbeba4edf9f8a98a05e65eda9f2469edb7f4f07",
+        "base": "b3e2516df345eb79bbedfbb597be46c1f5947eab",
+        "thread_id": "01a118fc-dd83-7672-ac81-7445f85fe09f",
         "host_id": "durable",
-        "status": "IN_PROGRESS",
-        "base": "d1863d3360fb5449629478545955b29df1e01054",
-        "scope": "Establish original request-bound discovery cutoff through existing bounded acquisition; no live calls/publication",
-        "wait_cursor": "a2dcfb97-463d-4188-9da3-48a81e644d23:61",
-        "turn_id": "01a11c0f-e216-749d-8675-14e00e57b0db"
-      },
-      {
-        "id": "PR94-FIX-REREVIEW",
-        "worker": "06",
-        "pr": 94,
-        "head": "6024d130e01c75b4075bba57856e010b7dc7778a",
-        "base": "7f57cf0e7b50f44868e77a149c2ca4c10173ee3b",
-        "thread_id": "01a118fc-f867-7233-8eec-c20659e70095",
-        "host_id": "durable",
-        "status": "REVIEWING",
-        "wait_cursor": "8f3328cf-bef6-441d-83f8-2d1f46b3b0df:61",
-        "turn_id": "01a11c13-b210-74a1-ba34-69c088ebb540"
+        "status": "DISPATCHED"
       }
     ],
     "saved_launch_probe": {
@@ -869,8 +856,8 @@
     "pending_completion_inventory": {
       "pr": 94,
       "head": "6024d130e01c75b4075bba57856e010b7dc7778a",
-      "integrated": false,
-      "review": "REPAIR PENDING independent06 rereview",
+      "integrated": true,
+      "review": "PASS corrected head worker06 Linux1880 zero skips292.143s;32 additional probes;old findings reproduced and repaired",
       "author_linux_tests": 1851,
       "author_skips": 0,
       "combined_base": "7f57cf0e7b50f44868e77a149c2ca4c10173ee3b",
@@ -884,7 +871,17 @@
       "independent_linux_tests": 1841,
       "independent_linux_seconds": 261.463,
       "independent_probes": 14,
-      "previous_blocked_head": "714e1e915ae74b965150b8a234c89d92a03b8590"
+      "previous_blocked_head": "714e1e915ae74b965150b8a234c89d92a03b8590",
+      "integration_commit": "b3e2516df345eb79bbedfbb597be46c1f5947eab",
+      "review_manifest_sha256": "63940bb289784ab041749d511e46f69c01b09876d67b99c3ec0d55ba80ab1d22",
+      "deployed": false
+    },
+    "pending_cutoff_contract": {
+      "pr": 95,
+      "head": "6fbeba4edf9f8a98a05e65eda9f2469edb7f4f07",
+      "integrated": false,
+      "review": "PENDING worker05; confirmed author fixture gap requires independent reproduction",
+      "author_linux_tests": 1852
     }
   },
   "native_reconciliation_review": {
