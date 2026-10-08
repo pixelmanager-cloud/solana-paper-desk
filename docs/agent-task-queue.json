@@ -835,7 +835,14 @@
       },
       "finding": "Monitor preflight/checkpoint corruption race leaks Ledger ValueError instead of recovery status",
       "linux_tests": 1450,
-      "reviewed_tree": "716b04c52428830ad903375e0a54b9e807841b18"
+      "reviewed_tree": "716b04c52428830ad903375e0a54b9e807841b18",
+      "mac_repaired_combined": {
+        "discovered": 1472,
+        "passed": 1373,
+        "skips": 99,
+        "seconds": 30.033
+      },
+      "ci": "SUCCESS repaired exact head"
     },
     "73": {
       "head": "64c262a8e8593d848d042832d47b3a8c711a8a00",
