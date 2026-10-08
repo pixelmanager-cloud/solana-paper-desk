@@ -290,16 +290,6 @@
         "pr": 72,
         "head": "f64144d4c583520666ca866c37dde3e8e81f2205",
         "base": "2ef1071"
-      },
-      {
-        "worker": "worker02",
-        "thread_id": "01a118fc-666c-70b6-9fa8-2c7520f0a0bb",
-        "host_id": "durable",
-        "status": "REVIEWING",
-        "task": "Independent exact partial-action proof and accounting review",
-        "pr": 73,
-        "head": "64c262a8e8593d848d042832d47b3a8c711a8a00",
-        "base": "c4e2b18"
       }
     ],
     "saved_launch_probe": {
@@ -840,8 +830,8 @@
     "73": {
       "head": "64c262a8e8593d848d042832d47b3a8c711a8a00",
       "reviewer": "worker02",
-      "status": "PASS_PENDING_FINAL_DESKTOP_BASE_TEST",
-      "integrated": false,
+      "status": "PASS_INTEGRATED",
+      "integrated": true,
       "mac_combined_with_pending_72": {
         "discovered": 1468,
         "passed": 1369,
@@ -851,7 +841,14 @@
       "linux_tests": 1460,
       "linux_skips": 0,
       "reviewed_tree": "a04fe2f010a2f05a8181b49e7b5875615e22a82b",
-      "ci": "SUCCESS exact head"
+      "ci": "SUCCESS exact head",
+      "integration_commit": "c663da9afaccec0c79ee137fa7a58441b12da13a",
+      "mac_final": {
+        "discovered": 1460,
+        "passed": 1361,
+        "skips": 99,
+        "seconds": 29.663
+      }
     }
   },
   "parallel_combined_regression": {

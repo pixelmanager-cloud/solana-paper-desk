@@ -4,7 +4,7 @@ Last verified: 8 October 2026, Korea time. The user's requested end state is a u
 
 ## Current status — 2026-10-08 07:47 UTC
 
-Paper readiness is incomplete. Production runs reviewed release 884e4ca: 1,442 tests passed under the VPS service account, with zero skips. Copied-data validation reassessed eight investigations, all rejected; all eight original decisions and 28 evaluations were preserved. Dashboard HTTP200 and decision/monitor services verified on loopback. No active paper ledger; automatic entry remains false. PR72 and PR73 candidates remain excluded pending review/repair.
+Paper readiness is incomplete. Production runs reviewed release 884e4ca: 1,442 tests passed under the VPS service account, with zero skips. Copied-data validation reassessed eight investigations, all rejected; all eight original decisions and 28 evaluations were preserved. Dashboard HTTP200 and decision/monitor services verified on loopback. No active paper ledger; automatic entry remains false. PR72 remains unaccepted pending repair. PR73 is accepted on the integration branch but excluded from this deployed release.
 
 Remaining critical path: live complete ownership/exposure evidence for a supported candidate; authenticated route/effect and exact quantity/cost evidence; measured current strategy features and a trusted source-bound entry adapter; durable supervised entry/refresh/exit integration; forward observation. Signed messages, parsed events, zero balance residuals and diagnostic receipt coverage alone do not satisfy those gates. No eligible live entry has been demonstrated.
 
@@ -467,3 +467,6 @@ TradeEvent checkpoint (PR57 repaired head4b0d9ba, integrated6477670): the offici
 
 
 2026-10-08 07:42Z: PR65 final repaired headff201a6 integrated after independent partial-restore/duplicate/report reproductions, full combined Linux1,442tests zero skips, exact treeb2189685 match and successfulCI. Desktop1,343passed/99Linux-only skips. Missing or malformed committed checkpoint and incomplete experiment identity now refuse acknowledgment, new fills and standalone reporting; genuinely fresh/raw-only reporting remains valid. No automatic reconstruction/migration. Consumer recovery diagnostics PR72 remain under separate combined review. This is fixture/restart integrity validation, not live paper entry or host-power-loss acceptance.
+
+
+2026-10-08 07:49 UTC: PR73 64c262a integrated after independent exact-head review, successful CI and combined Linux 1,460 tests with zero skips. Desktop: 1,361 passed, 99 Linux-only skips, 29.663 seconds. Reviewed tree a04fe2f0 reproduced exactly; accepted implementation matches the reviewed base plus this change. Partial exits require separate exact-quantity action evidence bound to the full valuation; stale, mismatched or reused evidence rejects. Synthetic quantity, cost basis, cash and PnL conservation verified. Remaining inventory is visibly unvalued until a new exact-size proof arrives. No trusted live proof builder or entry permission was added. Not yet deployed.
