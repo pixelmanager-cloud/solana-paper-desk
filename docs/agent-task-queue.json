@@ -277,9 +277,10 @@
         "thread_id": "01a118fc-666c-70b6-9fa8-2c7520f0a0bb",
         "host_id": "durable",
         "task": "Independent PR65 second repair review",
-        "status": "WAITING_REPAIR",
+        "status": "REVIEWING",
         "pr": 65,
-        "head": "30f70c4665b3c19a16636dcbdc378042d67c9db2"
+        "head": "ff201a6dacb979e8edfd541956e38167dcd66c8c",
+        "base": "cbb3cc9"
       },
       {
         "worker": "worker10",
@@ -727,13 +728,14 @@
       "positive_contract_approved": false
     },
     "65": {
-      "head": "30f70c4665b3c19a16636dcbdc378042d67c9db2",
+      "head": "ff201a6dacb979e8edfd541956e38167dcd66c8c",
       "reviewer": "worker02",
-      "status": "CHANGES_REQUESTED",
+      "status": "RE_REVIEWING",
       "integrated": false,
       "finding": "Standalone Ledger.report returns state:null with retained fills after committed checkpoint deletion",
       "repair_worker": "worker08",
-      "previous_findings_resolved": true
+      "previous_findings_resolved": true,
+      "ci": "SUCCESS exact head"
     },
     "67": {
       "head": "77991bf90bb31f428b1c3dd33076ab7dc6e1ca3f",
