@@ -262,18 +262,6 @@
     "published_ci": "Deployed d758bc529a7da1f74509117288740911f2ad6845: both CI runs successful",
     "active_claims": [
       {
-        "id": "PR93-REVIEW-FIX",
-        "worker": "02",
-        "pr": 93,
-        "head": "94a025d96f4ad22db2fb195b1df10a73537ac293",
-        "thread_id": "01a118fc-666c-70b6-9fa8-2c7520f0a0bb",
-        "host_id": "durable",
-        "status": "IN_PROGRESS",
-        "scope": "Reserve selected second-pass aggregate before fetching bodies",
-        "wait_cursor": "a2dcfb97-463d-4188-9da3-48a81e644d23:59",
-        "turn_id": "01a11c01-a964-7291-a255-286d5bcd16b1"
-      },
-      {
         "id": "PR94-REVIEW-FIX",
         "worker": "01",
         "pr": 94,
@@ -284,6 +272,16 @@
         "scope": "Reject schema typed-name collisions and malformed/rebound local intent fields",
         "wait_cursor": "5e651fc7-2996-4765-974d-5c852257a005:61",
         "turn_id": "01a11c01-b8e2-72d4-b87c-13ae7c27aeba"
+      },
+      {
+        "id": "PR93-FIX-REREVIEW",
+        "worker": "05",
+        "pr": 93,
+        "head": "ace7ee9560434f1ad7e0046a2617040b324c9992",
+        "base": "8a29c36",
+        "thread_id": "01a118fc-dd83-7672-ac81-7445f85fe09f",
+        "host_id": "durable",
+        "status": "DISPATCHED"
       }
     ],
     "saved_launch_probe": {
@@ -846,22 +844,23 @@
     },
     "pending_semantic_replay": {
       "pr": 93,
-      "head": "94a025d96f4ad22db2fb195b1df10a73537ac293",
+      "head": "ace7ee9560434f1ad7e0046a2617040b324c9992",
       "integrated": false,
-      "review": "CHANGES REQUIRED worker05: P2 second-pass body fetch before aggregate reservation",
-      "author_linux_tests": 1811,
+      "review": "REPAIR PENDING independent05 rereview",
+      "author_linux_tests": 1812,
       "author_skips": 0,
-      "combined_tree": "6e5029e1cde34441bfd44b5348b3377fc0feee88",
-      "combined_base": "adb2118142bf8d40f8d8d41ee8b810b9366acf62",
-      "mac_tests": "PASS",
-      "mac_discovered": 1845,
+      "combined_tree": "d604299a255078d0e26d0617a1e350fa06ae99e6",
+      "combined_base": "8a29c36",
+      "mac_tests": "PASS corrected combination",
+      "mac_discovered": 1846,
       "mac_passed": 1507,
-      "mac_skipped": 338,
-      "mac_seconds": 33.888,
-      "ci": "Both unchanged exact-head checks SUCCESS",
+      "mac_skipped": 339,
+      "mac_seconds": 33.933,
+      "ci": "PENDING corrected head",
       "independent_linux_tests": 1845,
       "independent_linux_seconds": 177.704,
-      "independent_probes": 13
+      "independent_probes": 13,
+      "previous_blocked_head": "94a025d96f4ad22db2fb195b1df10a73537ac293"
     },
     "pending_completion_inventory": {
       "pr": 94,
