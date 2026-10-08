@@ -1,6 +1,6 @@
 {
   "schema_version": 1,
-  "revision": 23,
+  "revision": 24,
   "repository": "pixelmanager-cloud/solana-paper-desk",
   "source_main_sha": "e298e15cd758932e81d2241130716632702f5bd0",
   "observed_date": "2026-10-08",
@@ -369,8 +369,10 @@
       "pr": 52,
       "head_sha": "ef58b4320db51517a53501a5b8073172adb74cd5",
       "review_id": 5451847117,
-      "status": "OPEN",
-      "action": "Side-effect-free current-state preflight or pre-open unsupported-mode rejection; do not ignore active WAL via immutable flag; add file/content invariance regressions."
+      "status": "RESOLVED_SCOPED_REPAIR_REVIEW",
+      "action": "Side-effect-free current-state preflight or pre-open unsupported-mode rejection; do not ignore active WAL via immutable flag; add file/content invariance regressions.",
+      "resolved_head_sha": "4f3573330b1b193579d733afab19b259297fa5df",
+      "resolution_review_id": 5451939899
     }
   ],
   "events": [
@@ -832,6 +834,65 @@
         "Trusted stable filesystem/UID not hostile replacement defense",
         "No chain/source/lifecycle/ownership/live acceptance",
         "Desktop VPS results external not cloud rerun"
+      ],
+      "accepted": false,
+      "live_acceptance": false
+    },
+    {
+      "kind": "PR52_PREFLIGHT_JOURNAL_REPAIR_REVIEW",
+      "policy_version": "cloud-independent-review-v1",
+      "pr": 52,
+      "head_sha": "4f3573330b1b193579d733afab19b259297fa5df",
+      "base_sha": "82046ac576475d2db255a4d0591455cd8559ae75",
+      "combined_integration_sha": "df8ac826bed8d95fc29903bbddfb5f9cb3f10ecf",
+      "worker_agent": "05",
+      "worker_thread_id": "01a118fc-dd83-7672-ac81-7445f85fe09f",
+      "branch": "codex/cloud-wave1-05-capture-cli",
+      "reviewer": "Independent cloud execution shared GitHub identity COMMENT only",
+      "review_id": 5451939899,
+      "review_action": "COMMENT",
+      "status": "SCOPED_PRIOR_P2_WAL_PREFLIGHT_RESOLVED",
+      "findings": [
+        "WAL rejected before SQLite open; no stale immutable/checkpoint workaround",
+        "OFD guard survives same-process reader close; same/separate process writers/mode conversion blocked",
+        "Existing crashed-writer journal rejected without recovery/mutation"
+      ],
+      "tests": {
+        "python": "3.12.14",
+        "full_suite_command": "python -m unittest discover -s tests -v",
+        "full_suite_passed": 1264,
+        "full_suite_seconds": 61.292,
+        "targeted_command": "python -m unittest tests.test_coordinator_capture_cli -q",
+        "targeted_passed": 20,
+        "targeted_seconds": 8.519,
+        "adversarial_command": "python /workspace/work/review/fix52-independent.py",
+        "adversarial_passed": 3,
+        "adversarial_seconds": 0.819,
+        "skipped": 0,
+        "provider_calls": 0
+      },
+      "ci": [
+        {
+          "id": 37732318225,
+          "name": "Tests",
+          "status": "completed",
+          "conclusion": "success",
+          "run_number": 344,
+          "jobs_url": "https://api.github.com/repos/pixelmanager-cloud/solana-paper-desk/actions/runs/37732318225/jobs",
+          "logs_url": "https://api.github.com/repos/pixelmanager-cloud/solana-paper-desk/actions/runs/37732318225/logs",
+          "workflow_id": 377958194
+        }
+      ],
+      "combined_ci": "NOT_RUN_SCRATCH_SOURCE_ONLY",
+      "proof_artifact": "docs/reviews/cloud-pr52-4f35733.md",
+      "source_manifest": "docs/reviews/cloud-pr52-df8ac82-4f35733-hashes.json",
+      "source_manifest_sha256": "6f75d910f9380e71661db702cdbd49168f11145bbabd3ad1ea1b255346201d88",
+      "source_files": 266,
+      "limitations": [
+        "LinuxLP64/OFD/standardPOSIXVFS rollback-only no existing journals, active writers unsupported",
+        "Trusted stableUID/path not hostile replacement defense",
+        "No source/chain/lifecycle/ownership/entry/live acceptance",
+        "External deployment evidence not rerun by cloud"
       ],
       "accepted": false,
       "live_acceptance": false
@@ -1714,13 +1775,71 @@
       ],
       "accepted": false,
       "live_acceptance": false
+    },
+    {
+      "policy_version": "cloud-independent-review-v1",
+      "pr": 52,
+      "head_sha": "4f3573330b1b193579d733afab19b259297fa5df",
+      "base_sha": "82046ac576475d2db255a4d0591455cd8559ae75",
+      "combined_integration_sha": "df8ac826bed8d95fc29903bbddfb5f9cb3f10ecf",
+      "worker_agent": "05",
+      "worker_thread_id": "01a118fc-dd83-7672-ac81-7445f85fe09f",
+      "branch": "codex/cloud-wave1-05-capture-cli",
+      "reviewer": "Independent cloud execution shared GitHub identity COMMENT only",
+      "review_id": 5451939899,
+      "review_action": "COMMENT",
+      "status": "SCOPED_PRIOR_P2_WAL_PREFLIGHT_RESOLVED",
+      "findings": [
+        "WAL rejected before SQLite open; no stale immutable/checkpoint workaround",
+        "OFD guard survives same-process reader close; same/separate process writers/mode conversion blocked",
+        "Existing crashed-writer journal rejected without recovery/mutation"
+      ],
+      "tests": {
+        "python": "3.12.14",
+        "full_suite_command": "python -m unittest discover -s tests -v",
+        "full_suite_passed": 1264,
+        "full_suite_seconds": 61.292,
+        "targeted_command": "python -m unittest tests.test_coordinator_capture_cli -q",
+        "targeted_passed": 20,
+        "targeted_seconds": 8.519,
+        "adversarial_command": "python /workspace/work/review/fix52-independent.py",
+        "adversarial_passed": 3,
+        "adversarial_seconds": 0.819,
+        "skipped": 0,
+        "provider_calls": 0
+      },
+      "ci": [
+        {
+          "id": 37732318225,
+          "name": "Tests",
+          "status": "completed",
+          "conclusion": "success",
+          "run_number": 344,
+          "jobs_url": "https://api.github.com/repos/pixelmanager-cloud/solana-paper-desk/actions/runs/37732318225/jobs",
+          "logs_url": "https://api.github.com/repos/pixelmanager-cloud/solana-paper-desk/actions/runs/37732318225/logs",
+          "workflow_id": 377958194
+        }
+      ],
+      "combined_ci": "NOT_RUN_SCRATCH_SOURCE_ONLY",
+      "proof_artifact": "docs/reviews/cloud-pr52-4f35733.md",
+      "source_manifest": "docs/reviews/cloud-pr52-df8ac82-4f35733-hashes.json",
+      "source_manifest_sha256": "6f75d910f9380e71661db702cdbd49168f11145bbabd3ad1ea1b255346201d88",
+      "source_files": 266,
+      "limitations": [
+        "LinuxLP64/OFD/standardPOSIXVFS rollback-only no existing journals, active writers unsupported",
+        "Trusted stableUID/path not hostile replacement defense",
+        "No source/chain/lifecycle/ownership/entry/live acceptance",
+        "External deployment evidence not rerun by cloud"
+      ],
+      "accepted": false,
+      "live_acceptance": false
     }
   ],
   "infrastructure": {
     "consecutive_failures": 0,
     "last_failure": "Historical immediate-run probe404; no current run infrastructure failure.",
     "retry_policy": "No busy polling; future supported review runs reconcile and pause after three consecutive execution/access failures.",
-    "last_success": "PR51 partial-schema repair independent re-review completed in verified cloud executor"
+    "last_success": "PR52 repaired-head journal/OFD review completed in verified cloud"
   },
   "review_lease": {
     "holder": null,
@@ -2222,9 +2341,9 @@
   "review_assignments": {
     "cloud_coordinator": {
       "exclusive_pr": 52,
-      "head_sha": "ef58b4320db51517a53501a5b8073172adb74cd5",
-      "status": "CHANGES_REQUIRED_P2_WAL_PREFLIGHT_WRITES",
-      "review_id": 5451847117
+      "head_sha": "4f3573330b1b193579d733afab19b259297fa5df",
+      "status": "SCOPED_PRIOR_P2_WAL_PREFLIGHT_RESOLVED",
+      "review_id": 5451939899
     },
     "pr31": {
       "owner": "worker02",
@@ -2414,65 +2533,60 @@
     }
   ],
   "last_review_run": {
-    "mode": "PR52_EXCLUSIVE_COMBINED_FIXTURE_REVIEW",
+    "mode": "PR52_REPAIR_EXCLUSIVE_COMBINED_FIXTURE_REVIEW",
     "policy_version": "cloud-independent-review-v1",
     "pr": 52,
-    "head_sha": "ef58b4320db51517a53501a5b8073172adb74cd5",
+    "head_sha": "4f3573330b1b193579d733afab19b259297fa5df",
     "base_sha": "82046ac576475d2db255a4d0591455cd8559ae75",
+    "combined_integration_sha": "df8ac826bed8d95fc29903bbddfb5f9cb3f10ecf",
     "worker_agent": "05",
     "worker_thread_id": "01a118fc-dd83-7672-ac81-7445f85fe09f",
     "branch": "codex/cloud-wave1-05-capture-cli",
     "reviewer": "Independent cloud execution shared GitHub identity COMMENT only",
-    "review_id": 5451847117,
+    "review_id": 5451939899,
     "review_action": "COMMENT",
-    "status": "CHANGES_REQUIRED_P2_WAL_PREFLIGHT_WRITES",
+    "status": "SCOPED_PRIOR_P2_WAL_PREFLIGHT_RESOLVED",
     "findings": [
-      {
-        "priority": "P2",
-        "path": "desk/coordinator_capture_cli.py",
-        "line": 90,
-        "title": "Invalid admission read-only WAL preflight creates sidecar files before binding validation",
-        "reproduction": "Valid private WAL DB closed with no sidecars; unmocked CLI missing scan returns BLOCKED0RPC yet -wal/-shm created.",
-        "action": "Side-effect-free current-state preflight or pre-open unsupported-mode rejection; do not ignore active WAL via immutable flag; add file/content invariance regressions."
-      }
+      "WAL rejected before SQLite open; no stale immutable/checkpoint workaround",
+      "OFD guard survives same-process reader close; same/separate process writers/mode conversion blocked",
+      "Existing crashed-writer journal rejected without recovery/mutation"
     ],
     "tests": {
       "python": "3.12.14",
       "full_suite_command": "python -m unittest discover -s tests -v",
-      "full_suite_passed": 1258,
-      "full_suite_seconds": 57.923,
+      "full_suite_passed": 1264,
+      "full_suite_seconds": 61.292,
       "targeted_command": "python -m unittest tests.test_coordinator_capture_cli -q",
-      "targeted_passed": 14,
-      "targeted_seconds": 5.287,
-      "adversarial_command": "python /workspace/work/review/p52-independent.py",
+      "targeted_passed": 20,
+      "targeted_seconds": 8.519,
+      "adversarial_command": "python /workspace/work/review/fix52-independent.py",
       "adversarial_passed": 3,
-      "adversarial_seconds": 0.723,
-      "wal_probe_command": "python /workspace/work/review/p52-wal-probe.py",
-      "wal_probe_result": "P2_REPRODUCED_IN_REAL_SQLITE_AND_UNMOCKED_SUBPROCESS",
+      "adversarial_seconds": 0.819,
       "skipped": 0,
       "provider_calls": 0
     },
     "ci": [
       {
-        "id": 37731532050,
+        "id": 37732318225,
         "name": "Tests",
         "status": "completed",
         "conclusion": "success",
-        "run_number": 332,
-        "jobs_url": "https://api.github.com/repos/pixelmanager-cloud/solana-paper-desk/actions/runs/37731532050/jobs",
-        "logs_url": "https://api.github.com/repos/pixelmanager-cloud/solana-paper-desk/actions/runs/37731532050/logs",
+        "run_number": 344,
+        "jobs_url": "https://api.github.com/repos/pixelmanager-cloud/solana-paper-desk/actions/runs/37732318225/jobs",
+        "logs_url": "https://api.github.com/repos/pixelmanager-cloud/solana-paper-desk/actions/runs/37732318225/logs",
         "workflow_id": 377958194
       }
     ],
     "combined_ci": "NOT_RUN_SCRATCH_SOURCE_ONLY",
-    "proof_artifact": "docs/reviews/cloud-pr52-ef58b43.md",
-    "source_manifest": "docs/reviews/cloud-pr52-82046ac-ef58b43-hashes.json",
-    "source_manifest_sha256": "32cb55e1e1ef9865c5762878729659883f4e83b93e56ab3de6d96493ba32eb38",
+    "proof_artifact": "docs/reviews/cloud-pr52-4f35733.md",
+    "source_manifest": "docs/reviews/cloud-pr52-df8ac82-4f35733-hashes.json",
+    "source_manifest_sha256": "6f75d910f9380e71661db702cdbd49168f11145bbabd3ad1ea1b255346201d88",
     "source_files": 266,
     "limitations": [
-      "Trusted stable filesystem/UID not hostile replacement defense",
-      "No chain/source/lifecycle/ownership/live acceptance",
-      "Desktop VPS results external not cloud rerun"
+      "LinuxLP64/OFD/standardPOSIXVFS rollback-only no existing journals, active writers unsupported",
+      "Trusted stableUID/path not hostile replacement defense",
+      "No source/chain/lifecycle/ownership/entry/live acceptance",
+      "External deployment evidence not rerun by cloud"
     ],
     "accepted": false,
     "live_acceptance": false,
