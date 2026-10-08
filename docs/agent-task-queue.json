@@ -200,7 +200,7 @@
       "cloud_reviewer": "Combined PR40 validation passed; available",
       "worker10": "PR44 documentation/provenance PASS; available for upcoming parser review",
       "worker03": "Bounded newerlegacysearch found no matching authoritative event;available",
-      "worker04": "PR40 repairs published3744192;review remains incomplete",
+      "worker04": "Separate bank-advancement point-capture repair; preserve original requests and reject unknowns",
       "worker05": "Implement disconnected nonredirecting bounded coordinator RPC transport",
       "worker09": "PR35 reviewed and integrated; available",
       "worker01": "Implement disconnected Token-2022 instruction syntax; PR43 already accepted",
@@ -279,6 +279,14 @@
         "task": "Dedicated nonredirecting single-request coordinator RPC transport; disconnected",
         "status": "DISPATCHED",
         "base_commit": "586bae86f8858f6c642be184b87c93d0995f7ceb"
+      },
+      {
+        "worker": "worker04",
+        "thread_id": "01a118fc-b862-7340-ab3a-e1115a3280a4",
+        "host_id": "durable",
+        "task": "Verify and repair minContextSlot floor versus returned bank for point-only capture",
+        "status": "DISPATCHED",
+        "base_commit": "36d5692"
       }
     ],
     "saved_launch_probe": {
