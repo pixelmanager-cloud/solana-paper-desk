@@ -12,6 +12,7 @@ from pathlib import Path
 import re
 import sqlite3
 import stat
+import sys
 import zlib
 
 from .entry_evidence import continuation_snapshot
@@ -30,6 +31,22 @@ UNRESOLVED = {
     'source_authentication': 'SOURCE_FINALITY_AND_HISTORY_COMPLETENESS_UNAUTHENTICATED',
     'transaction_bound_birth_state': 'TRANSACTION_BOUND_BIRTH_BYTES_UNAVAILABLE',
 }
+
+
+class ReadUnavailable(ValueError):
+    """No approved read capability; never fall back to weaker locks."""
+
+
+def read_platform_available():
+    """Static Linux LP64 contract, not a proof of this path/kernel's locks.
+
+    The actual guard must still succeed before any SQLite open. No filesystem
+    probes or imports of platform-specific modules occur on other platforms.
+    """
+    if sys.platform != 'linux':
+        return False
+    import ctypes
+    return ctypes.sizeof(ctypes.c_long) == 8 and ctypes.sizeof(ctypes.c_void_p) == 8
 
 
 def _hash(value):
@@ -51,6 +68,8 @@ def read_guard(path):
     immutable=1, copying, checkpointing, repairs, lock files or retries.
     Operators must not rename/replace/link files while workers use them.
     """
+    if not read_platform_available():
+        raise ReadUnavailable('DIAGNOSTIC_READ_PLATFORM_UNAVAILABLE')
     from .coordinator_capture_cli import _preflight_guard
     resolved = Path(path).resolve(strict=True)
     # Read-only diagnostics also support local tmpfs (fixture/volatile evidence),
@@ -103,13 +122,17 @@ class ReplayView:
         return json.loads(self.cache[key])
 
 
-def unknown_inventory(*, revision_hash=None, now=None):
+def unknown_inventory(*, revision_hash=None, now=None, unavailable_reason=None):
     obligations = {name: {'status':'UNRESOLVED', 'unknown_reasons':[reason],
                           'evidence_hashes':[]} for name, reason in UNRESOLVED.items()}
     for name in ('endpoint_controls', 'historical_accounting'):
         obligations[name] = {'status':'UNRESOLVED', 'unknown_reasons':['PERSISTED_RAW_REPLAY_UNAVAILABLE'],
                              'evidence_hashes':[]}
+    if unavailable_reason is not None:
+        for name in ('endpoint_controls', 'historical_accounting'):
+            obligations[name]['unknown_reasons'] = [unavailable_reason]
     return _finish({'schema':'legacy_control_obligations_v1', 'decision':'REJECT',
+            'read_status':'UNAVAILABLE',
             'revision_hash':revision_hash, 'evaluated_at':now, 'observed_at':None,
             'snapshot_slot':None, 'snapshot_time':None, 'source_hash':None,
             'requests_used':None, 'request_ceiling':18, 'provider_calls':0,
@@ -212,10 +235,14 @@ def inventory(scan, store, *, revision_hash, now):
                     unknown_reasons=_codes(replay['reasons']), evidence_hashes=sorted(view.requested),
                     scope='Provider-declared complete history replay to actual T; no authenticated CPI/control theorem')
                 result['evidence_hashes'] = sorted(view.requested)
+                result['read_status'] = 'AVAILABLE'
         if result['observed_at'] is None or not 0 <= now-result['observed_at'] <= 10:
             result['freshness_reasons'] = ['INVESTIGATION_NOT_FRESH_FOR_ENTRY']
         else:
             result['freshness_reasons'] = []
+    except ReadUnavailable:
+        result = unknown_inventory(revision_hash=revision_hash, now=now,
+                                   unavailable_reason='DIAGNOSTIC_READ_PLATFORM_UNAVAILABLE')
     except (ValueError, TypeError, KeyError, IndexError, AttributeError, sqlite3.Error,
             OverflowError, RecursionError, zlib.error, UnicodeError, OSError):
         result = unknown_inventory(revision_hash=revision_hash, now=now)

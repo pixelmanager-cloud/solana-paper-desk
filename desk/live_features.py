@@ -9,7 +9,7 @@ from pathlib import Path
 from .decision_runner import assess
 from .evidence import EvidenceStore
 from .model import canonical, digest
-from .control_obligations import ReplayView, inventory, read_guard, unknown_inventory
+from .control_obligations import ReadUnavailable, ReplayView, inventory, read_guard, unknown_inventory
 
 MAX_SOURCE_BYTES = 2 * 1024 * 1024
 MAX_LOADS = 128
@@ -83,6 +83,7 @@ def candidate_snapshot(research_db, evidence_db, scan_id, *, revision_hash, now)
               'scan_id': scan_id, 'revision_hash': revision_hash, 'source_hash': None,
               'scope': 'Historical local evidence; no current entry attestation',
               'provider_authenticity': 'UNVERIFIED', 'fields': fields,
+              'read_status': 'UNAVAILABLE',
               'components': {}, 'evidence_hashes': [],
               'control_obligations': unknown_inventory(revision_hash=revision_hash, now=now),
               'reasons': ['LIVE_FEATURE_ADAPTER_NOT_READY']}
@@ -112,6 +113,7 @@ def candidate_snapshot(research_db, evidence_db, scan_id, *, revision_hash, now)
         decision = assess(scan, now, store,
                           progress={'evidence_hash': revision_hash})
         result['control_obligations'] = inventory(scan, store, revision_hash=revision_hash, now=now)
+        result['read_status'] = 'AVAILABLE'
         gates = decision['entry_evidence']['gates']
         # A pinned raw historical reconciliation also validates source/seal/budget.
         bound = gates['history_snapshot']['status'] == 'VERIFIED_COMPONENT'
@@ -145,9 +147,16 @@ def candidate_snapshot(research_db, evidence_db, scan_id, *, revision_hash, now)
             result['reasons'].append('SOURCE_REVISION_RAW_REPLAY_UNVERIFIED')
         if result['observed_at'] is None or not 0 <= now - result['observed_at'] <= 10:
             result['reasons'].append('INVESTIGATION_NOT_FRESH_FOR_ENTRY')
+    except ReadUnavailable:
+        result['control_obligations'] = unknown_inventory(
+            revision_hash=revision_hash, now=now,
+            unavailable_reason='DIAGNOSTIC_READ_PLATFORM_UNAVAILABLE')
+        result['reasons'].extend(['DIAGNOSTIC_READ_PLATFORM_UNAVAILABLE',
+                                  'DIAGNOSTIC_SOURCE_OR_REPLAY_UNAVAILABLE'])
     except (ValueError, TypeError, KeyError, sqlite3.Error, OverflowError, RecursionError, zlib.error, UnicodeError, OSError):
         result['components'] = {}
         result['evidence_hashes'] = []
+        result['read_status'] = 'UNAVAILABLE'
         result['control_obligations'] = unknown_inventory(revision_hash=revision_hash, now=now)
         result['reasons'].append('DIAGNOSTIC_SOURCE_OR_REPLAY_UNAVAILABLE')
     finally:

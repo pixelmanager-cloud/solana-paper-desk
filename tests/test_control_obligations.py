@@ -1,14 +1,17 @@
 """Projection boundaries over real persisted fixture replay, never live RPC."""
 import base64
+from contextlib import contextmanager
 import copy
 import json
 import sqlite3
 import subprocess
 import sys
+import tempfile
 import unittest
+from pathlib import Path
 from unittest.mock import patch
 
-from desk.control_obligations import inventory, UNRESOLVED
+from desk.control_obligations import inventory, read_platform_available, ReplayView, UNRESOLVED
 from desk.evidence import EvidenceStore
 from desk.history import collect_history
 from desk.live_features import candidate_snapshot
@@ -16,6 +19,10 @@ from desk.model import canonical, digest
 from desk.ownership_worker import advance, saved_progress
 from desk.security import TOKEN_PROGRAM, TOKEN_2022
 from tests import test_ownership_multihistory_integration as multi
+
+
+requires_linux_reads = unittest.skipUnless(
+    read_platform_available(), 'Positive diagnostic replay requires approved Linux LP64 OFD read contract')
 
 
 class ControlObligationsTests(unittest.TestCase):
@@ -80,6 +87,7 @@ class ControlObligationsTests(unittest.TestCase):
         original = dict(result); original.pop('manifest_hash')
         self.assertEqual(result['manifest_hash'], digest(original))
 
+    @requires_linux_reads
     def test_thirteen_request_components_exact_hashes_original_age_and_no_writes(self):
         before = {p.name:p.read_bytes() for p in self.h.root.iterdir() if p.is_file()}
         with patch('desk.providers.helius_rpc', side_effect=AssertionError('no provider')):
@@ -102,6 +110,7 @@ class ControlObligationsTests(unittest.TestCase):
         self.assertFalse(first['eligible_for_trading'])
         self.assertEqual(first['fields']['top10_pct']['status'], 'UNKNOWN')
 
+    @requires_linux_reads
     def test_forged_summary_cannot_discharge_stronger_obligations(self):
         record = self.h.store.load(self.head['evidence_hash'])
         record.update(common_control_verified=True, eligible_for_trading=True,
@@ -187,6 +196,7 @@ class ControlObligationsTests(unittest.TestCase):
 
         self.assertEqual(result['obligations']['endpoint_controls']['status'], 'UNRESOLVED')
 
+    @requires_linux_reads
     def test_transient_approve_revoke_blocks_accounting_despite_clean_endpoint(self):
         h = self.h; account = h.f['accounts'][0]; owner = h.f['owners'][account]
         h.records[-1]['transaction']['message']['instructions'].extend([
@@ -210,6 +220,7 @@ class ControlObligationsTests(unittest.TestCase):
         self.assertEqual(result['obligations']['endpoint_controls']['status'], 'OBSERVED_COMPONENT')
         self.assertEqual(result['obligations']['historical_accounting']['status'], 'UNRESOLVED')
 
+    @requires_linux_reads
     def test_later_t_not_birth_s_and_mismatched_history_cutoff_blocks_accounting(self):
         raw = copy.deepcopy(self.h.f['snapshot']); raw['result']['context']['slot'] = 21
         clock = copy.deepcopy(self.h.f['block_time']); clock['params'] = [21]
@@ -228,6 +239,7 @@ class ControlObligationsTests(unittest.TestCase):
         self.assert_reject(result)
         self.assertEqual(result['obligations']['endpoint_controls']['status'], 'UNRESOLVED')
 
+    @requires_linux_reads
     def test_stale_observation_keeps_historical_components_but_no_refresh(self):
         result = self.project(now=131)['control_obligations']
         self.assert_reject(result)
@@ -257,6 +269,7 @@ class ControlObligationsTests(unittest.TestCase):
                 self.assertEqual(before,{p.name:p.read_bytes() for p in self.h.root.iterdir() if p.is_file()})
                 with sqlite3.connect(path) as c: c.execute('PRAGMA journal_mode=DELETE')
 
+    @requires_linux_reads
     def test_guard_keeps_revision_and_budget_stable_across_sqlite_connection_closes(self):
         from desk import control_obligations as module
         original = module.continuation_snapshot
@@ -276,6 +289,7 @@ class ControlObligationsTests(unittest.TestCase):
 
 
 class SealedControlObligationsTests(unittest.TestCase):
+    @requires_linux_reads
     def test_sealed_source_projects_only_when_exact_persisted_binding_replays(self):
         from tests import test_sealed_continuation_entry_evidence as sealed
         fixture = sealed.SealedContinuationEntryEvidenceTests()
@@ -293,4 +307,84 @@ class SealedControlObligationsTests(unittest.TestCase):
         result = project()
         self.assertEqual(result['obligations']['endpoint_controls']['status'], 'UNRESOLVED')
         self.assertFalse(result['ownership_approved'])
+
+
+class PortableControlBoundaryTests(unittest.TestCase):
+    def test_failed_lock_capability_never_falls_back_to_database_read(self):
+        from desk import control_obligations as module
+        @contextmanager
+        def rejected_guard(*args):
+            raise OSError('unsupported lock command')
+            yield
+        with tempfile.TemporaryDirectory() as root:
+            paths = [Path(root)/'research.sqlite',Path(root)/'evidence.sqlite']
+            for path in paths: path.write_bytes(b'unchanged unread database')
+            before = {p.name:p.read_bytes() for p in Path(root).iterdir()}
+            with patch.object(module,'read_platform_available',return_value=True), \
+                 patch.object(Path,'read_text',return_value='0 0 0:1 / / rw - tmpfs none rw'), \
+                 patch('desk.coordinator_capture_cli._preflight_guard',side_effect=rejected_guard), \
+                 patch('sqlite3.connect',side_effect=AssertionError('No fallback database read')):
+                result = candidate_snapshot(*paths,'scan',revision_hash='a'*64,now=1)
+            self.assertEqual(result['read_status'], 'UNAVAILABLE')
+            self.assertEqual(result['components'], {})
+            self.assertEqual(result['evidence_hashes'], [])
+            self.assertEqual(result['control_obligations']['read_status'], 'UNAVAILABLE')
+            self.assertFalse(result['eligible_for_trading'])
+            self.assertEqual(before,{p.name:p.read_bytes() for p in Path(root).iterdir()})
+
+    def test_unsupported_platforms_do_not_open_resolve_or_modify_databases(self):
+        from desk import control_obligations as module
+        with tempfile.TemporaryDirectory() as root:
+            paths = [Path(root)/'research.sqlite', Path(root)/'evidence.sqlite']
+            for path in paths: path.write_bytes(b'unchanged unread database')
+            before = {p.name:p.read_bytes() for p in Path(root).iterdir()}
+            store = EvidenceStore(paths[1], read_only=True)
+            scan = {'id':'scan','mint':'untrusted','created':1,'status':'COMPLETE','result':'{}'}
+            for platform in ('darwin','win32','freebsd'):
+                with self.subTest(platform=platform), \
+                     patch.object(module.sys,'platform',platform), \
+                     patch('sqlite3.connect',side_effect=AssertionError('No database opening')), \
+                     patch.object(Path,'resolve',side_effect=AssertionError('No path resolution')), \
+                     patch.object(Path,'read_text',side_effect=AssertionError('No mountinfo reading')), \
+                     patch.object(module.os,'open',side_effect=AssertionError('No file opening')):
+                    result = candidate_snapshot(*paths,'scan',revision_hash='a'*64,now=1)
+                    direct = inventory(scan,store,revision_hash='a'*64,now=1)
+                self.assertEqual(result['read_status'], 'UNAVAILABLE')
+                self.assertIn('DIAGNOSTIC_READ_PLATFORM_UNAVAILABLE',result['reasons'])
+                self.assertEqual(result['components'], {})
+                self.assertEqual(result['evidence_hashes'], [])
+                self.assertIsNone(result['observed_at'])
+                self.assertTrue(all(field['status']=='UNKNOWN' for field in result['fields'].values()))
+                for value in (result['control_obligations'],direct):
+                    self.assertEqual(value['read_status'], 'UNAVAILABLE')
+                    self.assertIn('DIAGNOSTIC_READ_PLATFORM_UNAVAILABLE',value['blockers'])
+                    self.assertTrue(all(o['status']=='UNRESOLVED' for o in value['obligations'].values()))
+                    self.assertFalse(value['eligible_for_trading'])
+                    self.assertIsNone(value['requests_used'])
+            self.assertEqual(before,{p.name:p.read_bytes() for p in Path(root).iterdir()})
+
+    def test_unsupported_platform_missing_paths_do_not_create_files(self):
+        from desk import control_obligations as module
+        with tempfile.TemporaryDirectory() as root, patch.object(module.sys,'platform','darwin'), \
+             patch('sqlite3.connect',side_effect=AssertionError('No database opening')):
+            paths = [Path(root)/'missing-research.sqlite',Path(root)/'missing-evidence.sqlite']
+            result = candidate_snapshot(*paths,'scan',revision_hash='a'*64,now=1)
+            self.assertEqual(result['read_status'], 'UNAVAILABLE')
+            self.assertIn('DIAGNOSTIC_READ_PLATFORM_UNAVAILABLE', result['reasons'])
+            self.assertEqual(list(Path(root).iterdir()), [])
+
+    def test_hash_and_resource_checks_are_portable_and_cache_copies_are_isolated(self):
+        class Store:
+            read_only = True
+            path = 'unused'
+            def load(self,key): return {'raw':['original']}
+        store = Store(); key = digest(store.load(None))
+        view = ReplayView(store)
+        view.load(key)['raw'].append('forged')
+        self.assertEqual(view.load(key), {'raw':['original']})
+        with self.assertRaises(ValueError): view.load('f'*64)
+        with patch('desk.control_obligations.MAX_REPLAY_BYTES',0):
+            with self.assertRaises(ValueError): ReplayView(store).load(key)
+        with patch('desk.control_obligations.MAX_HASHES',0):
+            with self.assertRaises(ValueError): ReplayView(store).load(key)
 

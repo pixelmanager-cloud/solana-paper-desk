@@ -117,6 +117,50 @@ forward-observation dependencies remain with their owners and blocked.
 
 ## Validation
 
+### Forward platform repair after desktop combined regression
+
+Coordinator desktop QA on integration27de4d7 plus the first PR76 head found
+10 failures and3 errors: the Linux-only guard correctly refused macOS but the
+output did not explicitly identify that platform contract, and thirteen tests
+required readable Linux diagnostics without a capability gate. The supported
+contract remains Linux LP64 OFD/rollback, with no substitute lock or unlocked
+desktop read. `read_platform_available` checks the static Linux LP64 contract;
+the real nonblocking OFD guard still must succeed before any SQLite opening.
+Unsupported OS/ABI now returns `read_status: UNAVAILABLE` and the static
+`DIAGNOSTIC_READ_PLATFORM_UNAVAILABLE` reason, before resolving a path, reading
+mountinfo, opening a file or database. Actual guard/path/kernel failures also
+remain UNAVAILABLE; static capability is never treated as successful locking.
+
+Thirteen individual tests requiring Linux component replay, original observed
+age, precise raw-replay blocker reasons or the writer-lock proof are capability
+gated: seven new obligation tests and six affected live-features tests. No test
+class or module receives a blanket skip. Portable identity checks, unavailable
+and reject-only output, no-write checks, malformed-source fail closure and
+manifest checks still run. Four added portable tests exercise macOS/Windows/
+FreeBSD explicit unavailability with database/path/file opening forbidden;
+missing paths without file creation; rejected runtime locks without database
+fallback; and hash/resource/cache-copy checks independent of platform locks.
+The affected existing live-features test file change is explicitly authorized
+by the coordinator's regression-repair dispatch.
+
+Updated Python3.12.14 focused results:97 tests in4.450s, OK, zero skips.
+Unsupported-platform branch simulation (production modules/stdlib imported on
+Linux before setting sys.platform to darwin, then affected tests loaded):32
+tests in1.216s, OK with precisely13 individual Linux-contract skips;19 portable
+tests executed. This is not a real macOS run or a claim of desktop-supported
+positive diagnostics. Coordinator desktop exact-head recheck remains required.
+Full isolated-branch Linux: `.venv/bin/python -m unittest discover -s tests`,
+1,493 tests in67.222s, OK; zero failures/errors/skips. Combined source from
+accepted integration `27de4d7a28b2d360159dcea8275f3250048964d0` and the PR76
+code/tests with this forward correction: `python -m unittest discover -q`,
+1,513 tests in67.603s, OK; zero failures/errors/skips. Combined QA uses a scratch
+archive of the independently reviewed combined tree
+`024eca54045e66f1f8f430cff959c68c9c67436c` with only the four corrected production/
+test files overlaid. It does not merge or change the integration branch.
+`git diff --check` remains clean. No known Linux failures remain; desktop
+positive reads are intentionally unavailable, and real desktop QA is pending.
+
+Initial PR76 head validation before the forward platform repair:
 Python3.12.14, synthetic/mock transports and local SQLite only. No provider,
 credential, VPS, signer or broadcast access.
 
