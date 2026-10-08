@@ -275,18 +275,6 @@
         "scope": "Review changed code and existing regression tests only; earlier flagged custom probes not repeated; stop if blocked"
       },
       {
-        "id": "PR96-FINAL-INDEPENDENT-REVIEW",
-        "worker": "06",
-        "thread_id": "01a118fc-f867-7233-8eec-c20659e70095",
-        "host_id": "durable",
-        "status": "IN_PROGRESS",
-        "pr": 96,
-        "head": "cb2e795e472bee322ece86659ca30b58364d03e3",
-        "base": "1a9f69595bf4c8c8814654a093fbba1bde93d5ad",
-        "wait_cursor": "8f3328cf-bef6-441d-83f8-2d1f46b3b0df:72",
-        "turn_id": "01a11c6d-ebd2-7444-a146-3d30d66ba75a"
-      },
-      {
         "id": "OWN1-COHESIVE-INTEGRATION-SCOPE",
         "worker": "03",
         "thread_id": "01a118fc-9478-778a-b77a-8f8f6ec7e0ad",
@@ -930,7 +918,7 @@
           "failures": 0,
           "seconds": 34.527
         },
-        "status": "INDEPENDENT_SECURITY_PASS_FULL_LINUX_PENDING",
+        "status": "ACCEPTED_INTEGRATED",
         "review": "https://github.com/pixelmanager-cloud/solana-paper-desk/pull/96#issuecomment-6063807197",
         "linux_tests": {
           "total": 1906,
@@ -944,7 +932,19 @@
           "reported_retry": "Oct 15th 2026 2:48 AM (tool did not specify timezone)",
           "partial_evidence": "four original framing cases reject;38focused and22independent checks pass;369file manifest and desktop tree match; no final full Linux result"
         },
-        "security_review": "https://github.com/pixelmanager-cloud/solana-paper-desk/pull/96#issuecomment-6064782143"
+        "security_review": "https://github.com/pixelmanager-cloud/solana-paper-desk/pull/96#issuecomment-6064782143",
+        "merge": "78f9ed8381e58798075a508b9d54f3f20f702fb0",
+        "independent_final_review": "https://github.com/pixelmanager-cloud/solana-paper-desk/pull/96#issuecomment-6064871389",
+        "independent_linux": {
+          "tests": 1910,
+          "skips": 0,
+          "failures": 0,
+          "seconds": 115.973,
+          "log_sha256": "46def5be8472ef30d17f3f910f1d18152f47e8f672d4647172d857482e16fc08",
+          "manifest_sha256": "a7dfa7aab955cea36cb0275caa1fab496cbcf97c69c46a03c59b35d22ad64f82"
+        },
+        "source_identity": "Integration index differs from independently tested tree only in coordinator queue JSON",
+        "deployment": "not deployed; disconnected transport"
       },
       "journal": {
         "pr": 97,
