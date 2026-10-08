@@ -189,15 +189,15 @@
   ],
   "integration": {
     "branch": "integration/cloud-wave1",
-    "tested_commit": "3aa4ec1acc2f3d8e9dde8184ebe354b15b6d5402",
-    "combined_tests": 1244,
+    "tested_commit": "f3987e58f9a39de2a69451aa08798fc4c16271f5",
+    "combined_tests": 1264,
     "result": "PASS",
     "live_verification": "BLOCKED_NO_SUPPORTED_BUDGET_FEASIBLE_PUBLIC_LEGACY_SEED; acquisition path in development",
     "blocker": "Live legacy evidence,protected pool receipt capture,lifecycle semantic approval and holder exposure integration unfinished",
     "followups": {
       "worker02": "PR40 review interrupted by automated cybersecurity-risk flag; no final acceptance",
       "worker06": "PR50 and combined Linux re-review complete; available",
-      "cloud_reviewer": "PR52 corrected preflight re-review",
+      "cloud_reviewer": "PR52 scoped re-review passed; available",
       "worker10": "PR45 independent review complete;available",
       "worker03": "Bounded newerlegacysearch found no matching authoritative event;available",
       "worker04": "PR47 accepted; available",
@@ -239,7 +239,7 @@
       "PR49": "2b11fbf6c8a5d7933088283a9a7ab9cbd9f25578 independent scopedPASS;Linux1179zero skips;canonical signatures and strict options independently probed",
       "PR51": "0b57227a36dd47b75128c66385c8e50dc16ecf24 scopedPASS;96 partial-schema/rebinding probes+3 crash/tamper/transport probes;Linux1201 zero skips",
       "PR50": "3c00d9679b997e2d92a317fbc0b9f469b76ef171 scopedPASS;1514 independent probes;combinedLinux1244 zero skips; no trusted lifecycle approval",
-      "PR52": "ef58b4320db51517a53501a5b8073172adb74cd5 CHANGES_REQUIRED: SQLite mode=ro WAL preflight creates sidecars before invalid admission rejection; no provider calls/budget mutation observed"
+      "PR52": "4f3573330b1b193579d733afab19b259297fa5df scopedPASS rollback-only contract; independent WAL/hot-journal/OFD locking probes;Linux1264 zero skips;266 sourcehashes matched"
     },
     "candidate_combination": {
       "commit": "bfcc550ca25bd6cb79dc7ac3ad2b30c72f7b1033",
@@ -259,17 +259,7 @@
       "status": "SUPERSEDED_BY_PUBLISHED_TESTED_COMMIT"
     },
     "published_ci": "886fc96d404b9d3ffd99c0045f7231d563a5d946 successful",
-    "active_claims": [
-      {
-        "worker": "cloud_reviewer",
-        "thread_id": "01a11901-8b68-70f9-8672-5a731a149091",
-        "host_id": "durable",
-        "task": "PR52 rollback-mode preflight re-review",
-        "status": "REVIEWING",
-        "pr": 52,
-        "head": "4f3573330b1b193579d733afab19b259297fa5df"
-      }
-    ],
+    "active_claims": [],
     "saved_launch_probe": {
       "source": "VPS saved raw launch events, read-only; no provider calls",
       "sample_size": 150,
@@ -320,7 +310,7 @@
       "result": "Linux combined975 PASS zero skips; reviewed",
       "integrated": true
     },
-    "test_platform_note": "Independent combinedLinux1244 zero skips;Mac1171 passed+73 Linux skips",
+    "test_platform_note": "Independent Linux1264 zero skips;Mac1172 passed+92 Linux skips",
     "pending_reference_combination": {
       "commit": "8aa5938aeef5e96f22a54f80ff698d043f3a154d",
       "pr": 39,
@@ -487,12 +477,12 @@
     "pending_capture_cli": {
       "pr": 52,
       "head": "4f3573330b1b193579d733afab19b259297fa5df",
-      "integrated": false,
-      "review": "CORRECTED_HEAD_UNDER_REVIEW",
-      "mac_discovered": 1258,
+      "integrated": true,
+      "review": "PASS",
+      "mac_discovered": 1264,
       "mac_passed": 1172,
-      "mac_skipped": 86,
-      "linux_combined": 1258
+      "mac_skipped": 92,
+      "linux_combined": 1264
     },
     "live_raw_capture_preflight": {
       "ownership_admissions_present": false,
