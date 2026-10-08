@@ -981,7 +981,35 @@
         "Future wiring must preserve transport failure semantics even when response bytes parse as valid slot."
       ],
       "live_acceptance": false,
-      "deployment": "unchanged f52840b; disconnected repairs are not yet integrated"
+      "deployment": "unchanged f52840b; disconnected repairs are not yet integrated",
+      "combined_candidate": {
+        "base": "1a9f69595bf4c8c8814654a093fbba1bde93d5ad",
+        "heads": [
+          "cb2e795e472bee322ece86659ca30b58364d03e3",
+          "c11bfad6f1a2debe323238ef746967310ba02349"
+        ],
+        "tree": "6f739e8a1b32b61624ba03322b7d0e8934d31502",
+        "scope": "isolated scratch combined verification only; not integration or acceptance",
+        "tests": {
+          "total": 1934,
+          "passed": 1561,
+          "skipped": 373,
+          "failures": 0,
+          "seconds": 35.489,
+          "platform": "Mac desktop; not independent Linux approval"
+        }
+      },
+      "next_wiring_contract": {
+        "status": "BLOCKED_ON_FINAL_REVIEWS",
+        "requirements": [
+          "Reserve same18 durable intent before invoking transport exactly once",
+          "Send persisted original request bytes unchanged",
+          "Preserve transport failure plus any original bounded response together: current attach_response parses valid prefixes as DONE while attach_failure cannot retain response bytes",
+          "Unknown pending after restart remains terminal; no retry/new request/refund",
+          "Only successful transport plus strict cutoff validation may feed later discovery; all authentication and entry gates remain false until separately proven"
+        ],
+        "dispatch": "No dependent implementation dispatched while prerequisite final review gates remain closed"
+      }
     }
   },
   "native_reconciliation_review": {
