@@ -273,16 +273,6 @@
         "wait_cursor": "b9784eaf-f3e5-457f-a98d-a386c23b37ea:48",
         "turn_id": "01a11c6e-65ba-7787-b458-530144590287",
         "scope": "Review changed code and existing regression tests only; earlier flagged custom probes not repeated; stop if blocked"
-      },
-      {
-        "id": "PR98-INDEPENDENT-REVIEW",
-        "worker": "06",
-        "thread_id": "01a118fc-f867-7233-8eec-c20659e70095",
-        "host_id": "durable",
-        "status": "IN_PROGRESS",
-        "pr": 98,
-        "head": "802f9f03a18a871c9617876d6eb666a84819ac4e",
-        "base": "bc5b8d0b85d72e47f85c08dc74b0e6919dd2bed7"
       }
     ],
     "saved_launch_probe": {
@@ -1062,7 +1052,7 @@
       "candidate_tree": "ca6c108f6c82eddf0e7234dff4b28b23c4cebbc5",
       "author": "01",
       "reviewer": "06",
-      "status": "INDEPENDENT_AND_DESKTOP_REVIEW",
+      "status": "ACCEPTED_INTEGRATED",
       "desktop_tests": {
         "total": 1934,
         "skipped": 373,
@@ -1070,7 +1060,20 @@
         "seconds": 34.423
       },
       "source_review": "Strict enumerated6methods; fixed _exchange extracted from accepted slot module; no runtime wiring. Pinned genesis fixture passes local response grammar.",
-      "live_acceptance": false
+      "live_acceptance": false,
+      "merge": "691737b03e9571eaecce8f3d22f9ef8a09098802",
+      "review": "https://github.com/pixelmanager-cloud/solana-paper-desk/pull/98#issuecomment-6065203244",
+      "linux_tests": {
+        "total": 1934,
+        "skips": 0,
+        "failures": 0,
+        "seconds": 118.976,
+        "independent_checks": 80
+      },
+      "manifest_sha256": "8cbc4873a37f321d754c1d03e398ccfcad07b5143da2794f7211f6876caabbac",
+      "ci": "both exact-head SUCCESS",
+      "identity": "Only coordinator queue differs from independently tested combined tree",
+      "deployment": "not deployed; disconnected"
     }
   },
   "native_reconciliation_review": {
