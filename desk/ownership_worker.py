@@ -10,6 +10,18 @@ from .security import mint_policy
 
 def advance(source,evidence_db,scan_id,rpc,*,max_calls=2):
     if type(max_calls) is not int or not 1<=max_calls<=4:raise ValueError('One to four continuation requests allowed')
+    # Serialize capture, aggregation, replay and head publication together. The
+    # per-request lock remains separate so nested continuation cannot deadlock.
+    import fcntl
+    store=EvidenceStore(evidence_db)
+    with open(str(store.path)+'.ownership-invocation.lock','a') as lock:
+        try:fcntl.flock(lock,fcntl.LOCK_EX|fcntl.LOCK_NB)
+        except BlockingIOError:
+            return {'scan_id':scan_id,'status':'BUSY','provider_calls':0,'eligible_for_trading':False}
+        return _advance_locked(source,evidence_db,scan_id,rpc,max_calls=max_calls)
+
+
+def _advance_locked(source,evidence_db,scan_id,rpc,*,max_calls):
     with sqlite3.connect(Path(source).resolve().as_uri()+'?mode=ro',uri=True) as c:
         c.row_factory=sqlite3.Row
         row=c.execute("SELECT id,mint,created,status,result FROM scans WHERE id=? AND status='COMPLETE'",(scan_id,)).fetchone()
