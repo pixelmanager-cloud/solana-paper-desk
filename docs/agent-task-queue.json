@@ -274,14 +274,6 @@
         "consumer_pr": 72
       },
       {
-        "worker": "worker10",
-        "thread_id": "01a118fd-56d5-70b8-ad31-dba13e982082",
-        "host_id": "durable",
-        "task": "Separate full valuation and exact partial-action evidence in paper engine; keep live gates disabled",
-        "status": "IMPLEMENTING",
-        "base": "c9b9356"
-      },
-      {
         "worker": "worker01",
         "thread_id": "01a118fc-39bc-722c-b442-8bf5a749e0bb",
         "host_id": "durable",
@@ -298,6 +290,16 @@
         "pr": 72,
         "head": "f64144d4c583520666ca866c37dde3e8e81f2205",
         "base": "2ef1071"
+      },
+      {
+        "worker": "worker02",
+        "thread_id": "01a118fc-666c-70b6-9fa8-2c7520f0a0bb",
+        "host_id": "durable",
+        "status": "REVIEWING",
+        "task": "Independent exact partial-action proof and accounting review",
+        "pr": 73,
+        "head": "64c262a8e8593d848d042832d47b3a8c711a8a00",
+        "base": "c4e2b18"
       }
     ],
     "saved_launch_probe": {
@@ -831,6 +833,12 @@
         "skips": 99,
         "seconds": 30.191
       }
+    },
+    "73": {
+      "head": "64c262a8e8593d848d042832d47b3a8c711a8a00",
+      "reviewer": "worker02",
+      "status": "REVIEWING",
+      "integrated": false
     }
   },
   "parallel_combined_regression": {
