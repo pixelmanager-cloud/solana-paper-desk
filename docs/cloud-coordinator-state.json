@@ -1,6 +1,6 @@
 {
   "schema_version": 1,
-  "revision": 44,
+  "revision": 45,
   "repository": "pixelmanager-cloud/solana-paper-desk",
   "source_main_sha": "e298e15cd758932e81d2241130716632702f5bd0",
   "observed_date": "2026-10-08",
@@ -1297,6 +1297,57 @@
       "branch_pagination_complete": true,
       "integration_queue_blob": "8528a40775c8b3d533cab0ca66589ff9ed403da6",
       "tests": "NOT_RUN_NO_NEW_UNASSIGNED_WORK",
+      "infrastructure_failures": [],
+      "new_review_comments": 0,
+      "accepted_tasks": [],
+      "live_acceptance": false,
+      "schedule": "Notreprobed/modified;nobinding/durabilityclaim"
+    },
+    {
+      "kind": "HOURLY_REVIEW_RECONCILIATION",
+      "observed_at_utc": "2026-10-08T11:02:15Z",
+      "policy_version": "cloud-independent-review-v1",
+      "hosted_execution": {
+        "provider": "cloud",
+        "observations_current": true,
+        "observed_phase": "running",
+        "durable_schedule_binding_verified": false
+      },
+      "status": "NO_NEW_OPEN_UNASSIGNED_REVIEW_WORK",
+      "observed_prs": [
+        {
+          "pr": 79,
+          "head_sha": "b3c527be544f25ea5d8d0329f181e74fdae46785",
+          "base_sha": "b96a0c5443431772258389fa050da10c9e779164",
+          "branch": "codex/cloud-wave1-05-legacy-control-inventory",
+          "merged": true,
+          "status": "DESKTOP_INTEGRATED_EXTERNAL_REVIEW_NOT_REPEATED"
+        },
+        {
+          "pr": 80,
+          "head_sha": "03d0a2ffce477243b8af813c9d5b310c490292ab",
+          "base_sha": "a6aee2cfabc6958c1ab51c426b72473890187772",
+          "branch": "codex/cloud-classification-resource-02",
+          "merged": true,
+          "status": "DESKTOP_INTEGRATED_EXTERNAL_REVIEW_NOT_REPEATED"
+        }
+      ],
+      "active_claims": [
+        {
+          "id": "OWN-2-SOURCE-BOUND-ADMISSION",
+          "worker": "02",
+          "thread_id": "01a118fc-666c-70b6-9fa8-2c7520f0a0bb",
+          "host_id": "durable",
+          "base": "2ab25cbb8472fd29072da078e2fa7e049e0c65ea",
+          "status": "DISPATCHED",
+          "scope": "Smallest missing source-bound pool-vault classification prerequisite; implement only justified raw/source/bank binding; otherwise report precise blocking inputs. No admission or entry guard relaxation.",
+          "assigned_at": "2026-10-08T10:55:25Z"
+        }
+      ],
+      "branches_checked": 72,
+      "branch_pagination_complete": true,
+      "integration_queue_blob": "8a977bf555043ce9d2a7164adb4c57778e721356",
+      "tests": "NOT_RUN_NO_NEW_OPEN_UNASSIGNED_WORK",
       "infrastructure_failures": [],
       "new_review_comments": 0,
       "accepted_tasks": [],
@@ -3239,14 +3290,14 @@
     },
     "external_current": [
       {
-        "worker": "worker01",
-        "thread_id": "01a118fc-39bc-722c-b442-8bf5a749e0bb",
+        "id": "OWN-2-SOURCE-BOUND-ADMISSION",
+        "worker": "02",
+        "thread_id": "01a118fc-666c-70b6-9fa8-2c7520f0a0bb",
         "host_id": "durable",
-        "status": "REVIEWING",
-        "base": "b96a0c5",
-        "pr": 79,
-        "head": "b3c527be544f25ea5d8d0329f181e74fdae46785",
-        "task": "Independent persisted historical control inventory review"
+        "base": "2ab25cbb8472fd29072da078e2fa7e049e0c65ea",
+        "status": "DISPATCHED",
+        "scope": "Smallest missing source-bound pool-vault classification prerequisite; implement only justified raw/source/bank binding; otherwise report precise blocking inputs. No admission or entry guard relaxation.",
+        "assigned_at": "2026-10-08T10:55:25Z"
       }
     ]
   },
@@ -3564,7 +3615,7 @@
   ],
   "last_reconciliation": {
     "kind": "HOURLY_REVIEW_RECONCILIATION",
-    "observed_at_utc": "2026-10-08T10:01:15Z",
+    "observed_at_utc": "2026-10-08T11:02:15Z",
     "policy_version": "cloud-independent-review-v1",
     "hosted_execution": {
       "provider": "cloud",
@@ -3572,22 +3623,41 @@
       "observed_phase": "running",
       "durable_schedule_binding_verified": false
     },
-    "status": "NO_NEW_UNASSIGNED_REVIEW_WORK",
+    "status": "NO_NEW_OPEN_UNASSIGNED_REVIEW_WORK",
     "observed_prs": [
       {
         "pr": 79,
         "head_sha": "b3c527be544f25ea5d8d0329f181e74fdae46785",
         "base_sha": "b96a0c5443431772258389fa050da10c9e779164",
         "branch": "codex/cloud-wave1-05-legacy-control-inventory",
-        "owner": "worker01",
-        "thread_id": "01a118fc-39bc-722c-b442-8bf5a749e0bb",
-        "status": "RESERVED_EXTERNAL_REVIEW"
+        "merged": true,
+        "status": "DESKTOP_INTEGRATED_EXTERNAL_REVIEW_NOT_REPEATED"
+      },
+      {
+        "pr": 80,
+        "head_sha": "03d0a2ffce477243b8af813c9d5b310c490292ab",
+        "base_sha": "a6aee2cfabc6958c1ab51c426b72473890187772",
+        "branch": "codex/cloud-classification-resource-02",
+        "merged": true,
+        "status": "DESKTOP_INTEGRATED_EXTERNAL_REVIEW_NOT_REPEATED"
       }
     ],
-    "branches_checked": 71,
+    "active_claims": [
+      {
+        "id": "OWN-2-SOURCE-BOUND-ADMISSION",
+        "worker": "02",
+        "thread_id": "01a118fc-666c-70b6-9fa8-2c7520f0a0bb",
+        "host_id": "durable",
+        "base": "2ab25cbb8472fd29072da078e2fa7e049e0c65ea",
+        "status": "DISPATCHED",
+        "scope": "Smallest missing source-bound pool-vault classification prerequisite; implement only justified raw/source/bank binding; otherwise report precise blocking inputs. No admission or entry guard relaxation.",
+        "assigned_at": "2026-10-08T10:55:25Z"
+      }
+    ],
+    "branches_checked": 72,
     "branch_pagination_complete": true,
-    "integration_queue_blob": "8528a40775c8b3d533cab0ca66589ff9ed403da6",
-    "tests": "NOT_RUN_NO_NEW_UNASSIGNED_WORK",
+    "integration_queue_blob": "8a977bf555043ce9d2a7164adb4c57778e721356",
+    "tests": "NOT_RUN_NO_NEW_OPEN_UNASSIGNED_WORK",
     "infrastructure_failures": [],
     "new_review_comments": 0,
     "accepted_tasks": [],
