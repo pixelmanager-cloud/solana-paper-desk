@@ -11,13 +11,14 @@ from urllib.error import HTTPError
 from urllib.request import HTTPRedirectHandler, Request, build_opener
 
 from .pool_receipt_ledger import ApprovedSource
-from .programs import address
+from .programs import address, unbase58
+from .security import base58
 
 _ENDPOINT = 'https://mainnet.helius-rpc.com/'
 _SOURCE = ApprovedSource('helius-mainnet-single-request-v1', 'coordinator_capture')
 _TIMEOUT_SECONDS = 15
 _MAX_RESPONSE_BYTES = 2 * 1024 * 1024
-_METHODS = frozenset(('getGenesisHash', 'getSlot', 'getMultipleAccounts', 'getBlockTime'))
+_METHODS = frozenset(('getGenesisHash', 'getSlot', 'getMultipleAccounts', 'getBlockTime', 'getTransaction'))
 
 
 class CoordinatorRPCError(ValueError):
@@ -42,6 +43,20 @@ def _params(method, params):
     elif method == 'getBlockTime':
         if len(params) != 1 or type(params[0]) is not int or params[0] < 0:
             raise ValueError('Invalid clock slot')
+    elif method == 'getTransaction':
+        if len(params) != 2 or type(params[0]) is not str or not 64 <= len(params[0]) <= 88:
+            raise ValueError('Canonical transaction signature required')
+        raw = unbase58(params[0])
+        if len(raw) != 64 or base58(raw) != params[0]:
+            raise ValueError('Canonical transaction signature required')
+        options = params[1]
+        if (type(options) is not dict
+                or set(options) != {'encoding', 'commitment', 'maxSupportedTransactionVersion'}
+                or type(options['encoding']) is not str or options['encoding'] != 'json'
+                or type(options['commitment']) is not str or options['commitment'] != 'finalized'
+                or type(options['maxSupportedTransactionVersion']) is not int
+                or options['maxSupportedTransactionVersion'] != 0):
+            raise ValueError('Exact finalized raw transaction configuration required')
     else:
         if len(params) != 2 or type(params[0]) is not list or not 1 <= len(params[0]) <= 100:
             raise ValueError('Bounded account keys required')
