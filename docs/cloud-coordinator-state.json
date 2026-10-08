@@ -1,6 +1,6 @@
 {
   "schema_version": 1,
-  "revision": 41,
+  "revision": 42,
   "repository": "pixelmanager-cloud/solana-paper-desk",
   "source_main_sha": "e298e15cd758932e81d2241130716632702f5bd0",
   "observed_date": "2026-10-08",
@@ -1142,6 +1142,69 @@
       "review_id": 5452960493,
       "head_sha": "5d53e384f2aa6e35bdb6054e1362beb74d42f850",
       "accepted": false
+    },
+    {
+      "kind": "HOURLY_REVIEW_RECONCILIATION",
+      "observed_at_utc": "2026-10-08T07:56:59Z",
+      "policy_version": "cloud-independent-review-v1",
+      "hosted_execution": {
+        "provider": "cloud",
+        "observations_current": true,
+        "observed_phase": "running",
+        "durable_schedule_binding_verified": false
+      },
+      "status": "NO_NEW_UNASSIGNED_REVIEW_WORK",
+      "observed_prs": [
+        {
+          "pr": 62,
+          "head_sha": "9e35c2bce3b4aa47051418ce0d5793c9b872edcd",
+          "base_sha": "13853bf3cc9a2e5e31c63656f3947cc2b0ddca33",
+          "branch": "codex/runtime-log-witness",
+          "merged": true,
+          "owner": "PRIOR_CLOUD_REVIEW",
+          "thread_id": null,
+          "status": "EXACT_HEAD_ALREADY_REVIEWED"
+        },
+        {
+          "pr": 69,
+          "head_sha": "5d53e384f2aa6e35bdb6054e1362beb74d42f850",
+          "base_sha": "a9f34861771eac7cd51fbafc380c92528dd90ccb",
+          "branch": "codex/cloud-wave1-07-signed-message-witness",
+          "merged": true,
+          "owner": "PRIOR_CLOUD_REVIEW",
+          "thread_id": null,
+          "status": "EXACT_HEAD_ALREADY_REVIEWED"
+        },
+        {
+          "pr": 72,
+          "head_sha": "f40d4edae7783d5dcbb6d9200879febd455edbf9",
+          "base_sha": "551ed49d5d64037cf6466028bf1f57639e3bf7f2",
+          "branch": "codex/cloud-wave3-08-paper-consumer-recovery",
+          "merged": false,
+          "owner": "worker06",
+          "thread_id": "01a118fc-f867-7233-8eec-c20659e70095",
+          "status": "RESERVED_EXTERNAL_REVIEW"
+        },
+        {
+          "pr": 74,
+          "head_sha": "63eaa3f876d7ee006e6a692dec8bceeb26d189f1",
+          "base_sha": "9f6adea66ec1cede061f5318bb2abff675bd8a2c",
+          "branch": "codex/cloud-outer-message-privileges",
+          "merged": false,
+          "owner": "worker02",
+          "thread_id": "01a118fc-666c-70b6-9fa8-2c7520f0a0bb",
+          "status": "RESERVED_EXTERNAL_REVIEW"
+        }
+      ],
+      "branches_checked": 66,
+      "branch_pagination_complete": true,
+      "integration_queue_blob": "cbd38316a4aacc82a92a91c64f48909d156bf114",
+      "tests": "NOT_RUN_NO_NEW_UNASSIGNED_WORK",
+      "infrastructure_failures": [],
+      "accepted_tasks": [],
+      "live_acceptance": false,
+      "new_review_comments": 0,
+      "schedule": "Existing schedule notprobed/modified; no new binding/durability claim"
     }
   ],
   "artifact_pr": {
@@ -3079,98 +3142,43 @@
     },
     "external_current": [
       {
-        "worker": "worker01",
-        "thread_id": "01a118fc-39bc-722c-b442-8bf5a749e0bb",
+        "worker": "worker08",
+        "thread_id": "01a118fd-2563-7126-90d7-bd07693de0b2",
         "host_id": "durable",
-        "task": "Independent PR60 review",
-        "status": "REVIEWING",
-        "base": "13853bf",
-        "pr": 60,
-        "head": "eb4432bbc614de775f510a1cfa86f917fb80abda"
-      },
-      {
-        "worker": "worker04",
-        "thread_id": "01a118fc-b862-7340-ab3a-e1115a3280a4",
-        "host_id": "durable",
-        "task": "Current-holder exposure correctness",
-        "status": "DISPATCHED",
-        "base": "c578dbe"
-      },
-      {
-        "worker": "worker05",
-        "thread_id": "01a118fc-dd83-7672-ac81-7445f85fe09f",
-        "host_id": "durable",
-        "task": "Independent token-control certificate proposal PR63 review",
-        "status": "REVIEWING",
-        "base": "c578dbe",
-        "pr": 63,
-        "head": "2efe5a0422380350a51e62bd3a08e4a7759ae1e5"
-      },
-      {
-        "worker": "worker07",
-        "thread_id": "01a118fd-0f1c-749c-b85b-5e730937d0a8",
-        "host_id": "durable",
-        "task": "Signed-message witness validation",
-        "status": "DISPATCHED",
-        "base": "c578dbe"
-      },
-      {
-        "worker": "worker09",
-        "thread_id": "01a118fd-3f90-77d9-9549-c4497f5b10a6",
-        "host_id": "durable",
-        "task": "Paper dashboard rejection clarity",
-        "status": "DISPATCHED",
-        "base": "c578dbe"
-      },
-      {
-        "worker": "worker03",
-        "thread_id": "01a118fc-9478-778a-b77a-8f8f6ec7e0ad",
-        "host_id": "durable",
-        "task": "Independent pool integration PR64 review",
-        "pr": 64,
-        "head": "75eaed53f3b6802dbfb06eded6f92559bc586bdf",
-        "status": "REVIEWING",
-        "base": "13853bf"
-      },
-      {
-        "worker": "worker02",
-        "thread_id": "01a118fc-666c-70b6-9fa8-2c7520f0a0bb",
-        "pr": 65,
-        "head": "209826064b770b67b9c528c763b7d0e0ba55f10d",
-        "host_id": "durable",
-        "task": "Independent PR65 review",
-        "status": "REVIEWING",
-        "base": "13853bf"
+        "task": "PR72 monitor preflight integrity race diagnostic repair",
+        "status": "AUTHOR_COMPLETE_PENDING_REVIEW",
+        "base": "e13d17b",
+        "pr": 72,
+        "head": "f40d4edae7783d5dcbb6d9200879febd455edbf9",
+        "consumer_pr": 72
       },
       {
         "worker": "worker06",
         "thread_id": "01a118fc-f867-7233-8eec-c20659e70095",
-        "pr": 67,
-        "head": "77991bf90bb31f428b1c3dd33076ab7dc6e1ca3f",
         "host_id": "durable",
-        "task": "Independent PR67 review",
+        "task": "Independent recovery consumer review with PR65 repair",
         "status": "REVIEWING",
-        "base": "13853bf"
-      },
-      {
-        "worker": "worker08",
-        "thread_id": "01a118fd-2563-7126-90d7-bd07693de0b2",
-        "pr": 66,
-        "head": "8538fb3098a321e21d9b8bc2f1a4cb5ac24f03cd",
-        "host_id": "durable",
-        "task": "Independent PR66 review",
-        "status": "REVIEWING",
-        "base": "13853bf"
+        "pr": 72,
+        "head": "f40d4edae7783d5dcbb6d9200879febd455edbf9",
+        "base": "9f6adea"
       },
       {
         "worker": "worker10",
         "thread_id": "01a118fd-56d5-70b8-ad31-dba13e982082",
-        "pr": 68,
-        "head": "944d97cf1a0cebb6e309e62f9583e9a87cba42b9",
         "host_id": "durable",
-        "task": "Independent PR68 review",
-        "status": "REVIEWING",
-        "base": "13853bf"
+        "status": "IMPLEMENTING",
+        "task": "Lossless mint-bound raw/human quantity witness in existing unsigned diagnostic path",
+        "base": "b5e4d66"
+      },
+      {
+        "worker": "worker02",
+        "thread_id": "01a118fc-666c-70b6-9fa8-2c7520f0a0bb",
+        "host_id": "durable",
+        "task": "Independent compiled message privilege evidence review",
+        "pr": 74,
+        "head": "63eaa3f876d7ee006e6a692dec8bceeb26d189f1",
+        "base": "4b45e5d",
+        "status": "REVIEWING"
       }
     ]
   },
@@ -3488,7 +3496,7 @@
   ],
   "last_reconciliation": {
     "kind": "HOURLY_REVIEW_RECONCILIATION",
-    "observed_at_utc": "2026-10-08T07:02:30Z",
+    "observed_at_utc": "2026-10-08T07:56:59Z",
     "policy_version": "cloud-independent-review-v1",
     "hosted_execution": {
       "provider": "cloud",
@@ -3499,95 +3507,54 @@
     "status": "NO_NEW_UNASSIGNED_REVIEW_WORK",
     "observed_prs": [
       {
-        "pr": 59,
-        "head_sha": "c120beebbaa2aa028ad777e995eac03a566881bf",
-        "base_sha": "a8141f153339e97652f9dd9108ff1703717e7697",
-        "branch": "codex/cloud-wave1-10-live-paper-critical-path",
-        "owner": "EXISTING_REVIEW",
-        "worker_thread_id": null,
-        "disposition": "EXACT_HEAD_ALREADY_REVIEWED"
-      },
-      {
-        "pr": 60,
-        "head_sha": "eb4432bbc614de775f510a1cfa86f917fb80abda",
-        "base_sha": "13853bf3cc9a2e5e31c63656f3947cc2b0ddca33",
-        "branch": "codex/cloud-readiness-02-classification",
-        "owner": "worker01",
-        "worker_thread_id": "01a118fc-39bc-722c-b442-8bf5a749e0bb",
-        "disposition": "RESERVED_EXTERNAL_REVIEW_DO_NOT_DUPLICATE"
-      },
-      {
         "pr": 62,
         "head_sha": "9e35c2bce3b4aa47051418ce0d5793c9b872edcd",
         "base_sha": "13853bf3cc9a2e5e31c63656f3947cc2b0ddca33",
         "branch": "codex/runtime-log-witness",
-        "owner": "cloud_reviewer",
-        "worker_thread_id": "01a11901-8b68-70f9-8672-5a731a149091",
-        "disposition": "EXACT_HEAD_ALREADY_REVIEWED"
+        "merged": true,
+        "owner": "PRIOR_CLOUD_REVIEW",
+        "thread_id": null,
+        "status": "EXACT_HEAD_ALREADY_REVIEWED"
       },
       {
-        "pr": 63,
-        "head_sha": "2efe5a0422380350a51e62bd3a08e4a7759ae1e5",
-        "base_sha": "13853bf3cc9a2e5e31c63656f3947cc2b0ddca33",
-        "branch": "codex/cloud-wave1-06-token-control-certificate",
-        "owner": "worker05",
-        "worker_thread_id": "01a118fc-dd83-7672-ac81-7445f85fe09f",
-        "disposition": "RESERVED_EXTERNAL_REVIEW_DO_NOT_DUPLICATE"
+        "pr": 69,
+        "head_sha": "5d53e384f2aa6e35bdb6054e1362beb74d42f850",
+        "base_sha": "a9f34861771eac7cd51fbafc380c92528dd90ccb",
+        "branch": "codex/cloud-wave1-07-signed-message-witness",
+        "merged": true,
+        "owner": "PRIOR_CLOUD_REVIEW",
+        "thread_id": null,
+        "status": "EXACT_HEAD_ALREADY_REVIEWED"
       },
       {
-        "pr": 64,
-        "head_sha": "75eaed53f3b6802dbfb06eded6f92559bc586bdf",
-        "base_sha": "83dae25613eae6102d58eb9fab2c3df0995c0e9e",
-        "branch": "codex/cloud-wave1-05-pool-integration",
-        "owner": "worker03",
-        "worker_thread_id": "01a118fc-9478-778a-b77a-8f8f6ec7e0ad",
-        "disposition": "RESERVED_EXTERNAL_REVIEW_DO_NOT_DUPLICATE"
-      },
-      {
-        "pr": 65,
-        "head_sha": "209826064b770b67b9c528c763b7d0e0ba55f10d",
-        "base_sha": "83dae25613eae6102d58eb9fab2c3df0995c0e9e",
-        "branch": "codex/cloud-wave2-08-paper-restart",
-        "owner": "worker02",
-        "worker_thread_id": "01a118fc-666c-70b6-9fa8-2c7520f0a0bb",
-        "disposition": "RESERVED_EXTERNAL_REVIEW_DO_NOT_DUPLICATE"
-      },
-      {
-        "pr": 66,
-        "head_sha": "8538fb3098a321e21d9b8bc2f1a4cb5ac24f03cd",
-        "base_sha": "d888ac457e7e32feea4679ca47594ff8c64ffc35",
-        "branch": "codex/cloud-paper-rejection-clarity",
-        "owner": "worker08",
-        "worker_thread_id": "01a118fd-2563-7126-90d7-bd07693de0b2",
-        "disposition": "RESERVED_EXTERNAL_REVIEW_DO_NOT_DUPLICATE"
-      },
-      {
-        "pr": 67,
-        "head_sha": "77991bf90bb31f428b1c3dd33076ab7dc6e1ca3f",
-        "base_sha": "d888ac457e7e32feea4679ca47594ff8c64ffc35",
-        "branch": "codex/cloud-wave1-10-live-feature-diagnostic",
+        "pr": 72,
+        "head_sha": "f40d4edae7783d5dcbb6d9200879febd455edbf9",
+        "base_sha": "551ed49d5d64037cf6466028bf1f57639e3bf7f2",
+        "branch": "codex/cloud-wave3-08-paper-consumer-recovery",
+        "merged": false,
         "owner": "worker06",
-        "worker_thread_id": "01a118fc-f867-7233-8eec-c20659e70095",
-        "disposition": "RESERVED_EXTERNAL_REVIEW_DO_NOT_DUPLICATE"
+        "thread_id": "01a118fc-f867-7233-8eec-c20659e70095",
+        "status": "RESERVED_EXTERNAL_REVIEW"
       },
       {
-        "pr": 68,
-        "head_sha": "944d97cf1a0cebb6e309e62f9583e9a87cba42b9",
-        "base_sha": "d888ac457e7e32feea4679ca47594ff8c64ffc35",
-        "branch": "codex/cloud-wave6-04-holder-exposure",
-        "owner": "worker10",
-        "worker_thread_id": "01a118fd-56d5-70b8-ad31-dba13e982082",
-        "disposition": "RESERVED_EXTERNAL_REVIEW_DO_NOT_DUPLICATE"
+        "pr": 74,
+        "head_sha": "63eaa3f876d7ee006e6a692dec8bceeb26d189f1",
+        "base_sha": "9f6adea66ec1cede061f5318bb2abff675bd8a2c",
+        "branch": "codex/cloud-outer-message-privileges",
+        "merged": false,
+        "owner": "worker02",
+        "thread_id": "01a118fc-666c-70b6-9fa8-2c7520f0a0bb",
+        "status": "RESERVED_EXTERNAL_REVIEW"
       }
     ],
-    "cloud_branches_checked": 60,
+    "branches_checked": 66,
     "branch_pagination_complete": true,
-    "integration_queue_blob": "43485d0ac9a46ac81da95b06991f18a80da528c7",
-    "tests": "NOT_RUN_NO_NEW_UNASSIGNED_REVIEW",
-    "new_review_comments": 0,
+    "integration_queue_blob": "cbd38316a4aacc82a92a91c64f48909d156bf114",
+    "tests": "NOT_RUN_NO_NEW_UNASSIGNED_WORK",
     "infrastructure_failures": [],
     "accepted_tasks": [],
     "live_acceptance": false,
-    "schedule": "Notreprobed/modified;noclaimofbounddurableenvironment"
+    "new_review_comments": 0,
+    "schedule": "Existing schedule notprobed/modified; no new binding/durability claim"
   }
 }
