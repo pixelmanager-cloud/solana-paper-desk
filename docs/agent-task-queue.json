@@ -864,7 +864,15 @@
       "head": "63eaa3f876d7ee006e6a692dec8bceeb26d189f1",
       "reviewer": "worker02",
       "status": "SCOPED_PASS_COMBINED_VALIDATING",
-      "integrated": false
+      "integrated": false,
+      "mac_combined": {
+        "base": "ae33013",
+        "tree": "9ff75fa7ab81991e634455d73b9617ec688b90b5",
+        "discovered": 1479,
+        "passed": 1380,
+        "skips": 99,
+        "seconds": 29.818
+      }
     }
   },
   "parallel_combined_regression": {
