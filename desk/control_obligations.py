@@ -18,6 +18,7 @@ import zlib
 from .entry_evidence import continuation_snapshot
 from .model import canonical, digest
 from .security import account_bytes, base58, holding_policy, mint_policy
+from .historical_controls import ControlLimit, observed_controls, unavailable_controls
 
 MAX_HASHES = 128
 MAX_SOURCE_BYTES = 2 * 1024 * 1024
@@ -131,6 +132,7 @@ def unknown_inventory(*, revision_hash=None, now=None, unavailable_reason=None):
     if unavailable_reason is not None:
         for name in ('endpoint_controls', 'historical_accounting'):
             obligations[name]['unknown_reasons'] = [unavailable_reason]
+    obligations['historical_controls']['observed_inventory'] = unavailable_controls()
     return _finish({'schema':'legacy_control_obligations_v1', 'decision':'REJECT',
             'read_status':'UNAVAILABLE',
             'revision_hash':revision_hash, 'evaluated_at':now, 'observed_at':None,
@@ -207,6 +209,8 @@ def inventory(scan, store, *, revision_hash, now):
                 reasons = _codes(replay['reasons'] + ['PERSISTED_RAW_REPLAY_UNAVAILABLE'])
                 for name in ('endpoint_controls','historical_accounting'):
                     result['obligations'][name]['unknown_reasons'] = reasons
+                result['obligations']['historical_controls']['unknown_reasons'] += (
+                    reasons + ['CONTROL_RAW_HISTORY_UNAVAILABLE'])
             else:
                 if type(observed) is int and 0 <= observed < 2**63: result['observed_at'] = observed
                 # All mutable bindings are stable under the OFD guard. Read the
@@ -234,12 +238,20 @@ def inventory(scan, store, *, revision_hash, now):
                     status='RECONCILED_COMPONENT' if replay['replay']['reconciled'] else 'UNRESOLVED',
                     unknown_reasons=_codes(replay['reasons']), evidence_hashes=sorted(view.requested),
                     scope='Provider-declared complete history replay to actual T; no authenticated CPI/control theorem')
+                queries = view.load(revision_hash)['history_queries']
+                controls = observed_controls(scan['mint'],snapshot,replay['history'],queries,view)
+                result['obligations']['historical_controls'].update(
+                    observed_inventory=controls,evidence_hashes=controls['evidence_hashes'],
+                    unknown_reasons=sorted(set([UNRESOLVED['historical_controls']] + controls['unknown_reasons'])))
                 result['evidence_hashes'] = sorted(view.requested)
                 result['read_status'] = 'AVAILABLE'
         if result['observed_at'] is None or not 0 <= now-result['observed_at'] <= 10:
             result['freshness_reasons'] = ['INVESTIGATION_NOT_FRESH_FOR_ENTRY']
         else:
             result['freshness_reasons'] = []
+    except ControlLimit:
+        result = unknown_inventory(revision_hash=revision_hash, now=now)
+        result['obligations']['historical_controls']['unknown_reasons'].append('CONTROL_PROJECTION_RESOURCE_LIMIT')
     except ReadUnavailable:
         result = unknown_inventory(revision_hash=revision_hash, now=now,
                                    unavailable_reason='DIAGNOSTIC_READ_PLATFORM_UNAVAILABLE')

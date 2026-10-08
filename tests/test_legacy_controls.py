@@ -392,17 +392,24 @@ class LegacyControlNormalizerTests(unittest.TestCase):
         self.assertTrue(result['normalization_complete'])
         self.assert_unapproved(result)
 
-    def test_runtime_consumers_do_not_import_the_foundation(self):
-        # This scoped module must not become a positive runtime gate by accident.
+    def test_only_diagnostic_history_helper_may_import_the_foundation(self):
+        # Coordinator dispatch permits syntax inventory in the guarded reject-only
+        # projection. Every other runtime consumer remains disconnected; this is
+        # an explicit one-module exception, never an approval/entry integration.
+        permitted = []
         for path in (ROOT / 'desk').glob('*.py'):
             if path.name == 'legacy_controls.py':
                 continue
             tree = ast.parse(path.read_text())
             for node in ast.walk(tree):
                 if isinstance(node, ast.ImportFrom):
-                    self.assertNotIn('legacy_controls', node.module or '', path.name)
+                    if 'legacy_controls' in (node.module or ''):
+                        self.assertEqual(path.name, 'historical_controls.py')
+                        self.assertEqual([n.name for n in node.names], ['normalize_legacy_control'])
+                        permitted.append(path.name)
                 elif isinstance(node, ast.Import):
                     self.assertFalse(any('legacy_controls' in n.name for n in node.names), path.name)
+        self.assertEqual(permitted, ['historical_controls.py'])
 
 
 if __name__ == '__main__':
