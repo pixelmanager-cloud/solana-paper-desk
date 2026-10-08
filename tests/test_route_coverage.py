@@ -1,5 +1,5 @@
 import unittest,copy
-from desk.route_coverage import check_route_coverage,REQUIRED
+from desk.route_coverage import check_route_coverage,REQUIRED,instruction_receipt
 from desk.instructions import JUPITER
 from desk.providers import PUMPSWAP
 from desk.dynamic_fees import fee_schema
@@ -9,6 +9,11 @@ class RouteCoverageTests(unittest.TestCase):
         self.rows=[{'instruction':'1','program':JUPITER,'stack_height':1,'data_base64':'','reasons':[]},
             {'instruction':'1.0','program':PUMPSWAP,'stack_height':2,'data_base64':'','reasons':[]},
             {'instruction':'1.1','program':fee_schema()['address'],'stack_height':3,'data_base64':'','reasons':['UNSUPPORTED_ROUTE_PROGRAM']}]
+        for row in self.rows:
+            row['accounts']=[];row['parent_instruction']=None;row['parent_program']=None
+        for name in ('envelope','amm','recipients','fee_query','event','setup'):self.checks[name]['checked_instructions']=[]
+        for name,row in zip(('envelope','amm','fee_query'),self.rows):self.checks[name]['checked_instructions']=[instruction_receipt(row)]
+        self.checks['router']['checked_instruction']={**instruction_receipt(self.rows[0]),'instruction':None}
     def check(self):return check_route_coverage({'stack_metadata_verified':True,'instructions':self.rows},self.checks)
     def test_component_coverage_never_implies_full_approval(self):
         r=self.check();self.assertTrue(r['coverage_passed']);self.assertFalse(r['transaction_policy_ok'])

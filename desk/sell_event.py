@@ -1,4 +1,5 @@
 """Constrain PumpSwap self-CPI sell events to the verified sell and its effects."""
+from .route_coverage import instruction_receipt
 import base64
 from .providers import PUMPSWAP
 from .programs import event_instruction
@@ -38,4 +39,5 @@ def check_sell_event(inventory,bindings,fees,recipients,pool):
         result['schema_file']=decoded['schema_file']
     except (ValueError,KeyError,TypeError,StopIteration):reasons.append('SELL_EVENT_LAYOUT_UNSUPPORTED')
     return {**result,'passed':not reasons,'reasons':sorted(set(reasons)),
+        'checked_instructions':[instruction_receipt(row)] if not reasons else [],
         'notice':'Callback identity and event/effect consistency only. Program event contents cannot substitute for balance evidence or complete fee policy.'}

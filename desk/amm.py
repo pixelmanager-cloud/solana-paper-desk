@@ -1,4 +1,5 @@
 """Pinned PumpSwap sell bindings; fee authorization is a separate requirement."""
+from .route_coverage import instruction_receipt
 import base64
 from .programs import schemas,address,unbase58
 from .providers import PUMPSWAP,SOL
@@ -75,6 +76,6 @@ def check_sell_bindings(inventory,pool,mint,wallet,holding,amount,minimum_out,sl
     result['fee_recipient_authorization_verified']=authorized and buyback_authorized
     result['account_profile']='STANDARD_WITH_BUYBACK' if modern else 'LEGACY_BASE_ACCOUNTS'
     result.update(passed=not reasons,reasons=sorted(set(reasons)),instruction=row['instruction'],
-        account_bindings=named,pool=pool['pool'],protocol_fee_recipient=named['protocol_fee_recipient'],
+        checked_instructions=[instruction_receipt(row)] if not reasons else [],account_bindings=named,pool=pool['pool'],protocol_fee_recipient=named['protocol_fee_recipient'],
         notice='Account bindings only. Standard protocol-fee membership is checked against the same-bank global configuration. Actual fee amounts and complete CPI policy remain unverified.')
     return result

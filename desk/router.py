@@ -1,4 +1,5 @@
 """Pinned Jupiter exact-input V2 argument/account checks for a narrow sell profile."""
+from .route_coverage import outer_receipt
 import base64,hashlib,json
 from pathlib import Path
 from functools import lru_cache
@@ -77,6 +78,6 @@ def check_sell_route(ix,mint,wallet,holding,amount,minimum_out):
     if len(plan)!=1 or plan[0]['swap']['variant']!='PumpSwapSell' or plan[0]['bps']!=10000 or plan[0]['input_index']!=0 or plan[0]['output_index']!=1:
         reasons.append('ROUTE_OUTSIDE_DIRECT_PUMPSWAP_SELL_PROFILE')
     result.update({'passed':not reasons,'reasons':sorted(set(reasons)),'instruction':spec['name'],'arguments':args,
-        'minimum_out_floor_raw':str(floor),'source_account':source,'destination_account':dest,
+        'checked_instruction':outer_receipt(ix) if not reasons else None,'minimum_out_floor_raw':str(floor),'source_account':source,'destination_account':dest,
         'notice':'Router arguments and user bindings only. Inner AMM pool bindings, setup/cleanup recipients and complete instruction policy remain required.'})
     return result

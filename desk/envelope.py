@@ -1,4 +1,5 @@
 """Narrow sell setup/cleanup policy; does not approve inner AMM behavior."""
+from .route_coverage import outer_receipt
 import base64
 from .instructions import ATA,COMPUTE,JUPITER,SYSTEM
 from .providers import SOL
@@ -53,5 +54,5 @@ def check_sell_envelope(outer,wallet):
     fee_bound=5000+(units*price+999999)//1000000
     if fee_bound>50000:reasons.append('ENVELOPE_NETWORK_FEE_EXCEEDS_BUDGET')
     return {'passed':not reasons,'full_route_policy_passed':False,'reasons':sorted(set(reasons)),
-            'output_account':destination,'network_fee_bound_lamports':fee_bound,
+            'checked_instructions':[outer_receipt(ix,i) for i,ix in enumerate(outer)] if not reasons else [],'output_account':destination,'network_fee_bound_lamports':fee_bound,
             'notice':'Outer sell setup, cleanup recipients and compute budget only. Inner transfers, pool bindings and actual rent costs remain required.'}
