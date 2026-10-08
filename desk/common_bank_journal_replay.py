@@ -156,15 +156,22 @@ def replay_semantics(session,capture_id,*,observed_at):
             _need(selected is not None,'COMMON_BANK_CAPTURE_MISSING')
             details={};view=ReplayView(_Store(session.journal.path,c,budget))
             runs=session._audit(c,view=view,details=(selected[0],details));budget.check();run=runs[capture_id]
-            stages={}
+            stages={};completions={};selected_bytes=0
             for stage,table in ATTACHMENTS.items():
                 completion=run[{'genesis':'completion','slot':'slot_completion','union':'union_completion','clock':'clock_completion'}[stage]]
                 _need(completion is not None and completion['state']=='DONE','COMMON_BANK_SEMANTIC_ALL_STAGES_DONE_REQUIRED')
+                lengths=c.execute('SELECT length(request_bytes),length(response_bytes),typeof(request_bytes),typeof(response_bytes) FROM '+table+' WHERE capture_id=?',(capture_id,)).fetchone()
+                _need(lengths is not None and lengths[2:] == ('blob','blob')
+                      and all(type(n) is int and n>=0 for n in lengths[:2]),
+                      'COMMON_BANK_SEMANTIC_ORIGINAL_BYTES_REQUIRED')
+                selected_bytes+=sum(lengths[:2]);completions[stage]=completion
+            # Reserve the entire second-pass aggregate under this same guarded
+            # snapshot before ANY selected original body is fetched/parsed.
+            budget.charge(selected_bytes)
+            for stage,table in ATTACHMENTS.items():
+                completion=completions[stage]
                 row=c.execute('SELECT request_bytes,response_bytes,event_hash FROM '+table+' WHERE capture_id=?',(capture_id,)).fetchone()
                 _need(row is not None and type(row[0]) is bytes and type(row[1]) is bytes,'COMMON_BANK_SEMANTIC_ORIGINAL_BYTES_REQUIRED')
-                # Selected originals are fetched/parsed again after all-stage
-                # audit; charge this extra bounded pass explicitly.
-                budget.charge(len(row[0])+len(row[1]))
                 stages[stage]={'request':_strict_json(row[0]),'response':_strict_json(row[1]),
                               'request_sha256':_sha(row[0]),'response_sha256':_sha(row[1]),
                               'intent_hash':completion['intent_hash'],'completion_hash':row[2]}

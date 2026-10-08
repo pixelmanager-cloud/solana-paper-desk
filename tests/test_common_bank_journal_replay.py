@@ -204,6 +204,39 @@ class JournalSemanticReplayTests(unittest.TestCase):
         self.assertEqual(before,self.bytes())
         with patch.object(replay,'MAX_BYTES',size):self.assertEqual(self.result()['resource_usage']['serialized_bytes_charged'],size)
 
+    def test_all_selected_second_pass_bytes_reserved_before_any_body_fetch(self):
+        self.complete();required=self.result()['resource_usage']['serialized_bytes_charged']
+        before=self.bytes();real_connect=sqlite3.connect;real_charge=replay._Budget.charge
+        trace=[];charged=[None]
+        class Cursor(sqlite3.Cursor):
+            def execute(cursor,sql,parameters=()):
+                cursor.query=sql
+                return super().execute(sql,parameters)
+            def fetchone(cursor):
+                if cursor.query.startswith('SELECT length(request_bytes),length(response_bytes),typeof('):
+                    trace.append(('length',id(cursor.connection)))
+                elif cursor.query.startswith('SELECT request_bytes,response_bytes,event_hash FROM '):
+                    trace.append(('body',id(cursor.connection),charged[0]))
+                return super().fetchone()
+        class Connection(sqlite3.Connection):
+            def cursor(connection,*args,**kwargs):return super().cursor(*args,**{**kwargs,'factory':Cursor})
+            def execute(connection,sql,parameters=()):return connection.cursor().execute(sql,parameters)
+        def connect(*args,**kwargs):return real_connect(*args,**{**kwargs,'factory':Connection})
+        def charge(budget,size):
+            real_charge(budget,size);charged[0]=budget.bytes
+        with patch.object(replay,'MAX_BYTES',required-1),patch.object(sqlite3,'connect',side_effect=connect),patch.object(replay._Budget,'charge',charge):
+            with self.assertRaisesRegex(JournalBlocked,'BYTE_CEILING'):self.result()
+        self.assertEqual([row[0] for row in trace],['length']*4,trace)
+        self.assertEqual(len({row[1] for row in trace}),1)
+        trace.clear()
+        with patch.object(replay,'MAX_BYTES',required),patch.object(sqlite3,'connect',side_effect=connect),patch.object(replay._Budget,'charge',charge):
+            out=self.result()
+        self.assertEqual([row[0] for row in trace],['length']*4+['body']*4,trace)
+        self.assertEqual(len({row[1] for row in trace}),1)
+        self.assertTrue(all(row[2]==required for row in trace if row[0]=='body'),trace)
+        self.assertEqual(out['resource_usage']['serialized_bytes_charged'],required)
+        self.assertEqual(before,self.bytes());self.assertEqual(self.f.used(),7)
+
     def test_preflight_oversized_original_before_any_decoding(self):
         self.complete();self.sql_update('common_bank_clock_attachments','response_bytes',b' '* (replay.MAX_BYTES+1),journal.CLOCK_SCHEMA)
         with patch.object(journal._Session,'_audit',side_effect=AssertionError('must not traverse')):
