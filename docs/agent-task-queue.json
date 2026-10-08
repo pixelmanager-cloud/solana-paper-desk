@@ -18,7 +18,8 @@
       "No cloud worker VPS deployment credentials",
       "Preserve API budgets and fail-closed gates",
       "Ownership milestone precedes strategy/execution work"
-    ]
+    ],
+    "idle_policy": "On worker completion or coordinator waiting point, reuse an idle worker for unclaimed dependency-ready work; keep doing coordinator work meanwhile. No busywork or duplicate claims."
   },
   "tasks": [
     {
@@ -198,7 +199,8 @@
       "worker04": "Narrow raw pool-vault admission verifier",
       "cloud_reviewer": "Review PR22/23 and repaired PR18",
       "worker10": "Re-review final combined head after fixes",
-      "worker05": "Trusted raw continuation-to-entry component wiring, separate PR"
+      "worker05": "Trusted raw continuation-to-entry component wiring, separate PR",
+      "worker03": "Unmocked multi-account multi-page ownership fixtures; tests only"
     }
   }
 }
