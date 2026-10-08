@@ -196,15 +196,15 @@
     "blocker": "Live legacy evidence,protected pool receipt capture,lifecycle semantic approval and holder exposure integration unfinished",
     "followups": {
       "worker02": "PR40 review interrupted by automated cybersecurity-risk flag; no final acceptance",
-      "worker06": "Raw launch provenance/inventory assigned",
-      "cloud_reviewer": "PR52 scoped re-review passed; available",
+      "worker06": "PR53 published; available",
+      "cloud_reviewer": "PR53 independent review",
       "worker10": "PR45 independent review complete;available",
       "worker03": "Bounded newerlegacysearch found no matching authoritative event;available",
       "worker04": "PR47 accepted; available",
       "worker05": "PR52 WAL repair published; available",
       "worker09": "PR35 reviewed and integrated; available",
       "worker01": "Forward fix published; independent re-review pending; available",
-      "worker07": "Raw launch syntax/report compatibility assigned",
+      "worker07": "Raw controls decode; repairing allocation-vs-transfer report mismatch",
       "worker08": "PR31 reviewed and integrated; available"
     },
     "reviews": {
@@ -269,12 +269,13 @@
         "base": "d41fe29"
       },
       {
-        "worker": "worker06",
-        "thread_id": "01a118fc-f867-7233-8eec-c20659e70095",
+        "worker": "cloud_reviewer",
+        "thread_id": "01a11901-8b68-70f9-8672-5a731a149091",
         "host_id": "durable",
-        "task": "Independent raw/parsed public fixture provenance and inventory",
-        "status": "IMPLEMENTING",
-        "base": "d41fe29"
+        "task": "Independent raw fixture provenance PR53 review",
+        "status": "REVIEWING",
+        "pr": 53,
+        "head": "ff4aadf41b158ca841d2ae9a3d1cc1841e8772bf"
       }
     ],
     "saved_launch_probe": {
@@ -561,6 +562,15 @@
         "extra_provider_calls": 0,
         "limitation": "Later state cannot substitute for launch endpoints; cause of supply change unverified"
       }
+    },
+    "pending_raw_provenance": {
+      "pr": 53,
+      "head": "ff4aadf41b158ca841d2ae9a3d1cc1841e8772bf",
+      "review": "IN_PROGRESS",
+      "integrated": false,
+      "mac_discovered": 1269,
+      "mac_passed": 1177,
+      "mac_skipped": 92
     }
   }
 }
