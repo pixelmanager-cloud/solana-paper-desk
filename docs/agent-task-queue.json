@@ -735,7 +735,13 @@
       "finding": "Standalone Ledger.report returns state:null with retained fills after committed checkpoint deletion",
       "repair_worker": "worker08",
       "previous_findings_resolved": true,
-      "ci": "SUCCESS exact head"
+      "ci": "SUCCESS exact head",
+      "mac_combined": {
+        "discovered": 1442,
+        "passed": 1343,
+        "skips": 99,
+        "seconds": 29.556
+      }
     },
     "67": {
       "head": "77991bf90bb31f428b1c3dd33076ab7dc6e1ca3f",
