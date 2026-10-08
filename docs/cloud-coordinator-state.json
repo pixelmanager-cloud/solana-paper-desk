@@ -1,15 +1,29 @@
 {
   "schema_version": 1,
-  "revision": 2,
+  "revision": 3,
   "repository": "pixelmanager-cloud/solana-paper-desk",
   "source_main_sha": "e298e15cd758932e81d2241130716632702f5bd0",
   "observed_date": "2026-10-08",
-  "status": "BLOCKED_CLOUD_CONTROL_CAPABILITIES",
+  "status": "GITHUB_REVIEW_ONLY_SCHEDULE_ENABLED_EXECUTION_UNVERIFIED",
   "schedule": {
-    "requested_interval_minutes": 10,
-    "created": false,
-    "id": null,
-    "blocker": "Exposed automations support hourly at most; no supported 10-minute durable cloud coordinator scheduler or same-chat environment binding verified."
+    "type": "HOSTED_AUTOMATION",
+    "interval_minutes": 60,
+    "id": "6ac6eaa238008191b06af7534c3b0cb9",
+    "enabled": true,
+    "verified_by": "create and peek",
+    "thread_id": "01a11901-8b68-70f9-8672-5a731a149091",
+    "conversation_id": null,
+    "same_chat_binding": "NOT_VERIFIED",
+    "cloud_execution": "NOT_VERIFIED",
+    "last_run_time": null,
+    "next_run_time": null,
+    "immediate_run_probe": "404 Action not found before invocation",
+    "scope": "GITHUB_ONLY_INDEPENDENT_REVIEW",
+    "stop_on": [
+      "USER_STOP",
+      "VERIFIED_READINESS",
+      "THREE_CONSECUTIVE_INFRASTRUCTURE_FAILURES"
+    ]
   },
   "coordinator_lock": {
     "holder": null,
@@ -316,24 +330,12 @@
   ],
   "blockers": [
     {
-      "id": "CLOUD_CHAT_CONTROL",
-      "action": "Expose supported durable worker read/follow-up tools for listed IDs; do not use transient collaboration agents as substitutes."
-    },
-    {
       "id": "WORKER_ARTIFACTS",
       "action": "Existing workers must publish their actual commits/PRs; coordinator cannot retrieve unpushed changes from their isolated environments."
     },
     {
-      "id": "CLOUD_SUCCESSORS",
-      "action": "Expose supported durable task creation selecting the same published solana-paper-desk environment."
-    },
-    {
-      "id": "CLOUD_SCHEDULE",
-      "action": "Expose supported 10-minute cloud same-chat scheduler; do not substitute desktop cron or an hourly schedule silently."
-    },
-    {
-      "id": "COORDINATOR_OWNERSHIP",
-      "action": "Reconcile original coordinator ownership and acquire a single fenced repository lock before dispatch/merge."
+      "id": "AUTOMATION_EXECUTION_VERIFICATION",
+      "action": "Observe actual hosted run and environment evidence; run_now returned 404; no last/next run available. Do not claim tested execution or same-chat environment binding."
     }
   ],
   "events": [
@@ -348,6 +350,10 @@
       "kind": "DURABLE_ARTIFACT_WRITE",
       "result": "Branch/commit/PR creation verified through GitHub connector; saved state content read back exactly.",
       "prior_artifact_head_sha": "808f5dfb599149d77d3aa9c0dca47675221b67b4"
+    },
+    {
+      "kind": "SCOPE_HANDOFF",
+      "result": "Desktop coordinator exclusively owns integration/dispatch; hourly hosted GitHub-only review automation created and enabled, execution not verified."
     }
   ],
   "artifact_pr": {
@@ -355,5 +361,18 @@
     "url": "https://github.com/pixelmanager-cloud/solana-paper-desk/pull/10",
     "status": "DRAFT_NOT_MERGED",
     "branch": "codex/cloud-coordinator-protocol-20261008"
+  },
+  "integration_owner": {
+    "role": "ORIGINAL_DESKTOP_COORDINATOR",
+    "source_thread_id": "01a11793-598c-73d0-a711-089b8b46638b",
+    "dispatch_and_merge": "EXCLUSIVE_DESKTOP",
+    "reported_local_heartbeat_minutes": 10
+  },
+  "review_policy_version": "cloud-independent-review-v1",
+  "reviews": [],
+  "infrastructure": {
+    "consecutive_failures": 1,
+    "last_failure": "Immediate automation run action unavailable (404); creation and peek succeeded.",
+    "retry_policy": "No busy polling; future supported review runs reconcile and pause after three consecutive execution/access failures."
   }
 }
