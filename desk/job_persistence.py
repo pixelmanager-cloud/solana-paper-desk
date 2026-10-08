@@ -53,6 +53,14 @@ class JobPersistence:
                 descriptor_version INTEGER NOT NULL, descriptor TEXT NOT NULL,
                 descriptor_hash TEXT NOT NULL, generation INTEGER NOT NULL DEFAULT 0,
                 claim_token TEXT)''')
+            # REPLACE's implicit DELETE ignores delete triggers when a plain
+            # connection has recursive_triggers=0. Reject conflicts before insert,
+            # including explicit rowid conflicts, without relying on that pragma.
+            c.execute('''CREATE TRIGGER IF NOT EXISTS reject_scan_job_reinsertion
+                BEFORE INSERT ON scan_jobs
+                WHEN EXISTS(SELECT 1 FROM scan_jobs
+                            WHERE scan_id=NEW.scan_id OR rowid=NEW.rowid)
+                BEGIN SELECT RAISE(ABORT,'Immutable job descriptor identity'); END''')
             # Separate table preserves the original scans schema and completed bytes.
             for row in c.execute('SELECT id,mint,created FROM scans WHERE id NOT IN (SELECT scan_id FROM scan_jobs)').fetchall():
                 descriptor = self._descriptor(row['id'], row['mint'], row['created'], SCREEN)
@@ -113,6 +121,8 @@ class JobPersistence:
         if not row:
             raise ValueError('Job descriptor missing')
         value = json.loads(row['descriptor'])
+        if not isinstance(value, dict):
+            raise ValueError('Job descriptor must be a JSON object')
         if (row['kind'] not in (SCREEN, BIRTH_ACQUISITION_V1)
                 or row['descriptor_version'] != DESCRIPTOR_VERSION
                 or digest(value) != row['descriptor_hash']
