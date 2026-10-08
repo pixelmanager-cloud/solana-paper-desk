@@ -202,7 +202,7 @@
       "worker02": "PR74 integrated; available",
       "worker03": "PR70 integrated; available",
       "worker04": "PR68 integrated; available",
-      "worker07": "PR69 integrated; available",
+      "worker07": "Assessing next dischargeable full-route semantic obligation, no code yet",
       "worker08": "PR72 integrated; available",
       "worker09": "PR66 integrated; available"
     },
@@ -260,7 +260,16 @@
       "status": "SUPERSEDED_BY_PUBLISHED_TESTED_COMMIT"
     },
     "published_ci": "Deployed d758bc529a7da1f74509117288740911f2ad6845: both CI runs successful",
-    "active_claims": [],
+    "active_claims": [
+      {
+        "worker": "worker07",
+        "thread_id": "01a118fd-0f1c-749c-b85b-5e730937d0a8",
+        "host_id": "durable",
+        "status": "ASSESSING_IMPLEMENTABLE_OBLIGATION",
+        "base": "19e3527",
+        "task": "Select one dischargeable full-route semantic obligation from existing raw inputs; exact scope before implementation"
+      }
+    ],
     "saved_launch_probe": {
       "source": "VPS saved raw launch events, read-only; no provider calls",
       "sample_size": 150,
