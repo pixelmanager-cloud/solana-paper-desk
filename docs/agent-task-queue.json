@@ -281,32 +281,23 @@
         "base": "13853bf"
       },
       {
-        "worker": "worker06",
-        "thread_id": "01a118fc-f867-7233-8eec-c20659e70095",
-        "host_id": "durable",
-        "task": "Accepted f5eb854 combined Linux integration regression",
-        "status": "VERIFYING",
-        "base": "f5eb854"
-      },
-      {
         "worker": "worker01",
         "thread_id": "01a118fc-39bc-722c-b442-8bf5a749e0bb",
         "host_id": "durable",
-        "task": "Independent combined PR60+70 classifier repair review",
-        "pr": 70,
-        "head": "77248281830493666ccd4ac4ed2a14e4636f7b34",
-        "status": "REVIEWING",
+        "task": "Exact instruction role binding in route coverage",
+        "pr": null,
+        "head": null,
+        "status": "IMPLEMENTING",
         "base": "f5eb854"
       },
       {
-        "worker": "worker02",
-        "thread_id": "01a118fc-666c-70b6-9fa8-2c7520f0a0bb",
+        "worker": "worker08",
+        "thread_id": "01a118fd-2563-7126-90d7-bd07693de0b2",
         "host_id": "durable",
-        "task": "PR65 repaired partial restore independent re-review",
+        "task": "PR65 malformed checkpoint duplicate acknowledgment repair",
+        "status": "FIXING",
         "pr": 65,
-        "head": "052f4a47cc0740622a9d68406a898316e802c3c5",
-        "status": "REVIEWING",
-        "base": "f5eb854"
+        "head": "052f4a47cc0740622a9d68406a898316e802c3c5"
       }
     ],
     "saved_launch_probe": {
@@ -734,9 +725,9 @@
     "65": {
       "head": "052f4a47cc0740622a9d68406a898316e802c3c5",
       "reviewer": "worker02",
-      "status": "RE_REVIEW_IN_PROGRESS",
+      "status": "CHANGES_REQUESTED",
       "integrated": false,
-      "finding": "Partial restore missing events can bypass incomplete checkpoint/config guards",
+      "finding": "Duplicate acknowledgment accepts malformed null/empty checkpoint",
       "repair_worker": "worker08"
     },
     "67": {
@@ -796,6 +787,17 @@
     "mac_passed": 1286,
     "mac_skipped": 99,
     "seconds": 27.307,
-    "linux_status": "worker06 running"
+    "linux_status": "PASS",
+    "linux_tests": 1385,
+    "linux_skipped": 0,
+    "linux_seconds": 79.128,
+    "tree": "995671cfaee993af46217b903ff866d07a6c68cf"
+  },
+  "vps_stage_f5eb854": {
+    "status": "TESTING_SERVICE_USER",
+    "archive_sha256": "fe0e6e4c22f0783b8c53f7769f92040819468477142364fb286b4cb4bf1e3ac5",
+    "service_release": "886fc96",
+    "source": "f5eb854",
+    "provider_calls": 0
   }
 }
