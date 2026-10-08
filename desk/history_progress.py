@@ -38,11 +38,19 @@ class HistoryProgress:
             c.execute('CREATE TABLE IF NOT EXISTS ownership_history(id TEXT PRIMARY KEY,budget TEXT NOT NULL,query TEXT NOT NULL,coverage TEXT,status TEXT NOT NULL,attempts INTEGER NOT NULL DEFAULT 0)')
             c.execute('CREATE TABLE IF NOT EXISTS ownership_admissions(id TEXT PRIMARY KEY,descriptor TEXT NOT NULL,state TEXT NOT NULL,prepared_source TEXT,prepared_used INTEGER,completed_source_hash TEXT)')
     def _admission(self,c,identity):
+        return self.inspect_admission(c,identity)
+
+    @staticmethod
+    def inspect_admission(c,identity):
+        """Validate existing admission in caller's transaction, without writes/locks.
+
+        This does not create schema, admit a source or reserve capacity.
+        """
         row=c.execute('SELECT a.descriptor,a.state,a.prepared_source,a.prepared_used,a.completed_source_hash,b.source_hash,b.used,b.ceiling FROM ownership_admissions a JOIN ownership_budgets b ON b.id=a.id WHERE a.id=?',(identity,)).fetchone()
         if not row:
             if c.execute('SELECT 1 FROM ownership_admissions WHERE id=?',(identity,)).fetchone():raise ValueError('Admission budget missing')
             return None
-        descriptor=json.loads(row[0]);self._descriptor(identity,descriptor)
+        descriptor=json.loads(row[0]);HistoryProgress._descriptor(identity,descriptor)
         if canonical(descriptor)!=row[0] or digest(descriptor)!=row[5]:raise ValueError('Admission descriptor mismatch')
         if row[1] not in ('ADMITTED','PREPARED','SEALED') or type(row[6]) is not int or type(row[7]) is not int or not 0<=row[6]<=row[7]<=18:
             raise ValueError('Admission state or budget invalid')
@@ -50,7 +58,7 @@ class HistoryProgress:
         if row[1]=='ADMITTED':
             if any(v is not None for v in row[2:5]):raise ValueError('Unexpected prepared source')
         else:
-            self._completed_source(identity,descriptor,source)
+            HistoryProgress._completed_source(identity,descriptor,source)
             calls=json.loads(source['result'])['calls']
             if (type(row[3]) is not int or canonical(source)!=row[2] or digest(source)!=row[4]
                     or calls!=row[3] or not 0<=row[3]<=row[6]):
