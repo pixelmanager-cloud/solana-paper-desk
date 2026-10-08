@@ -274,16 +274,13 @@
         "turn_id": "01a11c01-b8e2-72d4-b87c-13ae7c27aeba"
       },
       {
-        "id": "PR93-FIX-REREVIEW",
-        "worker": "05",
-        "pr": 93,
-        "head": "ace7ee9560434f1ad7e0046a2617040b324c9992",
-        "base": "8a29c36",
-        "thread_id": "01a118fc-dd83-7672-ac81-7445f85fe09f",
+        "id": "REQUEST-BOUND-DISCOVERY-CUTOFF",
+        "worker": "02",
+        "thread_id": "01a118fc-666c-70b6-9fa8-2c7520f0a0bb",
         "host_id": "durable",
-        "status": "REVIEWING",
-        "wait_cursor": "b9784eaf-f3e5-457f-a98d-a386c23b37ea:39",
-        "turn_id": "01a11c0a-7030-725c-bc66-dae25b28032f"
+        "status": "DISPATCH_PENDING",
+        "base": "d1863d3360fb5449629478545955b29df1e01054",
+        "scope": "Establish original request-bound discovery cutoff through existing bounded acquisition; no live calls/publication"
       }
     ],
     "saved_launch_probe": {
@@ -847,8 +844,8 @@
     "pending_semantic_replay": {
       "pr": 93,
       "head": "ace7ee9560434f1ad7e0046a2617040b324c9992",
-      "integrated": false,
-      "review": "REPAIR PENDING independent05 rereview",
+      "integrated": true,
+      "review": "PASS repaired head worker05; exact tree matched; Linux1846 zero skips171.458s;13probes6.608s; regression fails old code and passes repair",
       "author_linux_tests": 1812,
       "author_skips": 0,
       "combined_tree": "d604299a255078d0e26d0617a1e350fa06ae99e6",
@@ -862,7 +859,10 @@
       "independent_linux_tests": 1845,
       "independent_linux_seconds": 177.704,
       "independent_probes": 13,
-      "previous_blocked_head": "94a025d96f4ad22db2fb195b1df10a73537ac293"
+      "previous_blocked_head": "94a025d96f4ad22db2fb195b1df10a73537ac293",
+      "integration_commit": "d1863d3360fb5449629478545955b29df1e01054",
+      "review_manifest_sha256": "db51ff84e98d5ab1fa82cfc04b1dd1a98dcff1e990ec81b853dae77b7a36714a",
+      "deployed": false
     },
     "pending_completion_inventory": {
       "pr": 94,
