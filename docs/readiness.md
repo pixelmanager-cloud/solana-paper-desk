@@ -457,3 +457,6 @@ TradeEvent checkpoint (PR57 repaired head4b0d9ba, integrated6477670): the offici
 
 
 2026-10-08 07:36Z: PR71 a97fec8 exact route instruction receipts integrated after independent56adversarial probes, combined Linux1,430 tests zero skips and unchanged-head successfulCI. Reviewed treebc0ec233 reproduced exactly. Desktop1,331passed/99Linux-only skips. Seven checkers bind diagnostic coverage to exact instruction paths/programs/raw bytes/ordered accounts and stack context; extra/substituted rows stay uncovered. Receipts do not authenticate source or signer/writable privileges. Both full-route approval flags remain false; no live entry or deployment acceptance.
+
+
+2026-10-08 07:42Z: PR65 final repaired headff201a6 integrated after independent partial-restore/duplicate/report reproductions, full combined Linux1,442tests zero skips, exact treeb2189685 match and successfulCI. Desktop1,343passed/99Linux-only skips. Missing or malformed committed checkpoint and incomplete experiment identity now refuse acknowledgment, new fills and standalone reporting; genuinely fresh/raw-only reporting remains valid. No automatic reconstruction/migration. Consumer recovery diagnostics PR72 remain under separate combined review. This is fixture/restart integrity validation, not live paper entry or host-power-loss acceptance.

@@ -274,16 +274,6 @@
         "consumer_pr": 72
       },
       {
-        "worker": "worker02",
-        "thread_id": "01a118fc-666c-70b6-9fa8-2c7520f0a0bb",
-        "host_id": "durable",
-        "task": "Independent PR65 second repair review",
-        "status": "REVIEWING",
-        "pr": 65,
-        "head": "ff201a6dacb979e8edfd541956e38167dcd66c8c",
-        "base": "cbb3cc9"
-      },
-      {
         "worker": "worker10",
         "thread_id": "01a118fd-56d5-70b8-ad31-dba13e982082",
         "host_id": "durable",
@@ -741,8 +731,8 @@
     "65": {
       "head": "ff201a6dacb979e8edfd541956e38167dcd66c8c",
       "reviewer": "worker02",
-      "status": "RE_REVIEWING",
-      "integrated": false,
+      "status": "PASS_INTEGRATED",
+      "integrated": true,
       "finding": "Standalone Ledger.report returns state:null with retained fills after committed checkpoint deletion",
       "repair_worker": "worker08",
       "previous_findings_resolved": true,
@@ -752,7 +742,12 @@
         "passed": 1343,
         "skips": 99,
         "seconds": 29.556
-      }
+      },
+      "integration_commit": "17238b67bd62a156b5a5cac9004bf49ac39a4eff",
+      "reviewed_tree": "b218968563e9ba6bb2a9bbdcfe46735f3866ceca",
+      "linux_tests": 1442,
+      "linux_skips": 0,
+      "finding_resolved": true
     },
     "67": {
       "head": "77991bf90bb31f428b1c3dd33076ab7dc6e1ca3f",
