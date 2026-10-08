@@ -266,10 +266,12 @@
         "worker": "01",
         "thread_id": "01a118fc-39bc-722c-b442-8bf5a749e0bb",
         "host_id": "durable",
-        "status": "DISPATCHED",
+        "status": "DEFINING_FORMAT_PREREQUISITE",
         "base": "28e59ac3da521c032cec49a26b603088c78e78f1",
-        "scope": "Disconnected guarded exact-format snapshot reader with independently supplied anchors; no migration, issuer or entry",
-        "wait_cursor": "5e651fc7-2996-4765-974d-5c852257a005:48"
+        "scope": "Extend PR89 with exact physical format constants and adversarial proofs before independent review and reader implementation",
+        "wait_cursor": "5e651fc7-2996-4765-974d-5c852257a005:50",
+        "pr": 89,
+        "head": "bd9d2321bccc4efc11889b78b9382ec2df67f0db"
       },
       {
         "id": "PR88-INDEPENDENT-REVIEW",
@@ -279,7 +281,8 @@
         "status": "REVIEWING",
         "pr": 88,
         "head": "04c531b19f06ed666d28afb771f8ce25c252616f",
-        "base": "d45b65952c82d2c79d122df17d0202a53a8f31a9"
+        "base": "d45b65952c82d2c79d122df17d0202a53a8f31a9",
+        "wait_cursor": "b9784eaf-f3e5-457f-a98d-a386c23b37ea:29"
       }
     ],
     "saved_launch_probe": {
@@ -746,7 +749,17 @@
       "mac_seconds": 32.873,
       "combined_base": "d45b65952c82d2c79d122df17d0202a53a8f31a9",
       "combined_tree": "27f9becc86f2757cba34bef18cdfa26f9b3f5fcd",
-      "coordinator_diff_review": "Journal diff reviewed; independent Linux and security review pending"
+      "coordinator_diff_review": "Journal diff reviewed; independent Linux and security review pending",
+      "ci": "Both exact-head checks SUCCESS"
+    },
+    "pending_protected_reader_format": {
+      "pr": 89,
+      "head": "bd9d2321bccc4efc11889b78b9382ec2df67f0db",
+      "integrated": false,
+      "status": "Report identifies missing exact SQL, singleton, fence, fingerprint and physical bounds; author assigned concrete definition on same PR",
+      "author_linux_tests": 1698,
+      "author_skips": 0,
+      "reader_implemented": false
     }
   },
   "native_reconciliation_review": {
