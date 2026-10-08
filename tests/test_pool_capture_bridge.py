@@ -60,6 +60,7 @@ def die_before_publication(boundary, fixture, investigation):
     bridge.capture(capture_id='recover-completed', investigation=investigation, pool=fixture['query']['pool'])
 
 
+@unittest.skipUnless(Path('/proc/self/mountinfo').is_file(), 'Linux local filesystem ledger contract')
 class PoolCaptureBridgeTests(unittest.TestCase):
     def setUp(self):
         (ROOT/'work').mkdir(exist_ok=True)
