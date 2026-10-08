@@ -332,4 +332,3 @@ class ReadTransportTests(unittest.TestCase):
         result=self.exchange(REQUEST,RESPONSE)
         self.assertIsNone(result.failure_code); self.assertEqual(result.response_bytes,RESPONSE)
         self.invalid_request(request('getSlot',[{'commitment':'confirmed'}]))
-
