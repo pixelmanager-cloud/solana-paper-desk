@@ -262,22 +262,24 @@
     "published_ci": "Deployed d758bc529a7da1f74509117288740911f2ad6845: both CI runs successful",
     "active_claims": [
       {
-        "id": "COMMON-BANK-VIEW",
-        "worker": "01",
-        "thread_id": "01a118fc-39bc-722c-b442-8bf5a749e0bb",
+        "id": "PR83-INDEPENDENT-REVIEW",
+        "worker": "06",
+        "thread_id": "01a118fc-f867-7233-8eec-c20659e70095",
         "host_id": "durable",
-        "status": "DISPATCHED",
-        "base": "b4cbfaf588412cbd49a94f66b12abfa3f5b1c9a1",
-        "scope": "Disconnected original-parent manifest/index validator"
+        "status": "REVIEWING",
+        "base": "fbef1706df86f776d87773ac86fe9a37e6b0e982",
+        "pr": 83,
+        "head": "2d61a6a5c78e89928982f07e4346af8af7dc545d"
       },
       {
         "id": "COMMON-BANK-JOURNAL",
         "worker": "02",
         "thread_id": "01a118fc-666c-70b6-9fa8-2c7520f0a0bb",
         "host_id": "durable",
-        "status": "DISPATCHED",
+        "status": "ACTIVE",
         "base": "b4cbfaf588412cbd49a94f66b12abfa3f5b1c9a1",
-        "scope": "Disconnected atomic shared-counter reservation and immutable pending intent journal"
+        "scope": "Disconnected atomic shared-counter reservation and immutable pending intent journal",
+        "wait_cursor": "a2dcfb97-463d-4188-9da3-48a81e644d23:42"
       }
     ],
     "saved_launch_probe": {
@@ -644,6 +646,14 @@
       "combined_tree": "223b60be7b3c3b38248b24851bc94fe141e92340",
       "ci": "Both exact-head checks PASS",
       "review_manifest_sha256": "072fe96b3254435e7d40ea51ec550d956025287e237c32b8bd921b39bef3ae8a"
+    },
+    "pending_common_bank_view": {
+      "pr": 83,
+      "head": "2d61a6a5c78e89928982f07e4346af8af7dc545d",
+      "integrated": false,
+      "review": "PENDING worker06",
+      "author_linux_tests": 1611,
+      "author_skips": 0
     }
   },
   "native_reconciliation_review": {
