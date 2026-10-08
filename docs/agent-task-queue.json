@@ -257,7 +257,7 @@
       "tests": 878,
       "status": "SUPERSEDED_BY_PUBLISHED_TESTED_COMMIT"
     },
-    "published_ci": "d6c710bcf95a6c61fd0f786489be4b458bf7b6da successful",
+    "published_ci": "886fc96d404b9d3ffd99c0045f7231d563a5d946 successful",
     "active_claims": [
       {
         "worker": "worker05",
@@ -459,6 +459,16 @@
       "disk_available": "55G",
       "provider_calls": 0,
       "production_changes": false
+    },
+    "vps_staged_validation": {
+      "commit": "886fc96d404b9d3ffd99c0045f7231d563a5d946",
+      "directory": "/opt/solana-desk-releases/886fc96",
+      "archive_sha256": "49b3e2a6ca98b0a451d7b35ec943ada7aa1f7037b99287368c70092431a98d41",
+      "status": "RERUNNING_WITH_DEDICATED_WRITABLE_TEST_SCRATCH",
+      "test_log": "/var/tmp/solana-desk-886fc96-tests-retry.log",
+      "provider_calls": 0,
+      "running_service_changed": false,
+      "first_run": "1244 tests;73 errors due missing writable work directory;not product acceptance"
     }
   }
 }

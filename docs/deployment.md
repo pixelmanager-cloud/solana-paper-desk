@@ -338,3 +338,7 @@ Read-only VPS check on2026-10-08: `/var/lib/solana-desk` is on ext4, owned by `s
 ### Current preflight — 8 October 2026, 04:57 UTC
 
 Read-only SSH check: dashboard, discovery, decisions and backup timer/service checks all active; port8765 listens only on127.0.0.1. Evidence DB remains solana-desk0600, data root0755;55GB disk available. No provider calls or service/data changes. Cloud integration remains staged on integration/cloud-wave1, not deployed or merged to main. Accepted combined Linux suite1179 tests; PR50/51 still held for review defects. The historical automation-paused statements above describe earlier checkpoints; desktop coordination has since been explicitly reauthorized. Paper-entry readiness remains unverified.
+
+### Isolated candidate validation — 05:12 UTC
+
+Integration886fc96 passed GitHub CI and was staged root-owned under /opt/solana-desk-releases/886fc96. Archive SHA25649b3e2a6ca98b0a451d7b35ec943ada7aa1f7037b99287368c70092431a98d41 matched locally/remotely. First service-user fixture run discovered1244tests with73 PermissionErrors because tests require a writable work directory. A dedicated0700 scratch directory owned by solana-desk was created inside this staged release; source remains root-owned and rerun is pending. Production service/source/data unchanged; no provider calls. This is staged validation, not deployment or readiness.
