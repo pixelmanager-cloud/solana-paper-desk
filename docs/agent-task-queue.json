@@ -266,7 +266,7 @@
         "worker": "02",
         "thread_id": "01a118fc-666c-70b6-9fa8-2c7520f0a0bb",
         "host_id": "durable",
-        "status": "DISPATCH_PENDING",
+        "status": "DISPATCHED",
         "base": "893bf72ed79dee7be224bccf4c7ba3913f36d6b6",
         "scope": "Fresh admitted acquisition slot intent and completion; atomic same18 charge before I/O; no transport or retrofit"
       },
@@ -275,7 +275,7 @@
         "worker": "01",
         "thread_id": "01a118fc-39bc-722c-b442-8bf5a749e0bb",
         "host_id": "durable",
-        "status": "DISPATCH_PENDING",
+        "status": "DISPATCHED",
         "base": "893bf72ed79dee7be224bccf4c7ba3913f36d6b6",
         "scope": "Separate bounded original-byte finalized-slot transport primitive; no acquisition/journal/allowlist expansion"
       }
