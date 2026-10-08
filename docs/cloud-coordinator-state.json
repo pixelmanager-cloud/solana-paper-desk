@@ -1,6 +1,6 @@
 {
   "schema_version": 1,
-  "revision": 50,
+  "revision": 51,
   "repository": "pixelmanager-cloud/solana-paper-desk",
   "source_main_sha": "e298e15cd758932e81d2241130716632702f5bd0",
   "observed_date": "2026-10-08",
@@ -1542,6 +1542,85 @@
       "infrastructure_failures": 0,
       "schedule": "NOT_REPROBED_NO_NEW_DURABLE_BINDING_CLAIM",
       "readiness": "BLOCKED_NO_SUPPORTED_BUDGET_FEASIBLE_PUBLIC_LEGACY_SEED; acquisition path in development"
+    },
+    {
+      "kind": "HOURLY_GITHUB_RECONCILIATION",
+      "at": "2026-10-08T16:02:23Z",
+      "status": "NO_NEW_UNASSIGNED_REVIEW_WORK",
+      "cloud_execution": {
+        "provider": "cloud",
+        "observations_current": true,
+        "observed_phase": "running",
+        "spec_revision": "64"
+      },
+      "queue_blob_sha": "b00575f7524ef4877fc454237a1367c9ae1be4bd",
+      "external_claims": [
+        {
+          "id": "PRESEALED-SLOT-INTENT-JOURNAL",
+          "worker": "02",
+          "thread_id": "01a118fc-666c-70b6-9fa8-2c7520f0a0bb",
+          "host_id": "durable",
+          "status": "IN_PROGRESS",
+          "base": "893bf72ed79dee7be224bccf4c7ba3913f36d6b6",
+          "scope": "Fresh admitted acquisition slot intent and completion; atomic same18 charge before I/O; no transport or retrofit",
+          "wait_cursor": "a2dcfb97-463d-4188-9da3-48a81e644d23:63",
+          "turn_id": "01a11c26-ebdf-75e8-a64a-9063c0637615"
+        },
+        {
+          "id": "ORIGINAL-BYTE-SLOT-TRANSPORT",
+          "worker": "01",
+          "thread_id": "01a118fc-39bc-722c-b442-8bf5a749e0bb",
+          "host_id": "durable",
+          "status": "IN_PROGRESS",
+          "base": "893bf72ed79dee7be224bccf4c7ba3913f36d6b6",
+          "scope": "Separate bounded original-byte finalized-slot transport primitive; no acquisition/journal/allowlist expansion",
+          "wait_cursor": "5e651fc7-2996-4765-974d-5c852257a005:64",
+          "turn_id": "01a11c26-fcef-7341-a3c8-db3211a520d9"
+        }
+      ],
+      "observed_prs": [
+        {
+          "pr": 96,
+          "head_sha": "33ff34b15930989bc85337372c59f070eb0651f1",
+          "base_sha": "1a9f69595bf4c8c8814654a093fbba1bde93d5ad",
+          "branch": "codex/cloud-original-byte-slot-transport-01",
+          "author_worker": "01",
+          "author_thread_id": "01a118fc-39bc-722c-b442-8bf5a749e0bb",
+          "existing_comment_ids": [
+            6063740155,
+            6063807197
+          ],
+          "status": "EXTERNAL_INDEPENDENT_FINDINGS_EXIST_FORWARD_REPAIR_PENDING",
+          "tests_this_run": "NOT_RUN",
+          "limitations": "External review claims not independently reproduced in this reconciliation; PR97 original security finding binds 2de92b72, observed 524dfbc portability-only revision has no inferred security clearance."
+        },
+        {
+          "pr": 97,
+          "head_sha": "524dfbc42debd74c29382ce3d1754d5f0a691655",
+          "base_sha": "1a9f69595bf4c8c8814654a093fbba1bde93d5ad",
+          "branch": "codex/cloud-presealed-slot-02",
+          "author_worker": "02",
+          "author_thread_id": "01a118fc-666c-70b6-9fa8-2c7520f0a0bb",
+          "existing_comment_ids": [
+            5459418438,
+            6063827066,
+            4221224769,
+            4221224781,
+            6063884883
+          ],
+          "status": "EXTERNAL_INDEPENDENT_FINDINGS_EXIST_FORWARD_REPAIR_PENDING",
+          "tests_this_run": "NOT_RUN",
+          "limitations": "External review claims not independently reproduced in this reconciliation; PR97 original security finding binds 2de92b72, observed 524dfbc portability-only revision has no inferred security clearance."
+        }
+      ],
+      "observed_codex_branch_count": 89,
+      "branch_pagination_complete": true,
+      "tests": "NOT_RUN_EXISTING_INDEPENDENT_REVIEW_AND_REPAIR_SCOPES",
+      "review_comments_posted": 0,
+      "infrastructure_failures": 0,
+      "provider_calls": 0,
+      "readiness": "BLOCKED_NO_SUPPORTED_BUDGET_FEASIBLE_PUBLIC_LEGACY_SEED; acquisition path in development",
+      "schedule": "NOT_REPROBED_NO_DURABLE_BINDING_CLAIM"
     }
   ],
   "artifact_pr": {
@@ -3167,6 +3246,39 @@
       "status": "EXTERNAL_FINDINGS_PUBLISHED_AUTHOR_REPAIR_RESERVED",
       "independent_tests_this_run": "NOT_RUN",
       "limitations": "Existing reviewers' findings/results are external evidence; not reproduced or certified by this run."
+    },
+    {
+      "pr": 96,
+      "head_sha": "33ff34b15930989bc85337372c59f070eb0651f1",
+      "base_sha": "1a9f69595bf4c8c8814654a093fbba1bde93d5ad",
+      "branch": "codex/cloud-original-byte-slot-transport-01",
+      "author_worker": "01",
+      "author_thread_id": "01a118fc-39bc-722c-b442-8bf5a749e0bb",
+      "existing_comment_ids": [
+        6063740155,
+        6063807197
+      ],
+      "status": "EXTERNAL_INDEPENDENT_FINDINGS_EXIST_FORWARD_REPAIR_PENDING",
+      "tests_this_run": "NOT_RUN",
+      "limitations": "External review claims not independently reproduced in this reconciliation; PR97 original security finding binds 2de92b72, observed 524dfbc portability-only revision has no inferred security clearance."
+    },
+    {
+      "pr": 97,
+      "head_sha": "524dfbc42debd74c29382ce3d1754d5f0a691655",
+      "base_sha": "1a9f69595bf4c8c8814654a093fbba1bde93d5ad",
+      "branch": "codex/cloud-presealed-slot-02",
+      "author_worker": "02",
+      "author_thread_id": "01a118fc-666c-70b6-9fa8-2c7520f0a0bb",
+      "existing_comment_ids": [
+        5459418438,
+        6063827066,
+        4221224769,
+        4221224781,
+        6063884883
+      ],
+      "status": "EXTERNAL_INDEPENDENT_FINDINGS_EXIST_FORWARD_REPAIR_PENDING",
+      "tests_this_run": "NOT_RUN",
+      "limitations": "External review claims not independently reproduced in this reconciliation; PR97 original security finding binds 2de92b72, observed 524dfbc portability-only revision has no inferred security clearance."
     }
   ],
   "pending_reviews": [
@@ -3509,24 +3621,26 @@
     },
     "external_current": [
       {
-        "id": "PR93-REVIEW-FIX",
+        "id": "PRESEALED-SLOT-INTENT-JOURNAL",
         "worker": "02",
-        "pr": 93,
-        "head": "94a025d96f4ad22db2fb195b1df10a73537ac293",
         "thread_id": "01a118fc-666c-70b6-9fa8-2c7520f0a0bb",
         "host_id": "durable",
-        "status": "DISPATCHED",
-        "scope": "Reserve selected second-pass aggregate before fetching bodies"
+        "status": "IN_PROGRESS",
+        "base": "893bf72ed79dee7be224bccf4c7ba3913f36d6b6",
+        "scope": "Fresh admitted acquisition slot intent and completion; atomic same18 charge before I/O; no transport or retrofit",
+        "wait_cursor": "a2dcfb97-463d-4188-9da3-48a81e644d23:63",
+        "turn_id": "01a11c26-ebdf-75e8-a64a-9063c0637615"
       },
       {
-        "id": "PR94-REVIEW-FIX",
+        "id": "ORIGINAL-BYTE-SLOT-TRANSPORT",
         "worker": "01",
-        "pr": 94,
-        "head": "714e1e915ae74b965150b8a234c89d92a03b8590",
         "thread_id": "01a118fc-39bc-722c-b442-8bf5a749e0bb",
         "host_id": "durable",
-        "status": "DISPATCHED",
-        "scope": "Reject schema typed-name collisions and malformed/rebound local intent fields"
+        "status": "IN_PROGRESS",
+        "base": "893bf72ed79dee7be224bccf4c7ba3913f36d6b6",
+        "scope": "Separate bounded original-byte finalized-slot transport primitive; no acquisition/journal/allowlist expansion",
+        "wait_cursor": "5e651fc7-2996-4765-974d-5c852257a005:64",
+        "turn_id": "01a11c26-fcef-7341-a3c8-db3211a520d9"
       }
     ]
   },
@@ -3844,78 +3958,82 @@
   ],
   "last_reconciliation": {
     "kind": "HOURLY_GITHUB_RECONCILIATION",
-    "at": "2026-10-08T14:55:25Z",
+    "at": "2026-10-08T16:02:23Z",
     "status": "NO_NEW_UNASSIGNED_REVIEW_WORK",
     "cloud_execution": {
       "provider": "cloud",
       "observations_current": true,
       "observed_phase": "running",
-      "spec_revision": "62"
+      "spec_revision": "64"
     },
-    "queue_blob_sha": "dc402a46f368ef540fffe8cb853961fd993ea89a",
+    "queue_blob_sha": "b00575f7524ef4877fc454237a1367c9ae1be4bd",
     "external_claims": [
       {
-        "id": "PR93-REVIEW-FIX",
+        "id": "PRESEALED-SLOT-INTENT-JOURNAL",
         "worker": "02",
-        "pr": 93,
-        "head": "94a025d96f4ad22db2fb195b1df10a73537ac293",
         "thread_id": "01a118fc-666c-70b6-9fa8-2c7520f0a0bb",
         "host_id": "durable",
-        "status": "DISPATCHED",
-        "scope": "Reserve selected second-pass aggregate before fetching bodies"
+        "status": "IN_PROGRESS",
+        "base": "893bf72ed79dee7be224bccf4c7ba3913f36d6b6",
+        "scope": "Fresh admitted acquisition slot intent and completion; atomic same18 charge before I/O; no transport or retrofit",
+        "wait_cursor": "a2dcfb97-463d-4188-9da3-48a81e644d23:63",
+        "turn_id": "01a11c26-ebdf-75e8-a64a-9063c0637615"
       },
       {
-        "id": "PR94-REVIEW-FIX",
+        "id": "ORIGINAL-BYTE-SLOT-TRANSPORT",
         "worker": "01",
-        "pr": 94,
-        "head": "714e1e915ae74b965150b8a234c89d92a03b8590",
         "thread_id": "01a118fc-39bc-722c-b442-8bf5a749e0bb",
         "host_id": "durable",
-        "status": "DISPATCHED",
-        "scope": "Reject schema typed-name collisions and malformed/rebound local intent fields"
+        "status": "IN_PROGRESS",
+        "base": "893bf72ed79dee7be224bccf4c7ba3913f36d6b6",
+        "scope": "Separate bounded original-byte finalized-slot transport primitive; no acquisition/journal/allowlist expansion",
+        "wait_cursor": "5e651fc7-2996-4765-974d-5c852257a005:64",
+        "turn_id": "01a11c26-fcef-7341-a3c8-db3211a520d9"
       }
     ],
     "observed_prs": [
       {
-        "pr": 93,
-        "head_sha": "94a025d96f4ad22db2fb195b1df10a73537ac293",
-        "base_sha": "adb2118142bf8d40f8d8d41ee8b810b9366acf62",
-        "branch": "codex/cloud-common-bank-semantic-replay-02",
-        "author_worker": "02",
-        "author_thread_id": "01a118fc-666c-70b6-9fa8-2c7520f0a0bb",
-        "existing_comment_ids": [
-          4220470018,
-          5458476813
-        ],
-        "status": "EXTERNAL_FINDINGS_PUBLISHED_AUTHOR_REPAIR_RESERVED",
-        "independent_tests_this_run": "NOT_RUN",
-        "limitations": "Existing reviewers' findings/results are external evidence; not reproduced or certified by this run."
-      },
-      {
-        "pr": 94,
-        "head_sha": "714e1e915ae74b965150b8a234c89d92a03b8590",
-        "base_sha": "adb2118142bf8d40f8d8d41ee8b810b9366acf62",
-        "branch": "codex/cloud-completion-inventory-01",
+        "pr": 96,
+        "head_sha": "33ff34b15930989bc85337372c59f070eb0651f1",
+        "base_sha": "1a9f69595bf4c8c8814654a093fbba1bde93d5ad",
+        "branch": "codex/cloud-original-byte-slot-transport-01",
         "author_worker": "01",
         "author_thread_id": "01a118fc-39bc-722c-b442-8bf5a749e0bb",
         "existing_comment_ids": [
-          6062498707,
-          6062553574
+          6063740155,
+          6063807197
         ],
-        "status": "EXTERNAL_FINDINGS_PUBLISHED_AUTHOR_REPAIR_RESERVED",
-        "independent_tests_this_run": "NOT_RUN",
-        "limitations": "Existing reviewers' findings/results are external evidence; not reproduced or certified by this run."
+        "status": "EXTERNAL_INDEPENDENT_FINDINGS_EXIST_FORWARD_REPAIR_PENDING",
+        "tests_this_run": "NOT_RUN",
+        "limitations": "External review claims not independently reproduced in this reconciliation; PR97 original security finding binds 2de92b72, observed 524dfbc portability-only revision has no inferred security clearance."
+      },
+      {
+        "pr": 97,
+        "head_sha": "524dfbc42debd74c29382ce3d1754d5f0a691655",
+        "base_sha": "1a9f69595bf4c8c8814654a093fbba1bde93d5ad",
+        "branch": "codex/cloud-presealed-slot-02",
+        "author_worker": "02",
+        "author_thread_id": "01a118fc-666c-70b6-9fa8-2c7520f0a0bb",
+        "existing_comment_ids": [
+          5459418438,
+          6063827066,
+          4221224769,
+          4221224781,
+          6063884883
+        ],
+        "status": "EXTERNAL_INDEPENDENT_FINDINGS_EXIST_FORWARD_REPAIR_PENDING",
+        "tests_this_run": "NOT_RUN",
+        "limitations": "External review claims not independently reproduced in this reconciliation; PR97 original security finding binds 2de92b72, observed 524dfbc portability-only revision has no inferred security clearance."
       }
     ],
-    "observed_codex_branch_count": 86,
+    "observed_codex_branch_count": 89,
     "branch_pagination_complete": true,
-    "protocol_blob_sha": "89d0e2fdcb1bc96313c4e48b139386e37380e5c8",
-    "tests": "NOT_RUN_RESERVED_AUTHOR_REPAIRS_EXISTING_INDEPENDENT_REVIEWERS",
+    "tests": "NOT_RUN_EXISTING_INDEPENDENT_REVIEW_AND_REPAIR_SCOPES",
     "review_comments_posted": 0,
-    "provider_calls": 0,
     "infrastructure_failures": 0,
-    "schedule": "NOT_REPROBED_NO_NEW_DURABLE_BINDING_CLAIM",
-    "readiness": "BLOCKED_NO_SUPPORTED_BUDGET_FEASIBLE_PUBLIC_LEGACY_SEED; acquisition path in development"
+    "provider_calls": 0,
+    "readiness": "BLOCKED_NO_SUPPORTED_BUDGET_FEASIBLE_PUBLIC_LEGACY_SEED; acquisition path in development",
+    "schedule": "NOT_REPROBED_NO_DURABLE_BINDING_CLAIM"
   },
   "supplemental_validations": [
     {
