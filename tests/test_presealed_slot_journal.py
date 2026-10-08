@@ -42,7 +42,7 @@ def _die(research,evidence,uid,where):
                             result=super().execute(sql,*args);os._exit(126)
                         return super().execute(sql,*args)
                 def connect(*a,**kw):
-                    if Path(a[0])==Path(evidence):kw['factory']=ReserveDeathConnection
+                    if Path(a[0]).resolve()==Path(evidence).resolve():kw['factory']=ReserveDeathConnection
                     return original(*a,**kw)
                 with patch('desk.presealed_slot_journal.sqlite3.connect',side_effect=connect):s.begin_slot()
             h=s.begin_slot()
@@ -55,7 +55,7 @@ def _die(research,evidence,uid,where):
                         os._exit(123)
                     return super().commit()
             def connect(*a,**kw):
-                if Path(a[0])==Path(evidence):kw['factory']=DieConnection
+                if Path(a[0]).resolve()==Path(evidence).resolve():kw['factory']=DieConnection
                 return original(*a,**kw)
             with patch('desk.presealed_slot_journal.sqlite3.connect',side_effect=connect):
                 s.attach_response(h,request,_reply(request))
@@ -229,7 +229,7 @@ class PresealedSlotJournalTests(unittest.TestCase):
                             raise OSError('fixture completion commit ambiguity')
                         return super().commit()
                 def connect(*a,**kw):
-                    if Path(a[0])==self.evidence:kw['factory']=FailConnection
+                    if Path(a[0]).resolve()==self.evidence.resolve():kw['factory']=FailConnection
                     return original(*a,**kw)
                 with patch('desk.presealed_slot_journal.sqlite3.connect',side_effect=connect):
                     with self.assertRaises(OSError):s.attach_response(h,q,raw)
@@ -243,7 +243,7 @@ class PresealedSlotJournalTests(unittest.TestCase):
                 def commit(self):
                     super().commit();raise OSError('fixture reserve ack lost')
             def connect(*a,**kw):
-                if Path(a[0])==self.evidence:kw['factory']=FailConnection
+                if Path(a[0]).resolve()==self.evidence.resolve():kw['factory']=FailConnection
                 return original(*a,**kw)
             with patch('desk.presealed_slot_journal.sqlite3.connect',side_effect=connect):
                 with self.assertRaises(OSError):s.begin_slot()
@@ -276,7 +276,7 @@ class PresealedSlotJournalTests(unittest.TestCase):
             seen=[];original=sqlite3.connect
             def connect(*a,**kw):
                 c=original(*a,**kw)
-                if Path(a[0])==self.evidence:c.set_trace_callback(seen.append)
+                if Path(a[0]).resolve()==self.evidence.resolve():c.set_trace_callback(seen.append)
                 return c
             with patch('desk.presealed_slot_journal.sqlite3.connect',side_effect=connect):
                 with self.assertRaisesRegex(ValueError,'RECORD_LIMIT'):s.inspect()
