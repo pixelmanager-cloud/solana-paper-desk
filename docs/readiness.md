@@ -340,3 +340,8 @@ PR10 now records a hosted scheduler last-run time of 2026-10-08T02:01:01.779530Z
 ### Historical evidence display integrated
 
 PR35 exact head `ab41ed0a9b56bc0a1a96a9c10630b57425465f5d` passed independent review and CI. Combined source `4f80ea330fde7f2105f8f4e19f2bc85f8fc1b4b3` passes 886 tests (23.397s, no skips). The display distinguishes original observation age from evaluation time and labels component verification as historical, without granting current approval. No main merge or deployment. Worker07 now implements raw execution-trace ordering/caller reconstruction, while acquisition and protected pool receipt storage remain active prerequisites.
+
+
+### Acquisition executor review checkpoint
+
+PR36 `d184189654ddbae327d23dbca8e308cc2b0b83eb` implements explicit birth-inclusive acquisition with queue fencing, shared budget and sealed-source publication. Scratch combined source `ec5d5104e5ceae3f9ef1c64135ccb9f23b0527d2` passes 909 tests in23.571s. Independent review by worker02 is pending, including setup identity immutability and archive/publication crash boundaries. This candidate is not integrated or deployed and establishes no live acceptance.

@@ -195,7 +195,7 @@
     "live_verification": "BLOCKED_NO_SUPPORTED_BUDGET_FEASIBLE_PUBLIC_LEGACY_SEED; acquisition path in development",
     "blocker": "Acquisition executor, live legacy evidence, lifecycle semantic approval and exposure integration unfinished",
     "followups": {
-      "worker02": "PR31 independent re-review PASS; available",
+      "worker02": "Independent PR36 exact-head review active; budget/archive/fencing/setup immutability",
       "worker06": "PR34 integrated; available",
       "cloud_reviewer": "PR33 reviewed and integrated; available",
       "worker10": "PR35 reviewed and integrated; available",
@@ -203,7 +203,7 @@
       "worker04": "Implement protected pool receipt ledger; isolated module/tests, no provider or runtime wiring",
       "worker05": "PR30 reviewed and integrated; available",
       "worker09": "PR35 reviewed and integrated; available",
-      "worker01": "Implement birth-inclusive acquisition executor/CLI on reviewed queue and budget foundations; exact raw setup/pagination and prepare/seal/publish recovery",
+      "worker01": "PR36 published d184189654ddbae327d23dbca8e308cc2b0b83eb; available for review fixes",
       "worker07": "Implement raw execution trace ordering/caller reconstruction prerequisite; no runtime gate relaxation",
       "worker08": "PR31 reviewed and integrated; available"
     },
@@ -241,15 +241,8 @@
       "tests": 878,
       "status": "SUPERSEDED_BY_PUBLISHED_TESTED_COMMIT"
     },
-    "published_ci": "d0caa0f1262366ca541d052310d78fbfdc63722d successful",
+    "published_ci": "e5d9f9b0e3210421aabe3a80efd519b0d122d340 successful",
     "active_claims": [
-      {
-        "worker": "worker01",
-        "thread_id": "01a118fc-39bc-722c-b442-8bf5a749e0bb",
-        "host_id": "durable",
-        "task": "birth-inclusive acquisition executor/CLI",
-        "status": "IMPLEMENTING"
-      },
       {
         "worker": "worker04",
         "thread_id": "01a118fc-b862-7340-ab3a-e1115a3280a4",
@@ -263,6 +256,15 @@
         "host_id": "durable",
         "task": "raw execution trace reconstruction",
         "status": "IMPLEMENTING"
+      },
+      {
+        "worker": "worker02",
+        "thread_id": "01a118fc-666c-70b6-9fa8-2c7520f0a0bb",
+        "host_id": "durable",
+        "task": "independent acquisition executor review",
+        "pr": 36,
+        "head": "d184189654ddbae327d23dbca8e308cc2b0b83eb",
+        "status": "REVIEWING"
       }
     ],
     "saved_launch_probe": {
@@ -285,6 +287,15 @@
       "result": "PASS",
       "independent_review": "PASS",
       "integrated": true
+    },
+    "pending_acquisition_candidate": {
+      "pr": 36,
+      "head": "d184189654ddbae327d23dbca8e308cc2b0b83eb",
+      "scratch_merge": "ec5d5104e5ceae3f9ef1c64135ccb9f23b0527d2",
+      "combined_tests": 909,
+      "result": "PASS",
+      "independent_review": "PENDING",
+      "integrated": false
     }
   }
 }
