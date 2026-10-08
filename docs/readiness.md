@@ -380,3 +380,6 @@ PR40 capturebridge79e0352 is under independent Linux review. Desktop scratch3482
 
 
 PR40 review interrupted by automated cybersecurity-risk flag; it is not a passed review. Before interruption reviewer reported duplicate UNIQUE hash replacement can delete original capture-journal event (replay still blocks). Author repair assigned; platformguard already repaired at457e7f1. No candidate integration/deployment. Separate PR41 offline birth structural analyzer69f556d is now under independent review by worker10; no lifecycle authorization follows structural matching.
+
+
+PR41 birth structural analyzer69f556d passed independentLinux1006 tests,zero skips andCI. Integrated30c8b197 has identical implementation/test tree to reviewed combination; this remains offline structural research,not lifecycle acceptance. Worker01 now adds narrow production compiled-JSON key resolution preserving original evidence and control/schema rejections. PR40 repairs3744192 are published by author but independent capture review remains incomplete after external safety flag; candidate remains excluded.

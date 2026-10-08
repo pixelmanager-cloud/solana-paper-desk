@@ -189,8 +189,8 @@
   ],
   "integration": {
     "branch": "integration/cloud-wave1",
-    "tested_commit": "8aa5938aeef5e96f22a54f80ff698d043f3a154d",
-    "combined_tests": 982,
+    "tested_commit": "30c8b197cf44989962ea1b4880fb36e31e0704a4",
+    "combined_tests": 1006,
     "result": "PASS",
     "live_verification": "BLOCKED_NO_SUPPORTED_BUDGET_FEASIBLE_PUBLIC_LEGACY_SEED; acquisition path in development",
     "blocker": "Live legacy evidence,protected pool receipt capture,lifecycle semantic approval and holder exposure integration unfinished",
@@ -198,12 +198,12 @@
       "worker02": "PR40 review interrupted by automated cybersecurity-risk flag; no final acceptance",
       "worker06": "PR34 integrated; available",
       "cloud_reviewer": "PR33 reviewed and integrated; available",
-      "worker10": "Review PR41 offline birth structural analyzer",
+      "worker10": "PR41 reviewed;available",
       "worker03": "PR39 published; reference-only fixture review pending",
-      "worker04": "PR40 duplicate hash replacement journal preservation repair assigned",
+      "worker04": "PR40 repairs published3744192;review remains incomplete",
       "worker05": "PR30 reviewed and integrated; available",
       "worker09": "PR35 reviewed and integrated; available",
-      "worker01": "Reviewed PR36/37; available",
+      "worker01": "Implement compiled JSON decoder key/privilege resolution",
       "worker07": "PR41 published69f556d,scoped reviewpending",
       "worker08": "PR31 reviewed and integrated; available"
     },
@@ -226,7 +226,8 @@
       "PR36": "1c87f2f2b37997bdb9291f0ae2184c5e5aad5f06 independent scoped PASS; identity repair,18-attempt budget,archive/recovery verified;902 exact and910 combined",
       "PR37": "8220f8baf0d84fc9905f39d2762664095cd6bba1 independent scoped PASS;14 probes/550 stack sequences;910 exact and918 combined; disconnected foundation only",
       "PR38": "fabebccda9064cd8e69833ff7e9f588ab8e7d9e8 independent PASS,33 ledger and975 combined Linux zero skips; production issuer/bridge unfinished",
-      "PR39": "7651db1fa2842957fc15fb16a4e616c12ecef520 independent provenance PASS; final Linux982 zero skips; no finality/acceptance"
+      "PR39": "7651db1fa2842957fc15fb16a4e616c12ecef520 independent provenance PASS; final Linux982 zero skips; no finality/acceptance",
+      "PR41": "69f556dce2012ab1e9b2963d3dd7f8c0e190a476 independent structural-scope PASS;1006Linux,1034malformed+11targeted probes;notruntimeapproval"
     },
     "candidate_combination": {
       "commit": "bfcc550ca25bd6cb79dc7ac3ad2b30c72f7b1033",
@@ -248,20 +249,11 @@
     "published_ci": "e5d9f9b0e3210421aabe3a80efd519b0d122d340 successful",
     "active_claims": [
       {
-        "worker": "worker04",
-        "thread_id": "01a118fc-b862-7340-ab3a-e1115a3280a4",
+        "worker": "worker01",
+        "thread_id": "01a118fc-39bc-722c-b442-8bf5a749e0bb",
         "host_id": "durable",
-        "task": "PR40 test platform guard repair",
-        "status": "FIXING"
-      },
-      {
-        "worker": "worker10",
-        "thread_id": "01a118fd-56d5-70b8-ad31-dba13e982082",
-        "host_id": "durable",
-        "task": "independent offline birth structural analyzer review",
-        "pr": 41,
-        "head": "69f556dce2012ab1e9b2963d3dd7f8c0e190a476",
-        "status": "REVIEWING"
+        "task": "compiled JSON production decoder account resolution,preserve evidencegates",
+        "status": "IMPLEMENTING"
       }
     ],
     "saved_launch_probe": {
@@ -314,7 +306,7 @@
       "result": "Linux combined975 PASS zero skips; reviewed",
       "integrated": true
     },
-    "test_platform_note": "Independent Linux982 tests zero skips; exact combined tree95a17494b553ef37a9a1317adeeed988de1de3dc matches local merge",
+    "test_platform_note": "Independent combinedLinux1006 zero skips; implementation/tests match desktop scratch973passed+33Linuxskips",
     "pending_reference_combination": {
       "commit": "8aa5938aeef5e96f22a54f80ff698d043f3a154d",
       "pr": 39,
@@ -327,12 +319,12 @@
     },
     "pending_capture_bridge": {
       "pr": 40,
-      "head": "457e7f15f97c04033a51f07abf32c514cade5b08",
+      "head": "37441927f38f0b884d61fc2e1e563b6aa50a4355",
       "scratch_commit": "34829a5011dc2a37178522b6c5d8ef2fdcb3eb54",
       "mac_discovered": 1018,
       "mac_errors": 36,
       "mac_skips": 33,
-      "result": "Platformguard fixed;duplicate hash replacement journal integrity defect reported;review incomplete due external safety flag",
+      "result": "Author repaired duplicatehash/platformguard;independentreview incomplete after external safety flag;notaccepted",
       "integrated": false
     },
     "pending_birth_analyzer": {
@@ -342,8 +334,8 @@
       "mac_discovered": 1006,
       "mac_executed": 973,
       "mac_skips": 33,
-      "result": "Mac PASS;independentLinuxreview pending",
-      "integrated": false
+      "result": "Scoped independentPASS andLinux1006zero skips",
+      "integrated": true
     }
   }
 }
