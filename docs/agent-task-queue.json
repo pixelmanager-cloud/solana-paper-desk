@@ -202,7 +202,7 @@
       "worker03": "Public legacy feasibility report c932cbf published/reviewed; idle",
       "worker04": "PR26 reviewed; available",
       "worker05": "PR30 e1b22f0d7b55181a97f1eebe4338c0db0b700f70 published; independent repeated-concurrency review active",
-      "worker09": "PR28 correction e81d9be392bef4d29b70490ef2354bf3ec966f99 published; review active",
+      "worker09": "Implement static decision UI original observation age and explicit historical scope; no backend changes",
       "worker01": "PR32 reviewed and integrated; acquisition executor awaits queue repair",
       "worker07": "PR33 5095a17557c7fb916d74e508a3e157b49abcd784 raw control normalizer published",
       "worker08": "Repair UPDATE OR REPLACE rowid/oid aliases and recurring missing-descriptor migration risk, samePR append-only"
@@ -222,9 +222,9 @@
       "PR31": "04a9301 re-review: non-object JSON fixed, INSERT replacement blocked, remaining UPDATE OR REPLACE rowid deletion permits constructor to reclassify acquisition as SCREEN; held"
     },
     "candidate_combination": {
-      "commit": "f17a9aa219e76710da42fc6542d4c4eefdc99891",
+      "commit": "bfcc550ca25bd6cb79dc7ac3ad2b30c72f7b1033",
       "location": "local detached worktree work/cloud-controls",
-      "result": "PASS; PR31 corrected head independent re-review pending",
+      "result": "PASS single combined run; PR31 rowid bypass unresolved and PR34 independent review pending",
       "published": false,
       "prs": {
         "26": "aa4626fec148c244f841f0614abc4d18c52274dd",
@@ -232,9 +232,10 @@
         "28": "e81d9be392bef4d29b70490ef2354bf3ec966f99",
         "30": "e1b22f0d7b55181a97f1eebe4338c0db0b700f70",
         "31": "04a930172a088607b833017112e9d4721869e60c",
-        "32": "64765af62379fe4fbb185271c1d54405a527a0af"
+        "32": "64765af62379fe4fbb185271c1d54405a527a0af",
+        "34": "ae5a36bc0e8f6e6d33afea6292a64a2c6cc1e23e"
       },
-      "tests": 826
+      "tests": 843
     },
     "published_ci": "d0caa0f1262366ca541d052310d78fbfdc63722d successful"
   }
