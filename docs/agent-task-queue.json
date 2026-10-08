@@ -824,6 +824,12 @@
       "integrated": false,
       "depends_on": {
         "65": "ff201a6dacb979e8edfd541956e38167dcd66c8c"
+      },
+      "mac_combined": {
+        "discovered": 1450,
+        "passed": 1351,
+        "skips": 99,
+        "seconds": 30.191
       }
     }
   },
