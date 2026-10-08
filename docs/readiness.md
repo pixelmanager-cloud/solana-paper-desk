@@ -351,3 +351,8 @@ PR36 coordinator probe confirmed setup identity defect: default SQLite `UPDATE O
 
 
 PR36 repair `1c87f2f2b37997bdb9291f0ae2184c5e5aad5f06` adds immutable setup rowid protection. PR37 `8220f8baf0d84fc9905f39d2762664095cd6bba1` adds offline invocation trace reconstruction, explicitly not instruction effect ordering or authority authentication. Both are in independent review. Scratch combination `10345dfa9d9ea1e685756a3151dff97a1719fb77` passes942 tests in23.575s, no skips; neither candidate is integrated/deployed.
+
+
+### Reviewed acquisition and trace integration
+
+Exact PR36 repair1c87f2f and PR37 trace8220f8b passed independent review and CI before integration. Combined source8553ae7d7ed8f83d7b9da0d933f49b2f5b8122ca passes942 tests in24.051s with no skips. Explicit birth-inclusive acquisition is implemented; mainnet acceptance remains unverified. Trace foundation is disconnected research and does not authorize controls. Protected pool receipts, lifecycle semantics and current-holder exposure remain unfinished. Worker03 is searching bounded public sources for an unchanged legacy launch fixture without RPC. No main merge or VPS deployment.
