@@ -1,6 +1,6 @@
 {
   "schema_version": 1,
-  "revision": 48,
+  "revision": 49,
   "repository": "pixelmanager-cloud/solana-paper-desk",
   "source_main_sha": "e298e15cd758932e81d2241130716632702f5bd0",
   "observed_date": "2026-10-08",
@@ -1402,6 +1402,65 @@
       "observed_codex_branch_count": 79,
       "branch_pagination_complete": true,
       "tests": "NOT_RUN_NO_UNASSIGNED_SCOPE",
+      "review_comments_posted": 0,
+      "acceptance_claims": 0,
+      "provider_calls": 0,
+      "infrastructure_failures": 0,
+      "schedule": "NOT_REPROBED_NO_NEW_DURABLE_BINDING_CLAIM",
+      "readiness": "BLOCKED_NO_SUPPORTED_BUDGET_FEASIBLE_PUBLIC_LEGACY_SEED; acquisition path in development"
+    },
+    {
+      "kind": "HOURLY_GITHUB_RECONCILIATION",
+      "at": "2026-10-08T14:01:01Z",
+      "status": "NO_NEW_UNASSIGNED_REVIEW_WORK",
+      "cloud_execution": {
+        "provider": "cloud",
+        "observations_current": true,
+        "observed_phase": "running",
+        "spec_revision": "60"
+      },
+      "queue_blob_sha": "16260025b79ec04e8e72c382073f5ecc34ab01f4",
+      "external_claims": [
+        {
+          "id": "MIXED-RECEIPT-PROTECTED-READER",
+          "worker": "01",
+          "thread_id": "01a118fc-39bc-722c-b442-8bf5a749e0bb",
+          "host_id": "durable",
+          "status": "DISPATCHED",
+          "base": "0ce2a333be6c149fc4ac2398815e7ab7f46abc79",
+          "scope": "Implement guarded read-only physical format2 reader with independent anchors; no migration/issuer"
+        },
+        {
+          "id": "COMMON-BANK-CLOCK-STAGE",
+          "worker": "02",
+          "thread_id": "01a118fc-666c-70b6-9fa8-2c7520f0a0bb",
+          "host_id": "durable",
+          "status": "DISPATCHED",
+          "base": "32417a5965b6d92aeefd05ffbb54a0a20dede891",
+          "scope": "Atomic original clock request/completion bound to actual union T; no transport/publication"
+        }
+      ],
+      "open_pr_numbers": [
+        21,
+        10,
+        29,
+        18,
+        23,
+        22,
+        12,
+        19,
+        20,
+        17,
+        16,
+        15,
+        14,
+        13,
+        11
+      ],
+      "observed_codex_branch_count": 84,
+      "branch_pagination_complete": true,
+      "protocol_blob_sha": "89d0e2fdcb1bc96313c4e48b139386e37380e5c8",
+      "tests": "NOT_RUN_NO_NEW_UNASSIGNED_PR",
       "review_comments_posted": 0,
       "acceptance_claims": 0,
       "provider_calls": 0,
@@ -3345,23 +3404,22 @@
     },
     "external_current": [
       {
-        "id": "PR87-INDEPENDENT-REVIEW",
-        "worker": "06",
-        "thread_id": "01a118fc-f867-7233-8eec-c20659e70095",
+        "id": "MIXED-RECEIPT-PROTECTED-READER",
+        "worker": "01",
+        "thread_id": "01a118fc-39bc-722c-b442-8bf5a749e0bb",
         "host_id": "durable",
-        "status": "REVIEWING",
-        "pr": 87,
-        "head": "6561aa7a429f8f3db94668ad0da94005ee2cfb08",
-        "wait_cursor": "8f3328cf-bef6-441d-83f8-2d1f46b3b0df:47"
+        "status": "DISPATCHED",
+        "base": "0ce2a333be6c149fc4ac2398815e7ab7f46abc79",
+        "scope": "Implement guarded read-only physical format2 reader with independent anchors; no migration/issuer"
       },
       {
-        "id": "COMMON-BANK-SLOT-STAGE",
+        "id": "COMMON-BANK-CLOCK-STAGE",
         "worker": "02",
         "thread_id": "01a118fc-666c-70b6-9fa8-2c7520f0a0bb",
         "host_id": "durable",
         "status": "DISPATCHED",
-        "base": "072f654478dd7a73563cfbc5b18092f1ed92829d",
-        "scope": "Disconnected finalized-slot atomic reservation/completion after genesis; no transport or publication"
+        "base": "32417a5965b6d92aeefd05ffbb54a0a20dede891",
+        "scope": "Atomic original clock request/completion bound to actual union T; no transport/publication"
       }
     ]
   },
@@ -3679,46 +3737,56 @@
   ],
   "last_reconciliation": {
     "kind": "HOURLY_GITHUB_RECONCILIATION",
-    "at": "2026-10-08T12:57:42Z",
+    "at": "2026-10-08T14:01:01Z",
     "status": "NO_NEW_UNASSIGNED_REVIEW_WORK",
     "cloud_execution": {
       "provider": "cloud",
       "observations_current": true,
       "observed_phase": "running",
-      "spec_revision": "58"
+      "spec_revision": "60"
     },
-    "queue_blob_sha": "7d86409791331e53d99daa732c0ce30d97394394",
+    "queue_blob_sha": "16260025b79ec04e8e72c382073f5ecc34ab01f4",
     "external_claims": [
       {
-        "id": "PR87-INDEPENDENT-REVIEW",
-        "worker": "06",
-        "thread_id": "01a118fc-f867-7233-8eec-c20659e70095",
+        "id": "MIXED-RECEIPT-PROTECTED-READER",
+        "worker": "01",
+        "thread_id": "01a118fc-39bc-722c-b442-8bf5a749e0bb",
         "host_id": "durable",
-        "status": "REVIEWING",
-        "pr": 87,
-        "head": "6561aa7a429f8f3db94668ad0da94005ee2cfb08",
-        "wait_cursor": "8f3328cf-bef6-441d-83f8-2d1f46b3b0df:47"
+        "status": "DISPATCHED",
+        "base": "0ce2a333be6c149fc4ac2398815e7ab7f46abc79",
+        "scope": "Implement guarded read-only physical format2 reader with independent anchors; no migration/issuer"
       },
       {
-        "id": "COMMON-BANK-SLOT-STAGE",
+        "id": "COMMON-BANK-CLOCK-STAGE",
         "worker": "02",
         "thread_id": "01a118fc-666c-70b6-9fa8-2c7520f0a0bb",
         "host_id": "durable",
         "status": "DISPATCHED",
-        "base": "072f654478dd7a73563cfbc5b18092f1ed92829d",
-        "scope": "Disconnected finalized-slot atomic reservation/completion after genesis; no transport or publication"
+        "base": "32417a5965b6d92aeefd05ffbb54a0a20dede891",
+        "scope": "Atomic original clock request/completion bound to actual union T; no transport/publication"
       }
     ],
-    "observed_pr": {
-      "number": 87,
-      "head_sha": "6561aa7a429f8f3db94668ad0da94005ee2cfb08",
-      "base_sha": "c6c6e1377ec4b389a5920c85fa87d906d29ec4f9",
-      "branch": "codex/cloud-receipt-chain-validator-01",
-      "reserved_reviewer": "worker06"
-    },
-    "observed_codex_branch_count": 79,
+    "open_pr_numbers": [
+      21,
+      10,
+      29,
+      18,
+      23,
+      22,
+      12,
+      19,
+      20,
+      17,
+      16,
+      15,
+      14,
+      13,
+      11
+    ],
+    "observed_codex_branch_count": 84,
     "branch_pagination_complete": true,
-    "tests": "NOT_RUN_NO_UNASSIGNED_SCOPE",
+    "protocol_blob_sha": "89d0e2fdcb1bc96313c4e48b139386e37380e5c8",
+    "tests": "NOT_RUN_NO_NEW_UNASSIGNED_PR",
     "review_comments_posted": 0,
     "acceptance_claims": 0,
     "provider_calls": 0,
