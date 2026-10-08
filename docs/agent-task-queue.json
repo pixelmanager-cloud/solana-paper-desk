@@ -306,9 +306,10 @@
         "worker": "worker06",
         "thread_id": "01a118fc-f867-7233-8eec-c20659e70095",
         "host_id": "durable",
-        "task": "Independent evidence feasibility review",
-        "status": "DISPATCHED",
-        "base": "c578dbe"
+        "task": "Narrow token-control certificate obligation proposal",
+        "status": "RESEARCHING",
+        "base": "c578dbe",
+        "scope": "report only; no evidence contract changes"
       },
       {
         "worker": "worker07",
@@ -726,8 +727,11 @@
   "evidence_gap_review": {
     "pr": 58,
     "head": "38f456e940c071a0d50d5750021ef900ad79c67d",
-    "status": "REVIEWING",
-    "reviewer": "worker06"
+    "status": "PASS_REPORT_ONLY_INTEGRATED",
+    "reviewer": "worker06",
+    "integrated": true,
+    "reviewed_tree": "06b658c5d9fd98495bf56d8d4ec3af5a632f9dc4",
+    "linux_tests": 1336
   },
   "live_demo_path_review": {
     "pr": 59,
