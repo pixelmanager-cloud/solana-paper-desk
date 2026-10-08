@@ -1,6 +1,6 @@
 {
   "schema_version": 1,
-  "revision": 40,
+  "revision": 41,
   "repository": "pixelmanager-cloud/solana-paper-desk",
   "source_main_sha": "e298e15cd758932e81d2241130716632702f5bd0",
   "observed_date": "2026-10-08",
@@ -1136,6 +1136,12 @@
       "accepted_tasks": [],
       "live_acceptance": false,
       "schedule": "Notreprobed/modified;noclaimofbounddurableenvironment"
+    },
+    {
+      "kind": "PR69_INDEPENDENT_REVIEW_COMPLETE",
+      "review_id": 5452960493,
+      "head_sha": "5d53e384f2aa6e35bdb6054e1362beb74d42f850",
+      "accepted": false
     }
   ],
   "artifact_pr": {
@@ -2475,20 +2481,90 @@
       "dispatched_workers": 0,
       "accepted_tasks": [],
       "infrastructure_failures": []
+    },
+    {
+      "policy_version": "cloud-independent-review-v1",
+      "pr": 69,
+      "head_sha": "5d53e384f2aa6e35bdb6054e1362beb74d42f850",
+      "base_sha": "a9f34861771eac7cd51fbafc380c92528dd90ccb",
+      "author_ancestor": "c578dbead9931762a35a9a51b45b6aad62e1597c",
+      "worker_agent": "07",
+      "worker_thread_id": "01a118fd-0f1c-749c-b85b-5e730937d0a8",
+      "branch": "codex/cloud-wave1-07-signed-message-witness",
+      "review_id": 5452960493,
+      "review_action": "COMMENT",
+      "status": "NO_SCOPED_SIGNED_MESSAGE_BLOCKER_FOUND",
+      "findings": [
+        "Manuallegacy/v0wirematches;allpublicsignaturesverify",
+        "Signedbytesauthenticateddistinctfromunsignedmetadata/ALT/finality/authority",
+        "No signing/privatekeycreation or productionconsumer"
+      ],
+      "tests": {
+        "python": "3.12.14",
+        "full_suite_command": "python -m unittest discover -q",
+        "full_suite_passed": 1360,
+        "seconds": 61.862,
+        "skipped": 0,
+        "targeted_command": "python -m unittest tests.test_signed_message_witness -q",
+        "targeted_passed": 22,
+        "targeted_seconds": 0.769,
+        "independent_command": "python p69-independent.py",
+        "manual_public_wires": 2,
+        "message_byte_tamper": 3494,
+        "signature_byte_tamper": 256,
+        "unsigned_metadata_substitution": 8,
+        "manual_legacy_boundaries": 7,
+        "official_pins_verified": 4,
+        "provider_calls": 0
+      },
+      "ci": [
+        {
+          "id": 37741240639,
+          "name": "Tests",
+          "status": "completed",
+          "conclusion": "success",
+          "run_number": 514,
+          "jobs_url": "https://api.github.com/repos/pixelmanager-cloud/solana-paper-desk/actions/runs/37741240639/jobs",
+          "logs_url": "https://api.github.com/repos/pixelmanager-cloud/solana-paper-desk/actions/runs/37741240639/logs",
+          "workflow_id": 377958194
+        }
+      ],
+      "source_files": 287,
+      "source_manifest": "docs/reviews/cloud-pr69-a9f3486-5d53e38-hashes.json",
+      "source_manifest_sha256": "8aedb60c3ea452bb48e84985ddddc0cb25ddc5d6698814d298a07c34415bc40b",
+      "proof_artifact": "docs/reviews/cloud-pr69-5d53e38.md",
+      "prior_pr62_review_confirmed": 5452849429,
+      "limitations": [
+        "Positivepubliclegacywirefixturemissing",
+        "Alternatecryptographylibraryunavailable;existing soldersverifierused;manualencoderindependent",
+        "MessageauthnotRPCsource/metadata/ALT/inclusion/finality/CPI/authorization/ownership/entry"
+      ],
+      "infrastructure_failures": [],
+      "optional_probe_failure": {
+        "library": "cryptography",
+        "status": "UNAVAILABLE_NOT_ESSENTIAL_NO_INSTALL"
+      },
+      "accepted": false,
+      "live_acceptance": false,
+      "production_edits": false,
+      "merged_prs": 0,
+      "dispatched_workers": 0,
+      "accepted_tasks": []
     }
   ],
   "infrastructure": {
     "consecutive_failures": 0,
     "last_failure": "Historical immediate-run probe404; no current run infrastructure failure.",
     "retry_policy": "No busy polling; future supported review runs reconcile and pause after three consecutive execution/access failures.",
-    "last_success": "PR62supportedcloud1347Linuxzero skips;611independentcases"
+    "last_success": "PR69supportedcloud1360Linuxzero skips"
   },
   "review_lease": {
-    "holder": "cloud-pr69-5d53e38-review",
+    "holder": null,
     "fencing_token": 10,
-    "status": "HELD",
+    "status": "RELEASED",
     "scope": "PR69_FIXTURE_RESEARCH_ONLY",
-    "expires_at": "2026-10-08T08:30:00Z"
+    "expires_at": null,
+    "last_holder": "cloud-pr69-5d53e38-review"
   },
   "external_review_observations": [
     {
@@ -2981,10 +3057,10 @@
   ],
   "review_assignments": {
     "cloud_coordinator": {
-      "exclusive_pr": 62,
-      "head_sha": "9e35c2bce3b4aa47051418ce0d5793c9b872edcd",
-      "status": "NO_SCOPED_CORRESPONDENCE_BLOCKER_FOUND",
-      "review_id": 5452849429
+      "exclusive_pr": 69,
+      "head_sha": "5d53e384f2aa6e35bdb6054e1362beb74d42f850",
+      "status": "NO_SCOPED_SIGNED_MESSAGE_BLOCKER_FOUND",
+      "review_id": 5452960493
     },
     "pr31": {
       "owner": "worker02",
@@ -3278,67 +3354,72 @@
   ],
   "last_review_run": {
     "policy_version": "cloud-independent-review-v1",
-    "pr": 62,
-    "head_sha": "9e35c2bce3b4aa47051418ce0d5793c9b872edcd",
-    "base_sha": "13853bf3cc9a2e5e31c63656f3947cc2b0ddca33",
+    "pr": 69,
+    "head_sha": "5d53e384f2aa6e35bdb6054e1362beb74d42f850",
+    "base_sha": "a9f34861771eac7cd51fbafc380c92528dd90ccb",
     "author_ancestor": "c578dbead9931762a35a9a51b45b6aad62e1597c",
-    "worker_agent": "03",
-    "worker_thread_id": "01a118fc-9478-778a-b77a-8f8f6ec7e0ad",
-    "branch": "codex/runtime-log-witness",
-    "review_id": 5452849429,
+    "worker_agent": "07",
+    "worker_thread_id": "01a118fd-0f1c-749c-b85b-5e730937d0a8",
+    "branch": "codex/cloud-wave1-07-signed-message-witness",
+    "review_id": 5452960493,
     "review_action": "COMMENT",
-    "status": "NO_SCOPED_CORRESPONDENCE_BLOCKER_FOUND",
+    "status": "NO_SCOPED_SIGNED_MESSAGE_BLOCKER_FOUND",
     "findings": [
-      "33originalpathsretained;wholeentryspoofresistance;failed/caughtbranchesunknown",
-      "Finalsyscalloutcomeunknownandallapprovalsfalse",
-      "Official3immutableGitblobsverified;successlogprecedespostcallcompletion"
+      "Manuallegacy/v0wirematches;allpublicsignaturesverify",
+      "Signedbytesauthenticateddistinctfromunsignedmetadata/ALT/finality/authority",
+      "No signing/privatekeycreation or productionconsumer"
     ],
     "tests": {
       "python": "3.12.14",
       "full_suite_command": "python -m unittest discover -q",
-      "full_suite_passed": 1347,
-      "seconds": 61.574,
+      "full_suite_passed": 1360,
+      "seconds": 61.862,
       "skipped": 0,
-      "targeted_command": "python -m unittest tests.test_runtime_log_witness -q",
-      "targeted_passed": 11,
-      "targeted_seconds": 0.143,
-      "independent_command": "python p62-independent.py",
-      "independent_cases": 611,
-      "unknown_cases": 603,
-      "spoof_text_correspondence_cases": 6,
-      "identical_swap_cases": 2,
-      "initial_probe_expectation_failure": "Twoidenticalsuccessstringsswapped;testexpectationcorrected,notproductfailure",
+      "targeted_command": "python -m unittest tests.test_signed_message_witness -q",
+      "targeted_passed": 22,
+      "targeted_seconds": 0.769,
+      "independent_command": "python p69-independent.py",
+      "manual_public_wires": 2,
+      "message_byte_tamper": 3494,
+      "signature_byte_tamper": 256,
+      "unsigned_metadata_substitution": 8,
+      "manual_legacy_boundaries": 7,
+      "official_pins_verified": 4,
       "provider_calls": 0
     },
     "ci": [
       {
-        "id": 37740108980,
+        "id": 37741240639,
         "name": "Tests",
         "status": "completed",
         "conclusion": "success",
-        "run_number": 474,
-        "jobs_url": "https://api.github.com/repos/pixelmanager-cloud/solana-paper-desk/actions/runs/37740108980/jobs",
-        "logs_url": "https://api.github.com/repos/pixelmanager-cloud/solana-paper-desk/actions/runs/37740108980/logs",
+        "run_number": 514,
+        "jobs_url": "https://api.github.com/repos/pixelmanager-cloud/solana-paper-desk/actions/runs/37741240639/jobs",
+        "logs_url": "https://api.github.com/repos/pixelmanager-cloud/solana-paper-desk/actions/runs/37741240639/logs",
         "workflow_id": 377958194
       }
     ],
-    "combined_ci": "NOT_RUN_SOURCE_SNAPSHOT_ONLY",
-    "source_manifest": "docs/reviews/cloud-pr62-13853bf-9e35c2b-hashes.json",
-    "source_manifest_sha256": "ed2e71a56203473b387a749ee9e65b86110159bdd31c2b415898ca5d6b2be92a",
-    "source_files": 285,
-    "proof_artifact": "docs/reviews/cloud-pr62-9e35c2b.md",
+    "source_files": 287,
+    "source_manifest": "docs/reviews/cloud-pr69-a9f3486-5d53e38-hashes.json",
+    "source_manifest_sha256": "8aedb60c3ea452bb48e84985ddddc0cb25ddc5d6698814d298a07c34415bc40b",
+    "proof_artifact": "docs/reviews/cloud-pr69-5d53e38.md",
+    "prior_pr62_review_confirmed": 5452849429,
     "limitations": [
-      "Correspondencenotauthenticity/finality/deployment/CPIprivilege/postlogsuccess/effects",
-      "Arbitraryoriginalretentionnotbounded;offlineutilitynotpublicingress",
-      "PR58notreviewed;nonewapproval/liveacceptance"
+      "Positivepubliclegacywirefixturemissing",
+      "Alternatecryptographylibraryunavailable;existing soldersverifierused;manualencoderindependent",
+      "MessageauthnotRPCsource/metadata/ALT/inclusion/finality/CPI/authorization/ownership/entry"
     ],
+    "infrastructure_failures": [],
+    "optional_probe_failure": {
+      "library": "cryptography",
+      "status": "UNAVAILABLE_NOT_ESSENTIAL_NO_INSTALL"
+    },
     "accepted": false,
     "live_acceptance": false,
     "production_edits": false,
     "merged_prs": 0,
     "dispatched_workers": 0,
-    "accepted_tasks": [],
-    "infrastructure_failures": []
+    "accepted_tasks": []
   },
   "combined_validations": [
     {
