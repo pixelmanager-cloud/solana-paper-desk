@@ -262,26 +262,38 @@
     "published_ci": "Deployed d758bc529a7da1f74509117288740911f2ad6845: both CI runs successful",
     "active_claims": [
       {
-        "id": "PRESEALED-SLOT-INTENT-JOURNAL",
+        "id": "PR96-INDEPENDENT-REVIEW",
+        "worker": "06",
+        "thread_id": "01a118fc-f867-7233-8eec-c20659e70095",
+        "host_id": "durable",
+        "status": "IN_PROGRESS",
+        "pr": 96,
+        "head": "33ff34b15930989bc85337372c59f070eb0651f1",
+        "base": "1a9f69595bf4c8c8814654a093fbba1bde93d5ad",
+        "wait_cursor": "8f3328cf-bef6-441d-83f8-2d1f46b3b0df:63",
+        "turn_id": "01a11c34-11c0-76a8-9e45-48444dd42773"
+      },
+      {
+        "id": "PR97-INDEPENDENT-REVIEW",
+        "worker": "05",
+        "thread_id": "01a118fc-dd83-7672-ac81-7445f85fe09f",
+        "host_id": "durable",
+        "status": "IN_PROGRESS",
+        "pr": 97,
+        "head": "2de92b72fa972bfbf1a1299e608830050e5c06ca",
+        "base": "1a9f69595bf4c8c8814654a093fbba1bde93d5ad",
+        "wait_cursor": "b9784eaf-f3e5-457f-a98d-a386c23b37ea:44",
+        "turn_id": "01a11c37-7fa2-77ad-acb5-1cfc502f2cce"
+      },
+      {
+        "id": "PR97-MAC-INJECTION-REPAIR",
         "worker": "02",
         "thread_id": "01a118fc-666c-70b6-9fa8-2c7520f0a0bb",
         "host_id": "durable",
         "status": "IN_PROGRESS",
-        "base": "893bf72ed79dee7be224bccf4c7ba3913f36d6b6",
-        "scope": "Fresh admitted acquisition slot intent and completion; atomic same18 charge before I/O; no transport or retrofit",
-        "wait_cursor": "a2dcfb97-463d-4188-9da3-48a81e644d23:63",
-        "turn_id": "01a11c26-ebdf-75e8-a64a-9063c0637615"
-      },
-      {
-        "id": "ORIGINAL-BYTE-SLOT-TRANSPORT",
-        "worker": "01",
-        "thread_id": "01a118fc-39bc-722c-b442-8bf5a749e0bb",
-        "host_id": "durable",
-        "status": "IN_PROGRESS",
-        "base": "893bf72ed79dee7be224bccf4c7ba3913f36d6b6",
-        "scope": "Separate bounded original-byte finalized-slot transport primitive; no acquisition/journal/allowlist expansion",
-        "wait_cursor": "5e651fc7-2996-4765-974d-5c852257a005:64",
-        "turn_id": "01a11c26-fcef-7341-a3c8-db3211a520d9"
+        "pr": 97,
+        "head": "2de92b72fa972bfbf1a1299e608830050e5c06ca",
+        "scope": "Test portability only; preserve real death/commit fault injection, no skips"
       }
     ],
     "saved_launch_probe": {
@@ -904,6 +916,43 @@
       "coordinator_diff_review": "Full tests/report inspected; real death gap reproduced by dedicated test, no production change",
       "integration_commit": "893bf72ed79dee7be224bccf4c7ba3913f36d6b6",
       "review_manifest_sha256": "6a62317fc780ab9c7647fa50cb4befb0a3ba4b363baaf2f5a43ab55a948584c7"
+    },
+    "pending_slot_repairs": {
+      "status": "INDEPENDENT_AND_DESKTOP_REVIEW",
+      "transport": {
+        "pr": 96,
+        "head": "33ff34b15930989bc85337372c59f070eb0651f1",
+        "author": "01",
+        "candidate_tree": "8b9c52448e9ee9a1b5d6f97dc9090abafa862122",
+        "ci": "both SUCCESS",
+        "desktop_tests": {
+          "total": 1906,
+          "skipped": 373,
+          "failures": 0,
+          "seconds": 34.731
+        }
+      },
+      "journal": {
+        "pr": 97,
+        "head": "2de92b72fa972bfbf1a1299e608830050e5c06ca",
+        "author": "02",
+        "candidate_tree": "a48ad2baa5ace136cb811235decf782f56627529",
+        "ci": "one SUCCESS; one pending",
+        "desktop_tests": {
+          "total": 1904,
+          "skipped": 373,
+          "failures": 3,
+          "seconds": 34.593,
+          "reason": "Crash/commit injection likely misses Mac canonical temp paths; author02 assigned test-only fix"
+        },
+        "desktop_probe": "Unknown unrecognized_hook AFTER UPDATE trigger accepted through DONE; false eligibility preserved; reviewer05 alerted for complete typed schema assessment."
+      },
+      "desktop_concerns": [
+        "PR97 complete initial and journal schema validation and bounded cardinality preflight require independent probes.",
+        "Future wiring must preserve transport failure semantics even when response bytes parse as valid slot."
+      ],
+      "live_acceptance": false,
+      "deployment": "unchanged f52840b; disconnected repairs are not yet integrated"
     }
   },
   "native_reconciliation_review": {
