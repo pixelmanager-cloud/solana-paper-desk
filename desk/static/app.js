@@ -1,6 +1,7 @@
 const $=s=>document.querySelector(s);const node=(tag,text,cls)=>{const n=document.createElement(tag);n.textContent=text;if(cls)n.className=cls;return n};
 const human=s=>s.toLowerCase().replaceAll('_',' ');
-async function refresh(){try{const response=await fetch('/api/scans');if(!response.ok)throw Error('Dashboard unavailable');const scans=await response.json();$('#scans').replaceChildren();if(!scans.length)$('#scans').append(node('p','No investigations yet. Paste a mint above to start.'));for(const scan of scans){const a=node('article','');a.append(node('code',scan.mint));a.append(node('p',scan.status+' · '+new Date(scan.created*1000).toLocaleString(),'status'));const r=scan.result;if(r){if(r.error)a.append(node('p',r.error));else{a.append(node('h3','Research-only evidence · not a paper entry'));a.append(node('p','Original investigation observation: '+decisionTime(r.observed_at)));a.append(node('p','Observation age at display: '+decisionAge(r.observed_at,Date.now())));const grid=node('div','','grid');for(const [title,items]of[['Findings',r.findings],['Unresolved checks',r.unknowns]]){const box=node('div','');box.append(node('h4',title));const ul=node('ul','');for(const item of items||[])ul.append(node('li',human(item)));if(!items?.length)ul.append(node('li','None observed in this bounded sample; this is not a safety pass.'));box.append(ul);grid.append(box)}a.append(grid);if(r.holder_evidence)a.append(node('p',r.holder_evidence.verified?`Holder coverage: saved chain snapshot at slot ${r.holder_evidence.slot}. Wallet and pool classification remains incomplete.`:'Holder coverage: provisional sample or indexed data; complete chain coverage is unverified.'));if(r.roundtrip_quote)a.append(node('p',`Round-trip quote: ${(Number(r.roundtrip_quote.quoted_return_lamports)/1e9).toFixed(6)} SOL returned from 0.01 SOL · quotes only; not simulated fills`));if(r.sell_simulation)a.append(node('p',r.sell_simulation.simulation_ok&&r.sell_simulation.balance_effects?.passed&&r.sell_simulation.account_controls?.passed?'Public-holder sell simulation, balance checks and account-control checks passed. Full route policy and your wallet are not approved.':'Public-holder sell diagnostics failed or have unresolved checks.'));a.append(node('p',`${r.history?.transactions||0} historical transactions · ${r.holders?.length||0} reported holder owners · ${r.shared_funding_candidates?.length||0} shared-funding candidates`));}const d=node('details','');d.append(node('summary','Inspect full evidence report'));d.append(node('pre',JSON.stringify(r,null,2)));a.append(d)}$('#scans').append(a)}}catch(e){$('#message').textContent=e.message}}
+const diagnosticPanels=new Map();
+async function refresh(){try{const response=await fetch('/api/scans');if(!response.ok)throw Error('Dashboard unavailable');const scans=await response.json();$('#scans').replaceChildren();if(!scans.length)$('#scans').append(node('p','No investigations yet. Paste a mint above to start.'));for(const scan of scans){const a=node('article','');a.append(node('code',scan.mint));a.append(node('p',scan.status+' · '+new Date(scan.created*1000).toLocaleString(),'status'));const r=scan.result;if(r){if(r.error)a.append(node('p',r.error));else{a.append(node('h3','Research-only evidence · not a paper entry'));a.append(node('p','Original investigation observation: '+decisionTime(r.observed_at)));a.append(node('p','Observation age at display: '+decisionAge(r.observed_at,Date.now())));const grid=node('div','','grid');for(const [title,items]of[['Findings',r.findings],['Unresolved checks',r.unknowns]]){const box=node('div','');box.append(node('h4',title));const ul=node('ul','');for(const item of items||[])ul.append(node('li',human(item)));if(!items?.length)ul.append(node('li','None observed in this bounded sample; this is not a safety pass.'));box.append(ul);grid.append(box)}a.append(grid);if(r.holder_evidence)a.append(node('p',r.holder_evidence.verified?`Holder coverage: saved chain snapshot at slot ${r.holder_evidence.slot}. Wallet and pool classification remains incomplete.`:'Holder coverage: provisional sample or indexed data; complete chain coverage is unverified.'));if(r.roundtrip_quote)a.append(node('p',`Round-trip quote: ${(Number(r.roundtrip_quote.quoted_return_lamports)/1e9).toFixed(6)} SOL returned from 0.01 SOL · quotes only; not simulated fills`));if(r.sell_simulation)a.append(node('p',r.sell_simulation.simulation_ok&&r.sell_simulation.balance_effects?.passed&&r.sell_simulation.account_controls?.passed?'Public-holder sell simulation, balance checks and account-control checks passed. Full route policy and your wallet are not approved.':'Public-holder sell diagnostics failed or have unresolved checks.'));a.append(node('p',`${r.history?.transactions||0} historical transactions · ${r.holders?.length||0} reported holder owners · ${r.shared_funding_candidates?.length||0} shared-funding candidates`));}const d=node('details','');d.append(node('summary','Inspect full evidence report'));d.append(node('pre',JSON.stringify(r,null,2)));a.append(d)}appendDiagnostics(a,scan);$('#scans').append(a)}for(const id of diagnosticPanels.keys())if(!scans.some(scan=>scan.id===id))diagnosticPanels.delete(id)}catch(e){$('#message').textContent=e.message}}
 $('#scan').addEventListener('submit',async e=>{e.preventDefault();const b=e.target.querySelector('button');b.disabled=true;try{const response=await fetch('/api/scans',{method:'POST',headers:{'Content-Type':'application/json','X-Desk-Request':'1'},body:JSON.stringify({mint:$('#mint').value.trim()})});const r=await response.json();if(!response.ok)throw Error(r.error||'Could not start scan');$('#message').textContent='Queued. A bounded investigation can take a few minutes.';await refresh()}catch(e){$('#message').textContent=e.message}finally{b.disabled=false}});$('#refresh').addEventListener('click',refresh);refresh();setInterval(refresh,5000);
 
 async function launches(){try{const r=await fetch('/api/launches');if(!r.ok)return;const data=await r.json();$('#launches').replaceChildren();if(!data.launches.length)$('#launches').append(node('p','No launches captured yet.'));for(const item of data.launches.slice(0,8)){const row=node('p','');const b=node('button',item.mint,'secondary mint');b.addEventListener('click',()=>{$('#mint').value=item.mint;$('#mint').focus();$('#scan').scrollIntoView({behavior:'smooth'})});row.append(b);row.append(node('small','  '+new Date(item.received_at*1000).toLocaleTimeString()));$('#launches').append(row)}}catch{}}launches();setInterval(launches,30000);
@@ -149,3 +150,79 @@ async function decisions(){
   }
 }
 decisions();setInterval(decisions,15000);
+
+
+function diagnosticUnavailable(box,reasons=[]){
+  box.replaceChildren(node('p','Evidence diagnostics unavailable. Entry remains REJECT; no current controls or eligibility are certified.','status'));
+  if(reasons.length)box.append(node('p','Unavailable reasons: '+reasons.join('; ')));
+}
+function renderDiagnostics(box,data){
+  if(data.status==='BUSY'){
+    box.replaceChildren(node('p','Evidence diagnostic replay is busy. Retry inspection manually; entry remains REJECT.','status'));
+    return;
+  }
+  const value=data.diagnostics;
+  if(data.status!=='AVAILABLE'||!value||value.schema!=='candidate_snapshot_diagnostic_v1'||value.read_status!=='AVAILABLE'||value.decision!=='REJECT'||value.eligible_for_trading!==false){
+    diagnosticUnavailable(box,data.reasons||[]);
+    if(value?.revision_hash||data.revision_hash)box.append(node('p','Looked-up ownership revision: '+(value?.revision_hash||data.revision_hash)));
+    return;
+  }
+  const inventory=value.control_obligations;
+  if(!inventory?.obligations||inventory.decision!=='REJECT'||inventory.eligible_for_trading!==false)throw Error('Unavailable diagnostic contract');
+  box.replaceChildren(node('h4','Historical evidence inspection · entry remains REJECT'));
+  box.append(node('p',value.scope+'. Hashes bind local records; provider authenticity: '+value.provider_authenticity+'. This inspection does not continuously certify current evidence health.','muted'));
+  box.append(node('p','Original observation time: '+decisionTime(value.observed_at)));
+  box.append(node('p','Observation age at inspection display: '+decisionAge(value.observed_at,Date.now())));
+  box.append(node('p','Diagnostic evaluation time: '+decisionTime(value.evaluated_at)));
+  box.append(node('p','Canonical ownership revision: '+value.revision_hash));
+  box.append(node('p','Original source hash: '+(value.source_hash||'unavailable')));
+  box.append(node('p','Diagnostic manifest hash: '+value.manifest_hash));
+  box.append(node('p','Obligation manifest hash: '+inventory.manifest_hash));
+  box.append(node('p','Why entry remains rejected: '+value.reasons.join('; ')));
+  box.append(node('p','Obligation replay availability: '+inventory.read_status+' · actual bank slot: '+(inventory.snapshot_slot??'unavailable')+' · bank time: '+decisionTime(inventory.snapshot_time)));
+  box.append(node('p','Persisted investigation requests: '+(inventory.requests_used??'unavailable')+'/'+inventory.request_ceiling+' · diagnostic provider calls: '+inventory.provider_calls));
+  for(const [name,title] of [['endpoint_controls','Observed endpoint controls'],['historical_accounting','Reconciled historical accounting']]){
+    const obligation=inventory.obligations[name];
+    if(!obligation)throw Error('Missing obligation');
+    const section=node('section','');
+    section.append(node('h4',title+' · '+obligation.status));
+    section.append(node('p',obligation.scope||'No component scope recorded; no verification is implied.'));
+    section.append(node('p',name==='endpoint_controls'?'Endpoint observations at the saved bank do not prove control safety throughout history.':'Reconciled accounting does not authenticate sources, CPI outcomes or historical controls.','muted'));
+    if(obligation.unknown_reasons.length)section.append(node('p','Unresolved reasons: '+obligation.unknown_reasons.join('; ')));
+    if(obligation.accounts){const accounts=node('details','');accounts.append(node('summary','Observed account endpoints'));accounts.append(node('pre',JSON.stringify(obligation.accounts,null,2)));section.append(accounts)}
+    box.append(section);
+  }
+  const unresolved=node('section','');
+  unresolved.append(node('h4','Unresolved historical control and authentication obligations'));
+  for(const [name,obligation] of Object.entries(inventory.obligations)){
+    if(name==='endpoint_controls'||name==='historical_accounting')continue;
+    unresolved.append(node('p',name+' · '+obligation.status+' · '+obligation.unknown_reasons.join('; ')));
+  }
+  if(inventory.freshness_reasons?.length)unresolved.append(node('p','Freshness blockers at evaluation: '+inventory.freshness_reasons.join('; ')));
+  box.append(unresolved);
+  box.append(node('p','No trading action is available here. Unknown strategy inputs and unresolved obligations cannot promote entry eligibility.','muted'));
+  const raw=node('details','');raw.append(node('summary','Exact diagnostic fields, evidence hashes and source bindings'));raw.append(node('pre',JSON.stringify(value,null,2)));box.append(raw);
+}
+function appendDiagnostics(article,scan){
+  if(typeof scan.id!=='string')return;
+  let panel=diagnosticPanels.get(scan.id);
+  if(!panel){
+    panel=node('section','');
+    const button=node('button','Inspect saved evidence diagnostics','secondary');button.type='button';
+    const box=node('div','');
+    box.append(node('p','On-demand local evidence inspection; no provider calls or entry approval.','muted'));
+    button.addEventListener('click',async()=>{
+      if(button.disabled)return;
+      button.disabled=true;
+      box.replaceChildren(node('p','Inspecting persisted evidence; entry remains REJECT.'));
+      try{
+        const response=await fetch('/api/evidence-diagnostics?scan_id='+encodeURIComponent(scan.id));
+        const data=await response.json();
+        if(!response.ok&&data.status!=='BUSY'&&data.status!=='UNAVAILABLE')throw Error('Diagnostic request unavailable');
+        renderDiagnostics(box,data);
+      }catch{diagnosticUnavailable(box)}finally{button.disabled=false}
+    });
+    panel.append(button,box);diagnosticPanels.set(scan.id,panel);
+  }
+  article.append(panel);
+}

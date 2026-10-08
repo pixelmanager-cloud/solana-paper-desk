@@ -30,6 +30,7 @@ let fetchOK=request.fetch_ok!==false;
 const calls=[],intervals=[];
 const context={document,Date:FixtureDate,console,setInterval:(callback,ms)=>intervals.push({callback,ms}),fetch:async(url,options)=>{
   calls.push({url,method:options?.method||'GET'});
+  if(url.startsWith('/api/evidence-diagnostics?')){if(request.diagnostic_fetch_error)throw Error('fixture diagnostic unavailable');return {ok:request.diagnostic_http_ok!==false,json:async()=>request.diagnostics_data};}
   const payload=url==='/api/decisions'?data:url==='/api/scans'?(request.scans_data??[]):url==='/api/launches'?{launches:[]}:(request.paper_data??{status:'NOT_CONFIGURED'});
   return {ok:url==='/api/decisions'?fetchOK:true,json:async()=>payload};
 }};
@@ -39,6 +40,14 @@ vm.runInContext(fs.readFileSync(process.argv[2],'utf8'),context,{filename:'desk/
   await context.paper();
   await context.refresh();
   await context.decisions();
+  if(request.inspect_scan){
+    const buttons=[];
+    function collect(element){if(element.tag==='button'&&element.textContent==='Inspect saved evidence diagnostics')buttons.push(element);for(const child of element.children)collect(child);}
+    collect(root.find('scans'));
+    if(!buttons.length)throw Error('No scan diagnostic action');
+    await Promise.all([buttons[0].listeners[0].callback(),...(request.double_inspect?[buttons[0].listeners[0].callback()]:[])]);
+    if(request.refresh_after_inspection)await context.refresh();
+  }
   const first=root.find('entry-decisions').serialize();
   if(request.next_now_ms!==undefined||request.next_fetch_ok!==undefined){
     if(request.next_now_ms!==undefined)clock=request.next_now_ms;
