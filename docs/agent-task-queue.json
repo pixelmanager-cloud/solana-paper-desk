@@ -222,19 +222,19 @@
       "PR31": "988e5ef review: two P2s also present in8a6ab02: INSERT OR REPLACE can replace immutable kind; non-object JSON stops worker. Fix assigned"
     },
     "candidate_combination": {
-      "commit": "a77bf9e2ab77e4cac9bf4fa2def15fd208e755de",
+      "commit": "f17a9aa219e76710da42fc6542d4c4eefdc99891",
       "location": "local detached worktree work/cloud-controls",
-      "result": "823 tests PASS on macOS; NOT APPROVED due independently reproduced PR31 contract defects",
+      "result": "PASS; PR31 corrected head independent re-review pending",
       "published": false,
       "prs": {
         "26": "aa4626fec148c244f841f0614abc4d18c52274dd",
         "27": "dbffb7551ce2925156b1c8a173f4b0c38ad4f6c9",
         "28": "e81d9be392bef4d29b70490ef2354bf3ec966f99",
         "30": "e1b22f0d7b55181a97f1eebe4338c0db0b700f70",
-        "31": "8a6ab02298ba8a6cf1024e5938ccd6a95a06886a",
+        "31": "04a930172a088607b833017112e9d4721869e60c",
         "32": "64765af62379fe4fbb185271c1d54405a527a0af"
       },
-      "tests": 823
+      "tests": 826
     },
     "published_ci": "d0caa0f1262366ca541d052310d78fbfdc63722d successful"
   }
