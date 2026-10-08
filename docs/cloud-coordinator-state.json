@@ -1,6 +1,6 @@
 {
   "schema_version": 1,
-  "revision": 32,
+  "revision": 33,
   "repository": "pixelmanager-cloud/solana-paper-desk",
   "source_main_sha": "e298e15cd758932e81d2241130716632702f5bd0",
   "observed_date": "2026-10-08",
@@ -2178,12 +2178,11 @@
     "last_success": "PR57 hosted independent1300tests zero skips; P2 separately reproduced"
   },
   "review_lease": {
-    "holder": null,
-    "fencing_token": 6,
-    "status": "RELEASED",
-    "scope": "PR57_COMBINED_FIXTURE_ADDENDUM_ONLY",
-    "expires_at": null,
-    "last_holder": "cloud-pr57-plus56-validation"
+    "holder": "cloud-fix57-4b0d9ba-review",
+    "fencing_token": 7,
+    "status": "HELD",
+    "scope": "PR57_REPAIR_REVIEW_ONLY",
+    "expires_at": "2026-10-08T07:30:00Z"
   },
   "external_review_observations": [
     {
