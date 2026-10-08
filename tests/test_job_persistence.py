@@ -112,6 +112,87 @@ class JobPersistenceTests(unittest.TestCase):
         self.assertEqual(Jobs(self.path).descriptor(uid), descriptor)
         self.assertEqual(set(self.jobs.list()[0]), {'id','mint','created','status','result'})
 
+    def test_plain_connection_replace_cannot_rebind_admitted_identity(self):
+        uid = self.jobs.submit_acquisition(MINT, self.root/'evidence.sqlite')
+        original = self.jobs.descriptor(uid)
+        rebound = dict(original, kind=SCREEN, source_version=SCREEN)
+        rebound.pop('evidence_db')
+        with self.jobs.connect() as c:
+            before = tuple(c.execute('SELECT rowid,* FROM scan_jobs WHERE scan_id=?', (uid,)).fetchone())
+        columns = 'scan_id,kind,descriptor_version,descriptor,descriptor_hash,generation,claim_token'
+        values = (uid, SCREEN, 1, canonical(rebound), digest(rebound), 77, 'replacement-token')
+        variants = [
+            (f'INSERT OR REPLACE INTO scan_jobs({columns}) VALUES(?,?,?,?,?,?,?)', values),
+            (f'REPLACE INTO scan_jobs({columns}) VALUES(?,?,?,?,?,?,?)', values),
+            (f'INSERT OR REPLACE INTO scan_jobs({columns}) SELECT ?,?,?,?,?,?,?', values),
+            (f'INSERT OR REPLACE INTO scan_jobs(rowid,{columns}) VALUES(?,?,?,?,?,?,?,?)', (before[0],)+values),
+            # Plain INSERT and IGNORE must not silently preserve or rebind a
+            # duplicate descriptor under a different conflict policy either.
+            (f'INSERT INTO scan_jobs({columns}) VALUES(?,?,?,?,?,?,?)', values),
+            (f'INSERT OR IGNORE INTO scan_jobs({columns}) VALUES(?,?,?,?,?,?,?)', values),
+        ]
+        for sql, params in variants:
+            with self.subTest(sql=sql):
+                # Fresh plain connection, deliberately not helper.connect().
+                with sqlite3.connect(self.path) as c:
+                    self.assertEqual(c.execute('PRAGMA recursive_triggers').fetchone()[0], 0)
+                    with self.assertRaisesRegex(sqlite3.IntegrityError, 'Immutable job descriptor identity'):
+                        c.execute(sql, params)
+                    self.assertEqual(tuple(c.execute('SELECT rowid,* FROM scan_jobs WHERE scan_id=?', (uid,)).fetchone()), before)
+                self.assertEqual(self.jobs.descriptor(uid), original)
+                self.assertFalse(self.jobs.once())
+        later = self.jobs.submit(OTHER)
+        self.assertTrue(self.jobs.once())
+        self.assertEqual({r['id']:r['status'] for r in self.jobs.list()}, {uid:'QUEUED', later:'COMPLETE'})
+        self.assertEqual(self.jobs.descriptor(uid), original)
+
+    def test_plain_connection_replace_by_rowid_cannot_remove_another_identity(self):
+        uid = self.jobs.submit_acquisition(MINT, self.root/'evidence.sqlite')
+        other = self.jobs.submit(OTHER)
+        with self.jobs.connect() as c:
+            before = [tuple(r) for r in c.execute('SELECT rowid,* FROM scan_jobs ORDER BY rowid')]
+            descriptor = self.jobs.descriptor(other)
+        with sqlite3.connect(self.path) as c:
+            self.assertEqual(c.execute('PRAGMA recursive_triggers').fetchone()[0], 0)
+            # Different scan ID but colliding storage rowid must not delete the
+            # admitted acquisition's protected descriptor implicitly.
+            with self.assertRaisesRegex(sqlite3.IntegrityError, 'Immutable'):
+                c.execute('''REPLACE INTO scan_jobs(rowid,scan_id,kind,descriptor_version,descriptor,descriptor_hash)
+                             VALUES(?,?,?,?,?,?)''',
+                          (before[0][0], 'fixture-new-id', SCREEN, 1, canonical(descriptor), digest(descriptor)))
+            self.assertEqual([tuple(r) for r in c.execute('SELECT rowid,* FROM scan_jobs ORDER BY rowid')], before)
+        self.assertEqual(self.jobs.descriptor(uid)['kind'], BIRTH_ACQUISITION_V1)
+
+    def test_non_object_descriptors_block_only_corrupt_jobs_not_later_valid_work(self):
+        for value in ([], [1], None, 'fixture-scalar', 0, 1.5, True, False):
+            with self.subTest(value=value):
+                path = self.root/f'shape-{type(value).__name__}-{canonical(value)}.sqlite'
+                seen = []
+                jobs = Jobs(path, scanner=lambda mint: seen.append(mint) or {'fixture':True})
+                with sqlite3.connect(path) as c:
+                    c.execute('INSERT INTO scans VALUES(?,?,?,?,NULL)', ('bad',MINT,int(time.time()),'QUEUED'))
+                    c.execute('''INSERT INTO scan_jobs(scan_id,kind,descriptor_version,descriptor,descriptor_hash)
+                                 VALUES(?,?,?,?,?)''', ('bad', SCREEN, 1, canonical(value), digest(value)))
+                    before = tuple(c.execute('SELECT * FROM scan_jobs WHERE scan_id=?', ('bad',)).fetchone())
+                with self.assertRaisesRegex(ValueError, 'JSON object'):
+                    jobs.descriptor('bad')
+                good = jobs.submit(OTHER)
+                # Exercise the actual worker loop: without shape validation its
+                # first once() raises AttributeError and never dispatches OTHER.
+                jobs.scanner = lambda mint: seen.append(mint) or jobs.stopping.set() or {'fixture':True}
+                jobs.run()
+                self.assertEqual(seen, [OTHER])
+                self.assertEqual({r['id']:r['status'] for r in jobs.list()}, {'bad':'QUEUED', good:'COMPLETE'})
+                self.assertFalse(jobs.once())
+                with jobs.connect() as c:
+                    self.assertEqual(tuple(c.execute('SELECT * FROM scan_jobs WHERE scan_id=?', ('bad',)).fetchone()), before)
+                with self.assertRaisesRegex(ValueError, 'pending'):
+                    jobs.submit(MINT)
+                jobs.submit(THIRD)
+                jobs.submit(base58(bytes([10])*32))
+                with self.assertRaisesRegex(ValueError, 'Queue full'):
+                    jobs.submit(base58(bytes([11])*32))
+
     def test_descriptor_insert_failure_rolls_back_admission(self):
         with patch.object(JobPersistence, '_insert_descriptor', side_effect=RuntimeError('fixture crash')):
             with self.assertRaises(RuntimeError):
