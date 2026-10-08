@@ -30,15 +30,12 @@ from .providers import PUMPSWAP
 from .programs import address
 from .replay_history import reconstruct_launch_history
 from .security import TOKEN_PROGRAM, mint_policy
-from .original_byte_slot_transport import SlotByteExchange
 
 APPLICATION_ID = 0x43424A31
 ATTACHMENT_VERSION = 0x43424731
 SLOT_VERSION = 0x43425331
 UNION_VERSION = 0x43425531
 CLOCK_VERSION = 0x43424331
-# Explicit full-clock profile fence; existing SQL/metadata/rows are unchanged.
-TRANSPORT_VERSION = 0x43425432
 MAX_UNION_REQUEST_BYTES = 8192
 MAX_REQUEST_BYTES = 1024
 MAX_RESPONSE_BYTES = 65536
@@ -119,8 +116,6 @@ CLOCK_SCHEMA.update({
     'common_bank_clock_attachment_insert': "CREATE TRIGGER common_bank_clock_attachment_insert BEFORE INSERT ON common_bank_clock_attachments WHEN EXISTS(SELECT 1 FROM common_bank_clock_attachments WHERE capture_id=NEW.capture_id OR event_hash=NEW.event_hash) OR NOT EXISTS(SELECT 1 FROM common_bank_clock_intents i WHERE i.capture_id=NEW.capture_id AND i.event_hash=NEW.previous_hash) BEGIN SELECT RAISE(ABORT,'Clock attachment predecessor mismatch'); END",
 })
 FAILURE_CATEGORIES = frozenset(('TRANSPORT_TIMEOUT', 'TRANSPORT_ERROR', 'CANCELLED'))
-TRANSPORT_FAILURE_CODES = frozenset(('CREDENTIAL_UNAVAILABLE','TRANSPORT_ERROR','HTTP_REJECTED',
-    'RESPONSE_HEADERS_INVALID','RESPONSE_OVERSIZED','RESPONSE_TRUNCATED','RESPONSE_INVALID','RPC_ERROR'))
 
 
 def _sha(raw):
@@ -249,11 +244,11 @@ class _Session:
             c.execute(f'PRAGMA application_id={APPLICATION_ID}')
             actual = dict(c.execute(sql))
         version = c.execute('PRAGMA user_version').fetchone()[0]
-        _need(version in (0, ATTACHMENT_VERSION, SLOT_VERSION, UNION_VERSION, CLOCK_VERSION,TRANSPORT_VERSION), 'COMMON_BANK_ATTACHMENT_VERSION_UNKNOWN')
+        _need(version in (0, ATTACHMENT_VERSION, SLOT_VERSION, UNION_VERSION, CLOCK_VERSION), 'COMMON_BANK_ATTACHMENT_VERSION_UNKNOWN')
         expected = SCHEMA | ATTACHMENT_SCHEMA if version != 0 else SCHEMA
-        if version in (SLOT_VERSION,UNION_VERSION,CLOCK_VERSION,TRANSPORT_VERSION): expected = expected | SLOT_SCHEMA
-        if version in (UNION_VERSION,CLOCK_VERSION,TRANSPORT_VERSION): expected = expected | UNION_SCHEMA
-        if version in (CLOCK_VERSION,TRANSPORT_VERSION): expected = expected | CLOCK_SCHEMA
+        if version in (SLOT_VERSION,UNION_VERSION,CLOCK_VERSION): expected = expected | SLOT_SCHEMA
+        if version in (UNION_VERSION,CLOCK_VERSION): expected = expected | UNION_SCHEMA
+        if version == CLOCK_VERSION: expected = expected | CLOCK_SCHEMA
         _need(marker in (0, APPLICATION_ID) and actual == expected, 'COMMON_BANK_SCHEMA_OR_TRIGGER_MISMATCH')
         _need(c.execute('PRAGMA application_id').fetchone()[0] == APPLICATION_ID,
               'COMMON_BANK_INSTALLATION_MARKER_MISMATCH')
@@ -262,13 +257,13 @@ class _Session:
         if version != 0:
             _need(c.execute('SELECT id,descriptor FROM common_bank_attachment_meta').fetchall()
                   == [(1,canonical(self._attachment_descriptor()))], 'COMMON_BANK_ATTACHMENT_METADATA_MISMATCH')
-        if version in (SLOT_VERSION,UNION_VERSION,CLOCK_VERSION,TRANSPORT_VERSION):
+        if version in (SLOT_VERSION,UNION_VERSION,CLOCK_VERSION):
             _need(c.execute('SELECT id,descriptor FROM common_bank_slot_meta').fetchall()
                   == [(1,canonical(self._slot_descriptor()))], 'COMMON_BANK_SLOT_METADATA_MISMATCH')
-        if version in (UNION_VERSION,CLOCK_VERSION,TRANSPORT_VERSION):
+        if version in (UNION_VERSION,CLOCK_VERSION):
             _need(c.execute('SELECT id,descriptor FROM common_bank_union_meta').fetchall()
                   == [(1,canonical(self._union_descriptor()))], 'COMMON_BANK_UNION_METADATA_MISMATCH')
-        if version in (CLOCK_VERSION,TRANSPORT_VERSION):
+        if version == CLOCK_VERSION:
             _need(c.execute('SELECT id,descriptor FROM common_bank_clock_meta').fetchall()
                   == [(1,canonical(self._clock_descriptor()))], 'COMMON_BANK_CLOCK_METADATA_MISMATCH')
 
@@ -475,7 +470,7 @@ class _Session:
         """Explicit additive installation; never retrofits v1 PENDING authority."""
         with self._transaction() as c:
             self._audit(c)
-            if c.execute('PRAGMA user_version').fetchone()[0] in (ATTACHMENT_VERSION,SLOT_VERSION,UNION_VERSION,CLOCK_VERSION,TRANSPORT_VERSION):
+            if c.execute('PRAGMA user_version').fetchone()[0] in (ATTACHMENT_VERSION,SLOT_VERSION,UNION_VERSION,CLOCK_VERSION):
                 return
             for statement in ATTACHMENT_SCHEMA.values(): c.execute(statement)
             c.execute('INSERT INTO common_bank_attachment_meta VALUES(1,?)',
@@ -490,7 +485,7 @@ class _Session:
         must be sent unchanged by a future reviewed transport, not this module.
         """
         with self._transaction() as c:
-            _need(c.execute('PRAGMA user_version').fetchone()[0] in (ATTACHMENT_VERSION,SLOT_VERSION,UNION_VERSION,CLOCK_VERSION,TRANSPORT_VERSION),
+            _need(c.execute('PRAGMA user_version').fetchone()[0] in (ATTACHMENT_VERSION,SLOT_VERSION,UNION_VERSION,CLOCK_VERSION),
                   'EXPLICIT_GENESIS_ATTACHMENT_INSTALL_REQUIRED')
         intent = self.reserve_stage(capture_id,'genesis','getGenesisHash',[],
                                     fence=fence,reserved_at=reserved_at)
@@ -518,75 +513,6 @@ class _Session:
         """Original generated wire request, not a caller-provided summary."""
         return self._flight(token)['request']
 
-    def install_transport_outcomes(self):
-        """Explicit format fence after all four v1 profiles; no row rewriting.
-
-        Header transition and complete existing audit are atomic. Old binaries
-        reject this marker. Downgrading it cannot make v2 records readable as v1.
-        This does not recover a lost capability or authenticate transport.
-        """
-        with self._transaction() as c:
-            self._audit(c)
-            _need(c.execute('PRAGMA user_version').fetchone()[0] in (CLOCK_VERSION,TRANSPORT_VERSION),
-                  'EXPLICIT_FULL_CLOCK_PROFILE_REQUIRED')
-            c.execute(f'PRAGMA user_version={TRANSPORT_VERSION}')
-            self._schema(c,False)
-
-    @staticmethod
-    def _transport_record(c,event,stage):
-        _need(type(event) is dict and event.get('kind') in
-              (f'common_bank_{stage}_attachment_v1',f'common_bank_{stage}_attachment_v2'),
-              'COMMON_BANK_COMPLETION_VERSION_UNKNOWN')
-        transport=event['kind'].endswith('_v2')
-        if transport:
-            _need(c.execute('PRAGMA user_version').fetchone()[0]==TRANSPORT_VERSION,
-                  'COMMON_BANK_TRANSPORT_RECORD_PROFILE_MISMATCH')
-        return transport
-
-    @staticmethod
-    def _transport_failure(request,category,stage):
-        _need(type(category) is str and category in TRANSPORT_FAILURE_CODES,
-              'COMMON_BANK_TRANSPORT_FAILURE_CODE_INVALID')
-        return canonical({'kind':'common_bank_transport_failure_v2','stage':stage,
-                          'method':_strict_json(request)['method'],'category':category,
-                          'request_sha256':_sha(request)})
-
-    @staticmethod
-    def _validate_transport_failure(request,response,failure,stage):
-        _need(response is None or type(response) is bytes and len(response)<=MAX_RESPONSE_BYTES,
-              'COMMON_BANK_TRANSPORT_BODY_INVALID')
-        _need(type(failure) is str and len(failure.encode())<=MAX_FAILURE_BYTES,
-              'COMMON_BANK_TRANSPORT_FAILURE_INVALID')
-        try: decoded=_strict_json(failure.encode())
-        except (ValueError,RecursionError,UnicodeError):
-            raise JournalBlocked('COMMON_BANK_TRANSPORT_FAILURE_INVALID') from None
-        _need(type(decoded) is dict and failure==_Session._transport_failure(request,decoded.get('category'),stage),
-              'COMMON_BANK_TRANSPORT_FAILURE_INVALID')
-        return decoded['category']
-
-    def _attach_transport_outcome(self,token,outcome,stage,at):
-        flight=self._flight(token,stage)
-        _need(type(outcome) is SlotByteExchange and type(outcome.request_bytes) is bytes
-              and outcome.request_bytes==flight['request'], 'COMMON_BANK_TRANSPORT_ORIGINAL_REQUEST_MISMATCH')
-        response,category=outcome.response_bytes,outcome.failure_code
-        _need(response is None or type(response) is bytes and len(response)<=MAX_RESPONSE_BYTES,
-              'COMMON_BANK_TRANSPORT_BODY_INVALID')
-        _need(category is not None or response is not None, 'COMMON_BANK_TRANSPORT_OUTCOME_MISSING')
-        failure=self._transport_failure(flight['request'],category,stage) if category is not None else None
-        return getattr(self,'_finish_'+stage)(token,response,failure,at,transport=True)
-
-    def attach_genesis_outcome(self,token,outcome,*,completed_at):
-        return self._attach_transport_outcome(token,outcome,'genesis',completed_at)
-
-    def attach_slot_outcome(self,token,outcome,*,completed_at):
-        return self._attach_transport_outcome(token,outcome,'slot',completed_at)
-
-    def attach_union_outcome(self,token,outcome,*,completed_at):
-        return self._attach_transport_outcome(token,outcome,'union',completed_at)
-
-    def attach_clock_outcome(self,token,outcome,*,completed_at):
-        return self._attach_transport_outcome(token,outcome,'clock',completed_at)
-
     @staticmethod
     def _failure(category,*,observed_bytes=None,stage='genesis'):
         failure = {'kind':'common_bank_redacted_failure_v1','category':category,
@@ -596,9 +522,7 @@ class _Session:
         return canonical(failure)
 
     @staticmethod
-    def _outcome(request,response,failure,stage='genesis',*,transport=False):
-        if transport and failure is not None:
-            return 'FAILED',_Session._validate_transport_failure(request,response,failure,stage)
+    def _outcome(request,response,failure,stage='genesis'):
         if failure is not None:
             _need(type(failure) is str and len(failure.encode()) <= MAX_FAILURE_BYTES,
                   'COMMON_BANK_FAILURE_PROVENANCE_INVALID')
@@ -637,16 +561,16 @@ class _Session:
             return 'FAILED','RESPONSE_INVALID'
 
     @staticmethod
-    def _attachment(run,capture,request,response,failure,completed_at,*,transport=False):
+    def _attachment(run,capture,request,response,failure,completed_at):
         intent = run['event']
         _need(intent is not None and type(completed_at) is int
               and intent['reserved_at'] <= completed_at < 2**63,
               'COMMON_BANK_COMPLETION_TIME_OR_PREDECESSOR_INVALID')
         _need(type(request) is bytes and len(request) <= MAX_REQUEST_BYTES
               and request == _Session._request(intent), 'COMMON_BANK_ORIGINAL_REQUEST_MISMATCH')
-        state,reason = _Session._outcome(request,response,failure,transport=transport)
+        state,reason = _Session._outcome(request,response,failure)
         intent_hash = digest({'previous_hash':run['seed'],'event':intent})
-        event = {'kind':f'common_bank_genesis_attachment_v{2 if transport else 1}','capture_id':capture,
+        event = {'kind':'common_bank_genesis_attachment_v1','capture_id':capture,
                  'budget_id':run['budget'],'stage':'genesis','ordinal':2,'state':state,'reason':reason,
                  'intent_hash':intent_hash,'fence':run['seed'],
                  'descriptor_hash':digest(run['descriptor']),'plan_hash':digest(run['plan']),
@@ -670,7 +594,7 @@ class _Session:
             _need(capture in runs, 'COMMON_BANK_ATTACHMENT_CAPTURE_MISSING')
             run = runs[capture]; recorded = json.loads(event_json)
             _need(type(recorded) is dict, 'COMMON_BANK_ATTACHMENT_INVALID')
-            expected,prior,event_hash = self._attachment(run,capture,request,response,failure,recorded.get('completed_at'),transport=self._transport_record(c,recorded,'genesis'))
+            expected,prior,event_hash = self._attachment(run,capture,request,response,failure,recorded.get('completed_at'))
             _need(canonical(expected) == event_json and previous == prior and key == event_hash,
                   'COMMON_BANK_ATTACHMENT_HASH_OR_BINDING_MISMATCH')
             run['completion'] = expected
@@ -688,18 +612,15 @@ class _Session:
               'COMMON_BANK_FAILURE_CATEGORY_INVALID')
         return self._finish_genesis(token,None,self._failure(category),completed_at)
 
-    def _finish_genesis(self,token,response,failure,at,*,transport=False):
+    def _finish_genesis(self,token,response,failure,at):
         flight = self._flight(token)
         with self._transaction() as c:
-            if transport:
-                _need(c.execute('PRAGMA user_version').fetchone()[0]==TRANSPORT_VERSION,
-                      'EXPLICIT_TRANSPORT_OUTCOME_PROFILE_REQUIRED')
-            _need(c.execute('PRAGMA user_version').fetchone()[0] in (ATTACHMENT_VERSION,SLOT_VERSION,UNION_VERSION,CLOCK_VERSION,TRANSPORT_VERSION),
+            _need(c.execute('PRAGMA user_version').fetchone()[0] in (ATTACHMENT_VERSION,SLOT_VERSION,UNION_VERSION,CLOCK_VERSION),
                   'EXPLICIT_GENESIS_ATTACHMENT_INSTALL_REQUIRED')
             runs = self._audit(c); capture = flight['capture']
             _need(capture in runs and canonical(runs[capture]['event']) == flight['intent'],
                   'COMMON_BANK_STALE_INFLIGHT_INTENT')
-            event,previous,key = self._attachment(runs[capture],capture,flight['request'],response,failure,at,transport=transport)
+            event,previous,key = self._attachment(runs[capture],capture,flight['request'],response,failure,at)
             chosen = (canonical(event),previous,key,flight['request'],response,failure)
             _need(flight['chosen'] is None or flight['chosen'] == chosen,
                   'COMMON_BANK_CONFLICTING_COMPLETION')
@@ -722,10 +643,10 @@ class _Session:
     def install_slot_stage(self):
         """Explicit additive upgrade after genesis attachment profile install."""
         with self._transaction() as c:
-            _need(c.execute('PRAGMA user_version').fetchone()[0] in (ATTACHMENT_VERSION,SLOT_VERSION,UNION_VERSION,CLOCK_VERSION,TRANSPORT_VERSION),
+            _need(c.execute('PRAGMA user_version').fetchone()[0] in (ATTACHMENT_VERSION,SLOT_VERSION,UNION_VERSION,CLOCK_VERSION),
                   'GENESIS_ATTACHMENT_PROFILE_REQUIRED')
             self._audit(c)
-            if c.execute('PRAGMA user_version').fetchone()[0] in (SLOT_VERSION,UNION_VERSION,CLOCK_VERSION,TRANSPORT_VERSION): return
+            if c.execute('PRAGMA user_version').fetchone()[0] in (SLOT_VERSION,UNION_VERSION,CLOCK_VERSION): return
             for statement in SLOT_SCHEMA.values(): c.execute(statement)
             c.execute('INSERT INTO common_bank_slot_meta VALUES(1,?)',(canonical(self._slot_descriptor()),))
             c.execute(f'PRAGMA user_version={SLOT_VERSION}')
@@ -745,7 +666,7 @@ class _Session:
     def begin_slot(self,capture_id,*,fence,reserved_at):
         _need(_identity(capture_id), 'COMMON_BANK_QUERY_ID_INVALID')
         with self._transaction() as c:
-            _need(c.execute('PRAGMA user_version').fetchone()[0] in (SLOT_VERSION,UNION_VERSION,CLOCK_VERSION,TRANSPORT_VERSION),
+            _need(c.execute('PRAGMA user_version').fetchone()[0] in (SLOT_VERSION,UNION_VERSION,CLOCK_VERSION),
                   'EXPLICIT_SLOT_INSTALL_REQUIRED')
             runs = self._audit(c)
             _need(capture_id in runs, 'COMMON_BANK_CAPTURE_MISSING'); run = runs[capture_id]
@@ -776,7 +697,7 @@ class _Session:
         return self._flight(token,'slot')['request']
 
     @staticmethod
-    def _slot_attachment(run,capture,request,response,failure,at,*,transport=False):
+    def _slot_attachment(run,capture,request,response,failure,at):
         intent=run['slot_intent']
         _need(intent is not None and type(at) is int and intent['reserved_at'] <= at < 2**63,
               'COMMON_BANK_SLOT_COMPLETION_TIME_INVALID')
@@ -784,9 +705,9 @@ class _Session:
                                     'params':[{'commitment':'finalized'}]}).encode()
         _need(type(request) is bytes and len(request)<=MAX_REQUEST_BYTES and request==expected_request,
               'COMMON_BANK_ORIGINAL_SLOT_REQUEST_MISMATCH')
-        state,reason=_Session._outcome(request,response,failure,'slot',transport=transport)
+        state,reason=_Session._outcome(request,response,failure,'slot')
         previous=digest({'previous_hash':intent['fence'],'event':intent})
-        event={'kind':f'common_bank_slot_attachment_v{2 if transport else 1}','capture_id':capture,'budget_id':run['budget'],
+        event={'kind':'common_bank_slot_attachment_v1','capture_id':capture,'budget_id':run['budget'],
                'stage':'slot','ordinal':4,'state':state,'reason':reason,'intent_hash':previous,
                'fence':intent['fence'],'descriptor_hash':digest(run['descriptor']),
                'plan_hash':digest(run['plan']),'planned_source':run['descriptor']['planned_source'],
@@ -798,7 +719,7 @@ class _Session:
         return event,previous,digest({'previous_hash':previous,'event':event})
 
     def _audit_slots(self,c,runs):
-        if c.execute('PRAGMA user_version').fetchone()[0] not in (SLOT_VERSION,UNION_VERSION,CLOCK_VERSION,TRANSPORT_VERSION): return
+        if c.execute('PRAGMA user_version').fetchone()[0] not in (SLOT_VERSION,UNION_VERSION,CLOCK_VERSION): return
         _need(not c.execute('SELECT 1 FROM common_bank_slot_intents WHERE length(event_json)>8192 LIMIT 1').fetchone(),
               'COMMON_BANK_SLOT_INTENT_OVERSIZED')
         intents=c.execute('SELECT capture_id,event_json,previous_hash,event_hash FROM common_bank_slot_intents LIMIT ?',
@@ -826,7 +747,7 @@ class _Session:
         for capture,raw,previous,key,request,response,failure in rows:
             _need(capture in runs, 'COMMON_BANK_SLOT_CAPTURE_MISSING'); run=runs[capture]
             event=json.loads(raw); _need(type(event) is dict,'COMMON_BANK_SLOT_ATTACHMENT_INVALID')
-            expected,prior,event_hash=self._slot_attachment(run,capture,request,response,failure,event.get('completed_at'),transport=self._transport_record(c,event,'slot'))
+            expected,prior,event_hash=self._slot_attachment(run,capture,request,response,failure,event.get('completed_at'))
             _need(raw==canonical(expected) and previous==prior and key==event_hash,
                   'COMMON_BANK_SLOT_ATTACHMENT_HASH_OR_BINDING_MISMATCH')
             run['slot_completion']=expected
@@ -841,16 +762,13 @@ class _Session:
         _need(type(category) is str and category in FAILURE_CATEGORIES,'COMMON_BANK_FAILURE_CATEGORY_INVALID')
         return self._finish_slot(token,None,self._failure(category,stage='slot'),completed_at)
 
-    def _finish_slot(self,token,response,failure,at,*,transport=False):
+    def _finish_slot(self,token,response,failure,at):
         flight=self._flight(token,'slot')
         with self._transaction() as c:
-            if transport:
-                _need(c.execute('PRAGMA user_version').fetchone()[0]==TRANSPORT_VERSION,
-                      'EXPLICIT_TRANSPORT_OUTCOME_PROFILE_REQUIRED')
             runs=self._audit(c); capture=flight['capture']
             _need(capture in runs and canonical(runs[capture]['slot_intent'])==flight['intent'],
                   'COMMON_BANK_STALE_SLOT_INTENT')
-            event,previous,key=self._slot_attachment(runs[capture],capture,flight['request'],response,failure,at,transport=transport)
+            event,previous,key=self._slot_attachment(runs[capture],capture,flight['request'],response,failure,at)
             chosen=(canonical(event),previous,key,flight['request'],response,failure)
             _need(flight['chosen'] is None or flight['chosen']==chosen, 'COMMON_BANK_CONFLICTING_COMPLETION')
             flight['chosen']=chosen
@@ -868,10 +786,10 @@ class _Session:
 
     def install_union_stage(self):
         with self._transaction() as c:
-            _need(c.execute('PRAGMA user_version').fetchone()[0] in (SLOT_VERSION,UNION_VERSION,CLOCK_VERSION,TRANSPORT_VERSION),
+            _need(c.execute('PRAGMA user_version').fetchone()[0] in (SLOT_VERSION,UNION_VERSION,CLOCK_VERSION),
                   'SLOT_PROFILE_REQUIRED')
             self._audit(c)
-            if c.execute('PRAGMA user_version').fetchone()[0] in (UNION_VERSION,CLOCK_VERSION,TRANSPORT_VERSION): return
+            if c.execute('PRAGMA user_version').fetchone()[0] in (UNION_VERSION,CLOCK_VERSION): return
             for statement in UNION_SCHEMA.values(): c.execute(statement)
             c.execute('INSERT INTO common_bank_union_meta VALUES(1,?)',(canonical(self._union_descriptor()),))
             c.execute(f'PRAGMA user_version={UNION_VERSION}')
@@ -898,7 +816,7 @@ class _Session:
     def begin_union(self,capture_id,*,fence,reserved_at):
         _need(_identity(capture_id),'COMMON_BANK_QUERY_ID_INVALID')
         with self._transaction() as c:
-            _need(c.execute('PRAGMA user_version').fetchone()[0] in (UNION_VERSION,CLOCK_VERSION,TRANSPORT_VERSION),'EXPLICIT_UNION_INSTALL_REQUIRED')
+            _need(c.execute('PRAGMA user_version').fetchone()[0] in (UNION_VERSION,CLOCK_VERSION),'EXPLICIT_UNION_INSTALL_REQUIRED')
             runs=self._audit(c);_need(capture_id in runs,'COMMON_BANK_CAPTURE_MISSING');run=runs[capture_id]
             _need(run['slot_completion'] is not None and run['slot_completion']['state']=='DONE','AUDITED_SLOT_DONE_REQUIRED')
             _need(run['union_intent'] is None,'COMMON_BANK_UNION_ALREADY_RESERVED_TERMINAL')
@@ -931,9 +849,7 @@ class _Session:
         return canonical(record)
 
     @staticmethod
-    def _union_outcome(run,request,response,failure,*,transport=False):
-        if transport and failure is not None:
-            return 'FAILED',_Session._validate_transport_failure(request,response,failure,'union'),None
+    def _union_outcome(run,request,response,failure):
         if failure is not None:
             _need(type(failure) is str and len(failure.encode())<=MAX_FAILURE_BYTES,'COMMON_BANK_UNION_FAILURE_INVALID')
             record=json.loads(failure);_need(type(record) is dict,'COMMON_BANK_UNION_FAILURE_INVALID')
@@ -972,14 +888,14 @@ class _Session:
             return 'FAILED','UNION_ACCOUNT_OR_RECORD_INVALID',None
 
     @staticmethod
-    def _union_attachment(run,capture,request,response,failure,at,*,transport=False):
+    def _union_attachment(run,capture,request,response,failure,at):
         intent=run['union_intent']
         _need(intent is not None and type(at) is int and intent['reserved_at']<=at<2**63,'COMMON_BANK_UNION_COMPLETION_TIME_INVALID')
         _need(type(request) is bytes and len(request)<=MAX_UNION_REQUEST_BYTES and request==_Session._union_request(intent),
               'COMMON_BANK_ORIGINAL_UNION_REQUEST_MISMATCH')
-        state,reason,slot=_Session._union_outcome(run,request,response,failure,transport=transport)
+        state,reason,slot=_Session._union_outcome(run,request,response,failure)
         previous=digest({'previous_hash':intent['fence'],'event':intent})
-        event={'kind':f'common_bank_union_attachment_v{2 if transport else 1}','capture_id':capture,'budget_id':run['budget'],
+        event={'kind':'common_bank_union_attachment_v1','capture_id':capture,'budget_id':run['budget'],
                'stage':'union','ordinal':6,'state':state,'reason':reason,'intent_hash':previous,
                'fence':intent['fence'],'descriptor_hash':digest(run['descriptor']),'plan_hash':digest(run['plan']),
                'planned_source':run['descriptor']['planned_source'],'used_after':intent['used_after'],
@@ -991,7 +907,7 @@ class _Session:
         return event,previous,digest({'previous_hash':previous,'event':event})
 
     def _audit_unions(self,c,runs):
-        if c.execute('PRAGMA user_version').fetchone()[0]not in (UNION_VERSION,CLOCK_VERSION,TRANSPORT_VERSION):return
+        if c.execute('PRAGMA user_version').fetchone()[0]not in (UNION_VERSION,CLOCK_VERSION):return
         _need(not c.execute('SELECT 1 FROM common_bank_union_intents WHERE length(event_json)>16384 LIMIT 1').fetchone(),
               'COMMON_BANK_UNION_INTENT_OVERSIZED')
         intents=c.execute('SELECT capture_id,event_json,previous_hash,event_hash FROM common_bank_union_intents LIMIT ?',
@@ -1017,7 +933,7 @@ class _Session:
         for capture,raw,previous,key,request,response,failure in rows:
             _need(capture in runs,'COMMON_BANK_UNION_CAPTURE_MISSING');run=runs[capture]
             event=json.loads(raw);_need(type(event) is dict,'COMMON_BANK_UNION_ATTACHMENT_INVALID')
-            expected,prior,event_hash=self._union_attachment(run,capture,request,response,failure,event.get('completed_at'),transport=self._transport_record(c,event,'union'))
+            expected,prior,event_hash=self._union_attachment(run,capture,request,response,failure,event.get('completed_at'))
             _need(raw==canonical(expected) and previous==prior and key==event_hash,'COMMON_BANK_UNION_ATTACHMENT_HASH_OR_BINDING_MISMATCH')
             run['union_completion']=expected
 
@@ -1033,15 +949,12 @@ class _Session:
         flight=self._flight(token,'union')
         return self._finish_union(token,None,self._union_failure(flight['request'],category),completed_at)
 
-    def _finish_union(self,token,response,failure,at,*,transport=False):
+    def _finish_union(self,token,response,failure,at):
         flight=self._flight(token,'union')
         with self._transaction() as c:
-            if transport:
-                _need(c.execute('PRAGMA user_version').fetchone()[0]==TRANSPORT_VERSION,
-                      'EXPLICIT_TRANSPORT_OUTCOME_PROFILE_REQUIRED')
             runs=self._audit(c);capture=flight['capture']
             _need(capture in runs and canonical(runs[capture]['union_intent'])==flight['intent'],'COMMON_BANK_STALE_UNION_INTENT')
-            event,previous,key=self._union_attachment(runs[capture],capture,flight['request'],response,failure,at,transport=transport)
+            event,previous,key=self._union_attachment(runs[capture],capture,flight['request'],response,failure,at)
             chosen=(canonical(event),previous,key,flight['request'],response,failure)
             _need(flight['chosen'] is None or flight['chosen']==chosen,'COMMON_BANK_CONFLICTING_COMPLETION');flight['chosen']=chosen
             existing=c.execute('SELECT event_json,previous_hash,event_hash,request_bytes,response_bytes,failure_json FROM common_bank_union_attachments WHERE capture_id=?',(capture,)).fetchone()
@@ -1058,10 +971,10 @@ class _Session:
 
     def install_clock_stage(self):
         with self._transaction() as c:
-            _need(c.execute('PRAGMA user_version').fetchone()[0] in (UNION_VERSION,CLOCK_VERSION,TRANSPORT_VERSION),
+            _need(c.execute('PRAGMA user_version').fetchone()[0] in (UNION_VERSION,CLOCK_VERSION),
                   'UNION_PROFILE_REQUIRED')
             self._audit(c)
-            if c.execute('PRAGMA user_version').fetchone()[0] in (CLOCK_VERSION,TRANSPORT_VERSION): return
+            if c.execute('PRAGMA user_version').fetchone()[0] == CLOCK_VERSION: return
             for statement in CLOCK_SCHEMA.values(): c.execute(statement)
             c.execute('INSERT INTO common_bank_clock_meta VALUES(1,?)',(canonical(self._clock_descriptor()),))
             c.execute(f'PRAGMA user_version={CLOCK_VERSION}')
@@ -1087,7 +1000,7 @@ class _Session:
     def begin_clock(self,capture_id,*,fence,reserved_at):
         _need(_identity(capture_id),'COMMON_BANK_QUERY_ID_INVALID')
         with self._transaction() as c:
-            _need(c.execute('PRAGMA user_version').fetchone()[0] in (CLOCK_VERSION,TRANSPORT_VERSION),'EXPLICIT_CLOCK_INSTALL_REQUIRED')
+            _need(c.execute('PRAGMA user_version').fetchone()[0] == CLOCK_VERSION,'EXPLICIT_CLOCK_INSTALL_REQUIRED')
             runs=self._audit(c);_need(capture_id in runs,'COMMON_BANK_CAPTURE_MISSING');run=runs[capture_id]
             _need(run['union_completion'] is not None and run['union_completion']['state']=='DONE','AUDITED_UNION_DONE_REQUIRED')
             _need(run['clock_intent'] is None,'COMMON_BANK_CLOCK_ALREADY_RESERVED_TERMINAL')
@@ -1119,9 +1032,7 @@ class _Session:
         return canonical(record)
 
     @staticmethod
-    def _clock_outcome(run,request,response,failure,*,transport=False):
-        if transport and failure is not None:
-            return 'FAILED',_Session._validate_transport_failure(request,response,failure,'clock'),None
+    def _clock_outcome(run,request,response,failure):
         if failure is not None:
             _need(type(failure) is str and len(failure.encode())<=MAX_FAILURE_BYTES,'COMMON_BANK_CLOCK_FAILURE_INVALID')
             record=json.loads(failure);_need(type(record) is dict,'COMMON_BANK_CLOCK_FAILURE_INVALID')
@@ -1136,14 +1047,14 @@ class _Session:
         return state,reason,_strict_json(response)['result'] if state=='DONE' else None
 
     @staticmethod
-    def _clock_attachment(run,capture,request,response,failure,at,*,transport=False):
+    def _clock_attachment(run,capture,request,response,failure,at):
         intent=run['clock_intent']
         _need(intent is not None and type(at) is int and intent['reserved_at']<=at<2**63,'COMMON_BANK_CLOCK_COMPLETION_TIME_INVALID')
         _need(type(request) is bytes and len(request)<=MAX_REQUEST_BYTES and request==_Session._clock_request(intent),
               'COMMON_BANK_ORIGINAL_CLOCK_REQUEST_MISMATCH')
-        state,reason,block_time=_Session._clock_outcome(run,request,response,failure,transport=transport)
+        state,reason,block_time=_Session._clock_outcome(run,request,response,failure)
         previous=digest({'previous_hash':intent['fence'],'event':intent})
-        event={'kind':f'common_bank_clock_attachment_v{2 if transport else 1}','capture_id':capture,'budget_id':run['budget'],
+        event={'kind':'common_bank_clock_attachment_v1','capture_id':capture,'budget_id':run['budget'],
                'stage':'clock','ordinal':8,'state':state,'reason':reason,'intent_hash':previous,
                'fence':intent['fence'],'descriptor_hash':digest(run['descriptor']),'plan_hash':digest(run['plan']),
                'planned_source':run['descriptor']['planned_source'],'used_after':intent['used_after'],
@@ -1156,7 +1067,7 @@ class _Session:
         return event,previous,digest({'previous_hash':previous,'event':event})
 
     def _audit_clocks(self,c,runs):
-        if c.execute('PRAGMA user_version').fetchone()[0] not in (CLOCK_VERSION,TRANSPORT_VERSION):return
+        if c.execute('PRAGMA user_version').fetchone()[0]!= CLOCK_VERSION:return
         _need(not c.execute('SELECT 1 FROM common_bank_clock_intents WHERE length(event_json)>8192 LIMIT 1').fetchone(),
               'COMMON_BANK_CLOCK_INTENT_OVERSIZED')
         intents=c.execute('SELECT capture_id,event_json,previous_hash,event_hash FROM common_bank_clock_intents LIMIT ?',
@@ -1181,7 +1092,7 @@ class _Session:
         for capture,raw,previous,key,request,response,failure in rows:
             _need(capture in runs,'COMMON_BANK_CLOCK_CAPTURE_MISSING');run=runs[capture]
             event=json.loads(raw);_need(type(event) is dict,'COMMON_BANK_CLOCK_ATTACHMENT_INVALID')
-            expected,prior,event_hash=self._clock_attachment(run,capture,request,response,failure,event.get('completed_at'),transport=self._transport_record(c,event,'clock'))
+            expected,prior,event_hash=self._clock_attachment(run,capture,request,response,failure,event.get('completed_at'))
             _need(raw==canonical(expected) and previous==prior and key==event_hash,'COMMON_BANK_CLOCK_ATTACHMENT_HASH_OR_BINDING_MISMATCH')
             run['clock_completion']=expected
 
@@ -1197,15 +1108,12 @@ class _Session:
         flight=self._flight(token,'clock')
         return self._finish_clock(token,None,self._clock_failure(flight['request'],category),completed_at)
 
-    def _finish_clock(self,token,response,failure,at,*,transport=False):
+    def _finish_clock(self,token,response,failure,at):
         flight=self._flight(token,'clock')
         with self._transaction() as c:
-            if transport:
-                _need(c.execute('PRAGMA user_version').fetchone()[0]==TRANSPORT_VERSION,
-                      'EXPLICIT_TRANSPORT_OUTCOME_PROFILE_REQUIRED')
             runs=self._audit(c);capture=flight['capture']
             _need(capture in runs and canonical(runs[capture]['clock_intent'])==flight['intent'],'COMMON_BANK_STALE_CLOCK_INTENT')
-            event,previous,key=self._clock_attachment(runs[capture],capture,flight['request'],response,failure,at,transport=transport)
+            event,previous,key=self._clock_attachment(runs[capture],capture,flight['request'],response,failure,at)
             chosen=(canonical(event),previous,key,flight['request'],response,failure)
             _need(flight['chosen'] is None or flight['chosen']==chosen,'COMMON_BANK_CONFLICTING_COMPLETION');flight['chosen']=chosen
             existing=c.execute('SELECT event_json,previous_hash,event_hash,request_bytes,response_bytes,failure_json FROM common_bank_clock_attachments WHERE capture_id=?',(capture,)).fetchone()
