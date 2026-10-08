@@ -197,11 +197,11 @@
     "followups": {
       "worker02": "PR40 review interrupted by automated cybersecurity-risk flag; no final acceptance",
       "worker06": "PR50 and combined Linux re-review complete; available",
-      "cloud_reviewer": "PR52 independent review",
+      "cloud_reviewer": "PR52 changes requested; available",
       "worker10": "PR45 independent review complete;available",
       "worker03": "Bounded newerlegacysearch found no matching authoritative event;available",
       "worker04": "PR47 accepted; available",
-      "worker05": "PR52 published; available",
+      "worker05": "PR52 WAL preflight repair assigned",
       "worker09": "PR35 reviewed and integrated; available",
       "worker01": "Forward fix published; independent re-review pending; available",
       "worker07": "Forward fix published; independent re-review pending; available",
@@ -238,7 +238,8 @@
       "PR48": "3ffe18674a2162257e5fd641f1fafb92e5ef40c4 scopedPASS;6013 independentbyteprobes; exactLinux1082 andcombined1170zero skips",
       "PR49": "2b11fbf6c8a5d7933088283a9a7ab9cbd9f25578 independent scopedPASS;Linux1179zero skips;canonical signatures and strict options independently probed",
       "PR51": "0b57227a36dd47b75128c66385c8e50dc16ecf24 scopedPASS;96 partial-schema/rebinding probes+3 crash/tamper/transport probes;Linux1201 zero skips",
-      "PR50": "3c00d9679b997e2d92a317fbc0b9f469b76ef171 scopedPASS;1514 independent probes;combinedLinux1244 zero skips; no trusted lifecycle approval"
+      "PR50": "3c00d9679b997e2d92a317fbc0b9f469b76ef171 scopedPASS;1514 independent probes;combinedLinux1244 zero skips; no trusted lifecycle approval",
+      "PR52": "ef58b4320db51517a53501a5b8073172adb74cd5 CHANGES_REQUIRED: SQLite mode=ro WAL preflight creates sidecars before invalid admission rejection; no provider calls/budget mutation observed"
     },
     "candidate_combination": {
       "commit": "bfcc550ca25bd6cb79dc7ac3ad2b30c72f7b1033",
@@ -260,11 +261,11 @@
     "published_ci": "886fc96d404b9d3ffd99c0045f7231d563a5d946 successful",
     "active_claims": [
       {
-        "worker": "cloud_reviewer",
-        "thread_id": "01a11901-8b68-70f9-8672-5a731a149091",
+        "worker": "worker05",
+        "thread_id": "01a118fc-dd83-7672-ac81-7445f85fe09f",
         "host_id": "durable",
-        "task": "Independent explicit capture CLI review",
-        "status": "REVIEWING",
+        "task": "Repair CLI WAL preflight side effects",
+        "status": "FIXING",
         "pr": 52,
         "head": "ef58b4320db51517a53501a5b8073172adb74cd5"
       }
@@ -487,7 +488,19 @@
       "pr": 52,
       "head": "ef58b4320db51517a53501a5b8073172adb74cd5",
       "integrated": false,
-      "review": "IN_PROGRESS"
+      "review": "CHANGES_REQUIRED",
+      "mac_discovered": 1258,
+      "mac_passed": 1172,
+      "mac_skipped": 86,
+      "linux_combined": 1258
+    },
+    "live_raw_capture_preflight": {
+      "ownership_admissions_present": false,
+      "ownership_budget_rows": 0,
+      "ownership_history_rows": 0,
+      "acquisition_setup_present": false,
+      "provider_calls": 0,
+      "next_requirement": "Use reviewed normal acquisition to create a bounded admitted scan; never retrofit older records or create ad-hoc diagnostic budget"
     }
   }
 }
