@@ -262,26 +262,24 @@
     "published_ci": "Deployed d758bc529a7da1f74509117288740911f2ad6845: both CI runs successful",
     "active_claims": [
       {
-        "id": "PR93-INDEPENDENT-REVIEW",
-        "worker": "05",
-        "thread_id": "01a118fc-dd83-7672-ac81-7445f85fe09f",
-        "host_id": "durable",
-        "status": "REVIEWING",
+        "id": "PR93-REVIEW-FIX",
+        "worker": "02",
         "pr": 93,
         "head": "94a025d96f4ad22db2fb195b1df10a73537ac293",
-        "base": "adb2118142bf8d40f8d8d41ee8b810b9366acf62",
-        "wait_cursor": "b9784eaf-f3e5-457f-a98d-a386c23b37ea:38"
+        "thread_id": "01a118fc-666c-70b6-9fa8-2c7520f0a0bb",
+        "host_id": "durable",
+        "status": "DISPATCHED",
+        "scope": "Reserve selected second-pass aggregate before fetching bodies"
       },
       {
-        "id": "PR94-INDEPENDENT-REVIEW",
-        "worker": "06",
-        "thread_id": "01a118fc-f867-7233-8eec-c20659e70095",
-        "host_id": "durable",
-        "status": "REVIEWING",
+        "id": "PR94-REVIEW-FIX",
+        "worker": "01",
         "pr": 94,
         "head": "714e1e915ae74b965150b8a234c89d92a03b8590",
-        "base": "07049e5",
-        "wait_cursor": "8f3328cf-bef6-441d-83f8-2d1f46b3b0df:58"
+        "thread_id": "01a118fc-39bc-722c-b442-8bf5a749e0bb",
+        "host_id": "durable",
+        "status": "DISPATCHED",
+        "scope": "Reject schema typed-name collisions and malformed/rebound local intent fields"
       }
     ],
     "saved_launch_probe": {
@@ -846,7 +844,7 @@
       "pr": 93,
       "head": "94a025d96f4ad22db2fb195b1df10a73537ac293",
       "integrated": false,
-      "review": "PENDING worker05",
+      "review": "CHANGES REQUIRED worker05: P2 second-pass body fetch before aggregate reservation",
       "author_linux_tests": 1811,
       "author_skips": 0,
       "combined_tree": "6e5029e1cde34441bfd44b5348b3377fc0feee88",
@@ -856,13 +854,16 @@
       "mac_passed": 1507,
       "mac_skipped": 338,
       "mac_seconds": 33.888,
-      "ci": "Both unchanged exact-head checks SUCCESS"
+      "ci": "Both unchanged exact-head checks SUCCESS",
+      "independent_linux_tests": 1845,
+      "independent_linux_seconds": 177.704,
+      "independent_probes": 13
     },
     "pending_completion_inventory": {
       "pr": 94,
       "head": "714e1e915ae74b965150b8a234c89d92a03b8590",
       "integrated": false,
-      "review": "PENDING worker06",
+      "review": "CHANGES REQUIRED worker06: schema-family typed-name collision and partial intent structural validation",
       "author_linux_tests": 1841,
       "author_skips": 0,
       "combined_base": "07049e5",
@@ -872,7 +873,10 @@
       "mac_skipped": 334,
       "mac_seconds": 33.921,
       "ci": "Run37794887536 failed: existing dashboard Node harness10s timeout,1841 tests203.911s,one error; failed-job rerun requested2026-10-08T14:48Z; no PASS inferred",
-      "coordinator_diff_review": "Module inspected; independent security/full Linux pending"
+      "coordinator_diff_review": "Module inspected; independent security/full Linux pending",
+      "independent_linux_tests": 1841,
+      "independent_linux_seconds": 261.463,
+      "independent_probes": 14
     }
   },
   "native_reconciliation_review": {
