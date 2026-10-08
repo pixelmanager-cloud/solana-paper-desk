@@ -32,7 +32,9 @@ class ReconcileTests(unittest.TestCase):
     def test_mainnet_transfer_fixture(self):
         p=json.loads((Path(__file__).resolve().parents[1]/'fixtures/mainnet-distribution.json').read_text())
         obs=decode(p['payload']);obs['commitment']='finalized_provider_response'
-        self.assertTrue(reconcile_movements(p['mint'],obs)['passed'])
+        result=reconcile_movements(p['mint'],obs)
+        self.assertFalse(result['passed']);self.assertIn('MOVEMENT_DECODING_INCOMPLETE',result['reasons'])
+        self.assertIn('UNSUPPORTED_TOKEN_CONTROL_OPERATION',result['reasons'])
     def test_wrapped_sol_not_misclassified_as_ordinary_mint(self):
         from desk.providers import SOL
         self.assertIn('WRAPPED_SOL_RECONCILIATION_UNSUPPORTED',reconcile_movements(SOL,self.obs)['reasons'])
