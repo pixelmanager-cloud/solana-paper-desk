@@ -1,6 +1,6 @@
 """Disconnected SEALED-source plan and atomic shared-charge/PENDING primitive.
 
-No provider, clock/publication, canonical bank/head or receipt API exists.
+No provider/publication, canonical bank/head or receipt API exists.
 Reopened PENDING is terminal; only a same-session opaque in-flight handle
 can attach an observation. Trusted application configuration
 supplies the planned source identity; its type/hash never authenticates RPC.
@@ -35,6 +35,7 @@ APPLICATION_ID = 0x43424A31
 ATTACHMENT_VERSION = 0x43424731
 SLOT_VERSION = 0x43425331
 UNION_VERSION = 0x43425531
+CLOCK_VERSION = 0x43424331
 MAX_UNION_REQUEST_BYTES = 8192
 MAX_REQUEST_BYTES = 1024
 MAX_RESPONSE_BYTES = 65536
@@ -100,6 +101,19 @@ UNION_SCHEMA.update({
     'common_bank_union_meta_replace': "CREATE TRIGGER common_bank_union_meta_replace BEFORE INSERT ON common_bank_union_meta WHEN EXISTS(SELECT 1 FROM common_bank_union_meta) BEGIN SELECT RAISE(ABORT,'Immutable union metadata'); END",
     'common_bank_union_intent_insert': "CREATE TRIGGER common_bank_union_intent_insert BEFORE INSERT ON common_bank_union_intents WHEN EXISTS(SELECT 1 FROM common_bank_union_intents WHERE capture_id=NEW.capture_id OR event_hash=NEW.event_hash) OR NOT EXISTS(SELECT 1 FROM common_bank_slot_attachments a JOIN common_bank_runs r ON r.capture_id=a.capture_id JOIN ownership_budgets b ON b.id=r.budget_id WHERE a.capture_id=NEW.capture_id AND a.event_hash=NEW.previous_hash AND json_extract(a.event_json,'$.state')='DONE' AND json_valid(NEW.event_json) AND json_extract(NEW.event_json,'$.used_after')=b.used AND json_extract(NEW.event_json,'$.state')='PENDING') BEGIN SELECT RAISE(ABORT,'Union predecessor or charge mismatch'); END",
     'common_bank_union_attachment_insert': "CREATE TRIGGER common_bank_union_attachment_insert BEFORE INSERT ON common_bank_union_attachments WHEN EXISTS(SELECT 1 FROM common_bank_union_attachments WHERE capture_id=NEW.capture_id OR event_hash=NEW.event_hash) OR NOT EXISTS(SELECT 1 FROM common_bank_union_intents i WHERE i.capture_id=NEW.capture_id AND i.event_hash=NEW.previous_hash) BEGIN SELECT RAISE(ABORT,'Union attachment predecessor mismatch'); END",
+})
+CLOCK_SCHEMA = {
+    'common_bank_clock_meta': 'CREATE TABLE common_bank_clock_meta(id INTEGER PRIMARY KEY CHECK(id=1),descriptor TEXT NOT NULL) WITHOUT ROWID',
+    'common_bank_clock_intents': 'CREATE TABLE common_bank_clock_intents(capture_id TEXT PRIMARY KEY,event_json TEXT NOT NULL,previous_hash TEXT NOT NULL,event_hash TEXT UNIQUE NOT NULL,FOREIGN KEY(capture_id) REFERENCES common_bank_runs(capture_id)) WITHOUT ROWID',
+    'common_bank_clock_attachments': 'CREATE TABLE common_bank_clock_attachments(capture_id TEXT PRIMARY KEY,event_json TEXT NOT NULL,previous_hash TEXT NOT NULL,event_hash TEXT UNIQUE NOT NULL,request_bytes BLOB NOT NULL,response_bytes BLOB,failure_json TEXT,FOREIGN KEY(capture_id) REFERENCES common_bank_clock_intents(capture_id)) WITHOUT ROWID',
+}
+for table in ('common_bank_clock_meta','common_bank_clock_intents','common_bank_clock_attachments'):
+    for operation in ('UPDATE','DELETE'):
+        CLOCK_SCHEMA[table+'_'+operation.lower()] = f"CREATE TRIGGER {table}_{operation.lower()} BEFORE {operation} ON {table} BEGIN SELECT RAISE(ABORT,'Immutable common bank clock'); END"
+CLOCK_SCHEMA.update({
+    'common_bank_clock_meta_replace': "CREATE TRIGGER common_bank_clock_meta_replace BEFORE INSERT ON common_bank_clock_meta WHEN EXISTS(SELECT 1 FROM common_bank_clock_meta) BEGIN SELECT RAISE(ABORT,'Immutable clock metadata'); END",
+    'common_bank_clock_intent_insert': "CREATE TRIGGER common_bank_clock_intent_insert BEFORE INSERT ON common_bank_clock_intents WHEN EXISTS(SELECT 1 FROM common_bank_clock_intents WHERE capture_id=NEW.capture_id OR event_hash=NEW.event_hash) OR NOT EXISTS(SELECT 1 FROM common_bank_union_attachments a JOIN common_bank_runs r ON r.capture_id=a.capture_id JOIN ownership_budgets b ON b.id=r.budget_id WHERE a.capture_id=NEW.capture_id AND a.event_hash=NEW.previous_hash AND json_extract(a.event_json,'$.state')='DONE' AND json_valid(NEW.event_json) AND json_extract(NEW.event_json,'$.used_after')=b.used AND json_extract(NEW.event_json,'$.state')='PENDING') BEGIN SELECT RAISE(ABORT,'Clock predecessor or charge mismatch'); END",
+    'common_bank_clock_attachment_insert': "CREATE TRIGGER common_bank_clock_attachment_insert BEFORE INSERT ON common_bank_clock_attachments WHEN EXISTS(SELECT 1 FROM common_bank_clock_attachments WHERE capture_id=NEW.capture_id OR event_hash=NEW.event_hash) OR NOT EXISTS(SELECT 1 FROM common_bank_clock_intents i WHERE i.capture_id=NEW.capture_id AND i.event_hash=NEW.previous_hash) BEGIN SELECT RAISE(ABORT,'Clock attachment predecessor mismatch'); END",
 })
 FAILURE_CATEGORIES = frozenset(('TRANSPORT_TIMEOUT', 'TRANSPORT_ERROR', 'CANCELLED'))
 
@@ -220,7 +234,7 @@ class _Session:
         _need(not c.execute("SELECT 1 FROM sqlite_master WHERE type='trigger' AND tbl_name IN ('ownership_budgets','ownership_admissions','pages') LIMIT 1").fetchone(),
               'UNREVIEWED_EXISTING_ADMISSION_TRIGGER')
         marker = c.execute('PRAGMA application_id').fetchone()[0]
-        sql = "SELECT name,sql FROM sqlite_master WHERE name LIKE 'common_bank_%' OR (type='trigger' AND tbl_name IN ('common_bank_meta','common_bank_runs','common_bank_events','common_bank_attachment_meta','common_bank_attachments','common_bank_slot_meta','common_bank_slot_intents','common_bank_slot_attachments','common_bank_union_meta','common_bank_union_intents','common_bank_union_attachments'))"
+        sql = "SELECT name,sql FROM sqlite_master WHERE name LIKE 'common_bank_%' OR (type='trigger' AND tbl_name IN ('common_bank_meta','common_bank_runs','common_bank_events','common_bank_attachment_meta','common_bank_attachments','common_bank_slot_meta','common_bank_slot_intents','common_bank_slot_attachments','common_bank_union_meta','common_bank_union_intents','common_bank_union_attachments','common_bank_clock_meta','common_bank_clock_intents','common_bank_clock_attachments'))"
         actual = dict(c.execute(sql))
         if not actual and marker == 0 and initialize:
             _need(c.execute("SELECT count(*) FROM sqlite_master WHERE name IN ('ownership_budgets','ownership_admissions','pages')").fetchone()[0] == 3,
@@ -230,10 +244,11 @@ class _Session:
             c.execute(f'PRAGMA application_id={APPLICATION_ID}')
             actual = dict(c.execute(sql))
         version = c.execute('PRAGMA user_version').fetchone()[0]
-        _need(version in (0, ATTACHMENT_VERSION, SLOT_VERSION, UNION_VERSION), 'COMMON_BANK_ATTACHMENT_VERSION_UNKNOWN')
+        _need(version in (0, ATTACHMENT_VERSION, SLOT_VERSION, UNION_VERSION, CLOCK_VERSION), 'COMMON_BANK_ATTACHMENT_VERSION_UNKNOWN')
         expected = SCHEMA | ATTACHMENT_SCHEMA if version != 0 else SCHEMA
-        if version in (SLOT_VERSION,UNION_VERSION): expected = expected | SLOT_SCHEMA
-        if version == UNION_VERSION: expected = expected | UNION_SCHEMA
+        if version in (SLOT_VERSION,UNION_VERSION,CLOCK_VERSION): expected = expected | SLOT_SCHEMA
+        if version in (UNION_VERSION,CLOCK_VERSION): expected = expected | UNION_SCHEMA
+        if version == CLOCK_VERSION: expected = expected | CLOCK_SCHEMA
         _need(marker in (0, APPLICATION_ID) and actual == expected, 'COMMON_BANK_SCHEMA_OR_TRIGGER_MISMATCH')
         _need(c.execute('PRAGMA application_id').fetchone()[0] == APPLICATION_ID,
               'COMMON_BANK_INSTALLATION_MARKER_MISMATCH')
@@ -242,12 +257,15 @@ class _Session:
         if version != 0:
             _need(c.execute('SELECT id,descriptor FROM common_bank_attachment_meta').fetchall()
                   == [(1,canonical(self._attachment_descriptor()))], 'COMMON_BANK_ATTACHMENT_METADATA_MISMATCH')
-        if version in (SLOT_VERSION,UNION_VERSION):
+        if version in (SLOT_VERSION,UNION_VERSION,CLOCK_VERSION):
             _need(c.execute('SELECT id,descriptor FROM common_bank_slot_meta').fetchall()
                   == [(1,canonical(self._slot_descriptor()))], 'COMMON_BANK_SLOT_METADATA_MISMATCH')
-        if version == UNION_VERSION:
+        if version in (UNION_VERSION,CLOCK_VERSION):
             _need(c.execute('SELECT id,descriptor FROM common_bank_union_meta').fetchall()
                   == [(1,canonical(self._union_descriptor()))], 'COMMON_BANK_UNION_METADATA_MISMATCH')
+        if version == CLOCK_VERSION:
+            _need(c.execute('SELECT id,descriptor FROM common_bank_clock_meta').fetchall()
+                  == [(1,canonical(self._clock_descriptor()))], 'COMMON_BANK_CLOCK_METADATA_MISMATCH')
 
     def _source(self, c, budget):
         size = c.execute('SELECT length(descriptor),length(prepared_source) FROM ownership_admissions WHERE id=?',(budget,)).fetchone()
@@ -335,7 +353,7 @@ class _Session:
                   and digest({'descriptor':descriptor,'plan_hash':plan_hash}) == seed,
                   'COMMON_BANK_PLAN_OR_SEED_MISMATCH')
             runs[capture] = dict(budget=budget,descriptor=descriptor,plan=plan,seed=seed,
-                                 used=admission['requests_used'],event=None,completion=None,slot_intent=None,slot_completion=None,union_intent=None,union_completion=None)
+                                 used=admission['requests_used'],event=None,completion=None,slot_intent=None,slot_completion=None,union_intent=None,union_completion=None,clock_intent=None,clock_completion=None)
         for capture, ordinal, event_json, previous, event_hash in events:
             _need(capture in runs and ordinal == 1 and runs[capture]['event'] is None,
                   'COMMON_BANK_EVENT_IDENTITY_INVALID')
@@ -352,6 +370,7 @@ class _Session:
         self._audit_attachments(c,runs)
         self._audit_slots(c,runs)
         self._audit_unions(c,runs)
+        self._audit_clocks(c,runs)
         return runs
 
     @staticmethod
@@ -383,7 +402,7 @@ class _Session:
             c.execute('INSERT INTO common_bank_runs VALUES(?,?,?,?,?,?)',
                       (capture_id,budget_id,canonical(descriptor),canonical(plan),plan_hash,seed))
             run = dict(budget=budget_id,descriptor=descriptor,plan=plan,seed=seed,
-                       used=admission['requests_used'],event=None,completion=None,slot_intent=None,slot_completion=None,union_intent=None,union_completion=None)
+                       used=admission['requests_used'],event=None,completion=None,slot_intent=None,slot_completion=None,union_intent=None,union_completion=None,clock_intent=None,clock_completion=None)
             return self._status(run,capture_id)
 
     def reserve_stage(self,capture_id,stage,method,params,*,fence,reserved_at):
@@ -409,7 +428,10 @@ class _Session:
     def _status(self,run,capture):
         return {'capture_id':capture,'budget_id':run['budget'],'fence':run['seed'],
                 'plan':run['plan'],'requests_used':run['used'],
-                'state': ('UNION_'+run['union_completion']['state'] if run['union_completion'] else
+                'state': ('CLOCK_'+run['clock_completion']['state'] if run['clock_completion'] else
+                          'CLOCK_IN_FLIGHT' if run['clock_intent'] and any(v['capture']==capture and v['stage']=='clock' for v in self._inflight.values()) else
+                          'TERMINAL_UNCERTAINTY' if run['clock_intent'] else
+                          'UNION_'+run['union_completion']['state'] if run['union_completion'] else
                           'UNION_IN_FLIGHT' if run['union_intent'] and any(v['capture']==capture and v['stage']=='union' for v in self._inflight.values()) else
                           'TERMINAL_UNCERTAINTY' if run['union_intent'] else
                           'SLOT_'+run['slot_completion']['state'] if run['slot_completion'] else
@@ -420,7 +442,9 @@ class _Session:
                           'TERMINAL_UNCERTAINTY' if run['event'] else 'READY_GENESIS'),
                 'completion':run['completion'],'slot_intent':run['slot_intent'],
                 'slot_completion':run['slot_completion'],'union_intent':run['union_intent'],
-                'union_completion':run['union_completion'],
+                'union_completion':run['union_completion'],'clock_intent':run['clock_intent'],
+                'clock_completion':run['clock_completion'],
+                'clock_fence':self._union_hash(run) if run['union_completion'] and run['union_completion']['state']=='DONE' else None,
                 'union_fence':self._slot_hash(run) if run['slot_completion'] and run['slot_completion']['state']=='DONE' else None,
                 'slot_fence':self._genesis_hash(run) if run['completion'] and run['completion']['state']=='DONE' else None,
                 'intent':run['event'],'provider_calls':0,'eligible_for_trading':False,
@@ -443,7 +467,7 @@ class _Session:
         """Explicit additive installation; never retrofits v1 PENDING authority."""
         with self._transaction() as c:
             self._audit(c)
-            if c.execute('PRAGMA user_version').fetchone()[0] in (ATTACHMENT_VERSION,SLOT_VERSION,UNION_VERSION):
+            if c.execute('PRAGMA user_version').fetchone()[0] in (ATTACHMENT_VERSION,SLOT_VERSION,UNION_VERSION,CLOCK_VERSION):
                 return
             for statement in ATTACHMENT_SCHEMA.values(): c.execute(statement)
             c.execute('INSERT INTO common_bank_attachment_meta VALUES(1,?)',
@@ -458,7 +482,7 @@ class _Session:
         must be sent unchanged by a future reviewed transport, not this module.
         """
         with self._transaction() as c:
-            _need(c.execute('PRAGMA user_version').fetchone()[0] in (ATTACHMENT_VERSION,SLOT_VERSION,UNION_VERSION),
+            _need(c.execute('PRAGMA user_version').fetchone()[0] in (ATTACHMENT_VERSION,SLOT_VERSION,UNION_VERSION,CLOCK_VERSION),
                   'EXPLICIT_GENESIS_ATTACHMENT_INSTALL_REQUIRED')
         intent = self.reserve_stage(capture_id,'genesis','getGenesisHash',[],
                                     fence=fence,reserved_at=reserved_at)
@@ -525,6 +549,8 @@ class _Session:
             if set(body) != {'jsonrpc','id','result'}:
                 return 'FAILED','RESPONSE_INVALID'
             if stage == 'union': return 'DONE','UNION_FRAMING_VALID'
+            if stage == 'clock':
+                return ('DONE','BLOCK_TIME_DECLARED') if type(body['result']) is int and 0<=body['result']<2**63 else ('FAILED','CLOCK_TIME_INVALID')
             if stage == 'slot':
                 return ('DONE','FINALIZED_SLOT_DECLARED') if type(body['result']) is int and 0 <= body['result'] < 2**64 else ('FAILED','SLOT_INVALID')
             return ('DONE','EXACT_GENESIS') if type(body['result']) is str and body['result'] == GENESIS else ('FAILED','GENESIS_MISMATCH')
@@ -586,7 +612,7 @@ class _Session:
     def _finish_genesis(self,token,response,failure,at):
         flight = self._flight(token)
         with self._transaction() as c:
-            _need(c.execute('PRAGMA user_version').fetchone()[0] in (ATTACHMENT_VERSION,SLOT_VERSION,UNION_VERSION),
+            _need(c.execute('PRAGMA user_version').fetchone()[0] in (ATTACHMENT_VERSION,SLOT_VERSION,UNION_VERSION,CLOCK_VERSION),
                   'EXPLICIT_GENESIS_ATTACHMENT_INSTALL_REQUIRED')
             runs = self._audit(c); capture = flight['capture']
             _need(capture in runs and canonical(runs[capture]['event']) == flight['intent'],
@@ -614,10 +640,10 @@ class _Session:
     def install_slot_stage(self):
         """Explicit additive upgrade after genesis attachment profile install."""
         with self._transaction() as c:
-            _need(c.execute('PRAGMA user_version').fetchone()[0] in (ATTACHMENT_VERSION,SLOT_VERSION,UNION_VERSION),
+            _need(c.execute('PRAGMA user_version').fetchone()[0] in (ATTACHMENT_VERSION,SLOT_VERSION,UNION_VERSION,CLOCK_VERSION),
                   'GENESIS_ATTACHMENT_PROFILE_REQUIRED')
             self._audit(c)
-            if c.execute('PRAGMA user_version').fetchone()[0] in (SLOT_VERSION,UNION_VERSION): return
+            if c.execute('PRAGMA user_version').fetchone()[0] in (SLOT_VERSION,UNION_VERSION,CLOCK_VERSION): return
             for statement in SLOT_SCHEMA.values(): c.execute(statement)
             c.execute('INSERT INTO common_bank_slot_meta VALUES(1,?)',(canonical(self._slot_descriptor()),))
             c.execute(f'PRAGMA user_version={SLOT_VERSION}')
@@ -637,7 +663,7 @@ class _Session:
     def begin_slot(self,capture_id,*,fence,reserved_at):
         _need(_identity(capture_id), 'COMMON_BANK_QUERY_ID_INVALID')
         with self._transaction() as c:
-            _need(c.execute('PRAGMA user_version').fetchone()[0] in (SLOT_VERSION,UNION_VERSION),
+            _need(c.execute('PRAGMA user_version').fetchone()[0] in (SLOT_VERSION,UNION_VERSION,CLOCK_VERSION),
                   'EXPLICIT_SLOT_INSTALL_REQUIRED')
             runs = self._audit(c)
             _need(capture_id in runs, 'COMMON_BANK_CAPTURE_MISSING'); run = runs[capture_id]
@@ -690,7 +716,7 @@ class _Session:
         return event,previous,digest({'previous_hash':previous,'event':event})
 
     def _audit_slots(self,c,runs):
-        if c.execute('PRAGMA user_version').fetchone()[0] not in (SLOT_VERSION,UNION_VERSION): return
+        if c.execute('PRAGMA user_version').fetchone()[0] not in (SLOT_VERSION,UNION_VERSION,CLOCK_VERSION): return
         _need(not c.execute('SELECT 1 FROM common_bank_slot_intents WHERE length(event_json)>8192 LIMIT 1').fetchone(),
               'COMMON_BANK_SLOT_INTENT_OVERSIZED')
         intents=c.execute('SELECT capture_id,event_json,previous_hash,event_hash FROM common_bank_slot_intents LIMIT ?',
@@ -757,10 +783,10 @@ class _Session:
 
     def install_union_stage(self):
         with self._transaction() as c:
-            _need(c.execute('PRAGMA user_version').fetchone()[0] in (SLOT_VERSION,UNION_VERSION),
+            _need(c.execute('PRAGMA user_version').fetchone()[0] in (SLOT_VERSION,UNION_VERSION,CLOCK_VERSION),
                   'SLOT_PROFILE_REQUIRED')
             self._audit(c)
-            if c.execute('PRAGMA user_version').fetchone()[0] == UNION_VERSION: return
+            if c.execute('PRAGMA user_version').fetchone()[0] in (UNION_VERSION,CLOCK_VERSION): return
             for statement in UNION_SCHEMA.values(): c.execute(statement)
             c.execute('INSERT INTO common_bank_union_meta VALUES(1,?)',(canonical(self._union_descriptor()),))
             c.execute(f'PRAGMA user_version={UNION_VERSION}')
@@ -787,7 +813,7 @@ class _Session:
     def begin_union(self,capture_id,*,fence,reserved_at):
         _need(_identity(capture_id),'COMMON_BANK_QUERY_ID_INVALID')
         with self._transaction() as c:
-            _need(c.execute('PRAGMA user_version').fetchone()[0] == UNION_VERSION,'EXPLICIT_UNION_INSTALL_REQUIRED')
+            _need(c.execute('PRAGMA user_version').fetchone()[0] in (UNION_VERSION,CLOCK_VERSION),'EXPLICIT_UNION_INSTALL_REQUIRED')
             runs=self._audit(c);_need(capture_id in runs,'COMMON_BANK_CAPTURE_MISSING');run=runs[capture_id]
             _need(run['slot_completion'] is not None and run['slot_completion']['state']=='DONE','AUDITED_SLOT_DONE_REQUIRED')
             _need(run['union_intent'] is None,'COMMON_BANK_UNION_ALREADY_RESERVED_TERMINAL')
@@ -878,7 +904,7 @@ class _Session:
         return event,previous,digest({'previous_hash':previous,'event':event})
 
     def _audit_unions(self,c,runs):
-        if c.execute('PRAGMA user_version').fetchone()[0]!=UNION_VERSION:return
+        if c.execute('PRAGMA user_version').fetchone()[0]not in (UNION_VERSION,CLOCK_VERSION):return
         _need(not c.execute('SELECT 1 FROM common_bank_union_intents WHERE length(event_json)>16384 LIMIT 1').fetchone(),
               'COMMON_BANK_UNION_INTENT_OVERSIZED')
         intents=c.execute('SELECT capture_id,event_json,previous_hash,event_hash FROM common_bank_union_intents LIMIT ?',
@@ -932,4 +958,163 @@ class _Session:
             if existing is not None:
                 _need(existing==chosen,'COMMON_BANK_CONFLICTING_COMPLETION');return event
             c.execute('INSERT INTO common_bank_union_attachments VALUES(?,?,?,?,?,?,?)',(capture,)+chosen)
+            return event
+
+
+    def _clock_descriptor(self):
+        return {'kind':'common_bank_clock_profile_v1','database_binding':self.journal.descriptor,
+                'parent_schema_hash':digest(SCHEMA | ATTACHMENT_SCHEMA | SLOT_SCHEMA | UNION_SCHEMA),
+                'request_limit':MAX_REQUEST_BYTES,'response_limit':MAX_RECORD_BYTES}
+
+    def install_clock_stage(self):
+        with self._transaction() as c:
+            _need(c.execute('PRAGMA user_version').fetchone()[0] in (UNION_VERSION,CLOCK_VERSION),
+                  'UNION_PROFILE_REQUIRED')
+            self._audit(c)
+            if c.execute('PRAGMA user_version').fetchone()[0] == CLOCK_VERSION: return
+            for statement in CLOCK_SCHEMA.values(): c.execute(statement)
+            c.execute('INSERT INTO common_bank_clock_meta VALUES(1,?)',(canonical(self._clock_descriptor()),))
+            c.execute(f'PRAGMA user_version={CLOCK_VERSION}')
+            self._schema(c,False)
+
+    @staticmethod
+    def _union_hash(run):
+        return digest({'previous_hash':run['union_completion']['intent_hash'],'event':run['union_completion']})
+
+    @staticmethod
+    def _clock_intent(run,capture,used,at):
+        return {'kind':'common_bank_clock_pending_v1','capture_id':capture,'budget_id':run['budget'],
+                'stage':'clock','state':'PENDING','method':'getBlockTime',
+                'params':[run['union_completion']['slot']],
+                'descriptor_hash':digest(run['descriptor']),'plan_hash':digest(run['plan']),
+                'fence':_Session._union_hash(run),'ordinal':7,'used_after':used,'reserved_at':at}
+
+    @staticmethod
+    def _clock_request(intent):
+        return canonical({'jsonrpc':'2.0','id':digest(intent),'method':'getBlockTime',
+                          'params':intent['params']}).encode()
+
+    def begin_clock(self,capture_id,*,fence,reserved_at):
+        _need(_identity(capture_id),'COMMON_BANK_QUERY_ID_INVALID')
+        with self._transaction() as c:
+            _need(c.execute('PRAGMA user_version').fetchone()[0] == CLOCK_VERSION,'EXPLICIT_CLOCK_INSTALL_REQUIRED')
+            runs=self._audit(c);_need(capture_id in runs,'COMMON_BANK_CAPTURE_MISSING');run=runs[capture_id]
+            _need(run['union_completion'] is not None and run['union_completion']['state']=='DONE','AUDITED_UNION_DONE_REQUIRED')
+            _need(run['clock_intent'] is None,'COMMON_BANK_CLOCK_ALREADY_RESERVED_TERMINAL')
+            previous=self._union_hash(run)
+            _need(type(fence) is str and fence==previous,'COMMON_BANK_STALE_CLOCK_FENCE')
+            _need(type(reserved_at) is int and run['union_completion']['completed_at'] <= reserved_at < 2**63,
+                  'COMMON_BANK_CLOCK_RESERVATION_TIME_INVALID')
+            _need(run['used']+2+len(run['plan']['F']) <= 18,'COMMON_BANK_LOWER_BOUND_EXCEEDS_18')
+            used=run['used']+1;intent=self._clock_intent(run,capture_id,used,reserved_at)
+            request=self._clock_request(intent)
+            _need(len(request)<=MAX_REQUEST_BYTES,'COMMON_BANK_CLOCK_REQUEST_OVERSIZED')
+            changed=c.execute('UPDATE ownership_budgets SET used=used+1 WHERE id=? AND source_hash=? AND ceiling=18 AND used<18',
+                              (run['budget'],run['descriptor']['admission_descriptor_hash'])).rowcount
+            _need(changed==1,'INVESTIGATION_REQUEST_BUDGET_EXHAUSTED')
+            c.execute('INSERT INTO common_bank_clock_intents VALUES(?,?,?,?)',
+                      (capture_id,canonical(intent),previous,digest({'previous_hash':previous,'event':intent})))
+        token=object();self._inflight[token]={'capture':capture_id,'stage':'clock','intent':canonical(intent),
+                                            'request':request,'chosen':None}
+        return token
+
+    def clock_request(self,token):
+        return self._flight(token,'clock')['request']
+
+    @staticmethod
+    def _clock_failure(request,category,observed_bytes=None):
+        record={'kind':'common_bank_clock_redacted_failure_v1','method':'getBlockTime',
+                'request_sha256':_sha(request),'category':category}
+        if observed_bytes is not None:record['observed_bytes']=observed_bytes
+        return canonical(record)
+
+    @staticmethod
+    def _clock_outcome(run,request,response,failure):
+        if failure is not None:
+            _need(type(failure) is str and len(failure.encode())<=MAX_FAILURE_BYTES,'COMMON_BANK_CLOCK_FAILURE_INVALID')
+            record=json.loads(failure);_need(type(record) is dict,'COMMON_BANK_CLOCK_FAILURE_INVALID')
+            category=record.get('category');size=record.get('observed_bytes')
+            _need((category in FAILURE_CATEGORIES and size is None
+                   and failure==_Session._clock_failure(request,category)) or
+                  (category=='RESPONSE_OVERSIZED' and type(size) is int and MAX_RECORD_BYTES<size<2**63
+                   and failure==_Session._clock_failure(request,category,size)), 'COMMON_BANK_CLOCK_FAILURE_INVALID')
+            _need(response is None,'COMMON_BANK_ATTACHMENT_PROVENANCE_AMBIGUOUS')
+            return 'FAILED',category,None
+        state,reason=_Session._outcome(request,response,None,'clock')
+        return state,reason,_strict_json(response)['result'] if state=='DONE' else None
+
+    @staticmethod
+    def _clock_attachment(run,capture,request,response,failure,at):
+        intent=run['clock_intent']
+        _need(intent is not None and type(at) is int and intent['reserved_at']<=at<2**63,'COMMON_BANK_CLOCK_COMPLETION_TIME_INVALID')
+        _need(type(request) is bytes and len(request)<=MAX_REQUEST_BYTES and request==_Session._clock_request(intent),
+              'COMMON_BANK_ORIGINAL_CLOCK_REQUEST_MISMATCH')
+        state,reason,block_time=_Session._clock_outcome(run,request,response,failure)
+        previous=digest({'previous_hash':intent['fence'],'event':intent})
+        event={'kind':'common_bank_clock_attachment_v1','capture_id':capture,'budget_id':run['budget'],
+               'stage':'clock','ordinal':8,'state':state,'reason':reason,'intent_hash':previous,
+               'fence':intent['fence'],'descriptor_hash':digest(run['descriptor']),'plan_hash':digest(run['plan']),
+               'planned_source':run['descriptor']['planned_source'],'used_after':intent['used_after'],
+               'reserved_at':intent['reserved_at'],'completed_at':at,'request_sha256':_sha(request),
+               'response_sha256':_sha(response) if response is not None else None,
+               'failure_hash':digest(json.loads(failure)) if failure is not None else None,
+               'slot':run['union_completion']['slot'],'block_time':block_time,
+               'bank_captured_at':run['union_completion']['reserved_at'],
+               'eligible_for_trading':False,'ownership_approval':False,'chain_authenticated':False}
+        return event,previous,digest({'previous_hash':previous,'event':event})
+
+    def _audit_clocks(self,c,runs):
+        if c.execute('PRAGMA user_version').fetchone()[0]!= CLOCK_VERSION:return
+        _need(not c.execute('SELECT 1 FROM common_bank_clock_intents WHERE length(event_json)>8192 LIMIT 1').fetchone(),
+              'COMMON_BANK_CLOCK_INTENT_OVERSIZED')
+        intents=c.execute('SELECT capture_id,event_json,previous_hash,event_hash FROM common_bank_clock_intents LIMIT ?',
+                          (MAX_RUNS+1,)).fetchall();_need(len(intents)<=MAX_RUNS,'COMMON_BANK_CLOCK_CAPACITY')
+        for capture,raw,previous,key in intents:
+            _need(capture in runs,'COMMON_BANK_CLOCK_CAPTURE_MISSING');run=runs[capture]
+            _need(run['union_completion'] is not None and run['union_completion']['state']=='DONE','AUDITED_UNION_DONE_REQUIRED')
+            intent=json.loads(raw)
+            _need(type(intent) is dict and type(intent.get('used_after')) is int
+                  and run['union_completion']['used_after']<intent['used_after']<=run['used']
+                  and type(intent.get('reserved_at')) is int and run['union_completion']['completed_at']<=intent['reserved_at']<2**63,
+                  'COMMON_BANK_CLOCK_INTENT_INVALID')
+            expected=self._clock_intent(run,capture,intent['used_after'],intent['reserved_at'])
+            _need(raw==canonical(expected) and previous==self._union_hash(run)
+                  and key==digest({'previous_hash':previous,'event':intent})
+                  and len(self._clock_request(intent))<=MAX_REQUEST_BYTES,'COMMON_BANK_CLOCK_FENCE_OR_HASH_MISMATCH')
+            run['clock_intent']=intent
+        _need(not c.execute('SELECT 1 FROM common_bank_clock_attachments WHERE length(event_json)>8192 OR length(request_bytes)>? OR length(response_bytes)>? OR length(failure_json)>? LIMIT 1',
+                            (MAX_REQUEST_BYTES,MAX_RECORD_BYTES,MAX_FAILURE_BYTES)).fetchone(),'COMMON_BANK_CLOCK_ATTACHMENT_OVERSIZED')
+        rows=c.execute('SELECT capture_id,event_json,previous_hash,event_hash,request_bytes,response_bytes,failure_json FROM common_bank_clock_attachments LIMIT ?',
+                       (MAX_RUNS+1,)).fetchall();_need(len(rows)<=MAX_RUNS,'COMMON_BANK_CLOCK_ATTACHMENT_CAPACITY')
+        for capture,raw,previous,key,request,response,failure in rows:
+            _need(capture in runs,'COMMON_BANK_CLOCK_CAPTURE_MISSING');run=runs[capture]
+            event=json.loads(raw);_need(type(event) is dict,'COMMON_BANK_CLOCK_ATTACHMENT_INVALID')
+            expected,prior,event_hash=self._clock_attachment(run,capture,request,response,failure,event.get('completed_at'))
+            _need(raw==canonical(expected) and previous==prior and key==event_hash,'COMMON_BANK_CLOCK_ATTACHMENT_HASH_OR_BINDING_MISMATCH')
+            run['clock_completion']=expected
+
+    def attach_clock_response(self,token,response_bytes,*,completed_at):
+        _need(type(response_bytes) is bytes,'COMMON_BANK_RAW_RESPONSE_REQUIRED')
+        flight=self._flight(token,'clock')
+        if len(response_bytes)>MAX_RECORD_BYTES:
+            return self._finish_clock(token,None,self._clock_failure(flight['request'],'RESPONSE_OVERSIZED',len(response_bytes)),completed_at)
+        return self._finish_clock(token,response_bytes,None,completed_at)
+
+    def attach_clock_failure(self,token,category,*,completed_at):
+        _need(type(category) is str and category in FAILURE_CATEGORIES,'COMMON_BANK_FAILURE_CATEGORY_INVALID')
+        flight=self._flight(token,'clock')
+        return self._finish_clock(token,None,self._clock_failure(flight['request'],category),completed_at)
+
+    def _finish_clock(self,token,response,failure,at):
+        flight=self._flight(token,'clock')
+        with self._transaction() as c:
+            runs=self._audit(c);capture=flight['capture']
+            _need(capture in runs and canonical(runs[capture]['clock_intent'])==flight['intent'],'COMMON_BANK_STALE_CLOCK_INTENT')
+            event,previous,key=self._clock_attachment(runs[capture],capture,flight['request'],response,failure,at)
+            chosen=(canonical(event),previous,key,flight['request'],response,failure)
+            _need(flight['chosen'] is None or flight['chosen']==chosen,'COMMON_BANK_CONFLICTING_COMPLETION');flight['chosen']=chosen
+            existing=c.execute('SELECT event_json,previous_hash,event_hash,request_bytes,response_bytes,failure_json FROM common_bank_clock_attachments WHERE capture_id=?',(capture,)).fetchone()
+            if existing is not None:
+                _need(existing==chosen,'COMMON_BANK_CONFLICTING_COMPLETION');return event
+            c.execute('INSERT INTO common_bank_clock_attachments VALUES(?,?,?,?,?,?,?)',(capture,)+chosen)
             return event
