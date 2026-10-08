@@ -273,15 +273,13 @@
         "wait_cursor": "8f3328cf-bef6-441d-83f8-2d1f46b3b0df:54"
       },
       {
-        "id": "PR92-INDEPENDENT-REVIEW",
-        "worker": "05",
-        "thread_id": "01a118fc-dd83-7672-ac81-7445f85fe09f",
+        "id": "COMMON-BANK-JOURNAL-SEMANTIC-REPLAY",
+        "worker": "02",
+        "thread_id": "01a118fc-666c-70b6-9fa8-2c7520f0a0bb",
         "host_id": "durable",
-        "status": "REVIEWING",
-        "pr": 92,
-        "head": "c94889edeaf1b5ddd6ce098220c2a5cf7c9a410e",
-        "base": "94eb463c58d08cfe6c5ac470ae41b4b6a3ef077e",
-        "wait_cursor": "b9784eaf-f3e5-457f-a98d-a386c23b37ea:35"
+        "status": "RESERVED_PENDING_DISPATCH",
+        "base": "a2afb0075e2d1d33672027b71b9ff066ce6aa76c",
+        "scope": "Bounded diagnostic semantic replay of original completed journal bytes against accepted common bank view; no publication/transport"
       }
     ],
     "saved_launch_probe": {
@@ -813,8 +811,8 @@
     "pending_clock_stage": {
       "pr": 92,
       "head": "c94889edeaf1b5ddd6ce098220c2a5cf7c9a410e",
-      "integrated": false,
-      "review": "PENDING worker05",
+      "integrated": true,
+      "review": "PASS worker05 Linux1783 zero skips158.392s;21 independent probes;exact tree matched",
       "author_linux_tests": 1783,
       "author_skips": 0,
       "combined_base": "94eb463c58d08cfe6c5ac470ae41b4b6a3ef077e",
@@ -824,7 +822,10 @@
       "mac_seconds": 33.804,
       "combined_tree": "2fec0fcf045a51e024db41d4331cb0707de229d0",
       "coordinator_diff_review": "Clock implementation reviewed; independent Linux review pending",
-      "ci": "Both unchanged exact-head checks SUCCESS"
+      "ci": "Both unchanged exact-head checks SUCCESS",
+      "integration_commit": "a2afb0075e2d1d33672027b71b9ff066ce6aa76c",
+      "review_manifest_sha256": "5a95b6010e8858eb310df330e5e3a014ca8bef4e25cdb2ccb819135e371e48f5",
+      "deployed": false
     }
   },
   "native_reconciliation_review": {
