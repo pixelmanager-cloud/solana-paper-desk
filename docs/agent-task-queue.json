@@ -275,12 +275,13 @@
         "scope": "Review changed code and existing regression tests only; earlier flagged custom probes not repeated; stop if blocked"
       },
       {
-        "id": "OWN1-COHESIVE-INTEGRATION-SCOPE",
-        "worker": "03",
-        "thread_id": "01a118fc-9478-778a-b77a-8f8f6ec7e0ad",
+        "id": "OWN1-ORIGINAL-BYTE-READ-TRANSPORT",
+        "worker": "01",
+        "thread_id": "01a118fc-39bc-722c-b442-8bf5a749e0bb",
         "host_id": "durable",
         "status": "IN_PROGRESS",
-        "scope": "Concrete cohesive fresh-admission through original cutoff/discovery/sealing/commonbank patch plan; no source modifications or dependency bypass"
+        "base": "6bf9d1d",
+        "scope": "Strict existing read-method original-byte transport for producer; no PR97 or runtime wiring"
       }
     ],
     "saved_launch_probe": {
@@ -1030,6 +1031,21 @@
       "preserved": "Both repaired heads have successful CI; combined desktop1934tests passes with373skips. Neither merged/deployed.",
       "resume_condition": "Review infrastructure restored or user supplies an approved review path; maintain exact-head gates",
       "resume_action": "Heartbeat active; one existing PR96 review continuation requested to recover already-running test output. PR97 filter gate unchanged."
+    },
+    "ownership_producer_plan": {
+      "worker": "03",
+      "turn_id": "01a11c6e-dcb7-73a4-a80a-e3738d2f6541",
+      "status": "COMPLETE",
+      "steps": [
+        "Preserve transport bytes plus failure together",
+        "Fresh cutoff-first admission using same18counter",
+        "Versioned presealed-discovery-SEALED transition",
+        "Birth-inclusive discovery original-byte transport",
+        "Release research locks before commonbank stages/replay"
+      ],
+      "minimum_calls": "6+H discovery pages; not completeness guarantee",
+      "blocked_on": "PR97 final independent review; producer state handoff and wire outcome contract",
+      "ready_parallel_work": "Strict original-byte read transport coverage assigned01; uses accepted code only"
     }
   },
   "native_reconciliation_review": {
