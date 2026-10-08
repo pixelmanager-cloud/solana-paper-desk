@@ -196,7 +196,7 @@
     "blocker": "PR31 immutable-kind and malformed-descriptor fixes; acquisition executor and live legacy acceptance; exposure integration unfinished",
     "followups": {
       "worker02": "PR31 two P2 findings await repair; PR28 correction reviewed",
-      "worker06": "Available; PR27 reviewed and integrated",
+      "worker06": "Implement read-only SEALED admission descriptor/prepared source verification in entry_evidence; legacy compatibility, raw replay and rejection preserved",
       "cloud_reviewer": "PR32 independent review passed; available",
       "worker10": "PR30 independent review passed; available",
       "worker03": "Public legacy feasibility report c932cbf published/reviewed; idle",
