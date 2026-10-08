@@ -260,7 +260,17 @@
       "status": "SUPERSEDED_BY_PUBLISHED_TESTED_COMMIT"
     },
     "published_ci": "Deployed d758bc529a7da1f74509117288740911f2ad6845: both CI runs successful",
-    "active_claims": [],
+    "active_claims": [
+      {
+        "id": "COMMON-BANK-GENESIS-COMPLETION",
+        "worker": "02",
+        "thread_id": "01a118fc-666c-70b6-9fa8-2c7520f0a0bb",
+        "host_id": "durable",
+        "status": "DISPATCHED",
+        "base": "335e086e18a9e514a4431b7429d69e865bc163e2",
+        "scope": "Immutable in-flight genesis success/failure attachment; no provider/next stage/publication; terminal uncertain PENDING preserved"
+      }
+    ],
     "saved_launch_probe": {
       "source": "VPS saved raw launch events, read-only; no provider calls",
       "sample_size": 150,
