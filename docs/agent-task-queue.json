@@ -262,15 +262,14 @@
     "published_ci": "Deployed d758bc529a7da1f74509117288740911f2ad6845: both CI runs successful",
     "active_claims": [
       {
-        "id": "OWN-2-SOURCE-BOUND-ADMISSION",
-        "worker": "02",
-        "thread_id": "01a118fc-666c-70b6-9fa8-2c7520f0a0bb",
+        "id": "PR81-INDEPENDENT-REVIEW",
+        "worker": "06",
+        "thread_id": "01a118fc-f867-7233-8eec-c20659e70095",
         "host_id": "durable",
-        "base": "2ab25cbb8472fd29072da078e2fa7e049e0c65ea",
-        "status": "ACTIVE",
-        "scope": "Smallest missing source-bound pool-vault classification prerequisite; implement only justified raw/source/bank binding; otherwise report precise blocking inputs. No admission or entry guard relaxation.",
-        "assigned_at": "2026-10-08T10:55:25Z",
-        "wait_cursor": "a2dcfb97-463d-4188-9da3-48a81e644d23:39"
+        "status": "REVIEWING",
+        "base": "a557decf642f4408c6532ebd3ab24661503f916c",
+        "pr": 81,
+        "head": "7385abd0104b7e2b5f955f865e4a5b9569a5d24f"
       }
     ],
     "saved_launch_probe": {
@@ -603,7 +602,17 @@
       }
     },
     "reviewed_combined_tree": "613d5e3393e8a930cb15df979cf0c211fa89c037",
-    "test_identity_note": "Exact d758bc5 + PR75 tree independently tested; accepted integration differs only in coordinator documentation."
+    "test_identity_note": "Exact d758bc5 + PR75 tree independently tested; accepted integration differs only in coordinator documentation.",
+    "pending_pool_projection": {
+      "pr": 81,
+      "head": "7385abd0104b7e2b5f955f865e4a5b9569a5d24f",
+      "author": "02",
+      "author_linux_tests": 1576,
+      "author_linux_skips": 0,
+      "integrated": false,
+      "review": "PENDING worker06",
+      "scope": "Source/revision-bound pool-vault point prerequisite only; history/exclusion/entry remain false"
+    }
   },
   "native_reconciliation_review": {
     "pr": 56,
