@@ -196,15 +196,15 @@
     "blocker": "Live legacy evidence,protected pool receipt capture,lifecycle semantic approval and holder exposure integration unfinished",
     "followups": {
       "worker02": "PR40 review interrupted by automated cybersecurity-risk flag; no final acceptance",
-      "worker06": "PR50 independent changes requested; available for corrected exact-head review",
-      "cloud_reviewer": "PR51 changes required; available",
+      "worker06": "Independent repaired lifecycle review and final combined Linux",
+      "cloud_reviewer": "Independent partial-schema fail-closed re-review",
       "worker10": "PR45 independent review complete;available",
       "worker03": "Bounded newerlegacysearch found no matching authoritative event;available",
       "worker04": "PR47 accepted; available",
       "worker05": "PR49 accepted; available",
       "worker09": "PR35 reviewed and integrated; available",
-      "worker01": "PR51 partial schema regression repair assigned",
-      "worker07": "PR50 structural context binding repair assigned",
+      "worker01": "Forward fix published; independent re-review pending; available",
+      "worker07": "Forward fix published; independent re-review pending; available",
       "worker08": "PR31 reviewed and integrated; available"
     },
     "reviews": {
@@ -260,22 +260,22 @@
     "published_ci": "d6c710bcf95a6c61fd0f786489be4b458bf7b6da successful",
     "active_claims": [
       {
-        "worker": "worker01",
-        "thread_id": "01a118fc-39bc-722c-b442-8bf5a749e0bb",
+        "worker": "worker06",
+        "thread_id": "01a118fc-f867-7233-8eec-c20659e70095",
         "host_id": "durable",
-        "task": "Repair partial raw-capture schema loss fail-closed",
-        "status": "FIXING",
-        "pr": 51,
-        "head": "5bd4cd0854fa95470489cbbef00a3b8cb620c8db"
+        "pr": 50,
+        "head": "3c00d9679b997e2d92a317fbc0b9f469b76ef171",
+        "task": "Independent repaired lifecycle review and final combined Linux",
+        "status": "REVIEWING"
       },
       {
-        "worker": "worker07",
-        "thread_id": "01a118fd-0f1c-749c-b85b-5e730937d0a8",
+        "worker": "cloud_reviewer",
+        "thread_id": "01a11901-8b68-70f9-8672-5a731a149091",
         "host_id": "durable",
-        "task": "Repair lifecycle slot/signature structural binding",
-        "status": "FIXING",
-        "pr": 50,
-        "head": "1706dddc4850d7ea8d23ab9a6b8cf08a99f3e9c0"
+        "pr": 51,
+        "head": "0b57227a36dd47b75128c66385c8e50dc16ecf24",
+        "task": "Independent partial-schema fail-closed re-review",
+        "status": "REVIEWING"
       }
     ],
     "saved_launch_probe": {
@@ -445,15 +445,16 @@
     },
     "pending_capture_lifecycle": {
       "prs": {
-        "50": "1706dddc4850d7ea8d23ab9a6b8cf08a99f3e9c0",
-        "51": "5bd4cd0854fa95470489cbbef00a3b8cb620c8db"
+        "50": "3c00d9679b997e2d92a317fbc0b9f469b76ef171",
+        "51": "0b57227a36dd47b75128c66385c8e50dc16ecf24"
       },
-      "scratch_commit": "50efbda3972f43f3018ad370f758833842246bc8",
+      "scratch_commit": "874aed58f0a90ec610063e358dd8155cba0d781a",
       "integrated": false,
-      "review": "CHANGES_REQUIRED; neither candidate integrated",
-      "mac_discovered": 1235,
-      "mac_passed": 1162,
-      "mac_skipped": 73
+      "review": "CORRECTED_HEADS_UNDER_REVIEW",
+      "mac_discovered": 1244,
+      "mac_passed": 1171,
+      "mac_skipped": 73,
+      "ci": "Both corrected heads successful"
     },
     "vps_read_only_preflight": {
       "observed_utc": "2026-10-08T04:57Z",
