@@ -324,3 +324,8 @@ Ownership evidence is NOT complete. The finalized snapshot collection/requery st
 Command: .venv/bin/python -m desk --secrets-file <existing-systemd-credential-path> ownership-advance --db /var/lib/solana-desk/research.sqlite --evidence-db /var/lib/solana-desk/evidence.sqlite --scan-id <completed-scan-id>. Do not print credentials or source reports containing provider errors.
 
 Sources checked: https://www.helius.dev/docs/api-reference/rpc/http/gettransactionsforaddress (slot gte/lt filtering); https://solana.com/docs/rpc/http/getblocktime (estimated block production time).
+
+
+## Pre-deployment ownership verification — 8 October 2026
+
+Read-only server check confirmed dashboard, discovery and decision timers active. Seven investigations exist in the rolling 24-hour window, leaving at most three new investigations under the existing ten-scan limit at that observation. Only the latest scan has the required persisted initial mint response; it is the previously identified unsupported Token-2022 case. Older records must not be patched to invent missing acquisition evidence. No provider call or production change was made in this check. Positive legacy launch capture feasibility is being checked against committed public data before consuming the remaining budget. Integration remains staged locally until exact-head reviews and decoder completeness repair pass.
