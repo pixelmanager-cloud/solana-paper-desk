@@ -193,14 +193,33 @@
     "combined_tests": 687,
     "result": "PASS",
     "live_verification": "NOT_STARTED_PENDING_REVIEW_AND_LEGACY_CAPTURE",
-    "blocker": "PR18 canonical alias-path repair integrated, independent re-review pending; PR22/23 review pending; positive pool admission and continuation-to-entry wiring incomplete",
+    "blocker": "PR24/25/26 independent reviews pending; authority-operation decoder gap assigned to worker06; live legacy acceptance and exposure integration remain unfinished",
     "followups": {
-      "worker01": "Canonical path fix 92e9c61 published; pending review",
-      "worker04": "Narrow raw pool-vault admission verifier",
-      "cloud_reviewer": "Review PR22/23 and repaired PR18",
-      "worker10": "Re-review final combined head after fixes",
-      "worker05": "Trusted raw continuation-to-entry component wiring, separate PR",
-      "worker03": "Unmocked multi-account multi-page ownership fixtures; tests only"
+      "worker02": "Independent exact-head PR24 fixture review; no edits",
+      "worker06": "Fix silently omitted parsed authority/control operations in decoder and history; new branch/PR",
+      "cloud_reviewer": "Independent exact-head PR26 point-in-time pool admission review",
+      "worker10": "Independent exact-head PR25 continuation entry component review",
+      "worker03": "PR24 published; idle pending review",
+      "worker04": "PR26 published; idle pending review",
+      "worker05": "PR25 published; idle pending review"
+    },
+    "reviews": {
+      "PR18": "92e9c6104b411101e414c03774a1675cbbf1ac91: independent review no blocking scoped defect",
+      "PR22": "c50b7aa5e690fb2a3517c7f9afd7a75f3908384b: reject-only scope reviewed",
+      "PR23": "11bf7d168200f7945a36493f763378b4a8a5ca39: token control correction reviewed",
+      "PR21": "22e1dae7c8f6a1adaca2690c14b13aabc663e729: worker10 independently passed 687 tests, no new regression"
+    },
+    "candidate_combination": {
+      "commit": "57a51245c85ba50d11fe782612a443131ffaa934",
+      "location": "local detached worktree work/cloud-next",
+      "tests": 750,
+      "result": "PASS",
+      "published": false,
+      "prs": {
+        "24": "b5911a6fece35f83af87b89a14537de2d7c11dec",
+        "25": "28e04362e426e50fc5cceca232bb227f38a3707c",
+        "26": "f873c52cfab48ebb203377d0e3548cfc38c477bf"
+      }
     }
   }
 }
