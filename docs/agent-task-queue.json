@@ -263,21 +263,21 @@
     "published_ci": "886fc96d404b9d3ffd99c0045f7231d563a5d946 successful",
     "active_claims": [
       {
-        "worker": "worker07",
-        "thread_id": "01a118fd-0f1c-749c-b85b-5e730937d0a8",
+        "worker": "worker03",
+        "thread_id": "01a118fc-9478-778a-b77a-8f8f6ec7e0ad",
         "host_id": "durable",
-        "task": "Disconnected native lamport reconciliation",
+        "task": "Versioned official TradeEvent schema with unresolved economic effects",
         "status": "IMPLEMENTING",
-        "base": "7568e4622d19b6eabe50b94b0b72b3ca53334017"
+        "base": "7e1d3e4"
       },
       {
-        "worker": "cloud_reviewer",
-        "thread_id": "01a11901-8b68-70f9-8672-5a731a149091",
+        "worker": "worker06",
+        "thread_id": "01a118fc-f867-7233-8eec-c20659e70095",
         "host_id": "durable",
-        "task": "Independent official TradeEvent field provenance PR55 review",
+        "task": "Independent native reconciliation PR56 review",
         "status": "REVIEWING",
-        "pr": 55,
-        "head": "2732693c10aa948b66aa83c231bcede54da6f112"
+        "pr": 56,
+        "head": "db8b1554a40ea4505975b6cdfdbb49c98c26636d"
       }
     ],
     "saved_launch_probe": {
@@ -616,6 +616,11 @@
     "combined_base": "5bc3adfc230a221b0959c55084749633c11e909e",
     "integrated": false,
     "author_linux_tests": 1322,
-    "scope": "Disconnected conditional arithmetic only; all effect authentication and entry permissions false"
+    "scope": "Disconnected conditional arithmetic only; all effect authentication and entry permissions false",
+    "mac_discovered": 1329,
+    "mac_passed": 1237,
+    "mac_skipped": 92,
+    "mac_seconds": 25.608,
+    "ci": "PASS exact PR head"
   }
 }
