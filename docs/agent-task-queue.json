@@ -204,7 +204,7 @@
       "worker04": "PR68 integrated; available",
       "worker07": "Implementing pool-vault conservation diagnostic",
       "worker08": "PR72 integrated; available",
-      "worker09": "PR66 integrated; available"
+      "worker09": "Implementing on-demand ownership evidence inspection UI"
     },
     "reviews": {
       "PR18": "92e9c6104b411101e414c03774a1675cbbf1ac91: independent review no blocking scoped defect",
@@ -268,6 +268,14 @@
         "status": "IMPLEMENTING",
         "base": "19e3527",
         "task": "Exact pool-vault token and WSOL conservation diagnostic wired into sell/replay"
+      },
+      {
+        "worker": "worker09",
+        "thread_id": "01a118fd-3f90-77d9-9549-c4497f5b10a6",
+        "host_id": "durable",
+        "status": "IMPLEMENTING",
+        "base": "e23027f",
+        "task": "On-demand guarded ownership diagnostic dashboard endpoint and scan UI, no provider or entry actions"
       }
     ],
     "saved_launch_probe": {
