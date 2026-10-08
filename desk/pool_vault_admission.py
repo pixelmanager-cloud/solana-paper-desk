@@ -5,6 +5,10 @@ integrity, then raw protocol identity. JSON and SHA256 are NOT chain authenticat
 The policy must come from the coordinator's protected acquisition ledger, never
 from a candidate report, normalized label or evidence-store contents. Its issuer
 must independently attest the RPC source/cluster and exact capture references.
+Include every known source-approved observation of this pool/mint/finalized slot;
+never prune contradictory receipts by selected refs, source or capture freshness.
+All scoped captures must agree on raw bank state and the slot's block time;
+unavailable or malformed competing evidence blocks admission as ambiguous.
 Synthetic receipts are explicitly opt-in, visibly marked and cannot authorize a
 production exclusion. This module performs no I/O except a supplied offline reader.
 
@@ -153,6 +157,71 @@ def _vault(value, mint, authority, *, native):
     return amount
 
 
+def _load_capture(refs, load, cache):
+    _require(type(refs) is EvidenceRefs and all(_hash(h) for h in refs.hashes()),
+             'EVIDENCE_REFERENCES_INVALID')
+    evidence = []
+    for key in refs.hashes():
+        if key not in cache:
+            try:
+                payload = load(key)
+                _require(isinstance(payload, dict) and len(canonical(payload).encode()) <= MAX_EVIDENCE_BYTES,
+                         'EVIDENCE_SHAPE_OR_SIZE_UNSUPPORTED')
+                _require(digest(payload) == key, 'EVIDENCE_CONTENT_HASH_MISMATCH')
+                cache[key] = payload
+            except _Reject:
+                raise
+            except Exception:
+                raise _Reject('EVIDENCE_UNREADABLE') from None
+        evidence.append(cache[key])
+    return evidence
+
+
+def _bound_capture(evidence, refs, keys, slot, at):
+    snapshot, request, clock, clock_request = evidence
+    params = [keys, {'encoding': 'base64', 'commitment': 'finalized', 'minContextSlot': slot}]
+    for envelope, manifest, method, expected_params, response_hash in (
+            (snapshot, request, 'getMultipleAccounts', params, refs.snapshot),
+            (clock, clock_request, 'getBlockTime', [slot], refs.block_time)):
+        _require(envelope.get('kind') == 'rpc_response_v1' and envelope.get('method') == method
+                 and envelope.get('params') == expected_params and 'result' in envelope
+                 and 'error' not in envelope, 'RPC_REQUEST_OR_RESPONSE_MISMATCH')
+        _require(manifest == {'kind': 'pool_vault_request_v1', 'network': NETWORK,
+                 'genesis_hash': GENESIS, 'method': method, 'params': expected_params,
+                 'response_hash': response_hash}, 'RPC_MANIFEST_BINDING_MISMATCH')
+    # Python equality treats bool == int; validate nested RPC slot types too.
+    _require(type(snapshot['params'][1]['minContextSlot']) is int
+             and type(clock['params'][0]) is int
+             and type(request['params'][1]['minContextSlot']) is int
+             and type(clock_request['params'][0]) is int, 'RPC_SLOT_TYPE_INVALID')
+    response = snapshot['result']
+    _require(isinstance(response, dict) and isinstance(response.get('context'), dict)
+             and type(response['context'].get('slot')) is int
+             and response['context']['slot'] == slot, 'ATOMIC_SNAPSHOT_SLOT_MISMATCH')
+    _require(type(clock['result']) is int and clock['result'] == at,
+             'SNAPSHOT_BLOCK_TIME_MISMATCH')
+    values = response.get('value')
+    _require(isinstance(values, list) and len(values) == 6, 'ATOMIC_ACCOUNT_SET_INCOMPLETE')
+    return values
+
+
+def _capture_state(values):
+    """Compare raw bank state, not transport metadata or normalized assertions.
+
+    Requests/account order/slot/block time are checked separately. API versions,
+    envelope annotations, omitted space and receipt source/capture wall time do
+    not change identity. Raw bytes, owner, executable and lamports do. Unknown
+    or malformed competing state is ambiguous, never an ignorable observation.
+    """
+    state = []
+    for index, value in enumerate(values):
+        program = PUMPSWAP if index == 0 else TOKEN_PROGRAM
+        lengths = (243, 287, 300, 301) if index == 0 else ((82,) if index < 4 else (165,))
+        raw = _raw_account(value, program, lengths)
+        state.append((value['owner'], value['executable'], value['lamports'], raw))
+    return tuple(state)
+
+
 def admit_pool_vault(*, account: str, pool: str, mint: str, snapshot_slot: int,
                      snapshot_time: int, now: int, refs: EvidenceRefs,
                      policy: TrustedSourcePolicy | None,
@@ -184,41 +253,49 @@ def admit_pool_vault(*, account: str, pool: str, mint: str, snapshot_slot: int,
         _require(type(refs) is EvidenceRefs and all(_hash(h) for h in refs.hashes()),
                  'EVIDENCE_REFERENCES_INVALID')
         result['evidence_hashes'] = list(refs.hashes())
-        # Selection is by refs, then exact external identity/scope; all conflicts block.
+        # Ref selection establishes endorsement only, never permission to ignore
+        # other independently trusted observations of the same immutable bank.
         receipts = [r for r in policy.receipts if r.refs == refs]
-        _require(len(receipts) == 1, 'ACQUISITION_RECEIPT_MISSING_OR_CONFLICTING')
-        receipt = receipts[0]
-        _require(receipt.source_id in policy.allowed_source_ids
-                 and receipt.source_kind in ('coordinator_capture', 'synthetic_fixture')
-                 and receipt.network == NETWORK and receipt.genesis_hash == GENESIS,
-                 'ACQUISITION_SOURCE_UNTRUSTED')
-        _require(receipt.source_kind != 'synthetic_fixture' or policy.allow_synthetic_fixtures,
-                 'SYNTHETIC_SOURCE_NOT_ALLOWED')
-        _require(receipt.pool == pool and receipt.mint == mint
-                 and _int(receipt.slot) and receipt.slot == snapshot_slot
-                 and _int(receipt.snapshot_time) and receipt.snapshot_time == snapshot_time,
-                 'ACQUISITION_SCOPE_MISMATCH')
-        _require(_int(receipt.captured_at) and snapshot_time <= receipt.captured_at
-                 and receipt.captured_at - snapshot_time <= 300
-                 and receipt.captured_at <= now < receipt.captured_at + policy.max_age_seconds,
-                 'ACQUISITION_TIME_STALE_OR_FUTURE')
+        _require(receipts, 'ACQUISITION_RECEIPT_MISSING_OR_CONFLICTING')
+        for receipt in receipts:
+            _require(receipt.source_id in policy.allowed_source_ids
+                     and receipt.source_kind in ('coordinator_capture', 'synthetic_fixture')
+                     and receipt.network == NETWORK and receipt.genesis_hash == GENESIS,
+                     'ACQUISITION_SOURCE_UNTRUSTED')
+            _require(receipt.source_kind != 'synthetic_fixture' or policy.allow_synthetic_fixtures,
+                     'SYNTHETIC_SOURCE_NOT_ALLOWED')
+            _require(receipt.pool == pool and receipt.mint == mint
+                     and _int(receipt.slot) and receipt.slot == snapshot_slot
+                     and _int(receipt.snapshot_time) and receipt.snapshot_time == snapshot_time,
+                     'ACQUISITION_SCOPE_MISMATCH')
+            _require(_int(receipt.captured_at) and snapshot_time <= receipt.captured_at
+                     and receipt.captured_at - snapshot_time <= 300
+                     and receipt.captured_at <= now < receipt.captured_at + policy.max_age_seconds,
+                     'ACQUISITION_TIME_STALE_OR_FUTURE')
+        # Equivalent endorsements are harmless; pick deterministically, prefer
+        # an explicitly approved coordinator source, and retain earliest expiry.
+        receipt = min(receipts, key=lambda r: (r.source_kind != 'coordinator_capture',
+                                              r.captured_at, r.source_id))
+        scoped = [r for r in policy.receipts
+                  if r.source_id in policy.allowed_source_ids
+                  and (r.source_kind == 'coordinator_capture'
+                       or (r.source_kind == 'synthetic_fixture' and policy.allow_synthetic_fixtures))
+                  and r.network == NETWORK and r.genesis_hash == GENESIS
+                  and r.pool == pool and r.mint == mint and _int(r.slot) and r.slot == snapshot_slot]
+        # Block time is deliberately NOT a grouping key: another trusted time
+        # for this same finalized slot is a contradiction, not another scope.
+        _require(all(_int(r.snapshot_time) and r.snapshot_time == snapshot_time for r in scoped),
+                 'ACQUISITION_CAPTURE_CONFLICT')
+        _require(all(_int(r.captured_at) and snapshot_time <= r.captured_at <= min(now, snapshot_time + 300)
+                     for r in scoped), 'ACQUISITION_CAPTURE_AMBIGUOUS')
         result.update(acquisition_provenance_trusted=True, source_id=receipt.source_id,
+                      source_ids=sorted({r.source_id for r in receipts}),
                       source_kind=receipt.source_kind, policy_id=policy.policy_id,
-                      captured_at=receipt.captured_at, expires_at=receipt.captured_at + policy.max_age_seconds)
-        evidence = []
-        for key in refs.hashes():
-            try:
-                payload = load(key)
-                _require(isinstance(payload, dict) and len(canonical(payload).encode()) <= MAX_EVIDENCE_BYTES,
-                         'EVIDENCE_SHAPE_OR_SIZE_UNSUPPORTED')
-                _require(digest(payload) == key, 'EVIDENCE_CONTENT_HASH_MISMATCH')
-                evidence.append(payload)
-            except _Reject:
-                raise
-            except Exception:
-                raise _Reject('EVIDENCE_UNREADABLE') from None
+                      captured_at=receipt.captured_at,
+                      expires_at=min(r.captured_at + policy.max_age_seconds for r in receipts))
+        cache = {}
+        evidence = _load_capture(refs, load, cache)
         result['content_integrity_verified'] = True
-        snapshot, request, clock, clock_request = evidence
         from solders.pubkey import Pubkey
         pk = Pubkey.from_string
         creator = Pubkey.find_program_address([b'pool-authority', bytes(pk(mint))], pk(PUMP))[0]
@@ -230,30 +307,26 @@ def admit_pool_vault(*, account: str, pool: str, mint: str, snapshot_slot: int,
                   bytes(pk(asset))], pk(ATA))[0]) for asset in (mint, SOL)]
         keys = [pool, mint, SOL, lp, *vaults]
         _require(len(set(keys)) == 6 and account in vaults, 'VAULT_ACCOUNT_ATA_MISMATCH')
-        params = [keys, {'encoding': 'base64', 'commitment': 'finalized', 'minContextSlot': snapshot_slot}]
-        for envelope, manifest, method, expected_params, response_hash in (
-                (snapshot, request, 'getMultipleAccounts', params, refs.snapshot),
-                (clock, clock_request, 'getBlockTime', [snapshot_slot], refs.block_time)):
-            _require(envelope.get('kind') == 'rpc_response_v1' and envelope.get('method') == method
-                     and envelope.get('params') == expected_params and 'result' in envelope
-                     and 'error' not in envelope, 'RPC_REQUEST_OR_RESPONSE_MISMATCH')
-            _require(manifest == {'kind': 'pool_vault_request_v1', 'network': NETWORK,
-                     'genesis_hash': GENESIS, 'method': method, 'params': expected_params,
-                     'response_hash': response_hash}, 'RPC_MANIFEST_BINDING_MISMATCH')
-        # Python equality treats bool == int; validate nested RPC slot types too.
-        _require(type(snapshot['params'][1]['minContextSlot']) is int
-                 and type(clock['params'][0]) is int
-                 and type(request['params'][1]['minContextSlot']) is int
-                 and type(clock_request['params'][0]) is int, 'RPC_SLOT_TYPE_INVALID')
-        response = snapshot['result']
-        _require(isinstance(response, dict) and isinstance(response.get('context'), dict)
-                 and type(response['context'].get('slot')) is int
-                 and response['context']['slot'] == snapshot_slot, 'ATOMIC_SNAPSHOT_SLOT_MISMATCH')
-        _require(type(clock['result']) is int and clock['result'] == snapshot_time,
-                 'SNAPSHOT_BLOCK_TIME_MISMATCH')
+        values = _bound_capture(evidence, refs, keys, snapshot_slot, snapshot_time)
         result['request_binding_verified'] = True
-        values = response.get('value')
-        _require(isinstance(values, list) and len(values) == 6, 'ATOMIC_ACCOUNT_SET_INCOMPLETE')
+        selected_state = _capture_state(values)
+        checked_refs = {refs}
+        # At most 256 receipts x four content-addressed reads (cached), all
+        # offline and <=64 KiB each. Contradictions never expire out of this
+        # immutable slot merely because the other capture's freshness expired.
+        for other in scoped:
+            if other.refs in checked_refs:
+                continue
+            try:
+                other_evidence = _load_capture(other.refs, load, cache)
+                other_values = _bound_capture(other_evidence, other.refs, keys, snapshot_slot, snapshot_time)
+                other_state = _capture_state(other_values)
+            except (_Reject, ValueError, KeyError, TypeError, IndexError, OverflowError):
+                raise _Reject('ACQUISITION_CAPTURE_AMBIGUOUS') from None
+            _require(other_state == selected_state, 'ACQUISITION_CAPTURE_CONFLICT')
+            checked_refs.add(other.refs)
+        result.update(supporting_capture_count=len(checked_refs),
+                      conflict_check_evidence_hashes=sorted(cache))
         pool_raw = _raw_account(values[0], PUMPSWAP, (243, 287, 300, 301))
         fields = parse_pool(values[0])
         _require(fields['unknown_trailing_bytes'] == 0 and fields['pool_bump'] == bump

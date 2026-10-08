@@ -133,14 +133,18 @@ class PoolVaultAdmissionTests(unittest.TestCase):
                        replace(self.policy, max_age_seconds=301), replace(self.policy, max_age_seconds=True),
                        replace(self.policy, max_age_seconds=0), replace(self.policy, allow_synthetic_fixtures=1),
                        replace(self.policy, allowed_source_ids=set(self.policy.allowed_source_ids)),
-                       replace(self.policy, receipts=tuple(self.policy.receipts))]:
+                       replace(self.policy, receipts=tuple(self.policy.receipts)),
+                       replace(self.policy, receipts=frozenset(
+                           replace(self.receipt, source_id=f'source-{i}') for i in range(257)))]:
             with self.subTest(policy=policy):
                 self.rejected(self.admit(policy=policy), 'SOURCE_POLICY_INVALID')
 
-    def test_empty_and_conflicting_receipts_never_choose_one(self):
-        for receipts in [frozenset(), frozenset({self.receipt, replace(self.receipt, source_id='other')})]:
-            self.rejected(self.admit(policy=replace(self.policy, receipts=receipts)),
-                          'ACQUISITION_RECEIPT_MISSING_OR_CONFLICTING')
+    def test_empty_and_untrusted_duplicate_receipts_never_choose_one(self):
+        self.rejected(self.admit(policy=replace(self.policy, receipts=frozenset())),
+                      'ACQUISITION_RECEIPT_MISSING_OR_CONFLICTING')
+        receipts = frozenset({self.receipt, replace(self.receipt, source_id='other')})
+        self.rejected(self.admit(policy=replace(self.policy, receipts=receipts)),
+                      'ACQUISITION_SOURCE_UNTRUSTED')
 
     def test_source_cluster_genesis_and_fixture_opt_in_are_independent(self):
         for receipt in [replace(self.receipt, source_id='untrusted'), replace(self.receipt, network='devnet'),
@@ -392,3 +396,128 @@ class PoolVaultAdmissionTests(unittest.TestCase):
     def test_slot_and_clock_integer_layout_limits(self):
         for changes in [dict(snapshot_slot=2**64), dict(snapshot_time=2**63), dict(now=2**63)]:
             self.rejected(self.admit(**changes), 'QUERY_TIME_OR_SLOT_INVALID')
+
+    def paired_captures(self, *, mutate=None, other_source=None, other_time=None):
+        """Harness-only coordinator endorsements; no live acquisition claim."""
+        first_refs = self.refs
+        first_evidence = deepcopy(self.evidence)
+        first = replace(self.receipt, source_kind='coordinator_capture')
+        self.receipt = first
+        snapshot = deepcopy(self.evidence[self.refs.snapshot])
+        clock = deepcopy(self.evidence[self.refs.block_time])
+        if mutate:
+            mutate(snapshot)
+        if other_time is not None:
+            clock['result'] = other_time
+            self.receipt = replace(self.receipt, snapshot_time=other_time)
+        self.repin(snapshot=snapshot, clock=clock)
+        second_refs = self.refs
+        second = replace(self.receipt, source_id=other_source or first.source_id)
+        self.evidence.update(first_evidence)
+        self.policy = replace(self.policy, allowed_source_ids=frozenset({first.source_id, second.source_id}),
+                              receipts=frozenset({first, second}), allow_synthetic_fixtures=False)
+        return first_refs, second_refs, first, second
+
+    @staticmethod
+    def change_base_amount(snapshot):
+        account = snapshot['result']['value'][4]
+        raw = bytearray(base64.b64decode(account['data'][0]))
+        raw[64:72] = (6001).to_bytes(8, 'little')
+        account['data'][0] = base64.b64encode(raw).decode()
+
+    def test_contradictory_same_point_captures_reject_both_ref_directions_and_vaults(self):
+        first_refs, second_refs, _, _ = self.paired_captures(mutate=self.change_base_amount)
+        self.assertNotEqual(first_refs, second_refs)
+        for refs in (first_refs, second_refs):
+            for account in (self.q['base_vault'], self.q['quote_vault']):
+                with self.subTest(refs=refs, account=account):
+                    self.rejected(self.admit(refs=refs, account=account), 'ACQUISITION_CAPTURE_CONFLICT')
+
+    def test_different_allowed_sources_cannot_select_convenient_capture(self):
+        first_refs, second_refs, _, _ = self.paired_captures(
+            mutate=self.change_base_amount, other_source='independent-source-two')
+        for refs in (first_refs, second_refs):
+            self.rejected(self.admit(refs=refs), 'ACQUISITION_CAPTURE_CONFLICT')
+
+    def test_contradictory_block_times_are_same_slot_conflict_not_distinct_scope(self):
+        first_time = self.q['snapshot_time']
+        first_refs, second_refs, _, _ = self.paired_captures(other_time=first_time+1)
+        for refs, at in [(first_refs, first_time), (second_refs, first_time+1)]:
+            self.rejected(self.admit(refs=refs, snapshot_time=at), 'ACQUISITION_CAPTURE_CONFLICT')
+
+    def test_stale_competing_capture_does_not_erase_immutable_slot_contradiction(self):
+        first_refs, _, first, second = self.paired_captures(mutate=self.change_base_amount)
+        second = replace(second, captured_at=self.q['snapshot_time'])
+        policy = replace(self.policy, receipts=frozenset({first, second}), max_age_seconds=1)
+        self.rejected(self.admit(refs=first_refs, policy=policy), 'ACQUISITION_CAPTURE_CONFLICT')
+
+    def test_future_competing_capture_is_ambiguous_even_with_equivalent_state(self):
+        first_refs, second_refs, first, second = self.paired_captures(
+            mutate=lambda s: s.update(transport_annotation='duplicate transport'))
+        second = replace(second, captured_at=self.captured_at+1)
+        policy = replace(self.policy, receipts=frozenset({first, second}))
+        self.rejected(self.admit(refs=first_refs, policy=policy), 'ACQUISITION_CAPTURE_AMBIGUOUS')
+        self.rejected(self.admit(refs=second_refs, policy=policy), 'ACQUISITION_TIME_STALE_OR_FUTURE')
+
+    def test_duplicate_equivalent_endorsements_are_admitted_with_cached_reads(self):
+        refs, _, first, second = self.paired_captures(other_source='independent-source-two')
+        second = replace(second, captured_at=second.captured_at-1)
+        policy = replace(self.policy, receipts=frozenset({first, second, first}))
+        loaded = []
+        def load(key):
+            loaded.append(key)
+            return deepcopy(self.evidence[key])
+        result = self.admit(refs=refs, policy=policy, load=load)
+        self.assertTrue(result['production_snapshot_exclusion_allowed'])
+        self.assertEqual(result['supporting_capture_count'], 1)
+        self.assertEqual(result['source_ids'], sorted(policy.allowed_source_ids))
+        self.assertEqual(result['expires_at'], second.captured_at+policy.max_age_seconds)
+        self.assertEqual(len(loaded), 4)
+        self.assertEqual(len(set(loaded)), 4)
+        self.assertFalse(result['historical_interval_exclusion_allowed'])
+        self.assertFalse(result['eligible_for_trading'])
+
+    def test_metadata_distinct_refs_with_identical_raw_state_are_equivalent(self):
+        def metadata_only(snapshot):
+            snapshot['result']['context']['apiVersion'] = 'another-provider-version'
+            snapshot['transport_annotation'] = 'not bank state'
+            for value in snapshot['result']['value']:
+                value.pop('space')
+        first_refs, second_refs, _, _ = self.paired_captures(
+            mutate=metadata_only, other_source='independent-source-two')
+        self.assertNotEqual(first_refs, second_refs)
+        for refs in (first_refs, second_refs):
+            result = self.admit(refs=refs)
+            self.assertTrue(result['production_snapshot_exclusion_allowed'])
+            self.assertEqual(result['amount_raw'], '6000')
+            self.assertEqual(result['supporting_capture_count'], 2)
+            self.assertEqual(len(result['conflict_check_evidence_hashes']), 6)
+            self.assertFalse(result['chain_authenticated'])
+
+    def test_unavailable_or_malformed_trusted_competing_capture_is_ambiguous(self):
+        first_refs, second_refs, _, _ = self.paired_captures(mutate=self.change_base_amount)
+        del self.evidence[second_refs.snapshot]
+        self.rejected(self.admit(refs=first_refs), 'ACQUISITION_CAPTURE_AMBIGUOUS')
+        self.setUp()
+        def wrong_request(snapshot):
+            snapshot['params'][1]['commitment'] = 'confirmed'
+        first_refs, _, _, _ = self.paired_captures(mutate=wrong_request)
+        self.rejected(self.admit(refs=first_refs), 'ACQUISITION_CAPTURE_AMBIGUOUS')
+
+    def test_same_point_raw_control_or_lamport_conflict_is_quarantined(self):
+        for change in [lambda s: s['result']['value'][0].update(lamports=2039281),
+                       lambda s: s['result']['value'][4].update(owner=TOKEN_2022)]:
+            self.setUp()
+            first_refs, _, _, _ = self.paired_captures(mutate=change)
+            self.rejected(self.admit(refs=first_refs))
+
+    def test_other_slot_chain_or_pool_receipts_are_not_this_snapshot_scope(self):
+        for change in [dict(slot=101), dict(network='devnet'), dict(genesis_hash='other-chain'),
+                       dict(pool=SOL), dict(mint=SOL)]:
+            self.setUp()
+            first_refs, _, first, second = self.paired_captures(mutate=self.change_base_amount)
+            other = replace(second, **change)
+            policy = replace(self.policy, receipts=frozenset({first, other}))
+            result = self.admit(refs=first_refs, policy=policy)
+            self.assertTrue(result['production_snapshot_exclusion_allowed'])
+            self.assertEqual(result['supporting_capture_count'], 1)
