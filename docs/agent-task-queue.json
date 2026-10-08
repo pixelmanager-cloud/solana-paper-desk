@@ -196,15 +196,15 @@
     "blocker": "Live legacy evidence,protected pool receipt capture,lifecycle semantic approval and holder exposure integration unfinished",
     "followups": {
       "worker02": "PR40 review interrupted by automated cybersecurity-risk flag; no final acceptance",
-      "worker06": "PR48 and combinedreview complete;available",
-      "cloud_reviewer": "PR49 review complete;available",
+      "worker06": "PR50 review with record/context slot probes",
+      "cloud_reviewer": "PR51 changes required; available",
       "worker10": "PR45 independent review complete;available",
       "worker03": "Bounded newerlegacysearch found no matching authoritative event;available",
-      "worker04": "PR47 published; under independent review",
-      "worker05": "PR49 published;independent review",
+      "worker04": "PR47 accepted; available",
+      "worker05": "PR49 accepted; available",
       "worker09": "PR35 reviewed and integrated; available",
-      "worker01": "Implement raw transaction diagnostic capture; no gate widening or new budget",
-      "worker07": "Implement disconnected structural lifecycle report; PR48 still pending; no runtime approval",
+      "worker01": "PR51 partial schema regression repair assigned",
+      "worker07": "PR50 structural context binding repair assigned",
       "worker08": "PR31 reviewed and integrated; available"
     },
     "reviews": {
@@ -236,7 +236,9 @@
       "PR47": "9e73e6c5a10cfae5fd3c25c02eb71b2bd4deb12b independent scopedPASS; combinedLinux1091zero skips and102focused/probe tests; final combination pending",
       "PR45": "ad09535f8db8c736e8295e2df1988e0b79de12af scopedPASS; Linux1096zero skips;3832probes; combinedtreecbc8f932f3fbf4de957a8d85086f2f8ec23c76ce",
       "PR48": "3ffe18674a2162257e5fd641f1fafb92e5ef40c4 scopedPASS;6013 independentbyteprobes; exactLinux1082 andcombined1170zero skips",
-      "PR49": "2b11fbf6c8a5d7933088283a9a7ab9cbd9f25578 independent scopedPASS;Linux1179zero skips;canonical signatures and strict options independently probed"
+      "PR49": "2b11fbf6c8a5d7933088283a9a7ab9cbd9f25578 independent scopedPASS;Linux1179zero skips;canonical signatures and strict options independently probed",
+      "PR51": "5bd4cd0854fa95470489cbbef00a3b8cb620c8db CHANGES_REQUIRED: partial claims-table loss after ambiguous charged attempt permits duplicate RPC; independent Linux1199 zero skips does not cover defect",
+      "PR50": "1706dddc4850d7ea8d23ab9a6b8cf08a99f3e9c0 HELD: coordinator reproduced record/context slot mismatch, missing context signature and out-of-u64 slots yielding structural agreement; independent review ongoing"
     },
     "candidate_combination": {
       "commit": "bfcc550ca25bd6cb79dc7ac3ad2b30c72f7b1033",
@@ -258,22 +260,31 @@
     "published_ci": "d6c710bcf95a6c61fd0f786489be4b458bf7b6da successful",
     "active_claims": [
       {
-        "worker": "worker07",
-        "thread_id": "01a118fd-0f1c-749c-b85b-5e730937d0a8",
+        "worker": "worker06",
+        "thread_id": "01a118fc-f867-7233-8eec-c20659e70095",
         "host_id": "durable",
-        "task": "Disconnected create_v2 structural lifecycle report; explicit pending PR48 dependency",
-        "status": "DISPATCHED",
-        "base_commit": "56e7aaf2c252cd6093a786e07072527ee4617d82",
-        "depends_on_pr": 48,
-        "dependency_head": "3ffe18674a2162257e5fd641f1fafb92e5ef40c4"
+        "task": "Independent create_v2 structural lifecycle review",
+        "status": "REVIEWING",
+        "pr": 50,
+        "head": "1706dddc4850d7ea8d23ab9a6b8cf08a99f3e9c0"
       },
       {
         "worker": "worker01",
         "thread_id": "01a118fc-39bc-722c-b442-8bf5a749e0bb",
         "host_id": "durable",
-        "task": "Bounded raw transaction diagnostic capture on existing admitted investigation budget",
-        "status": "DISPATCHED",
-        "base_commit": "076c9ad87e019bd458a444b59973186565aea5fd"
+        "task": "Repair partial raw-capture schema loss fail-closed",
+        "status": "FIXING",
+        "pr": 51,
+        "head": "5bd4cd0854fa95470489cbbef00a3b8cb620c8db"
+      },
+      {
+        "worker": "worker07",
+        "thread_id": "01a118fd-0f1c-749c-b85b-5e730937d0a8",
+        "host_id": "durable",
+        "task": "Repair lifecycle slot/signature structural binding",
+        "status": "FIXING",
+        "pr": 50,
+        "head": "1706dddc4850d7ea8d23ab9a6b8cf08a99f3e9c0"
       }
     ],
     "saved_launch_probe": {
@@ -439,6 +450,18 @@
       "ci": "PASS",
       "mac_discovered": 1179,
       "mac_passed": 1106,
+      "mac_skipped": 73
+    },
+    "pending_capture_lifecycle": {
+      "prs": {
+        "50": "1706dddc4850d7ea8d23ab9a6b8cf08a99f3e9c0",
+        "51": "5bd4cd0854fa95470489cbbef00a3b8cb620c8db"
+      },
+      "scratch_commit": "50efbda3972f43f3018ad370f758833842246bc8",
+      "integrated": false,
+      "review": "CHANGES_REQUIRED; neither candidate integrated",
+      "mac_discovered": 1235,
+      "mac_passed": 1162,
       "mac_skipped": 73
     }
   }
