@@ -791,7 +791,14 @@
       "head": "a97fec8a07c9da8166310b776d6e03c191866096",
       "reviewer": "worker06",
       "status": "REVIEWING",
-      "integrated": false
+      "integrated": false,
+      "mac_combined": {
+        "discovered": 1430,
+        "passed": 1331,
+        "skips": 99,
+        "seconds": 27.156
+      },
+      "ci": "SUCCESS exact head; independent review pending"
     }
   },
   "parallel_combined_regression": {
