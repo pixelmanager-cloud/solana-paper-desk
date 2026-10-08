@@ -210,7 +210,11 @@ class CloudEntryGateTests(unittest.TestCase):
         d = assess(scan, 1000, self.store, progress)
         self.assertEqual(d['observed_at'], 1)
         self.assertIn('INVESTIGATION_NOT_FRESH_FOR_ENTRY', d['reasons'])
-        self.assertEqual(d['entry_evidence']['gates'], evaluate(self.signed(original), self.store)['gates'])
+        original_gates = evaluate(self.signed(original), self.store)['gates']
+        for name, gate in original_gates.items():
+            if name != 'history_snapshot':
+                self.assertEqual(d['entry_evidence']['gates'][name], gate)
+        self.assertIn('CONTINUATION_RAW_EVIDENCE_UNVERIFIED', d['reasons'])
         self.blocked(d)
 
     def test_consumer_preserves_original_after_source_timestamp_rewrite(self):

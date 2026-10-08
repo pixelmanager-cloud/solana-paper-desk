@@ -17,14 +17,13 @@ def assess(scan,now,store=None,progress=None):
         if not isinstance(values,list) or any(not isinstance(v,str) for v in values):raise ValueError('Invalid investigation reasons')
         reasons.extend(values)
     from .entry_evidence import evaluate,POLICY
-    evidence=evaluate(report,store)
-    if progress:
-        from .replay_history import reconstruct_launch_history
-        evidence['continued_ownership_history']=reconstruct_launch_history({**report,'history_queries':progress['history_queries']},store)
-        evidence['ownership_progress_hash']=progress['evidence_hash']
-        evidence['ownership_requests_used']=progress['requests_used']
-        # A historical continuation does not refresh the original scan, rewrite
-        # its original gates or authorize entry. Preserve both views explicitly.
+    evidence=evaluate(report,store,scan=scan,progress=progress)
+    continued=evidence['continuation_evidence']
+    if 'progress_hash' in continued:
+        evidence['ownership_progress_hash']=continued['progress_hash']
+        evidence['ownership_requests_used']=continued['requests_used']
+    if 'history' in continued:
+        evidence['continued_ownership_history']=continued['history']
     reasons.extend(evidence['reasons'])
     return {'kind':'paper_candidate_decision','policy':POLICY,'entry_evidence':evidence,'scan_id':scan['id'],'mint':scan['mint'],
         'evaluated_at':now,'observed_at':observed,'source_hash':digest(dict(scan)),'decision':'REJECT',
@@ -61,11 +60,10 @@ def consume(source,destination,*,now=None,limit=20,evidence_db=None):
             for row in rows:
                 source_payload=canonical(dict(row))
                 if len(source_payload.encode())>2*1024*1024:raise ValueError('Investigation exceeds consumer size budget')
-                from .ownership_worker import saved_progress
-                progress=saved_progress(store,row)
-                revision=POLICY+(':'+progress['evidence_hash'] if progress else '')
+                decision=assess(row,now,store)
+                key=decision['entry_evidence']['continuation_evidence'].get('revision_hash')
+                revision=POLICY+(':'+key if key else '')
                 if c.execute('SELECT 1 FROM decision_evaluations WHERE scan_id=? AND policy=?',(row['id'],revision)).fetchone():continue
-                decision=assess(row,now,store,progress)
                 c.execute('INSERT INTO decision_evaluations VALUES(?,?,?,?,?)',(row['id'],revision,decision['source_hash'],source_payload,canonical(decision)))
                 c.execute('INSERT OR IGNORE INTO decisions VALUES(?,?,?,?)',(row['id'],decision['source_hash'],source_payload,canonical(decision)))
                 output.append(decision)
