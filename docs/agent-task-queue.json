@@ -904,7 +904,16 @@
         "tree": "024eca54045e66f1f8f430cff959c68c9c67436c"
       },
       "original_linux_tests": 1509,
-      "original_independent_probes": 17
+      "original_independent_probes": 17,
+      "mac_repaired_combined": {
+        "base": "27de4d7",
+        "tree": "577bfdba722f171254c28b11d7c2fae92e8a38a8",
+        "discovered": 1513,
+        "passed": 1401,
+        "skips": 112,
+        "seconds": 30.644,
+        "platform_limitation": "Guarded diagnostic replay explicitly unavailable on non-Linux;13 actual read-dependent cases individually gated; portable rejection tests pass"
+      }
     }
   },
   "parallel_combined_regression": {
