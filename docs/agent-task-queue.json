@@ -196,7 +196,7 @@
     "blocker": "Live legacy evidence,protected pool receipt capture,lifecycle semantic approval and holder exposure integration unfinished",
     "followups": {
       "worker02": "PR40 review interrupted by automated cybersecurity-risk flag; no final acceptance",
-      "worker06": "PR54 review published; available",
+      "worker06": "PR72 repaired independent review PASS; available",
       "cloud_reviewer": "PR55 source/schema provenance review",
       "worker10": "PR45 independent review complete;available",
       "worker03": "PR55 published; available",
@@ -205,7 +205,7 @@
       "worker09": "PR35 reviewed and integrated; available",
       "worker01": "Forward fix published; independent re-review pending; available",
       "worker07": "Native lamport reconciliation assigned",
-      "worker08": "PR31 reviewed and integrated; available"
+      "worker08": "PR72 repaired consumer accepted; available"
     },
     "reviews": {
       "PR18": "92e9c6104b411101e414c03774a1675cbbf1ac91: independent review no blocking scoped defect",
@@ -262,27 +262,6 @@
     },
     "published_ci": "886fc96d404b9d3ffd99c0045f7231d563a5d946 successful",
     "active_claims": [
-      {
-        "worker": "worker08",
-        "thread_id": "01a118fd-2563-7126-90d7-bd07693de0b2",
-        "host_id": "durable",
-        "task": "PR72 monitor preflight integrity race diagnostic repair",
-        "status": "AUTHOR_COMPLETE_PENDING_REVIEW",
-        "base": "e13d17b",
-        "pr": 72,
-        "head": "f40d4edae7783d5dcbb6d9200879febd455edbf9",
-        "consumer_pr": 72
-      },
-      {
-        "worker": "worker06",
-        "thread_id": "01a118fc-f867-7233-8eec-c20659e70095",
-        "host_id": "durable",
-        "task": "Independent recovery consumer review with PR65 repair",
-        "status": "REVIEWING",
-        "pr": 72,
-        "head": "f40d4edae7783d5dcbb6d9200879febd455edbf9",
-        "base": "9f6adea"
-      },
       {
         "worker": "worker10",
         "thread_id": "01a118fd-56d5-70b8-ad31-dba13e982082",
@@ -822,8 +801,8 @@
     "72": {
       "head": "f40d4edae7783d5dcbb6d9200879febd455edbf9",
       "reviewer": "worker06",
-      "status": "RE_REVIEWING",
-      "integrated": false,
+      "status": "PASS_INTEGRATED",
+      "integrated": true,
       "depends_on": {
         "65": "ff201a6dacb979e8edfd541956e38167dcd66c8c"
       },
@@ -834,15 +813,20 @@
         "seconds": 30.191
       },
       "finding": "Monitor preflight/checkpoint corruption race leaks Ledger ValueError instead of recovery status",
-      "linux_tests": 1450,
-      "reviewed_tree": "716b04c52428830ad903375e0a54b9e807841b18",
+      "linux_tests": 1472,
+      "reviewed_tree": "d58e62db81636694f2d86510a10c4698634f880b",
       "mac_repaired_combined": {
         "discovered": 1472,
         "passed": 1373,
         "skips": 99,
         "seconds": 30.033
       },
-      "ci": "SUCCESS repaired exact head"
+      "ci": "SUCCESS repaired exact head",
+      "finding_resolved": true,
+      "linux_skips": 0,
+      "tree_match": true,
+      "integration_commit": "17959d27fef67a5b7c280cb5f251ea724421101a",
+      "review_url": "https://github.com/pixelmanager-cloud/solana-paper-desk/pull/72#issuecomment-6055398798"
     },
     "73": {
       "head": "64c262a8e8593d848d042832d47b3a8c711a8a00",
