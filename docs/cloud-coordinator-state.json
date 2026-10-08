@@ -1,6 +1,6 @@
 {
   "schema_version": 1,
-  "revision": 7,
+  "revision": 8,
   "repository": "pixelmanager-cloud/solana-paper-desk",
   "source_main_sha": "e298e15cd758932e81d2241130716632702f5bd0",
   "observed_date": "2026-10-08",
@@ -392,6 +392,12 @@
       "head_sha": "92e9c6104b411101e414c03774a1675cbbf1ac91",
       "review_id": 5450316600,
       "result": "Prior P2 findings resolved; exact-head tests/CI pass; no ownership acceptance or merge."
+    },
+    {
+      "kind": "PR26_POINT_SNAPSHOT_REVIEW",
+      "head_sha": "f873c52cfab48ebb203377d0e3548cfc38c477bf",
+      "review_id": 5450369141,
+      "result": "P2 conflicting captures reproduced and review posted; exact-head suite/CI pass; no merge, dispatch or live acceptance."
     }
   ],
   "artifact_pr": {
@@ -690,6 +696,44 @@
         }
       ],
       "proof_artifact": "docs/reviews/cloud-pr18-92e9c61.md",
+      "accepted": false,
+      "live_acceptance": false
+    },
+    {
+      "policy_version": "cloud-independent-review-v1",
+      "pr": 26,
+      "head_sha": "f873c52cfab48ebb203377d0e3548cfc38c477bf",
+      "base_sha": "22e1dae7c8f6a1adaca2690c14b13aabc663e729",
+      "review_id": 5450369141,
+      "review_action": "COMMENT",
+      "status": "FINDING_P2_CONFLICTING_SNAPSHOT_CAPTURES_FIX_REQUESTED",
+      "findings": [
+        "Different reference tuples for contradictory trusted captures of the same finalized snapshot both yield production_snapshot_exclusion_allowed; quarantine unresolved contradictory state before selecting refs."
+      ],
+      "limitations": [
+        "Protected production acquisition receipt issuer/ledger is external and absent in this PR; fixture coordinator_capture is a harness attestation, not authenticated live evidence.",
+        "No historical interval exclusion, entry or ownership acceptance; no live calls. PR25 left to worker10."
+      ],
+      "tests": {
+        "python": "3.12.14",
+        "targeted_passed": 33,
+        "full_suite_passed": 703,
+        "skipped": 0,
+        "independent_control_matrix_cases": 300,
+        "freshness_boundaries": 4,
+        "reference_substitution_cases": 4,
+        "conflicting_captures": "REPRODUCED_BOTH_PRODUCTION_SNAPSHOT_ADMITTED",
+        "exact_changed_blobs_verified": 36
+      },
+      "ci": [
+        {
+          "id": 37713023296,
+          "name": "Tests",
+          "status": "completed",
+          "conclusion": "success"
+        }
+      ],
+      "proof_artifact": "docs/reviews/cloud-pr26-f873c52.md",
       "accepted": false,
       "live_acceptance": false
     }
