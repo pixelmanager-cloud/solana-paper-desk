@@ -270,14 +270,15 @@
         "pr": 91,
         "head": "ce5928225a40a4d32ff5c53781631c0fa010a414",
         "base": "94eb463c58d08cfe6c5ac470ae41b4b6a3ef077e",
-        "wait_cursor": "8f3328cf-bef6-441d-83f8-2d1f46b3b0df:54"
+        "wait_cursor": "8f3328cf-bef6-441d-83f8-2d1f46b3b0df:54",
+        "final_base": "a2afb0075e2d1d33672027b71b9ff066ce6aa76c"
       },
       {
         "id": "COMMON-BANK-JOURNAL-SEMANTIC-REPLAY",
         "worker": "02",
         "thread_id": "01a118fc-666c-70b6-9fa8-2c7520f0a0bb",
         "host_id": "durable",
-        "status": "RESERVED_PENDING_DISPATCH",
+        "status": "DISPATCHED",
         "base": "a2afb0075e2d1d33672027b71b9ff066ce6aa76c",
         "scope": "Bounded diagnostic semantic replay of original completed journal bytes against accepted common bank view; no publication/transport"
       }
