@@ -1,10 +1,10 @@
 {
   "schema_version": 1,
-  "revision": 3,
+  "revision": 4,
   "repository": "pixelmanager-cloud/solana-paper-desk",
   "source_main_sha": "e298e15cd758932e81d2241130716632702f5bd0",
   "observed_date": "2026-10-08",
-  "status": "GITHUB_REVIEW_ONLY_SCHEDULE_ENABLED_EXECUTION_UNVERIFIED",
+  "status": "GITHUB_REVIEW_ONLY_ACTIVE",
   "schedule": {
     "type": "HOSTED_AUTOMATION",
     "interval_minutes": 60,
@@ -57,11 +57,11 @@
       "host_id": "durable",
       "assignment": "OWN-1 finalized snapshot integration",
       "expected_branch": "codex/cloud-wave1-01",
-      "branch_sha": null,
-      "pr": null,
+      "branch_sha": "87f7bc7a2a01c89b33d870748a35f919cd0c4ff7",
+      "pr": 18,
       "activity": "UNKNOWN_LAST_DISPATCH_ACTIVE",
       "claim": "RESERVED_UNRESOLVED",
-      "review_status": "AWAITING_REVIEWABLE_ARTIFACT",
+      "review_status": "FINDING_P2_FIX_REQUESTED",
       "acceptance": "NOT_ACCEPTED",
       "followup_delivery": "BLOCKED",
       "requested_followup": "Return a pushed reviewable branch or PR, exact base/head SHAs, changed files, full test result, provenance, limitations and unresolved dependencies. Preserve assigned scope; do not integrate or claim live acceptance."
@@ -72,11 +72,11 @@
       "host_id": "durable",
       "assignment": "OWN-2 account classification",
       "expected_branch": "codex/cloud-wave1-02",
-      "branch_sha": null,
-      "pr": null,
+      "branch_sha": "0a2cea9a1e255915f49831a3c7d467e4afb77c05",
+      "pr": 19,
       "activity": "UNKNOWN_LAST_DISPATCH_ACTIVE",
       "claim": "RESERVED_UNRESOLVED",
-      "review_status": "AWAITING_REVIEWABLE_ARTIFACT",
+      "review_status": "SCOPED_REVIEW_NO_BLOCKING_DEFECT_FOUND_ADAPTER_GATES_PENDING",
       "acceptance": "NOT_ACCEPTED",
       "followup_delivery": "BLOCKED",
       "requested_followup": "Return a pushed reviewable branch or PR, exact base/head SHAs, changed files, full test result, provenance, limitations and unresolved dependencies. Preserve assigned scope; do not integrate or claim live acceptance."
@@ -102,11 +102,11 @@
       "host_id": "durable",
       "assignment": "OWN-3 distribution exposure core",
       "expected_branch": "codex/cloud-wave1-04",
-      "branch_sha": null,
-      "pr": null,
+      "branch_sha": "0b4fbdb108cb00ac2927071812ed725c6469f1ea",
+      "pr": 12,
       "activity": "UNKNOWN_LAST_DISPATCH_ACTIVE",
       "claim": "RESERVED_UNRESOLVED",
-      "review_status": "AWAITING_REVIEWABLE_ARTIFACT",
+      "review_status": "SCOPED_REVIEW_NO_BLOCKING_DEFECT_FOUND_ADAPTER_GATES_PENDING",
       "acceptance": "NOT_ACCEPTED",
       "followup_delivery": "BLOCKED",
       "requested_followup": "Return a pushed reviewable branch or PR, exact base/head SHAs, changed files, full test result, provenance, limitations and unresolved dependencies. Preserve assigned scope; do not integrate or claim live acceptance."
@@ -354,6 +354,20 @@
     {
       "kind": "SCOPE_HANDOFF",
       "result": "Desktop coordinator exclusively owns integration/dispatch; hourly hosted GitHub-only review automation created and enabled, execution not verified."
+    },
+    {
+      "kind": "EXACT_HEAD_INDEPENDENT_REVIEWS",
+      "prs": [
+        18,
+        19,
+        12
+      ],
+      "review_ids": [
+        5450225333,
+        5450226120,
+        5450226914
+      ],
+      "result": "Reviews posted; heads unchanged at submission; full fixture suites pass; PR18 publication race reproduced; no acceptance/merge/dispatch."
     }
   ],
   "artifact_pr": {
@@ -369,10 +383,138 @@
     "reported_local_heartbeat_minutes": 10
   },
   "review_policy_version": "cloud-independent-review-v1",
-  "reviews": [],
+  "reviews": [
+    {
+      "policy_version": "cloud-independent-review-v1",
+      "pr": 18,
+      "head_sha": "87f7bc7a2a01c89b33d870748a35f919cd0c4ff7",
+      "base_sha": "e298e15cd758932e81d2241130716632702f5bd0",
+      "worker_agent": "01",
+      "review_id": 5450225333,
+      "review_action": "COMMENT",
+      "reviewer": "independent cloud coordinator execution; shared GitHub account pixelmanager-cloud; not an author self-approval",
+      "status": "FINDING_P2_FIX_REQUESTED",
+      "findings": [
+        "Stale concurrent ownership_heads publication reproduced; serialize invocation or fence head writes.",
+        "Unmocked positive collection-to-replay integration fixture needed."
+      ],
+      "tests": {
+        "python": "3.12.14",
+        "targeted_passed": 10,
+        "full_suite_passed": 523,
+        "full_suite_command": "python -m unittest discover -q",
+        "adversarial_command": "python review_adversarial.py",
+        "adversarial_result": "PASS (reproduced documented finding/contract boundary)",
+        "initial_environment_failure": "Existing loopback HTTP socket denied; rerun with loopback-capable permission passed.",
+        "exact_changed_blobs_verified": true,
+        "base_code_equivalence_verified": true,
+        "combined_integration_suite": "NOT_RUN_NO_PROPOSED_COMBINED_COMMIT"
+      },
+      "ci": [
+        {
+          "id": 37710656102,
+          "name": "Tests",
+          "status": "completed",
+          "conclusion": "success",
+          "run_number": 30,
+          "jobs_url": "https://api.github.com/repos/pixelmanager-cloud/solana-paper-desk/actions/runs/37710656102/jobs",
+          "logs_url": "https://api.github.com/repos/pixelmanager-cloud/solana-paper-desk/actions/runs/37710656102/logs",
+          "workflow_id": 377958194
+        }
+      ],
+      "proof_artifact": "docs/reviews/cloud-independent-20261008-wave1.md",
+      "accepted": false,
+      "live_acceptance": false
+    },
+    {
+      "policy_version": "cloud-independent-review-v1",
+      "pr": 19,
+      "head_sha": "0a2cea9a1e255915f49831a3c7d467e4afb77c05",
+      "base_sha": "e298e15cd758932e81d2241130716632702f5bd0",
+      "worker_agent": "02",
+      "review_id": 5450226120,
+      "review_action": "COMMENT",
+      "reviewer": "independent cloud coordinator execution; shared GitHub account pixelmanager-cloud; not an author self-approval",
+      "status": "SCOPED_REVIEW_NO_BLOCKING_DEFECT_FOUND_ADAPTER_GATES_PENDING",
+      "findings": [
+        "Trusted hash policy membership is external authentication contract; candidate-controlled admission must remain blocked.",
+        "Preserve chain-program vs holder-owner identity, purpose and exclusive time/slot expiry in adapter."
+      ],
+      "tests": {
+        "python": "3.12.14",
+        "targeted_passed": 12,
+        "full_suite_passed": 525,
+        "full_suite_command": "python -m unittest discover -q",
+        "adversarial_command": "python review_adversarial.py",
+        "adversarial_result": "PASS (reproduced documented finding/contract boundary)",
+        "initial_environment_failure": "Existing loopback HTTP socket denied; rerun with loopback-capable permission passed.",
+        "exact_changed_blobs_verified": true,
+        "base_code_equivalence_verified": true,
+        "combined_integration_suite": "NOT_RUN_NO_PROPOSED_COMBINED_COMMIT"
+      },
+      "ci": [
+        {
+          "id": 37710675720,
+          "name": "Tests",
+          "status": "completed",
+          "conclusion": "success",
+          "run_number": 32,
+          "jobs_url": "https://api.github.com/repos/pixelmanager-cloud/solana-paper-desk/actions/runs/37710675720/jobs",
+          "logs_url": "https://api.github.com/repos/pixelmanager-cloud/solana-paper-desk/actions/runs/37710675720/logs",
+          "workflow_id": 377958194
+        }
+      ],
+      "proof_artifact": "docs/reviews/cloud-independent-20261008-wave1.md",
+      "accepted": false,
+      "live_acceptance": false
+    },
+    {
+      "policy_version": "cloud-independent-review-v1",
+      "pr": 12,
+      "head_sha": "0b4fbdb108cb00ac2927071812ed725c6469f1ea",
+      "base_sha": "e298e15cd758932e81d2241130716632702f5bd0",
+      "worker_agent": "04",
+      "review_id": 5450226914,
+      "review_action": "COMMENT",
+      "reviewer": "independent cloud coordinator execution; shared GitHub account pixelmanager-cloud; not an author self-approval",
+      "status": "SCOPED_REVIEW_NO_BLOCKING_DEFECT_FOUND_ADAPTER_GATES_PENDING",
+      "findings": [
+        "Typed flags/nonempty refs are trusted adapter contracts, not evidence authentication.",
+        "OWN-2 exclusive slot/time expiry, program identity and unknown/private semantics require deliberate adapter mapping."
+      ],
+      "tests": {
+        "python": "3.12.14",
+        "targeted_passed": 25,
+        "full_suite_passed": 538,
+        "full_suite_command": "python -m unittest discover -q",
+        "adversarial_command": "python review_adversarial.py",
+        "adversarial_result": "PASS (reproduced documented finding/contract boundary)",
+        "initial_environment_failure": "Existing loopback HTTP socket denied; rerun with loopback-capable permission passed.",
+        "exact_changed_blobs_verified": true,
+        "base_code_equivalence_verified": true,
+        "combined_integration_suite": "NOT_RUN_NO_PROPOSED_COMBINED_COMMIT"
+      },
+      "ci": [
+        {
+          "id": 37710576311,
+          "name": "Tests",
+          "status": "completed",
+          "conclusion": "success",
+          "run_number": 17,
+          "jobs_url": "https://api.github.com/repos/pixelmanager-cloud/solana-paper-desk/actions/runs/37710576311/jobs",
+          "logs_url": "https://api.github.com/repos/pixelmanager-cloud/solana-paper-desk/actions/runs/37710576311/logs",
+          "workflow_id": 377958194
+        }
+      ],
+      "proof_artifact": "docs/reviews/cloud-independent-20261008-wave1.md",
+      "accepted": false,
+      "live_acceptance": false
+    }
+  ],
   "infrastructure": {
-    "consecutive_failures": 1,
+    "consecutive_failures": 0,
     "last_failure": "Immediate automation run action unavailable (404); creation and peek succeeded.",
-    "retry_policy": "No busy polling; future supported review runs reconcile and pause after three consecutive execution/access failures."
+    "retry_policy": "No busy polling; future supported review runs reconcile and pause after three consecutive execution/access failures.",
+    "last_success": "Immediate independent GitHub review and fixture-only tests completed in current managed cloud executor; scheduled execution remains unverified."
   }
 }
