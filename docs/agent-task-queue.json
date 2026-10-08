@@ -263,15 +263,6 @@
     "published_ci": "886fc96d404b9d3ffd99c0045f7231d563a5d946 successful",
     "active_claims": [
       {
-        "worker": "worker03",
-        "thread_id": "01a118fc-9478-778a-b77a-8f8f6ec7e0ad",
-        "host_id": "durable",
-        "task": "PR57 P2 restrict new event schema to TradeEvent and regress launch consumer",
-        "status": "FIXING",
-        "pr": 57,
-        "head": "70d1dfcaa20350a2a8126c8d47ce58a71e9b2e2b"
-      },
-      {
         "worker": "worker07",
         "thread_id": "01a118fd-0f1c-749c-b85b-5e730937d0a8",
         "host_id": "durable",
@@ -279,6 +270,15 @@
         "status": "RESEARCHING",
         "base": "745622f",
         "scope": "review report only"
+      },
+      {
+        "worker": "cloud_reviewer",
+        "thread_id": "01a11901-8b68-70f9-8672-5a731a149091",
+        "host_id": "durable",
+        "task": "PR57 allowlist repair independent review",
+        "status": "REVIEWING",
+        "pr": 57,
+        "head": "4b0d9ba49a4ffadce82ad7a42178ab8b53372c31"
       }
     ],
     "saved_launch_probe": {
@@ -631,8 +631,8 @@
   },
   "trade_event_schema_review": {
     "pr": 57,
-    "head": "70d1dfcaa20350a2a8126c8d47ce58a71e9b2e2b",
-    "status": "CHANGES_REQUESTED",
+    "head": "4b0d9ba49a4ffadce82ad7a42178ab8b53372c31",
+    "status": "RE_REVIEW_IN_PROGRESS",
     "integrated": false,
     "author_linux_tests": 1300,
     "combined_native_pr": 56,
@@ -641,6 +641,7 @@
     "mac_skipped": 92,
     "mac_seconds": 25.646,
     "finding": "P2 full events_only registration exposes new CreateEvent.depth to verified launch anchor; restrict new registration to TradeEvent",
-    "fix_worker": "03"
+    "fix_worker": "03",
+    "author_combined_linux": 1336
   }
 }
