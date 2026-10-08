@@ -201,7 +201,7 @@
       "worker10": "PR45 independent review complete;available",
       "worker03": "Bounded newerlegacysearch found no matching authoritative event;available",
       "worker04": "PR47 published; under independent review",
-      "worker05": "PR46 published; under independent review",
+      "worker05": "Implement exact raw getTransaction transport dependency for worker01 capture",
       "worker09": "PR35 reviewed and integrated; available",
       "worker01": "Implement raw transaction diagnostic capture; no gate widening or new budget",
       "worker07": "Implement disconnected structural lifecycle report; PR48 still pending; no runtime approval",
@@ -254,7 +254,7 @@
       "tests": 878,
       "status": "SUPERSEDED_BY_PUBLISHED_TESTED_COMMIT"
     },
-    "published_ci": "6267c94a3a861bebe1da10496032123ae8dbb125 successful",
+    "published_ci": "d6c710bcf95a6c61fd0f786489be4b458bf7b6da successful",
     "active_claims": [
       {
         "worker": "worker07",
@@ -273,6 +273,14 @@
         "task": "Bounded raw transaction diagnostic capture on existing admitted investigation budget",
         "status": "DISPATCHED",
         "base_commit": "076c9ad87e019bd458a444b59973186565aea5fd"
+      },
+      {
+        "worker": "worker05",
+        "thread_id": "01a118fc-dd83-7672-ac81-7445f85fe09f",
+        "host_id": "durable",
+        "task": "Exact finalized getTransaction support in bounded coordinator transport",
+        "status": "DISPATCHED",
+        "base_commit": "d6c710bcf95a6c61fd0f786489be4b458bf7b6da"
       }
     ],
     "saved_launch_probe": {
