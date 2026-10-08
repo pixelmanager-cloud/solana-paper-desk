@@ -313,7 +313,6 @@ class PoolVaultAdmissionTests(unittest.TestCase):
     def test_request_method_commitment_key_order_and_minimum_slot(self):
         for mutate in [lambda s: s.update(method='getAccountInfo'),
                        lambda s: s['params'][1].update(commitment='confirmed'),
-                       lambda s: s['params'][1].update(minContextSlot=99),
                        lambda s: s['params'][1].update(encoding='jsonParsed'),
                        lambda s: s['params'][0].reverse(),
                        lambda s: s['params'][0].__setitem__(1, SOL),
@@ -321,6 +320,139 @@ class PoolVaultAdmissionTests(unittest.TestCase):
             self.setUp()
             s = deepcopy(self.evidence[self.refs.snapshot]); mutate(s); self.repin(snapshot=s)
             self.rejected(self.admit(), 'RPC_REQUEST_OR_RESPONSE_MISMATCH')
+
+    def advance_bank(self, *, floor=100, bank=101):
+        """Harness-only approved provider observation; no live evidence claim."""
+        snapshot = deepcopy(self.evidence[self.refs.snapshot])
+        clock = deepcopy(self.evidence[self.refs.block_time])
+        snapshot['params'][1]['minContextSlot'] = floor
+        snapshot['result']['context']['slot'] = bank
+        clock['params'] = [bank]
+        self.q['snapshot_slot'] = bank
+        self.receipt = replace(self.receipt, slot=bank)
+        self.repin(snapshot=snapshot, clock=clock)
+
+    def test_advanced_finalized_bank_admits_actual_point_with_original_floor(self):
+        self.advance_bank()
+        original = deepcopy(self.evidence)
+        for account in (self.q['base_vault'], self.q['quote_vault']):
+            result = self.admit(account=account)
+            self.assertTrue(result['snapshot_label_admitted'], result)
+            self.assertEqual(result['snapshot_slot'], 101)
+            self.assertEqual(result['request_min_context_slot'], 100)
+            self.assertTrue(result['request_binding_verified'])
+            for flag in ('historical_interval_exclusion_allowed', 'continuity_verified',
+                         'ownership_approval', 'private_control_proven', 'eligible_for_trading', 'chain_authenticated'):
+                self.assertFalse(result[flag])
+        self.assertEqual(self.evidence, original)
+        self.assertFalse(self.admit()['production_snapshot_exclusion_allowed']) # Synthetic harness.
+
+    def test_request_floor_zero_and_large_bank_advancement_are_not_historical_selection(self):
+        for floor, bank in ((0, 101), (99, 100), (100, 100), (100, 2**64-1)):
+            with self.subTest(floor=floor, bank=bank):
+                self.setUp(); self.advance_bank(floor=floor, bank=bank)
+                result = self.admit()
+                self.assertTrue(result['snapshot_label_admitted'], result)
+                self.assertEqual(result['request_min_context_slot'], floor)
+                self.assertEqual(result['snapshot_slot'], bank)
+                self.assertFalse(result['historical_interval_exclusion_allowed'])
+
+    def test_bank_below_original_request_floor_is_rejected(self):
+        self.advance_bank(floor=101, bank=100)
+        self.rejected(self.admit(), 'ATOMIC_SNAPSHOT_BELOW_REQUEST_FLOOR')
+
+    def test_request_floor_must_be_exact_unsigned_integer(self):
+        for floor in (True, False, -1, 100.0, '100', None, 2**64):
+            with self.subTest(floor=floor):
+                self.setUp(); self.advance_bank(floor=floor)
+                self.rejected(self.admit(), 'RPC_SLOT_TYPE_INVALID')
+        self.setUp(); self.advance_bank()
+        snapshot = deepcopy(self.evidence[self.refs.snapshot])
+        del snapshot['params'][1]['minContextSlot']
+        self.repin(snapshot=snapshot)
+        self.rejected(self.admit(), 'RPC_SLOT_TYPE_INVALID')
+
+    def test_advanced_bank_cannot_be_relabelled_as_floor_point(self):
+        self.advance_bank()
+        self.receipt = replace(self.receipt, slot=100)
+        self.policy = replace(self.policy, receipts=frozenset({self.receipt}))
+        self.rejected(self.admit(snapshot_slot=100), 'RPC_REQUEST_OR_RESPONSE_MISMATCH')
+        # Even a re-pinned block-time(S) cannot make the account bank T equal S.
+        clock = deepcopy(self.evidence[self.refs.block_time]); clock['params'] = [100]
+        self.repin(clock=clock)
+        self.rejected(self.admit(snapshot_slot=100), 'ATOMIC_SNAPSHOT_SLOT_MISMATCH')
+
+    def test_advanced_bank_manifest_cannot_rewrite_original_floor_to_actual_slot(self):
+        self.advance_bank()
+        request = deepcopy(self.evidence[self.refs.snapshot_request])
+        request['params'][1]['minContextSlot'] = 101
+        self.repin(request=request)
+        self.rejected(self.admit(), 'RPC_MANIFEST_BINDING_MISMATCH')
+
+    def test_advanced_bank_block_time_must_query_actual_bank_not_request_floor(self):
+        self.advance_bank()
+        clock = deepcopy(self.evidence[self.refs.block_time]); clock['params'] = [100]
+        self.repin(clock=clock)
+        self.rejected(self.admit(), 'RPC_REQUEST_OR_RESPONSE_MISMATCH')
+
+    def test_advanced_bank_context_and_single_atomic_batch_are_required(self):
+        for change in (lambda s: s['result'].update(context=None),
+                       lambda s: s['result'].update(context={}),
+                       lambda s: s['result']['context'].update(slot=101.0),
+                       lambda s: s['result']['context'].update(slot='101'),
+                       lambda s: s['result']['context'].update(slot=True),
+                       lambda s: s['result']['value'].pop(),
+                       lambda s: s['result']['value'].__setitem__(4, None),
+                       lambda s: s['params'][1].update(commitment='confirmed'),
+                       lambda s: s['params'][1].update(commitment='processed'),
+                       lambda s: s['params'][1].update(dataSlice={'offset':0,'length':165})):
+            self.setUp(); self.advance_bank()
+            snapshot = deepcopy(self.evidence[self.refs.snapshot]); change(snapshot)
+            self.repin(snapshot=snapshot)
+            self.rejected(self.admit())
+
+    def test_wrong_time_result_and_rebound_refs_still_fail_at_advanced_bank(self):
+        self.advance_bank()
+        clock = deepcopy(self.evidence[self.refs.block_time]); clock['result'] += 1
+        self.repin(clock=clock)
+        self.rejected(self.admit(), 'SNAPSHOT_BLOCK_TIME_MISMATCH')
+        self.setUp(); self.advance_bank()
+        wrong_refs = replace(self.refs, snapshot_request=self.refs.block_time_request)
+        self.rejected(self.admit(refs=wrong_refs), 'ACQUISITION_RECEIPT_MISSING_OR_CONFLICTING')
+
+    def test_different_floors_for_same_actual_bank_are_equivalent(self):
+        self.advance_bank()
+        first_refs, second_refs, _, _ = self.paired_captures(
+            mutate=lambda s: s['params'][1].update(minContextSlot=99), other_source='second-approved-source')
+        for refs, floor in ((first_refs,100), (second_refs,99)):
+            result = self.admit(refs=refs)
+            self.assertTrue(result['snapshot_label_admitted'], result)
+            self.assertEqual(result['snapshot_slot'],101)
+            self.assertEqual(result['request_min_context_slot'],floor)
+            self.assertEqual(result['supporting_capture_count'],2)
+            self.assertFalse(result['historical_interval_exclusion_allowed'])
+
+    def test_contradictions_at_actual_bank_survive_different_request_floors(self):
+        self.advance_bank()
+        def conflict(snapshot):
+            snapshot['params'][1]['minContextSlot'] = 99
+            self.change_base_amount(snapshot)
+        first_refs, second_refs, _, _ = self.paired_captures(mutate=conflict, other_source='second-approved-source')
+        for refs in (first_refs, second_refs):
+            self.rejected(self.admit(refs=refs), 'ACQUISITION_CAPTURE_CONFLICT')
+
+    def test_contradictory_times_at_actual_bank_are_not_separate_floor_scopes(self):
+        self.advance_bank()
+        at = self.q['snapshot_time']
+        first_refs, second_refs, _, _ = self.paired_captures(
+            mutate=lambda s: s['params'][1].update(minContextSlot=99), other_time=at+1)
+        for refs, block_time in ((first_refs,at), (second_refs,at+1)):
+            self.rejected(self.admit(refs=refs,snapshot_time=block_time), 'ACQUISITION_CAPTURE_CONFLICT')
+
+    def test_competing_capture_below_its_floor_remains_ambiguous_at_actual_bank(self):
+        self.advance_bank()
+        refs, _, _, _ = self.paired_captures(mutate=lambda s:s['params'][1].update(minContextSlot=102))
+        self.rejected(self.admit(refs=refs), 'ACQUISITION_CAPTURE_AMBIGUOUS')
 
     def test_rehashed_manifest_cannot_rebind_network_request_or_response(self):
         for changes in [dict(network='devnet'), dict(genesis_hash='forged'), dict(response_hash='0'*64),

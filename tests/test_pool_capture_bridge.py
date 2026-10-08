@@ -188,16 +188,94 @@ class PoolCaptureBridgeTests(unittest.TestCase):
         self.blocked(self.capture(bridge),'CAPTURE_SCOPE_AMBIGUOUS'); self.assertEqual(self.used(),3)
         self.blocked(self.capture(name='healthy'),'PRIOR_CAPTURE_UNRESOLVED')
 
-    def test_atomic_bank_drift_is_not_rewritten_and_is_published(self):
-        def drift(m,r):
-            if m=='getMultipleAccounts':r['context']['slot']=101
+    def test_atomic_bank_advancement_preserves_floor_and_admits_only_actual_point(self):
+        def advance(m, r):
+            if m == 'getMultipleAccounts': r['context']['slot'] = 101
             return r
-        result = self.capture(self.make_bridge(FixtureRPC(self.fixture,mutate=drift)))
-        self.blocked(result,'POINT_ADMISSION_REJECTED')
-        self.assertEqual(result['snapshot_slot'],101)
-        receipts = self.ledger.policy(pool=self.q['pool'],mint=self.q['mint'],slot=101).receipts
-        self.assertEqual(len(receipts),1)
-        self.assertIn('RPC_REQUEST_OR_RESPONSE_MISMATCH',result['labels'][0]['reasons'])
+        rpc = FixtureRPC(self.fixture, mutate=advance)
+        result = self.capture(self.make_bridge(rpc))
+        self.assertEqual(result['status'], 'CAPTURED_POINT', result)
+        self.assertEqual(result['snapshot_slot'], 101)
+        self.assertEqual(result['request_min_context_slot'], 100)
+        self.assertEqual(rpc.calls[2][1][1]['minContextSlot'], 100)
+        self.assertEqual(rpc.calls[3], ('getBlockTime', [101]))
+        receipts = self.ledger.policy(pool=self.q['pool'], mint=self.q['mint'], slot=101).receipts
+        receipt, = receipts
+        self.assertEqual(receipt.slot, 101)
+        snapshot = self.store.load(receipt.refs.snapshot)
+        manifest = self.store.load(receipt.refs.snapshot_request)
+        self.assertEqual(snapshot['params'][1]['minContextSlot'], 100)
+        self.assertEqual(manifest['params'], snapshot['params'])
+        self.assertEqual(manifest['response_hash'], receipt.refs.snapshot)
+        self.assertEqual(self.store.load(receipt.refs.block_time)['params'], [101])
+        self.assertEqual(self.store.load(receipt.refs.block_time_request)['params'], [101])
+        self.assertEqual(self.receipts(), frozenset()) # No receipt invented at request floor S.
+        for label in result['labels']:
+            self.assertEqual(label['snapshot_slot'], 101)
+            self.assertEqual(label['request_min_context_slot'], 100)
+            self.assertFalse(label['historical_interval_exclusion_allowed'])
+            self.assertFalse(label['continuity_verified'])
+            self.assertFalse(label['eligible_for_trading'])
+        repeated = self.capture(self.make_bridge(rpc))
+        self.assertEqual(repeated['status'], 'CAPTURED_POINT')
+        self.assertEqual(repeated['provider_calls'], 0)
+        self.assertEqual(self.used(), 4)
+
+    def test_bank_below_floor_is_preserved_and_rejected_at_actual_slot(self):
+        rpc = FixtureRPC(self.fixture, mutate=lambda m,r: {**r, 'context': {'slot':99}} if m=='getMultipleAccounts' else r)
+        result = self.capture(self.make_bridge(rpc))
+        self.blocked(result, 'POINT_ADMISSION_REJECTED')
+        self.assertEqual(result['snapshot_slot'],99)
+        self.assertEqual(result['request_min_context_slot'],100)
+        self.assertIn('ATOMIC_SNAPSHOT_BELOW_REQUEST_FLOOR',result['labels'][0]['reasons'])
+        receipt, = self.ledger.policy(pool=self.q['pool'],mint=self.q['mint'],slot=99).receipts
+        self.assertEqual(self.store.load(receipt.refs.snapshot)['params'][1]['minContextSlot'],100)
+        self.assertEqual(rpc.calls[3], ('getBlockTime',[99]))
+        self.assertEqual(self.used(),4)
+
+    def test_same_actual_bank_conflicts_across_sources_with_different_floors(self):
+        def advance(method,result):
+            if method=='getMultipleAccounts':result['context']['slot']=101
+            return result
+        original_rpc=FixtureRPC(self.fixture,mutate=advance)
+        first_bridge=self.make_bridge(original_rpc)
+        self.assertEqual(self.capture(first_bridge)['status'],'CAPTURED_POINT')
+        def conflict(method,result):
+            if method=='getSlot':return 99
+            if method=='getMultipleAccounts':
+                result['context']['slot']=101
+                raw=bytearray(base64.b64decode(result['value'][4]['data'][0]))
+                raw[64:72]=(6001).to_bytes(8,'little')
+                result['value'][4]['data'][0]=base64.b64encode(raw).decode()
+            return result
+        second_rpc=FixtureRPC(self.fixture,mutate=conflict)
+        second_bridge=self.make_bridge(second_rpc,source='B')
+        outcome=self.capture(second_bridge,name='actual-bank-conflict')
+        self.blocked(outcome,'POINT_ADMISSION_REJECTED')
+        self.assertEqual(second_rpc.calls[2][1][1]['minContextSlot'],99)
+        self.assertEqual(second_rpc.calls[3],('getBlockTime',[101]))
+        self.assertIn('ACQUISITION_CAPTURE_CONFLICT',outcome['labels'][0]['reasons'])
+        original=self.capture(first_bridge)
+        self.blocked(original,'POINT_ADMISSION_REJECTED')
+        self.assertIn('ACQUISITION_CAPTURE_CONFLICT',original['labels'][0]['reasons'])
+        self.assertEqual(original['provider_calls'],0)
+        self.assertEqual(len(self.ledger.policy(pool=self.q['pool'],mint=self.q['mint'],slot=101).receipts),2)
+        self.assertEqual(self.used(),8)
+
+    def test_same_actual_bank_equivalent_captures_with_different_floors(self):
+        def first(method,result):
+            if method=='getMultipleAccounts':result['context']['slot']=101
+            return result
+        self.assertEqual(self.capture(self.make_bridge(FixtureRPC(self.fixture,mutate=first)))['status'],'CAPTURED_POINT')
+        def second(method,result):
+            if method=='getSlot':return 99
+            if method=='getMultipleAccounts':result['context']['slot']=101
+            return result
+        outcome=self.capture(self.make_bridge(FixtureRPC(self.fixture,mutate=second),source='B'),name='equivalent-bank')
+        self.assertEqual(outcome['status'],'CAPTURED_POINT',outcome)
+        self.assertEqual(outcome['request_min_context_slot'],99)
+        self.assertEqual(outcome['labels'][0]['supporting_capture_count'],2)
+        self.assertEqual(self.used(),8)
 
     def test_protocol_forgery_remains_approved_raw_observation_but_blocked(self):
         def forge(m,r):
