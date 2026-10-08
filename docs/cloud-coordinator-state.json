@@ -1,0 +1,348 @@
+{
+  "schema_version": 1,
+  "revision": 1,
+  "repository": "pixelmanager-cloud/solana-paper-desk",
+  "source_main_sha": "e298e15cd758932e81d2241130716632702f5bd0",
+  "observed_date": "2026-10-08",
+  "status": "BLOCKED_CLOUD_CONTROL_CAPABILITIES",
+  "schedule": {
+    "requested_interval_minutes": 10,
+    "created": false,
+    "id": null,
+    "blocker": "Exposed automations support hourly at most; no supported 10-minute durable cloud coordinator scheduler or same-chat environment binding verified."
+  },
+  "coordinator_lock": {
+    "holder": null,
+    "fencing_token": null,
+    "expires_at": null,
+    "status": "NOT_ACQUIRED",
+    "reason": "No dispatch/integration loop started. Cross-coordinator ownership must be reconciled with original desktop coordinator before acquiring."
+  },
+  "capabilities": {
+    "private_repo_read": "VERIFIED",
+    "branch_write": "VERIFIED",
+    "commit_write": "VERIFIED",
+    "pr_create": "NOT_YET_PROBED",
+    "worker_chat_read": "UNAVAILABLE_NO_SUPPORTED_TOOL",
+    "worker_diff_recovery": "BLOCKED_NO_REMOTE_WORKER_BRANCHES_OR_PRS_FOUND",
+    "worker_followup": "UNAVAILABLE_NO_SUPPORTED_TOOL",
+    "durable_successor_same_environment": "UNAVAILABLE_NO_SUPPORTED_TOOL",
+    "local_execution": "VERIFIED",
+    "ten_minute_cloud_schedule": "UNSUPPORTED"
+  },
+  "capacity": {
+    "max_workers": 10,
+    "reserved_worker_slots": 10,
+    "current_active_count": null,
+    "rule": "Treat all unresolved dispatch claims as occupied; never infer termination from missing branches or elapsed time."
+  },
+  "workers": [
+    {
+      "agent": "01",
+      "thread_id": "01a118fc-39bc-722c-b442-8bf5a749e0bb",
+      "host_id": "durable",
+      "assignment": "OWN-1 finalized snapshot integration",
+      "expected_branch": "codex/cloud-wave1-01",
+      "branch_sha": null,
+      "pr": null,
+      "activity": "UNKNOWN_LAST_DISPATCH_ACTIVE",
+      "claim": "RESERVED_UNRESOLVED",
+      "review_status": "AWAITING_REVIEWABLE_ARTIFACT",
+      "acceptance": "NOT_ACCEPTED",
+      "followup_delivery": "BLOCKED",
+      "requested_followup": "Return a pushed reviewable branch or PR, exact base/head SHAs, changed files, full test result, provenance, limitations and unresolved dependencies. Preserve assigned scope; do not integrate or claim live acceptance."
+    },
+    {
+      "agent": "02",
+      "thread_id": "01a118fc-666c-70b6-9fa8-2c7520f0a0bb",
+      "host_id": "durable",
+      "assignment": "OWN-2 account classification",
+      "expected_branch": "codex/cloud-wave1-02",
+      "branch_sha": null,
+      "pr": null,
+      "activity": "UNKNOWN_LAST_DISPATCH_ACTIVE",
+      "claim": "RESERVED_UNRESOLVED",
+      "review_status": "AWAITING_REVIEWABLE_ARTIFACT",
+      "acceptance": "NOT_ACCEPTED",
+      "followup_delivery": "BLOCKED",
+      "requested_followup": "Return a pushed reviewable branch or PR, exact base/head SHAs, changed files, full test result, provenance, limitations and unresolved dependencies. Preserve assigned scope; do not integrate or claim live acceptance."
+    },
+    {
+      "agent": "03",
+      "thread_id": "01a118fc-9478-778a-b77a-8f8f6ec7e0ad",
+      "host_id": "durable",
+      "assignment": "Ownership history adversarial fixtures",
+      "expected_branch": "codex/cloud-wave1-03",
+      "branch_sha": null,
+      "pr": null,
+      "activity": "UNKNOWN_LAST_DISPATCH_ACTIVE",
+      "claim": "RESERVED_UNRESOLVED",
+      "review_status": "AWAITING_REVIEWABLE_ARTIFACT",
+      "acceptance": "NOT_ACCEPTED",
+      "followup_delivery": "BLOCKED",
+      "requested_followup": "Return a pushed reviewable branch or PR, exact base/head SHAs, changed files, full test result, provenance, limitations and unresolved dependencies. Preserve assigned scope; do not integrate or claim live acceptance."
+    },
+    {
+      "agent": "04",
+      "thread_id": "01a118fc-b862-7340-ab3a-e1115a3280a4",
+      "host_id": "durable",
+      "assignment": "OWN-3 distribution exposure core",
+      "expected_branch": "codex/cloud-wave1-04",
+      "branch_sha": null,
+      "pr": null,
+      "activity": "UNKNOWN_LAST_DISPATCH_ACTIVE",
+      "claim": "RESERVED_UNRESOLVED",
+      "review_status": "AWAITING_REVIEWABLE_ARTIFACT",
+      "acceptance": "NOT_ACCEPTED",
+      "followup_delivery": "BLOCKED",
+      "requested_followup": "Return a pushed reviewable branch or PR, exact base/head SHAs, changed files, full test result, provenance, limitations and unresolved dependencies. Preserve assigned scope; do not integrate or claim live acceptance."
+    },
+    {
+      "agent": "05",
+      "thread_id": "01a118fc-dd83-7672-ac81-7445f85fe09f",
+      "host_id": "durable",
+      "assignment": "Evidence gate bypass review",
+      "expected_branch": "codex/cloud-wave1-05",
+      "branch_sha": null,
+      "pr": null,
+      "activity": "UNKNOWN_LAST_DISPATCH_ACTIVE",
+      "claim": "RESERVED_UNRESOLVED",
+      "review_status": "AWAITING_REVIEWABLE_ARTIFACT",
+      "acceptance": "NOT_ACCEPTED",
+      "followup_delivery": "BLOCKED",
+      "requested_followup": "Return a pushed reviewable branch or PR, exact base/head SHAs, changed files, full test result, provenance, limitations and unresolved dependencies. Preserve assigned scope; do not integrate or claim live acceptance."
+    },
+    {
+      "agent": "06",
+      "thread_id": "01a118fc-f867-7233-8eec-c20659e70095",
+      "host_id": "durable",
+      "assignment": "Token control and supply revocation checks",
+      "expected_branch": "codex/cloud-wave1-06",
+      "branch_sha": null,
+      "pr": null,
+      "activity": "UNKNOWN_LAST_DISPATCH_ACTIVE",
+      "claim": "RESERVED_UNRESOLVED",
+      "review_status": "AWAITING_REVIEWABLE_ARTIFACT",
+      "acceptance": "NOT_ACCEPTED",
+      "followup_delivery": "BLOCKED",
+      "requested_followup": "Return a pushed reviewable branch or PR, exact base/head SHAs, changed files, full test result, provenance, limitations and unresolved dependencies. Preserve assigned scope; do not integrate or claim live acceptance."
+    },
+    {
+      "agent": "07",
+      "thread_id": "01a118fd-0f1c-749c-b85b-5e730937d0a8",
+      "host_id": "durable",
+      "assignment": "Unsigned route and sellability audit",
+      "expected_branch": "codex/cloud-wave1-07",
+      "branch_sha": null,
+      "pr": null,
+      "activity": "UNKNOWN_LAST_DISPATCH_ACTIVE",
+      "claim": "RESERVED_UNRESOLVED",
+      "review_status": "AWAITING_REVIEWABLE_ARTIFACT",
+      "acceptance": "NOT_ACCEPTED",
+      "followup_delivery": "BLOCKED",
+      "requested_followup": "Return a pushed reviewable branch or PR, exact base/head SHAs, changed files, full test result, provenance, limitations and unresolved dependencies. Preserve assigned scope; do not integrate or claim live acceptance."
+    },
+    {
+      "agent": "08",
+      "thread_id": "01a118fd-2563-7126-90d7-bd07693de0b2",
+      "host_id": "durable",
+      "assignment": "Paper ledger restart adversarial tests",
+      "expected_branch": "codex/cloud-wave1-08",
+      "branch_sha": null,
+      "pr": null,
+      "activity": "UNKNOWN_LAST_DISPATCH_ACTIVE",
+      "claim": "RESERVED_UNRESOLVED",
+      "review_status": "AWAITING_REVIEWABLE_ARTIFACT",
+      "acceptance": "NOT_ACCEPTED",
+      "followup_delivery": "BLOCKED",
+      "requested_followup": "Return a pushed reviewable branch or PR, exact base/head SHAs, changed files, full test result, provenance, limitations and unresolved dependencies. Preserve assigned scope; do not integrate or claim live acceptance."
+    },
+    {
+      "agent": "09",
+      "thread_id": "01a118fd-3f90-77d9-9549-c4497f5b10a6",
+      "host_id": "durable",
+      "assignment": "Evidence dashboard contract",
+      "expected_branch": "codex/cloud-wave1-09",
+      "branch_sha": null,
+      "pr": null,
+      "activity": "UNKNOWN_LAST_DISPATCH_ACTIVE",
+      "claim": "RESERVED_UNRESOLVED",
+      "review_status": "AWAITING_REVIEWABLE_ARTIFACT",
+      "acceptance": "NOT_ACCEPTED",
+      "followup_delivery": "BLOCKED",
+      "requested_followup": "Return a pushed reviewable branch or PR, exact base/head SHAs, changed files, full test result, provenance, limitations and unresolved dependencies. Preserve assigned scope; do not integrate or claim live acceptance."
+    },
+    {
+      "agent": "10",
+      "thread_id": "01a118fd-56d5-70b8-ad31-dba13e982082",
+      "host_id": "durable",
+      "assignment": "End-to-end readiness harness design",
+      "expected_branch": "codex/cloud-wave1-10",
+      "branch_sha": null,
+      "pr": null,
+      "activity": "UNKNOWN_LAST_DISPATCH_ACTIVE",
+      "claim": "RESERVED_UNRESOLVED",
+      "review_status": "AWAITING_REVIEWABLE_ARTIFACT",
+      "acceptance": "NOT_ACCEPTED",
+      "followup_delivery": "BLOCKED",
+      "requested_followup": "Return a pushed reviewable branch or PR, exact base/head SHAs, changed files, full test result, provenance, limitations and unresolved dependencies. Preserve assigned scope; do not integrate or claim live acceptance."
+    }
+  ],
+  "tasks": [
+    {
+      "id": "OWN-1",
+      "queue_status": "IN_PROGRESS_CLOUD",
+      "depends_on": [],
+      "code_status": "NOT_REVIEWED",
+      "acceptance_status": "NOT_ACCEPTED",
+      "accepted_commit_sha": null,
+      "ci": null,
+      "independent_review": null,
+      "combined_suite": null,
+      "live_acceptance": "PENDING_DESKTOP_COORDINATOR"
+    },
+    {
+      "id": "OWN-2",
+      "queue_status": "IN_PROGRESS_CLOUD",
+      "depends_on": [],
+      "code_status": "NOT_REVIEWED",
+      "acceptance_status": "NOT_ACCEPTED",
+      "accepted_commit_sha": null,
+      "ci": null,
+      "independent_review": null,
+      "combined_suite": null,
+      "live_acceptance": "NOT_EVALUATED"
+    },
+    {
+      "id": "OWN-3",
+      "queue_status": "BACKLOG",
+      "depends_on": [
+        "OWN-1",
+        "OWN-2"
+      ],
+      "code_status": "NOT_REVIEWED",
+      "acceptance_status": "NOT_ACCEPTED",
+      "accepted_commit_sha": null,
+      "ci": null,
+      "independent_review": null,
+      "combined_suite": null,
+      "live_acceptance": "NOT_EVALUATED"
+    },
+    {
+      "id": "OWN-4",
+      "queue_status": "BACKLOG",
+      "depends_on": [
+        "OWN-3"
+      ],
+      "code_status": "NOT_REVIEWED",
+      "acceptance_status": "NOT_ACCEPTED",
+      "accepted_commit_sha": null,
+      "ci": null,
+      "independent_review": null,
+      "combined_suite": null,
+      "live_acceptance": "PENDING_DESKTOP_COORDINATOR"
+    },
+    {
+      "id": "SELL-1",
+      "queue_status": "BACKLOG",
+      "depends_on": [
+        "OWN-4"
+      ],
+      "code_status": "NOT_REVIEWED",
+      "acceptance_status": "NOT_ACCEPTED",
+      "accepted_commit_sha": null,
+      "ci": null,
+      "independent_review": null,
+      "combined_suite": null,
+      "live_acceptance": "NOT_EVALUATED"
+    },
+    {
+      "id": "PAPER-1",
+      "queue_status": "BACKLOG",
+      "depends_on": [
+        "OWN-4"
+      ],
+      "code_status": "NOT_REVIEWED",
+      "acceptance_status": "NOT_ACCEPTED",
+      "accepted_commit_sha": null,
+      "ci": null,
+      "independent_review": null,
+      "combined_suite": null,
+      "live_acceptance": "NOT_EVALUATED"
+    },
+    {
+      "id": "PAPER-2",
+      "queue_status": "BACKLOG",
+      "depends_on": [
+        "SELL-1",
+        "PAPER-1"
+      ],
+      "code_status": "NOT_REVIEWED",
+      "acceptance_status": "NOT_ACCEPTED",
+      "accepted_commit_sha": null,
+      "ci": null,
+      "independent_review": null,
+      "combined_suite": null,
+      "live_acceptance": "NOT_EVALUATED"
+    },
+    {
+      "id": "OPS-1",
+      "queue_status": "BACKLOG",
+      "depends_on": [
+        "PAPER-2"
+      ],
+      "code_status": "NOT_REVIEWED",
+      "acceptance_status": "NOT_ACCEPTED",
+      "accepted_commit_sha": null,
+      "ci": null,
+      "independent_review": null,
+      "combined_suite": null,
+      "live_acceptance": "NOT_EVALUATED"
+    },
+    {
+      "id": "QA-1",
+      "queue_status": "BACKLOG",
+      "depends_on": [
+        "OPS-1"
+      ],
+      "code_status": "NOT_REVIEWED",
+      "acceptance_status": "NOT_ACCEPTED",
+      "accepted_commit_sha": null,
+      "ci": null,
+      "independent_review": null,
+      "combined_suite": null,
+      "live_acceptance": "PENDING_DESKTOP_COORDINATOR"
+    }
+  ],
+  "blockers": [
+    {
+      "id": "CLOUD_CHAT_CONTROL",
+      "action": "Expose supported durable worker read/follow-up tools for listed IDs; do not use transient collaboration agents as substitutes."
+    },
+    {
+      "id": "WORKER_ARTIFACTS",
+      "action": "Existing workers must publish their actual commits/PRs; coordinator cannot retrieve unpushed changes from their isolated environments."
+    },
+    {
+      "id": "CLOUD_SUCCESSORS",
+      "action": "Expose supported durable task creation selecting the same published solana-paper-desk environment."
+    },
+    {
+      "id": "CLOUD_SCHEDULE",
+      "action": "Expose supported 10-minute cloud same-chat scheduler; do not substitute desktop cron or an hourly schedule silently."
+    },
+    {
+      "id": "COORDINATOR_OWNERSHIP",
+      "action": "Reconcile original coordinator ownership and acquire a single fenced repository lock before dispatch/merge."
+    }
+  ],
+  "events": [
+    {
+      "kind": "CAPABILITY_PROBE",
+      "result": "Repository metadata/read and branch creation succeeded; no matching worker branches/open PRs found; unsupported worker/cloud schedule capabilities prevent unattended loop.",
+      "accepted_tasks": [],
+      "spawned_workers": 0,
+      "merged_prs": 0
+    }
+  ]
+}
