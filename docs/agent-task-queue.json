@@ -195,16 +195,16 @@
     "live_verification": "BLOCKED_NO_SUPPORTED_BUDGET_FEASIBLE_PUBLIC_LEGACY_SEED; acquisition path in development",
     "blocker": "No accepted provider-backed ownership candidate; historical-control semantics, complete route/effect policy, current measured features and trusted entry/refresh driver remain unfinished",
     "followups": {
-      "worker01": "Independent guarded diagnostics endpoint and UI review",
+      "worker01": "PR78 independent PASS; available",
       "worker05": "PR76 repaired ownership diagnostics integrated; available",
       "worker06": "PR75 exact combined review PASS; available",
       "worker10": "PR75 integrated; available",
-      "worker02": "PR77 held; available for repaired exact-head review",
+      "worker02": "Re-reviewing repaired PR77",
       "worker03": "PR70 integrated; available",
       "worker04": "PR68 integrated; available",
-      "worker07": "PR77 reject incomplete production inventory and add parsed/omitted-row regressions",
+      "worker07": "PR77 repair published; available",
       "worker08": "PR72 integrated; available",
-      "worker09": "PR78 published; available for concrete fixes"
+      "worker09": "PR78 integrated; available"
     },
     "reviews": {
       "PR18": "92e9c6104b411101e414c03774a1675cbbf1ac91: independent review no blocking scoped defect",
@@ -262,24 +262,14 @@
     "published_ci": "Deployed d758bc529a7da1f74509117288740911f2ad6845: both CI runs successful",
     "active_claims": [
       {
-        "worker": "worker07",
-        "thread_id": "01a118fd-0f1c-749c-b85b-5e730937d0a8",
-        "host_id": "durable",
-        "status": "REPAIRING",
-        "base": "d94613edd63ff01cd51949af30aafcdfcb80dbe8",
-        "pr": 77,
-        "head": "8d319cd7cc5f012fab548d30a380fba3cae174af",
-        "task": "PR77 reject incomplete production inventory and add parsed/omitted-row regressions"
-      },
-      {
-        "worker": "worker01",
-        "thread_id": "01a118fc-39bc-722c-b442-8bf5a749e0bb",
+        "worker": "worker02",
+        "thread_id": "01a118fc-666c-70b6-9fa8-2c7520f0a0bb",
         "host_id": "durable",
         "status": "REVIEWING",
-        "base": "d94613edd63ff01cd51949af30aafcdfcb80dbe8",
-        "pr": 78,
-        "head": "d013dfc26096735d949639b9fb2224cb8431f40b",
-        "task": "Independent guarded diagnostics endpoint and UI review"
+        "base": "3a232c0",
+        "pr": 77,
+        "head": "ac4bcb2a24864620d49398b9eeff777b347764c0",
+        "task": "Independent re-review of inventory completeness repair"
       }
     ],
     "saved_launch_probe": {
@@ -935,9 +925,9 @@
       "integration_commit": "d60cd4cf08434301bc75b2e331c4153a4612b2eb"
     },
     "77": {
-      "head": "8d319cd7cc5f012fab548d30a380fba3cae174af",
+      "head": "ac4bcb2a24864620d49398b9eeff777b347764c0",
       "reviewer": "worker02",
-      "status": "HOLD_REPAIR_REQUESTED",
+      "status": "REPAIRED_INDEPENDENT_REVIEW_PENDING",
       "integrated": false,
       "mac_combined": {
         "base": "d94613e",
@@ -957,8 +947,8 @@
     "78": {
       "head": "d013dfc26096735d949639b9fb2224cb8431f40b",
       "reviewer": "worker01",
-      "status": "INDEPENDENT_REVIEW_PENDING",
-      "integrated": false,
+      "status": "PASS_INTEGRATED",
+      "integrated": true,
       "mac_combined": {
         "base": "d94613e",
         "tree": "932de3493517da8eaabfddf314cb1243e1414a99",
@@ -968,7 +958,14 @@
         "seconds": 32.714
       },
       "ci": "Both exact head runs SUCCESS",
-      "coordinator_review": "Endpoint, adapter, renderer and tests reviewed; awaiting independent Linux review"
+      "coordinator_review": "Endpoint, adapter, renderer and tests reviewed; awaiting independent Linux review",
+      "linux_tests": 1525,
+      "linux_skips": 0,
+      "linux_seconds": 65.011,
+      "independent_probes": 9,
+      "reviewed_tree": "932de3493517da8eaabfddf314cb1243e1414a99",
+      "tree_match": true,
+      "integration_commit": "76ed7ec48d86e2c1ff8df12215079029d75eb96d"
     }
   },
   "parallel_combined_regression": {
