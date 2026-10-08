@@ -55,9 +55,16 @@ def simulate_sell(mint, wallet, holding, amount, rpc=helius_rpc, quote=jupiter_p
             rent_quote=rpc('getMinimumBalanceForRentExemption',[165,{'commitment':'confirmed'}])
         except (ValueError,KeyError,TypeError,OSError):pass
         debit_checks=check_sell_debits(instruction_inventory,value,resolved_keys,wallet,mint,holding,amount,rent_exempt_lamports=rent_quote)
+    from .quantity import diagnostic_quantity
+    mint_lookup = {'method': 'getMultipleAccounts',
+                   'params': [[wallet, holding, mint], {'encoding': 'base64', 'commitment': 'confirmed'}],
+                   'result': before}
+    quantity = diagnostic_quantity(mint, wallet, amount, mint_source=mint_lookup,
+        simulation=value, keys=resolved_keys, transaction_hash=hashlib.sha256(raw).hexdigest())
     evidence_hash=None
     if capture:
         evidence={'schema_version':2,'holding':holding,'route':route,'blockhash':blockhash,
+                 'mint_lookup':mint_lookup,'quantity_witness':quantity,
                  'compiler_lookup_snapshot':compiled['lookup_snapshot'],
                  'pool_evidence_hash':pool_snapshot.get('evidence_hash') if pool_snapshot else None,
                  'provenance':'UNSIGNED_UNSUBMITTED_MAINNET_SIMULATION','outer':raw_instructions,
@@ -94,7 +101,7 @@ def simulate_sell(mint, wallet, holding, amount, rpc=helius_rpc, quote=jupiter_p
     fresh=(0<=completed_at-started_at<=10 and type(route_at) is int and 0<=completed_at-route_at<=10
            and 0<=outcome['context']['slot']-before['context']['slot']<=32)
     return {'kind':'diagnostic_sell_simulation','mint':mint,'wallet':wallet,'holding':holding,
-        'amount_raw':str(amount),'observed_at':completed_at,'started_at':started_at,'fresh':fresh,'slot':outcome['context']['slot'],
+        'amount_raw':str(amount),'quantity_witness':quantity,'observed_at':completed_at,'started_at':started_at,'fresh':fresh,'slot':outcome['context']['slot'],
         'simulation_ok':ok,'simulation_error':value.get('err'),'units_consumed':value.get('unitsConsumed'),
         'holding_after':post_policy,'balance_effects':effects,'account_controls':controls,'instruction_inventory':instruction_inventory,'route_coverage':coverage_checks,'setup_checks':setup_checks,'fee_split_checks':split_checks,'sell_event_checks':event_checks,'fee_query':fee_query,'fee_checks':fee_checks,'recipient_checks':recipient_checks,'amm_bindings':amm_checks,'wallet_debit_checks':debit_checks,'router_checks':router_checks,'envelope_checks':envelope_checks,'before_slot':before['context']['slot'],
         'raw_evidence_persisted':evidence_hash is not None,'evidence_hash':evidence_hash,'transaction_hash':hashlib.sha256(raw).hexdigest(),'route_hash':digest(route),

@@ -1,6 +1,8 @@
 """Offline reconstruction of saved unsigned sell diagnostics; never fresh approval."""
 import base64
+import hashlib
 from .model import digest
+from .quantity import raw_u64
 from .compile import compile_unsigned
 from .pools import verify_pool
 from .effects import check_effects,check_account_controls
@@ -26,7 +28,7 @@ def replay_sell(store,key):
         if not saved or method!=saved['method'] or params!=saved['params']:raise ValueError('Lookup-table evidence missing or mismatched')
         return saved['result']
     route=record['route'];response=route['response'];wallet=record['wallet'];mint=record['mint'];holding=record['holding']
-    amount=int(record['amount_raw']);minimum=int(record['minimum_out_raw']);slot=record['slot']
+    amount=raw_u64(record['amount_raw']);minimum=int(record['minimum_out_raw']);slot=record['slot']
     from .providers import SOL
     if (response['inputMint']!=mint or response['outputMint']!=SOL or int(response['inAmount'])!=amount
             or int(response['otherAmountThreshold'])!=minimum or type(slot) is not int or slot<0):raise ValueError('Replay route identity mismatch')
@@ -52,7 +54,12 @@ def replay_sell(store,key):
     bindings=check_sell_bindings(instructions,pool,mint,wallet,holding,amount,minimum,slot)
     recipients=check_sell_recipients(instructions,bindings,amount,minimum)
     fees=check_sell_fee_totals(pool,bindings,recipients,value,keys,amount)
-    result={'kind':'historical_sell_replay','evidence_hash':key,'fresh':False,'eligible_for_trading':False,'transaction_policy_ok':False,
+    from .quantity import diagnostic_quantity
+    quantity = diagnostic_quantity(mint, wallet, amount, mint_source=record.get('mint_lookup'),
+        simulation=value, keys=keys, transaction_hash=hashlib.sha256(compiled['raw']).hexdigest())
+    if 'quantity_witness' in record and record['quantity_witness'] != quantity:
+        raise ValueError('Saved quantity witness differs from original raw inputs')
+    result={'quantity_witness':quantity,'kind':'historical_sell_replay','evidence_hash':key,'fresh':False,'eligible_for_trading':False,'transaction_policy_ok':False,
         'balance_effects':effects,'account_controls':controls,'instruction_inventory':instructions,'wallet_debit_checks':debits,
         'router_checks':check_sell_route(response['swapInstruction'],mint,wallet,holding,amount,minimum),
         'envelope_checks':check_sell_envelope(outer,wallet),'amm_bindings':bindings,'recipient_checks':recipients,'setup_checks':check_sell_setup(instructions,wallet),'fee_split_checks':check_protocol_split(pool,bindings,fees,recipients),'sell_event_checks':check_sell_event(instructions,bindings,fees,recipients,pool),'fee_query':check_fee_query(instructions,bindings,fees),'fee_checks':fees,

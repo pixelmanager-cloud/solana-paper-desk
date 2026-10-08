@@ -1,5 +1,7 @@
 """Conservative buy then partial sell simulation against one sequential bank state."""
 import time
+import base64
+import hashlib
 from .providers import SOL,helius_rpc,jupiter_sequence_probe
 from .programs import address
 from .decode import integer
@@ -48,11 +50,30 @@ def simulate_roundtrip(mint,wallet,spend,rpc=helius_rpc,quote=jupiter_sequence_p
             or type(slot) is not int or not 0<=slot-before['context']['slot']<=32):reasons.append('ROUNDTRIP_EVIDENCE_STALE')
     residual=str(int(effects[0]['received_raw'])-int(effects[1]['sold_raw'])) if len(effects)==2 and all(x['passed'] for x in effects) else None
     native_delta=str(sum(int(x['native_wealth_delta_lamports']) for x in effects)) if residual is not None else None
-    result={'residual_token_raw':residual,'net_native_wealth_delta_lamports':native_delta,'kind':'unsigned_buy_partial_sell_diagnostic','mint':mint,'wallet':wallet,'spend_lamports':str(spend),
+    from .quantity import diagnostic_quantity
+    mint_lookup = {'method': 'getMultipleAccounts',
+                   'params': [[wallet, mint], {'encoding': 'base64', 'commitment': 'confirmed'}],
+                   'result': before}
+    quantity_diagnostic = diagnostic_quantity(mint, wallet, quantity, mint_source=mint_lookup,
+        simulation={}, keys=legs[1]['keys'], transaction_hash=hashlib.sha256(legs[1]['raw']).hexdigest())
+    if len(rows) == 2:
+        post = rows[1].get('postExecutionAccounts')
+        hashes = sequence.get('transaction_hashes')
+        if (isinstance(post, list) and len(post) == len(watch)
+                and isinstance(hashes, list) and len(hashes) == 2
+                and hashes[1] == hashlib.sha256(legs[1]['raw']).hexdigest()):
+            normalized = {**rows[1], 'accounts': [post[watch.index(k)] for k in legs[1]['keys']]}
+            quantity_diagnostic = diagnostic_quantity(mint, wallet, quantity, mint_source=mint_lookup,
+                simulation=normalized, keys=legs[1]['keys'], transaction_hash=hashes[1])
+        elif isinstance(hashes, list) and len(hashes) == 2 and hashes[1] != hashlib.sha256(legs[1]['raw']).hexdigest():
+            quantity_diagnostic['reasons'] = ['QUANTITY_TRANSACTION_IDENTITY_MISMATCH']
+    result={'sell_quantity_witness':quantity_diagnostic,'residual_token_raw':residual,'net_native_wealth_delta_lamports':native_delta,'kind':'unsigned_buy_partial_sell_diagnostic','mint':mint,'wallet':wallet,'spend_lamports':str(spend),
         'sell_quantity_raw':str(quantity),'observed_at':now,'slot':slot,'effects_passed':not reasons,
         'reasons':sorted(set(reasons)),'leg_effects':effects,'leg_controls':controls,'sequence':sequence,
         'signed':False,'submitted':False,'eligible_for_trading':False,'transaction_policy_ok':False,
         'notice':'Sells only the buy minimum; surplus tokens may remain in simulated inventory. Complete instruction policy and wallet-specific evidence remain required. Not a trading approval.'}
-    if capture:capture({'provenance':'UNSIGNED_UNSUBMITTED_MAINNET_BUY_PARTIAL_SELL','result':result,
-        'legs':[{'keys':x['keys'],'outer':x['outer']} for x in legs],'quote_responses':[b,s]})
+    if capture:capture({'mint_lookup':mint_lookup,'provenance':'UNSIGNED_UNSUBMITTED_MAINNET_BUY_PARTIAL_SELL','result':result,
+        'legs':[{'keys':x['keys'],'outer':x['outer'],
+                 'unsigned_transaction':base64.b64encode(x['raw']).decode(),
+                 'transaction_hash':hashlib.sha256(x['raw']).hexdigest()} for x in legs],'quote_responses':[b,s]})
     return result
