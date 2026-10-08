@@ -63,6 +63,17 @@ def _pda(program, *seeds):
     return str(Pubkey.find_program_address(list(seeds), Pubkey.from_string(program))[0])
 
 
+def _slot(value):
+    return type(value) is int and 0 <= value < 2**64
+
+
+def _signature(value):
+    try:
+        return isinstance(value, str) and len(unbase58(value)) == 64
+    except ValueError:
+        return False
+
+
 def report_create_v2_lifecycle(record, *, endpoint_states=None, source_context=None):
     """Report a supplied RPC transaction object's observed structural agreement.
 
@@ -440,6 +451,28 @@ def report_create_v2_lifecycle(record, *, endpoint_states=None, source_context=N
     expected = {} if result['bindings'] is None else {
         b['mint']: ('mint', None), b['associated_bonding_curve']: ('account', b['bonding_curve']),
         result['bindings']['holder_ata']: ('account', b['user'])}
+    transaction = record.get('transaction') if isinstance(record, dict) else None
+    signatures = transaction.get('signatures') if isinstance(transaction, dict) else None
+    first_signature = signatures[0] if isinstance(signatures, list) and signatures else None
+    record_slot = record.get('slot') if isinstance(record, dict) else None
+    context_slot = source_context.get('slot') if isinstance(source_context, dict) else None
+    context_signature = source_context.get('signature') if isinstance(source_context, dict) else None
+    if record_slot is None:
+        result['unknowns'].append('RECORD_SLOT_MISSING')
+    elif not _slot(record_slot):
+        error('RECORD_SLOT_INVALID')
+    if context_slot is None:
+        result['unknowns'].append('SOURCE_SLOT_MISSING')
+    elif not _slot(context_slot):
+        error('SOURCE_SLOT_INVALID')
+    if _slot(record_slot) and _slot(context_slot) and record_slot != context_slot:
+        error('RECORD_SOURCE_SLOT_MISMATCH')
+    if context_signature is None:
+        result['unknowns'].append('SOURCE_SIGNATURE_MISSING')
+    elif not _signature(context_signature):
+        error('SOURCE_SIGNATURE_INVALID')
+    elif context_signature != first_signature:
+        error('SOURCE_SIGNATURE_DISAGREEMENT')
     if endpoint_states is None:
         result['unknowns'].append('RAW_STATE_MISSING')
     elif not isinstance(endpoint_states, list) or len(endpoint_states) > 64:
@@ -447,17 +480,6 @@ def report_create_v2_lifecycle(record, *, endpoint_states=None, source_context=N
     else:
         observed = set()
         endpoint_slots = set()
-        transaction = record.get('transaction') if isinstance(record, dict) else None
-        signatures = transaction.get('signatures') if isinstance(transaction, dict) else None
-        first_signature = signatures[0] if isinstance(signatures, list) and signatures else None
-        context_slot = source_context.get('slot') if isinstance(source_context, dict) else None
-        context_signature = source_context.get('signature') if isinstance(source_context, dict) else None
-        if context_slot is None:
-            result['unknowns'].append('SOURCE_SLOT_MISSING')
-        elif type(context_slot) is not int or context_slot < 0:
-            error('SOURCE_SLOT_INVALID')
-        if context_signature is not None and context_signature != first_signature:
-            error('SOURCE_SIGNATURE_DISAGREEMENT')
         for state in endpoint_states:
             if not isinstance(state, dict):
                 error('ENDPOINT_ENVELOPE_MALFORMED')
@@ -490,16 +512,20 @@ def report_create_v2_lifecycle(record, *, endpoint_states=None, source_context=N
             slot = state.get('slot')
             if slot is None:
                 result['unknowns'].append('ENDPOINT_SLOT_MISSING:' + state_address)
-            elif type(slot) is not int or slot < 0:
+            elif not _slot(slot):
                 error('ENDPOINT_SLOT_INVALID')
             else:
                 endpoint_slots.add(slot)
-                if type(context_slot) is int and slot != context_slot:
+                if _slot(context_slot) and slot != context_slot:
                     error('ENDPOINT_SOURCE_SLOT_MISMATCH')
+                if _slot(record_slot) and slot != record_slot:
+                    error('ENDPOINT_RECORD_SLOT_MISMATCH')
             signature = state.get('transaction_signature')
             if signature is None or first_signature is None:
                 result['unknowns'].append('ENDPOINT_TRANSACTION_BINDING_MISSING:' + state_address)
-            elif signature != first_signature:
+            elif not _signature(signature):
+                error('ENDPOINT_TRANSACTION_BINDING_INVALID')
+            elif signature != first_signature or (_signature(context_signature) and signature != context_signature):
                 error('ENDPOINT_TRANSACTION_BINDING_MISMATCH')
         if len(endpoint_slots) > 1:
             error('ENDPOINT_SLOT_DISAGREEMENT')
@@ -524,7 +550,8 @@ def report_create_v2_lifecycle(record, *, endpoint_states=None, source_context=N
         and result['endpoint_amount_comparison'] is not None and result['endpoint_amount_comparison']['amounts_agree']
         and result['signer_witness'] is not None and not any(
             u.startswith(('RAW_STATE_MISSING', 'ENDPOINT_SLOT_MISSING', 'ENDPOINT_TRANSACTION_BINDING_MISSING',
-                          'SOURCE_SLOT_MISSING')) for u in result['unknowns']))
+                          'SOURCE_SLOT_MISSING', 'RECORD_SLOT_MISSING', 'SOURCE_SIGNATURE_MISSING'))
+            for u in result['unknowns']))
     result['errors'] = sorted(set(result['errors']))
     result['unknowns'] = sorted(set(result['unknowns']))
     return result

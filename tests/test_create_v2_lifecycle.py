@@ -74,7 +74,7 @@ def synthetic():
         ix(TOKEN_2022,[mint,curve_ata,authority],b'\7'+struct.pack('<Q',SUPPLY),2),
         ix(TOKEN_2022,[mint,authority],b'\6\0\0',2),
         ix(PUMP,event['accounts'],unbase58(event['data']),2)]
-    record = {'version':'legacy','transaction':{'signatures':['1'*64]*2,
+    record = {'version':'legacy','slot':454321337,'transaction':{'signatures':['1'*64]*2,
         'message':{'accountKeys':keys,'header':{'numRequiredSignatures':2,
             'numReadonlySignedAccounts':0,'numReadonlyUnsignedAccounts':0},
             'instructions':[ix(PUMP,accounts,unbase58(create['data'])),
@@ -392,11 +392,63 @@ class CreateV2LifecycleTests(unittest.TestCase):
 
     def test_endpoint_slot_signature_stale_or_missing_not_trusted(self):
         for field,replacement,code in (('slot',454321338,'ENDPOINT_SOURCE_SLOT_MISMATCH'),
-            ('slot',True,'ENDPOINT_SLOT_INVALID'),('transaction_signature','2'*64,'ENDPOINT_TRANSACTION_BINDING_MISMATCH')):
+            ('slot',True,'ENDPOINT_SLOT_INVALID'),('transaction_signature',base58(bytes([1])*64),'ENDPOINT_TRANSACTION_BINDING_MISMATCH')):
             value=synthetic();value[1][0][field]=replacement;self.reject(value,code)
         value=synthetic();del value[1][0]['slot'];self.reject(value)
         value=synthetic();del value[1][0]['transaction_signature'];self.reject(value)
-        value=synthetic();value[2]['signature']='2'*64;self.reject(value,'SOURCE_SIGNATURE_DISAGREEMENT')
+        value=synthetic();value[2]['signature']=base58(bytes([1])*64);self.reject(value,'SOURCE_SIGNATURE_DISAGREEMENT')
+
+    def test_record_slot_mismatch_coordinator_reproduction(self):
+        value=synthetic();value[0]['slot']=1
+        result=self.reject(value,'RECORD_SOURCE_SLOT_MISMATCH')
+        self.assertIn('ENDPOINT_RECORD_SLOT_MISMATCH',result['errors'])
+
+    def test_context_signature_missing_coordinator_reproduction(self):
+        for explicit_none in (False,True):
+            value=synthetic()
+            if explicit_none:value[2]['signature']=None
+            else:value[2].pop('signature')
+            result=self.reject(value)
+            self.assertIn('SOURCE_SIGNATURE_MISSING',result['unknowns'])
+
+    def test_all_slots_overflow_coordinator_reproduction(self):
+        value=synthetic();value[0]['slot']=value[2]['slot']=2**64
+        for state in value[1]:state['slot']=2**64
+        result=self.reject(value,'RECORD_SLOT_INVALID')
+        self.assertIn('SOURCE_SLOT_INVALID',result['errors'])
+        self.assertIn('ENDPOINT_SLOT_INVALID',result['errors'])
+
+    def test_each_slot_witness_strict_u64_not_bool_float_string_or_overflow(self):
+        for location,code in ((0,'RECORD_SLOT_INVALID'),(2,'SOURCE_SLOT_INVALID'),(1,'ENDPOINT_SLOT_INVALID')):
+            for invalid in (-1,True,False,1.0,'454321337',2**64,2**128):
+                value=synthetic()
+                if location==1:value[1][0]['slot']=invalid
+                else:value[location]['slot']=invalid
+                with self.subTest(location=location,invalid=invalid):self.reject(value,code)
+
+    def test_slot_u64_boundaries_agree_only_with_all_explicit_bindings(self):
+        for slot in (0,2**64-1):
+            value=synthetic();value[0]['slot']=value[2]['slot']=slot
+            for state in value[1]:state['slot']=slot
+            result=report(value)
+            self.assertTrue(result['supported_sequence_agreement'])
+            self.assertEqual(result['errors'],[])
+            self.unapproved(result)
+
+    def test_missing_record_slot_is_unknown_not_filled_from_context(self):
+        value=synthetic();value[0].pop('slot')
+        result=self.reject(value)
+        self.assertIn('RECORD_SLOT_MISSING',result['unknowns'])
+
+    def test_signature_witnesses_invalid_or_cross_binding_conflicts(self):
+        for invalid in ('','0'*64,'1'*63,5,{},True):
+            value=synthetic();value[2]['signature']=invalid
+            self.reject(value,'SOURCE_SIGNATURE_INVALID')
+            value=synthetic();value[1][0]['transaction_signature']=invalid
+            self.reject(value,'ENDPOINT_TRANSACTION_BINDING_INVALID')
+        value=synthetic();value[0]['slot']=value[2]['slot']=1
+        result=self.reject(value,'ENDPOINT_RECORD_SLOT_MISMATCH')
+        self.assertIn('ENDPOINT_SOURCE_SLOT_MISMATCH',result['errors'])
 
     def test_forged_success_finality_and_endpoint_trust_flags_ignored(self):
         value=synthetic();value[0]['meta'].update(cpi_success_verified=True,effect_order_verified=True)
