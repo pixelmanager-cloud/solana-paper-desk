@@ -274,15 +274,13 @@
         "head": "bd9d2321bccc4efc11889b78b9382ec2df67f0db"
       },
       {
-        "id": "PR88-INDEPENDENT-REVIEW",
-        "worker": "05",
-        "thread_id": "01a118fc-dd83-7672-ac81-7445f85fe09f",
+        "id": "COMMON-BANK-UNION-STAGE",
+        "worker": "02",
+        "thread_id": "01a118fc-666c-70b6-9fa8-2c7520f0a0bb",
         "host_id": "durable",
-        "status": "REVIEWING",
-        "pr": 88,
-        "head": "04c531b19f06ed666d28afb771f8ce25c252616f",
-        "base": "d45b65952c82d2c79d122df17d0202a53a8f31a9",
-        "wait_cursor": "b9784eaf-f3e5-457f-a98d-a386c23b37ea:29"
+        "status": "RESERVED_PENDING_DISPATCH",
+        "base": "421a9ce1c92a737375b249e8fe83cb11e9295198",
+        "scope": "Atomic original union getMultipleAccounts reservation and completion after audited finalized-slot DONE; no transport or publication"
       }
     ],
     "saved_launch_probe": {
@@ -739,8 +737,8 @@
     "pending_slot_stage": {
       "pr": 88,
       "head": "04c531b19f06ed666d28afb771f8ce25c252616f",
-      "integrated": false,
-      "review": "PENDING worker05",
+      "integrated": true,
+      "review": "PASS worker05 exact tree; Linux1712 zero skips121.055s;16 probes6.146s",
       "author_linux_tests": 1678,
       "author_skips": 0,
       "mac_discovered": 1712,
@@ -750,7 +748,10 @@
       "combined_base": "d45b65952c82d2c79d122df17d0202a53a8f31a9",
       "combined_tree": "27f9becc86f2757cba34bef18cdfa26f9b3f5fcd",
       "coordinator_diff_review": "Journal diff reviewed; independent Linux and security review pending",
-      "ci": "Both exact-head checks SUCCESS"
+      "ci": "Both exact-head checks SUCCESS",
+      "integration_commit": "421a9ce1c92a737375b249e8fe83cb11e9295198",
+      "review_manifest_sha256": "9876738228065dd2151d1a2b2dd35ac943c131cbce054827a026dcca02309b10",
+      "deployed": false
     },
     "pending_protected_reader_format": {
       "pr": 89,
