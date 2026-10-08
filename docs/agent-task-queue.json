@@ -263,16 +263,6 @@
     "published_ci": "886fc96d404b9d3ffd99c0045f7231d563a5d946 successful",
     "active_claims": [
       {
-        "worker": "worker01",
-        "thread_id": "01a118fc-39bc-722c-b442-8bf5a749e0bb",
-        "host_id": "durable",
-        "task": "Exact instruction role binding in route coverage",
-        "pr": null,
-        "head": null,
-        "status": "IMPLEMENTING",
-        "base": "f5eb854"
-      },
-      {
         "worker": "worker08",
         "thread_id": "01a118fd-2563-7126-90d7-bd07693de0b2",
         "host_id": "durable",
@@ -298,6 +288,16 @@
         "task": "Separate full valuation and exact partial-action evidence in paper engine; keep live gates disabled",
         "status": "IMPLEMENTING",
         "base": "c9b9356"
+      },
+      {
+        "worker": "worker06",
+        "thread_id": "01a118fc-f867-7233-8eec-c20659e70095",
+        "host_id": "durable",
+        "task": "Independent exact route instruction receipt coverage review",
+        "status": "REVIEWING",
+        "pr": 71,
+        "head": "a97fec8a07c9da8166310b776d6e03c191866096",
+        "base": "a8e61c3"
       }
     ],
     "saved_launch_probe": {
@@ -786,6 +786,12 @@
       "linux_tests": 1397,
       "linux_skips": 0,
       "ci": "SUCCESS exact head"
+    },
+    "71": {
+      "head": "a97fec8a07c9da8166310b776d6e03c191866096",
+      "reviewer": "worker06",
+      "status": "REVIEWING",
+      "integrated": false
     }
   },
   "parallel_combined_regression": {
