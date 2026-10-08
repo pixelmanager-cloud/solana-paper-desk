@@ -249,6 +249,37 @@ class CloudContinuationOperationsTests(unittest.TestCase):
         self.assertNotIn('scan-000', counters['assessed_ids'])
         self.assertEqual(self.journal_rows(), before)
 
+    def test_unseen_older_scan_plus_recent_overlap_exceeds_fifty_assessments(self):
+        self.measure('51-bound-prepare-first', limit=50)
+        self.measure('51-bound-prepare-finish', limit=50)
+        original = self.journal_rows()
+        self.assertEqual(len(original['decision_evaluations']), 51)
+        source_before = self.database_state(self.source)
+        evidence_before = self.database_state(self.evidence)
+        # Make one older scan outside the recent window and one overlapping
+        # recent scan unseen by the current-policy query. Original decisions
+        # remain intact, as with a journal that retains older decision records.
+        with sqlite3.connect(self.journal) as c:
+            c.execute("DELETE FROM decision_evaluations WHERE scan_id IN ('scan-000','scan-001')")
+        unaffected = [row for row in original['decision_evaluations']
+                      if row[0] not in ('scan-000', 'scan-001')]
+        result, counters = self.measure('51-unseen-old-plus-recent-overlap', limit=20, instrument=True)
+        self.assertEqual(result['consumed'], 2)
+        self.assertEqual({d['scan_id'] for d in result['decisions']}, {'scan-000', 'scan-001'})
+        self.assertEqual(counters['assessed_ids'][:2], ['scan-000', 'scan-001'])
+        self.assertEqual(set(counters['assessed_ids']), {f'scan-{i:03}' for i in range(51)})
+        self.assertEqual(len(counters['assessed_ids']), 51)
+        self.assertEqual(counters['assessed_ids'].count('scan-001'), 1)
+        for decision in result['decisions']:
+            self.assert_historical_rejection(decision)
+        after = self.journal_rows()
+        self.assertEqual(after['decisions'], original['decisions'])
+        self.assertEqual(len(after['decision_evaluations']), 51)
+        self.assertEqual([row for row in after['decision_evaluations']
+                          if row[0] not in ('scan-000', 'scan-001')], unaffected)
+        self.assertEqual(self.database_state(self.source), source_before)
+        self.assertEqual(self.database_state(self.evidence), evidence_before)
+
     def test_original_age_not_bank_clock_or_later_evaluation_controls_freshness(self):
         scan, store = self.scans()[0], EvidenceStore(self.evidence, read_only=True)
         for now, stale in ((119, True), (120, False), (130, False), (131, True), (1000, True)):

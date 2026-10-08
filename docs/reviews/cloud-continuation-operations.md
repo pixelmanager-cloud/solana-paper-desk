@@ -201,3 +201,47 @@ is not common ownership, current freshness or safety. No VPS, secrets, live
 providers, signers, broadcasts, deployment, merge, issue closure, readiness change
 or entry enablement occurred. Only the coordinator may integrate and dispatch
 follow-up production work.
+
+## PR28 follow-up correction: recent-window bound versus total work
+
+The reviewer's independent 51-assessment probe correctly identifies an overbroad
+reading of the earlier heading, 'Operational work is bounded by the recent
+window'. **Fifty bounds only the completed-investigation recent selector, not
+the total number of assessments in one consume call.** The candidate list starts
+with up to `limit` previously unseen terminal scans and appends the most recent
+50 completed scans, excluding IDs already in the unseen list. Its conservative
+upper bound is therefore **`limit + 50` distinct candidates**, before overlap
+removal and early stopping after `limit` newly journaled rows. Assessments can
+exceed 50 when fewer than `limit` unseen candidates are selected and some lie
+outside the recent window. The measured unchanged/already-journaled scenarios in
+the original table still assess 50; they do not establish a universal bound.
+This correction supersedes any implication of a 50-assessment total ceiling.
+
+New regression:
+`test_unseen_older_scan_plus_recent_overlap_exceeds_fifty_assessments` first
+journals all 51 raw-fixture investigations. In its temporary journal it removes
+only current-policy evaluation rows for scan-000 (outside the recent window)
+and scan-001 (inside it), preserving every original decision. With `limit=20`,
+the unseen selector returns both IDs, the recent selector returns scan-001
+through scan-050, and the union assesses **51 distinct scans**. Scan-001 is
+assessed exactly once despite selector overlap. Exactly two evaluation rows are
+added, both historical component verification with overall REJECT; all original
+decision rows, the other 49 evaluations, source bytes, evidence and request
+budgets remain unchanged. This verifies the union, overlap deduplication and
+insertion limit independently of timing and makes no provider calls.
+
+The expanded dedicated suite passed **7 tests in 14.795 seconds**, zero
+failures/errors/skips. Follow-up full-suite results are recorded below. This
+append-only correction changes only the new operations test/report; no production
+or shared documents were modified. The separately assigned WAL race remains
+worker05's responsibility and is not implemented or certified by this follow-up.
+
+Follow-up combined validation: **724 tests in 28.432 seconds; OK**, zero
+failures/errors/skips, Python 3.12.14 and the same full discovery/measurement
+command recorded above. The new counted mixed-selection pass assessed 51 scans,
+inserted two rows, performed 2,040 evidence loads and 1,530 decodes, and reloaded
+4,956,282 logical uncompressed bytes in **0.791001 seconds elapsed / 0.790647 CPU
+seconds**. These are instrumented warm synthetic-fixture observations under the
+same hardware/cache limitations; no CI timing threshold is added. The earlier
+six-test/723-test timings remain the original PR28 result, not the follow-up
+result. Diff whitespace validation passed before the follow-up commit.
