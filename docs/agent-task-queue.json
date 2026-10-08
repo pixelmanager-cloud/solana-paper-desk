@@ -189,14 +189,14 @@
   ],
   "integration": {
     "branch": "integration/cloud-wave1",
-    "tested_commit": "eae935a8b6d6b04148e0355aaa4ddbf55df103d6",
-    "combined_tests": 1269,
+    "tested_commit": "7568e4622d19b6eabe50b94b0b72b3ca53334017",
+    "combined_tests": 1289,
     "result": "PASS",
     "live_verification": "BLOCKED_NO_SUPPORTED_BUDGET_FEASIBLE_PUBLIC_LEGACY_SEED; acquisition path in development",
     "blocker": "Live legacy evidence,protected pool receipt capture,lifecycle semantic approval and holder exposure integration unfinished",
     "followups": {
       "worker02": "PR40 review interrupted by automated cybersecurity-risk flag; no final acceptance",
-      "worker06": "PR54 independent review",
+      "worker06": "PR54 review passed; publishing evidence",
       "cloud_reviewer": "PR53 review passed; available",
       "worker10": "PR45 independent review complete;available",
       "worker03": "Bounded official TradeEvent schema research",
@@ -204,7 +204,7 @@
       "worker05": "PR52 WAL repair published; available",
       "worker09": "PR35 reviewed and integrated; available",
       "worker01": "Forward fix published; independent re-review pending; available",
-      "worker07": "PR54 published; available",
+      "worker07": "Native lamport reconciliation assigned",
       "worker08": "PR31 reviewed and integrated; available"
     },
     "reviews": {
@@ -240,7 +240,8 @@
       "PR51": "0b57227a36dd47b75128c66385c8e50dc16ecf24 scopedPASS;96 partial-schema/rebinding probes+3 crash/tamper/transport probes;Linux1201 zero skips",
       "PR50": "3c00d9679b997e2d92a317fbc0b9f469b76ef171 scopedPASS;1514 independent probes;combinedLinux1244 zero skips; no trusted lifecycle approval",
       "PR52": "4f3573330b1b193579d733afab19b259297fa5df scopedPASS rollback-only contract; independent WAL/hot-journal/OFD locking probes;Linux1264 zero skips;266 sourcehashes matched",
-      "PR53": "ff4aadf41b158ca841d2ae9a3d1cc1841e8772bf scopedPASS;270 source hashes matched;Linux1269 zero skips;40 independent mutations; provider provenance not authenticated chain evidence"
+      "PR53": "ff4aadf41b158ca841d2ae9a3d1cc1841e8772bf scopedPASS;270 source hashes matched;Linux1269 zero skips;40 independent mutations; provider provenance not authenticated chain evidence",
+      "PR54": "2895fd6d42ab7dc1fcade284877b68fdf6e5efd7 independent scopedPASS;1322probes,combinedLinux1289zero skips,exact tree449258e matches; no lifecycle approval"
     },
     "candidate_combination": {
       "commit": "bfcc550ca25bd6cb79dc7ac3ad2b30c72f7b1033",
@@ -262,21 +263,20 @@
     "published_ci": "886fc96d404b9d3ffd99c0045f7231d563a5d946 successful",
     "active_claims": [
       {
-        "worker": "worker06",
-        "thread_id": "01a118fc-f867-7233-8eec-c20659e70095",
-        "host_id": "durable",
-        "task": "Independent raw report PR54 review",
-        "status": "REVIEWING",
-        "pr": 54,
-        "head": "2895fd6d42ab7dc1fcade284877b68fdf6e5efd7"
-      },
-      {
         "worker": "worker03",
         "thread_id": "01a118fc-9478-778a-b77a-8f8f6ec7e0ad",
         "host_id": "durable",
         "task": "Primary TradeEvent trailing-byte schema provenance",
         "status": "RESEARCHING",
         "base": "1e8cd72"
+      },
+      {
+        "worker": "worker07",
+        "thread_id": "01a118fd-0f1c-749c-b85b-5e730937d0a8",
+        "host_id": "durable",
+        "task": "Disconnected native lamport reconciliation",
+        "status": "IMPLEMENTING",
+        "base": "7568e4622d19b6eabe50b94b0b72b3ca53334017"
       }
     ],
     "saved_launch_probe": {
@@ -329,7 +329,7 @@
       "result": "Linux combined975 PASS zero skips; reviewed",
       "integrated": true
     },
-    "test_platform_note": "Independent Linux1269 zero skips;Mac1177 passed+92 skips",
+    "test_platform_note": "Independent Linux1289 zero skips;Mac1197 passed+92 skips",
     "pending_reference_combination": {
       "commit": "8aa5938aeef5e96f22a54f80ff698d043f3a154d",
       "pr": 39,
@@ -576,11 +576,12 @@
     "pending_raw_support": {
       "pr": 54,
       "head": "2895fd6d42ab7dc1fcade284877b68fdf6e5efd7",
-      "review": "IN_PROGRESS",
-      "integrated": false,
+      "review": "PASS;worker06 durable review, GitHub publication requested",
+      "integrated": true,
       "mac_discovered": 1289,
       "mac_passed": 1197,
-      "mac_skipped": 92
+      "mac_skipped": 92,
+      "reviewed_tree": "449258e108938596b4f1b4b5900cd11e19100d6d"
     }
   }
 }
