@@ -1,6 +1,6 @@
 {
   "schema_version": 1,
-  "revision": 45,
+  "revision": 46,
   "repository": "pixelmanager-cloud/solana-paper-desk",
   "source_main_sha": "e298e15cd758932e81d2241130716632702f5bd0",
   "observed_date": "2026-10-08",
@@ -2770,12 +2770,11 @@
     "last_success": "PR69supportedcloud1360Linuxzero skips"
   },
   "review_lease": {
-    "holder": null,
-    "fencing_token": 10,
-    "status": "RELEASED",
-    "scope": "PR69_FIXTURE_RESEARCH_ONLY",
-    "expires_at": null,
-    "last_holder": "cloud-pr69-5d53e38-review"
+    "holder": "cloud-pr83-2d61a6a-review",
+    "fencing_token": 11,
+    "status": "HELD",
+    "scope": "PR83_INDEPENDENT_FIXTURE_REVIEW_ONLY",
+    "expires_at": "2026-10-08T12:45:00Z"
   },
   "external_review_observations": [
     {
