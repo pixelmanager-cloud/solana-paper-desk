@@ -290,3 +290,12 @@ Ownership evidence is NOT complete. The finalized snapshot collection/requery st
 Command: .venv/bin/python -m desk --secrets-file <existing-systemd-credential-path> ownership-advance --db /var/lib/solana-desk/research.sqlite --evidence-db /var/lib/solana-desk/evidence.sqlite --scan-id <completed-scan-id>. Do not print credentials or source reports containing provider errors.
 
 Sources checked: https://www.helius.dev/docs/api-reference/rpc/http/gettransactionsforaddress (slot gte/lt filtering); https://solana.com/docs/rpc/http/getblocktime (estimated block production time).
+
+
+## Combined cloud integration — 8 October 2026
+
+All ten initial worker branches were combined without conflicts on `integration/cloud-wave1`, not main. Python 3.12 with declared dependencies passed 662 tests at e056ec5b016782a06a20590b3ca4e498f238ab4c. The first local attempt used an interpreter missing solders (126 errors, 33 skips); a dedicated dependency-complete venv resolved that setup failure.
+
+Independent review found a stale ownership_heads publication race in PR18. Worker01 is repairing it and adding an unmocked positive replay fixture. PR19/12 core contracts received independent review with required trust-adapter constraints: never trust candidate hashes/flags, distinguish token-program owner from token authority, preserve purpose/time/slot validity and exclusive expiry. Worker02 is preparing a separate conservative adapter. No live verification or deployment of this batch occurred; entries remain disabled. Passing combined tests does not satisfy these review or live gates.
+
+The desktop 10-minute review/dispatch automation is now active and owns integration. The hourly cloud reviewer is GitHub-only; scheduled execution remains unverified.

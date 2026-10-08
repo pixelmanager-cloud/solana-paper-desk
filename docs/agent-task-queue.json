@@ -1,5 +1,5 @@
 {
-  "status": "CLOUD_WAVE1_DISPATCHED",
+  "status": "INTEGRATION_REVIEW_BLOCKED",
   "repository": "https://github.com/pixelmanager-cloud/solana-paper-desk",
   "cloud_environment": {
     "name": "solana-paper-desk",
@@ -185,5 +185,17 @@
       ],
       "issue_url": "https://github.com/pixelmanager-cloud/solana-paper-desk/issues/9"
     }
-  ]
+  ],
+  "integration": {
+    "branch": "integration/cloud-wave1",
+    "tested_commit": "e056ec5b016782a06a20590b3ca4e498f238ab4c",
+    "combined_tests": 662,
+    "result": "PASS",
+    "live_verification": "NOT_STARTED_PENDING_RACE_FIX",
+    "blocker": "PR18 stale ownership_heads publication race; repair assigned to worker01",
+    "followups": {
+      "worker01": "Repair PR18 race and add unmocked replay fixture",
+      "worker02": "Separate trusted classification/exposure adapter PR"
+    }
+  }
 }
