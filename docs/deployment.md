@@ -371,3 +371,12 @@ Fresh five-database backup: `/var/backups/solana-desk/pre-integration-884e4ca/da
 Five `60-reviewed-release.conf` WorkingDirectory overrides now select this release. Dashboard restart and decision/monitor runs succeeded. Dashboard and `/api/paper` HTTP200; paper status NOT_CONFIGURED and automatic entry false. Listener remains `127.0.0.1:8765`. Existing databases were neither replaced nor migrated.
 
 Rollback: restore the five saved unit overrides from `/var/backups/solana-desk/pre-integration-884e4ca/systemd-overrides/{unit}.conf` to `/etc/systemd/system/{unit}.service.d/60-reviewed-release.conf` for desk-dashboard, desk-decisions, desk-discovery, desk-paper-monitor and desk-backup; run daemon-reload and restart dashboard. Those saved overrides select 886fc96. Keep databases intact. A future paper experiment must retain its implementation identity; no experiment migration is implied by this deployment.
+
+
+## Reviewed release d758bc5 — 2026-10-08 08:09 UTC
+
+Deployed exact d758bc529a7da1f74509117288740911f2ad6845 after independent combined review, both successful CI runs and 1,479 VPS service-account tests (zero skips, 132.571s). Archive SHA256: 54e0eb9ef6957f111d0df8f91c852f238cfed8ae661795b1dd29f6391187946c. This release includes PR72–74; PR75 is excluded.
+
+Fresh five-database backup: `/var/backups/solana-desk/pre-integration-d758bc5/daily-20261008T080718Z`. Copied-data validation under `/var/lib/solana-desk-validation/d758bc5` preserved eight decisions and 28 evaluations plus research/evidence hashes; eight reassessments all rejected. No provider calls. Dashboard HTTP200, decisions/monitor success and listener 127.0.0.1:8765 verified. Paper remains NOT_CONFIGURED/NOT_CONNECTED with automatic entry false.
+
+Rollback: restore the five overrides saved in `/var/backups/solana-desk/pre-integration-d758bc5/systemd-overrides/{unit}.conf` to `/etc/systemd/system/{unit}.service.d/60-reviewed-release.conf` for dashboard, decisions, discovery, paper-monitor and backup (each prefixed desk-); daemon-reload and restart dashboard. Saved overrides select release884e4ca. Preserve databases; no experiment migration occurred.

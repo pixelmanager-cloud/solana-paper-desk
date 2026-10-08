@@ -263,20 +263,22 @@
     "published_ci": "886fc96d404b9d3ffd99c0045f7231d563a5d946 successful",
     "active_claims": [
       {
-        "worker": "worker10",
-        "thread_id": "01a118fd-56d5-70b8-ad31-dba13e982082",
-        "host_id": "durable",
-        "status": "IMPLEMENTING",
-        "task": "Lossless mint-bound raw/human quantity witness in existing unsigned diagnostic path",
-        "base": "b5e4d66"
-      },
-      {
         "worker": "worker05",
         "thread_id": "01a118fc-dd83-7672-ac81-7445f85fe09f",
         "host_id": "durable",
         "status": "IMPLEMENTING",
         "base": "ae33013",
         "task": "Replay ownership control obligations into existing candidate snapshot diagnostics"
+      },
+      {
+        "worker": "worker06",
+        "thread_id": "01a118fc-f867-7233-8eec-c20659e70095",
+        "host_id": "durable",
+        "task": "Independent raw quantity witness review including PR74 integration",
+        "pr": 75,
+        "head": "3c4399af143380381a066b7a296067909384f8b1",
+        "base": "d758bc5",
+        "status": "REVIEWING"
       }
     ],
     "saved_launch_probe": {
@@ -513,8 +515,8 @@
       "next_requirement": "Use reviewed normal acquisition to create a bounded admitted scan; never retrofit older records or create ad-hoc diagnostic budget"
     },
     "vps_deployment": {
-      "commit": "884e4ca1e7284d9b6e99ec661fc3a2b6ca147bd3",
-      "release": "/opt/solana-desk-releases/884e4ca",
+      "commit": "d758bc529a7da1f74509117288740911f2ad6845",
+      "release": "/opt/solana-desk-releases/d758bc5",
       "override": "60-reviewed-release.conf",
       "services": [
         "desk-dashboard",
@@ -870,6 +872,12 @@
       "tree_match": true,
       "ci": "SUCCESS unchanged exact head",
       "integration_commit": "d35dda2ca9bbbf46a1389bc3b30dd98e463c04cc"
+    },
+    "75": {
+      "head": "3c4399af143380381a066b7a296067909384f8b1",
+      "reviewer": "worker06",
+      "status": "REVIEWING",
+      "integrated": false
     }
   },
   "parallel_combined_regression": {
@@ -951,6 +959,27 @@
     "copy_reassessed": 8,
     "original_decisions_preserved": 8,
     "original_evaluations_preserved": 28,
+    "dashboard_http": 200,
+    "paper_status": "NOT_CONFIGURED",
+    "automatic_entry_enabled": false,
+    "listener": "127.0.0.1:8765"
+  },
+  "vps_stage_d758bc5": {
+    "source": "d758bc529a7da1f74509117288740911f2ad6845",
+    "status": "DEPLOYED_VERIFIED_RELEASE",
+    "archive_sha256": "54e0eb9ef6957f111d0df8f91c852f238cfed8ae661795b1dd29f6391187946c",
+    "provider_calls": 0,
+    "service_release": "884e4ca",
+    "backup": "/var/backups/solana-desk/pre-integration-d758bc5/daily-20261008T080718Z",
+    "test_log": "/var/tmp/solana-desk-d758bc5-tests.log",
+    "tests": 1479,
+    "skips": 0,
+    "seconds": 132.571,
+    "ci": "Both exact release CI runs SUCCESS",
+    "copy_reassessed": 8,
+    "original_decisions_preserved": 8,
+    "original_evaluations_preserved": 28,
+    "source_hashes_unchanged": true,
     "dashboard_http": 200,
     "paper_status": "NOT_CONFIGURED",
     "automatic_entry_enabled": false,
