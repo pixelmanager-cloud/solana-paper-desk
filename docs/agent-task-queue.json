@@ -196,7 +196,7 @@
     "blocker": "Live legacy evidence,protected pool receipt capture,lifecycle semantic approval and holder exposure integration unfinished",
     "followups": {
       "worker02": "PR40 review interrupted by automated cybersecurity-risk flag; no final acceptance",
-      "worker06": "PR50 and combined Linux re-review complete; available",
+      "worker06": "Raw launch provenance/inventory assigned",
       "cloud_reviewer": "PR52 scoped re-review passed; available",
       "worker10": "PR45 independent review complete;available",
       "worker03": "Bounded newerlegacysearch found no matching authoritative event;available",
@@ -204,7 +204,7 @@
       "worker05": "PR52 WAL repair published; available",
       "worker09": "PR35 reviewed and integrated; available",
       "worker01": "Forward fix published; independent re-review pending; available",
-      "worker07": "Forward fix published; independent re-review pending; available",
+      "worker07": "Raw launch syntax/report compatibility assigned",
       "worker08": "PR31 reviewed and integrated; available"
     },
     "reviews": {
@@ -259,7 +259,24 @@
       "status": "SUPERSEDED_BY_PUBLISHED_TESTED_COMMIT"
     },
     "published_ci": "886fc96d404b9d3ffd99c0045f7231d563a5d946 successful",
-    "active_claims": [],
+    "active_claims": [
+      {
+        "worker": "worker07",
+        "thread_id": "01a118fd-0f1c-749c-b85b-5e730937d0a8",
+        "host_id": "durable",
+        "task": "Raw public launch syntax/report gaps",
+        "status": "IMPLEMENTING",
+        "base": "d41fe29"
+      },
+      {
+        "worker": "worker06",
+        "thread_id": "01a118fc-f867-7233-8eec-c20659e70095",
+        "host_id": "durable",
+        "task": "Independent raw/parsed public fixture provenance and inventory",
+        "status": "IMPLEMENTING",
+        "base": "d41fe29"
+      }
+    ],
     "saved_launch_probe": {
       "source": "VPS saved raw launch events, read-only; no provider calls",
       "sample_size": 150,
