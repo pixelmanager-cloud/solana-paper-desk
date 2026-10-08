@@ -840,14 +840,18 @@
     "73": {
       "head": "64c262a8e8593d848d042832d47b3a8c711a8a00",
       "reviewer": "worker02",
-      "status": "REVIEWING",
+      "status": "PASS_PENDING_FINAL_DESKTOP_BASE_TEST",
       "integrated": false,
       "mac_combined_with_pending_72": {
         "discovered": 1468,
         "passed": 1369,
         "skips": 99,
         "seconds": 30.046
-      }
+      },
+      "linux_tests": 1460,
+      "linux_skips": 0,
+      "reviewed_tree": "a04fe2f010a2f05a8181b49e7b5875615e22a82b",
+      "ci": "SUCCESS exact head"
     }
   },
   "parallel_combined_regression": {
