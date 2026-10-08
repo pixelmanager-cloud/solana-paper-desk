@@ -1,6 +1,6 @@
 {
   "schema_version": 1,
-  "revision": 26,
+  "revision": 27,
   "repository": "pixelmanager-cloud/solana-paper-desk",
   "source_main_sha": "e298e15cd758932e81d2241130716632702f5bd0",
   "observed_date": "2026-10-08",
@@ -1995,12 +1995,11 @@
     "last_success": "PR52 repaired-head journal/OFD review completed in verified cloud"
   },
   "review_lease": {
-    "holder": null,
-    "fencing_token": 3,
-    "expires_at": null,
-    "status": "RELEASED",
-    "scope": "EXACT_HEAD_PR40_FIXTURE_REVIEW_NO_INTEGRATION_DISPATCH",
-    "last_holder": "cloud-review-2026-10-08T04:00:07Z"
+    "holder": "cloud-pr55-2732693-review",
+    "fencing_token": 4,
+    "status": "HELD",
+    "scope": "PR55_FIXTURE_REVIEW_ONLY_NO_INTEGRATION",
+    "expires_at": "2026-10-08T06:45:00Z"
   },
   "external_review_observations": [
     {
