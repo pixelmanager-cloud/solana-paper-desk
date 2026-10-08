@@ -269,7 +269,8 @@
         "status": "REVIEWING",
         "pr": 91,
         "head": "ce5928225a40a4d32ff5c53781631c0fa010a414",
-        "base": "94eb463c58d08cfe6c5ac470ae41b4b6a3ef077e"
+        "base": "94eb463c58d08cfe6c5ac470ae41b4b6a3ef077e",
+        "wait_cursor": "8f3328cf-bef6-441d-83f8-2d1f46b3b0df:54"
       },
       {
         "id": "PR92-INDEPENDENT-REVIEW",
@@ -279,7 +280,8 @@
         "status": "REVIEWING",
         "pr": 92,
         "head": "c94889edeaf1b5ddd6ce098220c2a5cf7c9a410e",
-        "base": "94eb463c58d08cfe6c5ac470ae41b4b6a3ef077e"
+        "base": "94eb463c58d08cfe6c5ac470ae41b4b6a3ef077e",
+        "wait_cursor": "b9784eaf-f3e5-457f-a98d-a386c23b37ea:35"
       }
     ],
     "saved_launch_probe": {
@@ -297,10 +299,9 @@
       "latest_protocol_head": "9e2eddb9b32a58a94e94417ae6c130a8179691ac",
       "latest_reconciliation": "2026-10-08T11:02:15Z: revision45 confirms PR79/80 desktop integration, reserves OWN-2 source-bound admission to worker02, no unassigned review; durable schedule binding remains unverified",
       "latest_protocol_check": {
-        "head": "a06d36ccc99c416e49c70a6f6ed189eb7fdc9cbb",
-        "revision": 48,
-        "observed_run": "2026-10-08T12:57:42Z",
-        "result": "No unassigned review work; respects desktop exclusive integration and worker06 claim; hosted execution observed, durable schedule binding not reprobed"
+        "head": "b4a1aa8c9aea1bd7052645257765c7bbcad687b0",
+        "observed_run": "2026-10-08T14:01:01Z",
+        "result": "No unassigned review; respects existing claims, no merge; execution observed, durable binding not reprobed"
       }
     },
     "pending_ui_candidate": {
@@ -805,7 +806,9 @@
       "mac_skipped": 291,
       "mac_seconds": 33.889,
       "combined_tree": "83dc34013c41f09462e603abb426d324157d2c98",
-      "coordinator_diff_review": "Full reader implementation reviewed; independent Linux review pending"
+      "coordinator_diff_review": "Full reader implementation reviewed; independent Linux review pending",
+      "ci": "Both unchanged exact-head checks SUCCESS",
+      "review_infrastructure": "Worker06 reports Git proxy unreachable; continuing authorized GitHub connector source inspection; no PASS inferred"
     },
     "pending_clock_stage": {
       "pr": 92,
@@ -820,7 +823,8 @@
       "mac_skipped": 278,
       "mac_seconds": 33.804,
       "combined_tree": "2fec0fcf045a51e024db41d4331cb0707de229d0",
-      "coordinator_diff_review": "Clock implementation reviewed; independent Linux review pending"
+      "coordinator_diff_review": "Clock implementation reviewed; independent Linux review pending",
+      "ci": "Both unchanged exact-head checks SUCCESS"
     }
   },
   "native_reconciliation_review": {
