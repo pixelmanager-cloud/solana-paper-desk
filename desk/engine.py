@@ -2,7 +2,7 @@ from __future__ import annotations
 
 from datetime import datetime, timezone
 
-from .model import D, ONE, ZERO, decimal as dec, validate_event
+from .model import D, ONE, ZERO, decimal as dec, validate_event, digest
 from .strategy import gates, scores, size, swap_quote
 from .bundles import audit
 from .security import entry_token_policy, sellability_gate
@@ -45,18 +45,74 @@ def risk(state, cfg, output):
             output.append({"type": "control", "reason": "RISK_EXIT_ONLY"})
 
 
-def position_sellability(p,e,qty):
-    reasons=sellability_gate(e,qty)
-    if p.get("provenance")!="SYNTHETIC_TEST_ONLY":
-        if e["provenance"]=="SYNTHETIC_TEST_ONLY":reasons.append("SYNTHETIC_EXIT_ON_REAL_POSITION")
-        if not p.get("taker") or e.get("taker")!=p["taker"]:reasons.append("POSITION_WALLET_MISMATCH")
-    return reasons
+def _proof_hash(value):
+    return (isinstance(value, str) and len(value) == 64
+            and all(c in "0123456789abcdef" for c in value))
+
+
+def _position_proof(p, e, qty, *, action=False):
+    """Select exact evidence; never resize a valuation result into action proof.
+
+    These records still require a future trusted adapter. Local source/hash
+    binding does not authenticate provider data or promote diagnostic flags.
+    """
+    valuation = e.get("sellability")
+    partial = action and qty != dec(p["qty"])
+    synthetic = (p.get("provenance") == "SYNTHETIC_TEST_ONLY"
+                 and e.get("provenance") == "SYNTHETIC_TEST_ONLY"
+                 and isinstance(valuation, dict)
+                 and valuation.get("kind") == "synthetic_model")
+    paired = "action_sellability" in e
+    proof = e.get("action_sellability") if partial and paired else valuation
+    reasons = []
+    if partial and not paired and not synthetic:
+        reasons.append("EXIT_ACTION_PROOF_MISSING")
+    try:
+        reasons.extend(sellability_gate({**e, "sellability": proof}, qty))
+    except (ValueError, TypeError, OverflowError):
+        reasons.append("SELL_PROOF_MALFORMED")
+    if p.get("provenance") != "SYNTHETIC_TEST_ONLY":
+        if e["provenance"] == "SYNTHETIC_TEST_ONLY":
+            reasons.append("SYNTHETIC_EXIT_ON_REAL_POSITION")
+    if (p.get("provenance") != "SYNTHETIC_TEST_ONLY" or paired
+            or "exit_source_hash" in e or "exit_revision_hash" in e):
+        if not p.get("taker") or e.get("taker") != p["taker"]:
+            reasons.append("POSITION_WALLET_MISMATCH")
+    # An explicit pair has source identity and a hash of the full valuation
+    # record. Source-bearing full exits also retain those checks.
+    if paired or "exit_source_hash" in e or "exit_revision_hash" in e:
+        for field, event_field in (("source_hash", "exit_source_hash"),
+                                   ("revision_hash", "exit_revision_hash")):
+            expected = e.get(event_field)
+            if (not _proof_hash(expected) or not isinstance(proof, dict)
+                    or proof.get(field) != expected):
+                reasons.append("EXIT_" + field.upper() + "_MISMATCH")
+        if (not isinstance(proof, dict) or proof.get("kind") != "sell_simulation"
+                or proof.get("provenance") != e["provenance"]):
+            reasons.append("EXIT_PROOF_PROVENANCE_MISMATCH")
+        if partial:
+            try:
+                bound = isinstance(proof, dict) and proof.get("valuation_proof_hash") == digest(valuation)
+            except (ValueError, TypeError, RecursionError):
+                bound = False
+            if not bound:
+                reasons.append("EXIT_VALUATION_PROOF_BINDING_MISMATCH")
+            if (isinstance(proof, dict) and isinstance(valuation, dict)
+                    and proof.get("transaction_hash") == valuation.get("transaction_hash")):
+                reasons.append("EXIT_ACTION_TRANSACTION_REUSED")
+    return proof, reasons
+
+
+def position_sellability(p, e, qty):
+    return _position_proof(p, e, qty)[1]
 
 
 def sell(state, e, cfg, fraction, reason, output):
     p = state["positions"][e["mint"]]
     qty = min(dec(p["qty"]), dec(p["initial_qty"]) * fraction)
-    evidence_reasons=position_sellability(p,e,qty)
+    proof, evidence_reasons = _position_proof(p, e, qty, action=True)
+    if qty != dec(p["qty"]):
+        evidence_reasons.extend(_position_proof(p, e, dec(p["qty"]))[1])
     if evidence_reasons:
         p["exit_blocked"]="EXIT_SELLABILITY_UNVERIFIED"
         p["mark_status"]="UNVERIFIED_EXIT"
@@ -74,8 +130,8 @@ def sell(state, e, cfg, fraction, reason, output):
     p["mark_status"]="MODEL_ESTIMATE"
     cost = dec(p["cost_left"]) * qty / dec(p["qty"])
     proceeds = gross - fee
-    if e["sellability"].get("kind")=="sell_simulation":
-        proceeds=min(proceeds,dec(e["sellability"]["net_proceeds_sol"]))
+    if proof.get("kind") == "sell_simulation":
+        proceeds = min(proceeds, dec(proof["net_proceeds_sol"]))
     pnl = proceeds - cost
     p["qty"] = str(dec(p["qty"]) - qty)
     p["cost_left"] = str(dec(p["cost_left"]) - cost)
@@ -93,6 +149,11 @@ def sell(state, e, cfg, fraction, reason, output):
         state["cooldowns"][e["mint"]] = e["ts"] + cooldown
     else:
         p["mark_value"] = str(max(ZERO, swap_quote(e, dec(p["qty"]), "sell", cfg) - fee))
+        if proof.get("kind") == "sell_simulation":
+            # The remaining model estimate is not an exact-size valuation proof.
+            # Obtain new full-remaining evidence on the next observation.
+            p["mark_status"] = "UNVERIFIED_EXIT"
+            p["exit_blocked"] = "REMAINING_POSITION_VALUATION_REQUIRED"
     return True
 
 
@@ -103,7 +164,7 @@ def manage_position(state, e, cfg, output):
         p["mark_status"]="STALE"
         output.append({"type": "blocked_exit", "reason": "STALE_OR_UNAVAILABLE_EXIT", "mint": e["mint"]})
         return
-    evidence_reasons=position_sellability(p,e,dec(p["qty"]))
+    valuation, evidence_reasons = _position_proof(p, e, dec(p["qty"]))
     if evidence_reasons:
         p["exit_blocked"]="EXIT_SELLABILITY_UNVERIFIED"
         p["mark_status"]="UNVERIFIED_EXIT"
@@ -112,7 +173,10 @@ def manage_position(state, e, cfg, output):
     p["exit_blocked"]=None
     p["mark_status"]="MODEL_ESTIMATE"
     gross = swap_quote(e, dec(p["qty"]), "sell", cfg)
-    p["mark_value"] = str(max(ZERO, gross - dec(cfg["fixed_fee_sol"])))
+    mark = max(ZERO, gross - dec(cfg["fixed_fee_sol"]))
+    if valuation.get("kind") == "sell_simulation":
+        mark = min(mark, dec(valuation["net_proceeds_sol"]))
+    p["mark_value"] = str(mark)
     p["mark_at"] = e["price_at"]
     ratio = dec(p["mark_value"]) / dec(p["cost_left"])
     p["peak_ratio"] = str(max(dec(p["peak_ratio"]), ratio))
