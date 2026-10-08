@@ -197,14 +197,14 @@
     "followups": {
       "worker02": "PR40 review interrupted by automated cybersecurity-risk flag; no final acceptance",
       "worker06": "PR34 integrated; available",
-      "cloud_reviewer": "PR33 reviewed and integrated; available",
-      "worker10": "PR43 reviewed;available",
+      "cloud_reviewer": "PR40 independently scheduled scoped review passed; combined Linux verification assigned",
+      "worker10": "Independent PR44 exact-head documentation/provenance review",
       "worker03": "Bounded newerlegacysearch found no matching authoritative event;available",
       "worker04": "PR40 repairs published3744192;review remains incomplete",
       "worker05": "PR30 reviewed and integrated; available",
       "worker09": "PR35 reviewed and integrated; available",
-      "worker01": "PR43 published77ed0fb;reviewpending",
-      "worker07": "Analyze exactsaved modernlaunch extension/control requirements;no gatechanges",
+      "worker01": "Implement disconnected Token-2022 instruction syntax; PR43 already accepted",
+      "worker07": "Implement disconnected exact Token-2022 raw state decoder",
       "worker08": "PR31 reviewed and integrated; available"
     },
     "reviews": {
@@ -248,14 +248,44 @@
       "tests": 878,
       "status": "SUPERSEDED_BY_PUBLISHED_TESTED_COMMIT"
     },
-    "published_ci": "e5d9f9b0e3210421aabe3a80efd519b0d122d340 successful",
+    "published_ci": "d9c093b0f0be103ebdb11a826c1896be6b8f055b successful",
     "active_claims": [
       {
         "worker": "worker07",
         "thread_id": "01a118fd-0f1c-749c-b85b-5e730937d0a8",
         "host_id": "durable",
-        "task": "saved create_v2 exactprofile safety compatibility analysis",
-        "status": "RESEARCHING"
+        "task": "Disconnected Token-2022 raw state decoder",
+        "status": "DISPATCHED",
+        "base_commit": "d9c093b0f0be103ebdb11a826c1896be6b8f055b",
+        "reference_pr": 44,
+        "reference_head": "c121119589880ae143fbb2f34d65eec93749a5c2"
+      },
+      {
+        "worker": "worker01",
+        "thread_id": "01a118fc-39bc-722c-b442-8bf5a749e0bb",
+        "host_id": "durable",
+        "task": "Disconnected Token-2022 raw instruction syntax",
+        "status": "DISPATCHED",
+        "base_commit": "d9c093b0f0be103ebdb11a826c1896be6b8f055b",
+        "reference_pr": 44,
+        "reference_head": "c121119589880ae143fbb2f34d65eec93749a5c2"
+      },
+      {
+        "worker": "worker10",
+        "thread_id": "01a118fd-56d5-70b8-ad31-dba13e982082",
+        "host_id": "durable",
+        "task": "Independent PR44 provenance review",
+        "status": "DISPATCHED",
+        "base_commit": "d9c093b0f0be103ebdb11a826c1896be6b8f055b",
+        "reference_pr": 44,
+        "reference_head": "c121119589880ae143fbb2f34d65eec93749a5c2"
+      },
+      {
+        "worker": "cloud_reviewer",
+        "thread_id": "01a11901-8b68-70f9-8672-5a731a149091",
+        "host_id": "durable",
+        "task": "Combined Linux validation d9c093b plus PR40 3744192",
+        "status": "DISPATCHED"
       }
     ],
     "saved_launch_probe": {
@@ -322,12 +352,14 @@
     "pending_capture_bridge": {
       "pr": 40,
       "head": "37441927f38f0b884d61fc2e1e563b6aa50a4355",
-      "scratch_commit": "34829a5011dc2a37178522b6c5d8ef2fdcb3eb54",
-      "mac_discovered": 1018,
-      "mac_errors": 36,
-      "mac_skips": 33,
-      "result": "Author repaired duplicatehash/platformguard;independentreview incomplete after external safety flag;notaccepted",
-      "integrated": false
+      "scratch_commit": "e329aab5f38fde5f15bf2e9f4c7d06ab7b56015b",
+      "mac_discovered": 1075,
+      "mac_errors": 0,
+      "mac_skips": 70,
+      "result": "Independent scheduled cloud review5451192398 PASS at3744192; original worker02 flagged review remains incomplete; combined Linux validation pending",
+      "integrated": false,
+      "independent_review": "PR10 report at521dcee15f237592709a3cf8b1b3c3a4dd81f053",
+      "mac_passed": 1005
     },
     "pending_birth_analyzer": {
       "pr": 41,
@@ -353,7 +385,7 @@
       "cloud_chat_host": "RECOVERED_SAME_TURN",
       "consecutive_checks": 0,
       "github": "ACCESSIBLE",
-      "impact": "New dispatch unavailable;existing posted review retrieved from GitHub;not paperreadiness"
+      "impact": "Cloud messaging recovered; three scoped assignments dispatched successfully"
     },
     "pending_raw_token": {
       "pr": 43,
@@ -364,6 +396,14 @@
       "mac_skipped": 33,
       "review": "PASS",
       "integrated": true
+    },
+    "pending_create_v2_plan": {
+      "pr": 44,
+      "head": "c121119589880ae143fbb2f34d65eec93749a5c2",
+      "ci": "PASS",
+      "review": "IN_PROGRESS",
+      "integrated": false,
+      "limitation": "Proposed exact extension profile; no raw state or runtime admission proof"
     }
   }
 }
