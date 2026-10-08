@@ -756,9 +756,16 @@
       "head": "37ca9420c4fbc4ff1398a9662d1f184714e8ccc3",
       "integrated": false,
       "status": "Concrete format published; independent review assigned worker06",
-      "author_linux_tests": 1698,
+      "author_linux_tests": 1722,
       "author_skips": 0,
-      "reader_implemented": false
+      "reader_implemented": false,
+      "mac_discovered": 1743,
+      "mac_passed": 1505,
+      "mac_skipped": 238,
+      "mac_seconds": 33.942,
+      "combined_base": "1486397add274e91281c2f5991daa7241ced67b6",
+      "combined_tree": "c3034d5bff9a1127f2c55c8f32f87c3eb9717908",
+      "coordinator_diff_review": "Concrete physical format module reviewed; independent review pending"
     }
   },
   "native_reconciliation_review": {
