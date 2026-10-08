@@ -863,7 +863,15 @@
       "integrated": false,
       "review": "PENDING worker06",
       "author_linux_tests": 1841,
-      "author_skips": 0
+      "author_skips": 0,
+      "combined_base": "07049e5",
+      "combined_tree": "1b166bdbb4d3d92f957474024959e2c6cc1ba304",
+      "mac_discovered": 1841,
+      "mac_passed": 1507,
+      "mac_skipped": 334,
+      "mac_seconds": 33.921,
+      "ci": "IN_PROGRESS",
+      "coordinator_diff_review": "Module inspected; independent security/full Linux pending"
     }
   },
   "native_reconciliation_review": {
