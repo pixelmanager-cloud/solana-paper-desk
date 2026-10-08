@@ -260,18 +260,7 @@
       "status": "SUPERSEDED_BY_PUBLISHED_TESTED_COMMIT"
     },
     "published_ci": "Deployed d758bc529a7da1f74509117288740911f2ad6845: both CI runs successful",
-    "active_claims": [
-      {
-        "id": "PR84-INDEPENDENT-REVIEW",
-        "worker": "06",
-        "thread_id": "01a118fc-f867-7233-8eec-c20659e70095",
-        "host_id": "durable",
-        "status": "REVIEWING",
-        "base": "99f53f46beec0329cce1a7a0e20b6428ba754906",
-        "pr": 84,
-        "head": "d1306c2072e260191b61e31e94e6adaa27518138"
-      }
-    ],
+    "active_claims": [],
     "saved_launch_probe": {
       "source": "VPS saved raw launch events, read-only; no provider calls",
       "sample_size": 150,
@@ -656,8 +645,8 @@
     "pending_common_bank_journal": {
       "pr": 84,
       "head": "d1306c2072e260191b61e31e94e6adaa27518138",
-      "review": "PENDING worker06",
-      "integrated": false,
+      "review": "PASS worker06 Linux1627 zero skips125.113s;15 independent probes including actual process deaths; exact tree matched",
+      "integrated": true,
       "author_linux_tests": 1602,
       "author_skips": 0,
       "scope": "Initial genesis reservation/intent only; successful transitions and response/publication remain unimplemented",
@@ -665,7 +654,10 @@
       "mac_passed": 1442,
       "mac_skipped": 185,
       "mac_seconds": 32.82,
-      "combined_tree": "848f772fe527acd240c79379e0b23ebe39dea292"
+      "combined_tree": "848f772fe527acd240c79379e0b23ebe39dea292",
+      "review_manifest_sha256": "fb16dccde2ddc0c3303cd32c8351df16b6afdbad2d893ba3730e421003c77c30",
+      "ci": "Both exact-head checks PASS",
+      "deployed": false
     }
   },
   "native_reconciliation_review": {
