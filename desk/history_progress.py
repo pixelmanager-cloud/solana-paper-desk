@@ -34,6 +34,10 @@ class HistoryProgress:
         store.path=canonical_ownership_path(store.path)
         self.store=store
         with store.connect() as c:
+            # This disconnected fresh-job profile owns its sole reservation.
+            # Generic acquisition/history must not adopt or retrofit it.
+            if c.execute("SELECT 1 FROM sqlite_master WHERE name='presealed_slot_meta'").fetchone() or c.execute('PRAGMA application_id').fetchone()[0] == 0x50534A31:
+                raise ValueError('Presealed slot journal requires its dedicated reader')
             c.execute('CREATE TABLE IF NOT EXISTS ownership_budgets(id TEXT PRIMARY KEY,source_hash TEXT NOT NULL,used INTEGER NOT NULL,ceiling INTEGER NOT NULL)')
             c.execute('CREATE TABLE IF NOT EXISTS ownership_history(id TEXT PRIMARY KEY,budget TEXT NOT NULL,query TEXT NOT NULL,coverage TEXT,status TEXT NOT NULL,attempts INTEGER NOT NULL DEFAULT 0)')
             c.execute('CREATE TABLE IF NOT EXISTS ownership_admissions(id TEXT PRIMARY KEY,descriptor TEXT NOT NULL,state TEXT NOT NULL,prepared_source TEXT,prepared_used INTEGER,completed_source_hash TEXT)')
