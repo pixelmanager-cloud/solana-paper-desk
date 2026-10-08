@@ -1,0 +1,217 @@
+{
+  "provenance": {
+    "kind": "synthetic",
+    "source": "Constructed locally from legacy SPL byte layouts; no provider or private data.",
+    "purpose": "Boundary, replay and durable reservation adversarial tests; no ownership approval."
+  },
+  "mint": "4vJ9JU1bJJE96FWSJKvHsmmFADCg4gpZQff4P3bkLKi",
+  "owner": "8qbHbw2BbbTHBW1sbeqakYXVKRQM8Ne7pLK7m6CVfeR",
+  "account": "CktRuQ2mttgRGkXJtyksdKHjUdc2C4TgDzyB98oEzy8",
+  "snapshot": {
+    "method": "getMultipleAccounts",
+    "params": [
+      [
+        "4vJ9JU1bJJE96FWSJKvHsmmFADCg4gpZQff4P3bkLKi",
+        "CktRuQ2mttgRGkXJtyksdKHjUdc2C4TgDzyB98oEzy8"
+      ],
+      {
+        "encoding": "base64",
+        "commitment": "finalized"
+      }
+    ],
+    "result": {
+      "context": {
+        "slot": 20
+      },
+      "value": [
+        {
+          "owner": "TokenkegQfeZyiNwAJbNbGKPFXCWuBvf9Ss623VQ5DA",
+          "executable": false,
+          "data": [
+            "AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAZAAAAAAAAAAAAQAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA==",
+            "base64"
+          ]
+        },
+        {
+          "owner": "TokenkegQfeZyiNwAJbNbGKPFXCWuBvf9Ss623VQ5DA",
+          "executable": false,
+          "data": [
+            "AQEBAQEBAQEBAQEBAQEBAQEBAQEBAQEBAQEBAQEBAQECAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAmQAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAQAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA",
+            "base64"
+          ]
+        }
+      ]
+    }
+  },
+  "clock": {
+    "method": "getBlockTime",
+    "params": [
+      20
+    ],
+    "result": 100
+  },
+  "history": {
+    "query_coverage_verified": true,
+    "slot_range": {
+      "gte": 0,
+      "lt": 21
+    },
+    "inventory": {
+      "initialization_inventory_verified": true,
+      "accounts": [
+        {
+          "address": "CktRuQ2mttgRGkXJtyksdKHjUdc2C4TgDzyB98oEzy8"
+        }
+      ]
+    },
+    "account_queries": {
+      "reasons": [],
+      "verified": 1,
+      "required": 1
+    },
+    "observed_movements": {
+      "passed": true
+    },
+    "block_ordering": {
+      "reasons": []
+    },
+    "account_continuity": {
+      "passed": true,
+      "end_states": [
+        {
+          "account": "CktRuQ2mttgRGkXJtyksdKHjUdc2C4TgDzyB98oEzy8",
+          "slot": 20,
+          "closed": false,
+          "owner": "8qbHbw2BbbTHBW1sbeqakYXVKRQM8Ne7pLK7m6CVfeR",
+          "program": "TokenkegQfeZyiNwAJbNbGKPFXCWuBvf9Ss623VQ5DA",
+          "amount_raw": "100"
+        }
+      ]
+    }
+  },
+  "records": [
+    {
+      "signature": "synthetic-a",
+      "slot": 19,
+      "blockTime": 100,
+      "transaction": {
+        "signatures": [
+          "synthetic-a"
+        ],
+        "message": {
+          "accountKeys": [],
+          "instructions": []
+        }
+      },
+      "meta": {
+        "err": null,
+        "preTokenBalances": [],
+        "postTokenBalances": [],
+        "innerInstructions": []
+      }
+    },
+    {
+      "signature": "synthetic-b",
+      "slot": 20,
+      "blockTime": 100,
+      "transaction": {
+        "signatures": [
+          "synthetic-b"
+        ],
+        "message": {
+          "accountKeys": [],
+          "instructions": []
+        }
+      },
+      "meta": {
+        "err": null,
+        "preTokenBalances": [],
+        "postTokenBalances": [],
+        "innerInstructions": []
+      }
+    },
+    {
+      "signature": "synthetic-c",
+      "slot": 21,
+      "blockTime": 100,
+      "transaction": {
+        "signatures": [
+          "synthetic-c"
+        ],
+        "message": {
+          "accountKeys": [],
+          "instructions": []
+        }
+      },
+      "meta": {
+        "err": null,
+        "preTokenBalances": [],
+        "postTokenBalances": [],
+        "innerInstructions": []
+      }
+    }
+  ],
+  "continuity_records": [
+    {
+      "signature": "zz-birth",
+      "slot": 20,
+      "status": "OBSERVED",
+      "commitment": "finalized_provider_response",
+      "token_deltas": [
+        {
+          "account": "CktRuQ2mttgRGkXJtyksdKHjUdc2C4TgDzyB98oEzy8",
+          "mint": "4vJ9JU1bJJE96FWSJKvHsmmFADCg4gpZQff4P3bkLKi",
+          "owner": "8qbHbw2BbbTHBW1sbeqakYXVKRQM8Ne7pLK7m6CVfeR",
+          "program": "TokenkegQfeZyiNwAJbNbGKPFXCWuBvf9Ss623VQ5DA",
+          "pre_raw": null,
+          "post_raw": "100"
+        }
+      ],
+      "token_account_initializations": [
+        {
+          "account": "CktRuQ2mttgRGkXJtyksdKHjUdc2C4TgDzyB98oEzy8",
+          "mint": "4vJ9JU1bJJE96FWSJKvHsmmFADCg4gpZQff4P3bkLKi",
+          "owner": "8qbHbw2BbbTHBW1sbeqakYXVKRQM8Ne7pLK7m6CVfeR",
+          "program": "TokenkegQfeZyiNwAJbNbGKPFXCWuBvf9Ss623VQ5DA"
+        }
+      ],
+      "token_account_closures": [],
+      "token_supply_changes": [
+        {
+          "account": "CktRuQ2mttgRGkXJtyksdKHjUdc2C4TgDzyB98oEzy8",
+          "mint": "4vJ9JU1bJJE96FWSJKvHsmmFADCg4gpZQff4P3bkLKi",
+          "amount_raw": "100",
+          "direction": "mint",
+          "instruction": "0"
+        }
+      ]
+    },
+    {
+      "signature": "aa-burn",
+      "slot": 20,
+      "status": "OBSERVED",
+      "commitment": "finalized_provider_response",
+      "token_deltas": [
+        {
+          "account": "CktRuQ2mttgRGkXJtyksdKHjUdc2C4TgDzyB98oEzy8",
+          "mint": "4vJ9JU1bJJE96FWSJKvHsmmFADCg4gpZQff4P3bkLKi",
+          "owner": "8qbHbw2BbbTHBW1sbeqakYXVKRQM8Ne7pLK7m6CVfeR",
+          "program": "TokenkegQfeZyiNwAJbNbGKPFXCWuBvf9Ss623VQ5DA",
+          "pre_raw": "100",
+          "post_raw": "90"
+        }
+      ],
+      "token_account_initializations": [],
+      "token_account_closures": [],
+      "token_supply_changes": [
+        {
+          "account": "CktRuQ2mttgRGkXJtyksdKHjUdc2C4TgDzyB98oEzy8",
+          "mint": "4vJ9JU1bJJE96FWSJKvHsmmFADCg4gpZQff4P3bkLKi",
+          "amount_raw": "10",
+          "direction": "burn",
+          "instruction": "0"
+        }
+      ]
+    }
+  ]
+}

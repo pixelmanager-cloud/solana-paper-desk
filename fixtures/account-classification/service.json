@@ -1,0 +1,20 @@
+{
+  "version": 1,
+  "label": "SERVICE",
+  "account": "4vJ9JU1bJJE96FWSJKvHsmmFADCg4gpZQff4P3bkLKi",
+  "program": "11111111111111111111111111111111",
+  "scope": {
+    "mint": "8qbHbw2BbbTHBW1sbeqakYXVKRQM8Ne7pLK7m6CVfeR",
+    "purpose": "funding_source"
+  },
+  "observed_at": 100,
+  "expires_at": 200,
+  "observed_slot": 10,
+  "expires_slot": 20,
+  "provenance": {
+    "source": "synthetic fixture; no real service attribution",
+    "method": "exact-address synthetic coordinator attestation",
+    "verifier": "offline-test-policy-v1",
+    "source_hash": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
+  }
+}

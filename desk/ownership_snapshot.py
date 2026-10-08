@@ -2,6 +2,18 @@
 from .security import account_bytes,base58,mint_policy,holding_policy
 
 
+def validate_bank(mint,accounts,snapshot):
+    keys,options=snapshot['params'];result=snapshot['result'];slot=result['context']['slot']
+    if (snapshot['method']!='getMultipleAccounts' or options!={'encoding':'base64','commitment':'finalized'}
+            or not keys or keys[0]!=mint or len(keys)>100 or len(keys)!=len(set(keys))
+            or set(keys[1:])!=set(accounts) or len(result['value'])!=len(keys)
+            or type(slot) is not int or slot<0 or not isinstance(result['value'],list)):
+        raise ValueError('Complete finalized historical-account snapshot required')
+    if mint_policy(result['value'][0])['decision']!='PASS_TOKEN_POLICY':
+        raise ValueError('Snapshot token policy failed')
+    return slot
+
+
 def reconcile_snapshot(mint,history,snapshot,block_time):
     reasons=[];observed=0
     if not history.get('query_coverage_verified'):reasons.append('MINT_HISTORY_NOT_EXHAUSTED')
