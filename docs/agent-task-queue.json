@@ -271,14 +271,13 @@
         "scope": "Implement guarded read-only physical format2 reader with independent anchors; no migration/issuer"
       },
       {
-        "id": "PR90-INDEPENDENT-REVIEW",
-        "worker": "05",
-        "thread_id": "01a118fc-dd83-7672-ac81-7445f85fe09f",
+        "id": "COMMON-BANK-CLOCK-STAGE",
+        "worker": "02",
+        "thread_id": "01a118fc-666c-70b6-9fa8-2c7520f0a0bb",
         "host_id": "durable",
-        "status": "REVIEWING",
-        "pr": 90,
-        "head": "2d341f05aa008c50f9b8a432c312826df1d22866",
-        "base": "1f4c40553bc18162c6cb09cea6f9f252fcecb098"
+        "status": "RESERVED_PENDING_DISPATCH",
+        "base": "32417a5965b6d92aeefd05ffbb54a0a20dede891",
+        "scope": "Atomic original clock request/completion bound to actual union T; no transport/publication"
       }
     ],
     "saved_launch_probe": {
@@ -775,8 +774,8 @@
     "pending_union_stage": {
       "pr": 90,
       "head": "2d341f05aa008c50f9b8a432c312826df1d22866",
-      "integrated": false,
-      "review": "PENDING worker05",
+      "integrated": true,
+      "review": "PASS worker05 Linux1763 zero skips141.330s;24 independent probes;exact tree matched",
       "author_linux_tests": 1732,
       "author_skips": 0,
       "combined_base": "1f4c40553bc18162c6cb09cea6f9f252fcecb098",
@@ -785,7 +784,11 @@
       "mac_skipped": 258,
       "mac_seconds": 33.9,
       "combined_tree": "733b58705c7ca746af726608132e963491d635b3",
-      "coordinator_diff_review": "Full journal diff reviewed; independent Linux review pending"
+      "coordinator_diff_review": "Full journal diff reviewed; independent Linux review pending",
+      "integration_commit": "32417a5965b6d92aeefd05ffbb54a0a20dede891",
+      "review_manifest_sha256": "7a1f1603413701639e1a8e334707a8feb3623ad36c17ec791cb5ba184da189b1",
+      "ci": "Both unchanged exact-head checks SUCCESS",
+      "deployed": false
     }
   },
   "native_reconciliation_review": {
