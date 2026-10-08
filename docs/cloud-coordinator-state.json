@@ -1,6 +1,6 @@
 {
   "schema_version": 1,
-  "revision": 27,
+  "revision": 28,
   "repository": "pixelmanager-cloud/solana-paper-desk",
   "source_main_sha": "e298e15cd758932e81d2241130716632702f5bd0",
   "observed_date": "2026-10-08",
@@ -995,6 +995,13 @@
       "live_acceptance": false,
       "infrastructure_failures": [],
       "schedule": "Existing schedule not reprobed or modified; no new durability claim"
+    },
+    {
+      "kind": "PR55_REVIEW_COMPLETED",
+      "review_id": 5452299856,
+      "head_sha": "2732693c10aa948b66aa83c231bcede54da6f112",
+      "full_suite_passed": 1296,
+      "accepted": false
     }
   ],
   "artifact_pr": {
@@ -1986,20 +1993,92 @@
       ],
       "accepted": false,
       "live_acceptance": false
+    },
+    {
+      "mode": "PR55_EXCLUSIVE_RESEARCH_COMBINED_FIXTURE_REVIEW",
+      "policy_version": "cloud-independent-review-v1",
+      "pr": 55,
+      "head_sha": "2732693c10aa948b66aa83c231bcede54da6f112",
+      "base_sha": "b3dabb29cbb39e59cccb6242319b066a07dcc882",
+      "patch_ancestor_sha": "1e8cd7254887197dbf5d9d67d019146597fea3dc",
+      "combined_baseline_sha": "cc4d00ab8de2a5d1ff3cbc3e0e330ab3437298ba",
+      "worker_agent": "03",
+      "worker_thread_id": "01a118fc-9478-778a-b77a-8f8f6ec7e0ad",
+      "branch": "codex/trade-event-provenance",
+      "review_id": 5452299856,
+      "review_action": "COMMENT",
+      "status": "NO_SCOPED_RESEARCH_BLOCKER_FOUND",
+      "findings": [
+        "Immutable official full-IDL digest/excerpts verified; separate decoder verified35fields/table/EOF",
+        "New official IDL NOT current production pin; current prefix rejection remains correct",
+        "778 malformed probes rejected; max-u64 positive boundary passes"
+      ],
+      "tests": {
+        "python": "3.12.14",
+        "full_suite_command": "python -m unittest discover -q",
+        "full_suite_passed": 1296,
+        "full_suite_seconds": 61.398,
+        "skipped": 0,
+        "targeted_command": "python -m unittest tests.test_trade_event_provenance -q",
+        "targeted_passed": 7,
+        "targeted_seconds": 0.046,
+        "independent_command": "python /workspace/work/review/p55-independent.py",
+        "negative_probes": 778,
+        "provider_calls": 0
+      },
+      "ci": [
+        {
+          "id": 37735415729,
+          "name": "Tests",
+          "status": "completed",
+          "conclusion": "success",
+          "run_number": 384,
+          "jobs_url": "https://api.github.com/repos/pixelmanager-cloud/solana-paper-desk/actions/runs/37735415729/jobs",
+          "logs_url": "https://api.github.com/repos/pixelmanager-cloud/solana-paper-desk/actions/runs/37735415729/logs",
+          "workflow_id": 377958194
+        }
+      ],
+      "combined_ci": "NOT_RUN_SCRATCH_SOURCE_ONLY",
+      "source_files": 275,
+      "source_manifest_sha256": "3e302f24a499d348c04d2105990625c6ad2bf1e0863efaf82c27792f950bfe80",
+      "source_manifest": "docs/reviews/cloud-pr55-cc4d00a-2732693-hashes.json",
+      "proof_artifact": "docs/reviews/cloud-pr55-2732693.md",
+      "limitations": [
+        "Full17revision survey not independently replayed",
+        "Syntax does not establish runtime deployment/authenticity/finality/CPI/accounting/lifecycle/ownership/entry acceptance",
+        "Cloud environment current/running verified; durable schedule binding not reprobed"
+      ],
+      "infrastructure_failures": [
+        {
+          "kind": "LOCAL_SOCKET_SANDBOX",
+          "initial_tests": 1296,
+          "errors": 17,
+          "seconds": 52.348,
+          "resolved": true,
+          "resolution": "Supported additional network permission for loopback fixture tests; rerun passed"
+        }
+      ],
+      "accepted": false,
+      "live_acceptance": false,
+      "production_edits": false,
+      "merged_prs": 0,
+      "dispatched_workers": 0,
+      "accepted_tasks": []
     }
   ],
   "infrastructure": {
     "consecutive_failures": 0,
     "last_failure": "Historical immediate-run probe404; no current run infrastructure failure.",
     "retry_policy": "No busy polling; future supported review runs reconcile and pause after three consecutive execution/access failures.",
-    "last_success": "PR52 repaired-head journal/OFD review completed in verified cloud"
+    "last_success": "PR55 verified hosted cloud combined Linux1296 zero skips"
   },
   "review_lease": {
-    "holder": "cloud-pr55-2732693-review",
+    "holder": null,
     "fencing_token": 4,
-    "status": "HELD",
+    "status": "RELEASED",
     "scope": "PR55_FIXTURE_REVIEW_ONLY_NO_INTEGRATION",
-    "expires_at": "2026-10-08T06:45:00Z"
+    "expires_at": null,
+    "last_holder": "cloud-pr55-2732693-review"
   },
   "external_review_observations": [
     {
@@ -2492,10 +2571,10 @@
   ],
   "review_assignments": {
     "cloud_coordinator": {
-      "exclusive_pr": 53,
-      "head_sha": "ff4aadf41b158ca841d2ae9a3d1cc1841e8772bf",
-      "status": "SCOPED_FIXTURE_CORRESPONDENCE_NO_BLOCKER_FOUND",
-      "review_id": 5452104300
+      "exclusive_pr": 55,
+      "head_sha": "2732693c10aa948b66aa83c231bcede54da6f112",
+      "status": "NO_SCOPED_RESEARCH_BLOCKER_FOUND",
+      "review_id": 5452299856
     },
     "pr31": {
       "owner": "worker02",
@@ -2692,64 +2771,75 @@
     }
   ],
   "last_review_run": {
-    "mode": "PR53_EXCLUSIVE_COMBINED_FIXTURE_REVIEW",
+    "mode": "PR55_EXCLUSIVE_RESEARCH_COMBINED_FIXTURE_REVIEW",
     "policy_version": "cloud-independent-review-v1",
-    "pr": 53,
-    "head_sha": "ff4aadf41b158ca841d2ae9a3d1cc1841e8772bf",
-    "base_sha": "90e1ece1e744f0317446a095741cc6ff4a8b9fe3",
-    "worker_agent": "06",
-    "worker_thread_id": "01a118fc-f867-7233-8eec-c20659e70095",
-    "branch": "codex/cloud-wave1-06-raw-fixture-provenance",
-    "reviewer": "Independent cloud execution shared GitHub identity COMMENT only",
-    "review_id": 5452104300,
+    "pr": 55,
+    "head_sha": "2732693c10aa948b66aa83c231bcede54da6f112",
+    "base_sha": "b3dabb29cbb39e59cccb6242319b066a07dcc882",
+    "patch_ancestor_sha": "1e8cd7254887197dbf5d9d67d019146597fea3dc",
+    "combined_baseline_sha": "cc4d00ab8de2a5d1ff3cbc3e0e330ab3437298ba",
+    "worker_agent": "03",
+    "worker_thread_id": "01a118fc-9478-778a-b77a-8f8f6ec7e0ad",
+    "branch": "codex/trade-event-provenance",
+    "review_id": 5452299856,
     "review_action": "COMMENT",
-    "status": "SCOPED_FIXTURE_CORRESPONDENCE_NO_BLOCKER_FOUND",
+    "status": "NO_SCOPED_RESEARCH_BLOCKER_FOUND",
     "findings": [
-      "Digest/literal hashes/34keys/header/all33paths independently verified",
-      "26 parsed versus7common raw representation explicitly distinguished",
-      "Same provider/signature not independent finality/CPI/source authenticity"
+      "Immutable official full-IDL digest/excerpts verified; separate decoder verified35fields/table/EOF",
+      "New official IDL NOT current production pin; current prefix rejection remains correct",
+      "778 malformed probes rejected; max-u64 positive boundary passes"
     ],
     "tests": {
       "python": "3.12.14",
-      "full_suite_command": "python -m unittest discover -s tests -v",
-      "full_suite_passed": 1269,
-      "full_suite_seconds": 65.323,
-      "targeted_command": "python -m unittest tests.test_cloud_raw_fixture_provenance -q",
-      "targeted_passed": 5,
-      "targeted_seconds": 0.004,
-      "adversarial_command": "python /workspace/work/review/p53-independent.py",
-      "negative_probes": 40,
+      "full_suite_command": "python -m unittest discover -q",
+      "full_suite_passed": 1296,
+      "full_suite_seconds": 61.398,
       "skipped": 0,
+      "targeted_command": "python -m unittest tests.test_trade_event_provenance -q",
+      "targeted_passed": 7,
+      "targeted_seconds": 0.046,
+      "independent_command": "python /workspace/work/review/p55-independent.py",
+      "negative_probes": 778,
       "provider_calls": 0
     },
     "ci": [
       {
-        "id": 37733681037,
+        "id": 37735415729,
         "name": "Tests",
         "status": "completed",
         "conclusion": "success",
-        "run_number": 366,
-        "jobs_url": "https://api.github.com/repos/pixelmanager-cloud/solana-paper-desk/actions/runs/37733681037/jobs",
-        "logs_url": "https://api.github.com/repos/pixelmanager-cloud/solana-paper-desk/actions/runs/37733681037/logs",
+        "run_number": 384,
+        "jobs_url": "https://api.github.com/repos/pixelmanager-cloud/solana-paper-desk/actions/runs/37735415729/jobs",
+        "logs_url": "https://api.github.com/repos/pixelmanager-cloud/solana-paper-desk/actions/runs/37735415729/logs",
         "workflow_id": 377958194
       }
     ],
     "combined_ci": "NOT_RUN_SCRATCH_SOURCE_ONLY",
-    "proof_artifact": "docs/reviews/cloud-pr53-ff4aadf.md",
-    "source_manifest": "docs/reviews/cloud-pr53-90e1ece-ff4aadf-hashes.json",
-    "source_manifest_sha256": "1e67806b8a910d47d312cfffda3623e776867e8c1b8c185b023655a1f55a707e",
-    "source_files": 270,
+    "source_files": 275,
+    "source_manifest_sha256": "3e302f24a499d348c04d2105990625c6ad2bf1e0863efaf82c27792f950bfe80",
+    "source_manifest": "docs/reviews/cloud-pr55-cc4d00a-2732693-hashes.json",
+    "proof_artifact": "docs/reviews/cloud-pr55-2732693.md",
     "limitations": [
-      "Saved same-provider correspondence not authenticity/finality/CPI/effect/lifecycle proof",
-      "Worker07 syntax separately active; no dependent acceptance"
+      "Full17revision survey not independently replayed",
+      "Syntax does not establish runtime deployment/authenticity/finality/CPI/accounting/lifecycle/ownership/entry acceptance",
+      "Cloud environment current/running verified; durable schedule binding not reprobed"
+    ],
+    "infrastructure_failures": [
+      {
+        "kind": "LOCAL_SOCKET_SANDBOX",
+        "initial_tests": 1296,
+        "errors": 17,
+        "seconds": 52.348,
+        "resolved": true,
+        "resolution": "Supported additional network permission for loopback fixture tests; rerun passed"
+      }
     ],
     "accepted": false,
     "live_acceptance": false,
     "production_edits": false,
     "merged_prs": 0,
     "dispatched_workers": 0,
-    "accepted_tasks": [],
-    "infrastructure_failures": []
+    "accepted_tasks": []
   },
   "combined_validations": [
     {
