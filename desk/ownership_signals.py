@@ -5,7 +5,7 @@ from .funding import observed_funding
 
 
 def funding_groups(mint,observations,queries,store,ordering,launch_slot):
-    first={}
+    first={};conflicted=set()
     for obs in sorted(observations,key=lambda o:o['slot']):
         for ix in obs.get('program_observations',[]):
             if (ix.get('mint')!=mint or ix.get('kind')!='BUY_INTENT' or ix.get('status')!='IDENTIFIED'
@@ -13,10 +13,17 @@ def funding_groups(mint,observations,queries,store,ordering,launch_slot):
             wallet=ix['wallet']
             buy=first.setdefault(wallet,{'slot':obs['slot'],'block_time':obs['block_time'],'signature':obs['signature'],
                                          'commitment':obs.get('commitment'),'same_slot_buy_signatures':[]})
-            if obs['slot']==buy['slot'] and obs['signature'] not in buy['same_slot_buy_signatures']:
-                buy['same_slot_buy_signatures'].append(obs['signature'])
+            if obs['slot']==buy['slot']:
+                # One finalized bank has one chain time. Neither input order nor
+                # a convenient query window may select between conflicting buy
+                # point/finality observations for the same early wallet.
+                if (obs['block_time'],obs.get('commitment'))!=(buy['block_time'],buy['commitment']):
+                    conflicted.add(wallet)
+                if obs['signature'] not in buy['same_slot_buy_signatures']:
+                    buy['same_slot_buy_signatures'].append(obs['signature'])
     reasons=[];edges=[];verified=[];hashes=[];ambiguities=[]
     for wallet,buy in sorted(first.items()):
+        if wallet in conflicted:reasons.append('EARLY_BUY_POINT_CONFLICT');continue
         at=buy['block_time']
         if type(at) is not int:reasons.append('EARLY_BUY_TIME_UNVERIFIED');continue
         matches=[q for q in queries if q.get('address')==wallet and q.get('start')==max(0,at-3600)
