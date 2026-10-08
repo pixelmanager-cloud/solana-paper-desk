@@ -262,14 +262,14 @@
     "published_ci": "Deployed d758bc529a7da1f74509117288740911f2ad6845: both CI runs successful",
     "active_claims": [
       {
-        "id": "OWN-1-COMMON-BANK-CONTRACT",
-        "worker": "01",
-        "thread_id": "01a118fc-39bc-722c-b442-8bf5a749e0bb",
+        "id": "PR82-INDEPENDENT-REVIEW",
+        "worker": "06",
+        "thread_id": "01a118fc-f867-7233-8eec-c20659e70095",
         "host_id": "durable",
-        "base": "11bd94462aa24053d95b77b5ba9336b374ea8444",
-        "status": "DISPATCHED",
-        "scope": "Common raw bank acquisition contract and fixture feasibility; no production change before independent review",
-        "assigned_at": "2026-10-08T11:20:25Z"
+        "base": "5d7e7ac7474cf3c215a07d2906d01afbfbf00656",
+        "status": "REVIEWING",
+        "pr": 82,
+        "head": "2859e55a77a3f6122ef23d6cf3f60a60914331a4"
       }
     ],
     "saved_launch_probe": {
@@ -620,6 +620,15 @@
       "ci": "Both exact-head checks PASS",
       "review_manifest_sha256": "c6bc15e29ceab77ea96203c75b05dfc120ddeb9480915010de38f147643952b0",
       "deployed": false
+    },
+    "pending_common_bank_contract": {
+      "pr": 82,
+      "head": "2859e55a77a3f6122ef23d6cf3f60a60914331a4",
+      "review": "PENDING worker06",
+      "integrated": false,
+      "author_linux_tests": 1586,
+      "author_skips": 0,
+      "scope": "Design and fixture proof only; production unchanged; atomic journal/versioned readers and mixed-profile receipts unimplemented"
     }
   },
   "native_reconciliation_review": {
