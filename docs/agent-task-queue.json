@@ -280,7 +280,9 @@
         "base": "7f57cf0e7b50f44868e77a149c2ca4c10173ee3b",
         "thread_id": "01a118fc-f867-7233-8eec-c20659e70095",
         "host_id": "durable",
-        "status": "DISPATCHED"
+        "status": "REVIEWING",
+        "wait_cursor": "8f3328cf-bef6-441d-83f8-2d1f46b3b0df:61",
+        "turn_id": "01a11c13-b210-74a1-ba34-69c088ebb540"
       }
     ],
     "saved_launch_probe": {
@@ -877,7 +879,7 @@
       "mac_passed": 1508,
       "mac_skipped": 372,
       "mac_seconds": 33.867,
-      "ci": "PENDING corrected head",
+      "ci": "Both corrected exact-head6024d130e01c75b4075bba57856e010b7dc7778a checks SUCCESS15:14Z; independent rereview pending",
       "coordinator_diff_review": "Module inspected; independent security/full Linux pending",
       "independent_linux_tests": 1841,
       "independent_linux_seconds": 261.463,
