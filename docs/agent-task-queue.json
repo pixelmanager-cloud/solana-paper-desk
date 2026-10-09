@@ -4662,7 +4662,13 @@
                   "MIGRATION_INSTRUCTION_SCOPE_UNAVAILABLE",
                   "MIGRATION_WITNESS_ABSENT"
                 ],
-                "limitation": "No retry or entry authorization; re-evaluate retained pages on reviewed decoder head"
+                "limitation": "No retry or entry authorization; re-evaluate retained pages on reviewed decoder head",
+                "new_head": "8a9acd1c30c35d59e9774a0c4d01277189fd585a",
+                "new_coverage_verified": true,
+                "remaining_migration_blockers": [
+                  "MIGRATION_INSTRUCTION_SCOPE_UNAVAILABLE",
+                  "MIGRATION_WITNESS_ABSENT"
+                ]
               }
             },
             "release_ci_result": {
@@ -4732,16 +4738,47 @@
                 "owner": "08",
                 "thread_id": "01a118fd-2563-7126-90d7-bd07693de0b2",
                 "turn_id": "01a1220b-6e68-7719-8c7b-9d9b4f927198",
-                "status": "IMPLEMENTATION_ASSIGNED",
+                "status": "INDEPENDENT_PASS_CI_PENDING",
                 "scope": "Complete explicit paper-only boosted pool pricing/spendable reserve/physical payout compatibility; preserve old profiles, gates and retired scans",
                 "base": "5cbd0da982c71914241265110d9152d5387ef204",
-                "diagnosis_turn": "01a12207-517d-73b9-9b10-b67dbd81ccc7"
+                "diagnosis_turn": "01a12207-517d-73b9-9b10-b67dbd81ccc7",
+                "pr": 174,
+                "head": "e0f9816992ce93ba1b2f062f71bfff580d894190",
+                "ci_runs": [
+                  37981003380,
+                  37980993873
+                ],
+                "root_focused": {
+                  "head": "1ef4fe393555fbb3c30d2b008a39a0882fb73f31",
+                  "tests": 12,
+                  "seconds": 5.038,
+                  "result": "PASS"
+                },
+                "independent_review": {
+                  "head": "e0f9816992ce93ba1b2f062f71bfff580d894190",
+                  "result": "PASS",
+                  "turn": "01a12228-5dd7-74b8-b06f-1e7fc8e856b9",
+                  "tests": 31,
+                  "probe": "Original10000001-lamport reproduction passes; precision28-rounded persistedcost still rejects"
+                },
+                "repair_turn": "01a12224-243e-7203-a996-5f698f0dd8e5",
+                "prior_hold": {
+                  "head": "0ac0cbce0f00a4db5d4de38aa6196d2f0db23546",
+                  "turn": "01a1221f-ad98-7153-8163-b92a6e9151f1",
+                  "result": "HOLD",
+                  "finding": "Reverse entry proof precision28 differs from entry400; actual10000001-lamport BUY fails restart; exact precision repair and regression assigned."
+                },
+                "root_repaired_focused": {
+                  "tests": 14,
+                  "seconds": 7.863,
+                  "result": "PASS"
+                }
               },
               {
                 "owner": "02",
                 "thread_id": "01a118fc-666c-70b6-9fa8-2c7520f0a0bb",
-                "turn_id": "01a1220b-ad95-7452-b9a1-23cf54dfb717",
-                "status": "INDEPENDENT_DESIGN_REVIEW",
+                "turn_id": "01a12228-5dd7-74b8-b06f-1e7fc8e856b9",
+                "status": "SCOPED_SOURCE_PASS",
                 "scope": "Boost compatibility contract read-only review",
                 "design_result": "Separate versioned signal subprofile required for effective-pricing denominator; originalphysicalfeature cannotbe silentlyrelabelled",
                 "design_followup_turn": "01a1220e-39dd-7337-82c1-1dbff3c14acc"
@@ -4750,47 +4787,138 @@
                 "owner": "01",
                 "thread_id": "01a118fc-39bc-722c-b442-8bf5a749e0bb",
                 "turn_id": "01a1220d-d482-76ab-b798-9adc185ce03f",
-                "status": "IMPLEMENTATION_ASSIGNED",
+                "status": "INDEPENDENT_PASS_CI_PENDING",
                 "scope": "Canonical version1 successful jsonParsed history semantics, authentic retained row; no whitelist-only fix",
-                "diagnosis_turn": "01a1220b-5e50-71a5-a80a-10e55e8222ef"
+                "diagnosis_turn": "01a1220b-5e50-71a5-a80a-10e55e8222ef",
+                "pr": 175,
+                "head": "47f5d4cc326b93144d6b5f1a7212f50ba5a069d8",
+                "ci_runs": [
+                  37979699711,
+                  37979708246
+                ],
+                "root_focused": {
+                  "tests": 19,
+                  "seconds": 0.101,
+                  "result": "PASS"
+                },
+                "independent_review": {
+                  "head": "47f5d4cc326b93144d6b5f1a7212f50ba5a069d8",
+                  "turn": "01a1221d-b4be-7102-b873-7bffe0cb0f3d",
+                  "result": "SCOPED_PASS",
+                  "tests": 59,
+                  "probes": 2
+                },
+                "root_repaired_focused": {
+                  "tests": 20,
+                  "seconds": 0.104,
+                  "result": "PASS",
+                  "authentic_query_coverage": true,
+                  "migration_witness": "UNKNOWN"
+                },
+                "ci_success": [
+                  37979699711,
+                  37979708246
+                ]
               },
               {
                 "owner": "09",
                 "thread_id": "01a118fd-3f90-77d9-9549-c4497f5b10a6",
-                "status": "INDEPENDENT_PARSED_V1_DESIGN_REVIEW",
+                "status": "SCOPED_SOURCE_PASS",
                 "scope": "Canonical parsedv1 shape, privileges, config, indices and preservedfailclosedlimitations",
-                "turn_id": "01a1220d-e554-7106-90a2-5ea4e303c015",
+                "turn_id": "01a1221d-b4be-7102-b873-7bffe0cb0f3d",
                 "design_result": "RPC writable demotion is not originalheaderorder; canonicalbounds64keys/64outer/12signatures; data pubkeys neednotroster"
               },
               {
                 "owner": "06",
                 "thread_id": "01a118fc-f867-7233-8eec-c20659e70095",
-                "turn_id": "01a1220f-43ef-7773-a7ec-642407439204",
-                "status": "OPS_DEPENDENCIES_IDENTIFIED",
-                "scope": "Second handoff blocked by single receipt and oldterminalcert activecontext validation"
+                "turn_id": "01a12220-3f15-70fb-a722-8fbaaf6ba616",
+                "status": "LOCAL_PIN_PLANNER_SCOPED_PASS",
+                "scope": "Second handoff blocked by single receipt and oldterminalcert activecontext validation",
+                "planner_review_turn": "01a12226-72f2-708b-9c43-a7e7fdd19362",
+                "planner_preconditions": [
+                  "services stopped",
+                  "DESK_PROVIDER_PACING_DB exact",
+                  "old_source3f819 exact",
+                  "final pin separately reviewed"
+                ]
               },
               {
                 "owner": "07",
                 "thread_id": "01a118fd-0f1c-749c-b85b-5e730937d0a8",
                 "turn_id": "01a12210-930b-77bf-8971-ce6a1837290d",
-                "status": "IMPLEMENTATION_ASSIGNED",
-                "scope": "Bounded append-only successor monitoring context preserving historical terminalproof and globalaccounting"
+                "status": "INDEPENDENT_PASS_CI_PENDING",
+                "scope": "Bounded append-only successor monitoring context preserving historical terminalproof and globalaccounting",
+                "pr": 176,
+                "head": "ea6d6a9209f7b8d7c8720fd3ac0f3a372cc124aa",
+                "ci_runs": [
+                  37979835826,
+                  37979772693
+                ],
+                "independent_review": {
+                  "result": "SCOPED_PASS",
+                  "turn": "01a1221f-9e28-7325-bd20-029ab4c9c03d",
+                  "tests": 75,
+                  "seconds": 117.146,
+                  "probes": "historical intervals, retired spending, shared pending, rollback, concurrent activation"
+                },
+                "ci_success": [
+                  37979835826,
+                  37979772693
+                ]
               },
               {
                 "owner": "03",
                 "thread_id": "01a118fc-9478-778a-b77a-8f8f6ec7e0ad",
-                "turn_id": "01a12210-a314-7073-9eaf-9bc8a1671cfd",
-                "status": "DESIGN_REVIEW_COMPLETE_SOURCE_PENDING",
+                "turn_id": "01a1221f-9e28-7325-bd20-029ab4c9c03d",
+                "status": "SCOPED_SOURCE_PASS",
                 "scope": "Successor handoff and historicalterminalproof independentlyreviewed"
               },
               {
                 "owner": "04",
                 "thread_id": "01a118fc-b862-7340-ab3a-e1115a3280a4",
-                "status": "COMPOSITION_TEST_PREPARATION",
+                "status": "COMPOSITION_FIXTURE_ACTIVE_AWAIT_REPAIRED_174",
                 "scope": "tests/test_profile2_runtime_composition.py only; oldcerts+nonzerousage+distinctprofile2BUYSELLrestart",
-                "turn_id": "01a12210-b0ec-70a1-be61-da2866e221fe"
+                "turn_id": "01a1221f-bddf-76c8-bc20-87906859cb76",
+                "latest_known_turn": "01a1221d-0bcd-745c-81b3-ad2dfed403aa"
               }
-            ]
+            ],
+            "new_pr_attachment_errors": {
+              "174": "thread attachment identity count exceeds100",
+              "175": "thread attachment identity count exceeds100"
+            },
+            "provisional_composition": {
+              "commit": "3cad64beea7567e8dc66765ffa277e287e508040",
+              "heads": [
+                "0ac0cbce0f00a4db5d4de38aa6196d2f0db23546",
+                "47f5d4cc326b93144d6b5f1a7212f50ba5a069d8",
+                "ea6d6a9209f7b8d7c8720fd3ac0f3a372cc124aa"
+              ],
+              "focused_tests": 43,
+              "seconds": 27.457,
+              "result": "PASS_BUT_174_INDEPENDENT_HOLD_NOT_DEPLOYABLE"
+            },
+            "combined_linux_run": {
+              "commit": "7663ece1c5e52fc0fbd582b2ccd94504e4bc8c08",
+              "source": "229cf8eccb99e2a2f5fad9dcf55c04061762861319c7ebdbe42ade2b8394f068",
+              "unit": "desk-fixture-7663ece",
+              "invocation": "e6f84986ed6a4af2a27b7c0742e2089e",
+              "status": "RUNNING_INACTIVE_RELEASE_FIXTURES_ONLY",
+              "composition_fixture_pending": true
+            },
+            "profile2_configuration_review": {
+              "hash": "c8156792b153b4f0193cbfb7b6d7ac6507e223eca41ac64e6028af05c36397c9",
+              "reviewer": "02",
+              "turn": "01a1222b-3c33-72bc-a120-cb6aa1fb9b25",
+              "result": "SCOPED_PASS",
+              "production_changed": false
+            },
+            "local_original_preservation_verifier": {
+              "reviewer": "06",
+              "turn": "01a1222a-4635-74be-afd2-ee0be65ee868",
+              "result": "CONDITIONAL_PASS_INVENTORY_COLLISION_FIXED",
+              "fix": "Reject duplicate schema object names before dict comparisons",
+              "production_executed": false
+            }
           }
         }
       }
