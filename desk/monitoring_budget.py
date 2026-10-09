@@ -57,6 +57,13 @@ class MonitoringBudget:
         self.clock = clock
 
     def _checkpoint(self):
+        from .monitoring_handoff import validate_active
+        try:
+            with self.store.connect() as evidence:
+                evidence.execute('BEGIN')
+                validate_active(evidence,self)
+        except (ValueError,sqlite3.Error,OSError,TypeError,KeyError,RecursionError):
+            raise MonitoringBlocked('MONITORING_CONTEXT_BINDING_INVALID') from None
         canonical_job_path(self.ledger)
         with closing(sqlite3.connect(self.ledger.as_uri()+'?mode=ro', uri=True)) as c:
             c.execute('BEGIN')
@@ -159,6 +166,10 @@ class MonitoringBudget:
 
     def _accounting(self, c):
         row = c.execute('SELECT version,ledger,config_hash,code_hash,cap,window_seconds,high_water,total,blocked FROM paper_monitoring_budget WHERE id=1').fetchone()
+        from .monitoring_handoff import validate_active
+        try: handoff=validate_active(c,self)
+        except (ValueError,sqlite3.Error,OSError,TypeError,KeyError,RecursionError):
+            raise MonitoringBlocked('MONITORING_CONTEXT_BINDING_INVALID') from None
         upgraded=policy.monitoring_policy(c)
         with closing(sqlite3.connect(self.ledger.as_uri()+'?mode=ro',uri=True)) as ledger:
             origin=ledger.execute("SELECT value FROM metadata WHERE key='implementation_hash'").fetchone()
@@ -166,14 +177,22 @@ class MonitoringBudget:
         expected=(VERSION,str(self.ledger),self.config_hash,origin,CAP,WINDOW_SECONDS)
         if upgraded:
             grant,key=upgraded
-            if (grant['ledger']!=str(self.ledger) or grant['evidence']!=str(self.path)
-                    or grant['config_hash']!=self.config_hash or grant['predecessor_code']!=origin
-                    or grant['successor_code']!=self.code_hash):
+            binding=handoff[0] if handoff else None
+            grant_ledger=binding['context']['old_ledger_db'] if binding else str(self.ledger)
+            grant_config=binding['old_config_hash'] if binding else self.config_hash
+            grant_source=binding['old_source'] if binding else self.code_hash
+            grant_origin=binding['original_budget'][3] if binding else origin
+            if (grant['ledger']!=grant_ledger or grant['evidence']!=str(self.path)
+                    or grant['config_hash']!=grant_config or grant['predecessor_code']!=grant_origin
+                    or grant['successor_code']!=grant_source):
                 raise MonitoringBlocked('MONITORING_ACCOUNTING_INVALID')
-            expected=(2,str(self.ledger),self.config_hash,origin,policy.NEW_MONITORING,WINDOW_SECONDS)
+            expected=(3 if handoff else 2,grant_ledger,grant_config,grant_origin,policy.NEW_MONITORING,WINDOW_SECONDS)
         if (row is None or row[:6] != expected
                 or type(row[6]) not in (int,float) or not math.isfinite(row[6])
                 or type(row[7]) is not int or not 0 <= row[6] < 2**63 or row[7] < 0):
+            raise MonitoringBlocked('MONITORING_ACCOUNTING_INVALID')
+        if handoff and (row[7]<handoff[0]['reservation_cutoff'] or row[6]<handoff[0]['original_budget'][6]
+                or (handoff[0]['original_budget'][8] is not None and row[8]!=handoff[0]['original_budget'][8])):
             raise MonitoringBlocked('MONITORING_ACCOUNTING_INVALID')
         if upgraded and (row[7]<grant['reservation_cutoff'] or row[6]<grant['old_budget'][6]
                 or (grant['old_budget'][8] is not None and row[8]!=grant['old_budget'][8])):
@@ -197,6 +216,8 @@ class MonitoringBudget:
                 receipt = original.get('monitoring_reservation', {})
             except (ValueError, TypeError, AttributeError):
                 raise MonitoringBlocked('MONITORING_ACCOUNTING_INVALID') from None
+            if handoff and identity>handoff[0]['reservation_cutoff'] and receipt.get('context_hash')!=handoff[1]:
+                raise MonitoringBlocked('MONITORING_CONTEXT_BINDING_INVALID')
             new_receipt=bool(upgraded and identity>grant['reservation_cutoff'])
             cap=policy.NEW_MONITORING if new_receipt else CAP
             kind='open_paper_monitoring_reservation_v2' if new_receipt else 'open_paper_monitoring_reservation_v1'
@@ -308,6 +329,9 @@ class MonitoringBudget:
                         raise MonitoringBlocked('MONITORING_RECOVERY_REQUIRED')
                     transition = policy.monitoring_policy(c)
                     clock_floor = max(row[6], transition[0]['at']) if transition else row[6]
+                    from .monitoring_handoff import read as read_handoff
+                    handoff=read_handoff(c)
+                    if handoff:clock_floor=max(clock_floor,handoff[0]['at'])
                     if now < clock_floor:
                         c.execute("UPDATE paper_monitoring_budget SET blocked='CLOCK_ROLLBACK' WHERE id=1")
                         c.commit()
@@ -321,21 +345,24 @@ class MonitoringBudget:
                         c.commit()
                         raise MonitoringBlocked('MONITORING_REQUEST_BUDGET_EXHAUSTED')
                     identity = row[7]+1
-                    c.execute('INSERT INTO paper_monitoring_reservations VALUES(?,?,?,?,?,?,?)',
-                              (identity, now, scan_id, admission['descriptor']['mint'], checkpoint_hash, method, digest(params)))
+                    values=(identity, now, scan_id, admission['descriptor']['mint'], checkpoint_hash, method, digest(params))
+                    if handoff:
+                        c.execute('INSERT INTO paper_monitoring_reservations(id,at,scan_id,mint,checkpoint_hash,method,params_hash,context_hash) VALUES(?,?,?,?,?,?,?,?)',values+(handoff[1],))
+                    else:c.execute('INSERT INTO paper_monitoring_reservations VALUES(?,?,?,?,?,?,?)',values)
                     c.execute('UPDATE paper_monitoring_budget SET total=? WHERE id=1', (identity,))
-                    transition_hash = policy.monitoring_policy(c)[1] if row[0] == 2 else None
+                    transition_hash = policy.monitoring_policy(c)[1] if row[0] in (2,3) else None
                     c.commit()
                 except BaseException:
                     c.rollback()
                     raise
-            receipt={'kind':'open_paper_monitoring_reservation_v2' if row[0]==2 else 'open_paper_monitoring_reservation_v1', 'id':identity,
+            receipt={'kind':'open_paper_monitoring_reservation_v2' if row[0] in (2,3) else 'open_paper_monitoring_reservation_v1', 'id':identity,
                     'reserved_at':now,
                     'mint':admission['descriptor']['mint'],
                     'total_used':identity, 'window_used':used+1, 'cap':cap,
                     'window_seconds':WINDOW_SECONDS, 'checkpoint_hash':checkpoint_hash,
                     'investigation_requests_used':admission['requests_used']}
-            if row[0]==2:receipt['policy_hash']=transition_hash
+            if row[0] in (2,3):receipt['policy_hash']=transition_hash
+            if handoff:receipt['context_hash']=handoff[1]
             return receipt
         except MonitoringBlocked:
             raise
@@ -353,6 +380,9 @@ class MonitoringBudget:
             row = self._accounting(c)
             transition = policy.monitoring_policy(c)
             clock_floor = max(row[6], transition[0]['at']) if transition else row[6]
+            from .monitoring_handoff import read as read_handoff
+            handoff=read_handoff(c)
+            if handoff:clock_floor=max(clock_floor,handoff[0]['at'])
             used = c.execute('SELECT count(*) FROM paper_monitoring_reservations WHERE at>?', (now-WINDOW_SECONDS,)).fetchone()[0]
             pending = bool(c.execute('SELECT 1 FROM paper_monitoring_reservations r LEFT JOIN paper_monitoring_outcomes o ON o.reservation_id=r.id WHERE o.reservation_id IS NULL LIMIT 1').fetchone())
         blockers = []
@@ -377,11 +407,13 @@ class MonitoringBudget:
                 row = c.execute('SELECT scan_id,method,params_hash FROM paper_monitoring_reservations WHERE id=?', (reservation['id'],)).fetchone()
                 if row != (record['scan_id'], record['method'], digest(record['params'])):
                     raise MonitoringBlocked('MONITORING_OUTCOME_BINDING_INVALID')
+                self._accounting(c)
                 old = c.execute('SELECT evidence_hash FROM paper_monitoring_outcomes WHERE reservation_id=?', (reservation['id'],)).fetchone()
                 if old and old[0] != evidence_hash:
                     raise MonitoringBlocked('MONITORING_OUTCOME_BINDING_INVALID')
                 if old is None:
                     c.execute('INSERT INTO paper_monitoring_outcomes VALUES(?,?)', (reservation['id'], evidence_hash))
+                self._accounting(c)
                 if record.get('failure_code') is not None:
                     c.execute("UPDATE paper_monitoring_budget SET blocked='SOURCE_FAILURE' WHERE id=1 AND blocked IS NULL")
                 c.commit()
