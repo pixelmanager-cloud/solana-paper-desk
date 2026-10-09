@@ -273,6 +273,28 @@
         "wait_cursor": "b9784eaf-f3e5-457f-a98d-a386c23b37ea:48",
         "turn_id": "01a11c6e-65ba-7787-b458-530144590287",
         "scope": "Review changed code and existing regression tests only; earlier flagged custom probes not repeated; stop if blocked"
+      },
+      {
+        "id": "RESUME-OWN2-GAP-ASSESSMENT",
+        "worker": "03",
+        "thread_id": "01a118fc-9478-778a-b77a-8f8f6ec7e0ad",
+        "host_id": "durable",
+        "status": "IN_PROGRESS",
+        "base": "9e43752daabf19b7e78e08e0b15d16d1c6e2a680",
+        "scope": "Concrete unclaimed OWN2/accepted ownership gap independent of blocked PR97; read-only",
+        "turn_id": "01a11e95-0e72-71a5-ada2-0f0aa95b8153",
+        "wait_cursor": "0851f5ab-a903-4567-a6fe-4cbb4e6a7b96:19"
+      },
+      {
+        "id": "RESUME-ROUTE-GAP-ASSESSMENT",
+        "worker": "07",
+        "thread_id": "01a118fd-0f1c-749c-b85b-5e730937d0a8",
+        "host_id": "durable",
+        "status": "IN_PROGRESS",
+        "base": "9e43752daabf19b7e78e08e0b15d16d1c6e2a680",
+        "scope": "Small deterministic route effect/recipient verifier gap supported by pinned fixtures; read-only; no gate change",
+        "turn_id": "01a11e95-8e85-75f3-beb7-914307929d0b",
+        "wait_cursor": "3dd79f38-868a-433f-9b14-13e7ed0a6e90:30"
       }
     ],
     "saved_launch_probe": {
@@ -1127,7 +1149,9 @@
       "at": "2026-10-08T18:02Z",
       "reason": "Repeated platform cybersecurity filter blocks required PR97 independent review; all accepted dependency-independent transport work complete; no useful unclaimed dependency-ready work identified. No blocked review retried or bypassed.",
       "readiness": false,
-      "resume_condition": "Required independent review becomes available through an authorized supported path; reassess dependencies before dispatch."
+      "resume_condition": "Required independent review becomes available through an authorized supported path; reassess dependencies before dispatch.",
+      "resumed_by_user": true,
+      "status": "RESUMED_REASSESSING_PARALLEL_WORK"
     }
   },
   "native_reconciliation_review": {
