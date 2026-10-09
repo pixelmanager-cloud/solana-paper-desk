@@ -178,6 +178,10 @@ class MonitoringBudget:
         if upgraded and (row[7]<grant['reservation_cutoff'] or row[6]<grant['old_budget'][6]
                 or (grant['old_budget'][8] is not None and row[8]!=grant['old_budget'][8])):
             raise MonitoringBlocked('MONITORING_ACCOUNTING_INVALID')
+        if upgraded and c.execute(
+                'SELECT 1 FROM paper_monitoring_reservations WHERE id>? AND at<? LIMIT 1',
+                (grant['reservation_cutoff'], grant['at'])).fetchone():
+            raise MonitoringBlocked('MONITORING_ACCOUNTING_INVALID')
         count, largest, earliest, latest = c.execute('SELECT count(*),max(id),min(at),max(at) FROM paper_monitoring_reservations').fetchone()
         if (count != row[7] or (largest or 0) != count
                 or (count and (earliest < 0 or latest > row[6]))
@@ -302,12 +306,14 @@ class MonitoringBudget:
                     row = self._accounting(c)
                     if row[8] is not None:
                         raise MonitoringBlocked('MONITORING_RECOVERY_REQUIRED')
-                    if c.execute('SELECT 1 FROM paper_monitoring_reservations r LEFT JOIN paper_monitoring_outcomes o ON o.reservation_id=r.id WHERE o.reservation_id IS NULL LIMIT 1').fetchone():
-                        raise MonitoringBlocked('MONITORING_OUTCOME_PENDING')
-                    if now < row[6]:
+                    transition = policy.monitoring_policy(c)
+                    clock_floor = max(row[6], transition[0]['at']) if transition else row[6]
+                    if now < clock_floor:
                         c.execute("UPDATE paper_monitoring_budget SET blocked='CLOCK_ROLLBACK' WHERE id=1")
                         c.commit()
                         raise MonitoringBlocked('MONITORING_CLOCK_ROLLBACK')
+                    if c.execute('SELECT 1 FROM paper_monitoring_reservations r LEFT JOIN paper_monitoring_outcomes o ON o.reservation_id=r.id WHERE o.reservation_id IS NULL LIMIT 1').fetchone():
+                        raise MonitoringBlocked('MONITORING_OUTCOME_PENDING')
                     c.execute('UPDATE paper_monitoring_budget SET high_water=? WHERE id=1', (now,))
                     used = c.execute('SELECT count(*) FROM paper_monitoring_reservations WHERE at>?', (now-WINDOW_SECONDS,)).fetchone()[0]
                     cap=row[4]
@@ -345,10 +351,12 @@ class MonitoringBudget:
         with self.store.connect() as c:
             c.execute('BEGIN')
             row = self._accounting(c)
+            transition = policy.monitoring_policy(c)
+            clock_floor = max(row[6], transition[0]['at']) if transition else row[6]
             used = c.execute('SELECT count(*) FROM paper_monitoring_reservations WHERE at>?', (now-WINDOW_SECONDS,)).fetchone()[0]
             pending = bool(c.execute('SELECT 1 FROM paper_monitoring_reservations r LEFT JOIN paper_monitoring_outcomes o ON o.reservation_id=r.id WHERE o.reservation_id IS NULL LIMIT 1').fetchone())
         blockers = []
-        if now < row[6]: blockers.append('MONITORING_CLOCK_ROLLBACK')
+        if now < clock_floor: blockers.append('MONITORING_CLOCK_ROLLBACK')
         if row[8] is not None: blockers.append('MONITORING_RECOVERY_REQUIRED')
         if pending: blockers.append('MONITORING_OUTCOME_PENDING')
         if used >= row[4]: blockers.append('MONITORING_REQUEST_BUDGET_EXHAUSTED')
@@ -375,11 +383,70 @@ class MonitoringBudget:
                 if old is None:
                     c.execute('INSERT INTO paper_monitoring_outcomes VALUES(?,?)', (reservation['id'], evidence_hash))
                 if record.get('failure_code') is not None:
-                    c.execute("UPDATE paper_monitoring_budget SET blocked='SOURCE_FAILURE' WHERE id=1")
+                    c.execute("UPDATE paper_monitoring_budget SET blocked='SOURCE_FAILURE' WHERE id=1 AND blocked IS NULL")
                 c.commit()
             except BaseException:
                 c.rollback()
                 raise
+
+def _research_binding(research, evidence):
+    """Existing-only read proof of the actual dispatch/admission context.
+
+    A path or schema alone cannot establish which worker lock protects evidence.
+    Require retained admission identities bound through original immutable birth
+    dispatch descriptors. No admissions means no available binding proof.
+    """
+    from contextlib import contextmanager
+    from .job_persistence import JobPersistence, BIRTH_ACQUISITION_V1
+    from .history_progress import HistoryProgress
+    with closing(sqlite3.connect(research.as_uri()+'?mode=ro',uri=True)) as jobs_db, \
+            closing(sqlite3.connect(evidence.as_uri()+'?mode=ro',uri=True)) as evidence_db:
+        jobs_db.row_factory=sqlite3.Row
+        jobs_db.execute('BEGIN');evidence_db.execute('BEGIN')
+        jobs_db.execute('SELECT id,mint,created,status,result FROM scans LIMIT 0')
+        jobs_db.execute('SELECT scan_id,kind,descriptor_version,descriptor,descriptor_hash,generation,claim_token FROM scan_jobs LIMIT 0')
+        evidence_db.execute('SELECT scan_id,job_descriptor_hash,mint_hash,cutoff_hash FROM ownership_acquisition_setup LIMIT 0')
+        marker=jobs_db.execute("SELECT version FROM scan_job_migrations WHERE name='legacy_screen_descriptors'").fetchone()
+        if marker is None or tuple(marker)!=(1,):
+            raise MonitoringBlocked('MONITORING_RESEARCH_BINDING_INVALID')
+        # Scalar preflight before rows/JSON. Fail closed on unreviewably large
+        # contexts rather than silently checking a subset of admissions.
+        count,total,largest,prepared_total,prepared_largest=evidence_db.execute(
+            'SELECT count(*),COALESCE(sum(length(CAST(descriptor AS BLOB))),0),'
+            'COALESCE(max(length(CAST(descriptor AS BLOB))),0),'
+            'COALESCE(sum(length(CAST(prepared_source AS BLOB))),0),'
+            'COALESCE(max(length(CAST(prepared_source AS BLOB))),0) FROM ownership_admissions').fetchone()
+        if not 1<=count<=10000:
+            raise MonitoringBlocked('MONITORING_RESEARCH_BINDING_UNAVAILABLE')
+        if total>32*1024*1024 or largest>8192 or prepared_total>32*1024*1024 or prepared_largest>2*1024*1024:
+            raise MonitoringBlocked('MONITORING_RESEARCH_BINDING_BOUND')
+        jobs=JobPersistence.__new__(JobPersistence);jobs.path=research
+        @contextmanager
+        def existing_snapshot():
+            yield jobs_db
+        jobs.connect=existing_snapshot
+        for (identity,) in evidence_db.execute('SELECT id FROM ownership_admissions ORDER BY id'):
+            size=jobs_db.execute('SELECT length(CAST(descriptor AS BLOB)),length(CAST(s.result AS BLOB)) '
+                                 'FROM scan_jobs j JOIN scans s ON s.id=j.scan_id WHERE j.scan_id=?',(identity,)).fetchone()
+            if size is None or not 1<=size[0]<=8192 or (size[1] is not None and size[1]>2*1024*1024):
+                raise MonitoringBlocked('MONITORING_RESEARCH_BINDING_INVALID')
+            dispatch=jobs.descriptor(identity)
+            admission=HistoryProgress.inspect_admission(evidence_db,identity)
+            setup=evidence_db.execute('SELECT job_descriptor_hash FROM ownership_acquisition_setup WHERE scan_id=?',
+                                      (identity,)).fetchone()
+            # The durable setup is the evidence-side pin of the original full
+            # dispatch, including its canonical research/evidence paths. Matching
+            # only mint/created/scan fields would accept a rehashed copied queue.
+            if setup is None or tuple(setup)!=(digest(dispatch),):
+                raise MonitoringBlocked('MONITORING_RESEARCH_BINDING_INVALID')
+            if (dispatch['kind']!=BIRTH_ACQUISITION_V1 or dispatch['evidence_db']!=str(evidence)
+                    or admission is None or admission['descriptor']!={'kind':'ownership_admission_v1',
+                        'scan_id':identity,'mint':dispatch['mint'],'created':dispatch['admitted_at']}
+                    or admission['request_ceiling']!=dispatch['request_ceiling']):
+                raise MonitoringBlocked('MONITORING_RESEARCH_BINDING_INVALID')
+            if admission['state']=='SEALED' and jobs.source(identity)!=admission['prepared_source']:
+                raise MonitoringBlocked('MONITORING_RESEARCH_BINDING_INVALID')
+
 
 def upgrade_existing(research_db, evidence_db, ledger_db, cfg, *, provenance, clock=time.time):
     """Explicit coordinator CLI seam: existing DBs only, no provisioning."""
@@ -396,6 +463,7 @@ def upgrade_existing(research_db, evidence_db, ledger_db, cfg, *, provenance, cl
             if not locked:raise MonitoringBlocked('MONITORING_EVIDENCE_BUSY')
             with _lock(str(ledger)+'.paper-cycle.lock') as locked:
                 if not locked:raise MonitoringBlocked('MONITORING_LEDGER_BUSY')
+                _research_binding(research, evidence)
                 store=EvidenceStore(evidence,read_only=True)
                 store.read_only=False
                 # Existing only: neither constructor nor connection may create

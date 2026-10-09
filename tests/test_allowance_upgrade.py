@@ -94,6 +94,8 @@ class ResearchUpgradeTests(unittest.TestCase):
 class MonitoringUpgradeTests(unittest.TestCase):
     def setUp(self):
         self.f=fixtures.MonitoringBudgetTests();self.f.setUp();self.addCleanup(self.f.doCleanups)
+        from desk.ownership_acquisition import _Setup
+        _Setup(self.f.store,self.f.jobs.descriptor(self.f.scan),self.f.progress.admission(self.f.scan))
 
     def upgrade(self):
         with self.f.store.connect() as c:
@@ -162,3 +164,121 @@ class MonitoringUpgradeTests(unittest.TestCase):
         with self.assertRaises(MonitoringBlocked):
             upgrade_existing(absent,self.f.store.path,self.f.f.path,self.f.f.cfg,provenance=policy.PROVENANCE)
         self.assertFalse(absent.exists())
+
+    def test_activation_epoch_is_clock_floor_without_resetting_original_highwater(self):
+        self.f.read()
+        old=self.f.accounting()
+        with self.f.store.connect() as c:
+            c.execute('BEGIN IMMEDIATE')
+            prepared=self.f.budget.prepare_upgrade(c,at=T+100,provenance=policy.PROVENANCE)
+            self.f.budget.activate_upgrade(c,prepared);c.commit()
+        self.assertEqual(old,self.f.accounting())
+        restarted=MonitoringBudget(self.f.store,self.f.f.path,self.f.f.cfg,clock=lambda:T+99)
+        snapshot=restarted.snapshot()
+        self.assertIn('MONITORING_CLOCK_ROLLBACK',snapshot['blockers'])
+        self.assertEqual(snapshot['high_water'],T)
+        with self.assertRaises(MonitoringBlocked) as error:
+            restarted.reserve_read(self.f.progress,self.f.scan,'getSlot',[{'commitment':'finalized'}])
+        self.assertEqual(error.exception.code,'MONITORING_CLOCK_ROLLBACK')
+        self.assertEqual(self.f.accounting(),(T,1,'CLOCK_ROLLBACK'))
+        recovered_clock=MonitoringBudget(self.f.store,self.f.f.path,self.f.f.cfg,clock=lambda:T+101)
+        with self.assertRaises(MonitoringBlocked):
+            recovered_clock.reserve_read(self.f.progress,self.f.scan,'getSlot',[{'commitment':'finalized'}])
+        self.assertEqual(self.f.accounting(),(T,1,'CLOCK_ROLLBACK'))
+
+    def test_at_epoch_boundary_and_legacy_pending_completion_remain_valid(self):
+        pending=self.f.budget.reserve_read(self.f.progress,self.f.scan,'getSlot',[{'commitment':'finalized'}])
+        with self.f.store.connect() as c:
+            c.execute('BEGIN IMMEDIATE')
+            prepared=self.f.budget.prepare_upgrade(c,at=T+100,provenance=policy.PROVENANCE)
+            self.f.budget.activate_upgrade(c,prepared);c.commit()
+        record={'monitoring_reservation':pending,'scan_id':self.f.scan,
+                'method':'getSlot','params':[{'commitment':'finalized'}],'failure_code':None}
+        key=self.f.store.save(record)
+        self.f.budget.retain_outcome(pending,key)
+        self.assertEqual(self.f.accounting(),(T,1,None))
+        self.f.now=T+100
+        _,key=self.f.read();new=self.f.store.load(key)['monitoring_reservation']
+        self.assertEqual((new['id'],new['reserved_at']),(2,T+100))
+
+    def test_persisted_new_reservation_before_epoch_rejected_even_while_pending(self):
+        self.upgrade()
+        pending=self.f.budget.reserve_read(self.f.progress,self.f.scan,'getSlot',[{'commitment':'finalized'}])
+        with self.f.store.connect() as c:
+            c.execute('DROP TRIGGER paper_monitoring_reservations_update')
+            c.execute('UPDATE paper_monitoring_reservations SET at=? WHERE id=?',(T-1,pending['id']))
+        with self.assertRaises(MonitoringBlocked):self.f.budget.snapshot()
+
+    def test_wrong_research_paths_and_copied_dispatch_cannot_substitute_worker_lock(self):
+        import fcntl,json
+        from desk.monitoring_budget import upgrade_existing
+        from desk.model import canonical,digest
+        original=self.f.accounting()
+        corrupt=Path(self.f.root)/'corrupt.sqlite';corrupt.write_text('SYNTHETIC_NOT_SQLITE')
+        empty=Path(self.f.root)/'empty.sqlite'
+        with sqlite3.connect(empty) as c:c.execute('CREATE TABLE unrelated(value TEXT)')
+        other=JobPersistence(Path(self.f.root)/'other.sqlite')
+        # Even a copied/rehashed otherwise-valid original descriptor must not
+        # replace the research path pinned by the evidence-side setup hash.
+        with self.f.jobs.connect() as c:
+            scan=tuple(c.execute('SELECT * FROM scans WHERE id=?',(self.f.scan,)).fetchone())
+            dispatch=list(c.execute('SELECT * FROM scan_jobs WHERE scan_id=?',(self.f.scan,)).fetchone())
+        changed=json.loads(dispatch[3]);changed['research_db']=str(other.path)
+        dispatch[3]=canonical(changed);dispatch[4]=digest(changed)
+        with other.connect() as c:
+            c.execute('INSERT INTO scans VALUES(?,?,?,?,?)',scan)
+            c.execute('INSERT INTO scan_jobs VALUES(?,?,?,?,?,?,?)',dispatch)
+        with open(str(self.f.jobs.path)+'.jobs-worker.lock','a') as held:
+            fcntl.flock(held,fcntl.LOCK_EX|fcntl.LOCK_NB)
+            for wrong in (corrupt,empty,other.path):
+                with self.subTest(wrong=wrong):
+                    with self.assertRaises((ValueError,sqlite3.Error)):
+                        upgrade_existing(wrong,self.f.store.path,self.f.f.path,self.f.f.cfg,
+                                         provenance=policy.PROVENANCE,clock=lambda:T)
+                    self.assertEqual(self.f.accounting(),original)
+                    with self.f.store.connect() as c:self.assertIsNone(policy.read(c,policy.MONITORING))
+            with self.assertRaises(MonitoringBlocked) as error:
+                upgrade_existing(self.f.jobs.path,self.f.store.path,self.f.f.path,self.f.f.cfg,
+                                 provenance=policy.PROVENANCE,clock=lambda:T)
+            self.assertEqual(error.exception.code,'MONITORING_RESEARCH_BUSY')
+
+    def test_unknown_empty_or_missing_setup_binding_never_initializes_or_upgrades(self):
+        from desk.monitoring_budget import upgrade_existing
+        with self.f.store.connect() as c:c.execute('DROP TABLE ownership_acquisition_setup')
+        before=self.f.accounting()
+        with self.assertRaises((ValueError,sqlite3.Error)):
+            upgrade_existing(self.f.jobs.path,self.f.store.path,self.f.f.path,self.f.f.cfg,
+                             provenance=policy.PROVENANCE,clock=lambda:T)
+        self.assertEqual(before,self.f.accounting())
+        with self.f.store.connect() as c:
+            self.assertIsNone(c.execute("SELECT 1 FROM sqlite_master WHERE name='ownership_acquisition_setup'").fetchone())
+            self.assertIsNone(policy.read(c,policy.MONITORING))
+
+    def test_real_cli_corrupt_context_with_genuine_worker_busy_is_redacted_and_nonmutating(self):
+        import subprocess,sys,fcntl
+        from desk.model import canonical
+        config_path=Path(self.f.root)/'upgrade-config.json';config_path.write_text(canonical(self.f.f.cfg))
+        wrong=Path(self.f.root)/'wrong-context.sqlite';wrong.write_text('SYNTHETIC_SECRET_NOT_SQLITE')
+        with self.f.store.connect() as c:original=list(c.iterdump())
+        command=[sys.executable,'-m','desk.monitoring_budget','--research-db',str(wrong),
+                 '--evidence-db',str(self.f.store.path),'--ledger-db',str(self.f.f.path),
+                 '--config',str(config_path),'--provenance',policy.PROVENANCE]
+        with open(str(self.f.jobs.path)+'.jobs-worker.lock','a') as held:
+            fcntl.flock(held,fcntl.LOCK_EX|fcntl.LOCK_NB)
+            result=subprocess.run(command,capture_output=True,text=True,timeout=10)
+        self.assertEqual(result.returncode,2,result.stdout+result.stderr)
+        self.assertNotIn('SYNTHETIC_SECRET',result.stdout+result.stderr)
+        with self.f.store.connect() as c:self.assertEqual(list(c.iterdump()),original)
+
+    def test_late_legacy_failure_completion_preserves_epoch_rollback_latch(self):
+        pending=self.f.budget.reserve_read(self.f.progress,self.f.scan,'getSlot',[{'commitment':'finalized'}])
+        with self.f.store.connect() as c:
+            c.execute('BEGIN IMMEDIATE')
+            prepared=self.f.budget.prepare_upgrade(c,at=T+100,provenance=policy.PROVENANCE)
+            self.f.budget.activate_upgrade(c,prepared);c.commit()
+        with self.assertRaises(MonitoringBlocked):
+            self.f.budget.reserve_read(self.f.progress,self.f.scan,'getSlot',[{'commitment':'finalized'}])
+        record={'monitoring_reservation':pending,'scan_id':self.f.scan,
+                'method':'getSlot','params':[{'commitment':'finalized'}],'failure_code':'HTTP_REJECTED'}
+        self.f.budget.retain_outcome(pending,self.f.store.save(record))
+        self.assertEqual(self.f.accounting(),(T,1,'CLOCK_ROLLBACK'))
