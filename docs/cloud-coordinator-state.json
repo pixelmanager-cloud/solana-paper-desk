@@ -1,6 +1,6 @@
 {
   "schema_version": 1,
-  "revision": 72,
+  "revision": 73,
   "repository": "pixelmanager-cloud/solana-paper-desk",
   "source_main_sha": "e298e15cd758932e81d2241130716632702f5bd0",
   "observed_date": "2026-10-08",
@@ -4310,6 +4310,78 @@
       "provider_calls": 0,
       "readiness": "BLOCKED_NO_SUPPORTED_BUDGET_FEASIBLE_PUBLIC_LEGACY_SEED; acquisition path in development",
       "schedule": "NOT_REPROBED_NO_DURABLE_BINDING_CLAIM"
+    },
+    {
+      "kind": "HOURLY_GITHUB_RECONCILIATION",
+      "at": "2026-10-09T14:02:34Z",
+      "status": "NO_NEW_UNASSIGNED_REVIEW_WORK",
+      "cloud_execution": {
+        "provider": "cloud",
+        "observations_current": true,
+        "observed_phase": "running",
+        "spec_revision": "122"
+      },
+      "queue_blob_sha": "8f9f176110e0abd81f01d7bc9b5981df739a0ec7",
+      "observed_prs": [
+        {
+          "pr": 156,
+          "head_sha": "d02d9068f29321ae78771d10f13a4dacc5cf33ef",
+          "base_sha": "41381bebac3de8cca2374c006202a180948c17c1",
+          "branch": "codex/cloud-token2022-paper-08",
+          "comment_ids": [
+            6082098024,
+            6082143049,
+            6082173103,
+            6082321521,
+            6082437032
+          ],
+          "status": "RESERVED_WORKER02_REPAIRED_HEAD_REVIEW_PENDING",
+          "tests_this_run": "NOT_RUN",
+          "limitations": "External results not reproduced; prior head findings do not approve repaired head."
+        },
+        {
+          "pr": 157,
+          "head_sha": "9e2337404bdc1f38edcf5b7d269e6a8e4a320a0c",
+          "base_sha": "41381bebac3de8cca2374c006202a180948c17c1",
+          "branch": "codex/cloud-wave1-10-selected-ledger",
+          "comment_ids": [
+            6081972873,
+            4230728215,
+            5470830445,
+            6082095008,
+            6082153007,
+            5470902382,
+            6082244128
+          ],
+          "status": "EXTERNAL_WORKER03_REPAIR_REVIEW_PUBLISHED",
+          "tests_this_run": "NOT_RUN",
+          "limitations": "External results not reproduced; prior head findings do not approve repaired head."
+        },
+        {
+          "pr": 158,
+          "head_sha": "275d8728187564ef0509d8f6dbd136cea241945f",
+          "base_sha": "e013ba096d557dc1aa0c167c7987bd229a92c754",
+          "branch": "codex/cloud-wave1-07-monitoring-handoff",
+          "comment_ids": [
+            5470921729,
+            6082220829,
+            5470961619,
+            6082347790,
+            6082397161
+          ],
+          "status": "EXTERNAL_WORKER09_COMPONENT_WORKER04_COMBINED_REVIEW",
+          "tests_this_run": "NOT_RUN",
+          "limitations": "External results not reproduced; prior head findings do not approve repaired head."
+        }
+      ],
+      "observed_codex_branch_count": 157,
+      "branch_pagination_complete": true,
+      "tests": "NOT_RUN_EXISTING_INDEPENDENT_REVIEW_SCOPES",
+      "review_comments_posted": 0,
+      "infrastructure_failures": 0,
+      "provider_calls": 0,
+      "readiness": "BLOCKED_NO_SUPPORTED_BUDGET_FEASIBLE_PUBLIC_LEGACY_SEED; acquisition path in development",
+      "schedule": "NOT_REPROBED_NO_DURABLE_BINDING_CLAIM"
     }
   ],
   "artifact_pr": {
@@ -6691,6 +6763,56 @@
       "status": "EXTERNAL_INDEPENDENT_EXACT_HEAD_REVIEW_ALREADY_PUBLISHED",
       "tests_this_run": "NOT_RUN",
       "limitations": "External results not reproduced or accepted by this run."
+    },
+    {
+      "pr": 156,
+      "head_sha": "d02d9068f29321ae78771d10f13a4dacc5cf33ef",
+      "base_sha": "41381bebac3de8cca2374c006202a180948c17c1",
+      "branch": "codex/cloud-token2022-paper-08",
+      "comment_ids": [
+        6082098024,
+        6082143049,
+        6082173103,
+        6082321521,
+        6082437032
+      ],
+      "status": "RESERVED_WORKER02_REPAIRED_HEAD_REVIEW_PENDING",
+      "tests_this_run": "NOT_RUN",
+      "limitations": "External results not reproduced; prior head findings do not approve repaired head."
+    },
+    {
+      "pr": 157,
+      "head_sha": "9e2337404bdc1f38edcf5b7d269e6a8e4a320a0c",
+      "base_sha": "41381bebac3de8cca2374c006202a180948c17c1",
+      "branch": "codex/cloud-wave1-10-selected-ledger",
+      "comment_ids": [
+        6081972873,
+        4230728215,
+        5470830445,
+        6082095008,
+        6082153007,
+        5470902382,
+        6082244128
+      ],
+      "status": "EXTERNAL_WORKER03_REPAIR_REVIEW_PUBLISHED",
+      "tests_this_run": "NOT_RUN",
+      "limitations": "External results not reproduced; prior head findings do not approve repaired head."
+    },
+    {
+      "pr": 158,
+      "head_sha": "275d8728187564ef0509d8f6dbd136cea241945f",
+      "base_sha": "e013ba096d557dc1aa0c167c7987bd229a92c754",
+      "branch": "codex/cloud-wave1-07-monitoring-handoff",
+      "comment_ids": [
+        5470921729,
+        6082220829,
+        5470961619,
+        6082347790,
+        6082397161
+      ],
+      "status": "EXTERNAL_WORKER09_COMPONENT_WORKER04_COMBINED_REVIEW",
+      "tests_this_run": "NOT_RUN",
+      "limitations": "External results not reproduced; prior head findings do not approve repaired head."
     }
   ],
   "pending_reviews": [
@@ -7753,60 +7875,70 @@
   ],
   "last_reconciliation": {
     "kind": "HOURLY_GITHUB_RECONCILIATION",
-    "at": "2026-10-09T13:02:34Z",
+    "at": "2026-10-09T14:02:34Z",
     "status": "NO_NEW_UNASSIGNED_REVIEW_WORK",
     "cloud_execution": {
       "provider": "cloud",
       "observations_current": true,
       "observed_phase": "running",
-      "spec_revision": "120"
+      "spec_revision": "122"
     },
-    "queue_blob_sha": "c6464376e3b07785f914c4b36bf25198f6538837",
+    "queue_blob_sha": "8f9f176110e0abd81f01d7bc9b5981df739a0ec7",
     "observed_prs": [
       {
-        "pr": 153,
-        "head_sha": "af2077308f17d3f2a7a0cbc6ed630ea0a5f1d764",
-        "base_sha": "34820de0712d9fc7724cc794565ca86edd3e313c",
-        "branch": "codex/cloud-explicit-allowance-upgrade-01",
+        "pr": 156,
+        "head_sha": "d02d9068f29321ae78771d10f13a4dacc5cf33ef",
+        "base_sha": "41381bebac3de8cca2374c006202a180948c17c1",
+        "branch": "codex/cloud-token2022-paper-08",
         "comment_ids": [
-          6080331586,
-          6080361410,
-          6080377351,
-          6080389878,
-          6080424395,
-          6080485703,
-          6080506568,
-          6080528237,
-          5469844702,
-          4229955476,
-          4229955483,
-          6080721622,
-          6080783569,
-          6080812241,
-          6080850783,
-          5469995853
+          6082098024,
+          6082143049,
+          6082173103,
+          6082321521,
+          6082437032
         ],
-        "status": "EXTERNAL_INDEPENDENT_EXACT_HEAD_REVIEW_ALREADY_PUBLISHED",
+        "status": "RESERVED_WORKER02_REPAIRED_HEAD_REVIEW_PENDING",
         "tests_this_run": "NOT_RUN",
-        "limitations": "External results not reproduced or accepted by this run."
+        "limitations": "External results not reproduced; prior head findings do not approve repaired head."
       },
       {
-        "pr": 155,
-        "head_sha": "3c8e7678ac7c38ec752add71276f96cc34708935",
-        "base_sha": "358109813fa302569543de213d44e66889979de7",
-        "branch": "codex/pacing-race-repair-06",
+        "pr": 157,
+        "head_sha": "9e2337404bdc1f38edcf5b7d269e6a8e4a320a0c",
+        "base_sha": "41381bebac3de8cca2374c006202a180948c17c1",
+        "branch": "codex/cloud-wave1-10-selected-ledger",
         "comment_ids": [
-          6081418920,
-          6081421280
+          6081972873,
+          4230728215,
+          5470830445,
+          6082095008,
+          6082153007,
+          5470902382,
+          6082244128
         ],
-        "status": "EXTERNAL_INDEPENDENT_EXACT_HEAD_REVIEW_ALREADY_PUBLISHED",
+        "status": "EXTERNAL_WORKER03_REPAIR_REVIEW_PUBLISHED",
         "tests_this_run": "NOT_RUN",
-        "limitations": "External results not reproduced or accepted by this run."
+        "limitations": "External results not reproduced; prior head findings do not approve repaired head."
+      },
+      {
+        "pr": 158,
+        "head_sha": "275d8728187564ef0509d8f6dbd136cea241945f",
+        "base_sha": "e013ba096d557dc1aa0c167c7987bd229a92c754",
+        "branch": "codex/cloud-wave1-07-monitoring-handoff",
+        "comment_ids": [
+          5470921729,
+          6082220829,
+          5470961619,
+          6082347790,
+          6082397161
+        ],
+        "status": "EXTERNAL_WORKER09_COMPONENT_WORKER04_COMBINED_REVIEW",
+        "tests_this_run": "NOT_RUN",
+        "limitations": "External results not reproduced; prior head findings do not approve repaired head."
       }
     ],
-    "observed_codex_branch_count": 153,
+    "observed_codex_branch_count": 157,
     "branch_pagination_complete": true,
-    "tests": "NOT_RUN_EXISTING_INDEPENDENT_REVIEW",
+    "tests": "NOT_RUN_EXISTING_INDEPENDENT_REVIEW_SCOPES",
     "review_comments_posted": 0,
     "infrastructure_failures": 0,
     "provider_calls": 0,
