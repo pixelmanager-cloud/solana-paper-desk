@@ -35,7 +35,7 @@ from unittest.mock import patch
 from desk.decode import decode
 from desk.live_strategy_features import calculate,MAX_RECORDS,MAX_RECORD_BYTES
 from desk.model import digest
-from desk.programs import unbase58
+from desk.programs import unbase58, schemas
 from desk.security import base58
 
 ROOT=Path(__file__).resolve().parents[1]
@@ -62,6 +62,22 @@ def transaction(signature='synthetic-signature',slot=10,ts=T,side='buy',quote=20
     return {'slot':slot,'blockTime':ts,'transaction':{'signatures':[signature],
             'message':{'accountKeys':[],'instructions':[ix]}},
             'meta':{'err':None,'preTokenBalances':[],'postTokenBalances':[],'innerInstructions':[]}}
+
+
+def multi_swap_transaction():
+    """SYNTHETIC_TEST_ONLY: pinned real instruction/event byte layouts."""
+    row=transaction(signature='multi-swap')
+    intents=[];events=[]
+    for side,quote in (('buy',200),('sell',100)):
+        spec=next(spec for spec in schemas()[PROGRAM].values() if spec['name']==side)
+        accounts=[entry.get('address',POOL) for entry in spec['accounts']]
+        accounts[next(i for i,entry in enumerate(spec['accounts']) if entry['name']=='user')]=PUBLIC['decoded']['fields']['user']
+        intents.append({'programId':PROGRAM,'accounts':accounts,
+                        'data':base58(bytes(spec['discriminator'])+(100).to_bytes(8,'little')+quote.to_bytes(8,'little'))})
+        events.append(transaction(side=side,quote=quote)['transaction']['message']['instructions'][0])
+    row['transaction']['message']['instructions']=intents
+    row['meta']['innerInstructions']=[{'index':i,'instructions':[event]} for i,event in enumerate(events)]
+    return row
 
 
 def history_pages(rows,now=T+2,*,split=None):
@@ -255,6 +271,78 @@ class StrategyFeatureTests(unittest.TestCase):
                 result=self.result(rows,history_pages=pages)
                 self.assertFalse(result['window']['coverage_complete'])
                 self.assertIsNone(result['fields']['directional_flow_proxy_v1']['value'])
+
+    def test_multiswap_each_intent_requires_its_own_complete_event(self):
+        row=multi_swap_transaction()
+        decoded=decode(row)['program_observations']
+        self.assertEqual([(r['instruction'],r['name'] if r.get('kind')=='PROGRAM_EVENT' else r.get('kind')) for r in decoded],
+                         [('0','BUY_INTENT'),('1','SELL_INTENT'),('0.0','BuyEvent'),('1.0','SellEvent')])
+        complete=self.result([row],history_pages=history_pages([row]))
+        self.assertTrue(complete['window']['coverage_complete'])
+        self.assertEqual(complete['trade_count'],2)
+        self.assertTrue(complete['fields']['directional_flow_proxy_v1']['value'].startswith('66.666'))
+        self.assertTrue(complete['fields']['same_wallet_churn_proxy_v1']['value'].startswith('0.666'))
+        for omitted in (0,1):
+            missing=copy.deepcopy(row)
+            missing['meta']['innerInstructions'][omitted]['instructions']=[]
+            before=copy.deepcopy(missing)
+            result=self.result([missing],history_pages=history_pages([missing]))
+            self.assertEqual(result['trade_count'],1)
+            self.assertFalse(result['window']['coverage_complete'])
+            self.assertIn('TRADE_INTENT_WITHOUT_COMPLETE_EVENT',result['blockers'])
+            self.assertEqual(result['source_hashes'],[digest(missing)])
+            self.assertEqual(missing,before)
+            for name in ('net_buy_ratio','directional_flow_proxy_v1','same_wallet_churn_proxy_v1',
+                         'buyer_volume_concentration_proxy_v1'):
+                self.assertEqual(result['fields'][name]['status'],'UNKNOWN')
+                self.assertIsNone(result['fields'][name]['value'])
+
+    def test_event_cannot_match_wrong_invocation_side_wallet_or_ambiguous_cpi(self):
+        for attack in ('parent','side','wallet','inner-intent','duplicate-event'):
+            row=multi_swap_transaction()
+            if attack=='parent':row['meta']['innerInstructions'][1]['index']=0
+            if attack=='side':
+                row['meta']['innerInstructions'][1]['instructions']=[transaction()['transaction']['message']['instructions'][0]]
+            if attack=='wallet':
+                row['meta']['innerInstructions'][1]['instructions']=[transaction(side='sell',wallet=POOL)['transaction']['message']['instructions'][0]]
+            if attack=='inner-intent':
+                row['meta']['innerInstructions'][1]['instructions'].insert(0,row['transaction']['message']['instructions'][1])
+                row['transaction']['message']['instructions'][1]={'programId':'11111111111111111111111111111111','accounts':[],'data':'1'}
+            if attack=='duplicate-event':
+                row['meta']['innerInstructions'][1]['instructions']*=2
+            with self.subTest(attack=attack):
+                result=self.result([row],history_pages=history_pages([row]))
+                self.assertFalse(result['window']['coverage_complete'])
+                self.assertIsNone(result['fields']['same_wallet_churn_proxy_v1']['value'])
+
+    def test_failed_and_nontrade_metadata_block_contradictory_complete_windows(self):
+        for failed in (True,False):
+            for slot,ts,reason in ((10,T+1,'SAME_SLOT_CHAIN_TIME_CONFLICT'),
+                                   (11,T-1,'CHAIN_TIME_SLOT_ORDER_CONFLICT')):
+                row=transaction('excluded',slot,ts)
+                if failed:row['meta']['err']={'InstructionError':[0,'Custom']}
+                else:row['transaction']['message']['instructions']=[]
+                rows=[transaction(),row]
+                before=copy.deepcopy(rows)
+                with self.subTest(failed=failed,slot=slot):
+                    result=self.result(rows,history_pages=history_pages(rows))
+                    self.assertFalse(result['window']['coverage_complete'])
+                    self.assertIn(reason,result['blockers'])
+                    self.assertEqual(result['failed_records'],int(failed))
+                    self.assertEqual(result['trade_count'],1)
+                    self.assertEqual(result['source_hashes'],sorted(map(digest,rows)))
+                    self.assertEqual(rows,before)
+                    for field in ('net_buy_ratio','directional_flow_proxy_v1','same_wallet_churn_proxy_v1'):
+                        self.assertIsNone(result['fields'][field]['value'])
+        # Consistent failed bank metadata adds neither volume nor phantom churn.
+        failed=transaction('failed',11,T+1)
+        failed['meta']['err']={'InstructionError':[0,'Custom']}
+        rows=[transaction(),failed]
+        result=self.result(rows,history_pages=history_pages(rows))
+        self.assertTrue(result['window']['coverage_complete'])
+        self.assertEqual(result['trade_count'],1)
+        self.assertEqual(result['fields']['same_wallet_churn_proxy_v1']['value'],'0')
+        self.assertEqual(result['fields']['directional_flow_proxy_v1']['value'],'100')
 
     def test_invalid_window_clock_and_provenance_cannot_select_live_approval(self):
         for kwargs in ({'window_seconds':60},{'ttl_seconds':0}):
