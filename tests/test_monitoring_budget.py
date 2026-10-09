@@ -215,6 +215,50 @@ class MonitoringBudgetTests(unittest.TestCase):
             for sql in ('DELETE FROM paper_monitoring_reservations','UPDATE paper_monitoring_reservations SET at=0','DELETE FROM paper_monitoring_outcomes'):
                 with self.assertRaises(sqlite3.IntegrityError):c.execute(sql)
 
+    def test_fresh_connection_replace_and_rowid_aliases_preserve_full_budget(self):
+        for _ in range(60):self.read()
+        with sqlite3.connect(self.store.path) as c:
+            self.assertEqual(c.execute('PRAGMA recursive_triggers').fetchone()[0],0)
+            before=list(c.iterdump())
+            statements=[
+                'INSERT OR REPLACE INTO paper_monitoring_reservations SELECT id,at-3600,scan_id,mint,checkpoint_hash,method,params_hash FROM paper_monitoring_reservations',
+                "INSERT OR REPLACE INTO paper_monitoring_outcomes SELECT reservation_id,'changed' FROM paper_monitoring_outcomes"]
+            for alias in ('id','rowid','oid','_rowid_'):
+                statements.append(f'INSERT OR REPLACE INTO paper_monitoring_reservations({alias},at,scan_id,mint,checkpoint_hash,method,params_hash) SELECT id,at-3600,scan_id,mint,checkpoint_hash,method,params_hash FROM paper_monitoring_reservations WHERE id=1')
+            for alias in ('reservation_id','rowid','oid','_rowid_'):
+                statements.append(f"INSERT OR REPLACE INTO paper_monitoring_outcomes({alias},evidence_hash) VALUES(1,'changed')")
+            statements.extend([
+                'INSERT INTO paper_monitoring_reservations SELECT * FROM paper_monitoring_reservations WHERE 1 ON CONFLICT(id) DO UPDATE SET at=0',
+                "INSERT INTO paper_monitoring_outcomes VALUES(1,'changed') ON CONFLICT(reservation_id) DO UPDATE SET evidence_hash='changed'",
+                'UPDATE OR REPLACE paper_monitoring_reservations SET id=1 WHERE id=2'])
+            for statement in statements:
+                with self.subTest(statement=statement),self.assertRaises(sqlite3.IntegrityError):c.execute(statement)
+                self.assertEqual(list(c.iterdump()),before)
+        self.assertEqual(self.budget.snapshot()['window_used'],60)
+        with patch('desk.paper_read_sources.os.environ.get') as credentials:
+            with self.assertRaises(PaperReadError) as caught:self.read_unmocked()
+        credentials.assert_not_called();self.assertEqual(caught.exception.code,'MONITORING_REQUEST_BUDGET_EXHAUSTED')
+        self.assertEqual(self.accounting()[1],60)
+
+    def test_corrupted_restored_time_and_outcome_refuse_without_repair(self):
+        self.read()
+        # Simulate an offline corrupted restore, bypassing the live connection's
+        # mutation guard only in this fixture. Source pages remain original.
+        with sqlite3.connect(self.store.path) as c:
+            c.execute('DROP TRIGGER paper_monitoring_reservations_update')
+            c.execute('UPDATE paper_monitoring_reservations SET at=at-3600')
+        before=self.accounting()
+        with patch('desk.paper_read_sources.os.environ.get') as credentials:
+            with self.assertRaises(PaperReadError) as caught:self.read_unmocked()
+        credentials.assert_not_called();self.assertEqual(caught.exception.code,'MONITORING_ACCOUNTING_INVALID');self.assertEqual(self.accounting(),before)
+        with self.assertRaises(MonitoringBlocked):self.budget.provision()
+
+    def test_completion_replay_idempotent_without_replace(self):
+        _,key=self.read();receipt=self.store.load(key)['monitoring_reservation']
+        with self.store.connect() as c:before=list(c.iterdump())
+        self.budget.retain_outcome(receipt,key)
+        with self.store.connect() as c:self.assertEqual(list(c.iterdump()),before)
+
     def test_held_atomic_pool_and_sell_quantities_use_actual_transport(self):
         from desk.live_observation import ingest_mint,ingest_quote,ProviderObservation
         source=PaperReadSources(self.progress,self.scan,monitoring_budget=self.budget)
