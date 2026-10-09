@@ -3015,7 +3015,7 @@
         "completed_connections": 1,
         "subscription_control_frames": 1,
         "pending_receives": 1,
-        "retained_observations": 3,
+        "retained_observations": 6,
         "charged_including_pending_bytes": 289341,
         "charged_including_pending_slots": 4,
         "original_launch_records_preserved": 782,
@@ -3027,9 +3027,9 @@
         "backup": "/var/backups/solana-desk/continuous-discovery/20261009T122013.198059Z.sqlite",
         "backup_sha256": "59493e32546b1e9f01ae951b7da3418f50724861ef9b643cf10be195b272985d",
         "lifecycle": "After clean24h completion verify Result=success/ExecMainStatus=0, inspect final summary, take offline backup under canonical lock, then explicitly start SAME DB. BLOCKED/forced stop stays stopped for inspection. Never reinitialize or restore older counters.",
-        "unique_base_mints": 2,
+        "unique_base_mints": 4,
         "base_token_program": "Token-2022; excluded by current policy",
-        "last_inspected_seq": 3
+        "last_inspected_seq": 6
       },
       "token_program_blocker_audit": {
         "worker": "08",
@@ -3128,7 +3128,7 @@
         "thread_id": "01a118fd-0f1c-749c-b85b-5e730937d0a8",
         "turn_id": "01a12099-e01c-76e1-b9e5-07ac1fcabc08",
         "cursor": "3dd79f38-868a-433f-9b14-13e7ed0a6e90:66",
-        "status": "CONTEXT_REPAIR_REREVIEW_RUNNING",
+        "status": "INDEPENDENT_CONTEXT_REPAIR_PASS",
         "scope": "Explicit exact predecessor-successor compatibility; preserve originals; no job or monitoring policy edits",
         "pr": 152,
         "head": "78b0a8c20fc75c45be392f45943619f60997f895",
@@ -3137,7 +3137,7 @@
           "worker": "02",
           "thread_id": "01a118fc-666c-70b6-9fa8-2c7520f0a0bb",
           "turn_id": "01a120a2-02c0-76ab-9e0c-812590e69456",
-          "cursor": "a2dcfb97-463d-4188-9da3-48a81e644d23:120"
+          "cursor": "a2dcfb97-463d-4188-9da3-48a81e644d23:121"
         },
         "findings": [
           "Post-transition malformed suffix grammar inconsistent acrossreaders",
@@ -3157,7 +3157,7 @@
           "worker": "04",
           "thread_id": "01a118fc-b862-7340-ab3a-e1115a3280a4",
           "turn_id": "01a120a2-b494-7736-88ff-e4b554be9480",
-          "cursor": "d3153436-2742-432e-8501-9c06b95f29ae:51",
+          "cursor": "d3153436-2742-432e-8501-9c06b95f29ae:52",
           "base": "a5bed0e68d8cfd72edcdf3033148e32b5a075068",
           "head": "78b0a8c20fc75c45be392f45943619f60997f895",
           "status": "NEW_FROZEN_COMPOSITION_RUNNING",
@@ -3165,7 +3165,13 @@
           "exit_code": 143,
           "pacing_head": "f40188d018ec8a9e7e1e9c9d4f7c87126bfa8a03"
         },
-        "coordination": "07 notified of01 _research_binding helper on af20773 to reuse/reconcile instead of divergent validators"
+        "coordination": "07 notified of01 _research_binding helper on af20773 to reuse/reconcile instead of divergent validators",
+        "context_review": {
+          "focused_tests": 18,
+          "prior_security_probes": 7,
+          "status": "PASS",
+          "head": "78b0a8c20fc75c45be392f45943619f60997f895"
+        }
       },
       "ownership_clarification": "01budgetpoliciesonly;07exclusive runtimecompatibility/readers. Duplicateintentcorrected immediately; overlapinterface requested.",
       "provider_pacing": {
@@ -3210,7 +3216,19 @@
         "thread_id": "01a118fd-3f90-77d9-9549-c4497f5b10a6",
         "status": "DISPATCHED_NOT_ACTIVATED",
         "successor_hash": "8098b4033adff886006e2f6af5ccb0ce4bfa02e242f5fb1b4c7402c05ddaa8c9",
-        "read_only_context_preflight": "4productionadmissions all have original job and setup rows"
+        "read_only_context_preflight": "PASS actual reviewed _research_binding against production read-only,4 admissions have matching jobs/setup",
+        "turn_id": "01a120a4-46e4-7490-a19b-c44955e6c743",
+        "cursor": "68a4d56e-d04a-40dc-ad15-e80a29c96b80:48"
+      },
+      "vps_stage": {
+        "source_commit": "96c7b0558a207321d693b132eb2b8b72c5854b36",
+        "implementation_hash": "8098b4033adff886006e2f6af5ccb0ce4bfa02e242f5fb1b4c7402c05ddaa8c9",
+        "path": "/opt/solana-desk-releases/upgrade-8098b403",
+        "archive_sha256": "58be97542257a490cb399a79f56fc71b89e2e8bc17246d738b5b4f92097f95f9",
+        "status": "FULL_FIXTURE_TESTS_RUNNING_NOT_ACTIVATED",
+        "test_log": "/var/tmp/upgrade-8098b403-tests.log",
+        "session_id": 86143,
+        "provider_calls": 0
       }
     },
     "discovery_policy_combined_review": {
