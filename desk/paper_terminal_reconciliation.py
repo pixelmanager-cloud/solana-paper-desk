@@ -425,11 +425,14 @@ def gate(store,research,scan_ids,*,ledger_locked=None):
     with closing(store.connect()) as c:
         found=c.execute("SELECT 1 FROM sqlite_master WHERE type='table' AND name='paper_observation_passes'").fetchone()
         if not found:
-            if _rows(c):raise ValueError('Original pass table missing')
+            from .paper_http403_retirement import rows as http_rows
+            if _rows(c) or http_rows(c):raise ValueError('Original pass table missing')
             _monitoring(c,store=store)
             return None
         _passes(c)
-        rows=_rows(c)
+        from .paper_http403_retirement import rows as http_rows
+        rows=_rows(c)+http_rows(c)
+        if len({v['pass_id'] for v in rows})!=len(rows) or len({v['scan_id'] for v in rows})!=len(rows):raise ValueError('Conflicting terminal receipts')
         _monitoring(c,store=store)
         pending=c.execute('SELECT id,intent_hash FROM paper_observation_passes WHERE outcome_hash IS NULL LIMIT 257').fetchall()
     if len(pending)>256:raise ValueError('Pending pass bound')
@@ -457,7 +460,10 @@ def gate(store,research,scan_ids,*,ledger_locked=None):
             with closing(store.connect()) as c:
                 _monitoring(c,store=store,ledger=path,cfg=cfg,pacing=v['context']['pacing_db'])
             progress=HistoryProgress.__new__(HistoryProgress);progress.store=store
-            _proof(store,progress,v,cfg,current_budget=False)
+            if v['association']=='EXPLICIT_REVIEWED_HTTP403':
+                from .paper_http403_retirement import proof as http_proof
+                http_proof(store,progress,v,cfg,current_budget=False)
+            else:_proof(store,progress,v,cfg,current_budget=False)
         _pacing(v['context']['pacing_db'])
         certified[v['pass_id']]=v['intent_hash']
     if any(v['scan_id'] in scan_ids for v in rows):return 'REJECTED_SCAN_RETIRED'
