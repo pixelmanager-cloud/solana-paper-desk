@@ -275,26 +275,26 @@
         "scope": "Review changed code and existing regression tests only; earlier flagged custom probes not repeated; stop if blocked"
       },
       {
-        "id": "RESUME-OWN2-GAP-ASSESSMENT",
+        "id": "OWN2-POOL-POINT-CLI",
         "worker": "03",
         "thread_id": "01a118fc-9478-778a-b77a-8f8f6ec7e0ad",
         "host_id": "durable",
-        "status": "IN_PROGRESS",
+        "status": "DISPATCHED",
         "base": "9e43752daabf19b7e78e08e0b15d16d1c6e2a680",
-        "scope": "Concrete unclaimed OWN2/accepted ownership gap independent of blocked PR97; read-only",
-        "turn_id": "01a11e95-0e72-71a5-ada2-0f0aa95b8153",
-        "wait_cursor": "0851f5ab-a903-4567-a6fe-4cbb4e6a7b96:19"
+        "scope": "Existing-admission/provisioned-ledger coordinator CLI for accepted PoolCaptureBridge; no new trust/admission/approval",
+        "assessment_turn_id": "01a11e95-0e72-71a5-ada2-0f0aa95b8153",
+        "assessment": "Operational composition absent from CLI; accepted bridge transport receipt and admission dependencies exist"
       },
       {
-        "id": "RESUME-ROUTE-GAP-ASSESSMENT",
+        "id": "ROUTE-WSOL-ATA-SEQUENCE",
         "worker": "07",
         "thread_id": "01a118fd-0f1c-749c-b85b-5e730937d0a8",
         "host_id": "durable",
-        "status": "IN_PROGRESS",
+        "status": "DISPATCHED",
         "base": "9e43752daabf19b7e78e08e0b15d16d1c6e2a680",
-        "scope": "Small deterministic route effect/recipient verifier gap supported by pinned fixtures; read-only; no gate change",
-        "turn_id": "01a11e95-8e85-75f3-beb7-914307929d0b",
-        "wait_cursor": "3dd79f38-868a-433f-9b14-13e7ed0a6e90:30"
+        "scope": "Fix setup_policy.check_sell_setup accepting initialization before creation; narrow ordered complete raw WSOL ATA sequence and fixtures",
+        "assessment_turn_id": "01a11e95-8e85-75f3-beb7-914307929d0b",
+        "assessment": "Worker reproduced reordered initialization returning passed=True; existing unchanged mainnet capture and pinned ATA processor support verifier"
       }
     ],
     "saved_launch_probe": {
@@ -1140,10 +1140,9 @@
       }
     },
     "latest_cloud_reconciliation": {
-      "pr10_head": "6ce54047648ea2981b453da4baf144a7bc0369cf",
-      "at": "2026-10-08T17:57:02Z",
-      "status": "NO_NEW_UNASSIGNED_REVIEW_WORK",
-      "pr97": "RESERVED_WORKER05_PLATFORM_BLOCK_REPORTED_NO_RETRY"
+      "pr10_head": "477f2b4007610d0f37ea58c48991537502b8efdc",
+      "at": "2026-10-09T02:54:27Z",
+      "status": "UNCHANGED_NO_NEW_UNASSIGNED_REVIEW_WORK"
     },
     "desktop_pause": {
       "at": "2026-10-08T18:02Z",
