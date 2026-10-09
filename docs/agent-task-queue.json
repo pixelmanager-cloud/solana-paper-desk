@@ -1893,16 +1893,16 @@
       "live_acceptance": false
     },
     "current_worker_followups": {
-      "01": "PR126 window history transport published; graduation source recipe",
-      "02": "Independent PR126 reservation-bound transport review",
-      "03": "Independent PR125 observation CLI review",
-      "04": "PR124 scoped review PASS; available",
+      "01": "Repair126 cross-budget reservation binding",
+      "02": "126 review changes required; await exact frozen repair",
+      "03": "125 review changes required; await exact frozen repair",
+      "04": "Independent128 adapter/profile review",
       "05": "Platformblocked97/110; not retried",
-      "06": "Implement user-approved quote execution and engine contract",
-      "07": "Foundation combined PASS; available",
-      "08": "PR125 frozen; implement bounded one-cycle live paper orchestration with06/09/01",
-      "09": "Trusted market adapter measured feature mapping",
-      "10": "PR124 author available"
+      "06": "Repair127 explicit v3 engine gates; coordinate trusted taker",
+      "07": "Independent127 quote accounting/restart review",
+      "08": "Repair125 ambiguity latch and pre-lock mutation; cycle wiring next",
+      "09": "Repair128 captured-window clock and taker binding",
+      "10": "Implement v3/quote checkpoint and reader compatibility"
     },
     "paper_live_foundation_candidate": {
       "base": "3fe3188",
@@ -1941,22 +1941,49 @@
     },
     "pending_pr125": {
       "head": "4e6a76a60e058ff082f25067bd169eba913a87c6",
-      "status": "INDEPENDENT_REVIEW_03",
+      "status": "CHANGES_REQUIRED_AUTHOR08_REPAIR_ACTIVE",
       "author_linux_tests": 2083,
       "reviewer_thread": "01a118fc-9478-778a-b77a-8f8f6ec7e0ad",
-      "live_acceptance": false
+      "live_acceptance": false,
+      "findings": [
+        "Restart after ambiguous or interrupted request lacks durable resolution latch",
+        "Invalid existing DB mutated before admission validation and locks"
+      ]
     },
     "pending_pr126": {
-      "head": "f39a6b818d0804beb8eac11b5d8a3c9092b0d81a",
-      "status": "INDEPENDENT_REVIEW_02",
+      "head": "35919a32cc7f19cdcfefee009c0d2bda9710f27d",
+      "status": "CHANGES_REQUIRED_AUTHOR01_REPAIR_ACTIVE",
       "reviewer_thread": "01a118fc-666c-70b6-9fa8-2c7520f0a0bb",
-      "live_acceptance": false
+      "live_acceptance": false,
+      "findings": [
+        "Persisted cross-budget reservation rebinding permits uncharged scan I/O"
+      ]
     },
     "pending_pr124": {
       "head": "07d44a35f04eb3e61caafd700a49bd171999f79b",
       "status": "SCOPED_REVIEW_04_PASS_NOT_INTEGRATED",
       "focused_tests": 12,
       "ci": "BOTH_SUCCESS"
+    },
+    "pending_pr127": {
+      "head": "956fdbb2f235d356f9a1f1a20fea0c10f7ec244e",
+      "status": "REVIEW07_AND_AUTHOR06_PROFILE_REPAIR",
+      "author_linux_tests": 2097,
+      "known_seam": "Unconditional bundle evidence gate blocks approved explicit unknown-history profile"
+    },
+    "pending_pr128": {
+      "head": "c19cdd542dfe8fedd7772ee9589e790ebb3db73a",
+      "status": "REVIEW04_AND_AUTHOR09_CLOCK_REPAIR",
+      "author_linux_tests": 2079,
+      "known_seams": [
+        "Decision clock advances window endpoint beyond captured evidence",
+        "Builder lacks trusted taker required by quote execution"
+      ]
+    },
+    "coordinator_resume": {
+      "reason": "User asked why coordinator stopped; resumed dispatch and integration follow-up",
+      "scheduled_task": "REMAINS_PAUSED_BY_USER",
+      "live_acceptance": false
     }
   },
   "native_reconciliation_review": {
