@@ -1573,21 +1573,20 @@
       }
     },
     "pending_pr108": {
-      "head": "b1b9c1256f83e09ee8393b0061ae16f4c36f5c60",
+      "head": "90d8c59d1e98c3d09074a6f2fa4a029dbd420862",
       "depends_on": {
         "pr": 106,
         "head": "7a45e55ca2cfa9c3c5a7802724987493c89e0dd4"
       },
-      "status": "INDEPENDENT_REREVIEW",
+      "status": "JOURNALED_BUY_BINDING_REREVIEW",
       "local_tests": {
-        "total": 1996,
-        "passed": 1601,
+        "total": 1997,
         "skipped": 395,
-        "seconds": 36.32
+        "seconds": 35.561
       },
       "live_acceptance": false,
       "branch": "codex/paper-engine-policy-wiring",
-      "repair": "Experimental policy bound to original hashed entry event in both reader/writer checkpoint validation"
+      "repair": "Bounded unambiguous buy ENTRY outcome must match original risk policy, scores, identity, initial quantity and cost; non-entry rebinding rejects"
     },
     "paper_fill_model_question": {
       "status": "AWAITING_USER_PREFERENCE",
@@ -1621,6 +1620,41 @@
       "live_acceptance": false,
       "merge_sha": "010fe66ac7718ffe7fb88798a33faf1825cc05d9",
       "source_identity": "Exact tested source; only coordinator queue differs"
+    },
+    "pending_pr113": {
+      "head": "f89029a2669b4a2c4b891c4855a20c821a78cad5",
+      "status": "INDEPENDENT_REVIEW_07",
+      "includes_pr105": true,
+      "linux_author_tests": 1970,
+      "live_acceptance": false
+    },
+    "pending_pr116": {
+      "head": "d9e4ed6b811b47376ac6ad604847edfcf94aa052",
+      "status": "INDEPENDENT_REVIEW_02",
+      "dependency_pr108": "b1b9c1256f83e09ee8393b0061ae16f4c36f5c60",
+      "linux_author_tests": 2003,
+      "live_acceptance": false
+    },
+    "pending_pr112": {
+      "head": "466ff9f8b8d980b4047532d4dd50497587eea77a",
+      "status": "CHANGES_REQUIRED_REPAIR_ASSIGNED_04",
+      "reviewer": "02",
+      "findings": [
+        "Completion clock exceptions discard returned raw responses",
+        "Post-I/O admission uncertainty allows subsequent candidate requests"
+      ],
+      "combined_linux_tests": 1999,
+      "live_acceptance": false
+    },
+    "pending_pr106_107_combined": {
+      "base": "6d72c17",
+      "heads": [
+        "7a45e55ca2cfa9c3c5a7802724987493c89e0dd4",
+        "adcaa9c17de601dd74dfc6685aa465c46aae961c"
+      ],
+      "status": "COMPONENT_REVIEWS_PASS_COMBINED_TESTING",
+      "reviewer": "03",
+      "live_acceptance": false
     }
   },
   "native_reconciliation_review": {
