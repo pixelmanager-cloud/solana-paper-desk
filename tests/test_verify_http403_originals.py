@@ -149,6 +149,25 @@ class PreservationTests(unittest.TestCase):
         with self.assertRaisesRegex(ValueError, 'aliases shadowed'):
             self.verify()
 
+    def test_generated_rowid_alias_does_not_hide_original_identity(self):
+        for root in (self.old, self.live):
+            with closing(sqlite3.connect(root / 'raw.sqlite')) as c:
+                c.execute('CREATE TABLE generated(value TEXT, rowid TEXT GENERATED ALWAYS AS (value) VIRTUAL)')
+                c.execute("INSERT INTO generated(value) VALUES('original')")
+                c.commit()
+        self.verify()
+        self.mutate('raw.sqlite', 'UPDATE generated SET _rowid_=99')
+        with self.assertRaisesRegex(ValueError, 'Original rows changed'):
+            self.verify()
+
+    def test_generated_aliases_all_shadowed_refuse(self):
+        for root in (self.old, self.live):
+            with closing(sqlite3.connect(root / 'raw.sqlite')) as c:
+                c.execute('CREATE TABLE generated(value TEXT, rowid TEXT GENERATED ALWAYS AS (value) STORED, _rowid_ TEXT GENERATED ALWAYS AS (value) VIRTUAL, oid TEXT GENERATED ALWAYS AS (value) VIRTUAL)')
+                c.commit()
+        with self.assertRaisesRegex(ValueError, 'aliases shadowed'):
+            self.verify()
+
 
 if __name__ == '__main__':
     unittest.main()

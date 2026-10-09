@@ -57,7 +57,8 @@ def additions(module):
 
 
 def compare_rows(old, new, table):
-    cols = [r[1] for r in old.execute('PRAGMA table_info(' + quote(table) + ')')]
+    # Generated columns also shadow rowid aliases; table_info omits them.
+    cols = [r[1] for r in old.execute('PRAGMA table_xinfo(' + quote(table) + ')')]
     if not 1 <= len(cols) <= 64:
         raise ValueError('Original column bound')
     # Bound a materialized row before fetching payloads, including BLOBs.
