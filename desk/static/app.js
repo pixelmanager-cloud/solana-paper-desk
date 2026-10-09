@@ -45,6 +45,17 @@ function renderPaper(data){
   if(!Array.isArray(data.positions)||!Array.isArray(data.recent_outcomes))throw Error('Invalid paper projection');
   box.append(node('p',`Saved strategy mode: ${paperLabel(data.strategy_mode)} · runner reported: ${paperLabel(data.runner_status)}. This checkpoint is not continuous monitoring status.`));
   box.append(node('p','Automatic paper entries: '+(data.automatic_entry_enabled===false?'disabled.':'status unavailable; no permission established.')));
+  if(data.runner_provenance==='SYNTHETIC_TEST_ONLY')box.append(node('p','SYNTHETIC_TEST_ONLY runner experiment · offline fixture activity only; no live paper entry permission.','status'));
+  box.append(node('p','Runner process liveness: unknown. Saved activity is not a heartbeat or proof of a completed run.'));
+  box.append(node('p','Automatic live paper entries remain disabled.'));
+  const savedAge=value=>Number.isSafeInteger(value)&&value>=0?value.toLocaleString()+' seconds':'unavailable (missing or future timestamp)';
+  box.append(node('p','Last saved event age: '+savedAge(data.last_event_age_seconds)));
+  box.append(node('p','Last saved market observation: '+decisionTime(data.last_market_at)+' · age: '+savedAge(data.last_market_age_seconds)+' · currentness: '+paperLabel(data.last_market_currentness)));
+  if(data.last_run_evidence){
+    box.append(node('p','Last committed runner event: '+paperValue(data.last_run_evidence.event_id)+' · '+paperLabel(data.last_run_evidence.kind)+' · '+decisionTime(data.last_run_evidence.ts)));
+    box.append(node('p','Saved event content hash: '+paperValue(data.last_run_evidence.payload_hash)));
+  }
+
   box.append(node('p','Saved ledger checkpoint time: '+decisionTime(data.last_event_at)));
   box.append(node('p',`Simulated cash: ${paperValue(data.cash_sol)} SOL · simulated realized PnL: ${paperValue(data.realized_pnl_sol)} SOL`));
   const unresolved=data.positions.some(position=>position.exit_blocked||position.mark_status!=='MODEL_ESTIMATE');
