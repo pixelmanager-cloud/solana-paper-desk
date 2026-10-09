@@ -2853,7 +2853,7 @@
       "next_if_recurs": "Verbose test names and periodic faulthandler dumps, preserving suite and10min timeout; no source repair established"
     },
     "continuous_discovery_preflight": {
-      "status": "USER_APPROVED_IMPLEMENTATION_DISPATCHED",
+      "status": "PR151_IN_INDEPENDENT_REVIEW",
       "worker": "08",
       "thread_id": "01a118fd-2563-7126-90d7-bd07693de0b2",
       "turn_id": "01a1205a-ac94-70d6-bb60-70c87ba13d8e",
@@ -2881,23 +2881,32 @@
         "worker": "08",
         "thread_id": "01a118fd-2563-7126-90d7-bd07693de0b2",
         "turn_id": "01a1205d-30f1-70db-9efb-e28ee40c94db",
-        "cursor": "02d8669f-59ba-43bb-8691-b196829f4867:49",
+        "cursor": "02d8669f-59ba-43bb-8691-b196829f4867:51",
         "base": "aa24a7648b7d39972db17364b68788d913d96458",
         "status": "DISPATCHED"
       },
       "independent_review": {
         "worker": "02",
         "thread_id": "01a118fc-666c-70b6-9fa8-2c7520f0a0bb",
-        "turn_id": "01a1205d-418c-760e-9bf0-a22770c45ab0",
-        "cursor": "a2dcfb97-463d-4188-9da3-48a81e644d23:106",
-        "status": "FAILURE_CONTRACT_COMPLETE_EXACT_HEAD_PENDING",
+        "turn_id": "01a1206d-97ef-731c-a06d-620ad48a4412",
+        "cursor": "a2dcfb97-463d-4188-9da3-48a81e644d23:107",
+        "status": "EXACT_HEAD_REVIEW_RUNNING",
         "requirements_relayed_to_author": true
       },
       "deployment": "NOT_DEPLOYED; retain sampler until exact-head review, full Linux tests and CI; keep paper runtime pinned",
-      "allowance_change": "Author08 and reviewer02 notified; not deployed; preserve prior charged usage and originals"
+      "allowance_change": "Author08 and reviewer02 notified; not deployed; preserve prior charged usage and originals",
+      "latest_periodic_sample": {
+        "completed_utc": "2026-10-09T11:21:41Z",
+        "service_result": "success",
+        "exit_status": 0,
+        "new_records_after_seq782": 0,
+        "extra_provider_calls": 0
+      },
+      "pr": 151,
+      "head": "c72d3c1ac1f16a724c0688ac59f0540d78d34247"
     },
     "paper_policy_tuning": {
-      "status": "OFFLINE_FOUNDATION_DISPATCHED",
+      "status": "PR150_IN_INDEPENDENT_REVIEW",
       "authorization": "User explicitly authorized tool to tweak entry eligibility to seek a profitable setting; paper only.",
       "worker": "03",
       "thread_id": "01a118fc-9478-778a-b77a-8f8f6ec7e0ad",
@@ -2915,7 +2924,28 @@
         "no real execution"
       ],
       "deployment": "Not implemented or enabled; independent review and full Linux/exact-head CI required; active ledger identity remains pinned",
-      "live_data": "Zero observed live paper fills at latest inspection; cannot select profitable policy yet"
+      "live_data": "Zero observed live paper fills at latest inspection; cannot select profitable policy yet",
+      "pr": 150,
+      "head": "033957f9f9550e45bc8ee2ba7270a69ad95c36e7",
+      "reviewer": {
+        "worker": "06",
+        "thread_id": "01a118fc-f867-7233-8eec-c20659e70095",
+        "turn_id": "01a1206b-fa67-75b2-89bb-bb91dbe2a120",
+        "cursor": "8f3328cf-bef6-441d-83f8-2d1f46b3b0df:118"
+      },
+      "limitation": "Foundation only: aggregate evidence cannot rank counterfactual thresholds; automatic tuning remains incomplete",
+      "coordinator_review": {
+        "head": "033957f9f9550e45bc8ee2ba7270a69ad95c36e7",
+        "diff": "Read source and dedicated tests; no activation or counterfactual profitability claims",
+        "focused_tests": 13,
+        "focused_seconds": 1.516,
+        "full_desktop": {
+          "tests": 2370,
+          "skips": 408,
+          "seconds": 65.445,
+          "status": "PASS_LINUX_REQUIRED"
+        }
+      }
     }
   },
   "native_reconciliation_review": {
