@@ -20,7 +20,7 @@ from .live_observation import (QuoteObservation, SourceRecord, ProviderObservati
                                ingest_mint, ingest_quote)
 from .model import canonical, digest, decimal
 from .programs import address
-from .token2022_paper import selected
+from .token2022_paper import selected, NAME
 from .original_byte_slot_transport import _parse
 from .original_byte_read_transport import _bounded_json
 
@@ -112,6 +112,7 @@ class _Book:
 
     def record(self, quote, cfg):
         return {'status': STATUS, 'version': VERSION, 'direction': quote.direction,
+                **({'token_profile':{'version':selected(cfg),'name':NAME}} if selected(cfg) else {}),
                 'input_raw': quote.input_raw, 'estimated_output_raw': quote.estimated_output_raw,
                 'provider_minimum_output_raw': quote.minimum_output_raw,
                 'simulated_output_raw': output_raw(quote, cfg), 'mint_decimals': self.decimals,
