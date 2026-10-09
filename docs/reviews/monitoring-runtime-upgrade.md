@@ -49,8 +49,17 @@ native-current identity rewrite without origin proof, and genuine compiled
 predecessor refusal after successor publication. All failed readers are nonmutating.
 
 Python3.12.14 Linux: first focused run40 tests / 29.993s / OK / zero skips;
-final dedicated7 tests / 8.964s / OK / zero skips. Full suite running; exact tested
-source/tree/results will be recorded in PR comments and the final report. No
+final dedicated7 tests / 8.964s / OK / zero skips. Full unittest discovery2525
+tests / 399.592s / OK / zero skips. Tested head
+0dd147dac66e4e39e07970670ea13254543c53d7, tree
+d5245ed5f9e44c1bee2e05d3bf9b0e88c8c13f6d; desk hash
+99ba6f06c92b19438f4d1535b6707630414fcdf4c3f8ba2e6bc70f890d651ef2
+is this component, not the final combined deployment pin. Source manifest SHA256
+b749b619b66c6ca912ebe9a5126936f8f3673c0fc8b79f8caddaefb11b7bfabd;
+full log SHA256 c1151a66bd0217a0b13b024184debca85c7169a3ff6f39bc415a29ee5cf133ea. Artifacts remain under
+/workspace/work/agent07-active-runtime-upgrade/{source-manifest.txt,manifest.json,focused.log,dedicated.log,full-linux.log}.
+This validation update changes only the report; production code/tests remain
+byte-identical to the tested head. No
 transport, runtime policy/deployment pin, shared readiness/queue or production
 changes. Worker08 owns the separate HTTPchunked fix; final combined successor
 hash and external reviewed policy edge belong to the coordinator. Independent09
