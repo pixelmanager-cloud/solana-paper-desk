@@ -128,8 +128,9 @@ def paper_status(path,*,now=None,expected_config=None):
             # repository default. A caller can additionally require an exact cfg.
             if expected_config is not None and digest(expected_config)!=metadata['config_hash']:
                 raise RecoveryRequired('CONFIG_IMPLEMENTATION_MISMATCH')
-            if _implementation_hash()!=metadata['implementation_hash']:
-                raise RecoveryRequired('CONFIG_IMPLEMENTATION_MISMATCH')
+            from .runtime_compatibility import require_runtime
+            try: require_runtime(c, implementation=_implementation_hash())
+            except ValueError: raise RecoveryRequired('CONFIG_IMPLEMENTATION_MISMATCH') from None
             cfg=json.loads(metadata['config']);ttl=cfg['price_ttl_seconds']
             if type(ttl) is not int or ttl<=0:raise ValueError('Invalid price TTL')
             runner=_runner_evidence(c,state,metadata.get('paper_runner'),now,ttl,cfg)

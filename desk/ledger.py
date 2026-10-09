@@ -125,8 +125,11 @@ class Ledger:
                     "SELECT 1 FROM outcomes o LEFT JOIN events e ON e.event_id=o.event_id "
                     "WHERE e.event_id IS NULL LIMIT 1").fetchone()):
                 raise ValueError("ledger event journal incomplete: recovery required; original records preserved")
-            if (old_code and old_code[0] != implementation) or (nonfresh and not old_code):
-                raise ValueError("implementation changed or unversioned: use a new experiment database")
+            if nonfresh:
+                from .runtime_compatibility import require_runtime
+                try: require_runtime(self.db, implementation=implementation)
+                except ValueError as error:
+                    raise ValueError('implementation changed or unversioned: explicit reviewed transition required') from error
             row = self.db.execute("SELECT value FROM metadata WHERE key='config_hash'").fetchone()
             if (row and row[0] != fingerprint) or (nonfresh and not row):
                 raise ValueError("config changed or unversioned: use a new experiment database")

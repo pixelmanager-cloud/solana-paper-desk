@@ -1,0 +1,127 @@
+"""Genuine pinned old desk sources; all ledger/config/accounting data synthetic."""
+import copy
+import json
+import sqlite3
+import subprocess
+import sys
+import tempfile
+import unittest
+import zipfile
+from pathlib import Path
+from unittest.mock import patch
+
+from desk import runtime_compatibility as rc, engine, paper_cycle
+from desk.ledger import Ledger
+from desk.model import canonical,digest
+from desk.paper_checkpoint import read_checkpoint,RecoveryRequired
+from desk.paper_view import paper_status
+from tests.helpers import config, T
+
+OLD='15054558d09320369b427a2900028472bf46a870d30e23159b235351df3a72a8'
+SOURCE=Path(__file__).resolve().parents[1]/'fixtures/runtime-predecessor-desk.zip'
+
+
+def dump(path):
+    with sqlite3.connect(path) as c:return list(c.iterdump())
+
+
+class RuntimeCompatibilityTests(unittest.TestCase):
+    def setUp(self):
+        self.tmp=tempfile.TemporaryDirectory();self.addCleanup(self.tmp.cleanup);self.root=Path(self.tmp.name)
+        self.oldroot=self.root/'old';self.oldroot.mkdir()
+        with zipfile.ZipFile(SOURCE) as z:z.extractall(self.oldroot)
+        self.cfg=config()|{'paper_signal_policy_version':3,'paper_quote_execution_version':1}
+        (self.oldroot/'config.json').write_text(canonical(self.cfg))
+        self.ledger=self.root/'ledger.sqlite';self.research=self.root/'research.sqlite';self.evidence=self.root/'evidence.sqlite'
+        script='''import json,sys
+from desk import paper_cycle
+from desk.model import digest
+from pathlib import Path
+r=Path('desk');actual=digest({str(p.relative_to(r)):p.read_text() for p in sorted(r.rglob('*')) if p.suffix in ('.py','.json')})
+assert actual==sys.argv[2]
+paper_cycle.initialize(sys.argv[1],json.loads(Path('config.json').read_text()))
+'''
+        result=subprocess.run([sys.executable,'-c',script,str(self.ledger),OLD],cwd=self.oldroot,capture_output=True,text=True,timeout=20)
+        self.assertEqual(result.returncode,0,result.stderr)
+        for path in (self.research,self.evidence):
+            with sqlite3.connect(path) as c:c.execute('CREATE TABLE unchanged_budget(used INTEGER,ceiling INTEGER)');c.execute('INSERT INTO unchanged_budget VALUES(18,18)')
+        self.current=rc.implementation_hash();self.policy=self.root/'policy.json'
+        self.edge={'predecessor':OLD,'successor':self.current,'config_hash':digest(self.cfg)}
+        self.policy.write_text(canonical({'version':1,'transitions':[self.edge]}))
+        self.patch=patch.object(rc,'POLICY',self.policy);self.patch.start();self.addCleanup(self.patch.stop)
+
+    def migrate(self,**kw):
+        return rc.transition(self.research,self.evidence,self.ledger,self.cfg,
+                            **({'predecessor':OLD,'successor':self.current}|kw))
+
+    def test_real_pinned_source_explicit_transition_preserves_records_and_readers(self):
+        original=dump(self.ledger);budgets=[dump(p) for p in (self.research,self.evidence)]
+        with sqlite3.connect(self.ledger) as c:
+            with self.assertRaises(RecoveryRequired):read_checkpoint(c)
+        self.assertEqual(dump(self.ledger),original)
+        self.assertEqual(self.migrate()['status'],'RECORDED')
+        with sqlite3.connect(self.ledger) as c:
+            state=read_checkpoint(c)
+            self.assertEqual(c.execute("SELECT value FROM metadata WHERE key='implementation_hash'").fetchone()[0],OLD)
+            receipt=json.loads(c.execute('SELECT payload FROM paper_runtime_transition').fetchone()[0])
+            self.assertEqual(receipt['original_checkpoint'],state)
+        # Every original SQL line is preserved, apart from inserted transition DDL/data.
+        self.assertTrue(set(original)<=set(dump(self.ledger)))
+        self.assertEqual(paper_cycle._state(self.ledger,self.cfg),state)
+        self.assertEqual(paper_status(self.ledger,now=0,expected_config=self.cfg)['status'],'LEDGER_PRESENT')
+        before=dump(self.ledger);self.assertEqual(self.migrate()['status'],'ALREADY_RECORDED');self.assertEqual(dump(self.ledger),before)
+        ledger=Ledger(self.ledger,must_exist=True)
+        try:
+            event={'schema_version':1,'kind':'clock','event_id':'successor-clock','ts':T,'actor':'paper_monitor'}
+            ledger.apply(event,self.cfg,engine.transition,engine.initial_state)
+            self.assertEqual(read_checkpoint(ledger.db)['last_ts'],T)
+            self.assertEqual(rc.require_runtime(ledger.db),self.current)
+        finally:ledger.close()
+        self.assertEqual([dump(p) for p in (self.research,self.evidence)],budgets)
+
+    def test_no_allowlist_wrong_source_config_and_malformed_policy_do_not_mutate(self):
+        original=dump(self.ledger)
+        for body in ('{"version":1,"transitions":[]}','[]','{"version":true,"transitions":[]}',
+                     '{"version":1,"version":1,"transitions":[]}',canonical({'version':1,'transitions':[self.edge,self.edge]})):
+            self.policy.write_text(body)
+            with self.assertRaises(ValueError):self.migrate()
+            self.assertEqual(dump(self.ledger),original)
+        self.policy.write_text(canonical({'version':1,'transitions':[self.edge]}))
+        with self.assertRaises(ValueError):self.migrate(successor='0'*64)
+        with sqlite3.connect(self.ledger) as c:c.execute("UPDATE metadata SET value='changed' WHERE key='config'")
+        original=dump(self.ledger)
+        with self.assertRaises(ValueError):self.migrate()
+        self.assertEqual(dump(self.ledger),original)
+
+    def test_corrupt_checkpoint_or_history_not_adopted_even_zero_fills(self):
+        with sqlite3.connect(self.ledger) as c:c.execute("UPDATE events SET payload_hash=?",('0'*64,))
+        before=dump(self.ledger)
+        with self.assertRaises(ValueError):self.migrate()
+        self.assertEqual(before,dump(self.ledger))
+
+    def test_atomic_failure_leaves_no_partial_schema(self):
+        before=dump(self.ledger)
+        with patch.object(rc,'require_runtime',side_effect=ValueError('interrupted validation')):
+            with self.assertRaises(ValueError):self.migrate()
+        self.assertEqual(before,dump(self.ledger))
+
+    def test_partial_or_tampered_receipt_fail_closed_and_originals_immutable(self):
+        self.migrate()
+        with sqlite3.connect(self.ledger) as c:
+            before=list(c.iterdump())
+            for sql in ('DELETE FROM paper_runtime_transition','UPDATE paper_runtime_transition SET payload=\'{}\'',
+                        'INSERT OR REPLACE INTO paper_runtime_transition SELECT * FROM paper_runtime_transition'):
+                with self.assertRaises(sqlite3.IntegrityError):c.execute(sql)
+                self.assertEqual(list(c.iterdump()),before)
+            c.execute('DROP TRIGGER paper_runtime_transition_update')
+            with self.assertRaises(ValueError):rc.require_runtime(c)
+            with self.assertRaises(RecoveryRequired):read_checkpoint(c)
+
+    def test_canonical_lock_contention_refuses_without_mutation(self):
+        import fcntl
+        before=dump(self.ledger)
+        for path in (str(self.research)+'.jobs-worker.lock',str(self.evidence)+'.ownership-invocation.lock',str(self.ledger)+'.paper-cycle.lock'):
+            with open(path,'a') as stream:
+                fcntl.flock(stream,fcntl.LOCK_EX|fcntl.LOCK_NB)
+                with self.assertRaises(ValueError):self.migrate()
+            self.assertEqual(dump(self.ledger),before)

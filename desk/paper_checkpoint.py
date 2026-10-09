@@ -1,5 +1,6 @@
 """Read-only consumer checks; never repair, initialize or replace ledger records."""
 import json
+import sqlite3
 from decimal import localcontext
 from .model import decimal, digest
 
@@ -100,6 +101,11 @@ def read_checkpoint(connection):
             raise ValueError('Invalid saved config')
     except (ValueError, TypeError):
         raise RecoveryRequired('EXPERIMENT_IDENTITY_INVALID') from None
+    try:
+        from .runtime_compatibility import require_runtime
+        require_runtime(connection)
+    except (ValueError, TypeError, KeyError, sqlite3.Error, OSError, RecursionError):
+        raise RecoveryRequired('RUNTIME_IDENTITY_INVALID') from None
     return validate_checkpoint(connection, row[0])
 
 
