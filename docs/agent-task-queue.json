@@ -3034,10 +3034,11 @@
       "token_program_blocker_audit": {
         "worker": "08",
         "thread_id": "01a118fd-2563-7126-90d7-bd07693de0b2",
-        "status": "DISPATCHED_READ_ONLY",
+        "status": "COMPLETE_NO_CURRENT_SUPPORTED_TOKEN2022_ENTRY_PATH",
         "scope": "Determine exact existing token-program exclusions and bounded change proposal only; no implementation/policy waiver/providers",
         "turn_id": "01a1209f-e3ad-7247-b6ff-700d72ee43e5",
-        "cursor": "02d8669f-59ba-43bb-8691-b196829f4867:54"
+        "cursor": "02d8669f-59ba-43bb-8691-b196829f4867:55",
+        "user_decision": "PENDING: narrow versioned paper Token2022 subset approval; no policy changed"
       }
     },
     "paper_policy_tuning": {
@@ -3095,7 +3096,7 @@
       "source_identity": "Only coordinator queue/readiness differ from independent exacthead"
     },
     "downstream_allowance_upgrade": {
-      "status": "FORWARD_REPAIR_INDEPENDENT_REREVIEW_DISPATCHED",
+      "status": "SCOPED_PASS_COMBINED_RUNTIME_VALIDATION_PENDING",
       "authorization": "User explicitly requested another increase beyond100/day and600/hour. Coordinator targets1000/day,queue25,monitor3600/hour; ceilings subject to provider pacing.",
       "limits": {
         "daily_admissions": 1000,
@@ -3127,16 +3128,16 @@
         "thread_id": "01a118fd-0f1c-749c-b85b-5e730937d0a8",
         "turn_id": "01a12099-e01c-76e1-b9e5-07ac1fcabc08",
         "cursor": "3dd79f38-868a-433f-9b14-13e7ed0a6e90:66",
-        "status": "CHANGES_REQUIRED_CONTEXT_LOCK_REPAIR",
+        "status": "CONTEXT_REPAIR_REREVIEW_RUNNING",
         "scope": "Explicit exact predecessor-successor compatibility; preserve originals; no job or monitoring policy edits",
         "pr": 152,
-        "head": "d0cfc34f167a39e814c400425640b5a91ec1ea85",
+        "head": "78b0a8c20fc75c45be392f45943619f60997f895",
         "interface": "runtime_compatibility.require_runtime(connection, implementation=code_hash)",
         "reviewer": {
           "worker": "02",
           "thread_id": "01a118fc-666c-70b6-9fa8-2c7520f0a0bb",
-          "turn_id": "01a12097-c55a-7239-a9c6-e4a586ae0dbe",
-          "cursor": "a2dcfb97-463d-4188-9da3-48a81e644d23:119"
+          "turn_id": "01a120a2-02c0-76ab-9e0c-812590e69456",
+          "cursor": "a2dcfb97-463d-4188-9da3-48a81e644d23:120"
         },
         "findings": [
           "Post-transition malformed suffix grammar inconsistent acrossreaders",
@@ -3155,13 +3156,14 @@
         "combined_regression": {
           "worker": "04",
           "thread_id": "01a118fc-b862-7340-ab3a-e1115a3280a4",
-          "turn_id": "01a12097-7f00-761e-bf22-ced51442305f",
-          "cursor": "d3153436-2742-432e-8501-9c06b95f29ae:50",
+          "turn_id": "01a120a2-b494-7736-88ff-e4b554be9480",
+          "cursor": "d3153436-2742-432e-8501-9c06b95f29ae:51",
           "base": "a5bed0e68d8cfd72edcdf3033148e32b5a075068",
-          "head": "d0cfc34f167a39e814c400425640b5a91ec1ea85",
-          "status": "STOPPED_SUPERSEDED_NO_FULL_PASS",
+          "head": "78b0a8c20fc75c45be392f45943619f60997f895",
+          "status": "NEW_FROZEN_COMPOSITION_RUNNING",
           "completed_tests": 110,
-          "exit_code": 143
+          "exit_code": 143,
+          "pacing_head": "f40188d018ec8a9e7e1e9c9d4f7c87126bfa8a03"
         },
         "coordination": "07 notified of01 _research_binding helper on af20773 to reuse/reconcile instead of divergent validators"
       },
@@ -3169,7 +3171,7 @@
       "provider_pacing": {
         "worker": "06",
         "thread_id": "01a118fc-f867-7233-8eec-c20659e70095",
-        "status": "FORWARD_REPAIR_INDEPENDENT_REREVIEW",
+        "status": "INDEPENDENT_PASS",
         "scope": "Durable shared Helius/Jupiter pacing/backoff, heldpositionpriority, preserve callerbudget charges, no hidden retries",
         "turn_id": "01a12095-5166-70e7-860c-efbe6d64b56e",
         "cursor": "8f3328cf-bef6-441d-83f8-2d1f46b3b0df:124",
@@ -3183,16 +3185,33 @@
         },
         "finding": "Lost429 embargo under SQLite contention reproduced through Pacer and PaperReadSources",
         "review_url": "https://github.com/pixelmanager-cloud/solana-paper-desk/pull/154#issuecomment-6080637194",
-        "linux_tests": 2387,
+        "linux_tests": 2392,
         "linux_skips": 0,
-        "linux_seconds": 257.566
+        "linux_seconds": 271.05,
+        "focused_tests": 60,
+        "independent_probes": 6,
+        "ci": "Both exact-head checks SUCCESS"
       },
       "pr": 153,
       "head": "af2077308f17d3f2a7a0cbc6ed630ea0a5f1d764",
       "findings": [
         "Independent03 epoch finding on a70c69f",
         "Wrong/corrupt research context allows monitoring policy upgrade under unrelated worker lock"
-      ]
+      ],
+      "independent_review": {
+        "status": "PASS",
+        "head": "af2077308f17d3f2a7a0cbc6ed630ea0a5f1d764",
+        "focused": 73,
+        "independent_probes": 13,
+        "ci": "Both exact-head checks SUCCESS"
+      },
+      "production_pin_review": {
+        "worker": "09",
+        "thread_id": "01a118fd-3f90-77d9-9549-c4497f5b10a6",
+        "status": "DISPATCHED_NOT_ACTIVATED",
+        "successor_hash": "8098b4033adff886006e2f6af5ccb0ce4bfa02e242f5fb1b4c7402c05ddaa8c9",
+        "read_only_context_preflight": "4productionadmissions all have original job and setup rows"
+      }
     },
     "discovery_policy_combined_review": {
       "prs": {
