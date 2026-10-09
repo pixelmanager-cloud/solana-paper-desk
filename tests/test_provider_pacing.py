@@ -208,6 +208,12 @@ class ConnectorTests(unittest.TestCase):
     def factory(self,*,priority='investigation'):
         self.priorities.append(priority);return self.make(priority)
     def test_actual_collector_429_shared_backoff_no_retry_and_exact_charges(self):
+        self._collector_backoff_refusal(expire_before_pacer=False)
+
+    def test_actual_collector_source_deadline_before_backoff_no_retry_and_exact_charges(self):
+        self._collector_backoff_refusal(expire_before_pacer=True)
+
+    def _collector_backoff_refusal(self, *, expire_before_pacer):
         f=read_fixtures.PaperReadTests();f.setUp();self.addCleanup(f.doCleanups);self.priorities=[]
         headers=Message();headers['Retry-After']='4'
         error=HTTPError('https://SYNTHETIC_SECRET_INVALID',429,'SYNTHETIC_SECRET',headers,io.BytesIO(b'private'))
@@ -216,13 +222,30 @@ class ConnectorTests(unittest.TestCase):
             record=f.outcome(caught.exception)
             self.assertEqual(record['http_status'],429);self.assertEqual(record['requests_used'],1)
             self.assertNotIn('SECRET',str(caught.exception));self.assertEqual(self.state()[1],104)
-            with patch.object(reads,'build_opener') as opened,patch.object(reads.os.environ,'get') as credentials:
+            before=self.state()
+            reserve=f.progress.reserve
+            def charged(scan):
+                used=reserve(scan)
+                if expire_before_pacer:self.clock.sleep(.02)
+                return used
+            # Source and pacer share one deterministic monotonic clock. A real
+            # 10ms source deadline races SQLite/scheduler work on loaded CI.
+            with (patch.object(reads,'build_opener') as opened,
+                  patch.object(reads.os.environ,'get') as credentials,
+                  patch.object(reads.time,'monotonic',side_effect=self.clock.monotonic),
+                  patch.object(f.progress,'reserve',side_effect=charged)):
                 with self.assertRaises(reads.PaperReadError) as blocked:
                     f.source.rpc('getAccountInfo',f.params,timeout_seconds=.01)
             opened.assert_not_called();credentials.assert_not_called()
-            self.assertEqual(blocked.exception.code,'PACING_DEADLINE_EXCEEDED')
+            expected='DEADLINE_EXCEEDED' if expire_before_pacer else 'PACING_DEADLINE_EXCEEDED'
+            self.assertEqual(blocked.exception.code,expected)
             record=f.outcome(blocked.exception);self.assertEqual(record['requests_used'],2)
+            self.assertEqual(record['failure_code'],expected)
             self.assertEqual(f.progress.admission('scan')['requests_used'],2)
+            self.assertEqual(self.state(),before)  # No grant/refund/backoff rewrite.
+            with sqlite3.connect(self.path) as c:
+                self.assertIsNone(c.execute("SELECT pending FROM state WHERE provider='helius'").fetchone()[0])
+                self.assertEqual(c.execute('SELECT COUNT(*) FROM waiters').fetchone()[0],0)
         self.assertEqual(self.priorities,['investigation','investigation'])
     def test_actual_jupiter_quote_and_price_share_cadence(self):
         f=read_fixtures.PaperReadTests();f.setUp();self.addCleanup(f.doCleanups);self.priorities=[]
