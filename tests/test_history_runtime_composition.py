@@ -61,7 +61,53 @@ def nonboosted_fee_response(method, params, response, pool):
     return response
 
 
+def distinct_protocol(seed=9):
+    from solders.pubkey import Pubkey
+    from tests.test_pools import PoolTests
+    from desk.pools import ATA
+    from desk.providers import PUMP, PUMPSWAP
+    from desk.security import TOKEN_PROGRAM
+    p=PoolTests();p.setUp();p.mint=Pubkey.from_bytes(bytes([seed])*32)
+    p.creator=Pubkey.find_program_address([b'pool-authority',bytes(p.mint)],Pubkey.from_string(PUMP))[0]
+    p.pool,p.bump=Pubkey.find_program_address([b'pool',bytes(2),bytes(p.creator),bytes(p.mint),bytes(Pubkey.from_string(SOL))],Pubkey.from_string(PUMPSWAP))
+    p.lp=Pubkey.find_program_address([b'pool_lp_mint',bytes(p.pool)],Pubkey.from_string(PUMPSWAP))[0]
+    p.vaults=[Pubkey.find_program_address([bytes(p.pool),bytes(Pubkey.from_string(TOKEN_PROGRAM)),bytes(mint)],Pubkey.from_string(ATA))[0] for mint in (p.mint,Pubkey.from_string(SOL))]
+    p.raw=p.raw[:8]+bytes([p.bump])+bytes(2)+b''.join(bytes(v) for v in (p.creator,p.mint,Pubkey.from_string(SOL),p.lp,*p.vaults))+p.raw[203:]
+    return p
+
+
+def migration_for(protocol,at):
+    from tests.test_graduation_witness import fixture
+    from desk import graduation_witness as g
+    from desk.providers import PUMP
+    raw,mint,pool=fixture('migrate_v2')
+    replacements={mint:str(protocol.mint),pool:str(protocol.pool),
+        g._pda([b'pool-authority',unbase58(mint)],PUMP):str(protocol.creator),
+        g._pda([b'bonding-curve',unbase58(mint)],PUMP):g._pda([b'bonding-curve',bytes(protocol.mint)],PUMP)}
+    outer=raw['transaction']['message']['instructions'][0]
+    outer['accounts']=[replacements.get(v,v) for v in outer['accounts']]
+    ix=raw['meta']['innerInstructions'][0]['instructions'][0];d=bytearray(unbase58(ix['data']))
+    d[48:80]=bytes(protocol.mint);d[104:136]=unbase58(replacements[g._pda([b'bonding-curve',unbase58(mint)],PUMP)])
+    d[136:144]=at.to_bytes(8,'little',signed=True);d[144:176]=bytes(protocol.pool)
+    ix['data']=base58(d);raw['blockTime']=at
+    raw['transaction']['signatures']=['SYNTHETIC_BOOSTED_CANDIDATE_A']
+    return raw
+
+
+def boosted_response(protocol,method,params):
+    result=copy.deepcopy(protocol.rpc(method,params))
+    account=result['value'][3] if method=='getMultipleAccounts' else result['value']
+    d=bytearray(base64.b64decode(account['data'][0]));d.extend(bytes(max(0,300-len(d))))
+    d[245:261]=(1).to_bytes(16,'little',signed=True)
+    account['data'][0]=base64.b64encode(d).decode()
+    return result
+
+
 class HistoryRuntimeCompositionTests(unittest.TestCase):
+    def test_reviewed_terminal_a_unblocks_distinct_b_wrapper_sell_restart(self):
+        self._scenario(continuation=True, event_quote_bytes=bytes(32),
+                       fee_profile=True, extension=True, terminal=True)
+
     def test_raw_fee_lp_entry_sell_restart_preserves_runtime_receipts(self):
         self._scenario(continuation=True, event_quote_bytes=bytes(32),
                        fee_profile=True, extension=True)
@@ -84,7 +130,7 @@ class HistoryRuntimeCompositionTests(unittest.TestCase):
     def test_invalid_chunked_history_retains_charge_and_blocks_restart_without_retry(self):
         self._scenario(invalid_history=True)
 
-    def _scenario(self, invalid_history=False, continuation=False, event_quote_bytes=None, fee_profile=False, extension=False):
+    def _scenario(self, invalid_history=False, continuation=False, event_quote_bytes=None, fee_profile=False, extension=False, terminal=False):
         if extension:
             from tests import test_runtime_extensions
             u = test_runtime_extensions.RuntimeExtensionTests()
@@ -153,6 +199,9 @@ class HistoryRuntimeCompositionTests(unittest.TestCase):
                     second_receipt = c.execute('SELECT payload,payload_hash FROM paper_runtime_continuation').fetchone()
             preserved = tuple(dump(path) for path in (h.old, h.evidence, h.research, h.pacing))
         with patch.dict('os.environ', environment):
+            if terminal:
+                rejected = self._legacy_rejection(u, h)
+                preserved = tuple(dump(path) for path in (h.old, h.evidence, h.research, h.pacing))
             self.assertEqual((u.append() if extension else u.upgrade())['status'], 'RECORDED')
             if extension:
                 from desk import runtime_extensions
@@ -181,6 +230,10 @@ class HistoryRuntimeCompositionTests(unittest.TestCase):
                     if call and call['method'] == 'getBlockTime':
                         return Response(canonical({'jsonrpc': '2.0', 'id': transport.RPC_ID,
                                                    'result': self.price_at}).encode())
+                    if terminal and call and call['method']=='getTransactionsForAddress':
+                        # Generate NEW synthetic B trades at this request's time;
+                        # every retained A transaction/response stays unchanged.
+                        f.f.at = int(time.time())-1
                     result = delegate.open(request, timeout=timeout)
                     if fee_profile and call and call['method'] in ('getAccountInfo', 'getMultipleAccounts'):
                         wire = json.loads(result.body)
@@ -212,6 +265,8 @@ class HistoryRuntimeCompositionTests(unittest.TestCase):
                     self.assertEqual(f.f.progress.admission(h.target.scan_id), admission)
                     self.assertEqual(paper_cycle._state(h.new, h.cfg)['positions'], {})
                     self.assertEqual(dump(h.old), retired)
+                    if terminal:
+                        self._assert_retired_originals(h, rejected)
                     with h.store.connect() as c:
                         pages = [h.store.load(key) for (key,) in c.execute('SELECT hash FROM pages')]
                         self.assertEqual(c.execute('SELECT count(*) FROM paper_observation_passes WHERE outcome_hash IS NULL').fetchone()[0], 1)
@@ -219,9 +274,11 @@ class HistoryRuntimeCompositionTests(unittest.TestCase):
                         and page.get('response_bytes_base64') == base64.b64encode(b'{').decode()
                         for page in pages))
                     return
+                if terminal:
+                    self._resolve_terminal(u, h, op, rejected)
                 entry = op.invoke(live=True, systemd_credentials=True)
                 self.assertEqual(entry['status'], 'COMPLETE', entry)
-                self.assertTrue(any(row.get('side') == 'buy' for row in entry['outcomes']))
+                self.assertTrue(any(row.get('side') == 'buy' for row in entry['outcomes']), entry)
                 self.assertEqual(len(history_bodies), 1)
                 self.assertEqual(f.f.progress.admission(h.target.scan_id)['requests_used'], 15 if continuation else 9)
                 with h.store.connect() as c:
@@ -282,6 +339,8 @@ class HistoryRuntimeCompositionTests(unittest.TestCase):
                     self.assertEqual(h.store.load(ref)['response_hash'], digest(response))
                     self.assertEqual(h.store.load(digest(response))['data'][0], raw)
                     self.assertEqual(dump(h.old), retired)
+                    if terminal:
+                        self._assert_retired_originals(h, rejected)
                     with h.store.connect() as c:
                         self.assertEqual(c.execute('SELECT * FROM paper_monitoring_reservations WHERE id=1').fetchall(), original_reservations)
                         self.assertEqual(c.execute('SELECT * FROM paper_monitoring_outcomes WHERE reservation_id=1').fetchall(), original_outcomes)
@@ -315,7 +374,8 @@ class HistoryRuntimeCompositionTests(unittest.TestCase):
         from desk.live_observation import ProviderObservation, ingest_pool
         with store.connect() as c:
             captures = [store.load(key) for (key,) in c.execute('SELECT hash FROM pages')]
-        captures = [raw for raw in captures if raw.get('kind') == 'pool_snapshot']
+        captures = [raw for raw in captures if isinstance(raw, dict)
+            and raw.get('kind') == 'pool_snapshot' and target.pool in raw['params'][0]]
         self.assertTrue(captures)
         for raw in captures:
             original = copy.deepcopy(raw)
@@ -331,3 +391,98 @@ class HistoryRuntimeCompositionTests(unittest.TestCase):
             self.assertEqual(observed.spot_sol_per_token, observed.reserve_sol/observed.reserve_tokens)
             self.assertEqual(observed.source.raw_hash, digest(original))
             self.assertEqual(raw, original)
+
+    def _legacy_rejection(self, u, h):
+        from desk.ownership_acquisition import _Setup
+        from tests.test_runtime_extensions import BASE
+        protocol = distinct_protocol()
+        target = h.f.context.target(protocol=protocol)
+        self.assertNotEqual(target.mint, h.target.mint)
+        _Setup(h.store, h.f.context.jobs.descriptor(target.scan_id), h.f.context.progress.admission(target.scan_id))
+        now = int(time.time())
+        raw = migration_for(protocol, now-600)
+        response_hash = h.store.save({'data': [raw], 'paginationToken': None})
+        ref = h.store.save({'kind':'history_request_v1','method':'getTransactionsForAddress',
+            'params':[target.pool,{'transactionDetails':'full','commitment':'finalized','encoding':'jsonParsed'}],
+            'response_hash':response_hash})
+        mint = {'context':{'slot':100},'value':protocol.rpc('getMultipleAccounts',[])['value'][6]}
+        result = u.successful_binary("""import os
+from unittest.mock import patch
+from desk import paper_cycle as cycle,paper_read_sources as transport
+from desk.model import canonical
+class Response:
+ status=200
+ headers={}
+ def __init__(self,body):self.body=body;self.pos=0
+ def read(self,n=-1):
+  b=self.body[self.pos:] if n<0 else self.body[self.pos:self.pos+n];self.pos+=len(b);return b
+ def __enter__(self):return self
+ def __exit__(self,*args):pass
+class HTTP:
+ def open(self,request,*,timeout):
+  q=json.loads(request.data);m=q['method']
+  result=a['mint_response'] if m=='getAccountInfo' and q['params'][0]==a['target']['mint'] else a['atomic'] if m=='getMultipleAccounts' else a['discovery']
+  return Response(canonical({'jsonrpc':'2.0','id':transport.RPC_ID,'result':result}).encode())
+item=cycle.CycleTarget(cycle.ObservationTarget(**a['target']),'SYNTHETIC_TEST_ONLY',a['graduated_at'],None,'25',graduation_refs=(a['ref'],))
+with patch.dict(os.environ,{'DESK_PROVIDER_PACING_DB':a['pacing'],'HELIUS_API_KEY':'SYNTHETIC_TEST_ONLY'}),patch.object(transport,'build_opener',return_value=HTTP()):
+ result=cycle.run_once(a['research'],a['evidence'],a['ledger'],a['cfg'],candidates=(item,),dependency_blockers=())
+ assert result['blockers']==['SOURCE_CONTENT_REJECTED'] and result['attempted_requests']==3,result
+ print(canonical(result))
+""", u.base_root, BASE, target=vars(target), mint_response=mint,
+            discovery=boosted_response(protocol,'getAccountInfo',[]),
+            atomic=boosted_response(protocol,'getMultipleAccounts',[]),
+            ref=ref, graduated_at=now-600, pacing=str(h.pacing))
+        failed = json.loads(result.stdout)
+        with h.store.connect() as c:
+            row = c.execute('SELECT id,intent_hash,outcome_hash FROM paper_observation_passes').fetchone()
+            pages = [(key,h.store.load(key)) for (key,) in c.execute('SELECT hash FROM pages')]
+        refs = tuple(key for key,value in sorted(pages,key=lambda x:x[1].get('requests_used',0))
+            if value.get('kind')=='paper_read_attempt_v1' and value.get('scan_id')==target.scan_id)
+        self.assertEqual(len(refs),3);self.assertIsNone(row[2])
+        return {'target':target,'row':row,'failed':failed,'refs':refs,
+            'admission':h.f.context.progress.admission(target.scan_id),
+            'originals':{key:h.store.load(key) for key in (*refs,row[1],failed['evidence_hash'])}}
+
+    def _resolve_terminal(self, u, h, op, rejected):
+        from desk import paper_terminal_reconciliation as r
+        calls = len(op.f.http_calls)
+        with self.assertRaises(ValueError):op.invoke(live=True,systemd_credentials=True)
+        self.assertEqual(len(op.f.http_calls),calls)
+        target = rejected['target'];records = [h.store.load(key) for key in rejected['refs']]
+        unit='synthetic-composition.service';invocation='b'*32
+        start=f'Started {unit} - /synthetic/python tools/history_first_paper_entry.py --research-db {h.research} --evidence-db {h.evidence} --ledger-db {h.new} --targets /synthetic/targets --execute'
+        messages=[start,unit+': Main process exited, code=exited, status=2/INVALIDARGUMENT',unit+": Failed with result 'exit-code'.",unit+': Consumed synthetic CPU time.']
+        times=[records[0]['observed_at']-1,records[-1]['observed_at']+1,records[-1]['observed_at']+1,records[-1]['observed_at']+1]
+        invocation_rows=[{'MESSAGE':m,'__REALTIME_TIMESTAMP':str(times[i]*1_000_000+i),'_SYSTEMD_UNIT':'init.scope','UNIT':unit,'INVOCATION_ID':invocation} for i,m in enumerate(messages)]
+        invocation_rows[0]['JOB_RESULT']='done'
+        proof={'pass_id':rejected['row'][0],'outcome_hash':rejected['failed']['evidence_hash'],
+            'attempt_refs':rejected['refs'],'invocation_hash':h.store.save(invocation_rows),'pacing_db':h.pacing}
+        policy=u.root/'synthetic-terminal-policy.json'
+        policy.write_text(canonical({'version':1,'associations':[]}))
+        pin=r.review_plan(h.research,h.evidence,h.new,h.cfg,**proof)
+        policy.write_text(canonical({'version':1,'associations':[pin]}))
+        before=dump(h.new),dump(h.research)
+        with patch.object(r,'POLICY',policy):
+            self.assertEqual(r.reconcile(h.research,h.evidence,h.new,h.cfg,**proof)['status'],'RECORDED')
+            self.assertEqual((dump(h.new),dump(h.research)),before)
+            self.assertEqual(r.gate(h.store,h.research,(target.scan_id,)),'REJECTED_SCAN_RETIRED')
+        # Keep the policy alive for the subsequent actual wrapper and held cycle.
+        p=patch.object(r,'POLICY',policy);p.start();self.addCleanup(p.stop)
+        retired=paper_cycle.run_once(h.research,h.evidence,h.new,h.cfg,
+            candidates=(replace(op.f.item,target=target),),dependency_blockers=())
+        self.assertEqual(retired['blockers'],['REJECTED_SCAN_RETIRED'])
+        self.assertEqual(retired['attempted_requests'],0)
+        with patch.object(operator_fixture.tool.cli,'_credentials',side_effect=AssertionError('retired scan credentials')):
+            prior=copy.deepcopy(op.row);op.row.update(vars(target));op.save()
+            try:
+                with self.assertRaises(ValueError):op.invoke(live=True,systemd_credentials=True)
+            finally:op.row=prior;op.save()
+        self.assertEqual(len(op.f.http_calls),calls)
+        self._assert_retired_originals(h,rejected)
+
+    def _assert_retired_originals(self, h, rejected):
+        with h.store.connect() as c:
+            self.assertEqual(c.execute('SELECT id,intent_hash,outcome_hash FROM paper_observation_passes WHERE id=?',(rejected['row'][0],)).fetchone(),rejected['row'])
+        self.assertEqual(h.f.context.progress.admission(rejected['target'].scan_id),rejected['admission'])
+        self.assertEqual(rejected['admission']['requests_used'],3)
+        for key,original in rejected['originals'].items():self.assertEqual(h.store.load(key),original)
