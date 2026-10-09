@@ -68,16 +68,22 @@ def extract_graduation(raw_transactions, *, mint, pool, now, provenance):
             for event in rows:
                 if event['program'] != PUMP or event.get('name') != 'CompletePumpAmmMigrationEvent':continue
                 f = event.get('fields', {})
-                if f.get('mint') != mint:continue
                 path = event['instruction'].split('.')
                 if len(path)!=2 or path[0] not in intents:
-                    blockers.add('MIGRATION_INSTRUCTION_SCOPE_UNAVAILABLE');continue
+                    if f.get('mint')==mint:blockers.add('MIGRATION_INSTRUCTION_SCOPE_UNAVAILABLE')
+                    continue
+                intent = intents[path[0]]; accounts = intent['accounts']
+                parent_mint = accounts.get('mint',accounts.get('base_mint'))
+                # Scope first: a wrong-mint sibling under the target migration is
+                # contradictory supplied evidence, not an unrelated observation.
+                if parent_mint != mint and f.get('mint') != mint:continue
+                if f.get('mint') != mint:
+                    blockers.add('MIGRATION_ACCOUNT_BINDING_MISMATCH');continue
                 groups_at = [g for g in groups if type(g.get('index')) is int and str(g['index'])==path[0]]
                 if len(groups_at)!=1:raise ValueError('ambiguous CPI group')
                 ix = groups_at[0]['instructions'][int(path[1])]
                 if type(ix.get('stackHeight')) is not int or ix['stackHeight']!=2:
                     blockers.add('DIRECT_MIGRATION_EVENT_CPI_SCOPE_UNAVAILABLE');continue
-                intent = intents[path[0]]; accounts = intent['accounts']
                 outer = container['transaction']['message']['instructions'][int(path[0])]
                 if len(unbase58(outer.get('data',''))) != 8:
                     blockers.add('MIGRATION_INSTRUCTION_ARGUMENT_LAYOUT_UNKNOWN');continue
