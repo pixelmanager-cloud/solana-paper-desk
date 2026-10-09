@@ -2,12 +2,14 @@ from __future__ import annotations
 
 from datetime import datetime, timezone
 from copy import deepcopy
+from decimal import localcontext
 
 from .model import D, ONE, ZERO, decimal as dec, validate_event, digest
 from .strategy import gates, scores, size, swap_quote, experimental_scores, experimental_gates
 from .model import PAPER_EXPERIMENTAL
 from .bundles import audit
 from .security import entry_token_policy, sellability_gate
+from . import quote_execution as qe
 
 
 def initial_state(cfg):
@@ -109,8 +111,10 @@ def position_sellability(p, e, qty):
     return _position_proof(p, e, qty)[1]
 
 
-def sell(state, e, cfg, fraction, reason, output):
+def sell(state, e, cfg, fraction, reason, output, quote_book=None):
     p = state["positions"][e["mint"]]
+    if quote_book is not None:
+        return _quote_sell(state,e,cfg,fraction,reason,output,quote_book)
     qty = min(dec(p["qty"]), dec(p["initial_qty"]) * fraction)
     proof, evidence_reasons = _position_proof(p, e, qty, action=True)
     if qty != dec(p["qty"]):
@@ -160,27 +164,92 @@ def sell(state, e, cfg, fraction, reason, output):
     return True
 
 
-def manage_position(state, e, cfg, output):
+def _quote_sell(state,e,cfg,fraction,reason,output,book):
+    p=state['positions'][e['mint']]
+    try:
+        if (p.get('taker')!=e.get('taker') or p['pool']!=e['pool'] or 'quote_execution' not in p
+                or p['provenance']!=e['provenance']):
+            raise qe.QuoteExecutionError('QUOTE_POSITION_IDENTITY_MISMATCH')
+        current=qe.raw_quantity(p['qty'],book.decimals)
+        initial=qe.raw_quantity(p['initial_qty'],book.decimals)
+        from decimal import localcontext, ROUND_DOWN
+        with localcontext() as ctx:
+            ctx.prec=400
+            raw=min(current,int((D(initial)*fraction).to_integral_value(rounding=ROUND_DOWN)))
+            if raw<=0:raise qe.QuoteExecutionError('QUOTE_QUANTITY_ZERO')
+            quote=book.find('sell',raw)
+            proceeds=qe.units(qe.output_raw(quote,cfg),9)-dec(cfg['fixed_fee_sol'])
+            if proceeds<=ZERO:raise qe.QuoteExecutionError('QUOTE_NO_NET_PROCEEDS')
+            qty=qe.units(raw,book.decimals)
+            cost=dec(p['cost_left'])*D(raw)/D(current)
+            pnl=proceeds-cost
+            p['qty']=str(qe.units(current-raw,book.decimals))
+            p['cost_left']=str(dec(p['cost_left'])-cost)
+            p['trade_pnl']=str(dec(p['trade_pnl'])+pnl)
+            state['cash']=str(dec(state['cash'])+proceeds)
+            state['realized_pnl']=str(dec(state['realized_pnl'])+pnl)
+            state['day_gross_losses']=str(dec(state['day_gross_losses'])+max(ZERO,-pnl))
+    except (ValueError,TypeError,KeyError):
+        p['exit_blocked']='EXACT_FRESH_SELL_QUOTE_REQUIRED';p['mark_status']='UNVERIFIED_EXIT'
+        output.append({'type':'blocked_exit','reason':'EXACT_FRESH_SELL_QUOTE_REQUIRED','mint':e['mint'],
+            'quote_demands':[{'direction':'sell','input_raw':raw}] if 'raw' in locals() and raw>0 else []})
+        return False
+    p['last_quote_execution']=book.record(quote,cfg)
+    output.append({'type':'fill','side':'sell','mint':e['mint'],'reason':reason,
+        'quantity':str(qty),'proceeds_sol':str(proceeds),'fee_sol':str(dec(cfg['fixed_fee_sol'])),
+        'realized_pnl_sol':str(pnl),'simulation':'quote_minimum_with_adverse_slippage',
+        'provenance':e['provenance'],
+        'execution_status':qe.STATUS,'quote_execution':book.record(quote,cfg),
+        **({'entry_policy':deepcopy(p['entry_policy'])} if 'entry_policy' in p else {})})
+    if current==raw:
+        state['loss_streak']=state['loss_streak']+1 if dec(p['trade_pnl'])<0 else 0
+        del state['positions'][e['mint']]
+        cooldown=cfg['stop_cooldown_seconds'] if reason=='STOP' else cfg['cooldown_seconds']
+        state['cooldowns'][e['mint']]=e['ts']+cooldown
+    else:
+        # Exact action quote cannot be resized into a remaining-position mark.
+        p['mark_status']='UNVERIFIED_EXIT';p['exit_blocked']='REMAINING_POSITION_VALUATION_REQUIRED'
+        p['mark_value']='0'
+    return True
+
+
+def manage_position(state, e, cfg, output, quote_book=None):
     p = state["positions"][e["mint"]]
     if e["ts"] - e["price_at"] > cfg["price_ttl_seconds"] or not e["route_available"]:
         p["exit_blocked"]="STALE_OR_UNAVAILABLE_EXIT"
         p["mark_status"]="STALE"
         output.append({"type": "blocked_exit", "reason": "STALE_OR_UNAVAILABLE_EXIT", "mint": e["mint"]})
         return
-    valuation, evidence_reasons = _position_proof(p, e, dec(p["qty"]))
+    if quote_book is not None:
+        try:
+            if (p.get('taker') != e.get('taker') or p['pool'] != e['pool'] or 'quote_execution' not in p
+                    or p['provenance']!=e['provenance']):
+                raise qe.QuoteExecutionError('QUOTE_POSITION_IDENTITY_MISMATCH')
+            valuation=quote_book.find('sell',qe.raw_quantity(p['qty'],quote_book.decimals))
+            mark=qe.units(qe.output_raw(valuation,cfg),9)-dec(cfg['fixed_fee_sol'])
+            p['last_quote_execution']=quote_book.record(valuation,cfg)
+            evidence_reasons=[]
+        except (ValueError,TypeError,KeyError):
+            valuation=None;evidence_reasons=['EXACT_FRESH_SELL_QUOTE_REQUIRED']
+    else:
+        valuation, evidence_reasons = _position_proof(p, e, dec(p["qty"]))
     if evidence_reasons:
         p["exit_blocked"]="EXIT_SELLABILITY_UNVERIFIED"
         p["mark_status"]="UNVERIFIED_EXIT"
         output.append({"type":"blocked_exit","reason":"EXIT_SELLABILITY_UNVERIFIED","mint":e["mint"],"reasons":evidence_reasons})
+        if quote_book is not None:
+            output[-1]['quote_demands']=[{'direction':'sell','input_raw':qe.raw_quantity(
+                p['qty'],p['quote_execution']['mint_decimals'])}]
         return
     p["exit_blocked"]=None
     p["mark_status"]="MODEL_ESTIMATE"
-    gross = swap_quote(e, dec(p["qty"]), "sell", cfg)
-    mark = max(ZERO, gross - dec(cfg["fixed_fee_sol"]))
-    if valuation.get("kind") == "sell_simulation":
-        mark = min(mark, dec(valuation["net_proceeds_sol"]))
-    p["mark_value"] = str(mark)
-    p["mark_at"] = e["price_at"]
+    if quote_book is None:
+        gross = swap_quote(e, dec(p["qty"]), "sell", cfg)
+        mark = max(ZERO, gross - dec(cfg["fixed_fee_sol"]))
+        if valuation.get("kind") == "sell_simulation":
+            mark = min(mark, dec(valuation["net_proceeds_sol"]))
+    p["mark_value"] = str(max(ZERO,mark))
+    p["mark_at"] = valuation.source.observed_at if quote_book is not None else e["price_at"]
     ratio = dec(p["mark_value"]) / dec(p["cost_left"])
     p["peak_ratio"] = str(max(dec(p["peak_ratio"]), ratio))
     if ratio >= D("1.15"):
@@ -200,25 +269,38 @@ def manage_position(state, e, cfg, output):
     elif not p["touched_15"] and e["ts"] - p["opened_at"] >= cfg["time_stop_seconds"]:
         reason = "TIME_STOP"
     if reason:
-        sell(state, e, cfg, ONE, reason, output)
+        sell(state, e, cfg, ONE, reason, output,quote_book)
         return
     ladder = [(D("1.4"), D(".3"), ONE), (D("2"), D(".3"), D("1.4")),
               (D("3"), D(".2"), D("2"))]
     # One rung per observed quote. Requote on the next event; never reuse a quote for several fills.
     if p["stage"] < len(ladder):
         trigger, fraction, stop = ladder[p["stage"]]
-        if ratio >= trigger and sell(state, e, cfg, fraction, "TAKE_PROFIT", output):
+        if ratio >= trigger and sell(state, e, cfg, fraction, "TAKE_PROFIT", output,quote_book):
             p["stage"] += 1
             p["stop_ratio"] = str(stop)
 
 
-def transition(state, e, cfg):
+def transition(state, e, cfg, *, _quote_book=None):
     # Config is fingerprinted by Ledger: selecting this experimental strategy
     # requires a new experiment, never an event-provided permission flag.
+    quote_mode=qe.config(cfg)
+    if quote_mode:
+        for mint,position in state['positions'].items():
+            qe.validate_position(mint,position,cfg)
+    if _quote_book is not None and (not quote_mode or type(_quote_book) is not qe._Book or _quote_book.event_hash!=digest(e)):
+        raise qe.QuoteExecutionError('QUOTE_EVENT_BINDING_MISMATCH')
+    if quote_mode and e.get('kind')=='market' and _quote_book is None:
+        # Opted-in experiments never fall back to model execution, even when
+        # directly invoked without the trusted coordinator quote binder.
+        _quote_book=qe._Book(digest(e),(),None)
     version = cfg.get("experimental_policy_version")
-    if version is not None and (type(version) is not int or version not in (1, 2) or cfg.get("mode") != "paper"):
+    if version is not None and (type(version) is not int or version not in (1, 2, 3) or cfg.get("mode") != "paper"):
         raise ValueError("Unsupported experimental paper policy configuration")
-    experimental = version in (1, 2) and e.get("kind") == "market"
+    # V3 is dispatched to worker09's explicit observable proxy validator; this
+    # engine never substitutes values for legacy null flow/wash/history fields.
+    # Until that validator is installed, validate_event rejects V3 unchanged.
+    experimental = version in (1, 2, 3) and e.get("kind") == "market"
     if experimental:
         validate_event(e, mode=PAPER_EXPERIMENTAL, policy_version=version)
     else:
@@ -260,19 +342,23 @@ def transition(state, e, cfg):
     mint = e["mint"]
     was_open = mint in state["positions"]
     if was_open:
-        manage_position(state, e, cfg, output)
+        manage_position(state, e, cfg, output,_quote_book)
     risk(state, cfg, output)
     if state["mode"] == "LIQUIDATING" and not state["positions"]:
         state["mode"] = "STOPPED"
     if was_open:
         return state, output
-    policy = experimental_scores(e, mode=PAPER_EXPERIMENTAL, policy_version=version) if experimental else None
-    scored = ({key: dec(policy[key]) if policy[key] is not None else None
-               for key in ("safety", "momentum", "flow", "entry")} if policy else scores(e))
-    reasons = (experimental_gates(e, cfg, mode=PAPER_EXPERIMENTAL, policy_version=version)
-               if experimental else gates(e, cfg, scored))
+    with localcontext() as policy_context:
+        # Preserve the existing policy journal representation. High precision
+        # raw-unit accounting must not alter checkpoint-recomputed score strings.
+        if quote_mode:policy_context.prec=28
+        policy = experimental_scores(e, mode=PAPER_EXPERIMENTAL, policy_version=version) if experimental else None
+        scored = ({key: dec(policy[key]) if policy[key] is not None else None
+                   for key in ("safety", "momentum", "flow", "entry")} if policy else scores(e))
+        reasons = (experimental_gates(e, cfg, mode=PAPER_EXPERIMENTAL, policy_version=version)
+                   if experimental else gates(e, cfg, scored))
     # Live adapters are unfinished. JSON assertions cannot authorize real-data fills.
-    if e["provenance"] != "SYNTHETIC_TEST_ONLY":
+    if e["provenance"] != "SYNTHETIC_TEST_ONLY" and not quote_mode:
         reasons.append("LIVE_FEATURE_ADAPTER_NOT_READY")
     reasons.extend(entry_token_policy(e))
     bundle_audit = audit(e.get("bundle_evidence"), e["ts"])
@@ -299,17 +385,37 @@ def transition(state, e, cfg):
                           exposure(state), budget, allocated_risk)
     if state["loss_streak"] >= 4:
         amount /= 2
+    if quote_mode:
+        amount=qe.units(int((amount*10**9).to_integral_value(rounding='ROUND_DOWN')),9)
     if amount < dec(cfg["min_order_sol"]):
         return state, output + [{"type": "reject", "reason": "BELOW_MINIMUM", "mint": mint,
                                  "size_sol": str(amount), "limits": {k: str(v) for k, v in limits.items()}}]
-    qty = swap_quote(e, amount, "buy", cfg)
-    sale_reasons = sellability_gate(e, qty)
+    if quote_mode:
+        demands=[{'direction':'buy','maximum_input_raw':qe.raw_quantity(amount,9),
+                  'minimum_input_raw':qe.raw_quantity(cfg['min_order_sol'],9)}]
+        try:
+            quote=_quote_book.buy()
+            if quote.input_units>amount or quote.input_units<dec(cfg['min_order_sol']):
+                raise qe.QuoteExecutionError('QUOTE_EXCEEDS_RISK_ALLOCATION')
+            amount=quote.input_units
+            qty=qe.units(qe.output_raw(quote,cfg),_quote_book.decimals)
+            demands=[{'direction':'sell','input_raw':qe.output_raw(quote,cfg)}]
+            exit_quote=_quote_book.find('sell',qe.output_raw(quote,cfg))
+            expected_sell=qe.units(qe.output_raw(exit_quote,cfg),9)
+            if qty<=ZERO:raise qe.QuoteExecutionError('QUOTE_OUTPUT_ZERO')
+        except (ValueError,TypeError):
+            return state,output+[{'type':'reject','reason':'EXACT_FRESH_ROUNDTRIP_QUOTES_REQUIRED','mint':mint,
+                                 'quote_demands':demands}]
+    else:
+        qty = swap_quote(e, amount, "buy", cfg)
+    sale_reasons = [] if quote_mode else sellability_gate(e, qty)
     if sale_reasons:
         return state, output + [{"type": "reject", "reason": sale_reasons[0], "reasons": sale_reasons, "mint": mint}]
     fee = dec(cfg["fixed_fee_sol"])
-    expected_sell = swap_quote(e, qty, "sell", cfg)
-    if e["sellability"].get("kind") == "sell_simulation":
-        expected_sell = min(expected_sell, dec(e["sellability"]["net_proceeds_sol"]) + fee)
+    if not quote_mode:
+        expected_sell = swap_quote(e, qty, "sell", cfg)
+        if e["sellability"].get("kind") == "sell_simulation":
+            expected_sell = min(expected_sell, dec(e["sellability"]["net_proceeds_sol"]) + fee)
     # Reserve fees for entry plus all four ladder sells. The model excludes rent, which
     # must be provided by the mainnet simulator before any performance gate can pass.
     roundtrip = (amount - expected_sell + 5 * fee) / amount
@@ -327,12 +433,16 @@ def transition(state, e, cfg):
         "mark_value": str(max(ZERO, expected_sell - fee)), "mark_at": e["price_at"],
         "pool": e["pool"], "entry_scores": evidence, "provenance":e["provenance"], "taker":e.get("taker"), **deepcopy(policy_record),
         **({"entry_event_id": e["event_id"]} if experimental else {}),
+        **({'quote_execution':_quote_book.record(quote,cfg),
+            'last_quote_execution':_quote_book.record(exit_quote,cfg)} if quote_mode else {}),
     }
     state["last_entry_minute"] = e["ts"] // 60
     output.append({"type": "fill", "side": "buy", "mint": mint, "reason": "ENTRY",
                    "amount_sol": str(amount), "quantity": str(qty), "fee_sol": str(fee),
                    "scores": evidence, "estimated_cost_fraction": str(roundtrip),
-                   "simulation": "constant_product", "provenance": e["provenance"],
+                   "simulation": "quote_minimum_with_adverse_slippage" if quote_mode else "constant_product", "provenance": e["provenance"],
+                   **({'quote_execution':_quote_book.record(quote,cfg),
+                       'execution_status':qe.STATUS} if quote_mode else {}),
                    "bundle_audit": bundle_audit, **policy_record})
     risk(state, cfg, output)
     return state, output
