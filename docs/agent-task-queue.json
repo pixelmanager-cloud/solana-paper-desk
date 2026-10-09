@@ -2895,6 +2895,27 @@
       },
       "deployment": "NOT_DEPLOYED; retain sampler until exact-head review, full Linux tests and CI; keep paper runtime pinned",
       "allowance_change": "Author08 and reviewer02 notified; not deployed; preserve prior charged usage and originals"
+    },
+    "paper_policy_tuning": {
+      "status": "OFFLINE_FOUNDATION_DISPATCHED",
+      "authorization": "User explicitly authorized tool to tweak entry eligibility to seek a profitable setting; paper only.",
+      "worker": "03",
+      "thread_id": "01a118fc-9478-778a-b77a-8f8f6ec7e0ad",
+      "turn_id": "01a12062-e330-72d3-9d94-c5cd9288e261",
+      "cursor": "0851f5ab-a903-4567-a6fe-4cbb4e6a7b96:47",
+      "scope": "Versioned economic-threshold proposals and chronological held-out experiment evaluation; insufficient data blocks tuning; no invented counterfactual PnL",
+      "fixed_controls": [
+        "known hazards",
+        "token program policy",
+        "evidence integrity",
+        "capital/exposure limits",
+        "investigation18/daily10/queue3",
+        "monitoring60",
+        "discovery approved caps",
+        "no real execution"
+      ],
+      "deployment": "Not implemented or enabled; independent review and full Linux/exact-head CI required; active ledger identity remains pinned",
+      "live_data": "Zero observed live paper fills at latest inspection; cannot select profitable policy yet"
     }
   },
   "native_reconciliation_review": {
