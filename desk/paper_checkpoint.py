@@ -63,6 +63,7 @@ def validate_checkpoint(connection, payload):
         latest = connection.execute('SELECT MAX(ts) FROM events').fetchone()[0]
         if latest is None or state['last_ts'] != latest:
             raise ValueError('checkpoint journal timestamp mismatch')
+        validate_entry_policies(connection, state)
         return state
     except (ValueError, TypeError, KeyError) as exc:
         raise RecoveryRequired('CHECKPOINT_INVALID') from exc
@@ -99,3 +100,63 @@ def read_checkpoint(connection):
     except (ValueError, TypeError):
         raise RecoveryRequired('EXPERIMENT_IDENTITY_INVALID') from None
     return validate_checkpoint(connection, row[0])
+
+
+def validate_entry_policies(connection, state):
+    """Rebind experimental risk metadata to the original hashed entry event.
+
+    Local journal consistency only, never provider/source authentication.
+    Missing or edited checkpoint metadata cannot promote a policy or lose risk
+    labels on restart. No mutation, migration, or silent reconstruction occurs.
+    """
+    from .model import canonical, PAPER_EXPERIMENTAL
+    from .strategy import experimental_scores
+    row = connection.execute("SELECT value FROM metadata WHERE key='config'").fetchone()
+    if row is None:
+        raise ValueError('Missing saved experiment configuration')
+    cfg = json.loads(row[0]); version = cfg.get('experimental_policy_version')
+    if version is None:
+        if any('entry_policy' in p or 'entry_event_id' in p for p in state['positions'].values()):
+            raise ValueError('Experimental policy in strict checkpoint')
+        return
+    if type(version) is not int or version not in (1, 2) or cfg.get('mode') != 'paper':
+        raise ValueError('Invalid saved experimental policy')
+    for mint, position in state['positions'].items():
+        identity = position.get('entry_event_id')
+        if type(identity) is not str or not identity or len(identity) > 4096:
+            raise ValueError('Missing experimental entry identity')
+        size = connection.execute('SELECT length(CAST(payload AS BLOB)) FROM events WHERE event_id=?', (identity,)).fetchone()
+        if size is None or not 0 < size[0] <= 2 * 1024 * 1024:
+            raise ValueError('Experimental entry unavailable')
+        payload, saved_hash = connection.execute('SELECT payload,payload_hash FROM events WHERE event_id=?', (identity,)).fetchone()
+        event = json.loads(payload)
+        if (digest(event) != saved_hash or event.get('event_id') != identity
+                or event.get('mint') != mint or event.get('pool') != position['pool']
+                or event.get('provenance') != position['provenance'] or event.get('ts') != position['opened_at']):
+            raise ValueError('Experimental entry binding mismatch')
+        expected = experimental_scores(event, mode=PAPER_EXPERIMENTAL, policy_version=version)
+        if canonical(position.get('entry_policy')) != canonical(expected):
+            raise ValueError('Experimental risk metadata changed')
+        if position['entry_scores'] != {key:expected[key] for key in ('safety','momentum','flow','entry')}:
+            raise ValueError('Experimental entry scores changed')
+
+        count, largest = connection.execute(
+            'SELECT COUNT(*),MAX(length(CAST(payload AS BLOB))) FROM outcomes WHERE event_id=?',
+            (identity,)).fetchone()
+        if not 0 < count <= 64 or largest > 2 * 1024 * 1024:
+            raise ValueError('Experimental entry outcomes unavailable')
+        outcomes = [json.loads(row[0]) for row in connection.execute(
+            'SELECT payload FROM outcomes WHERE event_id=?', (identity,))]
+        if any(not isinstance(outcome, dict) for outcome in outcomes):
+            raise ValueError('Invalid experimental entry outcome')
+        buys = [o for o in outcomes if o.get('type') == 'fill' and o.get('side') == 'buy']
+        if len(buys) != 1:
+            raise ValueError('Experimental entry buy unavailable or ambiguous')
+        buy = buys[0]
+        if (buy.get('reason') != 'ENTRY' or buy.get('mint') != mint
+                or buy.get('provenance') != position['provenance']
+                or canonical(buy.get('entry_policy')) != canonical(expected)
+                or buy.get('scores') != position['entry_scores']
+                or decimal(buy['quantity']) != decimal(position['initial_qty'])
+                or decimal(buy['amount_sol']) + decimal(buy['fee_sol']) != decimal(position['initial_cost'])):
+            raise ValueError('Experimental entry buy binding mismatch')
