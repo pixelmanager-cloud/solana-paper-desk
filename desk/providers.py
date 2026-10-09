@@ -4,8 +4,8 @@ import json
 import os
 import time
 from urllib.error import HTTPError, URLError
-from urllib.parse import urlencode
-from urllib.request import Request, urlopen
+from urllib.parse import urlencode, urlsplit
+from urllib.request import Request, urlopen, build_opener
 
 from .model import digest
 
@@ -28,10 +28,28 @@ def api_key(name):
 def fetch_json(url, payload=None, headers=None):
     body = json.dumps(payload).encode() if payload is not None else None
     request = Request(url, data=body, headers={"Content-Type": "application/json", **(headers or {})})
+    from . import provider_pacing
+    provider = {'mainnet.helius-rpc.com': 'helius', 'api.jup.ag': 'jupiter'}.get(urlsplit(url).hostname)
+    pacer = provider_pacing.configured() if provider is not None else None
+    deadline = time.monotonic() + 15
+    if pacer is not None: pacer.acquire(provider, timeout_seconds=15)
+    timeout = deadline-time.monotonic() if pacer is not None else 15
+    if timeout <= 0: raise provider_pacing.PacingError('PACING_DEADLINE_EXCEEDED')
     try:
-        with urlopen(request, timeout=15) as response:
+        if pacer is not None:
+            from .coordinator_rpc import _NoRedirect
+            opener = build_opener(_NoRedirect()).open
+        else: opener = urlopen
+        with opener(request, timeout=timeout) as response:
+            if pacer is not None and provider_pacing.should_throttle(response.status, response.headers):
+                pacer.throttle(provider, response.headers)
+            if pacer is not None and response.status != 200:
+                raise ValueError('Provider HTTP rejected')
             return json.load(response)
     except HTTPError as exc:
+        if pacer is not None and provider_pacing.should_throttle(exc.code, exc.headers):
+            try: pacer.throttle(provider, exc.headers)
+            finally: exc.close()
         # Provider responses/URLs can contain API keys. Never echo raw exceptions.
         raise ValueError(f"Provider HTTP {exc.code}; check credentials, plan or rate limit") from None
     except (URLError, TimeoutError, json.JSONDecodeError):
