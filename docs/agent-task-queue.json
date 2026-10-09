@@ -1971,7 +1971,8 @@
       "status": "REVIEW07_AND_AUTHOR06_PROFILE_REPAIR",
       "author_linux_tests": 2097,
       "known_seam": "Unconditional bundle evidence gate blocks approved explicit unknown-history profile",
-      "ci": "BOTH_SUCCESS at original frozen head"
+      "ci": "BOTH_SUCCESS at original frozen head",
+      "independent_finding": "Fresh quote mint decimals can conflict with saved entry and change raw exit quantity; repair assigned06, independent07 rereview required"
     },
     "pending_pr128": {
       "head": "c19cdd542dfe8fedd7772ee9589e790ebb3db73a",
@@ -2005,6 +2006,17 @@
     "integration_ci_latest": {
       "head": "55bfb4c7d1b3f8caa4de0c90683cf72c9d59d4e2",
       "status": "BOTH_SUCCESS"
+    },
+    "active_repair_turns": {
+      "01": "01a11fbf-c262-70ea-8356-94470a200cb0",
+      "02": "01a11fc1-7297-7134-8bdd-e3c7394bbc31",
+      "03": "01a11fc1-82a6-7175-a903-a21288592847",
+      "04": "01a11fc0-1929-7649-adee-c8e5a53fd141",
+      "06": "01a11fbf-d1fb-76ff-8f0c-4ad78168df3d",
+      "07": "01a11fc0-0505-71f9-990e-61674e391a63",
+      "08": "01a11fbf-b2ff-75a8-9e9b-ae2a9b92b661",
+      "09": "01a11fbf-e43e-7735-b06e-7ae91c74b164",
+      "10": "01a11fbf-f50a-770c-9878-97127d0b60f5"
     }
   },
   "native_reconciliation_review": {
