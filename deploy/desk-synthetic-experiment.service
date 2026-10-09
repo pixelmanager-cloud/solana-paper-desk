@@ -1,0 +1,25 @@
+[Unit]
+Description=One supervised offline synthetic paper experiment pass
+ConditionPathExists=/var/lib/solana-desk/experiments/synthetic-operator/active-paper.sqlite
+ConditionPathExists=/var/lib/solana-desk/experiments/synthetic-operator/runner.env
+
+[Service]
+Type=oneshot
+User=solana-desk
+Group=solana-desk
+WorkingDirectory=/opt/solana-desk
+EnvironmentFile=/var/lib/solana-desk/experiments/synthetic-operator/runner.env
+ExecStart=/opt/solana-desk/.venv/bin/python -m desk.paper_runner --config /opt/solana-desk/config/paper.json once --db /var/lib/solana-desk/experiments/synthetic-operator/active-paper.sqlite --fixture /opt/solana-desk/fixtures/paper_runner/lifecycle.json --now ${PAPER_SYNTHETIC_NOW} --limit 16
+UMask=0077
+NoNewPrivileges=true
+PrivateTmp=true
+ProtectSystem=strict
+ProtectHome=true
+ReadWritePaths=/var/lib/solana-desk/experiments/synthetic-operator
+PrivateNetwork=true
+RestrictAddressFamilies=AF_UNIX
+TimeoutStartSec=60
+MemoryMax=256M
+TasksMax=16
+StandardOutput=journal
+StandardError=journal
