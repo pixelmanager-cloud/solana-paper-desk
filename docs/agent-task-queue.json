@@ -4403,7 +4403,7 @@
             "thread_id": "01a118fd-0f1c-749c-b85b-5e730937d0a8",
             "reviewer": "09",
             "review_thread_id": "01a118fd-3f90-77d9-9549-c4497f5b10a6",
-            "status": "PR172_HELD_BOUNDED_EVIDENCE_READ_FIX_ASSIGNED_07",
+            "status": "LOADER_FIX_PUBLISHED_MONITORING_RETENTION_FIX_PENDING",
             "pass_id": "d8600ce75e014e22b84c3fd8d10bf2c0",
             "intent_hash": "6f6cfd1efe9aa257638bd750ccd3c4099a3943a5d403132fa9d9d2a7b868fb7e",
             "retained_outcome_hash": "4352afa8e732c4f03eaf1cb788047aea58379fe3ef24edd05f5535e5680eb4a8",
@@ -4413,7 +4413,7 @@
             "design_review_turn": "01a121bb-ad1b-7756-97ff-d041e03d33a5",
             "fixture_owner": "04",
             "fixture_thread_id": "01a118fc-b862-7340-ab3a-e1115a3280a4",
-            "fixture_status": "04_ASSIGNED_EXACT_PR172_ACTUAL_WRAPPER_BUY_SELL_RESTART",
+            "fixture_status": "04_CONTINUING_SELL_RESTART_ON_LOADER_FIXED_HEAD",
             "design_review": "PreserveNULLpass; explicitreviewedlegacyassociation; no genericexception autoresolution; retirefailedscan; preservecharges",
             "proof_file": "work/terminal-rejection-public-proof.json",
             "attempt_hashes": [
@@ -4442,7 +4442,7 @@
             "classification_review": "Dedicated subtype only after explicit fullyvalidated mint/pool knownhazard allowlist; malformed/unknown/identity/time/persist errors staylatched; not generic ObservationError or textmatch",
             "classification_focused_tests": 30,
             "pr": 172,
-            "head": "99aba03843c238f08ad627c4df884e77d3e3c488",
+            "head": "e32559cda9095b27d92fbdeebb98fc36457f5714",
             "review_requested_head": "99aba03843c238f08ad627c4df884e77d3e3c488",
             "ci_runs": [
               37971466355,
@@ -4472,6 +4472,38 @@
               "result": "RAW_PROOF_COMPATIBLE_NOT_LIVE_AUTHORIZATION",
               "invocation_hash": "4ce301202bc5aa68df3c0c6c02fab9f455785d2d0521e794b27ab98b66c53307",
               "calls": 0
+            },
+            "classification_exact_review": {
+              "head": "99aba03843c238f08ad627c4df884e77d3e3c488",
+              "result": "SCOPED_PASS",
+              "tests": 53,
+              "independent_probes": 7,
+              "scope": "typed rejection only"
+            },
+            "operations_order_review": {
+              "turn": "01a121e0-c555-7056-a3cc-5b1bb394f48a",
+              "result": "runtime extension must precede locked legacy planning; services remain stopped through exact pin review and reconciliation"
+            },
+            "repair_turn": "01a121e2-be81-7535-9d13-20ae7e7b5c06",
+            "ci_failure": {
+              "run": 37971466355,
+              "head": "99aba03843c238f08ad627c4df884e77d3e3c488",
+              "tests": 2603,
+              "seconds": 585.381,
+              "test": "test_actual_five_read_guard_expiry_and_old_marks_without_polling_or_mutation",
+              "cause": "New candidate attempt-ref cap18 incorrectly applies to repeated monitoring source, raises after page save before retain_outcome",
+              "assigned_to": "07",
+              "status": "REAL_SOURCE_FIX_REQUIRED"
+            },
+            "loader_fix_review_requested": "e32559cda9095b27d92fbdeebb98fc36457f5714",
+            "operations_helper_review": {
+              "turn": "01a121e4-9727-73a0-832c-ce063f1632c5",
+              "result": "CONDITIONAL_PASS",
+              "corrections_applied": [
+                "bounded witness file read",
+                "verifier exact source argument",
+                "saved witness readback"
+              ]
             }
           }
         }
