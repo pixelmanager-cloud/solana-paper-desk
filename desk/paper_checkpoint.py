@@ -296,14 +296,15 @@ def _validate_quote_journal(connection, state, cfg, quote):
                 continue
             event = json.loads(event_payload); record = outcome.get('quote_execution')
             if (type(event) is not dict or digest(event) != key or event.get('event_id') != identity
-                    or event.get('ts') != timestamp or event.get('kind') != 'market'
+                    or event.get('ts') != timestamp or event.get('kind') not in ('market', 'quote_exit')
                     or outcome.get('provenance') != event.get('provenance')
                     or outcome.get('mint') != event.get('mint') or type(record) is not dict
                     or outcome.get('execution_status') != quote.STATUS
                     or outcome.get('simulation') != 'quote_minimum_with_adverse_slippage'):
                 raise ValueError('Quote fill identity changed')
             mint = event['mint']; side = outcome['side']
-            if side not in ('buy', 'sell') or record.get('direction') != side:
+            if (side not in ('buy', 'sell') or record.get('direction') != side
+                    or (side == 'buy' and event['kind'] != 'market')):
                 raise ValueError('Quote fill direction changed')
             ms = SourceRecord(record['mint_source_id'], record['mint_observed_at'],
                               record['mint_hash'], record['original_mint_json'])
@@ -317,6 +318,16 @@ def _validate_quote_journal(connection, state, cfg, quote):
                 max_age_seconds=cfg['price_ttl_seconds'])
             if canonical(quote._Book('', (observation,), token.decimals).record(observation,cfg)) != canonical(record):
                 raise ValueError('Quote fill source binding changed')
+            if event['kind'] == 'quote_exit':
+                from .model import validate_event
+                validate_event(event)  # exact strict exit grammar, never entry profile
+                quote._book(event, (observation,), cfg)
+                trade = inventory.get(mint)
+                if (trade is None or event['current_quantity_raw'] != trade['raw']
+                        or event['mint_decimals'] != trade['decimals']
+                        or token.slot != event['source_evidence']['mint_slot']
+                        or token.source.observed_at != event['source_evidence']['mint_at']):
+                    raise ValueError('Quote exit checkpoint/source binding changed')
             raw = quote.raw_quantity(outcome['quantity'], token.decimals)
             fee = decimal(outcome['fee_sol'])
             if fee != decimal(cfg['fixed_fee_sol']):
@@ -327,10 +338,15 @@ def _validate_quote_journal(connection, state, cfg, quote):
                     raise ValueError('Quote buy quantity/debit changed')
                 cost = observation.input_units + fee; cash -= cost
                 inventory[mint] = {'raw':raw,'initial_raw':raw,'basis':cost,'initial_cost':cost,
-                    'pnl':decimal('0'),'decimals':token.decimals,'entry':record}
+                    'pnl':decimal('0'),'decimals':token.decimals,'entry':record,
+                    'pool':event['pool'],'taker':event['taker'],'provenance':event['provenance'],
+                    'policy':outcome.get('entry_policy')}
             else:
                 trade = inventory.get(mint)
-                if (trade is None or token.decimals != trade['decimals'] or raw > trade['raw']
+                if (trade is None or token.decimals != trade['decimals']
+                        or any(event[field] != trade[field] for field in ('pool','taker','provenance'))
+                        or canonical(outcome.get('entry_policy')) != canonical(trade['policy'])
+                        or raw > trade['raw']
                         or raw != observation.input_raw):
                     raise ValueError('Quote sell inventory changed')
                 proceeds = max(decimal('0'),quote.units(quote.output_raw(observation,cfg),9)-fee)

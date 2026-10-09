@@ -11,7 +11,7 @@ from contextlib import closing
 from decimal import localcontext
 from pathlib import Path
 
-from .model import decimal, digest, canonical, PAPER_EXPERIMENTAL
+from .model import decimal, digest, canonical, PAPER_EXPERIMENTAL, validate_event
 from .paper_checkpoint import read_checkpoint, RecoveryRequired
 
 MAX_ROWS = 10000
@@ -50,7 +50,11 @@ def _quote_fill(outcome, event, cfg):
             quote_source.observed_at, qe._original(quote_source)), mint=token,
             direction=outcome['side'], amount_raw=record['input_raw'], taker=event['taker'],
             expected_pool=event['pool'], now=event['ts'], max_age_seconds=cfg['price_ttl_seconds'])
-        book = qe._Book('', (quote,), token.decimals)
+        if event['kind'] == 'quote_exit':
+            source = event['source_evidence']
+            if token.slot != source['mint_slot'] or token.source.observed_at != source['mint_at']:
+                raise ValueError()
+        book = qe._book(event, (quote,), cfg) if event['kind'] == 'quote_exit' else qe._Book('', (quote,), token.decimals)
         if qe.canonical(book.record(quote, cfg)) != qe.canonical(record):
             raise ValueError()
         raw = qe.output_raw(quote, cfg) if outcome['side'] == 'buy' else quote.input_raw
@@ -117,18 +121,24 @@ def experiment_report(path, *, now=None):
         if type(ttl) is not int or ttl <= 0:
             raise RecoveryRequired('REPORT_CONFIG_INVALID')
         events = {}
-        markets = []; prices = []; provenance = {'synthetic': 0, 'non_synthetic_claims': 0, 'unknown': 0}
+        markets = []; exits = []; prices = []; provenance = {'synthetic': 0, 'non_synthetic_claims': 0, 'unknown': 0}
         first = last = None
         for event_id, ts, payload, key in c.execute('SELECT event_id,ts,payload,payload_hash FROM events ORDER BY seq'):
             event = json.loads(payload)
             if (not isinstance(event, dict) or event.get('event_id') != event_id or event.get('ts') != ts
                     or type(ts) is not int or ts < 0 or digest(event) != key
-                    or event.get('kind') not in ('market', 'clock', 'control') or event_id in events):
+                    or event.get('kind') not in ('market', 'clock', 'control', 'quote_exit') or event_id in events):
                 raise RecoveryRequired('EVENT_INTEGRITY_INVALID')
+            if event['kind'] == 'quote_exit':
+                try:
+                    if not quote_mode: raise ValueError()
+                    validate_event(event)  # Confirmed strict exit dispatcher, never entry-profile validation.
+                except (ValueError, TypeError, KeyError):
+                    raise RecoveryRequired('QUOTE_EXIT_EVENT_INVALID') from None
             events[event_id] = event
             first = ts if first is None else min(first, ts); last = ts if last is None else max(last, ts)
-            if event['kind'] == 'market':
-                markets.append(ts)
+            if event['kind'] in ('market', 'quote_exit'):
+                (markets if event['kind'] == 'market' else exits).append(ts)
                 at = event.get('price_at')
                 if type(at) is not int or not 0 <= at <= ts:
                     raise RecoveryRequired('OBSERVATION_TIME_INVALID')
@@ -151,7 +161,7 @@ def experiment_report(path, *, now=None):
             ctx.Emax = 999999; ctx.Emin = -999999
             ctx.prec = 400 if quote_mode else 512  # Bounded decimal strings + <=10000 additions; no reporting truncation.
             positions = {}; basis = {}; entry_basis = {}; trade_pnl = {}; closed_pnl = decimal('0'); fees = decimal('0'); realized = decimal('0'); cash = _number(cfg['initial_equity_sol'])
-            raw_positions = {}; denominations = {}
+            raw_positions = {}; denominations = {}; held_entries = {}
             quote_fills = []; retained_risks = set(); entry_risks = {}
             closed = partial = buys = sells = rejects = blocked = 0
             for outcome_seq, event_id, payload in c.execute('SELECT seq,event_id,payload FROM outcomes ORDER BY seq'):
@@ -164,8 +174,14 @@ def experiment_report(path, *, now=None):
                 elif kind == 'fill':
                     event = events[event_id]; mint = outcome['mint']; qty = _number(outcome['quantity'])
                     fee = _number(outcome['fee_sol'])
-                    if event['kind'] != 'market' or event.get('mint') != mint or qty <= 0 or fee < 0:
+                    if event['kind'] not in ('market', 'quote_exit') or event.get('mint') != mint or qty <= 0 or fee < 0:
                         raise RecoveryRequired('FILL_IDENTITY_INVALID')
+                    if event['kind'] == 'quote_exit':
+                        if (not quote_mode or outcome['side'] != 'sell' or mint not in raw_positions
+                                or event['current_quantity_raw'] != raw_positions[mint]
+                                or event['mint_decimals'] != denominations[mint]
+                                or any(event[key] != held_entries[mint][key] for key in ('pool', 'taker', 'provenance'))):
+                            raise RecoveryRequired('QUOTE_EXIT_HELD_POSITION_MISMATCH')
                     if quote_mode:
                         raw, denomination = _quote_fill(outcome, event, cfg)
                         if outcome['side'] == 'buy':
@@ -175,6 +191,7 @@ def experiment_report(path, *, now=None):
                         retained_risks.update(risks)
                         quote_fills.append({'outcome_seq': outcome_seq, 'event_id': event_id,
                             'event_hash': digest(event), 'mint': mint, 'side': outcome['side'],
+                            **({'exit_source_evidence': event['source_evidence']} if event['kind'] == 'quote_exit' else {}),
                             'execution_status': 'EXECUTION_UNVERIFIED',
                             'source_authenticated': False, 'transaction_verified': False,
                             'actual_fill_verified': False,
@@ -190,6 +207,7 @@ def experiment_report(path, *, now=None):
                             raise RecoveryRequired('TRADE_INVENTORY_INVALID')
                         if quote_mode:
                             raw_positions[mint] = raw; denominations[mint] = denomination
+                            held_entries[mint] = {key: event[key] for key in ('pool', 'taker', 'provenance')}
                         positions[mint] = qty; basis[mint] = amount + fee; entry_basis[mint] = basis[mint]
                         trade_pnl[mint] = decimal('0'); cash -= basis[mint]; buys += 1
                     elif outcome['side'] == 'sell':
@@ -254,14 +272,15 @@ def experiment_report(path, *, now=None):
                     'notice': 'Quote-mode paper fills are simulated estimates. Recorded fee/slippage assumptions do not establish actual execution or paid costs.'}} if quote_mode else {}),
                 'config_hash': identity['config_hash'], 'implementation_hash': identity['implementation_hash'],
                 'evaluated_at': now, 'data_provenance_counts': provenance,
-                'data_provenance_scope': 'Market events and raw payload declarations; non-synthetic claims are not authenticated live data.',
-                'data_provenance': 'SYNTHETIC_ONLY' if markets and provenance['synthetic'] == len(markets)+len(raw_times) else 'LIVE_CLAIMS_OR_UNKNOWN_UNVERIFIED',
+                'data_provenance_scope': ('Market/quote-exit events and raw payload declarations; non-synthetic claims are not authenticated live data.' if exits else 'Market events and raw payload declarations; non-synthetic claims are not authenticated live data.'),
+                'data_provenance': 'SYNTHETIC_ONLY' if (markets or exits) and provenance['synthetic'] == len(markets)+len(exits)+len(raw_times) else 'LIVE_CLAIMS_OR_UNKNOWN_UNVERIFIED',
                 'first_event_at': first, 'last_event_at': last, 'event_span_seconds': last-first,
                 'market_observation_count': len(markets),
+                **({'quote_exit_observation_count': len(exits)} if quote_mode else {}),
                 'raw_observation_count': len(raw_times), 'first_raw_observation_at': min(raw_times) if raw_times else None,
                 'last_raw_observation_at': max(raw_times) if raw_times else None,
-                'observation_span_seconds': max(raw_times)-min(raw_times) if raw_times else max(markets)-min(markets) if markets else None,
-                'observation_span_basis': 'RAW_RECEIPT_TIMES' if raw_times else 'MARKET_EVENT_TIMES',
+                'observation_span_seconds': max(raw_times)-min(raw_times) if raw_times else max(markets+exits)-min(markets+exits) if markets or exits else None,
+                'observation_span_basis': 'RAW_RECEIPT_TIMES' if raw_times else 'MARKET_AND_QUOTE_EXIT_EVENT_TIMES' if exits else 'MARKET_EVENT_TIMES',
                 'first_price_observation_at': min(prices) if prices else None, 'last_price_observation_at': max(prices) if prices else None,
                 'closed_trade_count': closed, 'partial_sell_fill_count': partial,
                 'buy_fill_count': buys, 'sell_fill_count': sells,

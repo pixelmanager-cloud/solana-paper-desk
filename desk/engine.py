@@ -294,7 +294,7 @@ def transition(state, e, cfg, *, _quote_book=None):
             and e.get('mint') in state['positions']
             and _quote_book.decimals != state['positions'][e['mint']]['quote_execution']['mint_decimals']):
         raise qe.QuoteExecutionError('QUOTE_POSITION_DECIMALS_MISMATCH')
-    if quote_mode and e.get('kind')=='market' and _quote_book is None:
+    if quote_mode and e.get('kind') in ('market','quote_exit') and _quote_book is None:
         # Opted-in experiments never fall back to model execution, even when
         # directly invoked without the trusted coordinator quote binder.
         _quote_book=qe._Book(digest(e),(),None)
@@ -315,6 +315,15 @@ def transition(state, e, cfg, *, _quote_book=None):
         validate_event(e, mode=PAPER_EXPERIMENTAL, policy_version=version)
     else:
         validate_event(e)
+    if e.get('kind')=='quote_exit':
+        if not quote_mode:raise qe.QuoteExecutionError('QUOTE_EXECUTION_CONFIG_REQUIRED')
+        if e['mint'] not in state['positions']:
+            return state,[{'type':'reject','reason':'EXIT_POSITION_REQUIRED','mint':e['mint']}]
+        held=state['positions'][e['mint']]
+        if (held['pool']!=e['pool'] or held['taker']!=e['taker'] or held['provenance']!=e['provenance']
+                or held['quote_execution']['mint_decimals']!=e['mint_decimals']
+                or qe.raw_quantity(held['qty'],e['mint_decimals'])!=e['current_quantity_raw']):
+            raise qe.QuoteExecutionError('EXIT_POSITION_BINDING_MISMATCH')
     output = []
     if e["ts"] < state["last_ts"]:
         return state, [{"type": "reject", "reason": "OUT_OF_ORDER"}]
