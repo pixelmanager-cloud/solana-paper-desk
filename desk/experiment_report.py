@@ -11,7 +11,7 @@ from contextlib import closing
 from decimal import localcontext
 from pathlib import Path
 
-from .model import decimal, digest
+from .model import decimal, digest, canonical, PAPER_EXPERIMENTAL
 from .paper_checkpoint import read_checkpoint, RecoveryRequired
 
 MAX_ROWS = 10000
@@ -20,16 +20,64 @@ EPS = decimal('1e-20')  # Existing engine's inventory-close threshold.
 
 
 def _number(value):
-    if not isinstance(value, str) or len(value) > 128:
+    if not isinstance(value, str) or len(value) > 512:
         raise RecoveryRequired('REPORT_DECIMAL_INVALID')
     number = decimal(value)
-    if abs(number.as_tuple().exponent) > 128 or len(number.as_tuple().digits) > 128:
+    if abs(number.as_tuple().exponent) > 512 or len(number.as_tuple().digits) > 512:
         raise RecoveryRequired('REPORT_DECIMAL_LIMIT')
     return number
 
 
 def _hash(value):
     return isinstance(value, str) and len(value) == 64 and all(c in '0123456789abcdef' for c in value)
+
+
+def _quote_fill(outcome, event, cfg):
+    """Replay original quote/mint bytes; normalized units alone cannot bind dust."""
+    from . import quote_execution as qe
+    try:
+        record = outcome['quote_execution']
+        if outcome['execution_status'] != qe.STATUS or outcome['simulation'] != 'quote_minimum_with_adverse_slippage':
+            raise ValueError()
+        sources = [qe.SourceRecord(record[prefix + '_source_id'], record[prefix + '_observed_at'],
+                                  record[prefix + '_hash'], record['original_' + prefix + '_json'])
+                   for prefix in ('quote', 'mint')]
+        quote_source, mint_source = sources
+        token = qe.ingest_mint(lambda: qe.ProviderObservation(mint_source.source_id,
+            mint_source.observed_at, qe._original(mint_source)), mint=outcome['mint'],
+            now=event['ts'], max_age_seconds=cfg['price_ttl_seconds'])
+        quote = qe.ingest_quote(lambda: qe.ProviderObservation(quote_source.source_id,
+            quote_source.observed_at, qe._original(quote_source)), mint=token,
+            direction=outcome['side'], amount_raw=record['input_raw'], taker=event['taker'],
+            expected_pool=event['pool'], now=event['ts'], max_age_seconds=cfg['price_ttl_seconds'])
+        book = qe._Book('', (quote,), token.decimals)
+        if qe.canonical(book.record(quote, cfg)) != qe.canonical(record):
+            raise ValueError()
+        raw = qe.output_raw(quote, cfg) if outcome['side'] == 'buy' else quote.input_raw
+        if qe.raw_quantity(outcome['quantity'], token.decimals) != raw:
+            raise ValueError()
+        if _number(outcome['fee_sol']) != decimal(cfg['fixed_fee_sol']):
+            raise ValueError()
+        if outcome['side'] == 'buy':
+            if _number(outcome['amount_sol']) != quote.input_units: raise ValueError()
+        elif _number(outcome['proceeds_sol']) != qe.units(qe.output_raw(quote, cfg), 9) - decimal(cfg['fixed_fee_sol']):
+            raise ValueError()
+        return raw, token.decimals
+    except (ValueError, TypeError, KeyError, OverflowError):
+        raise RecoveryRequired('QUOTE_FILL_BINDING_INVALID') from None
+
+
+def _entry_risk_flags(event, outcome, cfg):
+    version = cfg.get('paper_signal_policy_version', cfg.get('experimental_policy_version'))
+    if version is None:
+        return []
+    from .strategy import experimental_scores
+    with localcontext() as policy_context:
+        policy_context.prec = 28  # Original saved policy representation, independent of accounting precision.
+        expected = experimental_scores(event, mode=PAPER_EXPERIMENTAL, policy_version=version)
+    if canonical(outcome.get('entry_policy')) != canonical(expected):
+        raise RecoveryRequired('REPORT_ENTRY_RISK_BINDING_INVALID')
+    return list(expected['risk_flags'])
 
 
 def experiment_report(path, *, now=None):
@@ -64,6 +112,7 @@ def experiment_report(path, *, now=None):
         if not all(_hash(identity[k]) for k in ('config_hash', 'implementation_hash')):
             raise RecoveryRequired('EXPERIMENT_IDENTITY_INVALID')
         cfg = json.loads(identity['config'])
+        quote_mode = cfg.get('paper_quote_execution_version') == 1
         ttl = cfg['price_ttl_seconds']
         if type(ttl) is not int or ttl <= 0:
             raise RecoveryRequired('REPORT_CONFIG_INVALID')
@@ -100,10 +149,12 @@ def experiment_report(path, *, now=None):
             provenance[category] += 1
         with localcontext() as ctx:
             ctx.Emax = 999999; ctx.Emin = -999999
-            ctx.prec = 512  # Bounded decimal strings + <=10000 additions; no reporting truncation.
+            ctx.prec = 400 if quote_mode else 512  # Bounded decimal strings + <=10000 additions; no reporting truncation.
             positions = {}; basis = {}; entry_basis = {}; trade_pnl = {}; closed_pnl = decimal('0'); fees = decimal('0'); realized = decimal('0'); cash = _number(cfg['initial_equity_sol'])
+            raw_positions = {}; denominations = {}
+            quote_fills = []; retained_risks = set(); entry_risks = {}
             closed = partial = buys = sells = rejects = blocked = 0
-            for event_id, payload in c.execute('SELECT event_id,payload FROM outcomes ORDER BY seq'):
+            for outcome_seq, event_id, payload in c.execute('SELECT seq,event_id,payload FROM outcomes ORDER BY seq'):
                 outcome = json.loads(payload)
                 if not isinstance(outcome, dict) or event_id not in events:
                     raise RecoveryRequired('OUTCOME_INTEGRITY_INVALID')
@@ -115,32 +166,55 @@ def experiment_report(path, *, now=None):
                     fee = _number(outcome['fee_sol'])
                     if event['kind'] != 'market' or event.get('mint') != mint or qty <= 0 or fee < 0:
                         raise RecoveryRequired('FILL_IDENTITY_INVALID')
+                    if quote_mode:
+                        raw, denomination = _quote_fill(outcome, event, cfg)
+                        if outcome['side'] == 'buy':
+                            entry_risks[mint] = _entry_risk_flags(event, outcome, cfg)
+                        record = outcome['quote_execution']
+                        risks = sorted(set(record['risk_flags']) | set(entry_risks.get(mint, [])))
+                        retained_risks.update(risks)
+                        quote_fills.append({'outcome_seq': outcome_seq, 'event_id': event_id,
+                            'event_hash': digest(event), 'mint': mint, 'side': outcome['side'],
+                            'execution_status': 'EXECUTION_UNVERIFIED',
+                            'source_authenticated': False, 'transaction_verified': False,
+                            'actual_fill_verified': False,
+                            'assumptions': record['assumptions'], 'risk_flags': risks,
+                            'quote_source_id': record['quote_source_id'], 'quote_hash': record['quote_hash'],
+                            'quote_observed_at': record['quote_observed_at'],
+                            'mint_source_id': record['mint_source_id'], 'mint_hash': record['mint_hash'],
+                            'mint_observed_at': record['mint_observed_at']})
                     fees += fee
                     if outcome['side'] == 'buy':
                         amount = _number(outcome['amount_sol'])
                         if mint in positions or amount <= 0:
                             raise RecoveryRequired('TRADE_INVENTORY_INVALID')
+                        if quote_mode:
+                            raw_positions[mint] = raw; denominations[mint] = denomination
                         positions[mint] = qty; basis[mint] = amount + fee; entry_basis[mint] = basis[mint]
                         trade_pnl[mint] = decimal('0'); cash -= basis[mint]; buys += 1
                     elif outcome['side'] == 'sell':
-                        if mint not in positions or qty - positions[mint] > EPS:
+                        if (mint not in positions or (raw > raw_positions[mint] or denomination != denominations[mint]
+                                if quote_mode else qty - positions[mint] > EPS)):
                             raise RecoveryRequired('TRADE_INVENTORY_INVALID')
                         proceeds = _number(outcome['proceeds_sol']); pnl = _number(outcome['realized_pnl_sol'])
                         if proceeds < 0:
                             raise RecoveryRequired('FILL_ACCOUNTING_INVALID')
                         # Reconstruct disposal cost from entry debit and inventory, never declared PnL.
-                        disposed = basis[mint] * qty / positions[mint]
+                        disposed = (basis[mint] * decimal(str(raw)) / decimal(str(raw_positions[mint]))
+                                    if quote_mode else basis[mint] * qty / positions[mint])
                         derived_pnl = proceeds - disposed
-                        if abs(pnl - derived_pnl) > EPS:
+                        if (pnl != derived_pnl if quote_mode else abs(pnl - derived_pnl) > EPS):
                             raise RecoveryRequired('FILL_COST_BASIS_MISMATCH')
                         basis[mint] -= disposed
                         cash += proceeds; realized += derived_pnl; trade_pnl[mint] += derived_pnl; sells += 1
                         positions[mint] -= qty
-                        if positions[mint] <= EPS:
+                        if quote_mode: raw_positions[mint] -= raw
+                        if (raw_positions[mint] == 0 if quote_mode else positions[mint] <= EPS):
                             # Engine discards <=EPS quantity on closure. Unreconciled material
                             # residual basis is not a successful closed-trade accounting report.
                             if abs(basis[mint]) > EPS:
                                 raise RecoveryRequired('CLOSED_COST_BASIS_UNRECONCILED')
+                            if quote_mode: del raw_positions[mint], denominations[mint]
                             closed += 1; closed_pnl += trade_pnl.pop(mint)
                             del positions[mint], basis[mint], entry_basis[mint]
                         else: partial += 1
@@ -148,10 +222,10 @@ def experiment_report(path, *, now=None):
                 elif kind != 'control':
                     raise RecoveryRequired('OUTCOME_TYPE_INVALID')
             if (set(positions) != set(state['positions'])
-                    or any(abs(positions[m] - _number(state['positions'][m]['qty'])) > EPS for m in positions)
-                    or any(abs(trade_pnl[m] - _number(state['positions'][m]['trade_pnl'])) > EPS for m in positions)
-                    or any(abs(basis[m] - _number(state['positions'][m]['cost_left'])) > EPS for m in positions)
-                    or any(abs(entry_basis[m] - _number(state['positions'][m]['initial_cost'])) > EPS for m in positions)
+                    or any((positions[m] != _number(state['positions'][m]['qty']) if quote_mode else abs(positions[m] - _number(state['positions'][m]['qty'])) > EPS) for m in positions)
+                    or any((trade_pnl[m] != _number(state['positions'][m]['trade_pnl']) if quote_mode else abs(trade_pnl[m] - _number(state['positions'][m]['trade_pnl'])) > EPS) for m in positions)
+                    or any((basis[m] != _number(state['positions'][m]['cost_left']) if quote_mode else abs(basis[m] - _number(state['positions'][m]['cost_left'])) > EPS) for m in positions)
+                    or any((entry_basis[m] != _number(state['positions'][m]['initial_cost']) if quote_mode else abs(entry_basis[m] - _number(state['positions'][m]['initial_cost'])) > EPS) for m in positions)
                     or abs(cash - _number(state['cash'])) > EPS
                     or abs(realized - _number(state['realized_pnl'])) > EPS):
                 raise RecoveryRequired('ACCOUNTING_CHECKPOINT_MISMATCH')
@@ -172,6 +246,12 @@ def experiment_report(path, *, now=None):
             if not 0 <= drawdown <= 1:
                 raise RecoveryRequired('DRAWDOWN_INVALID')
             return {'kind': 'read_only_experiment_performance_v1', 'status': 'REPORTED',
+                **({'execution': {'status': 'EXECUTION_UNVERIFIED', 'model_version': 1,
+                    'source_authenticated': False, 'transaction_verified': False,
+                    'actual_fill_verified': False, 'risk_flags': sorted(retained_risks),
+                    'fills': quote_fills,
+                    'source_reference_scope': 'Original quote/mint hashes and source/time declarations in journal outcomes; content binding only, not authenticated HTTP or chain evidence.',
+                    'notice': 'Quote-mode paper fills are simulated estimates. Recorded fee/slippage assumptions do not establish actual execution or paid costs.'}} if quote_mode else {}),
                 'config_hash': identity['config_hash'], 'implementation_hash': identity['implementation_hash'],
                 'evaluated_at': now, 'data_provenance_counts': provenance,
                 'data_provenance_scope': 'Market events and raw payload declarations; non-synthetic claims are not authenticated live data.',
@@ -188,7 +268,7 @@ def experiment_report(path, *, now=None):
                 'net_realized_pnl_sol': str(realized), 'closed_trade_realized_pnl_sol': str(closed_pnl),
                 'open_trade_realized_pnl_sol': str(realized-closed_pnl), 'recorded_fill_fees_sol': str(fees),
                 'fee_accounting': 'Buy fees included once in reconstructed entry cost; sell proceeds recorded net. Sell fee inclusion in net proceeds is a journal declaration, not independently verified. Do not subtract fees again; unrecorded costs unknown.',
-                'accounting_scope': 'Cost basis and realized PnL reconstructed from recorded buy debits, buy fees, sell quantities and net proceeds; journal economic truth and fees are not authenticated. Absolute 1e-20 reconciliation tolerance; material closure dust rejects.',
+                'accounting_scope': 'Cost basis and realized PnL reconstructed from recorded buy debits, buy fees, sell quantities and net proceeds; journal economic truth and fees are not authenticated. Legacy reconciliation tolerance 1e-20; quoted inventory closes only at zero raw units and exact quote basis/PnL reconciliation is required.',
                 'saved_max_drawdown_fraction': str(drawdown),
                 'drawdown_scope': 'Saved engine peak/drawdown uses modeled equity; stale/unverified marks and unrecorded costs limit interpretation.',
                 'open_position_count': len(inventory), 'unvalued_or_blocked_position_count': sum(not p['model_mark_current'] for p in inventory),
