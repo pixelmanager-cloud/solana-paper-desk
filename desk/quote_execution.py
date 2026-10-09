@@ -328,7 +328,8 @@ def validate_entry_roundtrip(event,outcome,cfg):
             or ms.raw_hash!=outcome['quote_execution']['mint_hash']):
         raise QuoteExecutionError('ENTRY_REVERSE_SOURCE_BINDING_INVALID')
     with localcontext() as ctx:
-        ctx.prec=28
+        # Match the original entry arithmetic in bind_transition/plan exactly.
+        ctx.prec=400
         amount=decimal(outcome['amount_sol']);fee=decimal(cfg['fixed_fee_sol'])
         expected=(amount-units(output_raw(observation,cfg),9)+5*fee)/amount
         if (decimal(outcome['estimated_cost_fraction'])!=expected
