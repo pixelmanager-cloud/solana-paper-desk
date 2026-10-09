@@ -3960,7 +3960,7 @@
         "first_live_entry": false
       },
       "migration_sentinel_diagnosis": {
-        "status": "REVIEWED_COMPOSITION_INTEGRATED_EXACT_RELEASE_CI_NEXT",
+        "status": "DEPLOYED_OFFLINE_TARGET_SELECTION_REVIEW",
         "owner": "08",
         "thread_id": "01a118fd-2563-7126-90d7-bd07693de0b2",
         "reviewer": "02",
@@ -4170,7 +4170,46 @@
             612.517
           ]
         },
-        "combined_integration_commit": "354433ece22be7499e05b78d3335bc071e6f55fc"
+        "combined_integration_commit": "354433ece22be7499e05b78d3335bc071e6f55fc",
+        "release_candidate": {
+          "head": "5746912cd88b9527e2b196a2edefc66b72c257a0",
+          "source": "8c675296c36cd6b088a25aae0c7fcf8d65bdc26673bfdffa49012368acb06427",
+          "archive_sha256": "4a69553720b6c9bdb23254fab7fddeec465dbd0717d66e3af8290df104eba0fb",
+          "stage": "/opt/solana-desk-releases/5746912",
+          "ci_runs": [
+            37959875034,
+            37959868778
+          ],
+          "status": "DEPLOYED",
+          "ci_status": "BOTH_SUCCESS",
+          "ci_tests": 2564,
+          "ci_seconds": [
+            422.266,
+            477.709
+          ],
+          "original_tables_preserved": 48,
+          "backup_databases": 8,
+          "pre_backup": "/var/backups/solana-desk/pre-continuation-5746912",
+          "post_backup": "/var/backups/solana-desk/post-continuation-5746912",
+          "continuation_receipt": "66a7dbcddd61d053882bf2c9be51661ece3b4222d87c3a111bc57a8cce99b357",
+          "cash": "5",
+          "positions": 0,
+          "outcomes": 0,
+          "monitoring_remaining": 3600,
+          "monitoring_total_used": 0
+        },
+        "retained_slot_target": {
+          "status": "INDEPENDENT_REVIEW_REQUESTED",
+          "reviewer": "06",
+          "thread_id": "01a118fc-f867-7233-8eec-c20659e70095",
+          "scope": "Select existing complete slot454908373 query from validated retained refs; no original changes or bound increase",
+          "generic_export_blocker": "BOUNDED_GRADUATION_ORIGINALS_REQUIRED: old mint pages aggregate3092399bytes",
+          "selected_chain_bytes": 96868,
+          "provider_calls": 0,
+          "requests_used": 6,
+          "root_witness": "OBSERVED_MIGRATION original39b3c945a27e6c3db21d6ede1a29a8644ec673889531ddc73edd0b88780bc524",
+          "script": "work/export-retained-slot222.py"
+        }
       }
     }
   },
