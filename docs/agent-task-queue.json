@@ -3361,7 +3361,7 @@
       }
     },
     "token2022_paper_support": {
-      "status": "FINAL_COMBINED_CI_AND_VPS_TESTS_RUNNING",
+      "status": "INTEGRATED_NOT_DEPLOYED",
       "authorization": "2026-10-09 user: I think we need to modify the token2022 limitations as most tokens seem to be token2022 and we cannot open positions. Explicit approval to replace blanket exclusion with narrow versioned paper-only support; known hazards and unreviewed extensions still reject.",
       "base": "89f4317",
       "implementation_owner": "08",
@@ -3540,7 +3540,7 @@
       "combined_fixture_verification": {
         "worker": "04",
         "thread_id": "01a118fc-b862-7340-ab3a-e1115a3280a4",
-        "status": "FULL_LINUX_RUNNING",
+        "status": "TWO_FULL_LINUX_CI_PASS",
         "scope": "Actual Token2022 separate experiment + context handoff + held monitoring/exit/restart with preserved original ledger/charges; fullcombinedsuite onlyafterfinalheads",
         "turn_id": "01a120eb-1173-7153-a4b3-64b92e3a5aad",
         "cursor": "d3153436-2742-432e-8501-9c06b95f29ae:60",
@@ -3556,7 +3556,13 @@
           37941346774,
           37941498820
         ],
-        "ci_status": "ONE_SUCCESS_ONE_RUNNING"
+        "ci_status": "SUCCESS",
+        "tests": 2518,
+        "skips": 0,
+        "ci_seconds": [
+          352.768,
+          501.559
+        ]
       },
       "coordinator_handoff_operator_focused": {
         "heads": [
@@ -3580,7 +3586,14 @@
         "result": "Same scan and durable2sec pacer; exact retained history_as_of yields BUY8.20s,9 total requests including preparation. CLI-shaped target loses window identity and times out. No TTL/cap changes.",
         "reviewer": "06",
         "reviewer_thread_id": "01a118fc-f867-7233-8eec-c20659e70095",
-        "next": "Publish existingAPI recipe and narrow external helper only if needed; independent06 review before live use"
+        "next": "Publish existingAPI recipe and narrow external helper only if needed; independent06 review before live use",
+        "preliminary_independent_review": {
+          "worker": "06",
+          "turn_id": "01a12100-ef45-771a-9cd8-8952c348256f",
+          "status": "EXISTING_API_SEAM_PASS_HELPER_PENDING",
+          "tests": 60,
+          "seconds": 19.108
+        }
       },
       "handoff_predecessor_verification": {
         "files": 127,
@@ -3595,16 +3608,18 @@
         "head": "d02d9068f29321ae78771d10f13a4dacc5cf33ef"
       },
       "vps_candidate_validation": {
-        "status": "FULL_FIXTURE_SUITE_RUNNING_NOT_DEPLOYED",
+        "status": "RERUN_AFTER_SCRATCH_DIRECTORY_SETUP_FIX",
         "source_head": "7b4f32820061ff325ba6b00e5a4e51582f9e1f5e",
         "extra_file": "independently reviewed config/monitoring-handoff.json",
         "source_hash": "0fe08c215d591fb972b59749329abcea5c30fbbf5483ea313695ffd175aa433e",
         "path": "/opt/solana-desk-releases/review-0fe08c2-clean",
         "archive_sha256": "5c139138ca39a6d564feb222b893c07c19e5f4206a716268051e0b30cac00a16",
         "log": "/var/tmp/paper-review-0fe08c2/full.log",
-        "session_id": 87697,
-        "initial_packaging": "Mac tar added AppleDouble metadata; source identity check rejected before tests. Repacked using Python tarfile; clean archive hash and implementation match."
-      }
+        "session_id": 42864,
+        "initial_packaging": "Mac tar added AppleDouble metadata; source identity check rejected before tests. Repacked using Python tarfile; clean archive hash and implementation match.",
+        "initial_test_result": "2518 tests,414 identical PermissionError creating root-owned release/work; no other errors. Created service-account-owned0700 work/, rerunning unchanged suite."
+      },
+      "integration_commit": "878e0f4ce41d56e8873aea8259b551a7a9e88cc7"
     }
   },
   "native_reconciliation_review": {
