@@ -290,12 +290,22 @@ def transition(state, e, cfg, *, _quote_book=None):
             qe.validate_position(mint,position,cfg)
     if _quote_book is not None and (not quote_mode or type(_quote_book) is not qe._Book or _quote_book.event_hash!=digest(e)):
         raise qe.QuoteExecutionError('QUOTE_EVENT_BINDING_MISMATCH')
+    if (quote_mode and _quote_book is not None and _quote_book.decimals is not None
+            and e.get('mint') in state['positions']
+            and _quote_book.decimals != state['positions'][e['mint']]['quote_execution']['mint_decimals']):
+        raise qe.QuoteExecutionError('QUOTE_POSITION_DECIMALS_MISMATCH')
     if quote_mode and e.get('kind')=='market' and _quote_book is None:
         # Opted-in experiments never fall back to model execution, even when
         # directly invoked without the trusted coordinator quote binder.
         _quote_book=qe._Book(digest(e),(),None)
     version = cfg.get("experimental_policy_version")
-    if version is not None and (type(version) is not int or version not in (1, 2, 3) or cfg.get("mode") != "paper"):
+    signal_version=cfg.get('paper_signal_policy_version')
+    if signal_version is not None:
+        if (type(signal_version) is not int or signal_version!=3 or cfg.get('mode')!='paper'
+                or (version is not None and (type(version) is not int or version!=3)) or not quote_mode):
+            raise ValueError('Unsupported observable paper signal configuration')
+        version=signal_version
+    elif version is not None and (type(version) is not int or version not in (1, 2) or cfg.get("mode") != "paper"):
         raise ValueError("Unsupported experimental paper policy configuration")
     # V3 is dispatched to worker09's explicit observable proxy validator; this
     # engine never substitutes values for legacy null flow/wash/history fields.
@@ -361,8 +371,15 @@ def transition(state, e, cfg, *, _quote_book=None):
     if e["provenance"] != "SYNTHETIC_TEST_ONLY" and not quote_mode:
         reasons.append("LIVE_FEATURE_ADAPTER_NOT_READY")
     reasons.extend(entry_token_policy(e))
-    bundle_audit = audit(e.get("bundle_evidence"), e["ts"])
-    reasons.extend(bundle_audit["reasons"])
+    if signal_version==3 and 'bundle_evidence' not in e:
+        # Explicit approved V3 omission only. Never manufacture complete bundle
+        # history or safe percentages; any supplied evidence still runs audit.
+        bundle_audit={'decision':'UNKNOWN','status':'UNKNOWN','reasons':['BUNDLE_HISTORY_UNAVAILABLE'],
+            'risk_flags':['UNRESOLVED_OWNERSHIP_HISTORY'],'ownership_complete':False,
+            'entry_authorized':False,'source_authenticated':False}
+    else:
+        bundle_audit = audit(e.get("bundle_evidence"), e["ts"])
+        reasons.extend(bundle_audit["reasons"])
     if state["mode"] != "RUNNING":
         reasons.append(state["mode"])
     if len(state["positions"]) >= cfg["max_positions"]:
