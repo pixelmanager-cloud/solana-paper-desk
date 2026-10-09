@@ -4403,7 +4403,7 @@
             "thread_id": "01a118fd-0f1c-749c-b85b-5e730937d0a8",
             "reviewer": "09",
             "review_thread_id": "01a118fd-3f90-77d9-9549-c4497f5b10a6",
-            "status": "IMPLEMENTATION_AUTHORIZED_EXACT_PUBLIC_PROOF_SENT",
+            "status": "PR172_INDEPENDENT_REVIEW_AND_COMPOSITION_RUNNING",
             "pass_id": "d8600ce75e014e22b84c3fd8d10bf2c0",
             "intent_hash": "6f6cfd1efe9aa257638bd750ccd3c4099a3943a5d403132fa9d9d2a7b868fb7e",
             "retained_outcome_hash": "4352afa8e732c4f03eaf1cb788047aea58379fe3ef24edd05f5535e5680eb4a8",
@@ -4413,7 +4413,7 @@
             "design_review_turn": "01a121bb-ad1b-7756-97ff-d041e03d33a5",
             "fixture_owner": "04",
             "fixture_thread_id": "01a118fc-b862-7340-ab3a-e1115a3280a4",
-            "fixture_status": "A_3CHARGED_REJECT_AND_GLOBAL_RESTART_BLOCK_CONFIRMED_WAITING_API",
+            "fixture_status": "04_ASSIGNED_EXACT_PR172_ACTUAL_WRAPPER_BUY_SELL_RESTART",
             "design_review": "PreserveNULLpass; explicitreviewedlegacyassociation; no genericexception autoresolution; retirefailedscan; preservecharges",
             "proof_file": "work/terminal-rejection-public-proof.json",
             "attempt_hashes": [
@@ -4440,7 +4440,15 @@
             "classification_review_thread_id": "01a118fd-2563-7126-90d7-bd07693de0b2",
             "classification_review_turn": "01a121cb-21d2-75e5-83bb-9101cf5f7048",
             "classification_review": "Dedicated subtype only after explicit fullyvalidated mint/pool knownhazard allowlist; malformed/unknown/identity/time/persist errors staylatched; not generic ObservationError or textmatch",
-            "classification_focused_tests": 30
+            "classification_focused_tests": 30,
+            "pr": 172,
+            "head": "99aba03843c238f08ad627c4df884e77d3e3c488",
+            "review_requested_head": "99aba03843c238f08ad627c4df884e77d3e3c488",
+            "ci_runs": [
+              37971466355,
+              37971568991
+            ],
+            "artifact_attachment": "FAILED thread attachment identity count exceeds 100"
           }
         }
       }

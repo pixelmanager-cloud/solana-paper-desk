@@ -2,6 +2,8 @@
 
 Last production inspection: 9 October 2026. The current requested end state is a usable live-data paper-trading cycle under the explicit experimental policy below; further screening expansion is frozen. Do not equate a usable research dashboard with that end state. Real-money execution is disabled.
 
+PR172 `99aba03843c238f08ad627c4df884e77d3e3c488` now contains the terminal-rejection recovery repair. Independent reviewer09 and composition worker04 are reviewing that exact head; both Linux CI runs are pending. The repair preserves the original NULL pass, charges and rejected scan. It is not integrated or deployed. Production still has zero paper entries.
+
 ## Current status — 2026-10-09 16:42 UTC
 
 Release `5746912cd88b9527e2b196a2edefc66b72c257a0` is deployed, source `8c675296c36cd6b088a25aae0c7fcf8d65bdc26673bfdffa49012368acb06427`. Independent reviews passed; both exact release CI runs passed all 2,564 tests. The inactive VPS full suite passed 2,563 tests and the final test-only delta passed 23 focused tests. Activation preserved all 48 original tables and bracketed the append-only runtime receipt with eight-database backups. All five paper units use the exact release; dashboard remains private on 127.0.0.1:8765 and continuous discovery is active.
