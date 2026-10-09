@@ -279,26 +279,56 @@
         "worker": "03",
         "thread_id": "01a118fc-9478-778a-b77a-8f8f6ec7e0ad",
         "host_id": "durable",
-        "status": "IN_PROGRESS",
+        "status": "PUBLISHED_AWAITING_REVIEW",
         "base": "9e43752daabf19b7e78e08e0b15d16d1c6e2a680",
         "scope": "Existing-admission/provisioned-ledger coordinator CLI for accepted PoolCaptureBridge; no new trust/admission/approval",
         "assessment_turn_id": "01a11e95-0e72-71a5-ada2-0f0aa95b8153",
         "assessment": "Operational composition absent from CLI; accepted bridge transport receipt and admission dependencies exist",
         "turn_id": "01a11e9a-29bd-729f-9a8a-54852a12b965",
-        "wait_cursor": "0851f5ab-a903-4567-a6fe-4cbb4e6a7b96:21"
+        "wait_cursor": "0851f5ab-a903-4567-a6fe-4cbb4e6a7b96:21",
+        "pr": 101,
+        "head": "7fbd4a7ca0c435b5bf63f864f0db6dc13a5ef423"
       },
       {
         "id": "ROUTE-WSOL-ATA-SEQUENCE",
         "worker": "07",
         "thread_id": "01a118fd-0f1c-749c-b85b-5e730937d0a8",
         "host_id": "durable",
-        "status": "IN_PROGRESS",
+        "status": "PUBLISHED_AWAITING_REVIEW",
         "base": "9e43752daabf19b7e78e08e0b15d16d1c6e2a680",
         "scope": "Fix setup_policy.check_sell_setup accepting initialization before creation; narrow ordered complete raw WSOL ATA sequence and fixtures",
         "assessment_turn_id": "01a11e95-8e85-75f3-beb7-914307929d0b",
         "assessment": "Worker reproduced reordered initialization returning passed=True; existing unchanged mainnet capture and pinned ATA processor support verifier",
         "turn_id": "01a11e9a-3a24-75c3-aede-08633ee26565",
-        "wait_cursor": "3dd79f38-868a-433f-9b14-13e7ed0a6e90:32"
+        "wait_cursor": "3dd79f38-868a-433f-9b14-13e7ed0a6e90:32",
+        "pr": 100,
+        "head": "44c3d37653511b49387268be5ba9cf58d23058dc"
+      },
+      {
+        "id": "PR100-INDEPENDENT-REVIEW",
+        "worker": "01",
+        "thread_id": "01a118fc-39bc-722c-b442-8bf5a749e0bb",
+        "host_id": "durable",
+        "status": "IN_PROGRESS",
+        "pr": 100,
+        "head": "44c3d37653511b49387268be5ba9cf58d23058dc",
+        "base": "9e43752daabf19b7e78e08e0b15d16d1c6e2a680",
+        "scope": "Exact diff, independent fixtures, full combined Linux validation; excludes PR97",
+        "turn_id": "01a11ea7-d0c0-73a9-95a4-aa5cac0f6313",
+        "wait_cursor": "5e651fc7-2996-4765-974d-5c852257a005:75"
+      },
+      {
+        "id": "PR101-INDEPENDENT-REVIEW",
+        "worker": "06",
+        "thread_id": "01a118fc-f867-7233-8eec-c20659e70095",
+        "host_id": "durable",
+        "status": "IN_PROGRESS",
+        "pr": 101,
+        "head": "7fbd4a7ca0c435b5bf63f864f0db6dc13a5ef423",
+        "base": "9e43752daabf19b7e78e08e0b15d16d1c6e2a680",
+        "scope": "Exact diff, independent fixtures, full combined Linux validation; excludes PR97",
+        "turn_id": "01a11ea7-c061-776d-9cc3-9e567a2c88cd",
+        "wait_cursor": "8f3328cf-bef6-441d-83f8-2d1f46b3b0df:78"
       }
     ],
     "saved_launch_probe": {
@@ -1155,6 +1185,17 @@
       "resume_condition": "Required independent review becomes available through an authorized supported path; reassess dependencies before dispatch.",
       "resumed_by_user": true,
       "status": "RESUMED_REASSESSING_PARALLEL_WORK"
+    },
+    "pending_pr100_101_combined": {
+      "heads": {
+        "100": "44c3d37653511b49387268be5ba9cf58d23058dc",
+        "101": "7fbd4a7ca0c435b5bf63f864f0db6dc13a5ef423"
+      },
+      "tree": "0128d279dedcbc8db541a92cd7d20c5c39679df8",
+      "status": "LOCAL_PASS_INDEPENDENT_REVIEWS_AND_COMBINED_LINUX_PENDING",
+      "log": "work/pool-cli-setup-tests.log",
+      "live_acceptance": false,
+      "local_result": "ntimes/codex-primary-runtime/dependencies/python/lib/python3.12/multiprocessing/popen_fork.py:66: DeprecationWarning: This process (pid=53072) is multi-threaded, use of fork() may lead to deadlocks in the child.\n  self.pid = os.fork()\n----------------------------------------------------------------------\nRan 1959 tests in 34.800s\n\nOK (skipped=395)\n"
     }
   },
   "native_reconciliation_review": {
