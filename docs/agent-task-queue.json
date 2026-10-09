@@ -1,5 +1,5 @@
 {
-  "status": "PAPER_RUNTIME_DEPLOYED_AWAITING_ELIGIBLE_LIVE_ENTRY",
+  "status": "PAPER_RUNTIME_BLOCKED_TERMINAL_REJECTION_RECONCILIATION",
   "repository": "https://github.com/pixelmanager-cloud/solana-paper-desk",
   "cloud_environment": {
     "name": "solana-paper-desk",
@@ -189,11 +189,11 @@
   ],
   "integration": {
     "branch": "integration/cloud-wave1",
-    "tested_commit": "5746912cd88b9527e2b196a2edefc66b72c257a0",
-    "combined_tests": 2564,
-    "result": "PASS_FIXTURE_ONLY_DEPLOYED_LIVE_POOL_REJECTED",
-    "live_verification": "One live candidate attempted,4requests,total10/18,noquote/noBUY",
-    "blocker": "Profile1 rejects ubiquitous Token2022LP; nonboosted accrued-fee accounting compatibility in repair. Candidate222boosted/thin remainsrejected.",
+    "tested_commit": "2c6eb4009d28727223697ff1172b9b7170c54c8e",
+    "combined_tests": 2580,
+    "result": "PASS_COMBINED_FIXTURES_NOT_LIVE_READY",
+    "live_verification": "NoBUY;22210/18retiredboosted;3436/18historydecodegap;2426/18mintandmigrationpass but old222globalNULLpassblocksentry",
+    "blocker": "Known terminal pool rejection leaves global observation recovery marker;07implementing narrow explicit append-only reconciliation,09review; oldNULLrow andallcharges preserved",
     "followups": {
       "worker01": "PR79 independent PASS; available",
       "worker05": "PR79 integrated; available",
@@ -259,7 +259,7 @@
       "tests": 878,
       "status": "SUPERSEDED_BY_PUBLISHED_TESTED_COMMIT"
     },
-    "published_ci": "5746912 bothsuccess37959875034/37959868778",
+    "published_ci": "490d896 integration CI37967760895/37967756196 running; both171CI2580PASS",
     "active_claims": [
       {
         "id": "PR97-INDEPENDENT-REVIEW",
@@ -716,7 +716,7 @@
       "result": "Linux combined975 PASS zero skips; reviewed",
       "integrated": true
     },
-    "test_platform_note": "FullLinux2564bothCI;VPS2563plus23finaltestdelta",
+    "test_platform_note": "VPScombined2579PASS878.717s plus exact171testdeltaPASS24.613s; localdeltaPASS19.094s; earliercloudtimeoutretained",
     "pending_reference_combination": {
       "commit": "8aa5938aeef5e96f22a54f80ff698d043f3a154d",
       "pr": 39,
@@ -992,8 +992,8 @@
         "base": "7e1d3e4"
       }
     },
-    "reviewed_combined_tree": "8c675296c36cd6b088a25aae0c7fcf8d65bdc26673bfdffa49012368acb06427",
-    "test_identity_note": "Deployedexact5746912,rootverifiedsource; localcoordinator docs subsequentlyupdated",
+    "reviewed_combined_tree": "a611c45faf829ac7f1b63bb775e68c12f2503e6e63f4cb44a648d3c6b9d6d66b",
+    "test_identity_note": "Productionstill5746912/source8c; reviewed169/170/171published490d896 butnotdeployed",
     "pending_pool_projection": {
       "pr": 81,
       "head": "7385abd0104b7e2b5f955f865e4a5b9569a5d24f",
@@ -4444,7 +4444,8 @@
       "test_platform_note": "Independent Linux1289 zero skips;Mac1197 passed+92 skips",
       "reviewed_combined_tree": "613d5e3393e8a930cb15df979cf0c211fa89c037",
       "test_identity_note": "Exact d758bc5 + PR75 tree independently tested; accepted integration differs only in coordinator documentation."
-    }
+    },
+    "production_commit": "5746912cd88b9527e2b196a2edefc66b72c257a0"
   },
   "native_reconciliation_review": {
     "pr": 56,
