@@ -1,6 +1,6 @@
 {
   "schema_version": 1,
-  "revision": 66,
+  "revision": 67,
   "repository": "pixelmanager-cloud/solana-paper-desk",
   "source_main_sha": "e298e15cd758932e81d2241130716632702f5bd0",
   "observed_date": "2026-10-08",
@@ -3630,6 +3630,92 @@
       "provider_calls": 0,
       "readiness": "BLOCKED_NO_SUPPORTED_BUDGET_FEASIBLE_PUBLIC_LEGACY_SEED; acquisition path in development",
       "schedule": "NOT_REPROBED_NO_DURABLE_BINDING_CLAIM"
+    },
+    {
+      "kind": "HOURLY_GITHUB_RECONCILIATION",
+      "at": "2026-10-09T07:57:53Z",
+      "status": "UNCHANGED_EXISTING_REVIEW_SCOPES",
+      "cloud_execution": {
+        "provider": "cloud",
+        "observations_current": true,
+        "observed_phase": "running",
+        "spec_revision": "107"
+      },
+      "queue_blob_sha": "00d62b318b3ed31fb7f74fd6e355c7820baacffa",
+      "current_worker_followups": {
+        "10": "PR124 author available",
+        "01": "PR126 window history transport published; graduation source recipe",
+        "02": "Independent PR126 reservation-bound transport review",
+        "03": "Independent PR125 observation CLI review",
+        "04": "PR124 scoped review PASS; available",
+        "05": "Platformblocked97/110; not retried",
+        "06": "Implement user-approved quote execution and engine contract",
+        "07": "Foundation combined PASS; available",
+        "08": "PR125 frozen; implement bounded one-cycle live paper orchestration with06/09/01",
+        "09": "Trusted market adapter measured feature mapping"
+      },
+      "observed_prs": [
+        {
+          "pr": 125,
+          "head_sha": "4e6a76a60e058ff082f25067bd169eba913a87c6",
+          "base_sha": "3fe3188afb1e842873ae14af1601afc981baa4fb",
+          "branch": "codex/cloud-observation-recipe-08",
+          "comment_ids": [
+            6074551587,
+            4226772666,
+            4226772668,
+            5465892166
+          ],
+          "status": "UNCHANGED_EXTERNAL_WORKER03_FINDINGS",
+          "tests_this_run": "NOT_RUN"
+        },
+        {
+          "pr": 126,
+          "head_sha": "35919a32cc7f19cdcfefee009c0d2bda9710f27d",
+          "base_sha": "747a9d3e58df049ac784fd2110bc02affd6127b7",
+          "branch": "codex/cloud-paper-history-source-01",
+          "comment_ids": [
+            6074602887,
+            6074620455,
+            6074651678,
+            6074709590
+          ],
+          "status": "UNCHANGED_RESERVED_WORKER02_REPAIRED_HEAD_NOT_REVIEWED",
+          "tests_this_run": "NOT_RUN"
+        },
+        {
+          "pr": 127,
+          "head_sha": "956fdbb2f235d356f9a1f1a20fea0c10f7ec244e",
+          "base_sha": "6206be8a7921e7a8877264f46923785573823499",
+          "branch": "codex/quote-execution-06",
+          "comment_ids": [
+            6074666117,
+            6074705102,
+            6074793817
+          ],
+          "status": "UNCHANGED_ASSIGNED_AUTHOR_HANDOFF_SCOPE",
+          "tests_this_run": "NOT_RUN"
+        },
+        {
+          "pr": 128,
+          "head_sha": "c19cdd542dfe8fedd7772ee9589e790ebb3db73a",
+          "base_sha": "55bfb4c7d1b3f8caa4de0c90683cf72c9d59d4e2",
+          "branch": "codex/cloud-paper-market-adapter-09",
+          "comment_ids": [
+            6074735635
+          ],
+          "status": "UNCHANGED_ASSIGNED_AUTHOR_HANDOFF_SCOPE",
+          "tests_this_run": "NOT_RUN"
+        }
+      ],
+      "observed_codex_branch_count": 122,
+      "branch_pagination_complete": true,
+      "tests": "NOT_RUN_NO_NEW_UNASSIGNED_SCOPE",
+      "review_comments_posted": 0,
+      "infrastructure_failures": 0,
+      "provider_calls": 0,
+      "readiness": "BLOCKED_NO_SUPPORTED_BUDGET_FEASIBLE_PUBLIC_LEGACY_SEED; acquisition path in development",
+      "schedule": "NOT_REPROBED_NO_DURABLE_BINDING_CLAIM"
     }
   ],
   "artifact_pr": {
@@ -6649,13 +6735,13 @@
   ],
   "last_reconciliation": {
     "kind": "HOURLY_GITHUB_RECONCILIATION",
-    "at": "2026-10-09T07:02:58Z",
+    "at": "2026-10-09T07:57:53Z",
     "status": "UNCHANGED_EXISTING_REVIEW_SCOPES",
     "cloud_execution": {
       "provider": "cloud",
       "observations_current": true,
       "observed_phase": "running",
-      "spec_revision": "105"
+      "spec_revision": "107"
     },
     "queue_blob_sha": "00d62b318b3ed31fb7f74fd6e355c7820baacffa",
     "current_worker_followups": {
