@@ -1893,16 +1893,16 @@
       "live_acceptance": false
     },
     "current_worker_followups": {
-      "01": "136PASS; coordinate06newexit-onlykind report successor",
-      "02": "138PASS; available toreview03approvedmonitoringbudget onpublication",
+      "01": "141frozen review09; audit concrete admission/graduation/position-target deployment inputs",
+      "02": "Independent142 approvedmonitoringbudget review",
       "03": "Implement approved separate persisted60/hour sharedheldposition monitoring allowance; coordinate08/06",
-      "04": "Independent139 held-position exit review;134PASS",
+      "04": "Independent143 checkpoint/view consumer review",
       "05": "Platformblocked97/110; not retried",
-      "06": "Priority134 event-size repair then held-position exit contract",
-      "07": "Independent140 manualoperatorCLI; finalquote2237PASS",
-      "08": "138frozen review02; wire139 and approvedbudget03 successor",
-      "09": "140 frozen under07review; available for next concrete task",
-      "10": "Fix137 missing-dependency publication CI then quote_exit checkpoint/view successor"
+      "06": "Repair140 config boundary on separate successor;139 frozenPASS",
+      "07": "140 HOLD; ready06 exact repair re-review",
+      "08": "Wire139+142 concrete published APIs in separate138 successor",
+      "09": "Independent141 report quote_exit review",
+      "10": "quote_exit checkpoint/view successor; coordinator reproduced2 expected consumer errors"
     },
     "paper_live_foundation_candidate": {
       "base": "3fe3188",
@@ -2027,7 +2027,8 @@
       "runner": "NOT_CONNECTED",
       "positions": 0,
       "provider_calls": 0,
-      "source": "Direct loopback API via existing SSH; read-only research schema has8scans/8jobs"
+      "source": "Direct loopback API via existing SSH; read-only research schema has8scans/8jobs",
+      "automatic_entry_enabled": false
     },
     "integration_ci_latest": {
       "head": "55bfb4c7d1b3f8caa4de0c90683cf72c9d59d4e2",
@@ -2249,18 +2250,20 @@
     },
     "pending_pr139": {
       "head": "2a533b4872ab4bbd26acc3f36c3f63653b4f1ce4",
-      "status": "INDEPENDENT_REVIEW04",
+      "status": "SCOPED_PASS04_COMBINED_CONSUMERS_PENDING",
       "worker": "06",
       "reviewer": "04",
-      "scope": "Existing held-position quote_exit event, no entry-only history/USD/window features; consumer successors needed"
+      "scope": "Existing held-position quote_exit event, no entry-only history/USD/window features; consumer successors needed",
+      "focused_linux_tests": 43
     },
     "pending_pr140": {
       "head": "a678c45153ea8a7002c97fe011ca850e1b1ff39c",
-      "status": "INDEPENDENT_REVIEW07",
+      "status": "HOLD_CONFIG_BOUNDARY_REPAIR06",
       "worker": "09",
       "reviewer": "07",
       "scope": "Manual paper_cycle_cli init/once and operator guide",
-      "attachment_status": "App attachment count limit100 reached; linked by durablequeue"
+      "attachment_status": "App attachment count limit100 reached; linked by durablequeue",
+      "finding": "Config arrays/null/strings traceback; duplicate policy keys accepted last-wins.06 owns narrow successor;07 re-review."
     },
     "pending_quote_integration": {
       "status": "ACCEPTED_INTEGRATED_NOT_DEPLOYED",
@@ -2275,6 +2278,59 @@
       "scope": "127/128 with130/132/133/134/135/136/137 finalrepairs; existing125/126/129/131 unchanged; excludes138 onward",
       "integration_commit": "9b03e4532a3902e1f4521e99a04b8a071c2e28d6",
       "ci": "All finalcomponentheads rechecked unchanged/SUCCESS"
+    },
+    "pending_pr141": {
+      "head": "7e782441e39b8c8ab232dba15f50cbe40fcb4271",
+      "status": "INDEPENDENT_REVIEW09",
+      "worker": "01",
+      "reviewer": "09",
+      "scope": "quote_exit report consumer; checkpoint successor10 required",
+      "attachment_status": "App attachment limit100; durable PR/head retained"
+    },
+    "runtime_combined_smoke": {
+      "base": "d05d963a4cc8cda7d1943c7c3b1edcf7fb18aa6d",
+      "components": [
+        138,
+        139,
+        140,
+        141,
+        142,
+        143
+      ],
+      "tests": 65,
+      "errors": 0,
+      "seconds": 6.078,
+      "status": "FOCUSED_PASS_CLI_REPAIR_AND_CYCLE_WIRING_PENDING",
+      "live_acceptance": false,
+      "non_acceptance_full_run": {
+        "tests": 2302,
+        "skips": 408,
+        "seconds": 53.616,
+        "note": "PASS diagnostic only:142 fractional clock delta applied before process completion; not immutable-head acceptance. Final full combined still required."
+      }
+    },
+    "pending_pr142": {
+      "head": "db6f7850a217648b936db587d078356c6067d0f1",
+      "status": "INDEPENDENT_REVIEW02",
+      "worker": "03",
+      "reviewer": "02",
+      "scope": "Durable shared60/hour monitoring allowance; cycle wiring08 pending"
+    },
+    "pending_pr143": {
+      "head": "689d9f66a05b3e9ffe8b383192dea15d467dc74c",
+      "authored_commit": "7f22773ccbd055f0d5a8d936547fce6108584323",
+      "status": "INDEPENDENT_REVIEW04",
+      "worker": "10",
+      "reviewer": "04",
+      "scope": "Quote-exit checkpoint/view consumer"
+    },
+    "active_runtime_turns": {
+      "02": "01a11ff5-2975-77fb-bb9a-edeee854f0b7",
+      "04": "01a11ff5-37a7-73e3-b2d8-319b69b90254",
+      "06": "01a11ff4-0202-71da-b44d-05a4ba77f1ad",
+      "08": "01a11fef-9910-71a2-b4d7-051be54618d0",
+      "09": "01a11ff3-6a3c-7707-946d-86f56b7dd231",
+      "10": "01a11fed-cdc0-7172-970a-02d7956e44c4"
     }
   },
   "native_reconciliation_review": {
