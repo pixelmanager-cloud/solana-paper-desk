@@ -37,6 +37,12 @@ class PaperReadError(ValueError):
         self.evidence_hash = evidence_hash
 
 
+class _ChunkReadError(PaperReadError):
+    def __init__(self, code, partial):
+        super().__init__(code)
+        self.partial = partial
+
+
 def _read_chunked(response, limit, remaining):
     """Keep urllib entity decoding, but validate the boundaries it discards.
 
@@ -47,6 +53,16 @@ def _read_chunked(response, limit, remaining):
     if not isinstance(response, HTTPResponse) or not response.chunked or response.chunk_left is not None:
         raise PaperReadError('RESPONSE_HEADERS_INVALID')
     framing_left = 65536
+    entity = bytearray()
+    original_safe_read = response._safe_read
+    def entity_read(amount):
+        try:
+            data = original_safe_read(amount)
+        except IncompleteRead as error:
+            entity.extend(error.partial)
+            raise
+        entity.extend(data)
+        return data
     def boundary():
         nonlocal framing_left
         remaining()
@@ -54,7 +70,7 @@ def _read_chunked(response, limit, remaining):
         if not left:
             if left is not None:
                 framing_left -= 2
-                if response._safe_read(2) != b'\r\n': raise IncompleteRead(b'')
+                if original_safe_read(2) != b'\r\n': raise IncompleteRead(b'')
             remaining()
             line = response.fp.readline(128)
             framing_left -= len(line)
@@ -65,17 +81,23 @@ def _read_chunked(response, limit, remaining):
             left = int(line[:-2], 16)
             if left == 0:
                 remaining()
-                if response._safe_read(2) != b'\r\n': raise IncompleteRead(b'')
+                if original_safe_read(2) != b'\r\n': raise IncompleteRead(b'')
                 response._close_conn()
                 left = None
             response.chunk_left = left
         return left
     original = response._get_chunk_left
     response._get_chunk_left = boundary
+    response._safe_read = entity_read
     try:
         return response.read(limit + 1)
+    except Exception as error:
+        code = (error.code if isinstance(error, PaperReadError) else
+                'RESPONSE_TRUNCATED' if isinstance(error, IncompleteRead) else 'TRANSPORT_ERROR')
+        raise _ChunkReadError(code, bytes(entity)) from None
     finally:
         response._get_chunk_left = original
+        response._safe_read = original_safe_read
 
 
 class PaperReadSources:
@@ -236,6 +258,10 @@ class PaperReadSources:
                     # entity bytes, with the same bounded read and deadline.
                     observed = (_read_chunked(response, limit, remaining) if transfer is not None
                                 else response.read(limit + 1))
+                except _ChunkReadError as error:
+                    if len(error.partial) > limit: raise PaperReadError('RESPONSE_OVERSIZED') from None
+                    raw = error.partial
+                    raise PaperReadError(error.code) from None
                 except IncompleteRead as error:
                     if type(error.partial) is bytes and len(error.partial) <= limit:
                         raw = error.partial
