@@ -2865,7 +2865,7 @@
       "next_if_recurs": "Verbose test names and periodic faulthandler dumps, preserving suite and10min timeout; no source repair established"
     },
     "continuous_discovery_preflight": {
-      "status": "INTEGRATED_INDEPENDENT_LINUX_AND_EXACT_HEAD_CI_PASS",
+      "status": "DEPLOYED_CONNECTED_NO_OBSERVATIONS_YET",
       "worker": "08",
       "thread_id": "01a118fd-2563-7126-90d7-bd07693de0b2",
       "turn_id": "01a1205a-ac94-70d6-bb60-70c87ba13d8e",
@@ -2912,7 +2912,7 @@
         "seconds": 329.356,
         "tree": "dd09bb1e8d98f3c9552f7232e3f8fa49a41b6029"
       },
-      "deployment": "STAGED_NOT_ACTIVE; VPS tests and integration CI pending",
+      "deployment": "Active bounded24h service from reviewed dd09bb1; original sampler disabled; paper runtime unchanged",
       "allowance_change": "Author08 and reviewer02 notified; not deployed; preserve prior charged usage and originals",
       "latest_periodic_sample": {
         "checked_utc": "2026-10-09T11:54Z",
@@ -2983,7 +2983,7 @@
         "lifecycle": "Restart=no; coordinator inspect clean completion, offline verified backup, explicitly resume same DB; failure stays stopped"
       },
       "vps_stage": {
-        "status": "FULL_FIXTURE_TESTS_RUNNING_NOT_ACTIVATED",
+        "status": "DEPLOYED_ALL_TESTS_PASS",
         "source_tree": "dd09bb1e8d98f3c9552f7232e3f8fa49a41b6029",
         "directory": "/opt/solana-desk-tools/discovery-dd09bb1",
         "archive_sha256": "1c009979663d1f48a023c508ec3a3c95fecd3c7d4e0ba6101e7c449099277b43",
@@ -2993,7 +2993,11 @@
         "source_mismatches": 0,
         "python": "3.12.3",
         "websockets": "15.0.1",
-        "systemd_unit_validation": "PASS_NOT_INSTALLED"
+        "systemd_unit_validation": "PASS_NOT_INSTALLED",
+        "tests": 2397,
+        "skips": 0,
+        "seconds": 490.523,
+        "ci": "Both exact integration runs SUCCESS"
       },
       "integration_commit": "bcac115cb0a61763eabe4992ddd4b2f2eeb91ee3",
       "ci": "Both exact-head CI runs SUCCESS after approved public visibility",
@@ -3001,7 +3005,29 @@
       "integration_ci_runs": [
         37928518870,
         37928512994
-      ]
+      ],
+      "runtime": {
+        "started_utc": "2026-10-09T12:20:13Z",
+        "service": "desk-continuous-discovery.service",
+        "source": "/opt/solana-desk-tools/discovery-dd09bb1",
+        "db": "/var/lib/solana-desk/discovery/continuous.sqlite",
+        "active": true,
+        "completed_connections": 1,
+        "subscription_control_frames": 1,
+        "pending_receives": 1,
+        "retained_observations": 0,
+        "charged_including_pending_bytes": 200041,
+        "charged_including_pending_slots": 1,
+        "original_launch_records_preserved": 782,
+        "paper_positions": 0,
+        "paper_events": 1,
+        "paper_event_kind": "clock initialization only",
+        "paper_outcomes": 0,
+        "first_live_data_paper_entry": false,
+        "backup": "/var/backups/solana-desk/continuous-discovery/20261009T122013.198059Z.sqlite",
+        "backup_sha256": "59493e32546b1e9f01ae951b7da3418f50724861ef9b643cf10be195b272985d",
+        "lifecycle": "After clean24h completion verify Result=success/ExecMainStatus=0, inspect final summary, take offline backup under canonical lock, then explicitly start SAME DB. BLOCKED/forced stop stays stopped for inspection. Never reinitialize or restore older counters."
+      }
     },
     "paper_policy_tuning": {
       "status": "PASS_INTEGRATED_OFFLINE_FOUNDATION",
@@ -3088,8 +3114,8 @@
       "runtime_compatibility": {
         "worker": "07",
         "thread_id": "01a118fd-0f1c-749c-b85b-5e730937d0a8",
-        "turn_id": "01a12076-8710-75c8-b56b-fac802a40aca",
-        "cursor": "3dd79f38-868a-433f-9b14-13e7ed0a6e90:63",
+        "turn_id": "01a12099-e01c-76e1-b9e5-07ac1fcabc08",
+        "cursor": "3dd79f38-868a-433f-9b14-13e7ed0a6e90:65",
         "status": "CHANGES_REQUIRED_CONTEXT_LOCK_REPAIR",
         "scope": "Explicit exact predecessor-successor compatibility; preserve originals; no job or monitoring policy edits",
         "pr": 152,
