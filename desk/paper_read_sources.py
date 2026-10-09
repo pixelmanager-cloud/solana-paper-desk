@@ -41,11 +41,16 @@ class PaperReadSources:
     quote_source_id = 'jupiter-swap-v2-build-paper-v1'
     price_source_id = 'jupiter-price-v3-sol-paper-v1'
 
-    def __init__(self, progress, scan_id):
+    def __init__(self, progress, scan_id, *, monitoring_budget=None):
         if not isinstance(progress, HistoryProgress) or type(scan_id) is not str or not 1 <= len(scan_id) <= 256:
             raise PaperReadError('ADMISSION_REQUIRED')
         self.progress = progress
         self.scan_id = scan_id
+        if monitoring_budget is not None:
+            from .monitoring_budget import MonitoringBudget
+            if type(monitoring_budget) is not MonitoringBudget:
+                raise PaperReadError('MONITORING_CONFIGURATION_INVALID')
+        self.monitoring_budget = monitoring_budget
 
     def rpc(self, method, params, *, timeout_seconds):
         return self.rpc_with_evidence(method, params, timeout_seconds=timeout_seconds)[0]
@@ -112,14 +117,23 @@ class PaperReadSources:
         except Exception:
             raise PaperReadError('DEADLINE_INVALID') from None
         deadline = started + timeout_seconds
+        monitoring_reservation = None
         try:
-            admission = self.progress.admission(self.scan_id)
-            if admission is None or admission['state'] not in ('ADMITTED', 'SEALED'): raise ValueError()
-            if method == 'jupiter_probe' and (params['inputMint'], params['outputMint']) not in (
-                    (SOL, admission['descriptor']['mint']), (admission['descriptor']['mint'], SOL)):
-                raise ValueError()
-            if not self.progress.reserve(self.scan_id): raise PaperReadError('BUDGET_EXHAUSTED')
-            used = self.progress.admission(self.scan_id)['requests_used']
+            if self.monitoring_budget is not None:
+                from .monitoring_budget import MonitoringBlocked
+                try:
+                    monitoring_reservation = self.monitoring_budget.reserve_read(self.progress, self.scan_id, method, params)
+                except MonitoringBlocked as error:
+                    raise PaperReadError(error.code) from None
+                used = monitoring_reservation['investigation_requests_used']
+            else:
+                admission = self.progress.admission(self.scan_id)
+                if admission is None or admission['state'] not in ('ADMITTED', 'SEALED'): raise ValueError()
+                if method == 'jupiter_probe' and (params['inputMint'], params['outputMint']) not in (
+                        (SOL, admission['descriptor']['mint']), (admission['descriptor']['mint'], SOL)):
+                    raise ValueError()
+                if not self.progress.reserve(self.scan_id): raise PaperReadError('BUDGET_EXHAUSTED')
+                used = self.progress.admission(self.scan_id)['requests_used']
         except PaperReadError:
             raise
         except Exception:
@@ -223,9 +237,13 @@ class PaperReadSources:
                   'method': method, 'params': params, 'request_bytes_base64': base64.b64encode(request_bytes).decode(),
                   'response_bytes_base64': None if raw is None else base64.b64encode(raw).decode(),
                   'observed_at': completed, 'http_status': http_status, 'failure_code': code}
+        if monitoring_reservation is not None:
+            record['monitoring_reservation'] = monitoring_reservation
         try:
             evidence_hash = self.progress.store.save(record)
             if evidence_hash != digest(record): raise ValueError()
+            if monitoring_reservation is not None:
+                self.monitoring_budget.retain_outcome(monitoring_reservation, evidence_hash)
         except Exception:
             raise PaperReadError('OUTCOME_PERSISTENCE_FAILED') from None
         if code is not None: raise PaperReadError(code, evidence_hash) from None

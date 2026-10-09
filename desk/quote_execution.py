@@ -133,7 +133,7 @@ def _book(event, quotes, cfg):
         raise QuoteExecutionError('QUOTE_EXECUTION_CONFIG_REQUIRED')
     if type(quotes) is not tuple or len(quotes) > MAX_QUOTES:
         raise QuoteExecutionError('QUOTE_SET_INVALID')
-    if event.get('kind')=='market':
+    if event.get('kind') in ('market','quote_exit'):
         try:address(event.get('taker'))
         except ValueError:
             raise QuoteExecutionError('QUOTE_EVENT_WALLET_REQUIRED') from None
@@ -158,12 +158,62 @@ def _book(event, quotes, cfg):
             expected_pool=event['pool'], max_age_seconds=cfg['price_ttl_seconds'])
         if replayed != quote or (mint_hash is not None and mint_hash != token.source.raw_hash):
             raise QuoteExecutionError('QUOTE_REPLAY_MISMATCH')
+        if event.get('kind')=='quote_exit':
+            evidence=event['source_evidence']
+            if (quote.direction!='sell' or token.decimals!=event['mint_decimals']
+                    or token.source.raw_hash!=evidence['mint_hash']
+                    or token.source.source_id!=evidence['rpc_source_id']
+                    or quote.source.source_id!=evidence['quote_source_id']
+                    or (quote.input_raw==event['current_quantity_raw'] and
+                        (quote.source.raw_hash!=evidence['quote_hash'] or
+                         quote.source.observed_at!=evidence['quote_at']))):
+                raise QuoteExecutionError('EXIT_QUOTE_SOURCE_BINDING_MISMATCH')
         identity = (quote.direction, quote.input_raw)
         if identity in identities:
             raise QuoteExecutionError('DUPLICATE_QUOTE')
         identities.add(identity); validated.append(replayed)
         decimals = token.decimals; mint_hash = token.source.raw_hash
     return _Book(digest(event), tuple(validated), decimals)
+
+
+def validate_exit_valuation(event, outcome, cfg):
+    """Replay the original full-position mark independently of a partial action.
+
+    Full-size actions already persist their primary source. Partial quote_exit
+    fills must additionally retain it; absent historical evidence fails closed,
+    without synthesizing a full quote from an action or reconstructing originals.
+    This establishes local binding, never provider authenticity or actual fills.
+    """
+    from .model import validate_event
+    validate_event(event)
+    if event.get('kind') != 'quote_exit' or outcome.get('side') != 'sell':
+        raise QuoteExecutionError('EXIT_VALUATION_CONTEXT_REQUIRED')
+    action = outcome.get('quote_execution')
+    if type(action) is not dict:
+        raise QuoteExecutionError('EXIT_ACTION_RECORD_REQUIRED')
+    if (action.get('input_raw') == event['current_quantity_raw']
+            and 'valuation_quote_execution' in outcome):
+        raise QuoteExecutionError('EXIT_REDUNDANT_VALUATION_RECORD')
+    record = (action if action.get('input_raw') == event['current_quantity_raw']
+              else outcome.get('valuation_quote_execution'))
+    if (type(record) is not dict or record.get('direction') != 'sell'
+            or type(record.get('input_raw')) is not int
+            or record['input_raw'] != event['current_quantity_raw']):
+        raise QuoteExecutionError('EXIT_FULL_VALUATION_RECORD_REQUIRED')
+    ms = SourceRecord(record['mint_source_id'], record['mint_observed_at'],
+                      record['mint_hash'], record['original_mint_json'])
+    qs = SourceRecord(record['quote_source_id'], record['quote_observed_at'],
+                      record['quote_hash'], record['original_quote_json'])
+    token = ingest_mint(lambda: ProviderObservation(ms.source_id, ms.observed_at, _original(ms)),
+        mint=event['mint'], now=event['ts'], max_age_seconds=cfg['price_ttl_seconds'])
+    observation = ingest_quote(lambda: ProviderObservation(qs.source_id, qs.observed_at, _original(qs)),
+        mint=token, direction='sell', amount_raw=record['input_raw'], taker=event['taker'],
+        expected_pool=event['pool'], now=event['ts'], max_age_seconds=cfg['price_ttl_seconds'])
+    book = _book(event, (observation,), cfg)
+    source = event['source_evidence']
+    if (token.slot != source['mint_slot'] or token.source.observed_at != source['mint_at']
+            or canonical(book.record(observation,cfg)) != canonical(record)):
+        raise QuoteExecutionError('EXIT_FULL_VALUATION_BINDING_INVALID')
 
 
 def validate_position(mint, position, cfg):
@@ -208,7 +258,7 @@ def bind_transition(event, quotes):
         if digest(delivered) != event_hash:
             raise QuoteExecutionError('QUOTE_EVENT_BINDING_MISMATCH')
         from .engine import transition
-        if delivered.get('kind') != 'market':
+        if delivered.get('kind') not in ('market','quote_exit'):
             if frozen_quotes:
                 raise QuoteExecutionError('NONMARKET_QUOTE_FORBIDDEN')
             config(cfg)

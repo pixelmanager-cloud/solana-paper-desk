@@ -2238,7 +2238,7 @@
     },
     "pending_pr138": {
       "head": "5774e2549877d891b0f3f93a43352497a3166d7b",
-      "status": "SCOPED_PASS02_FINAL_COMBINATION_PENDING",
+      "status": "ACCEPTED_COMBINED_INTEGRATION",
       "worker": "08",
       "reviewer": "02",
       "scope": "Bounded one-cycle history/observation/quote/ledger intent and restart; exit-only/monitorbudget successors pending",
@@ -2246,24 +2246,27 @@
       "linux_skips": 0,
       "linux_seconds": 278.267,
       "independent_probes": 7,
-      "reviewed_tree": "5592468609d88f0868772a440653ed1fe570c399"
+      "reviewed_tree": "5592468609d88f0868772a440653ed1fe570c399",
+      "ci": "SUCCESS_EXACT_HEAD_RECHECKED"
     },
     "pending_pr139": {
       "head": "2a533b4872ab4bbd26acc3f36c3f63653b4f1ce4",
-      "status": "SCOPED_PASS04_COMBINED_CONSUMERS_PENDING",
+      "status": "ACCEPTED_COMBINED_INTEGRATION",
       "worker": "06",
       "reviewer": "04",
       "scope": "Existing held-position quote_exit event, no entry-only history/USD/window features; consumer successors needed",
-      "focused_linux_tests": 43
+      "focused_linux_tests": 43,
+      "ci": "SUCCESS_EXACT_HEAD_RECHECKED"
     },
     "pending_pr140": {
       "head": "a678c45153ea8a7002c97fe011ca850e1b1ff39c",
-      "status": "HOLD_CONFIG_BOUNDARY_REPAIR06",
+      "status": "ACCEPTED_COMBINED_INTEGRATION",
       "worker": "09",
       "reviewer": "07",
       "scope": "Manual paper_cycle_cli init/once and operator guide",
       "attachment_status": "App attachment count limit100 reached; linked by durablequeue",
-      "finding": "Config arrays/null/strings traceback; duplicate policy keys accepted last-wins.06 owns narrow successor;07 re-review."
+      "finding": "Config arrays/null/strings traceback; duplicate policy keys accepted last-wins.06 owns narrow successor;07 re-review.",
+      "ci": "SUCCESS_EXACT_HEAD_RECHECKED"
     },
     "pending_quote_integration": {
       "status": "ACCEPTED_INTEGRATED_NOT_DEPLOYED",
@@ -2281,12 +2284,13 @@
     },
     "pending_pr141": {
       "head": "7e782441e39b8c8ab232dba15f50cbe40fcb4271",
-      "status": "SCOPED_PASS09_CHECKPOINT143_COMBINATION_PENDING",
+      "status": "ACCEPTED_COMBINED_INTEGRATION",
       "worker": "01",
       "reviewer": "09",
       "scope": "quote_exit report consumer; checkpoint successor10 required",
       "attachment_status": "App attachment limit100; durable PR/head retained",
-      "independent_cases": 12
+      "independent_cases": 12,
+      "ci": "SUCCESS_EXACT_HEAD_RECHECKED"
     },
     "runtime_combined_smoke": {
       "base": "d05d963a4cc8cda7d1943c7c3b1edcf7fb18aa6d",
@@ -2331,52 +2335,56 @@
       }
     },
     "pending_pr142": {
-      "head": "1e60494bc4295384052a1f003b9eadaec28bb754",
-      "status": "HOLD_ACTIVE_ENTRY_BINDING_REPAIR03",
+      "head": "34c2400818d791ebbb9da5971449b98313e3980e",
+      "status": "ACCEPTED_COMBINED_INTEGRATION",
       "worker": "03",
       "reviewer": "02",
       "scope": "Durable shared60/hour monitoring allowance; cycle wiring08 pending",
       "finding": "Fresh SQLite INSERT OR REPLACE rewrites retained reservation timestamps and permits61stsamehour request;02 reproduced;03 repairing.",
-      "current_finding": "Replacement bypassfixed;02 actual fullclose/cooldown/rebuy failsmonitoring because allhistoricalbuyrows counted."
+      "current_finding": "Replacement and active-entry binding repairs independently passed;39 focused Linux tests zero skips",
+      "ci": "SUCCESS_EXACT_HEAD_RECHECKED"
     },
     "pending_pr143": {
       "head": "a006cdac07e0ff8b2e348cdc86ca5526f5e7b73a",
       "authored_commit": "7f22773ccbd055f0d5a8d936547fce6108584323",
-      "status": "SCOPED_REPAIR_PASS04_FINAL_COMBINATION_PENDING",
+      "status": "ACCEPTED_COMBINED_INTEGRATION",
       "worker": "10",
       "reviewer": "04",
       "scope": "Quote-exit checkpoint/view consumer",
       "finding": "After partial and fullclose, rehashed partial event full-quote hash substitution passes readers; must retain/replay full mark source independently of partial actionquote.",
       "repair_commit": "42b6645a1434c04001b2347be81b4a2cda25ec05",
-      "focused_linux_tests": 44
+      "focused_linux_tests": 44,
+      "ci": "SUCCESS_EXACT_HEAD_RECHECKED"
     },
     "active_runtime_turns": {
-      "02": "01a12000-9b45-730c-bc79-fe565b214809",
-      "04": "01a11ff5-37a7-73e3-b2d8-319b69b90254",
-      "06": "01a11ff4-0202-71da-b44d-05a4ba77f1ad",
+      "02": "01a12012-b4bd-72b6-a69b-4c41abd75bc9",
+      "04": "01a12008-3a4c-74d2-9d7c-32bc52abbbc4",
+      "06": "01a12011-b873-768c-a065-f388d92ab081",
       "08": "01a11fef-9910-71a2-b4d7-051be54618d0",
       "09": "01a11ffe-8ec2-751c-aac4-22f2c575176b",
       "10": "01a11ffd-06be-749a-87fa-3871ab128f62",
       "01": "01a11ffa-2a6d-74e0-b9b5-22037f7e7623",
-      "07": "01a11ffe-3eb9-7480-aa6f-2cabcb5d64d5"
+      "07": "01a12010-93f2-7180-b6b9-17e43bb2786b"
     },
     "pending_pr144": {
       "head": "21d9ed5211d2a22dcb21da6d90f0cbda03f46a51",
-      "status": "SCOPED_PASS07_FINAL_COMBINATION_PENDING",
+      "status": "ACCEPTED_COMBINED_INTEGRATION",
       "worker": "06",
       "reviewer": "07",
       "focused_linux_tests": 11,
       "independent_cli_cases": 12,
-      "scope": "140 bounded duplicate-free config snapshot repair"
+      "scope": "140 bounded duplicate-free config snapshot repair",
+      "ci": "SUCCESS_EXACT_HEAD_RECHECKED"
     },
     "pending_pr145": {
       "head": "c615743e743f2de32c90570a90a51d06cb533f28",
-      "status": "SCOPED_REPAIR_PASS07_FINAL_COMBINATION_PENDING",
+      "status": "ACCEPTED_COMBINED_INTEGRATION",
       "worker": "08",
       "reviewer": "07",
       "scope": "Held-only collection and explicit monitoring allowance wiring",
       "finding": "Original quote observed_at versuslocalcompletion1second boundary causesfalsebindingfailure andchargedlatch;08repairing",
-      "focused_linux_tests": 39
+      "focused_linux_tests": 39,
+      "ci": "SUCCESS_EXACT_HEAD_RECHECKED"
     },
     "runtime_combined_frozen": {
       "base": "d05d963a4cc8cda7d1943c7c3b1edcf7fb18aa6d",
@@ -2413,11 +2421,12 @@
         "95e72f467f9dabf5e90cd37e99a72cf025ca8878",
         "7e95377cb0aa4a14d20f20626cccadea8ed7e30f"
       ],
-      "status": "SCOPED_PASS07_FINAL_COMBINATION_PENDING",
+      "status": "ACCEPTED_COMBINED_INTEGRATION",
       "worker": "09",
       "reviewer": "07",
       "focused_linux_tests": 15,
-      "scope": "Explicit manual monitoring/provisioning and advisory5readsperposition pacing"
+      "scope": "Explicit manual monitoring/provisioning and advisory5readsperposition pacing",
+      "ci": "SUCCESS_EXACT_HEAD_RECHECKED"
     },
     "pending_pr147": {
       "head": "38bd53311b5cee6b40b36a3eab764685699af224",
@@ -2425,17 +2434,24 @@
         "a6461c46d2104433ea3e686e70256a1a197b85c0",
         "38bd53311b5cee6b40b36a3eab764685699af224"
       ],
-      "status": "INDEPENDENT_REVIEW04",
+      "status": "ACCEPTED_COMBINED_INTEGRATION",
       "worker": "01",
       "reviewer": "04",
-      "scope": "Read-only genuine acquisition/currentheld target export"
+      "scope": "Read-only genuine acquisition/currentheld target export",
+      "tests": 14,
+      "ci": "SUCCESS_EXACT_HEAD_RECHECKED"
     },
     "reviewed_acquisition_staging": {
       "release": "d05d963a4cc8cda7d1943c7c3b1edcf7fb18aa6d",
       "path": "/opt/solana-desk-releases/d05d963",
       "archive_sha256": "c1bd13d69907c029740d8f678460ad3755445a2c041e18c2ab089ca398c178e9",
       "archive_remote_match": true,
-      "vps_tests": "RUNNING_SERVICE_UID",
+      "vps_tests": {
+        "tests": 2237,
+        "skips": 0,
+        "seconds": 399.966,
+        "result": "PASS_SERVICE_UID"
+      },
       "active_release_unchanged": "f52840b",
       "provider_calls": 0
     },
@@ -2451,6 +2467,82 @@
       ],
       "eligibility": false,
       "note": "Saved launch tokenprogram only; actual mint controls/migration/pool/currentstrategy unverified"
+    },
+    "pending_pr148": {
+      "head": "aeff04124aaa2ba710c3c8f230c9577cd6b7a3d5",
+      "worker": "09",
+      "reviewer": "07",
+      "status": "ACCEPTED_COMBINED_INTEGRATION",
+      "scope": "Positions-only driver and inactive private systemd templates",
+      "authored_commits": [
+        "aeff04124aaa2ba710c3c8f230c9577cd6b7a3d5"
+      ],
+      "ci": "SUCCESS_EXACT_HEAD_RECHECKED"
+    },
+    "runtime_combined_repaired": {
+      "tree": "673b602ca9398fd9081b3e800cc9609c42b69a93",
+      "linux": {
+        "tests": 2335,
+        "skips": 0,
+        "seconds": 163.953,
+        "reviewer": "06",
+        "manifest_files": 437
+      },
+      "mac": {
+        "tests": 2335,
+        "skips": 408,
+        "seconds": 63.382
+      },
+      "status": "PASS_COMPONENTS138_TO147_NOT_LIVE_ACCEPTANCE"
+    },
+    "runtime_service_candidate": {
+      "tree": "afe2845a6067ea63bf1e16528a3dcd0f80783127",
+      "base_tree": "673b602ca9398fd9081b3e800cc9609c42b69a93",
+      "addition": "aeff04124aaa2ba710c3c8f230c9577cd6b7a3d5",
+      "linux": {
+        "tests": 2339,
+        "skips": 0,
+        "seconds": 162.135,
+        "reviewer": "06",
+        "manifest_files": 442
+      },
+      "mac": {
+        "tests": 2339,
+        "skips": 408,
+        "seconds": 62.689
+      },
+      "scoped_review": "PASS07_19_FOCUSED_ZERO_SKIPS",
+      "status": "ACCEPTED_SOURCE_NOT_LIVE_READY"
+    },
+    "live_candidate_acquisition": {
+      "scan_id": "4e542d600f0847cd916d3d04d762a2c3",
+      "mint": "NRRFHVS9AXqXQgo9sAh6xVHFt98wELLuo4BT7gRpump",
+      "release": "d05d963",
+      "status": "SEED_HISTORY_PARTIAL",
+      "provider_calls": 4,
+      "requests_used": 5,
+      "token_policy": "PASS_TOKEN_POLICY",
+      "mint_authority": null,
+      "freeze_authority": null,
+      "history_pages": 2,
+      "migration_witnesses_in_saved_pages": 0,
+      "entry_accepted": false,
+      "live_paper_fills": 0,
+      "limits_preserved": true,
+      "pool_read": {
+        "exists": false,
+        "context_slot": 454832049,
+        "evidence_hash": "a52f3599bec498058fbfc0e243bf4e97e2f313bf8d3d5d41f282a0d3f53211bb",
+        "charged_requests": 1
+      },
+      "current_blocker": "Canonical migrated pool absent; do not spend further requests on this candidate now"
+    },
+    "runtime_vps_stage": {
+      "tree": "afe2845a6067ea63bf1e16528a3dcd0f80783127",
+      "archive_sha256": "fe76030c52f92d6b19bf140b5417af8a7ea9102a260465d505ae7b82f958c2c1",
+      "tests": "RUNNING_SERVICE_UID",
+      "path": "/opt/solana-desk-releases/afe2845",
+      "services_changed": false
     }
   },
   "native_reconciliation_review": {

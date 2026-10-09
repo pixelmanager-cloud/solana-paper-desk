@@ -1,0 +1,583 @@
+"""One bounded, explicitly configured paper cycle; no scheduler or live approval.
+
+Trusted caller injects sources/context, holds stable single-host database paths,
+reports pending dependency blockers, and never derives permission from event JSON.
+Research worker -> evidence invocation -> cycle ledger locks. All reads spend the
+original admitted lifetime 18 for candidates. Explicitly provisioned held-position
+monitoring uses the separate shared rolling allowance; neither path admits/resets.
+"""
+from contextlib import contextmanager, closing
+from dataclasses import dataclass, asdict
+import base64
+import fcntl
+import json
+import math
+from pathlib import Path
+import sqlite3
+import time
+import uuid
+
+from . import engine, quote_execution as qe
+from .graduation_witness import extract_graduation
+from .ledger import Ledger
+from .model import canonical, digest, validate_event
+from .paper_checkpoint import read_checkpoint, RecoveryRequired
+from .paper_observe_cli import _worker_lock, _existing_context, _attempt_record
+from .history_progress import canonical_ownership_path, ownership_lock_path
+from .job_persistence import canonical_job_path
+from .paper_observation_collector import ObservationTarget, BoundedSource, collect_observations, TargetObservation, _Blocked
+from .paper_read_sources import PaperReadSources, PaperReadError, RPC_ID
+from .paper_history_source import PaperHistorySource
+from .paper_exit_adapter import ExitContext, build_exit_event
+from .paper_market_adapter import MarketContext, build_market_event, OBSERVABLE_FLOW_CHURN_CONCENTRATION_V1
+from .live_observation import ProviderObservation, ingest_quote, ingest_mint, ingest_pool, ObservationError
+from .monitoring_budget import MonitoringBudget, MonitoringBlocked
+from .pools import verify_pool
+from .providers import SOL
+from .original_byte_slot_transport import _parse
+from urllib.parse import urlencode
+from .sol_usd_observation import JupiterPriceResponse, TrustedSlotBounds, PRICE_URL, MAX_RESPONSE_BYTES
+
+MAX_EVENT_BYTES = 256*1024  # existing quote journal/reader ceiling
+MARKER = 'explicit-quote-cycle-v1'
+INIT = {'schema_version': 1, 'kind': 'clock', 'event_id': 'paper-cycle:init:v1',
+        'ts': 0, 'actor': 'paper_monitor'}
+
+
+@dataclass(frozen=True)
+class CycleTarget:
+    target: ObservationTarget
+    provenance: str
+    graduated_at: int | None
+    holder_at: int | None
+    pool_fee_bps: str | None
+    known_hazards: tuple = ()
+    history_as_of: int | None = None
+    graduation_refs: tuple = ()  # retained history_request_v1 manifest hashes
+
+
+class CycleBlocked(ValueError):
+    def __init__(self, code):
+        self.code = code
+        super().__init__(code)
+
+
+def _config(cfg):
+    if (type(cfg) is not dict or cfg.get('mode') != 'paper'
+            or type(cfg.get('paper_signal_policy_version')) is not int
+            or cfg['paper_signal_policy_version'] != 3
+            or 'experimental_policy_version' in cfg or not qe.config(cfg)):
+        raise ValueError('Explicit signal profile3 and quote execution1 required; no legacy policy field')
+
+
+@contextmanager
+def _lock(path):
+    with open(canonical_job_path(path), 'a') as stream:
+        try:
+            fcntl.flock(stream, fcntl.LOCK_EX | fcntl.LOCK_NB)
+        except BlockingIOError:
+            yield False
+            return
+        yield True
+
+
+def initialize(path, cfg):
+    """Exclusive new experiment only; never adopt an existing ledger."""
+    _config(cfg)
+    path = canonical_job_path(path)
+    path.parent.mkdir(parents=True, exist_ok=True)
+    with path.open('xb'):
+        pass
+    ledger = Ledger(path, must_exist=True)
+    try:
+        def bootstrap(state, event, config):
+            ledger.db.execute('INSERT INTO metadata VALUES(?,?)', ('paper_cycle', MARKER))
+            return engine.transition(state, event, config)
+        ledger.apply(INIT, cfg, bootstrap, engine.initial_state)
+    finally:
+        ledger.close()
+
+
+def _state(path, cfg):
+    with closing(sqlite3.connect(path.as_uri()+'?mode=ro', uri=True)) as c:
+        c.execute('BEGIN')
+        state = read_checkpoint(c)
+        if state is None or c.execute("SELECT value FROM metadata WHERE key='paper_cycle'").fetchone() != (MARKER,):
+            raise CycleBlocked('EXPLICIT_NEW_EXPERIMENT_REQUIRED')
+        if (c.execute("SELECT value FROM metadata WHERE key='config_hash'").fetchone() != (digest(cfg),)
+                or c.execute("SELECT value FROM metadata WHERE key='config'").fetchone() != (canonical(cfg),)):
+            raise CycleBlocked('SAVED_CONFIG_MISMATCH')
+        implementation = digest({str(p.relative_to(Path(__file__).parent)): p.read_text()
+            for p in sorted(Path(__file__).parent.rglob('*')) if p.is_file() and p.suffix in ('.py','.json')})
+        if c.execute("SELECT value FROM metadata WHERE key='implementation_hash'").fetchone() != (implementation,):
+            raise CycleBlocked('SAVED_IMPLEMENTATION_MISMATCH')
+        return state
+
+
+def _graduation(store, item, now):
+    refs = item.graduation_refs
+    if type(refs) is not tuple or len(refs)>8:
+        raise CycleBlocked('BOUNDED_GRADUATION_ORIGINALS_REQUIRED')
+    raw = []; total = 0
+    for key in refs:
+        manifest = store.load(key)
+        if (manifest.get('kind')!='history_request_v1' or manifest.get('method')!='getTransactionsForAddress'
+                or type(manifest.get('params')) is not list or len(manifest['params'])!=2
+                or manifest['params'][0] not in (item.target.mint,item.target.pool)):
+            raise CycleBlocked('GRADUATION_SOURCE_BINDING_INVALID')
+        options = manifest['params'][1]
+        if (type(options) is not dict or options.get('transactionDetails')!='full'
+                or options.get('commitment')!='finalized' or options.get('encoding')!='jsonParsed'):
+            raise CycleBlocked('GRADUATION_SOURCE_BINDING_INVALID')
+        response = store.load(manifest['response_hash'])
+        total += len(canonical(response).encode())
+        if total>2*1024*1024 or type(response.get('data')) is not list or len(raw)+len(response['data'])>256:
+            raise CycleBlocked('BOUNDED_GRADUATION_ORIGINALS_REQUIRED')
+        raw.extend(response['data'])
+    observed = extract_graduation(raw,mint=item.target.mint,pool=item.target.pool,now=now,provenance=item.provenance)
+    if (observed['status']=='OBSERVED_MIGRATION' and item.graduated_at is not None
+            and item.graduated_at!=observed['graduated_at']):
+        raise CycleBlocked('GRADUATION_TIMESTAMP_CONFLICT')
+    return {**observed,'request_evidence_refs':list(refs)}
+
+
+class _Budget:
+    def __init__(self, progress, wall_clock, monotonic):
+        self.progress, self.wall_clock, self.monotonic = progress, wall_clock, monotonic
+        self.start = self.last = monotonic()
+        self.attempted = 0
+        self.monitoring_attempted = 0
+        self.remaining()
+
+    def now(self):
+        value = self.wall_clock()
+        if type(value) not in (int, float) or not math.isfinite(value) or not 0 <= value < 2**63:
+            raise CycleBlocked('WALL_CLOCK_UNAVAILABLE')
+        return int(value)
+
+    def remaining(self):
+        value = self.monotonic()
+        if (type(value) not in (int, float) or type(self.start) not in (int, float)
+                or not math.isfinite(value) or not math.isfinite(self.start)
+                or value < self.last or value >= self.start+10):
+            raise CycleBlocked('CYCLE_DEADLINE_UNAVAILABLE')
+        self.last = value
+        return self.start+10-value
+
+    def call(self, scan, invoke):
+        before = self.progress.admission(scan)
+        if before is None or before['state'] not in ('ADMITTED', 'SEALED'):
+            raise CycleBlocked('PERSISTED_ADMISSION_REQUIRED')
+        if before['requests_used'] >= before['request_ceiling']:
+            raise CycleBlocked('INVESTIGATION_REQUEST_BUDGET_EXHAUSTED')
+        if self.attempted >= 18:
+            raise CycleBlocked('CYCLE_REQUEST_BUDGET_EXHAUSTED')
+        timeout = self.remaining()
+        self.attempted += 1
+        try:
+            result = invoke(timeout)
+        except PaperReadError as error:
+            raise CycleBlocked(error.code) from error
+        after = self.progress.admission(scan)
+        expected = {**before, 'requests_used': before['requests_used']+1}
+        if after != expected:
+            raise CycleBlocked('SHARED_BUDGET_CHARGE_OR_IDENTITY_MISMATCH')
+        self.remaining()
+        return result
+
+
+class _HeldBudget:
+    """Compare durable monotonic monitoring charges, never rolling count deltas."""
+    def __init__(self, parent, monitoring):
+        self.parent, self.monitoring = parent, monitoring
+    def now(self): return self.parent.now()
+    def remaining(self): return self.parent.remaining()
+    def call(self, scan, invoke):
+        admission = self.parent.progress.admission(scan)
+        before = self.monitoring.snapshot()
+        if before['blockers']: raise CycleBlocked(before['blockers'][0])
+        timeout = self.remaining()
+        self.parent.monitoring_attempted += 1
+        try:
+            result = invoke(timeout)
+        except PaperReadError as error:
+            raise CycleBlocked(error.code) from error
+        after = self.monitoring.snapshot()
+        if (after['total_used'] != before['total_used']+1
+                or self.parent.progress.admission(scan) != admission):
+            raise CycleBlocked('MONITORING_CHARGE_OR_ADMISSION_MISMATCH')
+        if after['blockers'] and after['blockers'] != ['MONITORING_REQUEST_BUDGET_EXHAUSTED']:
+            raise CycleBlocked(after['blockers'][0])
+        self.remaining()
+        return result
+
+
+def _collect_held(target, source, budget, store):
+    """Exit-only typed ingestion; investigation collector remains unchanged.
+
+    Preserve the same original envelope grammar used by the exit producer. Each
+    source call is independently fenced by the provisioned monitoring sequence.
+    """
+    refs = []
+    def request(method, params, invoke, identity):
+        original = json.loads(canonical(params)); started = budget.now()
+        response = budget.call(target.scan_id, invoke)
+        completed = budget.now()
+        acquired = response.get('observed_at') if method == 'jupiter_probe' else completed
+        envelope = {'source_id':identity,'acquired_at':acquired,'started_at':started,
+                    'method':method,'params':original,'result':response}
+        key = store.save(envelope)
+        if key != digest(envelope): raise CycleBlocked('ORIGINAL_RESPONSE_PERSISTENCE_FAILED')
+        refs.append(key)
+        if type(acquired) is not int or not started <= acquired <= completed:
+            raise CycleBlocked('SOURCE_ACQUISITION_CLOCK_INVALID')
+        if params != original: raise CycleBlocked('SOURCE_REQUEST_MUTATED')
+        if completed < started or completed-started > 10:
+            raise CycleBlocked('SOURCE_RESPONSE_STALE')
+        return response, completed, envelope
+    params = [target.mint, {'encoding':'base64','commitment':'confirmed'}]
+    raw, at, envelope = request('getAccountInfo',params,
+        lambda timeout:source.rpc('getAccountInfo',params,timeout_seconds=timeout),source.rpc_source_id)
+    token = ingest_mint(lambda:ProviderObservation(source.rpc_source_id,at,
+        {'mint':target.mint,'observed_at':at,'slot':raw.get('context',{}).get('slot'),
+         'account':raw.get('value'),'original_rpc_observation':envelope}),
+        mint=target.mint,now=budget.now(),max_age_seconds=10)
+    acquisitions = []; captures = []
+    def rpc(method, params):
+        result, at, _ = request(method,params,
+            lambda timeout:source.rpc(method,params,timeout_seconds=timeout),source.rpc_source_id)
+        acquisitions.append(at)
+        return result
+    def capture(payload):
+        key = store.save(payload)
+        if key != digest(payload): raise CycleBlocked('POOL_CAPTURE_PERSISTENCE_FAILED')
+        refs.append(key); captures.append(payload)
+        return key
+    verify_pool(target.pool,target.mint,rpc,capture=capture)
+    pool_at = acquisitions[-1]
+    pool = ingest_pool(lambda:ProviderObservation(source.rpc_source_id,pool_at,captures[0]),
+        mint=target.mint,pool=target.pool,now=budget.now(),max_age_seconds=10)
+    if token.decimals != pool.decimals or pool.slot < token.slot:
+        raise CycleBlocked('MINT_POOL_BANK_MISMATCH')
+    args = [target.mint,SOL,target.amount_raw,target.taker]
+    payload, _, _ = request('jupiter_probe',args,
+        lambda timeout:source.quote(*args,timeout_seconds=timeout),source.quote_source_id)
+    quote = ingest_quote(lambda:ProviderObservation(source.quote_source_id,payload.get('observed_at'),payload),
+        mint=token,direction='sell',amount_raw=target.amount_raw,taker=target.taker,
+        expected_pool=target.pool,now=budget.now(),max_age_seconds=10)
+    return TargetObservation(target,'sell',token,pool,quote,None,tuple(refs))
+
+
+def _history(progress, item, budget, source_factory):
+    target = item.target
+    as_of = budget.now() if item.history_as_of is None else item.history_as_of
+    if type(as_of) is not int or as_of < 300:
+        raise CycleBlocked('CAPTURED_HISTORY_WINDOW_INVALID')
+    key = progress.create(target.scan_id, target.pool, as_of-300, as_of+1)
+    state = progress.snapshot(key)
+    while state['status'] != 'DONE':
+        if state['status'] == 'RETRYABLE_ERROR':
+            raise CycleBlocked('HISTORY_RECOVERY_REQUIRED')
+        def advance(timeout):
+            source = source_factory(progress, target.scan_id, key, timeout_seconds=timeout)
+            return progress.advance(key, source)
+        state = budget.call(target.scan_id, advance)
+        if state.get('busy') or state.get('blocked') or state['status'] == 'RETRYABLE_ERROR':
+            raise CycleBlocked(state.get('blocked') or ('HISTORY_BUSY' if state.get('busy') else 'HISTORY_RECOVERY_REQUIRED'))
+        if state['coverage'] and len(state['coverage']['pages']) >= 8 and state['status'] != 'DONE':
+            raise CycleBlocked('FEATURE_HISTORY_PAGE_LIMIT')
+    # The existing feature calculator replays these original manifest/response
+    # pairs, not normalized decode output or caller coverage assertions.
+    pairs = []; rows = []
+    for page in state['coverage']['pages']:
+        request = progress.store.load(page['request_evidence_hash'])
+        response = progress.store.load(page['payload_hash'])
+        pairs.append({'request': request, 'response': response})
+        rows.extend(response['data'])
+    return as_of, rows, pairs
+
+
+def _usd(progress, source, scan, budget, refs=()):
+    if refs:
+        return _retained_usd(progress,source,scan,refs)
+    price = budget.call(scan, lambda timeout: source.sol_price(timeout_seconds=timeout))
+    original = _attempt_record(progress, price['evidence_hash'], scan, source.price_source_id, 'jupiter_price_v3', {'ids': SOL})
+    raw = base64.b64decode(original['response_bytes_base64'], validate=True)
+    if len(raw) > MAX_RESPONSE_BYTES or original['observed_at'] != price['observed_at']:
+        raise CycleBlocked('PRICE_ORIGINAL_BINDING_INVALID')
+    slot, slot_key = budget.call(scan, lambda timeout: source.rpc_with_evidence('getSlot', [{'commitment': 'finalized'}], timeout_seconds=timeout))
+    slot_record = _attempt_record(progress, slot_key, scan, source.rpc_source_id, 'getSlot', [{'commitment': 'finalized'}])
+    item = price['response'].get(SOL)
+    block = item.get('blockId') if type(item) is dict else None
+    if type(slot) is not int or not 0 <= slot < 2**63:
+        raise CycleBlocked('FINALIZED_SLOT_INVALID')
+    low = max(0, slot-32)
+    witness = block if type(block) is int and low <= block <= slot else slot
+    block_time, time_key = budget.call(scan, lambda timeout: source.rpc_with_evidence('getBlockTime', [witness], timeout_seconds=timeout))
+    _attempt_record(progress, time_key, scan, source.rpc_source_id, 'getBlockTime', [witness])
+    if type(block_time) is not int or block_time < 0:
+        raise CycleBlocked('EXACT_BLOCK_TIME_UNAVAILABLE')
+    return (JupiterPriceResponse('GET', PRICE_URL, raw, original['observed_at'], original['http_status']),
+            slot_record['observed_at'], low, slot, ((witness, block_time),),
+            (price['evidence_hash'],slot_key,time_key))
+
+
+def _retained_usd(progress, source, scan, refs):
+    """Reuse originals only; parser independently checks age at decision time."""
+    if type(refs) is not tuple or len(refs)!=3 or any(type(x) is not str or len(x)!=64 for x in refs):
+        raise CycleBlocked('EXACT_USD_ORIGINAL_REFS_REQUIRED')
+    price = _attempt_record(progress,refs[0],scan,source.price_source_id,'jupiter_price_v3',{'ids':SOL})
+    slot = _attempt_record(progress,refs[1],scan,source.rpc_source_id,'getSlot',[{'commitment':'finalized'}])
+    raw = base64.b64decode(price['response_bytes_base64'],validate=True)
+    if (len(raw)>MAX_RESPONSE_BYTES or base64.b64decode(price['request_bytes_base64'],validate=True)!=urlencode({'ids':SOL}).encode()):
+        raise CycleBlocked('PRICE_ORIGINAL_BINDING_INVALID')
+    def rpc_result(record,method,params):
+        request = _parse(base64.b64decode(record['request_bytes_base64'],validate=True))
+        response_bytes = base64.b64decode(record['response_bytes_base64'],validate=True)
+        if len(response_bytes)>2*1024*1024:
+            raise CycleBlocked('USD_WITNESS_RESPONSE_OVERSIZED')
+        response = _parse(response_bytes)
+        if (request!={'jsonrpc':'2.0','id':RPC_ID,'method':method,'params':params}
+                or set(response)!={'jsonrpc','id','result'} or response['jsonrpc']!='2.0' or response['id']!=RPC_ID):
+            raise CycleBlocked('USD_WITNESS_ORIGINAL_BINDING_INVALID')
+        return response['result']
+    height = rpc_result(slot,'getSlot',[{'commitment':'finalized'}])
+    if type(height) is not int or not 0<=height<2**63:
+        raise CycleBlocked('FINALIZED_SLOT_INVALID')
+    item = _parse(raw).get(SOL); block = item.get('blockId') if type(item) is dict else None
+    low = max(0,height-32); witness = block if type(block) is int and low<=block<=height else height
+    time_record = _attempt_record(progress,refs[2],scan,source.rpc_source_id,'getBlockTime',[witness])
+    at = rpc_result(time_record,'getBlockTime',[witness])
+    if type(at) is not int or at<0:
+        raise CycleBlocked('EXACT_BLOCK_TIME_UNAVAILABLE')
+    return (JupiterPriceResponse('GET',PRICE_URL,raw,price['observed_at'],price['http_status']),
+            slot['observed_at'],low,height,((witness,at),),refs)
+
+
+def fulfill_quotes(state, cfg, event_builder, collected, source, budget):
+    """Plan exact demands; one charged quote-only read per missing demand.
+
+    event_builder rebinds actual decision time after reads, preserving original
+    history/mint/pool/USD acquisition times. No quantity-scaled quote reuse.
+    Returns the final original-bound event, typed book and detached diagnostics.
+    """
+    quotes = (); available = collected.quote
+    for _ in range(qe.MAX_QUOTES+1):
+        event = event_builder()
+        if event is None:
+            raise CycleBlocked('MARKET_PRODUCER_BLOCKED')
+        if len(canonical(event).encode())>MAX_EVENT_BYTES:
+            raise CycleBlocked('EVENT_READER_SIZE_LIMIT')
+        planned = qe.plan(state, event, cfg, quotes)
+        demands = planned['quote_demands']
+        if not demands:
+            return event, quotes, planned
+        demand = demands[0]; direction = demand['direction']
+        raw = demand.get('input_raw', demand.get('maximum_input_raw'))
+        if type(raw) is not int or not 0 < raw < 2**64 or direction not in ('buy', 'sell'):
+            raise CycleBlocked('QUOTE_DEMAND_INVALID')
+        if any(q.direction == direction and q.input_raw == raw for q in quotes):
+            raise CycleBlocked('UNRESOLVED_QUOTE_DEMAND')
+        if (available is not None and available.direction == direction
+                and (available.input_raw == raw or (direction == 'buy'
+                     and demand['minimum_input_raw'] <= available.input_raw <= raw))):
+            quote = available; available = None
+        else:
+            input_mint, output_mint = (SOL,collected.target.mint) if direction == 'buy' else (collected.target.mint,SOL)
+            payload = budget.call(collected.target.scan_id, lambda timeout: source.quote(
+                input_mint, output_mint, raw, collected.target.taker, timeout_seconds=timeout))
+            quote = ingest_quote(lambda: ProviderObservation(source.quote_source_id,payload['observed_at'],payload),
+                mint=collected.mint, direction=direction, amount_raw=raw, taker=collected.target.taker,
+                expected_pool=collected.target.pool, now=budget.now(), max_age_seconds=cfg['price_ttl_seconds'])
+        quotes += (quote,)
+    raise CycleBlocked('QUOTE_DEMAND_LIMIT')
+
+
+def run_once(research_db, evidence_db, ledger_db, cfg, *, position_targets=(), candidates=(),
+             dependency_blockers, controls=(), usd_evidence_refs=(), monitoring=False, source_factory=PaperReadSources,
+             history_source_factory=PaperHistorySource, wall_clock=time.time, monotonic=time.monotonic):
+    """Trusted callable, no automatic runner activation or permission from JSON.
+
+    Pending dependency blockers are explicit caller-supplied review/integration
+    facts, not claims of live acceptance. They prevent reads and fills. Every open
+    ledger position must have its original admission and exact current raw size.
+    """
+    _config(cfg)
+    if type(monitoring) is not bool or type(position_targets) is not tuple or type(candidates) is not tuple:
+        raise ValueError('Explicit bounded cycle target tuples required')
+    items = position_targets+candidates
+    if (type(position_targets) is not tuple or type(candidates) is not tuple or len(items)>18
+            or any(type(x) is not CycleTarget or type(x.target) is not ObservationTarget for x in items)
+            or type(dependency_blockers) is not tuple or len(dependency_blockers)>16
+            or any(type(x) is not str or not 1<=len(x)<=128 for x in dependency_blockers)
+            or type(controls) is not tuple or len(controls)>18
+            or type(usd_evidence_refs) is not tuple or len(usd_evidence_refs) not in (0,3)):
+        raise ValueError('Explicit bounded cycle inputs required')
+    result = {'kind':'paper_cycle_v1','status':'BLOCKED','execution_status':'EXECUTION_UNVERIFIED',
+              'live_readiness':False,'attempted_requests':0,'outcomes':[],'events':[],
+              'blockers':list(dependency_blockers),'budget':{},'diagnostics':[],'usd_evidence_refs':[]}
+    if dependency_blockers:
+        return result
+    research, evidence, path = canonical_job_path(research_db), canonical_ownership_path(evidence_db), canonical_job_path(ledger_db)
+    if len({research,evidence,path}) != 3 or not all(p.is_file() for p in (research,evidence,path)):
+        raise ValueError('Three distinct existing databases required')
+    with _worker_lock(research) as worker:
+        if worker is None:
+            return {**result,'blockers':['RESEARCH_WORKER_BUSY']}
+        with _lock(str(evidence)+'.ownership-invocation.lock') as acquired:
+            if not acquired:
+                return {**result,'blockers':['EVIDENCE_INVOCATION_BUSY']}
+            with _lock(str(path)+'.paper-cycle.lock') as acquired:
+                if not acquired:
+                    return {**result,'blockers':['PAPER_CYCLE_BUSY']}
+                try:
+                    jobs, store, progress = _existing_context(research,evidence,tuple(x.target for x in items))
+                    state = _state(path,cfg)
+                    allowance = MonitoringBudget(store,path,cfg,clock=wall_clock) if monitoring else None
+                    if allowance is not None: allowance.snapshot()  # Never provision on a read path.
+                except MonitoringBlocked as error:
+                    return {**result,'blockers':[error.code]}
+                except RecoveryRequired as error:
+                    return {**result,'status':'RECOVERY_REQUIRED','blockers':[str(error)]}
+                except CycleBlocked as error:
+                    return {**result,'blockers':[error.code]}
+                except (_Blocked, sqlite3.Error):
+                    return {**result,'blockers':['PERSISTED_ADMISSION_OR_SCHEMA_REQUIRED']}
+                supplied = {x.target.mint:x for x in position_targets}
+                if len(supplied)!=len(position_targets) or set(supplied)!=set(state['positions']):
+                    return {**result,'blockers':['ALL_OPEN_POSITION_TARGETS_REQUIRED']}
+                with closing(sqlite3.connect(path.as_uri()+'?mode=ro',uri=True)) as c:
+                    for mint,p in state['positions'].items():
+                        target = supplied[mint].target
+                        row = c.execute('SELECT payload,payload_hash FROM events WHERE event_id=?',(p.get('entry_event_id'),)).fetchone()
+                        original = json.loads(row[0]) if row else None
+                        if (not row or digest(original)!=row[1] or target.scan_id!=original['paper_source_evidence']['scan_id']
+                                or target.pool!=p['pool'] or target.taker!=p['taker']
+                                or supplied[mint].provenance!=p['provenance']
+                                or target.amount_raw!=qe.raw_quantity(p['qty'],p['quote_execution']['mint_decimals'])):
+                            return {**result,'blockers':['POSITION_ORIGINAL_ADMISSION_OR_SIZE_MISMATCH']}
+                with store.connect() as c:
+                    c.execute('CREATE TABLE IF NOT EXISTS paper_observation_passes(id TEXT PRIMARY KEY,intent_hash TEXT NOT NULL,outcome_hash TEXT)')
+                    if c.execute('SELECT 1 FROM paper_observation_passes WHERE outcome_hash IS NULL LIMIT 1').fetchone():
+                        return {**result,'status':'RECOVERY_REQUIRED','blockers':['OBSERVATION_RECOVERY_REQUIRED']}
+                budget = _Budget(progress,wall_clock,monotonic)
+                for control in controls:
+                    validate_event(control)
+                    if control['kind']!='control' or control['ts']!=budget.now():
+                        raise ValueError('Current explicit operator controls required')
+                intent = {'kind':'paper_cycle_intent_v1','config_hash':digest(cfg),'ledger':str(path),
+                          'targets':[asdict(x) for x in items],
+                          'admissions':{x.target.scan_id:progress.admission(x.target.scan_id) for x in items}}
+                identity = uuid.uuid4().hex; key = store.save(intent)
+                with store.connect() as c:c.execute('INSERT INTO paper_observation_passes VALUES(?,?,NULL)',(identity,key))
+                ledger = Ledger(path,must_exist=True)
+                try:
+                    ledger.apply(INIT,cfg,engine.transition,engine.initial_state)
+                    def deliver(event,quotes=()):
+                        if len(canonical(event).encode())>MAX_EVENT_BYTES:
+                            raise CycleBlocked('EVENT_READER_SIZE_LIMIT')
+                        # Recheck inside the same write transaction, including
+                        # checkpoint loss after the read-only preflight.
+                        bound = qe.bind_transition(event,quotes)
+                        def checked(saved,delivered,config):
+                            read_checkpoint(ledger.db)
+                            return bound(saved,delivered,config)
+                        result['outcomes'].extend(ledger.apply(event,cfg,checked,engine.initial_state))
+                        result['events'].append(event['event_id'])
+                    for control in controls:deliver(control)
+                    usd = None
+                    for item in items:
+                        state = _state(path,cfg)
+                        target = item.target; is_position = item in position_targets
+                        if not is_position and (state['mode']!='RUNNING' or target.mint in state['positions']):
+                            result['diagnostics'].append({'scan_id':target.scan_id,'blockers':['ENTRY_CONTROL_OR_EXISTING_POSITION']})
+                            continue
+                        if not is_position:
+                            graduation = _graduation(store,item,budget.now())
+                            result['diagnostics'].append({'scan_id':target.scan_id,'graduation':graduation})
+                            if graduation['status']!='OBSERVED_MIGRATION':
+                                raise CycleBlocked('RETAINED_MIGRATION_WITNESS_REQUIRED')
+                        action_budget = _HeldBudget(budget,allowance) if is_position and allowance is not None else budget
+                        if is_position and allowance is not None:
+                            source = source_factory(progress,target.scan_id,monitoring_budget=allowance)
+                            collected = _collect_held(target,source,action_budget,store)
+                        else:
+                            if budget.attempted >= 18:
+                                raise CycleBlocked('CYCLE_REQUEST_BUDGET_EXHAUSTED')
+                            source = source_factory(progress,target.scan_id)
+                            collector = collect_observations(jobs=jobs,progress=progress,
+                                sources={target.scan_id:BoundedSource(source.rpc_source_id,source.quote_source_id,source.rpc,source.quote)},
+                                open_positions=(target,) if is_position else (), candidates=() if is_position else (target,),
+                                request_ceiling=18-budget.attempted,deadline_seconds=budget.remaining(),max_age_seconds=10,
+                                wall_clock=wall_clock,monotonic=monotonic)
+                            budget.attempted += collector.attempted_requests
+                            if collector.stopped_reason or not collector.observations or collector.observations[0].failure:
+                                raise CycleBlocked(collector.stopped_reason or (collector.observations[0].failure if collector.observations else 'OBSERVATIONS_INCOMPLETE'))
+                            collected = collector.observations[0]
+                        if not is_position:
+                            as_of, raw, pages = _history(progress,item,budget,history_source_factory)
+                            if usd is None:
+                                try:
+                                    usd = _usd(progress,source,target.scan_id,budget,usd_evidence_refs)
+                                except CycleBlocked:
+                                    raise
+                                except (ValueError,TypeError,KeyError,AttributeError):
+                                    raise CycleBlocked('USD_ORIGINAL_BINDING_INVALID') from None
+                                result['usd_evidence_refs']=list(usd[-1])
+                        diagnostic = None
+                        def event_builder():
+                            nonlocal diagnostic
+                            now = budget.now()
+                            if is_position:
+                                context = ExitContext(now,target,source.rpc_source_id,source.quote_source_id,
+                                                      item.provenance,item.known_hazards)
+                                diagnostic = build_exit_event(collected,context=context,
+                                    position=state['positions'][target.mint],cfg=cfg,load_evidence=store.load)
+                            else:
+                                context = MarketContext(now,target,source.rpc_source_id,source.quote_source_id,
+                                    item.provenance,graduation['graduated_at'],item.holder_at,item.known_hazards,item.pool_fee_bps,as_of)
+                                response,at,low,high,times,_refs = usd
+                                diagnostic = build_market_event(collected,context=context,load_evidence=store.load,
+                                    raw_trades=raw,history_pages=pages,usd_response=response,
+                                    usd_bounds=TrustedSlotBounds(now,at,low,high,times),strategy_profile=OBSERVABLE_FLOW_CHURN_CONCENTRATION_V1)
+                            if diagnostic['event'] is None:
+                                result['diagnostics'].append({'scan_id':target.scan_id,'blockers':diagnostic['blockers']})
+                            return diagnostic['event']
+                        event, quotes, planned = fulfill_quotes(state,cfg,event_builder,collected,source,action_budget)
+                        result['diagnostics'].append({'scan_id':target.scan_id,'blockers':diagnostic['blockers'],
+                                                      'planned_outcomes':planned['outcomes']})
+                        deliver(event,quotes)
+                        _state(path,cfg)
+                        if is_position and any(x['type']=='blocked_exit' for x in planned['outcomes']):
+                            raise CycleBlocked('UNRESOLVED_POSITION_EXIT')
+                    result['status']='COMPLETE'
+                except ObservationError:
+                    result['blockers'].append('HELD_OBSERVATION_CONTENT_REJECTED')
+                except (CycleBlocked, MonitoringBlocked) as error:
+                    result['blockers'].append(error.code)
+                except RecoveryRequired as error:
+                    result['status']='RECOVERY_REQUIRED';result['blockers'].append(str(error))
+                except ValueError as error:
+                    # Only known Ledger integrity diagnostics are converted;
+                    # unrelated programming/validator defects remain visible.
+                    if str(error).startswith(('ledger checkpoint missing: recovery required;',
+                                              'ledger checkpoint invalid: recovery required;',
+                                              'ledger event journal incomplete: recovery required;')):
+                        result['status']='RECOVERY_REQUIRED';result['blockers'].append('LEDGER_INTEGRITY_FAILURE')
+                    else:raise
+                finally:
+                    ledger.close()
+                    result['attempted_requests']=budget.attempted+budget.monitoring_attempted
+                    result['investigation_attempted_requests']=budget.attempted
+                    result['monitoring_attempted_requests']=budget.monitoring_attempted
+                    if allowance is not None:
+                        try: result['monitoring_budget']=allowance.snapshot()
+                        except (MonitoringBlocked,RecoveryRequired,sqlite3.Error):
+                            result['monitoring_budget']={'status':'RECOVERY_REQUIRED','blockers':['MONITORING_SNAPSHOT_UNAVAILABLE']}
+                    result['budget']={scan:{'used':progress.admission(scan)['requests_used'],
+                        'ceiling':progress.admission(scan)['request_ceiling']} for scan in intent['admissions']}
+                outcome = store.save(result)
+                if result['status']=='COMPLETE' or (budget.attempted==0 and budget.monitoring_attempted==0 and all(
+                        progress.admission(scan)==admission for scan,admission in intent['admissions'].items())):
+                    with store.connect() as c:c.execute('UPDATE paper_observation_passes SET outcome_hash=? WHERE id=?',(outcome,identity))
+                return {**result,'evidence_hash':outcome}
