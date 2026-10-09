@@ -15,6 +15,7 @@ from .programs import address, unbase58
 PUMP = '6EF8rrecthR5Dkzon8Nwu78hRvfCKubJ14M5uBEwF6P'
 AMM = 'pAMMBay6oceH9fJKBRHGP5D4bD4sWpmSwMn52FMfXEA'
 SOL = 'So11111111111111111111111111111111111111112'
+NATIVE_SOL_SENTINEL = '11111111111111111111111111111111'
 PROVENANCES = {'SYNTHETIC_TEST_ONLY', 'PUBLIC_MAINNET_CAPTURE_NOT_TRADING_EVIDENCE'}
 
 
@@ -90,11 +91,17 @@ def extract_graduation(raw_transactions, *, mint, pool, now, provenance):
                 pool_authority = _pda([b'pool-authority', bytes(Pubkey.from_string(mint))], PUMP)
                 expected_pool = _pda([b'pool', b'\0\0', bytes(Pubkey.from_string(accounts['pool_authority'])),
                                       bytes(Pubkey.from_string(mint)), bytes(Pubkey.from_string(SOL))], AMM)
+                # SOL curves store the zero key; migrate_v2 uses WSOL for its
+                # pool/interface. This exception is event-only: outer WSOL,
+                # canonical WSOL pool and every other binding stay mandatory.
+                event_quote = f.get('quote_mint')
+                event_quote_matches = (event_quote == SOL or
+                    (intent['name'] == 'migrate_v2' and event_quote == NATIVE_SOL_SENTINEL))
                 bindings = (accounts.get('pool_authority')==pool_authority, accounts.get('mint',accounts.get('base_mint'))==mint,
                             accounts.get('bonding_curve')==curve, accounts.get('pool')==pool==expected_pool,
                             accounts.get('quote_mint',accounts.get('wsol_mint'))==SOL,
                             accounts.get('program')==PUMP, f.get('bonding_curve')==curve,
-                            f.get('pool')==pool, f.get('quote_mint')==SOL,
+                            f.get('pool')==pool, event_quote_matches,
                             f.get('user')==accounts.get('user'))
                 if not all(bindings):blockers.add('MIGRATION_ACCOUNT_BINDING_MISMATCH');continue
                 if event.get('status')!='EVENT_DECODED' or event.get('schema_complete') is not True:
@@ -104,7 +111,8 @@ def extract_graduation(raw_transactions, *, mint, pool, now, provenance):
                 result['witnesses'].append({'timestamp':at,'slot':slot,'signature':signature,
                     'payload_hash':source_hash,'instruction':intent['instruction'],
                     'event_instruction':event['instruction'],'schema_file':event['schema_file'],
-                    'mint':mint,'bonding_curve':curve,'pool':pool,'quote_mint':SOL})
+                    'mint':mint,'bonding_curve':curve,'pool':pool,'quote_mint':SOL,
+                    'event_quote_mint':event_quote})
         except (ValueError, KeyError, TypeError, IndexError, OverflowError):
             blockers.add('MALFORMED_RAW_TRANSACTION_OR_TIME')
     ordered = sorted(slots.items())
