@@ -5,7 +5,7 @@ read 2026-10-09. Its price/block are historical documentation, not live data.
 All time/slot associations below are SYNTHETIC_TEST_ONLY, not chain captures.
 """
 from dataclasses import replace
-from decimal import Decimal
+from decimal import Decimal, InvalidOperation, localcontext
 import hashlib
 import json
 import unittest
@@ -13,7 +13,7 @@ from unittest.mock import patch
 
 from desk.sol_usd_observation import (
     JupiterPriceResponse, TrustedSlotBounds, SOL_MINT, PRICE_URL,
-    MAX_RESPONSE_BYTES, parse_sol_usd,
+    MAX_RESPONSE_BYTES, MAX_NUMBER_CHARS, MAX_EXPONENT, parse_sol_usd,
 )
 
 
@@ -99,6 +99,52 @@ class SolUsdTests(unittest.TestCase):
                 self.assertEqual(result.raw_payload, raw)
                 self.assertEqual(result.payload_sha256, hashlib.sha256(raw).hexdigest())
         self.unknown(self.parse(payload={SOL_MINT: []}), "SOL_PRICE_OBJECT_REQUIRED")
+
+    def test_reviewer_extreme_positive_and_negative_exponents_remain_unknown(self):
+        for exponent in ('999999999999999999999','-999999999999999999999'):
+            raw=('"usdPrice":1e'+exponent)
+            raw=('{"'+SOL_MINT+'":{'+raw+',"decimals":9,"blockId":348004023}}').encode()
+            with self.subTest(exponent=exponent):
+                result=parse_sol_usd(replace(self.obs,raw_payload=raw),bounds=self.bounds)
+                self.unknown(result,'MALFORMED_JSON')
+                self.assertEqual(result.raw_payload,raw)
+                self.assertEqual(result.payload_sha256,hashlib.sha256(raw).hexdigest())
+                self.assertEqual(result.acquired_at,998)
+                self.assertIsNone(result.price_at)
+                self.assertEqual(result.bounds,self.bounds)
+
+    def test_numeric_syntax_budgets_never_clamp_round_or_default(self):
+        for token in ('1e309','1e-309','1e'+str(MAX_EXPONENT+1),
+                      '1'* (MAX_NUMBER_CHARS+1),
+                      '1.'+'1'*MAX_NUMBER_CHARS):
+            raw=('{"'+SOL_MINT+'":{"usdPrice":'+token+',"decimals":9,"blockId":348004023}}').encode()
+            result=parse_sol_usd(replace(self.obs,raw_payload=raw),bounds=self.bounds)
+            self.unknown(result,'MALFORMED_JSON')
+            self.assertEqual(result.raw_payload,raw)
+        for token,expected in (('1e308','1e308'),('1e-308','1e-308'),
+                               ('1.474800e+2','147.4800')):
+            raw=('{"'+SOL_MINT+'":{"usdPrice":'+token+',"decimals":9,"blockId":348004023}}').encode()
+            with localcontext() as context:
+                context.prec=2
+                result=parse_sol_usd(replace(self.obs,raw_payload=raw),bounds=self.bounds)
+            self.assertEqual(result.status,'MEASURED')
+            self.assertEqual(result.usd_price,Decimal(expected))
+            self.assertEqual(result.payload_sha256,hashlib.sha256(raw).hexdigest())
+        # An unsupported number in an unused field must not silently disappear.
+        raw=('{"'+SOL_MINT+'":{"usdPrice":147.48,"decimals":9,"blockId":348004023},"extra":1e9999}').encode()
+        self.unknown(parse_sol_usd(replace(self.obs,raw_payload=raw),bounds=self.bounds),'MALFORMED_JSON')
+
+    def test_decimal_parse_exception_boundary_does_not_mask_adapter_errors(self):
+        with patch('desk.sol_usd_observation._json_decimal',side_effect=InvalidOperation):
+            result=parse_sol_usd(self.obs,bounds=self.bounds)
+            self.unknown(result,'MALFORMED_JSON')
+            self.assertEqual(result.raw_payload,self.obs.raw_payload)
+            with self.assertRaisesRegex(ValueError,'exact credential-free'):
+                parse_sol_usd(replace(self.obs,url='https://example.test'),bounds=self.bounds)
+        with localcontext() as context:
+            context.traps[InvalidOperation]=False
+            raw=('{"'+SOL_MINT+'":{"usdPrice":1e-999999999999999999999,"decimals":9,"blockId":348004023}}').encode()
+            self.unknown(parse_sol_usd(replace(self.obs,raw_payload=raw),bounds=self.bounds),'MALFORMED_JSON')
 
     def test_acquisition_and_trusted_capture_age_boundaries_and_reuse(self):
         self.assertEqual(self.parse(acquired_at=990).status, "MEASURED")

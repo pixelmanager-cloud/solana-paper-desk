@@ -14,19 +14,24 @@ chain times; a fresh getSlot alone cannot date an older price. Hashes identify
 records, not authenticate the provider. No network, filesystem or DB I/O.
 
 Conservative limits: 64 KiB response, 32-slot range, 10s acquisition/slot-capture
-age, 30s actual price-block age. Consumers must re-parse with a current trusted
+age, 30s actual price-block age; numeric tokens <=128 characters and
+explicit exponent magnitude <=308. Unsupported numeric syntax remains unknown. Consumers must re-parse with a current trusted
 clock before reuse. No interpolation, stablecoin peg or createdAt fallback.
 """
 from __future__ import annotations
 
 from dataclasses import dataclass
-from decimal import Decimal
+from decimal import Decimal, DecimalException
 import hashlib
 import json
+import re
 
 SOL_MINT = "So11111111111111111111111111111111111111112"
 PRICE_URL = "https://api.jup.ag/price/v3?ids=" + SOL_MINT
 MAX_RESPONSE_BYTES = 65536
+# Conservative JSON numeric syntax budgets, not price estimates or market bounds.
+MAX_NUMBER_CHARS = 128
+MAX_EXPONENT = 308
 
 
 @dataclass(frozen=True)
@@ -82,6 +87,24 @@ def _reject_constant(value):
     raise ValueError("nonfinite JSON number")
 
 
+
+def _json_decimal(token):
+    # Check the original numeric token before Decimal can overflow its exponent
+    # representation. No rounding, float conversion, clamping or zero fallback.
+    if len(token)>MAX_NUMBER_CHARS:
+        raise ValueError("JSON numeric token exceeds syntax budget")
+    match=re.fullmatch(r'-?(?:0|[1-9][0-9]*)(?:\.[0-9]+)?(?:[eE]([+-]?[0-9]+))?',token)
+    if match is None or (match[1] is not None and abs(int(match[1]))>MAX_EXPONENT):
+        raise ValueError("JSON numeric exponent exceeds syntax budget")
+    return Decimal(token)
+
+
+def _json_integer(token):
+    if len(token)>MAX_NUMBER_CHARS:
+        raise ValueError("JSON integer token exceeds syntax budget")
+    return int(token)
+
+
 def parse_sol_usd(observation: JupiterPriceResponse, *,
                   bounds: TrustedSlotBounds) -> SolUsdObservation:
     """Return MEASURED or UNKNOWN; invalid adapter/bounds raise ValueError.
@@ -127,9 +150,10 @@ def parse_sol_usd(observation: JupiterPriceResponse, *,
         blockers.append("HTTP_NOT_200")
     try:
         payload = json.loads(observation.raw_payload.decode("utf-8"),
-                             object_pairs_hook=_unique_object, parse_float=Decimal,
+                             object_pairs_hook=_unique_object, parse_float=_json_decimal,
+                             parse_int=_json_integer,
                              parse_constant=_reject_constant)
-    except (ValueError, UnicodeError, RecursionError):
+    except (ValueError, UnicodeError, RecursionError, DecimalException):
         payload = None
         blockers.append("MALFORMED_JSON")
     if not isinstance(payload, dict):
