@@ -156,3 +156,69 @@ class ExperimentReportTests(unittest.TestCase):
         out=io.StringIO()
         with redirect_stdout(out):code=main([str(self.path),'--now',str(T)])
         self.assertEqual(code,2);self.assertEqual(json.loads(out.getvalue())['status'],'RECOVERY_REQUIRED')
+
+    def copied_attack(self, name, mutate):
+        target=Path(self.tmp.name)/(name+'.sqlite')
+        with sqlite3.connect(target) as c:
+            self.ledger.db.backup(c);mutate(c);c.commit()
+            before=list(c.iterdump())
+        with self.assertRaises(RecoveryRequired):self.report(path=target)
+        with sqlite3.connect(target) as c:self.assertEqual(before,list(c.iterdump()))
+
+    def test_review_single_open_cost_basis_corruption_and_partial_remaining_basis(self):
+        self.apply(event());original=self.dump()
+        def corrupt_cost(c):
+            state=json.loads(c.execute('SELECT payload FROM state').fetchone()[0])
+            state['positions']['SYNTHETIC_A']['cost_left']='0'
+            c.execute('UPDATE state SET payload=?',(canonical(state),))
+        self.copied_attack('open-cost-zero',corrupt_cost)
+        self.assertEqual(original,self.dump())
+        fills=self.apply(event(T+5,reserve_sol='160'))
+        r=self.report(T+5);inventory=r['open_inventory'][0]
+        self.assertEqual(r['partial_sell_fill_count'],1)
+        with sqlite3.connect(self.path) as c:
+            buy=json.loads(c.execute("SELECT payload FROM outcomes WHERE json_extract(payload,'$.side')='buy'").fetchone()[0])
+        sell=next(o for o in fills if o.get('side')=='sell')
+        entry=D(buy['amount_sol'])+D(buy['fee_sol'])
+        remaining=entry*(D(buy['quantity'])-D(sell['quantity']))/D(buy['quantity'])
+        self.assertAlmostEqual(D(inventory['cost_left_sol']),remaining,places=25)
+        self.assertAlmostEqual(D(r['net_realized_pnl_sol']),D(sell['proceeds_sol'])-(entry-remaining),places=25)
+        original=self.dump();self.copied_attack('partial-cost-zero',corrupt_cost)
+        def corrupt_initial(c):
+            state=json.loads(c.execute('SELECT payload FROM state').fetchone()[0])
+            state['positions']['SYNTHETIC_A']['initial_cost']='0'
+            c.execute('UPDATE state SET payload=?',(canonical(state),))
+        self.copied_attack('partial-initial-cost',corrupt_initial)
+        self.assertEqual(original,self.dump())
+
+    def test_review_paired_closed_pnl_checkpoint_forgery_rejects_cash_loss_as_profit(self):
+        self.apply(event());self.apply(event(T+5,danger=True))
+        baseline=self.report(T+5)
+        self.assertLess(D(baseline['net_realized_pnl_sol']),0)
+        self.assertEqual(baseline['closed_trade_count'],1)
+        self.assertAlmostEqual(D(baseline['closed_trade_realized_pnl_sol']),
+                               D(json.loads(self.ledger.db.execute('SELECT payload FROM state').fetchone()[0])['cash'])-D(self.cfg['initial_equity_sol']),places=25)
+        original=self.dump()
+        def forge(c):
+            seq,payload=c.execute("SELECT seq,payload FROM outcomes WHERE json_extract(payload,'$.side')='sell'").fetchone()
+            outcome=json.loads(payload);outcome['realized_pnl_sol']=str(D(outcome['realized_pnl_sol'])+1)
+            c.execute('UPDATE outcomes SET payload=? WHERE seq=?',(canonical(outcome),seq))
+            state=json.loads(c.execute('SELECT payload FROM state').fetchone()[0])
+            state['realized_pnl']=str(D(state['realized_pnl'])+1)
+            c.execute('UPDATE state SET payload=?',(canonical(state),))
+        self.copied_attack('paired-closed-profit',forge)
+        self.assertEqual(original,self.dump())
+
+    def test_partial_paired_trade_pnl_and_remaining_basis_attack_rejects(self):
+        self.apply(event());self.apply(event(T+5,reserve_sol='160'));original=self.dump()
+        def forge(c):
+            seq,payload=c.execute("SELECT seq,payload FROM outcomes WHERE json_extract(payload,'$.side')='sell'").fetchone()
+            outcome=json.loads(payload);outcome['realized_pnl_sol']=str(D(outcome['realized_pnl_sol'])+1)
+            c.execute('UPDATE outcomes SET payload=? WHERE seq=?',(canonical(outcome),seq))
+            state=json.loads(c.execute('SELECT payload FROM state').fetchone()[0])
+            state['realized_pnl']=str(D(state['realized_pnl'])+1)
+            state['positions']['SYNTHETIC_A']['trade_pnl']=str(D(state['positions']['SYNTHETIC_A']['trade_pnl'])+1)
+            state['positions']['SYNTHETIC_A']['cost_left']='0'
+            c.execute('UPDATE state SET payload=?',(canonical(state),))
+        self.copied_attack('paired-partial-profit-basis',forge)
+        self.assertEqual(original,self.dump())

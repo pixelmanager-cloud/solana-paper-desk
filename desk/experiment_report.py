@@ -101,7 +101,7 @@ def experiment_report(path, *, now=None):
         with localcontext() as ctx:
             ctx.Emax = 999999; ctx.Emin = -999999
             ctx.prec = 512  # Bounded decimal strings + <=10000 additions; no reporting truncation.
-            positions = {}; trade_pnl = {}; closed_pnl = decimal('0'); fees = decimal('0'); realized = decimal('0'); cash = _number(cfg['initial_equity_sol'])
+            positions = {}; basis = {}; entry_basis = {}; trade_pnl = {}; closed_pnl = decimal('0'); fees = decimal('0'); realized = decimal('0'); cash = _number(cfg['initial_equity_sol'])
             closed = partial = buys = sells = rejects = blocked = 0
             for event_id, payload in c.execute('SELECT event_id,payload FROM outcomes ORDER BY seq'):
                 outcome = json.loads(payload)
@@ -120,17 +120,29 @@ def experiment_report(path, *, now=None):
                         amount = _number(outcome['amount_sol'])
                         if mint in positions or amount <= 0:
                             raise RecoveryRequired('TRADE_INVENTORY_INVALID')
-                        positions[mint] = qty; trade_pnl[mint] = decimal('0'); cash -= amount + fee; buys += 1
+                        positions[mint] = qty; basis[mint] = amount + fee; entry_basis[mint] = basis[mint]
+                        trade_pnl[mint] = decimal('0'); cash -= basis[mint]; buys += 1
                     elif outcome['side'] == 'sell':
                         if mint not in positions or qty - positions[mint] > EPS:
                             raise RecoveryRequired('TRADE_INVENTORY_INVALID')
                         proceeds = _number(outcome['proceeds_sol']); pnl = _number(outcome['realized_pnl_sol'])
                         if proceeds < 0:
                             raise RecoveryRequired('FILL_ACCOUNTING_INVALID')
-                        cash += proceeds; realized += pnl; trade_pnl[mint] += pnl; sells += 1
+                        # Reconstruct disposal cost from entry debit and inventory, never declared PnL.
+                        disposed = basis[mint] * qty / positions[mint]
+                        derived_pnl = proceeds - disposed
+                        if abs(pnl - derived_pnl) > EPS:
+                            raise RecoveryRequired('FILL_COST_BASIS_MISMATCH')
+                        basis[mint] -= disposed
+                        cash += proceeds; realized += derived_pnl; trade_pnl[mint] += derived_pnl; sells += 1
                         positions[mint] -= qty
                         if positions[mint] <= EPS:
-                            closed += 1; closed_pnl += trade_pnl.pop(mint); del positions[mint]
+                            # Engine discards <=EPS quantity on closure. Unreconciled material
+                            # residual basis is not a successful closed-trade accounting report.
+                            if abs(basis[mint]) > EPS:
+                                raise RecoveryRequired('CLOSED_COST_BASIS_UNRECONCILED')
+                            closed += 1; closed_pnl += trade_pnl.pop(mint)
+                            del positions[mint], basis[mint], entry_basis[mint]
                         else: partial += 1
                     else: raise RecoveryRequired('FILL_SIDE_INVALID')
                 elif kind != 'control':
@@ -138,12 +150,16 @@ def experiment_report(path, *, now=None):
             if (set(positions) != set(state['positions'])
                     or any(abs(positions[m] - _number(state['positions'][m]['qty'])) > EPS for m in positions)
                     or any(abs(trade_pnl[m] - _number(state['positions'][m]['trade_pnl'])) > EPS for m in positions)
+                    or any(abs(basis[m] - _number(state['positions'][m]['cost_left'])) > EPS for m in positions)
+                    or any(abs(entry_basis[m] - _number(state['positions'][m]['initial_cost'])) > EPS for m in positions)
                     or abs(cash - _number(state['cash'])) > EPS
                     or abs(realized - _number(state['realized_pnl'])) > EPS):
                 raise RecoveryRequired('ACCOUNTING_CHECKPOINT_MISMATCH')
+            if abs(cash + sum(basis.values(), decimal('0')) - _number(cfg['initial_equity_sol']) - realized) > EPS:
+                raise RecoveryRequired('COST_CONSERVATION_MISMATCH')
             inventory = []
             for mint, p in sorted(state['positions'].items()):
-                cost = _number(p['cost_left']); mark = _number(p['mark_value'])
+                cost = basis[mint]; mark = _number(p['mark_value'])
                 if min(cost, mark) < 0:
                     raise RecoveryRequired('POSITION_ACCOUNTING_INVALID')
                 fresh = (0 <= now - p['mark_at'] <= ttl and p['mark_status'] == 'MODEL_ESTIMATE' and not p['exit_blocked'])
@@ -171,7 +187,8 @@ def experiment_report(path, *, now=None):
                 'buy_fill_count': buys, 'sell_fill_count': sells,
                 'net_realized_pnl_sol': str(realized), 'closed_trade_realized_pnl_sol': str(closed_pnl),
                 'open_trade_realized_pnl_sol': str(realized-closed_pnl), 'recorded_fill_fees_sol': str(fees),
-                'fee_accounting': 'Fees already included in recorded cost/proceeds/PnL; do not subtract again. Unrecorded costs unknown.',
+                'fee_accounting': 'Buy fees included once in reconstructed entry cost; sell proceeds recorded net. Sell fee inclusion in net proceeds is a journal declaration, not independently verified. Do not subtract fees again; unrecorded costs unknown.',
+                'accounting_scope': 'Cost basis and realized PnL reconstructed from recorded buy debits, buy fees, sell quantities and net proceeds; journal economic truth and fees are not authenticated. Absolute 1e-20 reconciliation tolerance; material closure dust rejects.',
                 'saved_max_drawdown_fraction': str(drawdown),
                 'drawdown_scope': 'Saved engine peak/drawdown uses modeled equity; stale/unverified marks and unrecorded costs limit interpretation.',
                 'open_position_count': len(inventory), 'unvalued_or_blocked_position_count': sum(not p['model_mark_current'] for p in inventory),
