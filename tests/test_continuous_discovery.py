@@ -325,5 +325,45 @@ class ListeningTests(unittest.IsolatedAsyncioTestCase):
         self.assertNotIn('SYNTHETIC_TEST_ONLY',canonical(result))
         self.assertGreater(result['hour_connect_attempts'],0)
 
+    async def test_real_websocket_oversize_stops_and_keeps_charge_on_restart(self):
+        await self.real_websocket_oversize()
+
+    async def test_real_websocket_non_oversize_failure_still_retries_bounded(self):
+        await self.real_websocket_oversize(fail_first=True)
+
+    async def real_websocket_oversize(self,fail_first=False):
+        from websockets.asyncio.client import connect
+        from websockets.asyncio.server import serve
+        connections=[]
+        async def server(socket):
+            connections.append(socket)
+            await socket.recv()
+            if fail_first and len(connections)==1:
+                await socket.close(code=1011,reason='SYNTHETIC_TEST_ONLY')
+                return
+            await socket.send('{"id":1,"result":42}')
+            await socket.send(b'x'*(d.MESSAGE+1))
+            await socket.wait_closed()
+        async with serve(server,'127.0.0.1',0,compression=None) as local:
+            port=local.sockets[0].getsockname()[1]
+            def connector(url,**kwargs):
+                self.calls.append(kwargs)
+                return connect(f'ws://127.0.0.1:{port}',**kwargs)
+            with self.assertRaises(d.Blocked) as error:
+                await d.listen(self.store,seconds=5,connector=connector,
+                               key=lambda:'SYNTHETIC_TEST_ONLY',sleep=self.sleep)
+        self.assertEqual(error.exception.code,'DISCOVERY_OVERSIZE')
+        self.assertEqual(len(connections),1+fail_first);self.assertEqual(len(self.calls),1+fail_first)
+        self.assertEqual(self.delays,[2] if fail_first else [])
+        self.assertEqual(self.store.c.execute('SELECT count(*) FROM completions WHERE code="SOURCE_FAILURE"').fetchone()[0],int(fail_first))
+        self.assertEqual(self.store.c.execute('SELECT bytes,records FROM completions WHERE code="OVERSIZE"').fetchall(),[(d.MESSAGE,1)])
+        self.assertEqual(self.store.c.execute('SELECT count(*) FROM raw_events').fetchone()[0],0)
+        before=self.store.status()
+        self.store.close()
+        self.store=d.Store(self.path,clock=lambda:self.now);self.addCleanup(self.store.close)
+        self.store.recover()
+        self.assertEqual(self.store.status()['hour_bytes'],before['hour_bytes'])
+        self.assertEqual(self.store.status()['hour_records'],before['hour_records'])
+
 
 if __name__=='__main__':unittest.main()

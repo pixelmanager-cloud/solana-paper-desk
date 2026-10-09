@@ -368,8 +368,16 @@ async def _listen(store, *, seconds=86400, connector=None, key=credential, monot
             if error.code in ('DISCOVERY_TRAFFIC_LIMIT','DISCOVERY_RECONNECT_LIMIT'):
                 await sleep(min(60,remaining()));continue
             raise
-        except Exception:
+        except Exception as error:
             # No URLs, provider exception strings or credentials are emitted.
+            from websockets.exceptions import ConnectionClosed
+            oversized=(isinstance(error,ConnectionClosed) and any(
+                close is not None and close.code==1009 for close in (error.sent,error.rcvd)))
+            if oversized:
+                if receive is not None:store.complete(receive,code='OVERSIZE')
+                if not store.c.execute('SELECT 1 FROM completions WHERE id=?',(connection,)).fetchone():
+                    store.complete(connection,code='CONNECT_FAILURE')
+                raise Blocked('DISCOVERY_OVERSIZE') from None
             if receive is not None:store.complete(receive,code='SOURCE_FAILURE')
             if not store.c.execute('SELECT 1 FROM completions WHERE id=?',(connection,)).fetchone():
                 store.complete(connection,code='CONNECT_FAILURE')
