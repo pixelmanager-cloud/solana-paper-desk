@@ -73,7 +73,7 @@ def validate_checkpoint(connection, payload):
 
 
 
-def read_checkpoint(connection):
+def read_checkpoint(connection, *, _implementation=None):
     """Return a verified saved state, or None only for a genuinely fresh ledger.
 
     Caller supplies a read transaction so evidence and checkpoint are one snapshot.
@@ -105,7 +105,9 @@ def read_checkpoint(connection):
         raise RecoveryRequired('EXPERIMENT_IDENTITY_INVALID') from None
     try:
         from .runtime_compatibility import require_runtime
-        require_runtime(connection)
+        # Internal callers may propagate the source freshly hashed in this
+        # same validation invocation. Default readers always hash for themselves.
+        require_runtime(connection,implementation=_implementation)
     except (ValueError, TypeError, KeyError, sqlite3.Error, OSError, RecursionError):
         raise RecoveryRequired('RUNTIME_IDENTITY_INVALID') from None
     return validate_checkpoint(connection, row[0])

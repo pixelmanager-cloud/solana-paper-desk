@@ -127,7 +127,7 @@ def read(c):
     return body,key
 
 
-def _ledger(path, cfg_hash, source, *, old_runtime_hash=None, original_source=None, historical=False):
+def _ledger(path, cfg_hash, source, *, old_runtime_hash=None, original_source=None, historical=False, current_source=None):
     """Trusted exact-source contract; validate saved state/history, never rebuild."""
     from .paper_checkpoint import validate_checkpoint, read_checkpoint
     with closing(sqlite3.connect(Path(path).as_uri()+'?mode=ro',uri=True)) as c:
@@ -139,13 +139,21 @@ def _ledger(path, cfg_hash, source, *, old_runtime_hash=None, original_source=No
         if type(cfg) is not dict or digest(cfg)!=cfg_hash or metadata.get('config_hash')!=cfg_hash:
             raise ValueError('Handoff ledger config mismatch')
         if metadata.get('paper_cycle')!='explicit-quote-cycle-v1':raise ValueError('Explicit experiment ledger required')
-        runtime.require_runtime(c,implementation=source)
         runtime._history(c,cfg)
         size=c.execute('SELECT length(CAST(payload AS BLOB)) FROM state WHERE id=1').fetchone()
         if size is None or not 0<size[0]<=runtime.MAX_BYTES:raise ValueError('Handoff checkpoint bound')
         row=c.execute('SELECT payload FROM state WHERE id=1').fetchone()
         if row is None:raise ValueError('Handoff checkpoint missing')
-        state=validate_checkpoint(c,row[0])
+        # One verified checkpoint in this read transaction. Historical readers
+        # retain their explicitly pinned runtime; current readers use the same
+        # complete public checkpoint reader as all other runtime consumers.
+        if historical or old_runtime_hash is not None:
+            runtime.require_runtime(c,implementation=source)
+            state=validate_checkpoint(c,row[0])
+        else:
+            current=runtime.implementation_hash() if current_source is None else current_source
+            if source!=current:raise ValueError('Current experiment source mismatch')
+            state=read_checkpoint(c,_implementation=current)
         if old_runtime_hash is not None:
             receipt=c.execute(f'SELECT payload_hash FROM {runtime.TABLE} WHERE id=1').fetchone()
             if receipt!=(old_runtime_hash,):raise ValueError('Old runtime receipt mismatch')
@@ -153,10 +161,9 @@ def _ledger(path, cfg_hash, source, *, old_runtime_hash=None, original_source=No
             # Original experiment identity remains pinned; only require_runtime's
             # exact reviewed one-hop receipt can establish a different successor.
             origin=source if original_source is None else original_source
-            if (not historical and source!=runtime.implementation_hash()) or metadata.get('implementation_hash')!=origin:
+            if metadata.get('implementation_hash')!=origin:
                 raise ValueError('New experiment source mismatch')
-            if not historical:read_checkpoint(c)
-        result={'state':state,'metadata':metadata,'checkpoint_hash':digest(state),'config':cfg}
+        result={'state':state,'metadata':metadata,'checkpoint_hash':digest(state),'config':cfg,'payload':row[0]}
         for table in ('events','outcomes'):
             count=c.execute(f'SELECT COUNT(*) FROM {table}').fetchone()[0]
             result[table+'_count']=count;result[table+'_hash']=runtime._prefix(c,table,count)
@@ -170,7 +177,7 @@ def _pacing(context):
     provider_pacing.Pacer(path,priority='held')  # Validation only; no slots or resets.
 
 
-def validate_active(c,budget):
+def validate_active(c,budget,*,checkpoint=False):
     """Current readers must use only the reviewed successor experiment."""
     value=read(c)
     if value is None:return None
@@ -183,6 +190,10 @@ def validate_active(c,budget):
             or budget.config_hash!=tail['new_config_hash']):
         raise ValueError('Retired or mismatched monitoring context')
     _pacing(ctx)
+    # Exactly one fresh source hash for this invocation; no memo survives it.
+    current_source=runtime.implementation_hash()
+    if checkpoint and budget.code_hash!=current_source:
+        raise ValueError('Monitoring source changed since configuration')
     old=_ledger(body['context']['old_ledger_db'],body['old_config_hash'],body['old_source'],old_runtime_hash=body['old_runtime_hash'])
     if (old['state']['positions'] or old['checkpoint_hash']!=body['old_checkpoint_hash']
             or digest(old['metadata'])!=body['old_metadata_hash']
@@ -195,7 +206,7 @@ def validate_active(c,budget):
         if (current is None or list(current[:6])!=baseline[:6] or current[6]<baseline[6] or current[7]<baseline[7]
                 or (baseline[8] is not None and current[8]!=baseline[8])):raise ValueError('Successor accounting baseline changed')
     new=_ledger(ctx['new_ledger_db'],tail['new_config_hash'],budget.code_hash,
-                original_source=tail.get('new_origin',tail['new_source']),historical=budget.code_hash!=runtime.implementation_hash())
+                original_source=tail.get('new_origin',tail['new_source']),historical=budget.code_hash!=current_source,current_source=current_source)
     if history:
         if digest(new['metadata'])!=tail['new_metadata_hash']:raise ValueError('Successor original metadata changed')
         with closing(sqlite3.connect(Path(ctx['new_ledger_db']).as_uri()+'?mode=ro',uri=True)) as current:
@@ -216,7 +227,7 @@ def validate_active(c,budget):
     if (grant is None or grant[1]!=body['old_grant_hash']
             or old['metadata'].get('implementation_hash')!=body['original_budget'][3]):
         raise ValueError('Original allowance grant changed')
-    return body,key
+    return ((body,key),new) if checkpoint else (body,key)
 
 
 def activate(research_db,evidence_db,old_ledger_db,new_ledger_db,pacing_db,new_cfg,*,pins,at=None):

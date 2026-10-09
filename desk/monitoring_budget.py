@@ -61,7 +61,11 @@ class MonitoringBudget:
         try:
             with self.store.connect() as evidence:
                 evidence.execute('BEGIN')
-                validate_active(evidence,self)
+                verified=validate_active(evidence,self,checkpoint=True)
+                if verified is not None:
+                    # Reuse only the checkpoint just validated in this call; no
+                    # cache survives transaction close or provider I/O.
+                    return verified[1]['state'],verified[1]['payload']
         except (ValueError,sqlite3.Error,OSError,TypeError,KeyError,RecursionError):
             raise MonitoringBlocked('MONITORING_CONTEXT_BINDING_INVALID') from None
         canonical_job_path(self.ledger)
@@ -164,12 +168,15 @@ class MonitoringBudget:
                 c.rollback()
                 raise
 
-    def _accounting(self, c):
+    def _accounting(self, c, *, checkpoint=False):
         row = c.execute('SELECT version,ledger,config_hash,code_hash,cap,window_seconds,high_water,total,blocked FROM paper_monitoring_budget WHERE id=1').fetchone()
         from .monitoring_handoff import validate_active
-        try: handoff=validate_active(c,self)
+        try:
+            verified=validate_active(c,self,checkpoint=checkpoint)
+            handoff=verified[0] if checkpoint and verified is not None else verified
         except (ValueError,sqlite3.Error,OSError,TypeError,KeyError,RecursionError):
             raise MonitoringBlocked('MONITORING_CONTEXT_BINDING_INVALID') from None
+        if checkpoint and handoff is None:self._checkpoint()
         upgraded=policy.monitoring_policy(c)
         with closing(sqlite3.connect(self.ledger.as_uri()+'?mode=ro',uri=True)) as ledger:
             origin=ledger.execute("SELECT value FROM metadata WHERE key='implementation_hash'").fetchone()
@@ -380,13 +387,14 @@ class MonitoringBudget:
 
     def snapshot(self):
         """Read-only diagnostics and monotonic sequence; never refresh/reset state."""
-        self._checkpoint()
         now = self.clock()
         if type(now) not in (int, float) or not math.isfinite(now) or not 0 <= now < 2**63:
             raise MonitoringBlocked('MONITORING_CLOCK_INVALID')
         with self.store.connect() as c:
             c.execute('BEGIN')
-            row = self._accounting(c)
+            # Handoff accounting already verifies the complete active checkpoint
+            # once. Native contexts still require the explicit checkpoint read.
+            row = self._accounting(c,checkpoint=True)
             transition = policy.monitoring_policy(c)
             clock_floor = max(row[6], transition[0]['at']) if transition else row[6]
             from .monitoring_handoff import read as read_handoff
@@ -414,17 +422,18 @@ class MonitoringBudget:
         with self.store.connect() as c:
             c.execute('BEGIN IMMEDIATE')
             try:
-                self._accounting(c)
+                self._accounting(c,checkpoint=True)
                 row = c.execute('SELECT scan_id,method,params_hash FROM paper_monitoring_reservations WHERE id=?', (reservation['id'],)).fetchone()
                 if row != (record['scan_id'], record['method'], digest(record['params'])):
                     raise MonitoringBlocked('MONITORING_OUTCOME_BINDING_INVALID')
-                self._accounting(c)
+                # No mutation or I/O since the complete preflight above: this
+                # BEGIN IMMEDIATE snapshot cannot change between these SELECTs.
                 old = c.execute('SELECT evidence_hash FROM paper_monitoring_outcomes WHERE reservation_id=?', (reservation['id'],)).fetchone()
                 if old and old[0] != evidence_hash:
                     raise MonitoringBlocked('MONITORING_OUTCOME_BINDING_INVALID')
                 if old is None:
                     c.execute('INSERT INTO paper_monitoring_outcomes VALUES(?,?)', (reservation['id'], evidence_hash))
-                self._accounting(c)
+                self._accounting(c,checkpoint=True)
                 if record.get('failure_code') is not None:
                     c.execute("UPDATE paper_monitoring_budget SET blocked='SOURCE_FAILURE' WHERE id=1 AND blocked IS NULL")
                 c.commit()
