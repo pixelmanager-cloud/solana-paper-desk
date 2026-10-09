@@ -2740,23 +2740,46 @@
       "fixture_tests": 40
     },
     "migration_slot_intake_repair": {
-      "status": "IMPLEMENTATION_AND_COMPATIBILITY_TEST_IN_PROGRESS",
+      "status": "PR149_INDEPENDENT_REVIEW_AND_CI_PENDING",
       "worker": "01",
       "reviewer": "02",
       "thread_id": "01a118fc-39bc-722c-b442-8bf5a749e0bb",
       "turn_id": "01a12030-87b1-73a6-a6f0-5dcdb3e055ad",
       "base": "b84e20dd3a464be0c5a06f4252b4118a402190e0",
       "scope": "Explicit bounded finalized observed-slot history, existing immutable BIRTH cutoff and shared18 reservations, retained manifests/witness matching; no hint-based eligibility or budget resets",
-      "pr": null,
-      "head": null,
+      "pr": 149,
+      "head": "7d47cdeb8ee2c1f5aa911ca4c8354810409fd468",
       "deployment": "NOT_AUTHORIZED_PENDING_REVIEW_CI_COMBINED_TESTS_AND_EXPERIMENT_IDENTITY",
       "review_thread_id": "01a118fc-666c-70b6-9fa8-2c7520f0a0bb",
-      "review_turn_id": "01a12030-effa-7796-a930-c6cc9ce59fb4",
-      "review_cursor": "a2dcfb97-463d-4188-9da3-48a81e644d23:102",
+      "review_turn_id": "01a12041-c9a2-74b7-9ae8-2f46c953615e",
+      "review_cursor": "a2dcfb97-463d-4188-9da3-48a81e644d23:103",
       "compatibility_preflight": "02 fixture PASS unchanged b84 exporter/loader/witness accepts normally charged single-slot manifest; +1investigationusage, no ledger fingerprint change. Exact implementation review pending.",
       "deployment_plan": "Isolated reviewed operator acquisition release; unchanged afe2845 ledger/watchdog/dashboard/heldcycle; no ledger reset or monitoring reprovision",
-      "author_cursor": "5e651fc7-2996-4765-974d-5c852257a005:106",
-      "author_progress": "35 focused tests PASS; exact old b84 cycle compatibility proof in progress; no published head yet"
+      "author_cursor": "5e651fc7-2996-4765-974d-5c852257a005:107",
+      "author_progress": "36focused and2357Linux tests PASS zero skips; exact oldb84 cycle compatibility proof PASS",
+      "branch": "codex/cloud-migration-slot-intake-01",
+      "full_linux_validation": {
+        "worker": "06",
+        "thread_id": "01a118fc-f867-7233-8eec-c20659e70095",
+        "turn_id": "01a12042-5ab5-7144-9cf3-504cd2d9817a",
+        "cursor": "8f3328cf-bef6-441d-83f8-2d1f46b3b0df:111",
+        "status": "RUNNING_EXACT_HEAD"
+      },
+      "desktop_focused": {
+        "tests": 18,
+        "result": "PASS",
+        "seconds": 0.941
+      },
+      "ci": {
+        "status": "BOTH_SUCCESS",
+        "runs": [
+          37918685479,
+          37918803525
+        ],
+        "head": "7d47cdeb8ee2c1f5aa911ca4c8354810409fd468"
+      },
+      "source_tree": "8336a0222f3fbecaaaea76e334040d5716bc32de",
+      "local_archive_sha256": "95a7ff33e9a7909c2ffdcf54b87b8142d0ac241af0ecd2fd876f268011af2e28"
     }
   },
   "native_reconciliation_review": {
