@@ -2865,7 +2865,7 @@
       "next_if_recurs": "Verbose test names and periodic faulthandler dumps, preserving suite and10min timeout; no source repair established"
     },
     "continuous_discovery_preflight": {
-      "status": "DEPLOYED_CONNECTED_NO_OBSERVATIONS_YET",
+      "status": "DEPLOYED_LIVE_OBSERVATIONS_TOKEN2022_EXCLUDED",
       "worker": "08",
       "thread_id": "01a118fd-2563-7126-90d7-bd07693de0b2",
       "turn_id": "01a1205a-ac94-70d6-bb60-70c87ba13d8e",
@@ -3015,9 +3015,9 @@
         "completed_connections": 1,
         "subscription_control_frames": 1,
         "pending_receives": 1,
-        "retained_observations": 0,
-        "charged_including_pending_bytes": 200041,
-        "charged_including_pending_slots": 1,
+        "retained_observations": 3,
+        "charged_including_pending_bytes": 289341,
+        "charged_including_pending_slots": 4,
         "original_launch_records_preserved": 782,
         "paper_positions": 0,
         "paper_events": 1,
@@ -3026,7 +3026,16 @@
         "first_live_data_paper_entry": false,
         "backup": "/var/backups/solana-desk/continuous-discovery/20261009T122013.198059Z.sqlite",
         "backup_sha256": "59493e32546b1e9f01ae951b7da3418f50724861ef9b643cf10be195b272985d",
-        "lifecycle": "After clean24h completion verify Result=success/ExecMainStatus=0, inspect final summary, take offline backup under canonical lock, then explicitly start SAME DB. BLOCKED/forced stop stays stopped for inspection. Never reinitialize or restore older counters."
+        "lifecycle": "After clean24h completion verify Result=success/ExecMainStatus=0, inspect final summary, take offline backup under canonical lock, then explicitly start SAME DB. BLOCKED/forced stop stays stopped for inspection. Never reinitialize or restore older counters.",
+        "unique_base_mints": 2,
+        "base_token_program": "Token-2022; excluded by current policy",
+        "last_inspected_seq": 3
+      },
+      "token_program_blocker_audit": {
+        "worker": "08",
+        "thread_id": "01a118fd-2563-7126-90d7-bd07693de0b2",
+        "status": "DISPATCHED_READ_ONLY",
+        "scope": "Determine exact existing token-program exclusions and bounded change proposal only; no implementation/policy waiver/providers"
       }
     },
     "paper_policy_tuning": {
