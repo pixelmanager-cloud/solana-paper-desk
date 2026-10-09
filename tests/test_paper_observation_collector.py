@@ -27,9 +27,10 @@ class PaperObservationCollectorTests(unittest.TestCase):
         self.fail = None; self.charge = True; self.delay = 0; self.bad_quote = False
         self.taker = 'FzULv8pR9Rd7cyVKjVkzmJ1eqEmgwDnzjYyNUcEJtoG9'
 
-    def target(self, quantity=10000000):
+    def target(self, quantity=10000000, *, protocol=None):
+        protocol = protocol or self.protocol
         # Real existing persisted interfaces, not a fabricated boolean admission.
-        mint = str(self.protocol.mint)
+        mint = str(protocol.mint)
         with patch('desk.job_persistence.time.time', return_value=self.at):
             scan = self.jobs.admit(mint, kind=BIRTH_ACQUISITION_V1, evidence_db=self.progress.store.path)
         descriptor = self.jobs.descriptor(scan)
@@ -39,16 +40,16 @@ class PaperObservationCollectorTests(unittest.TestCase):
             self.before_io(scan, method, params, timeout_seconds)
             if method == 'getAccountInfo' and params[0] == mint:
                 return {
-                    'context': {'slot': 100}, 'value': copy.deepcopy(self.protocol.rpc('getMultipleAccounts', [])['value'][6]),
+                    'context': {'slot': 100}, 'value': copy.deepcopy(protocol.rpc('getMultipleAccounts', [])['value'][6]),
                     'unknown_rpc_field': {'retained': True}}
-            return copy.deepcopy(self.protocol.rpc(method, params))
+            return copy.deepcopy(protocol.rpc(method, params))
         def quote(input_mint, output_mint, amount, taker, *, timeout_seconds):
             self.before_io(scan, 'quote', [input_mint, output_mint, amount, taker], timeout_seconds)
             output = 2000000 if input_mint == SOL else 9000000
             response = {'inputMint': input_mint, 'outputMint': output_mint, 'inAmount': str(amount),
                         'outAmount': str(output), 'otherAmountThreshold': str(output-1),
                         'swapMode': 'ExactIn', 'slippageBps': 100,
-                        'routePlan': [{'percent': 100, 'swapInfo': {'ammKey': str(self.protocol.pool),
+                        'routePlan': [{'percent': 100, 'swapInfo': {'ammKey': str(protocol.pool),
                             'inputMint': input_mint, 'outputMint': output_mint,
                             'inAmount': str(amount), 'outAmount': str(output)}}],
                         'unknown_quote_field': ['unchanged', None]}
@@ -57,7 +58,7 @@ class PaperObservationCollectorTests(unittest.TestCase):
                     'request': {'inputMint': input_mint, 'outputMint': output_mint, 'amount': str(amount),
                                 'taker': taker, 'slippageBps': '100'}}
         self.sources[scan] = BoundedSource('fixture-protocol-rpc', 'fixture-protocol-quote', rpc, quote)
-        return ObservationTarget(scan, mint, str(self.protocol.pool), self.taker, quantity)
+        return ObservationTarget(scan, mint, str(protocol.pool), self.taker, quantity)
 
     def before_io(self, scan, method, params, timeout):
         self.assertGreater(timeout, 0)
@@ -238,3 +239,111 @@ class PaperObservationCollectorTests(unittest.TestCase):
         self.assertEqual(result.stopped_reason, 'PASS_DEADLINE_EXCEEDED')
         self.assertEqual(result.attempted_requests, 0)
         self.assertEqual(self.calls, [])
+
+    def other_target(self, seed=8):
+        # Distinct canonical fixture mint/pool: both jobs can remain ADMITTED
+        # through the ordinary daily-queue interface, without forged statuses.
+        from tests.test_pools import PoolTests
+        from desk.providers import PUMP, PUMPSWAP
+        from desk.pools import ATA
+        from desk.security import TOKEN_PROGRAM
+        protocol = PoolTests(); protocol.setUp(); pubkey = protocol.Pubkey
+        protocol.mint = pubkey.from_bytes(bytes([seed])*32)
+        protocol.creator = pubkey.find_program_address([b'pool-authority', bytes(protocol.mint)], pubkey.from_string(PUMP))[0]
+        protocol.pool, protocol.bump = pubkey.find_program_address([b'pool', bytes(2), bytes(protocol.creator),
+            bytes(protocol.mint), bytes(pubkey.from_string(SOL))], pubkey.from_string(PUMPSWAP))
+        protocol.lp = pubkey.find_program_address([b'pool_lp_mint', bytes(protocol.pool)], pubkey.from_string(PUMPSWAP))[0]
+        protocol.vaults = [pubkey.find_program_address([bytes(protocol.pool), bytes(pubkey.from_string(TOKEN_PROGRAM)),
+            bytes(mint)], pubkey.from_string(ATA))[0] for mint in (protocol.mint, pubkey.from_string(SOL))]
+        protocol.raw = protocol.raw[:8] + bytes([protocol.bump]) + bytes(2) + b''.join(bytes(key) for key in
+            (protocol.creator, protocol.mint, pubkey.from_string(SOL), protocol.lp, *protocol.vaults)) + protocol.raw[203:]
+        return self.target(protocol=protocol)
+
+    def prepare_finalizer(self, target):
+        source = self.jobs.source(target.scan_id)
+        admission = self.progress.admission(target.scan_id)
+        report = {'mint': target.mint, 'eligible_for_trading': False, 'calls': admission['requests_used']}
+        report['report_hash'] = digest(report)
+        source.update(status='COMPLETE', result=canonical(report))
+        self.progress.prepare_source(target.scan_id, admission['descriptor_hash'], source)
+
+    def test_completion_clock_exception_keeps_exact_returned_response_and_stops(self):
+        position = self.target(1234567); candidate = self.other_target()
+        source = self.sources[position.scan_id]; returned = []
+        def rpc(*args, **kwargs):
+            response = source.rpc(*args, **kwargs); returned.append(copy.deepcopy(response)); return response
+        self.sources[position.scan_id] = BoundedSource(source.rpc_source_id, source.quote_source_id, rpc, source.quote)
+        def completion_clock():
+            if returned: raise OSError('SECRET_COMPLETION_CLOCK=fixture-do-not-retain')
+            return self.at
+        result = collect_observations(jobs=self.jobs, progress=self.progress, sources=self.sources,
+            open_positions=(position,), candidates=(candidate,), wall_clock=completion_clock, monotonic=lambda: self.tick)
+        self.assertEqual(result.stopped_reason, 'ACQUISITION_CLOCK_UNAVAILABLE')
+        self.assertEqual(result.attempted_requests, 1)
+        self.assertEqual(len(self.calls), 1); self.assertEqual(len(result.observations), 1)
+        refs = result.observations[0].evidence_refs; self.assertEqual(len(refs), 1)
+        raw = self.progress.store.load(refs[0])
+        self.assertIsNone(raw['acquired_at']); self.assertEqual(raw['started_at'], self.at)
+        self.assertEqual(raw['result'], returned[0])
+        self.assertEqual(raw['result']['value']['data'], returned[0]['value']['data'])
+        self.assertNotIn('SECRET_COMPLETION_CLOCK', canonical(raw) + repr(result))
+        self.assertEqual(self.progress.admission(position.scan_id)['requests_used'], 1)
+        self.assertEqual(self.progress.admission(candidate.scan_id)['requests_used'], 0)
+        self.assertIsNone(result.observations[0].mint)
+
+    def test_post_io_finalizer_preparation_stops_batch_and_preserves_response(self):
+        position = self.target(1234567); candidate = self.other_target()
+        source = self.sources[position.scan_id]; returned = []
+        def finalized_rpc(*args, **kwargs):
+            response = source.rpc(*args, **kwargs); returned.append(copy.deepcopy(response))
+            self.prepare_finalizer(position)
+            return response
+        self.sources[position.scan_id] = BoundedSource(source.rpc_source_id, source.quote_source_id, finalized_rpc, source.quote)
+        result = self.collect(open_positions=(position,), candidates=(candidate,))
+        self.assertEqual(result.stopped_reason, 'PERSISTED_ADMISSION_REQUIRED')
+        self.assertEqual(result.attempted_requests, 1)
+        self.assertEqual(len(result.observations), 1); self.assertEqual(len(self.calls), 1)
+        raw = self.progress.store.load(result.observations[0].evidence_refs[0])
+        self.assertEqual(raw['result'], returned[0])
+        self.assertEqual(self.progress.admission(position.scan_id)['state'], 'PREPARED')
+        self.assertEqual(self.progress.admission(position.scan_id)['requests_used'], 1)
+        self.assertEqual(self.progress.admission(candidate.scan_id)['requests_used'], 0)
+
+    def test_admission_transition_before_next_io_also_stops_batch(self):
+        import desk.paper_observation_collector as module
+        position = self.target(1234567); candidate = self.other_target()
+        original = module._admission; checks = []
+        def transition_after_check(*args):
+            result = original(*args); checks.append(True)
+            if len(checks) == 3: self.prepare_finalizer(position)
+            return result
+        with patch.object(module, '_admission', side_effect=transition_after_check):
+            result = self.collect(open_positions=(position,), candidates=(candidate,))
+        self.assertEqual(result.stopped_reason, 'PERSISTED_ADMISSION_REQUIRED')
+        self.assertEqual(result.attempted_requests, 1)
+        self.assertIsNotNone(result.observations[0].mint)
+        self.assertEqual(len(self.calls), 1)
+        self.assertEqual(self.progress.admission(candidate.scan_id)['requests_used'], 0)
+
+    def test_initial_no_io_admission_rejection_can_still_collect_approved_target(self):
+        missing = self.target(1234567); candidate = self.other_target()
+        with self.progress.store.connect() as c:
+            c.execute('DELETE FROM ownership_admissions WHERE id=?', (missing.scan_id,))
+        result = self.collect(open_positions=(missing,), candidates=(candidate,))
+        self.assertIsNone(result.stopped_reason); self.assertEqual(result.attempted_requests, 4)
+        self.assertEqual(result.observations[0].failure, 'PERSISTED_ADMISSION_REQUIRED')
+        self.assertIsNone(result.observations[1].failure)
+        self.assertTrue(all(call[0] == candidate.scan_id for call in self.calls))
+        self.assertEqual(self.progress.admission(candidate.scan_id)['requests_used'], 4)
+
+    def test_admission_uncertainty_after_prior_success_blocks_remaining_candidates(self):
+        position = self.target(1234567); missing = self.other_target(); later = self.other_target(9)
+        with self.progress.store.connect() as c:
+            c.execute('DELETE FROM ownership_admissions WHERE id=?', (missing.scan_id,))
+        result = self.collect(open_positions=(position,), candidates=(missing, later))
+        self.assertEqual(result.stopped_reason, 'PERSISTED_ADMISSION_REQUIRED')
+        self.assertEqual(result.attempted_requests, 4); self.assertEqual(len(result.observations), 2)
+        self.assertIsNone(result.observations[0].failure)
+        self.assertEqual(result.observations[1].failure, 'PERSISTED_ADMISSION_REQUIRED')
+        self.assertTrue(all(call[0] == position.scan_id for call in self.calls))
+        self.assertEqual(self.progress.admission(later.scan_id)['requests_used'], 0)

@@ -104,6 +104,8 @@ def collect_observations(*, jobs: JobPersistence, progress: HistoryProgress,
     exactly one charged I/O, with no internal retry/fallback/discovery. Timeout is
     cooperative: a callable ignoring it cannot be preempted by this synchronous
     collector; late responses are saved but rejected, and no later I/O is allowed.
+    Admission uncertainty after any I/O stops the batch; missing admissions
+    before all I/O remain target rejections.
     At most 18 input targets and 18 wrapper invocations per pass are allowed.
     Returned quotes/spot marks never assert fill or event eligibility. SOL/USDC
     quotes alone cannot establish USD valuation; no peg is assumed.
@@ -174,6 +176,11 @@ def collect_observations(*, jobs: JobPersistence, progress: HistoryProgress,
                     completed = timestamp()
                 except _Blocked as error:
                     completed = None; clock_failure = error
+                except Exception:
+                    # The response already returned: retain it with unknown time
+                    # even if the injected completion clock itself raises.
+                    completed = None
+                    clock_failure = _Blocked('ACQUISITION_CLOCK_UNAVAILABLE', True)
                 if completed is not None and completed < at:
                     clock_failure = _Blocked('ACQUISITION_CLOCK_REGRESSED', True)
                 envelope = {'source_id': source.quote_source_id if kind == 'jupiter_probe' else source.rpc_source_id, 'acquired_at': completed,
@@ -231,7 +238,10 @@ def collect_observations(*, jobs: JobPersistence, progress: HistoryProgress,
             remaining()
         except _Blocked as error:
             failure = error.code
-            if error.stop: stopped = error.code
+            if error.stop or (attempted > 0 and error.code == 'PERSISTED_ADMISSION_REQUIRED'):
+                # After collection starts, admission uncertainty is batch-wide;
+                # it cannot authorize a healthy replacement on another target.
+                stopped = error.code
         except Exception:
             failure = 'SOURCE_CONTENT_REJECTED'
             # Invalid/ambiguous raw content must not trigger a healthy retry.
