@@ -5313,7 +5313,7 @@
             "http403_retirement": {
               "owner": "07",
               "reviewer": "09",
-              "status": "BOTH_CI_PASS_INTEGRATING",
+              "status": "INTEGRATED_STAGED_FINAL_TESTS_RUNNING",
               "scope": "Definitive retained Price403 read-only failed pass append-only retirement; originalNULL/charges/context preserved; rejectedcandidate neverretried; ambiguousI/O blocked",
               "worker_thread": "01a118fd-0f1c-749c-b85b-5e730937d0a8",
               "review_thread": "01a118fd-3f90-77d9-9549-c4497f5b10a6",
@@ -5350,9 +5350,16 @@
                 "head": "df444803bda0d9830444c0168dde59e84132e1b9",
                 "unit": "desk-fixture-df44480",
                 "invocation": "2d88b8bebe2442a5a52d52b842a9b178",
-                "status": "RUNNING",
+                "status": "FAILED_TEST_SCRATCH_READONLY_RETRY_RUNNING",
                 "network": "PrivateNetwork",
-                "production_data": "InaccessiblePaths=/var/lib/solana-desk"
+                "production_data": "InaccessiblePaths=/var/lib/solana-desk",
+                "tests": 2670,
+                "seconds": 974.513,
+                "errors": 414,
+                "error": "All414 OSError read-only release/work directory; no application assertion failures observed",
+                "retry_unit": "desk-fixture-df44480-retry",
+                "retry_invocation": "e3cfcfc5de0e43a5b67b7aff27fc23fa",
+                "repair": "Writable service-owned release/work plus TMPDIR; production data remains inaccessible and network private"
               },
               "runtime_edge_review": {
                 "reviewer": "03",
@@ -5383,18 +5390,18 @@
               "preservation_helper": {
                 "owner": "06",
                 "turn": "01a12279-b42c-77cd-8115-e9f2233b773e",
-                "status": "GENERATED_ALIAS_FIXED_FINAL_REVIEW_RUNNING",
+                "status": "REVIEW_AND_BOTH_CI_PASS_INTEGRATING",
                 "scope": "Ten database original schema+rows unchanged; only exact first runtime and HTTP403 append-only certificates",
                 "pr": 181,
                 "head": "707f2f1cf16227a1123c2ea9ebcb3d2961d6d73b",
                 "attachment_error": "App limit100; not retried",
                 "root_focused_tests": 9,
-                "root_seconds": 0.461,
+                "root_seconds": 0.723,
                 "reviewer": "03",
-                "review_turn": "01a1227c-a4cc-7704-9d9f-94f7b639ed46",
+                "review_turn": "01a12282-bdf6-779f-8011-78b6670353cd",
                 "ci_runs": [
-                  37991594602,
-                  37991589261
+                  37991910765,
+                  37991904404
                 ],
                 "previous_rejected_head": "f30bbcbf3fff3c5fdad3d31acb76d70c93d0e0d4",
                 "review_history": [
@@ -5408,6 +5415,14 @@
                     "finding": "Generated alias omitted by table_info",
                     "turn": "01a1227f-cd3e-72e8-9332-666d2505ec88"
                   }
+                ],
+                "review_tests": 15,
+                "review_seconds": 1.582,
+                "root_tests": 15,
+                "ci_tests": 2685,
+                "ci_seconds": [
+                  686.206,
+                  841.452
                 ]
               },
               "final_validator_review": {
@@ -5425,7 +5440,29 @@
               "ci_seconds": [
                 595.663,
                 869.942
-              ]
+              ],
+              "integration_head": "96ebcf1647fb4653f7c70f3e26af1aa8ab15f599",
+              "integration_ci": [
+                37992067062,
+                37992061704
+              ],
+              "invocation_wrapper_review": {
+                "reviewer": "09",
+                "turn": "01a12284-2f6d-7585-8580-db1b47019efb",
+                "result": "CONDITIONAL_PASS",
+                "path": "work/apply-http403-reviewed.py"
+              },
+              "integration_first_ci_pass": {
+                "run": 37992067062,
+                "tests": 2670,
+                "seconds": 732.839
+              },
+              "quiescence_review": {
+                "owner": "06",
+                "turn": "01a1228d-f5ea-73ba-b2ba-fb87642727b0",
+                "result": "PASS_ZERO_POSITIONS_AND_RESEARCH_LOCK_FENCED_SHUTDOWN",
+                "helper": "work/quiesce-http403-reviewed.py"
+              }
             },
             "last_actionable_check": {
               "at": "2026-10-09T20:54:00Z",
