@@ -42,6 +42,10 @@ def decode(payload):
     tx, meta = container.get('transaction'), container.get('meta')
     if not isinstance(tx, dict) or not isinstance(meta, dict) or 'err' not in meta:
         raise ValueError('missing transaction metadata')
+    parsed_v1 = type(container.get('version')) is int and container['version'] == 1
+    if parsed_v1:
+        from .parsed_v1 import validate
+        validate(container)
     signatures = tx.get('signatures', [])
     signature = envelope.get('signature') or (signatures[0] if signatures else None)
     if not signature or (signatures and signatures[0] != signature):
@@ -52,6 +56,9 @@ def decode(payload):
               'status': 'FAILED' if meta['err'] is not None else 'OBSERVED',
               'token_deltas': [], 'transfers': [], 'mint_initializations': [], 'token_account_initializations': [], 'token_supply_changes': [], 'token_account_closures': [], 'token_control_operations': [], 'program_observations': [],
               'limitations': ['HISTORY_INCOMPLETE', 'NOT_TRADE_EVIDENCE']}
+    if parsed_v1:
+        result['limitations'].extend(['V1_JSONPARSED_STRUCTURE_NOT_AUTHENTICATED',
+                                      'RPC_PRIVILEGES_MAY_BE_DEMOTED_NOT_CPI_AUTHORITY'])
     if meta['err'] is not None:
         return result  # Failed instructions must never create funding links.
     message = tx['message']
@@ -60,7 +67,7 @@ def decode(payload):
     if not isinstance(values,list):raise ValueError('Missing account keys')
     compiled = (bool(values) or 'header' in message) and all(isinstance(k,str) for k in values)
     version = container.get('version')
-    if 'version' in container and version != 'legacy' and not (type(version) is int and version == 0):
+    if 'version' in container and version != 'legacy' and not (type(version) is int and version == 0) and not parsed_v1:
         raise ValueError('Unsupported transaction version')
     if compiled:
         keys, privileges = compiled_keys(message,meta,version,signatures)

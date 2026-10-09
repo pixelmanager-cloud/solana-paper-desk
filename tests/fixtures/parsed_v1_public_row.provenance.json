@@ -1,0 +1,22 @@
+{
+  "scope": "PUBLIC_RETAINED_JSONPARSED_OBSERVATION_NOT_AUTHENTICATED_WIRE_OR_RUNTIME",
+  "coordinator_attestation": "Root loaded retained page through digest-verifying EvidenceStore and supplied row 6 in the task. This cloud worker transcribed that supplied JSON; no VPS/provider access or independent signature/finality authentication.",
+  "retained_page_digest": "620b1de88e24e56648352bea0907219935ab54739072261a83a8fcab1ce0c1f3",
+  "row_index": 6,
+  "slot": 454959916,
+  "row_model_digest": "bdb59f95de4018ad7d01091d2d0aa5e7365254e2c1387401d7018394f146803d",
+  "sdk_commit": "891412dceb0a7d3d4116ac295eef519882138090",
+  "primary_references": [
+    "https://github.com/anza-xyz/solana-sdk/blob/891412dceb0a7d3d4116ac295eef519882138090/message/src/versions/v1/mod.rs",
+    "https://github.com/anza-xyz/solana-sdk/blob/891412dceb0a7d3d4116ac295eef519882138090/message/src/versions/v1/config.rs",
+    "https://github.com/anza-xyz/solana-sdk/blob/891412dceb0a7d3d4116ac295eef519882138090/message/src/versions/v1/message.rs",
+    "https://solana.com/docs/rpc/json-structures"
+  ],
+  "supported_subset": "Explicit parsed static roster, no header/ALT/loaded addresses, exact four-field nullable config, bounded complete balance/inner arrays and explicit stack heights. Provider writable flags may be runtime-demoted; they do not reconstruct signed header ordering or CPI privileges. Encoded authorities need not appear in static keys.",
+  "failed_records": "Valid supported parsed-v1 failures return FAILED and no funding/accounting/program links; malformed or compiled-v1 failures reject before observation creation. This conservative v1-only rule preserves legacy/v0 early-return behavior.",
+  "wire_limit": "Visible wire fields provide only a 4096-byte lower-bound check; parsed instruction bytes and exact signed wire are unavailable. JSON diagnostic depth/node/UTF8 bounds are separate from canonical wire limits.",
+  "source_authenticated": false,
+  "finality_authenticated": false,
+  "cpi_authority_verified": false,
+  "entry_authorized": false
+}
