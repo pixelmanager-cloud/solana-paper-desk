@@ -1,5 +1,5 @@
 {
-  "status": "LIVE_PAPER_COMPATIBILITY_FIXES_IN_PROGRESS_NO_BUY",
+  "status": "PROFILE2_NATIVE_HELD_CYCLE_PERFORMANCE_REPAIR_NO_LIVE_BUY",
   "repository": "https://github.com/pixelmanager-cloud/solana-paper-desk",
   "cloud_environment": {
     "name": "solana-paper-desk",
@@ -4738,7 +4738,7 @@
                 "owner": "08",
                 "thread_id": "01a118fd-2563-7126-90d7-bd07693de0b2",
                 "turn_id": "01a1220b-6e68-7719-8c7b-9d9b4f927198",
-                "status": "INDEPENDENT_PASS_CI_PENDING",
+                "status": "INDEPENDENT_PASS_BOTH_CI_PASS",
                 "scope": "Complete explicit paper-only boosted pool pricing/spendable reserve/physical payout compatibility; preserve old profiles, gates and retired scans",
                 "base": "5cbd0da982c71914241265110d9152d5387ef204",
                 "diagnosis_turn": "01a12207-517d-73b9-9b10-b67dbd81ccc7",
@@ -4772,7 +4772,23 @@
                   "tests": 14,
                   "seconds": 7.863,
                   "result": "PASS"
-                }
+                },
+                "ci_success": [
+                  37980993873,
+                  37981003380
+                ],
+                "ci_results": [
+                  {
+                    "id": 37980993873,
+                    "tests": 2623,
+                    "seconds": 607.959
+                  },
+                  {
+                    "id": 37981003380,
+                    "tests": 2623,
+                    "seconds": 772.079
+                  }
+                ]
               },
               {
                 "owner": "02",
@@ -4787,7 +4803,7 @@
                 "owner": "01",
                 "thread_id": "01a118fc-39bc-722c-b442-8bf5a749e0bb",
                 "turn_id": "01a1220d-d482-76ab-b798-9adc185ce03f",
-                "status": "INDEPENDENT_PASS_CI_PENDING",
+                "status": "INDEPENDENT_PASS_BOTH_CI_PASS",
                 "scope": "Canonical version1 successful jsonParsed history semantics, authentic retained row; no whitelist-only fix",
                 "diagnosis_turn": "01a1220b-5e50-71a5-a80a-10e55e8222ef",
                 "pr": 175,
@@ -4818,6 +4834,18 @@
                 "ci_success": [
                   37979699711,
                   37979708246
+                ],
+                "ci_results": [
+                  {
+                    "id": 37979699711,
+                    "tests": 2629,
+                    "seconds": 536.113
+                  },
+                  {
+                    "id": 37979708246,
+                    "tests": 2629,
+                    "seconds": 681.649
+                  }
                 ]
               },
               {
@@ -4846,7 +4874,7 @@
                 "owner": "07",
                 "thread_id": "01a118fd-0f1c-749c-b85b-5e730937d0a8",
                 "turn_id": "01a12210-930b-77bf-8971-ce6a1837290d",
-                "status": "INDEPENDENT_PASS_CI_PENDING",
+                "status": "INDEPENDENT_PASS_BOTH_CI_PASS",
                 "scope": "Bounded append-only successor monitoring context preserving historical terminalproof and globalaccounting",
                 "pr": 176,
                 "head": "ea6d6a9209f7b8d7c8720fd3ac0f3a372cc124aa",
@@ -4864,6 +4892,18 @@
                 "ci_success": [
                   37979835826,
                   37979772693
+                ],
+                "ci_results": [
+                  {
+                    "id": 37979835826,
+                    "tests": 2619,
+                    "seconds": 773.867
+                  },
+                  {
+                    "id": 37979772693,
+                    "tests": 2619,
+                    "seconds": 772.981
+                  }
                 ]
               },
               {
@@ -4876,10 +4916,29 @@
               {
                 "owner": "04",
                 "thread_id": "01a118fc-b862-7340-ab3a-e1115a3280a4",
-                "status": "COMPOSITION_FIXTURE_ACTIVE_AWAIT_REPAIRED_174",
+                "status": "LOCAL_NATIVE_PASS_SERIAL_VPS_PENDING",
                 "scope": "tests/test_profile2_runtime_composition.py only; oldcerts+nonzerousage+distinctprofile2BUYSELLrestart",
                 "turn_id": "01a1221f-bddf-76c8-bc20-87906859cb76",
-                "latest_known_turn": "01a1221d-0bcd-745c-81b3-ad2dfed403aa"
+                "latest_known_turn": "01a1221d-0bcd-745c-81b3-ad2dfed403aa",
+                "pr": 177,
+                "head": "72cd2eec30f0e6f80cef3bb431cf4d065b028aba",
+                "structural_review": {
+                  "reviewer": "09",
+                  "turn": "01a12231-9ea4-77cf-81a0-7cce41d26116",
+                  "result": "PASS_NOT_LIFECYCLE_PASS"
+                },
+                "cloud_focused": {
+                  "result": "FAIL_STALE_MOMENTUM",
+                  "seconds": 74.187,
+                  "age_seconds": 17,
+                  "unchanged_ttl_seconds": 15
+                },
+                "root_native_focused": {
+                  "result": "PASS",
+                  "seconds": 43.782,
+                  "tests": 1
+                },
+                "attachment_error": "thread attachment identity count exceeds100"
               }
             ],
             "new_pr_attachment_errors": {
@@ -4902,8 +4961,14 @@
               "source": "229cf8eccb99e2a2f5fad9dcf55c04061762861319c7ebdbe42ade2b8394f068",
               "unit": "desk-fixture-7663ece",
               "invocation": "e6f84986ed6a4af2a27b7c0742e2089e",
-              "status": "RUNNING_INACTIVE_RELEASE_FIXTURES_ONLY",
-              "composition_fixture_pending": true
+              "status": "FAILED_HARNESS_PERMISSIONS",
+              "composition_fixture_pending": true,
+              "tests": 2653,
+              "seconds": 845.696,
+              "errors": 414,
+              "exception": "All414 PermissionError creating staged release/work",
+              "production_changed": false,
+              "fix": "Provision service-owned0700 scratchwork directory; final72cd2ee serialfixture thenfullsuite"
             },
             "profile2_configuration_review": {
               "hash": "c8156792b153b4f0193cbfb7b6d7ac6507e223eca41ac64e6028af05c36397c9",
@@ -4918,6 +4983,52 @@
               "result": "CONDITIONAL_PASS_INVENTORY_COLLISION_FIXED",
               "fix": "Reject duplicate schema object names before dict comparisons",
               "production_executed": false
+            },
+            "local_backup_helper_review": {
+              "reviewer": "06",
+              "turn": "01a1222e-5d91-744d-a714-6b4c5cedc567",
+              "result": "CONDITIONAL_PASS_PATH_AND_CARDINALITY_FIXES_APPLIED",
+              "production_executed": false
+            },
+            "local_deployment_helper_hashes": {
+              "work/plan-profile2-successor.py": "94bf5af2aee451bc032b93ab274e1ef78db40e7021fc5a12ab867be3249d759c",
+              "work/verify-profile2-originals.py": "17445143cff67b58b7b5fe96c9a12998384537bb9fb59669e5eb27f48f233626",
+              "work/backup-profile2-transition.py": "da98decd4949b988fb9ce3bdfc62a8507fb0c336b2ce111871d617a5bf8c7358"
+            },
+            "serial_vps_fixture": {
+              "head": "72cd2eec30f0e6f80cef3bb431cf4d065b028aba",
+              "unit": "desk-profile2-native-72cd2ee",
+              "invocation": "fc8d0a301cf44273b4e2375d74c510a0",
+              "status": "FAIL_RUNTIME_DEADLINE_AFTER_BUY",
+              "seconds": 55.776,
+              "held_seconds": 15.105,
+              "monitor_reads": 3,
+              "blocker": "CYCLE_DEADLINE_UNAVAILABLE",
+              "cpu_seconds": 38.298
+            },
+            "performance_repair": {
+              "owner": "07",
+              "reviewer": "03",
+              "base": "72cd2eec30f0e6f80cef3bb431cf4d065b028aba",
+              "status": "ASSIGNED",
+              "scope": "Profile and optimize repeated validation without weakening deadline,TTL,pacing,accounting or evidence",
+              "production_changed": false,
+              "turn": "01a12238-25c0-7795-934e-e1d983a5317d",
+              "review_turn": "01a12238-3685-7189-b7c5-30752e5fabbc"
+            },
+            "vps_profile": {
+              "unit": "desk-profile2-profile-72cd2ee",
+              "invocation": "2f59feedcc6b4e459938de90b5d3c8a9",
+              "result": "FAIL_DEADLINE_EXCEEDED",
+              "seconds": 64.822,
+              "held_seconds": 17.449,
+              "reads": 3,
+              "wrapper_exit": 0,
+              "note": "cProfile exit masked unittestfailure; journal authoritative; incorrectworkerPASSmessage immediatelycorrected",
+              "source_hash_calls": 364,
+              "source_hash_seconds": 21.471,
+              "validate_active_calls": 96,
+              "validate_active_cumulative_seconds": 26.414
             }
           }
         }
