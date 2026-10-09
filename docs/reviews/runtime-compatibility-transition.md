@@ -93,3 +93,15 @@ with correct guards, and oversized suffix preflight before materialization.
 The intermediate full rerun was stopped for these concrete findings; no PASS is
 claimed for that abandoned run. Focused repair checks41tests22.280s passed; final
 source full-suite validation is pending frozen repair review.
+
+Final frozen implementation validation at `965a2b1f62f92980805eb6b2bbc9f6750b381e10`
+(tree `7c1cf686b4799c58bebb08158482c71def97b10a`): Python3.12.14/Linux
+`python -m unittest discover -q` passed **2,370 tests in283.572s, zero skips**.
+Desk hash `912130548079d233e80c1d978288e830cb4126362afbc3222e0c60283dabc27c`.
+Manifest SHA256 `945887b0d26a3dea23c7b84d8a82e448d764864ad5a227656aa4d017fa0d9c48`;
+full-log SHA256 `36857b4b9e3ec694368552986c3463c0ff2a2448fc8e18998bce2b56262554c6`.
+This report-only follow-up does not alter any tested desk/test/fixture/policy blob.
+Unresolved: independently accepted worker01 resolver/allowance-policy composition,
+exact combined successor allowlist pin with unchanged production config digest,
+coordinator explicit transition and local saved-record verification. No production
+transition, live fill, source authentication or paper readiness is claimed.
