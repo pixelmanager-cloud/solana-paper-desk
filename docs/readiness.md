@@ -24,7 +24,7 @@ The user explicitly approved bounded continuous discovery: pause at 100,000,000 
 
 The user also authorized paper entry-eligibility tuning to search for profitable settings. Worker03 is building an offline versioned experiment evaluator and threshold-proposal foundation. Actual closed-trade evidence, chronological holdout, recorded costs and explicit insufficient-data outcomes are required; rejected candidates have no invented trade results. Safety, source integrity, capital/exposure and provider budgets remain fixed. No tuner is active and no profitable configuration has been established.
 
-The user authorized increasing downstream capacity. Coordinator selected 100 investigation admissions/day, queue10, and 600 monitoring requests/rolling hour; per-investigation lifetime18 remains. Worker01 implements the explicit durable upgrade and worker04 reviews it. Existing10/3/60 remain active until reviewed migration preserves charged usage, source identity, originals and recovery state. No counter reset or silent escalation is authorized.
+The user authorized increasing downstream capacity. Coordinator initially selected100/day,queue10,monitor600/hour; the user then requested a further increase, and the current targets are1,000 investigation admissions/day,queue25,and3,600 monitoring requests/rolling hour; per-investigation lifetime18 remains. Worker01 implements the explicit durable upgrade and worker04 reviews it. Existing10/3/60 remain active until reviewed migration preserves charged usage, source identity, originals and recovery state. No counter reset or silent escalation is authorized.
 
 ## Paper-loop priority update — 2026-10-09
 

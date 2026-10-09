@@ -2966,11 +2966,11 @@
     },
     "downstream_allowance_upgrade": {
       "status": "IMPLEMENTATION_AND_INDEPENDENT_PREFLIGHT_DISPATCHED",
-      "authorization": "User: Pump of those downstream limits as well. Coordinator selected 100 admissions/day, queue10, monitoring600/hour.",
+      "authorization": "User explicitly requested another increase beyond100/day and600/hour. Coordinator targets1000/day,queue25,monitor3600/hour; ceilings subject to provider pacing.",
       "limits": {
-        "daily_admissions": 100,
-        "queue": 10,
-        "monitoring_requests_rolling_hour": 600,
+        "daily_admissions": 1000,
+        "queue": 25,
+        "monitoring_requests_rolling_hour": 3600,
         "investigation_lifetime_requests_unchanged": 18
       },
       "worker": "01",
@@ -2985,7 +2985,13 @@
       },
       "constraints": "Explicit durable upgrade only; no counter reset, reprovision, forged source identity, historical evidence or checkpoint rewrite. Existing defaults do not silently escalate. Runtime compatibility required.",
       "deployment": "Not active; original10/3/60 remain until independent review/fullLinux/CI and safe coordinator upgrade",
-      "preflight": "Complete; author notified: versioned receipt policy cutoff, old+new rolling usage, explicit pinned runtime successor compatibility preserving original metadata/checkpoints, atomic idempotent upgrade"
+      "preflight": "Complete; author notified: versioned receipt policy cutoff, old+new rolling usage, explicit pinned runtime successor compatibility preserving original metadata/checkpoints, atomic idempotent upgrade",
+      "pacing": "Shared provider pacing required; heldpositions priority; no assumed paid tier, uncharged retry or provider purchase. Existing usage retained.",
+      "supersedes": {
+        "daily_admissions": 100,
+        "queue": 10,
+        "monitoring_requests_rolling_hour": 600
+      }
     }
   },
   "native_reconciliation_review": {
