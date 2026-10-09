@@ -3097,7 +3097,7 @@
       "source_identity": "Only coordinator queue/readiness differ from independent exacthead"
     },
     "downstream_allowance_upgrade": {
-      "status": "INTEGRATED_AWAITING_INTEGRATION_CI",
+      "status": "DEPLOYMENT_HELD_PACING_RACE_CI_FAILURE",
       "authorization": "User explicitly requested another increase beyond100/day and600/hour. Coordinator targets1000/day,queue25,monitor3600/hour; ceilings subject to provider pacing.",
       "limits": {
         "daily_admissions": 1000,
@@ -3238,7 +3238,37 @@
         "seconds": 588.54
       },
       "integration_commit": "5baa47bff2b1b613827551594642c9b89136f5e5",
-      "source_match": "Frozen96c7b055 exact except coordinator queue/readiness and separately independently reviewed external transition pin"
+      "source_match": "Frozen96c7b055 exact except coordinator queue/readiness and separately independently reviewed external transition pin",
+      "integration_ci": {
+        "head": "358109813fa302569543de213d44e66889979de7",
+        "runs": [
+          37932061735,
+          37932054540
+        ],
+        "status": "RUN37932054540_FAILED_PACING_MULTIPROCESS_RACE"
+      },
+      "deployment_preflight": {
+        "worker": "10",
+        "thread_id": "01a118fd-56d5-70b8-ad31-dba13e982082",
+        "turn_id": "01a120b1-fa8f-711a-861e-ccc32d284a2f",
+        "cursor": "e6039648-56af-4049-8a6e-06eaaa8aba52:57",
+        "status": "PASS_WITH_OPERATOR_PREREQUISITES",
+        "actual_service_config_check": "Watchdog and held-cycle already use correct /etc/solana-paper/paper-quote-reviewed.json; no ExecStartPre blocker in effective units. Preserve existing commands. Discovery is isolated and old sampler disabled."
+      },
+      "release_stage": {
+        "head": "358109813fa302569543de213d44e66889979de7",
+        "path": "/opt/solana-desk-releases/3581098",
+        "archive_sha256": "a1118a66554f0cbad203c8917464b08f6352e015e8e317b133743f025c9ca80c",
+        "implementation_hash": "8098b4033adff886006e2f6af5ccb0ce4bfa02e242f5fb1b4c7402c05ddaa8c9",
+        "status": "STAGED_NOT_ACTIVATED"
+      },
+      "ci_repair": {
+        "author_thread": "01a118fc-f867-7233-8eec-c20659e70095",
+        "review_thread": "01a118fd-3f90-77d9-9549-c4497f5b10a6",
+        "base": "358109813fa302569543de213d44e66889979de7",
+        "failure": "test_multiprocess_slot_race_actual_spacing_and_restart_death line141: one child PacingError; other OK. Full2454tests309.411s onefailure. VPSsame frozen code2454passed. Diagnose rather than blind retry.",
+        "status": "ASSIGNED"
+      }
     },
     "discovery_policy_combined_review": {
       "prs": {
