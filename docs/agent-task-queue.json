@@ -1895,13 +1895,13 @@
     "current_worker_followups": {
       "01": "136 frozen under03 review",
       "02": "Independent135 migration witness review",
-      "03": "Independent136 labels then ready08cycle review",
+      "03": "136 scopedPASS; ready for08 cycle exactreview",
       "04": "Complete130 review then134 raw mint handoff exact-head review",
       "05": "Platformblocked97/110; not retried",
       "06": "134 frozen; reproduce/fix held-position exit-only observation on sell-only window or entry hazards; coordinate08, review04",
       "07": "Independent137 checkpoint and finalquote/accounting Linux",
       "08": "Resume one-cycle orchestration on130/131 contracts, no budget expansion",
-      "09": "Coordinate08 callable contract for separate manual CLI wrapper;135 under02 review",
+      "09": "Repair135 scoped contradictory migration event; then08 operator wrapper contract",
       "10": "137 frozen under07 review"
     },
     "paper_live_foundation_candidate": {
@@ -2160,18 +2160,22 @@
     },
     "pending_pr135": {
       "head": "30b4b3fea134afb667863f6bd870df31d6b02506",
-      "status": "INDEPENDENT_REVIEW02",
+      "status": "CHANGES_REQUESTED02_REPAIR09",
       "author": "09",
       "reviewer": "02",
       "scope": "Retained raw migration witness extractor; runtime trusted source binding still required",
-      "linux_author_tests": 2143
+      "linux_author_tests": 2143,
+      "finding": "Wrong-mint event scoped to target migration instruction silently skipped; contradictory evidence must reject"
     },
     "pending_pr136": {
       "head": "d6e4a18eb3efdd0c31ab89648b14f343165e11bc",
-      "status": "INDEPENDENT_REVIEW03",
+      "status": "SCOPED_PASS03_FINAL_COMBINATION_PENDING",
       "author": "01",
       "reviewer": "03",
-      "scope": "Visible unverified quote execution assumptions and retained risks"
+      "scope": "Visible unverified quote execution assumptions and retained risks",
+      "focused_tests": 34,
+      "independent_probes": 3,
+      "reviewed_tree": "71b6fed8d516fd1aeffacc147d80cd6f26dacf31"
     },
     "pending_pr137": {
       "head": "2f90d6002c4f818765e126816a88f6497bdd7528",
