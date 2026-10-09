@@ -2976,9 +2976,11 @@
         "worker": "10",
         "thread_id": "01a118fd-56d5-70b8-ad31-dba13e982082",
         "turn_id": "01a12092-b0c4-749a-b258-6958c04b544f",
-        "cursor": "e6039648-56af-4049-8a6e-06eaaa8aba52:53",
-        "status": "REVIEW_RUNNING",
-        "scope": "Single-stream lifecycle, consistent backup and clean-completion-only restart"
+        "cursor": "e6039648-56af-4049-8a6e-06eaaa8aba52:54",
+        "status": "PASS_WITH_REQUIRED_OFFLINE_BACKUP",
+        "scope": "Single-stream lifecycle, consistent backup and clean-completion-only restart",
+        "review_url": "https://github.com/pixelmanager-cloud/solana-paper-desk/pull/151#issuecomment-6080663060",
+        "lifecycle": "Restart=no; coordinator inspect clean completion, offline verified backup, explicitly resume same DB; failure stays stopped"
       },
       "vps_stage": {
         "status": "FULL_FIXTURE_TESTS_RUNNING_NOT_ACTIVATED",
@@ -2986,7 +2988,12 @@
         "directory": "/opt/solana-desk-tools/discovery-dd09bb1",
         "archive_sha256": "1c009979663d1f48a023c508ec3a3c95fecd3c7d4e0ba6101e7c449099277b43",
         "test_log": "/var/tmp/discovery-dd09bb1-tests.log",
-        "provider_calls": 0
+        "provider_calls": 0,
+        "source_files_verified": 452,
+        "source_mismatches": 0,
+        "python": "3.12.3",
+        "websockets": "15.0.1",
+        "systemd_unit_validation": "PASS_NOT_INSTALLED"
       },
       "integration_commit": "bcac115cb0a61763eabe4992ddd4b2f2eeb91ee3",
       "ci": "Both exact-head CI runs SUCCESS after approved public visibility",
@@ -3083,7 +3090,7 @@
         "thread_id": "01a118fd-0f1c-749c-b85b-5e730937d0a8",
         "turn_id": "01a12076-8710-75c8-b56b-fac802a40aca",
         "cursor": "3dd79f38-868a-433f-9b14-13e7ed0a6e90:63",
-        "status": "FORWARD_FIXES_PENDING_REREVIEW",
+        "status": "CHANGES_REQUIRED_CONTEXT_LOCK_REPAIR",
         "scope": "Explicit exact predecessor-successor compatibility; preserve originals; no job or monitoring policy edits",
         "pr": 152,
         "head": "d0cfc34f167a39e814c400425640b5a91ec1ea85",
@@ -3091,15 +3098,32 @@
         "reviewer": {
           "worker": "02",
           "thread_id": "01a118fc-666c-70b6-9fa8-2c7520f0a0bb",
-          "turn_id": "01a12090-8604-74e8-aa79-cafe0752be58",
-          "cursor": "a2dcfb97-463d-4188-9da3-48a81e644d23:114"
+          "turn_id": "01a12097-c55a-7239-a9c6-e4a586ae0dbe",
+          "cursor": "a2dcfb97-463d-4188-9da3-48a81e644d23:119"
         },
         "findings": [
           "Post-transition malformed suffix grammar inconsistent acrossreaders",
-          "Same-name no-op triggers allow receipt mutation"
+          "Same-name no-op triggers allow receipt mutation",
+          "Genuine research/evidence locks bypassed using unrelated existing text files; ledger atomicity alone does not prove context quiescence"
         ],
         "implementation_head": "965a2b1f62f92980805eb6b2bbc9f6750b381e10",
-        "final_delta": "12 report lines only, root verified"
+        "final_delta": "12 report lines only, root verified",
+        "independent_result": {
+          "status": "HOLD_REOPENED",
+          "linux_tests": 2384,
+          "linux_skips": 0,
+          "linux_seconds": 292.712,
+          "tree": "cda2fc58b6e6d2e2600caa05fb29a485cc9e5ecf"
+        },
+        "combined_regression": {
+          "worker": "04",
+          "thread_id": "01a118fc-b862-7340-ab3a-e1115a3280a4",
+          "turn_id": "01a12097-7f00-761e-bf22-ced51442305f",
+          "cursor": "d3153436-2742-432e-8501-9c06b95f29ae:49",
+          "base": "a5bed0e68d8cfd72edcdf3033148e32b5a075068",
+          "head": "d0cfc34f167a39e814c400425640b5a91ec1ea85",
+          "status": "SUPERSEDED_STOP_REQUESTED"
+        }
       },
       "ownership_clarification": "01budgetpoliciesonly;07exclusive runtimecompatibility/readers. Duplicateintentcorrected immediately; overlapinterface requested.",
       "provider_pacing": {
@@ -3107,8 +3131,8 @@
         "thread_id": "01a118fc-f867-7233-8eec-c20659e70095",
         "status": "CHANGES_REQUIRED_REPAIR_REQUESTED",
         "scope": "Durable shared Helius/Jupiter pacing/backoff, heldpositionpriority, preserve callerbudget charges, no hidden retries",
-        "turn_id": "01a1207f-badc-7720-b415-aa1bc5476197",
-        "cursor": "8f3328cf-bef6-441d-83f8-2d1f46b3b0df:123",
+        "turn_id": "01a12095-5166-70e7-860c-efbe6d64b56e",
+        "cursor": "8f3328cf-bef6-441d-83f8-2d1f46b3b0df:124",
         "pr": 154,
         "head": "ecf143987c8b9063aee1178edf493cc8f1edcb95",
         "reviewer_worker": "09",
