@@ -129,7 +129,7 @@ def _pacing(path):
         if c.execute('SELECT 1 FROM waiters LIMIT 1').fetchone():raise ValueError('Provider waiter unresolved')
 
 
-def _ledger(c,cfg,*,initial):
+def _ledger(c,cfg,*,initial,historical_source=None):
     from .paper_cycle import INIT,MARKER
     from .engine import initial_state
     # Bounded shape before read_checkpoint fetches its original fields.
@@ -140,7 +140,12 @@ def _ledger(c,cfg,*,initial):
         raise ValueError('Terminal ledger configuration mismatch')
     shape=c.execute('SELECT COUNT(*),COALESCE(MAX(length(CAST(payload AS BLOB))),0) FROM state').fetchone()
     if shape[0]!=1 or not 0<shape[1]<=runtime.MAX_BYTES:raise ValueError('Terminal checkpoint bound')
-    state=read_checkpoint(c);runtime._history(c,metadata)
+    if historical_source is None:state=read_checkpoint(c)
+    else:
+        from .paper_checkpoint import validate_checkpoint
+        runtime.require_runtime(c,implementation=historical_source)
+        state=validate_checkpoint(c,c.execute('SELECT payload FROM state WHERE id=1').fetchone()[0])
+    runtime._history(c,metadata)
     if initial and (state!=initial_state(metadata) or c.execute('SELECT COUNT(*) FROM events').fetchone()[0]!=1
             or c.execute('SELECT COUNT(*) FROM outcomes').fetchone()[0]!=0
             or c.execute('SELECT event_id,payload_hash FROM events WHERE seq=1').fetchone()!=(INIT['event_id'],digest(INIT))):
@@ -299,17 +304,31 @@ def _monitoring(c, *, store=None, ledger=None, cfg=None, pacing=None):
     tables={x[0] for x in c.execute("SELECT name FROM sqlite_master WHERE type='table' AND name LIKE 'paper_monitoring_%'")}
     if not tables:return
     base={'paper_monitoring_budget','paper_monitoring_reservations','paper_monitoring_outcomes'}
-    permitted=base|{'paper_monitoring_context_handoff','paper_monitoring_allowance_upgrade'}
+    permitted=base|{'paper_monitoring_context_handoff','paper_monitoring_allowance_upgrade','paper_monitoring_context_successors'}
     if not base<=tables or not tables<=permitted:raise ValueError('Monitoring schema partial/unknown')
     if store is not None:
         from .monitoring_budget import MonitoringBudget
         from .evidence import EvidenceStore
         from .monitoring_handoff import read
         checked=EvidenceStore(store.path,read_only=True);checked.read_only=False
+        handoff=read(c)
+        if handoff:
+            from .monitoring_successor import active
+            tail=active(c,handoff)[0]
+            ledger=tail['context']['new_ledger_db'];pacing=tail['context']['pacing_db']
+            with closing(sqlite3.connect(Path(ledger).as_uri()+'?mode=ro',uri=True)) as current:
+                from .runtime_extensions import _metadata
+                cfg=runtime._parse(_metadata(current)['config'])
+        elif ledger is None:
+            row=c.execute('SELECT ledger FROM paper_monitoring_budget WHERE id=1').fetchone()
+            if row is None:raise ValueError('Monitoring identity missing')
+            ledger=row[0]
+            with closing(sqlite3.connect(Path(ledger).as_uri()+'?mode=ro',uri=True)) as current:
+                from .runtime_extensions import _metadata
+                cfg=runtime._parse(_metadata(current)['config'])
         budget=MonitoringBudget(checked,ledger,cfg)
         budget._checkpoint();budget._accounting(c)
-        handoff=read(c)
-        if handoff and handoff[0]['context']['pacing_db']!=pacing:raise ValueError('Original pacing context mismatch')
+        if pacing is not None:_pacing(pacing)
     if c.execute('SELECT 1 FROM paper_monitoring_budget WHERE blocked IS NOT NULL LIMIT 1').fetchone():raise ValueError('Monitoring latch unresolved')
     if c.execute('SELECT 1 FROM paper_monitoring_reservations r LEFT JOIN paper_monitoring_outcomes o ON o.reservation_id=r.id WHERE o.reservation_id IS NULL LIMIT 1').fetchone():raise ValueError('Monitoring transport unresolved')
 
@@ -407,11 +426,11 @@ def gate(store,research,scan_ids,*,ledger_locked=None):
         found=c.execute("SELECT 1 FROM sqlite_master WHERE type='table' AND name='paper_observation_passes'").fetchone()
         if not found:
             if _rows(c):raise ValueError('Original pass table missing')
-            _monitoring(c)
+            _monitoring(c,store=store)
             return None
         _passes(c)
         rows=_rows(c)
-        _monitoring(c)
+        _monitoring(c,store=store)
         pending=c.execute('SELECT id,intent_hash FROM paper_observation_passes WHERE outcome_hash IS NULL LIMIT 257').fetchall()
     if len(pending)>256:raise ValueError('Pending pass bound')
     certified={}
@@ -421,8 +440,18 @@ def gate(store,research,scan_ids,*,ledger_locked=None):
         with ExitStack() as stack:
             if ledger_locked!=str(path):
                 if not stack.enter_context(_lock(str(path)+'.paper-cycle.lock')):raise ValueError('Receipt ledger busy')
+            historical_source=None
+            with closing(store.connect()) as evidence:
+                from .monitoring_handoff import read as read_handoff
+                from .monitoring_successor import rows as successor_rows
+                first=read_handoff(evidence)
+                if first:
+                    history=successor_rows(evidence,first)
+                    retired=[first]+history
+                    matches=[edge for edge,_ in retired if edge['context']['old_ledger_db']==str(path) and edge['old_config_hash']==v['config_hash']]
+                    if matches:historical_source=matches[-1]['old_source']
             with closing(sqlite3.connect(path.as_uri()+'?mode=ro',uri=True)) as c:
-                anchors,cfg=_ledger(c,None,initial=False)
+                anchors,cfg=_ledger(c,None,initial=False,historical_source=historical_source)
             if (anchors['metadata_hash']!=v['ledger_anchors']['metadata_hash'] or anchors['events_hash']!=v['ledger_anchors']['events_hash']
                     or digest(cfg)!=v['config_hash']):raise ValueError('Certified ledger prefix/config changed')
             with closing(store.connect()) as c:
