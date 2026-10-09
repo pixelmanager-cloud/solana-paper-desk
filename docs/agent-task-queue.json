@@ -3097,7 +3097,7 @@
       "source_identity": "Only coordinator queue/readiness differ from independent exacthead"
     },
     "downstream_allowance_upgrade": {
-      "status": "COMBINED_LINUX_PASS_INTEGRATING",
+      "status": "INTEGRATED_AWAITING_INTEGRATION_CI",
       "authorization": "User explicitly requested another increase beyond100/day and600/hour. Coordinator targets1000/day,queue25,monitor3600/hour; ceilings subject to provider pacing.",
       "limits": {
         "daily_admissions": 1000,
@@ -3216,7 +3216,7 @@
       "production_pin_review": {
         "worker": "09",
         "thread_id": "01a118fd-3f90-77d9-9549-c4497f5b10a6",
-        "status": "INDEPENDENT_PASS_NOT_ACTIVATED",
+        "status": "INDEPENDENT_PASS_COMMITTED_NOT_ACTIVATED",
         "successor_hash": "8098b4033adff886006e2f6af5ccb0ce4bfa02e242f5fb1b4c7402c05ddaa8c9",
         "read_only_context_preflight": "PASS actual reviewed _research_binding against production read-only,4 admissions have matching jobs/setup",
         "turn_id": "01a120a4-46e4-7490-a19b-c44955e6c743",
@@ -3236,7 +3236,9 @@
         "tests": 2454,
         "skips": 0,
         "seconds": 588.54
-      }
+      },
+      "integration_commit": "5baa47bff2b1b613827551594642c9b89136f5e5",
+      "source_match": "Frozen96c7b055 exact except coordinator queue/readiness and separately independently reviewed external transition pin"
     },
     "discovery_policy_combined_review": {
       "prs": {
