@@ -4,14 +4,62 @@ import sqlite3
 import time
 from contextlib import closing
 from pathlib import Path
-from .model import decimal as dec,ZERO
+from .model import decimal as dec,ZERO,digest,load_config
 from .paper_checkpoint import read_checkpoint,RecoveryRequired
 
 
-def paper_status(path,*,now=None):
+def _implementation_hash():
+    root=Path(__file__).parent
+    return digest({str(p.relative_to(root)):p.read_text() for p in sorted(root.rglob('*'))
+                   if p.is_file() and p.suffix in ('.py','.json')})
+
+
+def _runner_evidence(c,state,marker,now,ttl):
+    """PR103 marker/bootstrap identifies saved synthetic history, never liveness.
+
+    Future LIVE_PAPER requires a separately reviewed adapter identity/source and
+    admission contract. Its marker is unsupported here and grants no permission.
+    """
+    if marker is not None and marker!='SYNTHETIC_TEST_ONLY':
+        raise RecoveryRequired('RUNNER_MARKER_UNSUPPORTED')
+    bootstrap=None;last=None;market=None;total=0;count=0
+    for seq,event_id,ts,payload,key in c.execute('SELECT seq,event_id,ts,payload,payload_hash FROM events ORDER BY seq LIMIT 10001'):
+        count+=1;total+=len(payload.encode())
+        if count>10000 or len(payload.encode())>256*1024 or total>16*1024*1024:
+            raise RecoveryRequired('RUNNER_HISTORY_LIMIT')
+        event=json.loads(payload)
+        if (not isinstance(event,dict) or event.get('event_id')!=event_id
+                or type(event.get('ts')) is not int or event['ts']!=ts or digest(event)!=key):
+            raise RecoveryRequired('RUNNER_EVENT_INVALID')
+        if event_id=='paper-runner:init':bootstrap=(seq,event)
+        last={'event_id':event_id,'kind':event.get('kind'),'ts':ts,'payload_hash':key}
+        if event.get('kind')=='market':
+            if marker is not None and event.get('provenance')!='SYNTHETIC_TEST_ONLY':
+                raise RecoveryRequired('RUNNER_PROVENANCE_MISMATCH')
+            if market is None or ts>=market['ts']:
+                market={**last,'provenance':event.get('provenance','UNKNOWN')}
+    if marker is not None:
+        init={'schema_version':1,'event_id':'paper-runner:init','ts':0,'kind':'clock','actor':'paper_monitor'}
+        if bootstrap!=(1,init) or any(p['provenance']!=marker for p in state['positions'].values()):
+            raise RecoveryRequired('RUNNER_INITIALIZATION_INVALID')
+    age=now-state['last_ts'];market_age=now-market['ts'] if market else None
+    initialized=marker=='SYNTHETIC_TEST_ONLY'
+    return {'runner_status':('SYNTHETIC_INITIALIZED' if initialized and count==1 else
+                             'SYNTHETIC_CHECKPOINT_RECORDED' if initialized else 'NOT_CONNECTED'),
+            'runner_provenance':marker,'runner_liveness':'UNKNOWN',
+            'last_event_age_seconds':age,'last_market_at':market['ts'] if market else None,
+            'last_market_age_seconds':market_age,
+            'last_market_currentness':('NO_MARKET_OBSERVATION' if market is None else
+                                      'FUTURE' if market_age<0 else 'RECENT_SAVED_OBSERVATION' if market_age<=ttl else 'STALE'),
+            'last_run_evidence':last if initialized and count>1 else None,
+            'runner_evidence_scope':'Last committed experiment event only; run completion and process liveness are not persisted.'}
+
+
+def paper_status(path,*,now=None,expected_config=None):
     now=int(time.time()) if now is None else now
     if type(now) is not int or now<0:raise ValueError('Invalid observation time')
     result={'mode':'PAPER_ONLY','automatic_entry_enabled':False,'runner_status':'NOT_CONNECTED',
+        'runner_liveness':'UNKNOWN','runner_provenance':None,
         'status':'NOT_CONFIGURED','positions':[],'recent_outcomes':[],
         'cash_sol':None,'realized_pnl_sol':None,'estimated_equity_sol':None,
         'notice':'Simulated research accounting. Automatic entries remain disabled; paper results are not evidence of profitability.'}
@@ -22,9 +70,15 @@ def paper_status(path,*,now=None):
             c.execute('PRAGMA query_only=ON');c.execute('BEGIN')
             state=read_checkpoint(c)
             if state is None:return {**result,'status':'EMPTY_LEDGER'}
-            metadata=dict(c.execute("SELECT key,value FROM metadata WHERE key IN ('config','config_hash','implementation_hash')"))
+            metadata=dict(c.execute("SELECT key,value FROM metadata WHERE key IN ('config','config_hash','implementation_hash','paper_runner')"))
+            current_cfg=expected_config if expected_config is not None else load_config(Path(__file__).resolve().parents[1]/'config/paper.json')
+            if digest(current_cfg)!=metadata['config_hash']:
+                raise RecoveryRequired('CONFIG_IMPLEMENTATION_MISMATCH')
+            if _implementation_hash()!=metadata['implementation_hash']:
+                raise RecoveryRequired('CONFIG_IMPLEMENTATION_MISMATCH')
             cfg=json.loads(metadata['config']);ttl=cfg['price_ttl_seconds']
             if type(ttl) is not int or ttl<=0:raise ValueError('Invalid price TTL')
+            runner=_runner_evidence(c,state,metadata.get('paper_runner'),now,ttl)
             cash=dec(state['cash']);realized=dec(state['realized_pnl']);positions=[];marks=ZERO;all_fresh=True
             if not isinstance(state['positions'],dict) or len(state['positions'])>100:raise ValueError('Invalid position state')
             for mint,p in sorted(state['positions'].items()):
@@ -41,7 +95,7 @@ def paper_status(path,*,now=None):
             # One read transaction binds outcomes and state to the same checkpoint.
             outcomes=[{'event_id':r[0],'ts':r[1],'outcome':json.loads(r[2])} for r in c.execute(
                 'SELECT o.event_id,e.ts,o.payload FROM outcomes o JOIN events e ON e.event_id=o.event_id ORDER BY o.seq DESC LIMIT 50')]
-            result.update(status='LEDGER_PRESENT',strategy_mode=state['mode'],last_event_at=state['last_ts'],
+            result.update(**runner,status='LEDGER_PRESENT',strategy_mode=state['mode'],last_event_at=state['last_ts'],
                 config_hash=metadata.get('config_hash'),implementation_hash=metadata.get('implementation_hash'),
                 cash_sol=str(cash),realized_pnl_sol=str(realized),positions=positions,recent_outcomes=outcomes,
                 estimated_equity_sol=str(cash+marks) if all_fresh else None,
