@@ -4294,7 +4294,9 @@
               "source": "a611c45faf829ac7f1b63bb775e68c12f2503e6e63f4cb44a648d3c6b9d6d66b",
               "session": 19969,
               "log": "/var/tmp/solana-desk-b3aba9e-tests.log",
-              "status": "RUNNING_INACTIVE_SERVICE_ACCOUNT"
+              "status": "PASS",
+              "tests": 2579,
+              "seconds": 878.717
             },
             "pin_review": "CONDITIONAL_PASS_RECHECK_LOCKED_ANCHORS_FINAL_CI",
             "pin_review_turn": "01a121af-80c2-74ef-a452-235b245966dd",
@@ -4358,7 +4360,10 @@
             "ci_seconds": [
               623.062,
               null
-            ]
+            ],
+            "integration_commit": "e84e33a2df3011f7a73649d38f3b582900be1e13",
+            "vps_serial_test": "PASS1/24.613s; exact final171 test delta, nativeclock, all BUY/4readSELL/restart assertions",
+            "vps_serial_log": "/var/tmp/solana-desk-pr171-serial.log"
           },
           "candidate343": {
             "mint": "DxLEjcWVexfe83L28b5hR7r3rT139ph5fSXYrAczpump",
@@ -4397,7 +4402,12 @@
             "intent_hash": "6f6cfd1efe9aa257638bd750ccd3c4099a3943a5d403132fa9d9d2a7b868fb7e",
             "retained_outcome_hash": "4352afa8e732c4f03eaf1cb788047aea58379fe3ef24edd05f5535e5680eb4a8",
             "blocker": "Known SOURCE_CONTENT_REJECTED afterchargedRPC leaves global NULL observationpass; allfuturepassesblocked",
-            "constraints": "Preserveoriginalblockedrecord andcharges; noreset/retry; ambiguous/crashed/pendingremainblocked"
+            "constraints": "Preserveoriginalblockedrecord andcharges; noreset/retry; ambiguous/crashed/pendingremainblocked",
+            "implementation_turn": "01a121bb-96bb-766e-b671-fcf69ea9af8a",
+            "design_review_turn": "01a121bb-ad1b-7756-97ff-d041e03d33a5",
+            "fixture_owner": "04",
+            "fixture_thread_id": "01a118fc-b862-7340-ab3a-e1115a3280a4",
+            "fixture_status": "PREPARING_SYNTHETIC_FAILED_A_THEN_VALID_B_CONTRACT"
           }
         }
       }
