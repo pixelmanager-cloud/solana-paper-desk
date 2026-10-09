@@ -259,7 +259,7 @@
       "tests": 878,
       "status": "SUPERSEDED_BY_PUBLISHED_TESTED_COMMIT"
     },
-    "published_ci": "490d896 integration CI37967760895/37967756196 running; both171CI2580PASS",
+    "published_ci": "490d896 BOTH_SUCCESS37967760895/37967756196",
     "active_claims": [
       {
         "id": "PR97-INDEPENDENT-REVIEW",
@@ -4306,7 +4306,8 @@
             "integration_ci_runs": [
               37967760895,
               37967756196
-            ]
+            ],
+            "integration_ci_status": "BOTH_SUCCESS"
           },
           "diagnosis_turn": "01a12192-8d9e-7451-ab97-660e61856a26",
           "independent_review_turn": "01a12194-1955-714c-b4b7-a1b94d8461ee",
@@ -4408,7 +4409,7 @@
             "retained_outcome_hash": "4352afa8e732c4f03eaf1cb788047aea58379fe3ef24edd05f5535e5680eb4a8",
             "blocker": "Known SOURCE_CONTENT_REJECTED afterchargedRPC leaves global NULL observationpass; allfuturepassesblocked",
             "constraints": "Preserveoriginalblockedrecord andcharges; noreset/retry; ambiguous/crashed/pendingremainblocked",
-            "implementation_turn": "01a121bb-96bb-766e-b671-fcf69ea9af8a",
+            "implementation_turn": "01a121c0-4be5-72fe-8c5e-7f5c7efc3369",
             "design_review_turn": "01a121bb-ad1b-7756-97ff-d041e03d33a5",
             "fixture_owner": "04",
             "fixture_thread_id": "01a118fc-b862-7340-ab3a-e1115a3280a4",
@@ -4429,7 +4430,17 @@
             "invocation_start_microseconds": 1791564502120007,
             "invocation_end_microseconds": 1791564509227403,
             "invocation_exit": 2,
-            "fixture_turn": "01a121be-c550-7790-adeb-aa3596f07dd1"
+            "fixture_turn": "01a121be-c550-7790-adeb-aa3596f07dd1",
+            "historical_proof_review_turn": "01a121c3-298c-701c-bb75-c245a6843f65",
+            "historical_proof_review": "Supports explicit coordinator-reviewed legacy association only; recheckexactrecords/anchors/pending states",
+            "historical_source_replay": "8c675296 actual retainedsnapshot96a8c9 rejection reproduced LP_TOKEN_PROGRAM_UNSUPPORTED,ACCRUED_POOL_FEES_REQUIRE_RESERVE_ADJUSTMENT,VIRTUAL_RESERVES_REQUIRE_SPECIAL_PRICING;0calls originalunchanged",
+            "ledger_unchanged_vs_pre_entry_backup": true,
+            "ledger_logical_dump_sha256": "dd8baa7218041b5c324f66ee3b0972f9d1970a8acd35bb6939b0d543dc877473",
+            "classification_review_owner": "08",
+            "classification_review_thread_id": "01a118fd-2563-7126-90d7-bd07693de0b2",
+            "classification_review_turn": "01a121cb-21d2-75e5-83bb-9101cf5f7048",
+            "classification_review": "Dedicated subtype only after explicit fullyvalidated mint/pool knownhazard allowlist; malformed/unknown/identity/time/persist errors staylatched; not generic ObservationError or textmatch",
+            "classification_focused_tests": 30
           }
         }
       }
