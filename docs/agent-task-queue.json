@@ -4258,7 +4258,7 @@
             "owner": "07",
             "thread_id": "01a118fd-0f1c-749c-b85b-5e730937d0a8",
             "scope": "One bounded append-only exact-pinned extension journal max4additionaledges; preserveoriginal2receipts/alltables/config/counters; oldbinaryfences",
-            "status": "INDEPENDENT_REVIEW_PASS_CI_SECOND_PENDING",
+            "status": "LOCALLY_INTEGRATED_BOTH_CI_SUCCESS_FINAL_PIN_REVIEW_ACTIVE",
             "assessment_turn": "01a12193-b5ac-7547-b4c0-91dfc6b8abf4",
             "reviewer": "09",
             "review_thread_id": "01a118fd-3f90-77d9-9549-c4497f5b10a6",
@@ -4279,7 +4279,27 @@
             "review_focused_tests": 46,
             "review_focused_seconds": 57.972,
             "independent_probes": 2,
-            "independent_probe_seconds": 5.081
+            "independent_probe_seconds": 5.081,
+            "integration_commit": "b3aba9e71e79f823f930d6400c967f72b064b36b",
+            "composed_source": "a611c45faf829ac7f1b63bb775e68c12f2503e6e63f4cb44a648d3c6b9d6d66b",
+            "ci_runs": [
+              37964250210,
+              37964232233
+            ],
+            "pin_proposal": "work/runtime-extension-proposal.json",
+            "pin_review_owner": "09",
+            "activation_review_owner": "06",
+            "activation_review_thread_id": "01a118fc-f867-7233-8eec-c20659e70095",
+            "vps_combined_suite": {
+              "source": "a611c45faf829ac7f1b63bb775e68c12f2503e6e63f4cb44a648d3c6b9d6d66b",
+              "session": 19969,
+              "log": "/var/tmp/solana-desk-b3aba9e-tests.log",
+              "status": "RUNNING_INACTIVE_SERVICE_ACCOUNT"
+            },
+            "pin_review": "CONDITIONAL_PASS_RECHECK_LOCKED_ANCHORS_FINAL_CI",
+            "pin_review_turn": "01a121af-80c2-74ef-a452-235b245966dd",
+            "activation_review": "PASS_WITH_SPECIFIED_INDEPENDENT_TRAP_CLEANUP_APPLIED",
+            "activation_review_turn": "01a121b1-c2bf-737d-a40a-98e654e4f812"
           },
           "diagnosis_turn": "01a12192-8d9e-7451-ab97-660e61856a26",
           "independent_review_turn": "01a12194-1955-714c-b4b7-a1b94d8461ee",
@@ -4291,7 +4311,7 @@
           "combined_fixture_owner": "04",
           "combined_fixture_thread_id": "01a118fc-b862-7340-ab3a-e1115a3280a4",
           "combined_fixture_turn": "01a121ab-3245-76c8-8e31-9b5d74bf266e",
-          "combined_fixture_status": "BOTH_FROZEN_DEPENDENCIES_SENT_IMPLEMENTATION_ACTIVE",
+          "combined_fixture_status": "PR171_NATIVE_HELD_DEADLINE_FAILURE_UNDER_DIAGNOSIS",
           "independent_review_claim_turn": "01a12196-ab5a-7033-af25-4d355f67f2c8",
           "candidate_selection_hint_file": "work/retained-migration-hints.json",
           "candidate_selection_authority": "HISTORICAL_HINTS_ONLY_NO_PROVIDER_CALLS_NO_ENTRY_PERMISSION",
@@ -4315,6 +4335,16 @@
             "ci_status": "BOTH_SUCCESS",
             "ci_tests": 2571,
             "integration_commit": "6510685b60b8725e15442da3dd7b715136b8fdc8"
+          },
+          "combined_fixture_pr": {
+            "number": 171,
+            "head": "2c6eb4009d28727223697ff1172b9b7170c54c8e",
+            "final_test": "FAILED after BUY: held CYCLE_DEADLINE_UNAVAILABLE after3reads,41.723s; no final SELL/restart acceptance",
+            "initial_test": "PASS38.119s before final assertion additions",
+            "attachment": "identity count exceeds100;notretried",
+            "root_local_test": "PASS1/19.094s exact final head nativeclock cProfile; BUY4readSELLrestart reached; no deadline change",
+            "independent_reviewer": "02",
+            "review_thread_id": "01a118fc-666c-70b6-9fa8-2c7520f0a0bb"
           }
         }
       }

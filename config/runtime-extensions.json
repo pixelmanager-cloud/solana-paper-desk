@@ -1,1 +1,25 @@
-{"version":1,"extensions":[]}
+{
+  "version": 1,
+  "extensions": [
+    {
+      "checkpoint_hash": "61eacdccf4ab480c20530384923f46d0f44e75f4b8199c4e39632fd3821e9362",
+      "metadata_hash": "cd8281e88a1a18468aeabc97662613d178a76d60911c75e967cdb9cb213db2c1",
+      "events_count": 1,
+      "events_hash": "d6a2c29038acabac20136482ea2d7848e4e4a334d6109f3133a9d807aaa2574b",
+      "outcomes_count": 0,
+      "outcomes_hash": "4f53cda18c2baa0c0354bb5f9a3ecbe5ed12ab4d8e11ba873c2f11161202b945",
+      "sequence": 1,
+      "first_receipt_hash": "104329395b99a60b1da22f8085c8fd2832510570b3c4e875937dc0aa6ba6df46",
+      "continuation_receipt_hash": "66a7dbcddd61d053882bf2c9be51661ece3b4222d87c3a111bc57a8cce99b357",
+      "parent_receipt_hash": "66a7dbcddd61d053882bf2c9be51661ece3b4222d87c3a111bc57a8cce99b357",
+      "predecessor": "8c675296c36cd6b088a25aae0c7fcf8d65bdc26673bfdffa49012368acb06427",
+      "successor": "a611c45faf829ac7f1b63bb775e68c12f2503e6e63f4cb44a648d3c6b9d6d66b",
+      "config_hash": "30406d9cb727b3e518687dbb4c20820483bf51384f0edfb14a94f8221e2b595e",
+      "context": {
+        "evidence_db": "/var/lib/solana-desk/evidence.sqlite",
+        "ledger_db": "/var/lib/solana-desk/token2022-paper.sqlite",
+        "research_db": "/var/lib/solana-desk/research.sqlite"
+      }
+    }
+  ]
+}
