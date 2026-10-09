@@ -50,6 +50,10 @@ def _quote_fill(outcome, event, cfg):
             quote_source.observed_at, qe._original(quote_source)), mint=token,
             direction=outcome['side'], amount_raw=record['input_raw'], taker=event['taker'],
             expected_pool=event['pool'], now=event['ts'], max_age_seconds=cfg['price_ttl_seconds'])
+        if event['kind'] == 'quote_exit':
+            source = event['source_evidence']
+            if token.slot != source['mint_slot'] or token.source.observed_at != source['mint_at']:
+                raise ValueError()
         book = qe._book(event, (quote,), cfg) if event['kind'] == 'quote_exit' else qe._Book('', (quote,), token.decimals)
         if qe.canonical(book.record(quote, cfg)) != qe.canonical(record):
             raise ValueError()

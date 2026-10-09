@@ -50,7 +50,7 @@ class ExitReportTests(unittest.TestCase):
         self.assertEqual(r['open_position_count'],1);self.assertEqual(r['sell_fill_count'],0)
         self.assertEqual(r['quote_exit_observation_count'],1)
     def test_forged_buy_and_rehashed_exit_bindings_reject_without_mutation(self):
-        for attack in ('buy','quantity','source','entry_authorized'):
+        for attack in ('buy','quantity','source','mint_slot','mint_at','entry_authorized'):
             with self.subTest(attack=attack):
                 c=self.setup_case();e,fill=self.sell(c)
                 if attack=='buy':
@@ -61,6 +61,8 @@ class ExitReportTests(unittest.TestCase):
                     bad=copy.deepcopy(e)
                     if attack=='quantity':bad['current_quantity_raw']+=1
                     elif attack=='source':bad['source_evidence']['quote_hash']='0'*64
+                    elif attack=='mint_slot':bad['source_evidence']['mint_slot']+=1
+                    elif attack=='mint_at':bad['source_evidence']['mint_at']-=1
                     else:bad['entry_authorized']=True
                     bad['event_id']='paper-exit:'+digest({k:v for k,v in bad.items() if k!='event_id'})
                     c.f.ledger.db.execute('UPDATE events SET event_id=?,payload=?,payload_hash=? WHERE event_id=?',
