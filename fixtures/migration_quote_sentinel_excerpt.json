@@ -1,0 +1,19 @@
+{
+  "provenance": "PUBLIC_MAINNET_CAPTURE_NOT_TRADING_EVIDENCE_EXCERPT",
+  "scope": "Original event instruction only; not the full transaction or provider response",
+  "signature": "1F15VYqJ42Z62t5RE67PoffE9fBxWosDNwnvz9H2tg4RQF2GfkZA7cCFQ9zU1X2EzAHovWdPHgKYnDvEtW9GDr5",
+  "slot": 454908373,
+  "blockTime": 1791559554,
+  "outer_instruction_index": 2,
+  "event_inner_index": 49,
+  "retained_page_hashes": [
+    "d2bf373db99acabcbfcf56b281c1b46e93a865eb9078082b6f3faddcfba443fb",
+    "fdd89433f8a4162ab731c52fa0e6c9b386cb7809864e58a6fdccd44d83eed3d0"
+  ],
+  "event": {
+    "accounts": ["Ce6TQqeHC9p8KetsN6JsjHK7UTZk7nasjjnr7XxXp9F1"],
+    "data": "28AUVybe3Jro3a5o6vV4ukBdHZq6Kjrcq2BBmvmMEgCDPsKmht24XxSuvtL5vZN73kHGDyN3WtbaojjaSbLgUCngvG51sc6xXY5vn7f3aFLkX38RXoZ2Bo5fUkprUA87szGTkhUW6t1BT9VkNYg3dc2yxkXMMvkvfGm5nQJgLoej1DPx6nyvhkoU7psAr9ZHBU5vvF4qM9ATGotmpw3zcQrVA9D2FSVpWqNWfNqEVC2bWw9993SQQjJxWT2yM6RCpLhb2YFbLbNiJGpkrV5FC1qu5YkLF",
+    "programId": "6EF8rrecthR5Dkzon8Nwu78hRvfCKubJ14M5uBEwF6P",
+    "stackHeight": 2
+  }
+}
