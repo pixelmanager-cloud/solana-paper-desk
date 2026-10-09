@@ -279,7 +279,7 @@
         "worker": "09",
         "thread_id": "01a118fd-3f90-77d9-9549-c4497f5b10a6",
         "host_id": "durable",
-        "status": "PUBLISHED_PENDING_INDEPENDENT_REVIEW",
+        "status": "ACCEPTED_INTEGRATED_NOT_DEPLOYED",
         "base": "9e43752daabf19b7e78e08e0b15d16d1c6e2a680",
         "scope": "Minimal supervised runner using existing ledger/engine/watchdog, executable synthetic lifecycle and restart; no live authorization or screening policy changes",
         "turn_id": "01a11eae-36ed-72bd-8c5d-ab7f42d99073",
@@ -1375,7 +1375,7 @@
       }
     },
     "pending_pr103": {
-      "status": "REVIEWED_READY_TO_INTEGRATE",
+      "status": "ACCEPTED_INTEGRATED_NOT_DEPLOYED",
       "head": "7100483d800189b62efa14da33de3e21e7dd0f35",
       "review_url": "https://github.com/pixelmanager-cloud/solana-paper-desk/pull/103#issuecomment-6073816532",
       "independent_tree": "3cfb190862009f8e944194ed90bd8c71da223338",
@@ -1396,7 +1396,9 @@
         37879658388
       ],
       "ci": "SUCCESS",
-      "live_acceptance": false
+      "live_acceptance": false,
+      "merge_sha": "9d8c2a58429d53fff02df112d1c6762421b2ce60",
+      "source_identity": "Exact tested source; differences only coordinator queue/readiness docs"
     }
   },
   "native_reconciliation_review": {
