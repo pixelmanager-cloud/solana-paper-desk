@@ -16,6 +16,15 @@ from tests.helpers import ROOT, T, config, control, event
 from tests.test_paper_experimental_scoring import experimental
 
 
+def experimental_history(**changes):
+    e=experimental(**changes)
+    e['paper_experimental']['policy_version']=2
+    for key in ('fresh_wallet_ratio','dev_launches_7d','manip_safety'):
+        e[key]=None
+        e['paper_experimental']['ownership_unknowns'][key]={'status':'UNKNOWN','reasons':['SYNTHETIC_HISTORY_INCOMPLETE']}
+    return e
+
+
 class ExperimentalRunnerConfigTests(unittest.TestCase):
     def setUp(self):
         self.tmp=tempfile.TemporaryDirectory();self.addCleanup(self.tmp.cleanup)
@@ -36,7 +45,7 @@ class ExperimentalRunnerConfigTests(unittest.TestCase):
             cwd=ROOT,env={'PATH':os.defpath,'PYTHONPATH':str(ROOT),'PYTHONDONTWRITEBYTECODE':'1'},
             capture_output=True,text=True,timeout=30)
 
-    def test_actual_cli_entry_refresh_exit_restart_preserves_unknowns_and_risk(self):
+    def _assert_cli_lifecycle(self):
         initialized=self.cli('init','--db',str(self.path))
         self.assertEqual(initialized.returncode,0,initialized.stderr)
         outcomes=[]
@@ -62,13 +71,42 @@ class ExperimentalRunnerConfigTests(unittest.TestCase):
             for delivered in self.fixture['events']:
                 saved=json.loads(c.execute('SELECT payload FROM events WHERE event_id=?',(delivered['event_id'],)).fetchone()[0])
                 self.assertEqual(saved,delivered)
-                self.assertTrue(all(saved[key] is None for key in ('top10_pct','dev_pct','bundle_pct','cluster_pct')))
+                self.assertTrue(all(saved[key] is None for key in delivered['paper_experimental']['ownership_unknowns']))
             self.assertEqual(c.execute("SELECT value FROM metadata WHERE key='config_hash'").fetchone()[0],digest(self.cfg))
         before=self.records()
         restarted=self.cli('once','--db',str(self.path),'--fixture',str(self.fixture_path),'--now',str(T+2))
         self.assertEqual(restarted.returncode,0,restarted.stderr)
         self.assertEqual(json.loads(restarted.stdout)['outcomes'],[])
         self.assertEqual(self.records(),before)
+
+    def test_actual_cli_profiles_entry_refresh_exit_restart_preserve_unknowns_and_risk(self):
+        for version,make in ((1,experimental),(2,experimental_history)):
+            with self.subTest(version=version):
+                self.path=self.root/f'profile-{version}.sqlite'
+                self.cfg={**config(),'experimental_policy_version':version}
+                self.fixture={'provenance':'SYNTHETIC_TEST_ONLY','events':[
+                    make(),make(ts=T+1),make(ts=T+2,danger=True)]}
+                self.config_path.write_text(json.dumps(self.cfg))
+                self.fixture_path.write_text(json.dumps(self.fixture))
+                self._assert_cli_lifecycle()
+
+    def test_profile_versions_and_metadata_cannot_widen_v1_or_adopt_v2(self):
+        history=experimental_history()
+        fixture={'provenance':'SYNTHETIC_TEST_ONLY','events':[history]}
+        with self.assertRaises(ValueError):FixtureAdapter(fixture,cfg=self.cfg)
+        version1=copy.deepcopy(history);version1['paper_experimental']['policy_version']=1
+        with self.assertRaises(ValueError):FixtureAdapter({'provenance':'SYNTHETIC_TEST_ONLY','events':[version1]},cfg=self.cfg)
+        with self.assertRaises(ValueError):FixtureAdapter(self.fixture,cfg={**config(),'experimental_policy_version':2})
+        for saved_version,new_version in ((1,2),(2,1)):
+            with self.subTest(saved=saved_version,new=new_version):
+                self.path=self.root/f'switch-{saved_version}.sqlite'
+                saved={**config(),'experimental_policy_version':saved_version}
+                changed={**config(),'experimental_policy_version':new_version}
+                initialize(self.path,saved);before=self.records()
+                make=experimental if new_version==1 else experimental_history
+                selected=FixtureAdapter({'provenance':'SYNTHETIC_TEST_ONLY','events':[make()]},cfg=changed)
+                with self.assertRaises(ValueError):run_once(self.path,changed,selected,now=T)
+                self.assertEqual(self.records(),before)
 
     def test_fixture_json_cannot_opt_in_and_config_cannot_adopt_old_ledger(self):
         with self.assertRaises(ValueError):FixtureAdapter(self.fixture)
@@ -100,7 +138,7 @@ class ExperimentalRunnerConfigTests(unittest.TestCase):
         self.assertEqual(self.records(),before)
 
     def test_live_provenance_missing_metadata_and_invalid_versions_refuse(self):
-        for version in (True,'1',2,0):
+        for version in (True,'1',3,0):
             with self.assertRaises(ValueError):FixtureAdapter(self.fixture,cfg={**config(),'experimental_policy_version':version})
         for changes in ({'provenance':'MAINNET_OBSERVATION'},{'provenance':'LIVE_PROVIDER'},{'paper_experimental':None}):
             bad=copy.deepcopy(self.fixture);bad['events'][0].update(changes)
