@@ -3361,7 +3361,7 @@
       }
     },
     "token2022_paper_support": {
-      "status": "TOKEN_IMPLEMENTATION_AND_HANDOFF_IN_PROGRESS",
+      "status": "EXACT_HEAD_REVIEWS_RUNNING_HANDOFF_PENDING",
       "authorization": "2026-10-09 user: I think we need to modify the token2022 limitations as most tokens seem to be token2022 and we cannot open positions. Explicit approval to replace blanket exclusion with narrow versioned paper-only support; known hazards and unreviewed extensions still reject.",
       "base": "89f4317",
       "implementation_owner": "08",
@@ -3414,10 +3414,12 @@
       "operator_path_implementation": {
         "worker": "10",
         "thread_id": "01a118fd-56d5-70b8-ad31-dba13e982082",
-        "status": "ASSIGNED",
+        "status": "INDEPENDENT_REVIEW_RUNNING",
         "scope": "explicitselectedpaperledger fordashboard + backupselectedandoriginalledger; legacydefaultunchanged",
         "turn_id": "01a120d4-e3be-7730-a8fe-a9d9323f1184",
-        "cursor": "e6039648-56af-4049-8a6e-06eaaa8aba52:60"
+        "cursor": "e6039648-56af-4049-8a6e-06eaaa8aba52:60",
+        "pr": 157,
+        "head": "8248566a4220dcae8beadd3d3108c8c4bea77dda"
       },
       "bounded_live_shape_probe": {
         "scan_id": "f5470ca34d0d45d1af2db086fd18eca6",
@@ -3478,7 +3480,22 @@
       "operator_path_review": {
         "worker": "03",
         "thread_id": "01a118fc-9478-778a-b77a-8f8f6ec7e0ad",
-        "status": "PREPARING"
+        "status": "EXACT_HEAD_REVIEW_RUNNING",
+        "head": "8248566a4220dcae8beadd3d3108c8c4bea77dda",
+        "turn_id": "01a120dd-91f7-7554-a685-a268f5ab2452",
+        "cursor": "0851f5ab-a903-4567-a6fe-4cbb4e6a7b96:54"
+      },
+      "implementation_pr": {
+        "number": 156,
+        "head": "873786e712146d45b7249df23b7f31cb9f0c5b85",
+        "reviewer": "02",
+        "review_turn_id": "01a120e2-1c96-7125-aacb-3882479902fd",
+        "status": "INDEPENDENT_REVIEW_RUNNING",
+        "ci_runs": [
+          37937387209,
+          37937313642
+        ],
+        "ci_status": "SUCCESS"
       }
     }
   },
