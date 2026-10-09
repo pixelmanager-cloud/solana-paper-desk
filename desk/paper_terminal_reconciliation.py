@@ -5,6 +5,8 @@ explicit reviewed operator evidence; RPC observations are not authenticated stat
 All callers hold research -> evidence -> ledger locks. No requests or retries.
 """
 import base64
+import json
+import zlib
 from contextlib import closing, ExitStack
 from pathlib import Path
 import sqlite3
@@ -23,6 +25,8 @@ POLICY = Path(__file__).resolve().parents[1]/'config/paper-terminal-reconciliati
 TABLE = 'paper_terminal_reconciliations'
 MAX_RECEIPTS = 256
 MAX_BYTES = 65536
+MAX_PROOF_RAW_BYTES = 16*1024*1024  # original EvidenceStore page ceiling
+MAX_PROOF_COMPRESSED_BYTES = MAX_PROOF_RAW_BYTES+65536  # bounded zlib overhead
 HAZARDS = MINT_POLICY_REJECTIONS | POOL_POLICY_REJECTIONS
 ANCHORS = {'metadata_hash','checkpoint_hash','events_hash','outcomes_hash'}
 FIELDS = {'version','association','pass_id','intent_hash','outcome_hash','attempt_refs',
@@ -147,8 +151,32 @@ def _ledger(c,cfg,*,initial):
 
 def _load(store,key):
     if not runtime._hash(key):raise ValueError('Evidence identity malformed')
-    value=store.load(key)
-    if value is None or digest(value)!=key:raise ValueError('Original evidence missing/corrupt')
+    # Pin SQL shape and payload to one read snapshot. In particular, do not
+    # fetch a corrupt TEXT raw_bytes value or any compressed content as part of
+    # the scalar preflight; both can otherwise materialize unbounded data.
+    with closing(store.connect()) as c:
+        c.execute('BEGIN')
+        shapes=c.execute("SELECT typeof(hash),length(CAST(hash AS BLOB)),typeof(payload),length(CAST(payload AS BLOB)),typeof(raw_bytes),CASE WHEN typeof(raw_bytes)='integer' THEN raw_bytes ELSE NULL END FROM pages WHERE hash=? LIMIT 2",(key,)).fetchall()
+        if (len(shapes)!=1 or shapes[0][:3]!=('text',64,'blob')
+                or type(shapes[0][3]) is not int or not 0<shapes[0][3]<=MAX_PROOF_COMPRESSED_BYTES
+                or shapes[0][4]!='integer' or type(shapes[0][5]) is not int
+                or not 0<shapes[0][5]<=MAX_PROOF_RAW_BYTES):
+            raise ValueError('Evidence missing or oversized: invalid proof scalar shape')
+        rows=c.execute("SELECT payload,raw_bytes FROM pages WHERE hash=? AND typeof(hash)='text' AND length(CAST(hash AS BLOB))=64 AND typeof(payload)='blob' AND length(payload) BETWEEN 1 AND ? AND typeof(raw_bytes)='integer' AND raw_bytes BETWEEN 1 AND ? LIMIT 2",(key,MAX_PROOF_COMPRESSED_BYTES,MAX_PROOF_RAW_BYTES)).fetchall()
+        if (len(rows)!=1 or type(rows[0][0]) is not bytes or len(rows[0][0])!=shapes[0][3]
+                or type(rows[0][1]) is not int or rows[0][1]!=shapes[0][5]):
+            raise ValueError('Proof content changed or exceeded preflight')
+        compressed,raw_bytes=rows[0]
+    inflater=zlib.decompressobj()
+    try:
+        raw=inflater.decompress(compressed,raw_bytes+1)
+        if (not inflater.eof or inflater.unused_data or inflater.unconsumed_tail or len(raw)!=raw_bytes):
+            raise ValueError('Evidence encoding mismatch')
+        value=json.loads(raw,object_pairs_hook=runtime._unique,
+            parse_constant=lambda _:(_ for _ in ()).throw(ValueError('Nonfinite proof content')))
+    except zlib.error as error:
+        raise ValueError('Evidence encoding mismatch') from error
+    if digest(value)!=key:raise ValueError('Original evidence missing/corrupt')
     return value
 
 

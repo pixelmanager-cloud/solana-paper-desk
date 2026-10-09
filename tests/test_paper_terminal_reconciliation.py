@@ -356,3 +356,52 @@ class TerminalReconciliationTests(unittest.TestCase):
         with self.assertRaisesRegex(ValueError,'Evidence missing or oversized'):self.reconcile()
         self.assertEqual(dump(self.store.path),before)
         with self.store.connect() as c:self.assertIsNone(c.execute('SELECT 1 FROM pages WHERE hash=?',(key,)).fetchone())
+
+    def test_proof_sql_preflight_rejects_corrupt_blobs_types_and_raw_bounds_without_fetch(self):
+        value={'kind':'SYNTHETIC_BOUNDED_PROOF'};key=self.store.save(value)
+        with self.store.connect() as c:original=c.execute('SELECT payload,raw_bytes FROM pages WHERE hash=?',(key,)).fetchone()
+        fetched=[]
+        class NoPayloadFetch(sqlite3.Connection):
+            def execute(connection,sql,*args,**kwargs):
+                if sql.startswith('SELECT payload,'):
+                    fetched.append(sql);raise AssertionError('Corrupt proof payload was materialized')
+                return super().execute(sql,*args,**kwargs)
+        # Includes the independent20MiB corrupt compressed blob and invalid
+        # raw_bytes reproduction, plus large TEXT metadata and malformed types.
+        variants=[(sqlite3.Binary(b'x'*(20*1024*1024)),-1),
+                  (sqlite3.Binary(b'x'*(r.MAX_PROOF_COMPRESSED_BYTES+1)),original[1]),
+                  ('not a compressed BLOB',original[1]),(original[0],'x'*(20*1024*1024)),
+                  (original[0],1.25),(original[0],r.MAX_PROOF_RAW_BYTES+1),(original[0],0)]
+        for payload,size in variants:
+            with self.subTest(payload_type=type(payload).__name__,raw_type=type(size).__name__):
+                with self.store.connect() as c:c.execute('UPDATE pages SET payload=?,raw_bytes=? WHERE hash=?',(payload,size,key))
+                connect=lambda:sqlite3.connect(self.store.path,isolation_level=None,factory=NoPayloadFetch)
+                with patch.object(self.store,'connect',side_effect=connect),patch.object(self.store,'load',side_effect=AssertionError('unsafe loader')):
+                    with self.assertRaisesRegex(ValueError,'scalar shape'):r._load(self.store,key)
+        self.assertEqual(fetched,[])
+
+    def test_proof_preflight_and_content_fetch_share_snapshot_during_concurrent_replacement(self):
+        value={'kind':'SYNTHETIC_SNAPSHOT_PROOF','retained':'original'};key=self.store.save(value)
+        with self.store.connect() as c:c.execute('PRAGMA journal_mode=WAL')
+        path=self.store.path;replaced=[]
+        class ConcurrentReplacement(sqlite3.Connection):
+            def execute(connection,sql,*args,**kwargs):
+                cursor=super().execute(sql,*args,**kwargs)
+                if sql.startswith('SELECT typeof(hash)'):
+                    with sqlite3.connect(path,isolation_level=None) as writer:
+                        writer.execute('UPDATE pages SET payload=?,raw_bytes=? WHERE hash=?',(sqlite3.Binary(b'x'*(20*1024*1024)),'corrupt',key))
+                    replaced.append(True)
+                return cursor
+        connect=lambda:sqlite3.connect(path,isolation_level=None,factory=ConcurrentReplacement)
+        with patch.object(self.store,'connect',side_effect=connect),patch.object(self.store,'load',side_effect=AssertionError('unsafe loader')):
+            self.assertEqual(r._load(self.store,key),value)
+        self.assertEqual(replaced,[True])
+        with self.assertRaisesRegex(ValueError,'scalar shape'):r._load(self.store,key)
+
+    def test_bounded_proof_decode_still_rejects_trailing_compression_and_checksum_corruption(self):
+        import zlib
+        value={'kind':'SYNTHETIC_ENCODING_PROOF'};key=self.store.save(value)
+        variants=[zlib.compress(canonical(value).encode())+b'trailing',zlib.compress(b'{}'),b'not zlib']
+        for payload in variants:
+            with self.store.connect() as c:c.execute('UPDATE pages SET payload=? WHERE hash=?',(sqlite3.Binary(payload),key))
+            with self.assertRaises(ValueError):r._load(self.store,key)
