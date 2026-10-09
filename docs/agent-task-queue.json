@@ -2654,7 +2654,7 @@
       "token_2022_mints": 39,
       "legacy_candidates": 0,
       "decode_errors_excluded": 3,
-      "policy_change": "Token2022 narrowpaperprofile question pending; no implementation/waiver",
+      "policy_change": "User approved narrow Token2022 paper support; implementation/review pending; live exclusion remains until reviewed deployment.",
       "no_first_live_paper_entry": true
     },
     "paper_runtime_deployment": {
@@ -3359,6 +3359,16 @@
         "skips": 0,
         "seconds": 1135.495
       }
+    },
+    "token2022_paper_support": {
+      "status": "AUTHORIZED_IMPLEMENTATION_DISPATCH",
+      "authorization": "2026-10-09 user: I think we need to modify the token2022 limitations as most tokens seem to be token2022 and we cannot open positions. Explicit approval to replace blanket exclusion with narrow versioned paper-only support; known hazards and unreviewed extensions still reject.",
+      "base": "89f4317",
+      "implementation_owner": "08",
+      "independent_reviewer": "02",
+      "runtime_compatibility_preflight_owner": "07",
+      "scope": "Verified original mint/account bytes; metadataPointer/TokenMetadata/ImmutableOwner subset only after official-layout validation; all acquisition, pool/vault, entry, quote accounting and restart paths must agree. No blanket waiver, provider caps/signing/public exposure changes.",
+      "runtime_dependency": "Existing ledger already records150545\u21928098 transition; preserve originals and immutable receipts during any future reviewed successor upgrade.07preflight read-only, no overlapping implementation."
     }
   },
   "native_reconciliation_review": {
