@@ -387,10 +387,12 @@
         "worker": "09",
         "thread_id": "01a118fd-3f90-77d9-9549-c4497f5b10a6",
         "host_id": "durable",
-        "status": "IN_PROGRESS",
+        "status": "PUBLISHED_PENDING_REVIEW",
         "scope": "new bounded raw-trade feature producer; explicit missing inputs/coverage; no engine changes",
         "turn_id": "01a11ebe-60c2-7569-9146-133915eac521",
-        "wait_cursor": "68a4d56e-d04a-40dc-ad15-e80a29c96b80:13"
+        "wait_cursor": "68a4d56e-d04a-40dc-ad15-e80a29c96b80:15",
+        "pr": 114,
+        "head": "eae754dd0104829ddd5ccc2bfd9a953fa65c8a3d"
       },
       {
         "id": "PR105-INDEPENDENT-REVIEW",
@@ -529,8 +531,15 @@
         "worker": "06",
         "thread_id": "01a118fc-f867-7233-8eec-c20659e70095",
         "host_id": "durable",
-        "status": "DISPATCHED",
-        "scope": "Savedrunner status/display read-only review"
+        "status": "CHANGES_REQUESTED",
+        "scope": "Savedrunner status/display read-only review",
+        "turn_id": "01a11ecc-2673-7544-adce-70c77801a741",
+        "wait_cursor": "8f3328cf-bef6-441d-83f8-2d1f46b3b0df:84",
+        "findings": [
+          "Malformed hashed events appear verified",
+          "Custom config runner commits but reports recovery required",
+          "History bounds applied after materialization"
+        ]
       },
       {
         "id": "PR112-INDEPENDENT-REVIEW",
@@ -541,6 +550,38 @@
         "pr": 112,
         "head": "466ff9f8b8d980b4047532d4dd50497587eea77a",
         "scope": "Collector shared persistedbudget/admission/no-retry review including107prerequisite"
+      },
+      {
+        "id": "PAPER-READ-SOURCES",
+        "worker": "01",
+        "thread_id": "01a118fc-39bc-722c-b442-8bf5a749e0bb",
+        "host_id": "durable",
+        "status": "DISPATCHED",
+        "scope": "Actual budgeted deadline bounded fixed-provider wrappers, no cloud calls"
+      },
+      {
+        "id": "SOL-USD-OBSERVATION",
+        "worker": "09",
+        "thread_id": "01a118fd-3f90-77d9-9549-c4497f5b10a6",
+        "host_id": "durable",
+        "status": "DISPATCHED",
+        "scope": "Jupiter SOL USD response parser and freshness/provenance; no peg assumption"
+      },
+      {
+        "id": "PR114-INDEPENDENT-REVIEW",
+        "worker": "04",
+        "thread_id": "01a118fc-b862-7340-ab3a-e1115a3280a4",
+        "host_id": "durable",
+        "status": "DISPATCHED",
+        "scope": "Raw observed feature/proxy coverage and semantics review"
+      },
+      {
+        "id": "PR111-DASHBOARD-REPAIR",
+        "worker": "06",
+        "thread_id": "01a118fc-f867-7233-8eec-c20659e70095",
+        "host_id": "durable",
+        "status": "DISPATCHED",
+        "scope": "Fix bounded history validation and actual pinned custom config status"
       }
     ],
     "saved_launch_probe": {
@@ -1532,20 +1573,21 @@
       }
     },
     "pending_pr108": {
-      "head": "966581f608dbccc1ebccbb0a63ab3a757db5eece",
+      "head": "b1b9c1256f83e09ee8393b0061ae16f4c36f5c60",
       "depends_on": {
         "pr": 106,
         "head": "7a45e55ca2cfa9c3c5a7802724987493c89e0dd4"
       },
-      "status": "REPAIRING_RESTART_RISK_METADATA_BINDING_FINDING",
+      "status": "INDEPENDENT_REREVIEW",
       "local_tests": {
-        "total": 1995,
-        "passed": 1600,
+        "total": 1996,
+        "passed": 1601,
         "skipped": 395,
-        "seconds": 35.818
+        "seconds": 36.32
       },
       "live_acceptance": false,
-      "branch": "codex/paper-engine-policy-wiring"
+      "branch": "codex/paper-engine-policy-wiring",
+      "repair": "Experimental policy bound to original hashed entry event in both reader/writer checkpoint validation"
     },
     "paper_fill_model_question": {
       "status": "AWAITING_USER_PREFERENCE",
