@@ -3464,11 +3464,15 @@
       "handoff_review": {
         "worker": "09",
         "thread_id": "01a118fd-3f90-77d9-9549-c4497f5b10a6",
-        "status": "EXACT_HEAD_REVIEW_RUNNING",
+        "status": "PASS",
         "required_probe": "Old73edf43binarycannotreserveafterhandoff; failedattemptdoesnotmutatebudget; immutableoriginalgrant/receiptandusagepreserved",
         "turn_id": "01a120e8-8f2c-77f5-9c45-8671ab7154bd",
-        "cursor": "68a4d56e-d04a-40dc-ad15-e80a29c96b80:55",
-        "head": "bf42166f2b570015b75fc5c0f9689f5f5ecc377d"
+        "cursor": "68a4d56e-d04a-40dc-ad15-e80a29c96b80:56",
+        "head": "bf42166f2b570015b75fc5c0f9689f5f5ecc377d",
+        "tests": 55,
+        "seconds": 41.017,
+        "adversarial_probes": 2,
+        "review_url": "https://github.com/pixelmanager-cloud/solana-paper-desk/pull/158#issuecomment-6082220829"
       },
       "candidate_configuration": {
         "status": "LOCAL_PREPARED_NOT_DEPLOYED",
@@ -3532,7 +3536,9 @@
         "worker": "04",
         "thread_id": "01a118fc-b862-7340-ab3a-e1115a3280a4",
         "status": "ASSIGNED",
-        "scope": "Actual Token2022 separate experiment + context handoff + held monitoring/exit/restart with preserved original ledger/charges; fullcombinedsuite onlyafterfinalheads"
+        "scope": "Actual Token2022 separate experiment + context handoff + held monitoring/exit/restart with preserved original ledger/charges; fullcombinedsuite onlyafterfinalheads",
+        "turn_id": "01a120eb-1173-7153-a4b3-64b92e3a5aad",
+        "cursor": "d3153436-2742-432e-8501-9c06b95f29ae:56"
       },
       "coordinator_handoff_operator_focused": {
         "heads": [
@@ -3544,6 +3550,13 @@
         "seconds": 9.984,
         "result": "PASS",
         "scope": "handoff+selectedledger tests; doesnotwaive156sourcecontradiction"
+      },
+      "cold_entry_timing": {
+        "worker": "01",
+        "thread_id": "01a118fc-39bc-722c-b442-b442-8bf5a749e0bb",
+        "status": "ASSIGNED",
+        "finding": "08actual2secPacer freshcollector+held4reads4.10s pass; coldentry10sdeadlineblocks; retainedfreshUSD6.15sentry needs full samepacer USDacquisitionrecipe verified",
+        "scope": "fixtureonly existingoperatorrecipe; no TTL/pacing/budget weakening"
       }
     }
   },
