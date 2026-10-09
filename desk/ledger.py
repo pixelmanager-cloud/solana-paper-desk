@@ -98,6 +98,8 @@ class Ledger:
             latest = self.db.execute('SELECT MAX(ts) FROM events').fetchone()[0]
             if latest is None or state['last_ts'] != latest:
                 raise ValueError('checkpoint journal timestamp mismatch')
+            from .paper_checkpoint import validate_entry_policies
+            validate_entry_policies(self.db, state)
             return state
         except (ValueError, TypeError, KeyError) as exc:
             raise ValueError('ledger checkpoint invalid: recovery required; original records preserved') from exc

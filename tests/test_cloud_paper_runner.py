@@ -62,7 +62,11 @@ class PaperRunnerTests(unittest.TestCase):
         self.assertEqual(replay['outcomes'],[])
         self.assertEqual(before,self.snapshot())
         self.assertFalse(exited['paper']['automatic_entry_enabled'])
-        self.assertEqual(exited['paper']['runner_status'],'NOT_CONNECTED')
+        self.assertEqual(exited['paper']['runner_status'],'SYNTHETIC_CHECKPOINT_RECORDED')
+        self.assertEqual(exited['paper']['runner_provenance'],'SYNTHETIC_TEST_ONLY')
+        self.assertEqual(exited['paper']['runner_liveness'],'UNKNOWN')
+        self.assertEqual(exited['paper']['last_run_evidence']['event_id'],
+                         next(e['event_id'] for e in fixture.events if e['ts']==T+2))
 
     def test_existing_position_observed_before_candidate_regardless_of_fixture_order(self):
         self.once(adapter(event()))

@@ -12,7 +12,7 @@ import sqlite3
 
 from .engine import initial_state, transition
 from .ledger import Ledger
-from .model import canonical, load_config, validate_event
+from .model import canonical, load_config, validate_event, PAPER_EXPERIMENTAL
 from .monitor import tick
 from .paper_checkpoint import read_checkpoint
 from .paper_view import paper_status
@@ -24,9 +24,21 @@ INIT = {'schema_version':1,'event_id':'paper-runner:init','ts':0,
         'kind':'clock','actor':'paper_monitor'}
 
 
+def _validate_fixture_event(event,cfg):
+    # Only the explicit operator config selects validation. Event risk metadata
+    # is evidence to validate, never permission to select experimental mode.
+    version=cfg.get('experimental_policy_version') if cfg is not None else None
+    if version is not None:
+        if type(version) is not int or version not in (1,2) or cfg.get('mode')!='paper':
+            raise ValueError('Unsupported experimental paper policy configuration')
+        validate_event(event,mode=PAPER_EXPERIMENTAL,policy_version=version)
+    else:
+        validate_event(event)
+
+
 class FixtureAdapter:
     """Explicit offline fixture boundary, never live authorization from JSON."""
-    def __init__(self, fixture):
+    def __init__(self, fixture, *, cfg=None):
         if (type(fixture) is not dict or set(fixture)!={'provenance','events'}
                 or fixture['provenance']!=PROVENANCE or type(fixture['events']) is not list
                 or len(fixture['events'])>MAX_EVENTS):
@@ -35,18 +47,18 @@ class FixtureAdapter:
         if len(encoded.encode())>MAX_FIXTURE_BYTES:raise ValueError('Fixture size ceiling')
         self.events = json.loads(encoded)
         for event in self.events:
-            validate_event(event)
+            _validate_fixture_event(event,cfg)
             if event['kind']!='market' or event['provenance']!=PROVENANCE:
                 raise ValueError('Fixture market provenance required')
         if len({event['event_id'] for event in self.events})!=len(self.events):
             raise ValueError('Duplicate fixture event identity')
 
     @classmethod
-    def from_file(cls,path):
+    def from_file(cls,path,*,cfg=None):
         with Path(path).open('rb') as source:
             raw=source.read(MAX_FIXTURE_BYTES+1)
         if len(raw)>MAX_FIXTURE_BYTES:raise ValueError('Fixture size ceiling')
-        return cls(json.loads(raw))
+        return cls(json.loads(raw),cfg=cfg)
 
     def observations(self,positions,now,limit):
         return [event for event in self.events if event['ts']==now and event['mint'] in positions][:limit]
@@ -82,7 +94,7 @@ def _state(path):
         return state
 
 
-def _batch(values,now,limit,*,positions,observations):
+def _batch(values,now,limit,*,positions,observations,cfg=None):
     result=[]
     for event in values:
         if len(result)>=limit:raise ValueError('Adapter event ceiling exceeded')
@@ -90,7 +102,7 @@ def _batch(values,now,limit,*,positions,observations):
         encoded=canonical(event)
         if len(encoded.encode())>MAX_FIXTURE_BYTES:raise ValueError('Adapter event size ceiling')
         event=json.loads(encoded)
-        validate_event(event)
+        _validate_fixture_event(event,cfg)
         if (event['kind']!='market' or event['provenance']!=PROVENANCE or event['ts']!=now
                 or (event['mint'] in positions)!=observations):
             raise ValueError('Adapter must supply current synthetic events for the requested phase')
@@ -141,7 +153,7 @@ def run_once(path,cfg,adapter,*,now,controls=(),limit=MAX_EVENTS):
         remaining=limit-len(controls)
         try:
             observations=_batch(adapter.observations(positions,now,remaining),now,remaining,
-                                positions=positions,observations=True)
+                                positions=positions,observations=True,cfg=cfg)
         except (ValueError,TypeError,KeyError,OSError):
             observations=[]
             result['status']='OBSERVATIONS_UNAVAILABLE'
@@ -155,7 +167,7 @@ def run_once(path,cfg,adapter,*,now,controls=(),limit=MAX_EVENTS):
         if result['status']=='COMPLETE' and remaining:
             try:
                 candidates=_batch(adapter.candidates(positions,now,remaining),now,remaining,
-                                  positions=positions,observations=False)
+                                  positions=positions,observations=False,cfg=cfg)
             except (ValueError,TypeError,KeyError,OSError):
                 candidates=[]
                 result['status']='CANDIDATES_UNAVAILABLE'
@@ -182,7 +194,7 @@ def main(argv=None):
     try:
         if args.command=='init':result=initialize(args.db,cfg)
         else:
-            adapter=FixtureAdapter.from_file(args.fixture)
+            adapter=FixtureAdapter.from_file(args.fixture,cfg=cfg)
             controls=[] if not args.control else [{'schema_version':1,'event_id':f'paper-runner:control:{args.control}:{args.now}',
                 'ts':args.now,'kind':'control','actor':'operator','command':args.control}]
             result=run_once(args.db,cfg,adapter,now=args.now,controls=controls,limit=args.limit)

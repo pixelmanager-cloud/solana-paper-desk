@@ -20,6 +20,12 @@ A local scratch combination of PR103 runner and PR105 reporting demonstrated syn
 
 Live loop gaps are now assigned concretely: explicit unknown-compatible experimental scoring; measured rolling trade features; trusted live observation/event wiring; supported route and exact-cost evidence; actual runner state in the dashboard. Fresh production inspection still reports dashboard active, paper NOT_CONFIGURED, runner NOT_CONNECTED and automatic entry false. No live paper fill or readiness has been claimed.
 
+## Latest integration — 2026-10-09
+
+The paper-loop and bounded live-data foundation is integrated at `27bc668599a33562832d0da60966d9ad1f8c2f9c`. The source matches independently reviewed tree `346fb09130aea3c1a92c2cf4b7050fb6b8377316` except coordinator documentation. The combined Linux suite passed 2,136 tests with zero skips; desktop ran 2,136 with 408 platform skips. Exact component heads have successful CI. This is not yet deployed or live-paper readiness.
+
+The user approved an explicit new quote-based paper experiment: fresh live quotes, recorded fees and adverse slippage, and EXECUTION_UNVERIFIED labels. Unknown ownership history remains visibly flagged; known hazards still reject. Remaining implementation is the quote execution engine, measured-feature event adapter, and bounded one-cycle orchestration, followed by combined verification and coordinator-only live validation. PR125 observation CLI and PR126 window transport are under independent review. The scheduled desktop task remains paused.
+
 ## Earlier deployed milestones (historical counts)
 
 
