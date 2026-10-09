@@ -4,7 +4,7 @@ import sqlite3
 import time
 from contextlib import closing
 from pathlib import Path
-from .model import decimal as dec,ZERO,digest,validate_event
+from .model import decimal as dec,ZERO,digest,validate_event,PAPER_EXPERIMENTAL
 from .paper_checkpoint import read_checkpoint,RecoveryRequired
 
 
@@ -30,7 +30,7 @@ def _history_preflight(c):
         raise RecoveryRequired('RUNNER_HISTORY_LIMIT')
 
 
-def _event_json(payload):
+def _event_json(payload,cfg):
     def unique(pairs):
         value={}
         for key,item in pairs:
@@ -40,11 +40,20 @@ def _event_json(payload):
     event=json.loads(payload,object_pairs_hook=unique)
     if type(event) is not dict or type(event.get('schema_version')) is not int:
         raise ValueError('Invalid event version/type')
-    validate_event(event)
+    # Only the checkpoint's hash-bound experiment config selects the policy.
+    # Match engine.transition: experimental validation is market-only; operator
+    # controls and monitor clocks always use the strict grammar.
+    version=cfg.get('experimental_policy_version')
+    if version is not None and (type(version) is not int or version not in (1,2) or cfg.get('mode')!='paper'):
+        raise ValueError('Unsupported experimental paper policy configuration')
+    if version in (1,2) and event.get('kind')=='market':
+        validate_event(event,mode=PAPER_EXPERIMENTAL,policy_version=version)
+    else:
+        validate_event(event)
     return event
 
 
-def _runner_evidence(c,state,marker,now,ttl):
+def _runner_evidence(c,state,marker,now,ttl,cfg):
     """PR103 marker/bootstrap identifies saved synthetic history, never liveness.
 
     Future LIVE_PAPER requires a separately reviewed adapter identity/source and
@@ -58,7 +67,7 @@ def _runner_evidence(c,state,marker,now,ttl):
         count+=1;total+=len(payload.encode())
         if count>10000 or len(payload.encode())>256*1024 or total>16*1024*1024:
             raise RecoveryRequired('RUNNER_HISTORY_LIMIT')
-        try:event=_event_json(payload)
+        try:event=_event_json(payload,cfg)
         except (ValueError,TypeError,KeyError,AttributeError,RecursionError,OverflowError):
             raise RecoveryRequired('RUNNER_EVENT_INVALID') from None
         if (not isinstance(event,dict) or event.get('event_id')!=event_id
@@ -113,7 +122,7 @@ def paper_status(path,*,now=None,expected_config=None):
                 raise RecoveryRequired('CONFIG_IMPLEMENTATION_MISMATCH')
             cfg=json.loads(metadata['config']);ttl=cfg['price_ttl_seconds']
             if type(ttl) is not int or ttl<=0:raise ValueError('Invalid price TTL')
-            runner=_runner_evidence(c,state,metadata.get('paper_runner'),now,ttl)
+            runner=_runner_evidence(c,state,metadata.get('paper_runner'),now,ttl,cfg)
             cash=dec(state['cash']);realized=dec(state['realized_pnl']);positions=[];marks=ZERO;all_fresh=True
             if not isinstance(state['positions'],dict) or len(state['positions'])>100:raise ValueError('Invalid position state')
             for mint,p in sorted(state['positions'].items()):
