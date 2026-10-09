@@ -22,7 +22,7 @@ from .model import canonical, digest
 from .pools import verify_pool
 from .programs import address
 from .providers import SOL
-from .security import mint_policy
+from .security import account_bytes, mint_policy
 
 
 class ObservationError(ValueError):
@@ -145,7 +145,10 @@ def ingest_mint(reader: Callable[[], ProviderObservation], *, mint: str,
     slot = payload.get('slot')
     if type(slot) is not int or slot < 0:
         raise ObservationError('Mint bank missing')
-    policy = mint_policy(payload.get('account'))
+    try:
+        policy = mint_policy(payload.get('account'))
+    except (ValueError, TypeError, KeyError, IndexError, AttributeError, OverflowError) as error:
+        raise ObservationError('Malformed raw mint account') from error
     if policy['decision'] != 'PASS_TOKEN_POLICY':
         raise ObservationError('Unsafe mint: ' + ','.join(policy['reasons']))
     return MintObservation(mint, slot, policy['decimals'], _whole(policy['supply_raw'], positive=True),
@@ -174,6 +177,18 @@ def ingest_pool(reader: Callable[[], ProviderObservation], *, mint: str, pool: s
 
     try:
         result = verify_pool(pool, mint, replay, capture=captured)
+        # The verifier binds these first two original accounts to the vaults
+        # and rejects delegates. Check the remaining legacy control invariants
+        # at this ingestion boundary without rewriting the capture.
+        for account in payload['result']['value'][:2]:
+            raw = account_bytes(account)
+            if (int.from_bytes(raw[72:76], 'little') == 0
+                    and int.from_bytes(raw[121:129], 'little') != 0):
+                raise ObservationError('Inconsistent pool vault delegated amount')
+            if int.from_bytes(raw[109:113], 'little') not in (0, 1):
+                raise ObservationError('Invalid pool vault native option')
+    except ObservationError:
+        raise
     except (KeyError, TypeError, AttributeError, IndexError) as error:
         raise ObservationError('Malformed atomic pool capture') from error
     if result['reasons'] or not result['liquidity_control_verified']:

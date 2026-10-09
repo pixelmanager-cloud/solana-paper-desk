@@ -137,6 +137,68 @@ class LiveObservationTests(unittest.TestCase):
             ingest_pool(self.reader(public['capture'], 'fixture:public-pool-replay'),
                         mint=public['mint'], pool=public['pool'], now=self.now)
 
+    def test_malformed_raw_mint_is_an_observation_error(self):
+        for data in ([[], 'base64'], [None, 'base64'], ['!invalid!', 'base64'], [], None):
+            payload = copy.deepcopy(self.mint_payload)
+            payload['account']['data'] = data
+            original = copy.deepcopy(payload)
+            with self.subTest(data=data), self.assertRaises(ObservationError):
+                ingest_mint(self.reader(payload), mint=self.mint, now=self.now)
+            self.assertEqual(payload, original)
+
+    def persisted_pool(self, store):
+        from tests.test_pools import PoolTests
+        from desk.pools import verify_pool
+        helper = PoolTests(); helper.setUp()
+        result = verify_pool(str(helper.pool), str(helper.mint), helper.rpc, capture=store.save)
+        return helper, store.load(result['evidence_hash'])
+
+    def test_persisted_atomic_vault_controls_reject_corrupt_bytes(self):
+        import base64
+        import tempfile
+        from desk.evidence import EvidenceStore
+        with tempfile.TemporaryDirectory() as directory:
+            store = EvidenceStore(Path(directory) / 'evidence.sqlite')
+            helper, original = self.persisted_pool(store)
+            for index in (0, 1):
+                for start, end, value, reason in ((121, 129, 1, 'delegated amount'),
+                                                (109, 113, 2, 'native option'),
+                                                (109, 113, 2**32-1, 'native option')):
+                    payload = copy.deepcopy(original)
+                    raw = bytearray(base64.b64decode(payload['result']['value'][index]['data'][0]))
+                    self.assertEqual(raw[72:76], bytes(4))
+                    raw[start:end] = value.to_bytes(end-start, 'little')
+                    payload['result']['value'][index]['data'][0] = base64.b64encode(raw).decode()
+                    key = store.save(payload)
+                    with self.subTest(vault=index, start=start, value=value), self.assertRaisesRegex(ObservationError, reason):
+                        ingest_pool(self.reader(store.load(key), 'fixture:persisted-corrupt-controls'),
+                                    mint=str(helper.mint), pool=str(helper.pool), now=self.now)
+                    self.assertEqual(store.load(key), payload)
+                    self.assertEqual(payload['params'], original['params'])
+            self.assertEqual(store.load(digest(original)), original)
+
+    def test_persisted_legitimate_wsol_native_option_and_original_identity(self):
+        import base64
+        import tempfile
+        from desk.evidence import EvidenceStore
+        with tempfile.TemporaryDirectory() as directory:
+            store = EvidenceStore(Path(directory) / 'evidence.sqlite')
+            helper, payload = self.persisted_pool(store)
+            params = copy.deepcopy(payload['params'])
+            # Supported WSOL vault's Some(native rent reserve); no delegate.
+            raw = bytearray(base64.b64decode(payload['result']['value'][1]['data'][0]))
+            raw[109:113] = (1).to_bytes(4, 'little')
+            raw[113:121] = (2039280).to_bytes(8, 'little')
+            payload['result']['value'][1]['data'][0] = base64.b64encode(raw).decode()
+            key = store.save(payload)
+            observation = ingest_pool(self.reader(store.load(key), 'fixture:persisted-native-wsol'),
+                                      mint=str(helper.mint), pool=str(helper.pool), now=self.now)
+            self.assertEqual(observation.source.raw_hash, key)
+            self.assertEqual(json.loads(observation.source.original_json), payload)
+            self.assertEqual(store.load(key)['params'], params)
+            self.assertIsNone(observation.executable_fill_proof)
+            self.assertIn('OWNERSHIP_HISTORY_UNKNOWN', observation.risk_flags)
+
     def test_pool_requests_never_rewritten(self):
         public = json.loads((FIXTURES / 'mainnet-pool-snapshot.json').read_text())
         for change in ('mint', 'pool', 'floor', 'commitment', 'missing'):
