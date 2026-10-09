@@ -1893,16 +1893,16 @@
       "live_acceptance": false
     },
     "current_worker_followups": {
-      "01": "141frozen review09; audit concrete admission/graduation/position-target deployment inputs",
+      "01": "147targetexport published review04",
       "02": "Independent142 approvedmonitoringbudget review",
-      "03": "Implement approved separate persisted60/hour sharedheldposition monitoring allowance; coordinate08/06",
-      "04": "Independent143 checkpoint/view consumer review",
+      "03": "142current activeentry binding repair forlegitimate reentry",
+      "04": "147independentreview;143a006repairPASS",
       "05": "Platformblocked97/110; not retried",
-      "06": "Repair140 config boundary on separate successor;139 frozenPASS",
-      "07": "140 HOLD; ready06 exact repair re-review",
+      "06": "Exactcombined c5534d2 Linux regression, no source edits",
+      "07": "146scopedPASS;145c615PASS",
       "08": "Wire139+142 concrete published APIs in separate138 successor",
-      "09": "Independent141 report quote_exit review",
-      "10": "quote_exit checkpoint/view successor; coordinator reproduced2 expected consumer errors"
+      "09": "146published reviewPASS; inactive monitorunits withactual147API",
+      "10": "143 repaira006published,04rereview"
     },
     "paper_live_foundation_candidate": {
       "base": "3fe3188",
@@ -2031,7 +2031,7 @@
       "automatic_entry_enabled": false
     },
     "integration_ci_latest": {
-      "head": "55bfb4c7d1b3f8caa4de0c90683cf72c9d59d4e2",
+      "head": "d05d963a4cc8cda7d1943c7c3b1edcf7fb18aa6d",
       "status": "BOTH_SUCCESS"
     },
     "active_repair_turns": {
@@ -2281,11 +2281,12 @@
     },
     "pending_pr141": {
       "head": "7e782441e39b8c8ab232dba15f50cbe40fcb4271",
-      "status": "INDEPENDENT_REVIEW09",
+      "status": "SCOPED_PASS09_CHECKPOINT143_COMBINATION_PENDING",
       "worker": "01",
       "reviewer": "09",
       "scope": "quote_exit report consumer; checkpoint successor10 required",
-      "attachment_status": "App attachment limit100; durable PR/head retained"
+      "attachment_status": "App attachment limit100; durable PR/head retained",
+      "independent_cases": 12
     },
     "runtime_combined_smoke": {
       "base": "d05d963a4cc8cda7d1943c7c3b1edcf7fb18aa6d",
@@ -2307,30 +2308,149 @@
         "skips": 408,
         "seconds": 53.616,
         "note": "PASS diagnostic only:142 fractional clock delta applied before process completion; not immutable-head acceptance. Final full combined still required."
+      },
+      "latest_cycle_cli_focused": {
+        "tests": 48,
+        "seconds": 8.552,
+        "result": "PASS",
+        "heads": [
+          138,
+          139,
+          140,
+          141,
+          142,
+          143,
+          144,
+          145
+        ],
+        "known_review_holds": [
+          142,
+          143,
+          145
+        ]
       }
     },
     "pending_pr142": {
-      "head": "db6f7850a217648b936db587d078356c6067d0f1",
-      "status": "INDEPENDENT_REVIEW02",
+      "head": "1e60494bc4295384052a1f003b9eadaec28bb754",
+      "status": "HOLD_ACTIVE_ENTRY_BINDING_REPAIR03",
       "worker": "03",
       "reviewer": "02",
-      "scope": "Durable shared60/hour monitoring allowance; cycle wiring08 pending"
+      "scope": "Durable shared60/hour monitoring allowance; cycle wiring08 pending",
+      "finding": "Fresh SQLite INSERT OR REPLACE rewrites retained reservation timestamps and permits61stsamehour request;02 reproduced;03 repairing.",
+      "current_finding": "Replacement bypassfixed;02 actual fullclose/cooldown/rebuy failsmonitoring because allhistoricalbuyrows counted."
     },
     "pending_pr143": {
-      "head": "689d9f66a05b3e9ffe8b383192dea15d467dc74c",
+      "head": "a006cdac07e0ff8b2e348cdc86ca5526f5e7b73a",
       "authored_commit": "7f22773ccbd055f0d5a8d936547fce6108584323",
-      "status": "INDEPENDENT_REVIEW04",
+      "status": "SCOPED_REPAIR_PASS04_FINAL_COMBINATION_PENDING",
       "worker": "10",
       "reviewer": "04",
-      "scope": "Quote-exit checkpoint/view consumer"
+      "scope": "Quote-exit checkpoint/view consumer",
+      "finding": "After partial and fullclose, rehashed partial event full-quote hash substitution passes readers; must retain/replay full mark source independently of partial actionquote.",
+      "repair_commit": "42b6645a1434c04001b2347be81b4a2cda25ec05",
+      "focused_linux_tests": 44
     },
     "active_runtime_turns": {
-      "02": "01a11ff5-2975-77fb-bb9a-edeee854f0b7",
+      "02": "01a12000-9b45-730c-bc79-fe565b214809",
       "04": "01a11ff5-37a7-73e3-b2d8-319b69b90254",
       "06": "01a11ff4-0202-71da-b44d-05a4ba77f1ad",
       "08": "01a11fef-9910-71a2-b4d7-051be54618d0",
-      "09": "01a11ff3-6a3c-7707-946d-86f56b7dd231",
-      "10": "01a11fed-cdc0-7172-970a-02d7956e44c4"
+      "09": "01a11ffe-8ec2-751c-aac4-22f2c575176b",
+      "10": "01a11ffd-06be-749a-87fa-3871ab128f62",
+      "01": "01a11ffa-2a6d-74e0-b9b5-22037f7e7623",
+      "07": "01a11ffe-3eb9-7480-aa6f-2cabcb5d64d5"
+    },
+    "pending_pr144": {
+      "head": "21d9ed5211d2a22dcb21da6d90f0cbda03f46a51",
+      "status": "SCOPED_PASS07_FINAL_COMBINATION_PENDING",
+      "worker": "06",
+      "reviewer": "07",
+      "focused_linux_tests": 11,
+      "independent_cli_cases": 12,
+      "scope": "140 bounded duplicate-free config snapshot repair"
+    },
+    "pending_pr145": {
+      "head": "c615743e743f2de32c90570a90a51d06cb533f28",
+      "status": "SCOPED_REPAIR_PASS07_FINAL_COMBINATION_PENDING",
+      "worker": "08",
+      "reviewer": "07",
+      "scope": "Held-only collection and explicit monitoring allowance wiring",
+      "finding": "Original quote observed_at versuslocalcompletion1second boundary causesfalsebindingfailure andchargedlatch;08repairing",
+      "focused_linux_tests": 39
+    },
+    "runtime_combined_frozen": {
+      "base": "d05d963a4cc8cda7d1943c7c3b1edcf7fb18aa6d",
+      "tree": "c5534d22458a49608f6001b4b85397f9e8df4d1a",
+      "components": [
+        138,
+        139,
+        140,
+        141,
+        142,
+        143,
+        144,
+        145
+      ],
+      "heads": {
+        "142": "1e60494bc4295384052a1f003b9eadaec28bb754",
+        "143": "a006cdac07e0ff8b2e348cdc86ca5526f5e7b73a",
+        "144": "21d9ed5211d2a22dcb21da6d90f0cbda03f46a51",
+        "145": "c615743e743f2de32c90570a90a51d06cb533f28"
+      },
+      "mac": {
+        "tests": 2322,
+        "skips": 408,
+        "seconds": 62.122,
+        "result": "PASS"
+      },
+      "linux": "DISPATCHED06_EXACT_TREE",
+      "status": "DIAGNOSTIC_PASS_NOT_ACCEPTED142_REENTRY_REPAIR_REQUIRED",
+      "live_acceptance": false
+    },
+    "pending_pr146": {
+      "head": "7e95377cb0aa4a14d20f20626cccadea8ed7e30f",
+      "authored_commits": [
+        "95e72f467f9dabf5e90cd37e99a72cf025ca8878",
+        "7e95377cb0aa4a14d20f20626cccadea8ed7e30f"
+      ],
+      "status": "SCOPED_PASS07_FINAL_COMBINATION_PENDING",
+      "worker": "09",
+      "reviewer": "07",
+      "focused_linux_tests": 15,
+      "scope": "Explicit manual monitoring/provisioning and advisory5readsperposition pacing"
+    },
+    "pending_pr147": {
+      "head": "38bd53311b5cee6b40b36a3eab764685699af224",
+      "authored_commits": [
+        "a6461c46d2104433ea3e686e70256a1a197b85c0",
+        "38bd53311b5cee6b40b36a3eab764685699af224"
+      ],
+      "status": "INDEPENDENT_REVIEW04",
+      "worker": "01",
+      "reviewer": "04",
+      "scope": "Read-only genuine acquisition/currentheld target export"
+    },
+    "reviewed_acquisition_staging": {
+      "release": "d05d963a4cc8cda7d1943c7c3b1edcf7fb18aa6d",
+      "path": "/opt/solana-desk-releases/d05d963",
+      "archive_sha256": "c1bd13d69907c029740d8f678460ad3755445a2c041e18c2ab089ca398c178e9",
+      "archive_remote_match": true,
+      "vps_tests": "RUNNING_SERVICE_UID",
+      "active_release_unchanged": "f52840b",
+      "provider_calls": 0
+    },
+    "offline_live_candidate_preflight": {
+      "scope": "Latest200savedlaunchnotifications on VPS, zero provider calls",
+      "legacy_program_launches": 3,
+      "token2022_launches": 174,
+      "decode_errors": 23,
+      "mint_candidates": [
+        "NRRFHVS9AXqXQgo9sAh6xVHFt98wELLuo4BT7gRpump",
+        "JB2kicDzWjkLGzGAemvozTbvQex73MQBMLi8s3LSpump",
+        "J95NK9gFv5nYUSJWVid3QC2PKAwwiwFFPSVy2C8Zpump"
+      ],
+      "eligibility": false,
+      "note": "Saved launch tokenprogram only; actual mint controls/migration/pool/currentstrategy unverified"
     }
   },
   "native_reconciliation_review": {

@@ -1,6 +1,6 @@
 # Readiness and autonomous development checklist
 
-Last verified: 8 October 2026, Korea time. The user's requested end state is a usable Solana paper-trading tool with bundle-first screening. Do not equate a usable research dashboard with that end state. Real-money execution is disabled.
+Last production inspection: 9 October 2026. The current requested end state is a usable live-data paper-trading cycle under the explicit experimental policy below; further screening expansion is frozen. Do not equate a usable research dashboard with that end state. Real-money execution is disabled.
 
 ## Current status — 2026-10-08
 
@@ -8,7 +8,7 @@ Paper readiness is incomplete. Production runs reviewed release f52840b7f29940e3
 
 Dashboard is active on 127.0.0.1:8765; decision and monitor services exited successfully. Paper API remains NOT_CONFIGURED, runner NOT_CONNECTED, automatic entry false, and no active paper ledger exists. The original evidence database lacks ownership_heads; diagnostic inspection remains unavailable without a canonical head. No head was fabricated or migration performed. Historical control inventory and conditional vault conservation remain diagnostics, not ownership, route or entry approval. Rollback overrides preserve prior release d8e37c8.
 
-Remaining critical path: live complete ownership/exposure evidence for a supported candidate; authenticated route/effect and exact quantity/cost evidence; measured current strategy features and a trusted source-bound entry adapter; durable supervised entry/refresh/exit integration; forward observation. Signed messages, parsed events, zero balance residuals and diagnostic receipt coverage alone do not satisfy those gates. No eligible live entry has been demonstrated.
+Earlier strict-mode critical path (superseded for the explicitly approved paper experiment below): complete ownership/exposure and authenticated route/effect evidence. Current paper critical path: finish reviewed cycle and operator wiring, validate genuine supported candidate data under existing budgets, then demonstrate entry/monitor/exit/accounting/restart and forward observation. Signed messages, parsed events, zero balance residuals and diagnostic receipt coverage alone do not satisfy those gates. No eligible live entry has been demonstrated.
 
 ## Paper-loop priority update — 2026-10-09
 
@@ -21,6 +21,8 @@ A local scratch combination of PR103 runner and PR105 reporting demonstrated syn
 Live loop gaps are now assigned concretely: explicit unknown-compatible experimental scoring; measured rolling trade features; trusted live observation/event wiring; supported route and exact-cost evidence; actual runner state in the dashboard. Fresh production inspection still reports dashboard active, paper NOT_CONFIGURED, runner NOT_CONNECTED and automatic entry false. No live paper fill or readiness has been claimed.
 
 ## Latest integration — 2026-10-09
+
+Current pending runtime candidate `c5534d22458a49608f6001b4b85397f9e8df4d1a` passed 2,322 local tests (408 Linux-only skips), but is not accepted: monitoring re-entry binding needs repair. Partial-exit source retention and quote clock-boundary repairs passed independent scoped review. Manual monitoring/provisioning passed scoped review; offline target export is under review. Full final combined Linux validation and exact-head CI remain required. Reviewed acquisition release `d05d963` is staged on the VPS with matching archive hash and service-user tests running; active services remain `f52840b`. No new provider requests, active paper ledger or live fill are claimed.
 
 Quote-based paper execution, raw source-bound market/graduation adapters, checkpoint validation, and explicit unverified reporting are integrated at `9b03e4532a3902e1f4521e99a04b8a071c2e28d6`. Source matches independently reviewed tree `e44bc086fb7cd8431cd3f86eaf3b31087690fd9d` except coordinator documentation. All 2,237 Linux tests passed with zero skips; desktop passed the same suite with 408 platform skips. All final component heads passed CI and were rechecked before integration. Not deployed or live-paper accepted. Remaining: cycle/operator CLI integration, exit-only observations and reader/report consumers, approved shared monitoring allowance, final combined validation and bounded live runtime verification.
 
