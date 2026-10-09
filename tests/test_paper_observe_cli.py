@@ -8,6 +8,7 @@ import fcntl
 from pathlib import Path
 import subprocess
 import sys
+import sqlite3
 from unittest.mock import patch
 import unittest
 
@@ -30,6 +31,7 @@ class ObservationCliTests(unittest.TestCase):
         class Opener:
             def open(self,request,*,timeout):
                 outer.requests.append(request)
+                if outer.transport_fail == 'interrupt':raise KeyboardInterrupt()
                 if outer.transport_fail:raise OSError('SECRET_do_not_print')
                 outer.assertGreater(timeout,0);outer.assertLessEqual(timeout,10)
                 if request.method=='POST':
@@ -95,6 +97,64 @@ class ObservationCliTests(unittest.TestCase):
         self.assertEqual(len(self.requests),1);self.assertEqual(r['attempted_requests'],1)
         self.assertNotIn('SECRET',json.dumps(r))
         self.assertEqual(self.f.progress.admission(self.position.scan_id)['requests_used'],1)
+    def test_failed_read_latches_restart_and_different_targets_without_new_charge(self):
+        self.transport_fail=True
+        first=self.invoke()
+        self.assertEqual(first['stopped_reason'],'SOURCE_REQUEST_FAILED')
+        original=self.f.progress.store.load(first['evidence_hash'])
+        self.transport_fail=False;self.requests.clear()
+        for target in (self.candidate,self.position):
+            code,result=self.invoke(candidates=(target,),via_cli=True)
+            self.assertEqual(code,2)
+            self.assertEqual(result['stopped_reason'],'OBSERVATION_RECOVERY_REQUIRED')
+            self.assertEqual(result['attempted_requests'],0)
+        self.assertEqual(self.requests,[])
+        self.assertEqual(self.f.progress.admission(self.candidate.scan_id)['requests_used'],1)
+        self.assertEqual(self.f.progress.store.load(first['evidence_hash']),original)
+
+    def test_interrupted_charged_read_latches_without_published_outcome(self):
+        self.transport_fail='interrupt'
+        with self.assertRaises(KeyboardInterrupt):self.invoke()
+        self.assertEqual(self.f.progress.admission(self.candidate.scan_id)['requests_used'],1)
+        self.transport_fail=False;self.requests.clear()
+        result=self.invoke()
+        self.assertEqual(result['stopped_reason'],'OBSERVATION_RECOVERY_REQUIRED')
+        self.assertEqual(self.requests,[])
+        self.assertEqual(self.f.progress.admission(self.candidate.scan_id)['requests_used'],1)
+
+    def test_invalid_existing_databases_unchanged_before_admission_rejection(self):
+        root=Path(self.f.tmp.name)
+        paths=[root/'invalid-research.sqlite',root/'invalid-evidence.sqlite']
+        for path in paths:
+            with sqlite3.connect(path) as c:c.execute('CREATE TABLE original(value TEXT)')
+        before=[path.read_bytes() for path in paths]
+        result=cli.observe(*paths,candidates=(self.candidate,))
+        self.assertEqual(result['stopped_reason'],'PERSISTED_ADMISSION_REQUIRED')
+        self.assertEqual([path.read_bytes() for path in paths],before)
+        self.assertEqual(self.requests,[])
+
+    def test_missing_admission_keeps_all_original_tables_and_pages_unchanged(self):
+        with self.f.progress.store.connect() as c:
+            c.execute('DELETE FROM ownership_admissions WHERE id=?',(self.candidate.scan_id,))
+            before=list(c.iterdump())
+        result=self.invoke()
+        with self.f.progress.store.connect() as c:self.assertEqual(list(c.iterdump()),before)
+        self.assertEqual(result['stopped_reason'],'PERSISTED_ADMISSION_REQUIRED')
+        self.assertEqual(self.requests,[])
+
+    def test_output_persistence_interruption_remains_latched(self):
+        original=cli.EvidenceStore.save
+        def save(store,payload):
+            if payload.get('kind')=='paper_observation_pass_v1':raise OSError('fixture disk failure')
+            return original(store,payload)
+        with patch.object(cli.EvidenceStore,'save',save):
+            with self.assertRaises(OSError):self.invoke()
+        self.requests.clear()
+        result=self.invoke()
+        self.assertEqual(result['stopped_reason'],'OBSERVATION_RECOVERY_REQUIRED')
+        self.assertEqual(self.requests,[])
+        self.assertEqual(self.f.progress.admission(self.candidate.scan_id)['requests_used'],4)
+
     def test_usd_stale_never_healthy_or_numeric_default(self):
         self.block_time=self.f.at-31
         r=self.invoke(sol_usd=True)
