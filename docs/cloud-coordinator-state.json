@@ -1,6 +1,6 @@
 {
   "schema_version": 1,
-  "revision": 74,
+  "revision": 75,
   "repository": "pixelmanager-cloud/solana-paper-desk",
   "source_main_sha": "e298e15cd758932e81d2241130716632702f5bd0",
   "observed_date": "2026-10-08",
@@ -4448,6 +4448,86 @@
       "provider_calls": 0,
       "readiness": "BLOCKED_NO_SUPPORTED_BUDGET_FEASIBLE_PUBLIC_LEGACY_SEED; acquisition path in development",
       "schedule": "NOT_REPROBED_NO_DURABLE_BINDING_CLAIM"
+    },
+    {
+      "kind": "HOURLY_GITHUB_RECONCILIATION",
+      "at": "2026-10-09T16:01:51Z",
+      "status": "EXISTING_REVIEW_SCOPES_AND_PROVISIONAL_INVESTIGATION",
+      "cloud_execution": {
+        "provider": "cloud",
+        "observations_current": true,
+        "observed_phase": "running",
+        "spec_revision": "136"
+      },
+      "queue_blob_sha": "fc3bcf9c86978e3e235e1988f63c91836781596e",
+      "observed_prs": [
+        {
+          "pr": 162,
+          "head_sha": "b644bee22d1112e0c5b2b90e2548db9c60e752e1",
+          "base_sha": "e4badabe0ce850ceec59e4ae25aa1e7e0c266efb",
+          "branch": "codex/cloud-http-framing-audit-08",
+          "comment_ids": [
+            6083383700,
+            6083404071,
+            6083464729,
+            6083498672,
+            6083557545,
+            6083594247,
+            6083688758
+          ],
+          "status": "EXTERNAL_INDEPENDENT_COMPONENT_REVIEW_PRESENT",
+          "tests_this_run": "NOT_RUN",
+          "limitations": "No dependent completion or author test certification; PR167 explicitly investigation-only, provisional166 dependency not accepted."
+        },
+        {
+          "pr": 165,
+          "head_sha": "f40ea164b6ed6e1883bcbb094fc3cb24c2f7a07f",
+          "base_sha": "b414dbd175042e20eb17a50fd65e396d495820fd",
+          "branch": "codex/cloud-migration-sentinel-audit-08",
+          "comment_ids": [
+            6084336311,
+            6084393868,
+            6084400756
+          ],
+          "status": "EXTERNAL_INDEPENDENT_COMPONENT_REVIEW_PRESENT",
+          "tests_this_run": "NOT_RUN",
+          "limitations": "No dependent completion or author test certification; PR167 explicitly investigation-only, provisional166 dependency not accepted."
+        },
+        {
+          "pr": 166,
+          "head_sha": "4c981382e3e5dac8706361975dcad1813bc8dc50",
+          "base_sha": "b414dbd175042e20eb17a50fd65e396d495820fd",
+          "branch": "codex/cloud-wave1-07-runtime-continuation",
+          "comment_ids": [
+            5472323451,
+            6084383552,
+            5472356903,
+            5472403909,
+            6084486855
+          ],
+          "status": "EXTERNAL_WORKER09_REPAIRED_HEAD_REMAINING_BOUND_FINDING",
+          "tests_this_run": "NOT_RUN",
+          "limitations": "No dependent completion or author test certification; PR167 explicitly investigation-only, provisional166 dependency not accepted."
+        },
+        {
+          "pr": 167,
+          "head_sha": "f894e024a4ec5ce9b9158b3cea4d828ba90823a9",
+          "base_sha": "b414dbd175042e20eb17a50fd65e396d495820fd",
+          "branch": "codex/cloud-wave28-04-continuation-fixture",
+          "comment_ids": [],
+          "status": "AUTHOR_WORKER04_INVESTIGATION_ONLY_UNACCEPTED_RUNTIME_DEPENDENCY",
+          "tests_this_run": "NOT_RUN",
+          "limitations": "No dependent completion or author test certification; PR167 explicitly investigation-only, provisional166 dependency not accepted."
+        }
+      ],
+      "observed_codex_branch_count": 166,
+      "branch_pagination_complete": true,
+      "tests": "NOT_RUN_NO_READY_UNASSIGNED_REVIEW",
+      "review_comments_posted": 0,
+      "infrastructure_failures": 0,
+      "provider_calls": 0,
+      "readiness": "BLOCKED_NO_SUPPORTED_BUDGET_FEASIBLE_PUBLIC_LEGACY_SEED; acquisition path in development",
+      "schedule": "NOT_REPROBED_NO_DURABLE_BINDING_CLAIM"
     }
   ],
   "artifact_pr": {
@@ -6923,6 +7003,64 @@
       "status": "EXTERNAL_INDEPENDENT_COMPONENT_REVIEW_ALREADY_PRESENT",
       "tests_this_run": "NOT_RUN",
       "limitations": "External PASS/CI/tests not independently certified; PR163 published head differs from tested implementation and is not inferred accepted."
+    },
+    {
+      "pr": 162,
+      "head_sha": "b644bee22d1112e0c5b2b90e2548db9c60e752e1",
+      "base_sha": "e4badabe0ce850ceec59e4ae25aa1e7e0c266efb",
+      "branch": "codex/cloud-http-framing-audit-08",
+      "comment_ids": [
+        6083383700,
+        6083404071,
+        6083464729,
+        6083498672,
+        6083557545,
+        6083594247,
+        6083688758
+      ],
+      "status": "EXTERNAL_INDEPENDENT_COMPONENT_REVIEW_PRESENT",
+      "tests_this_run": "NOT_RUN",
+      "limitations": "No dependent completion or author test certification; PR167 explicitly investigation-only, provisional166 dependency not accepted."
+    },
+    {
+      "pr": 165,
+      "head_sha": "f40ea164b6ed6e1883bcbb094fc3cb24c2f7a07f",
+      "base_sha": "b414dbd175042e20eb17a50fd65e396d495820fd",
+      "branch": "codex/cloud-migration-sentinel-audit-08",
+      "comment_ids": [
+        6084336311,
+        6084393868,
+        6084400756
+      ],
+      "status": "EXTERNAL_INDEPENDENT_COMPONENT_REVIEW_PRESENT",
+      "tests_this_run": "NOT_RUN",
+      "limitations": "No dependent completion or author test certification; PR167 explicitly investigation-only, provisional166 dependency not accepted."
+    },
+    {
+      "pr": 166,
+      "head_sha": "4c981382e3e5dac8706361975dcad1813bc8dc50",
+      "base_sha": "b414dbd175042e20eb17a50fd65e396d495820fd",
+      "branch": "codex/cloud-wave1-07-runtime-continuation",
+      "comment_ids": [
+        5472323451,
+        6084383552,
+        5472356903,
+        5472403909,
+        6084486855
+      ],
+      "status": "EXTERNAL_WORKER09_REPAIRED_HEAD_REMAINING_BOUND_FINDING",
+      "tests_this_run": "NOT_RUN",
+      "limitations": "No dependent completion or author test certification; PR167 explicitly investigation-only, provisional166 dependency not accepted."
+    },
+    {
+      "pr": 167,
+      "head_sha": "f894e024a4ec5ce9b9158b3cea4d828ba90823a9",
+      "base_sha": "b414dbd175042e20eb17a50fd65e396d495820fd",
+      "branch": "codex/cloud-wave28-04-continuation-fixture",
+      "comment_ids": [],
+      "status": "AUTHOR_WORKER04_INVESTIGATION_ONLY_UNACCEPTED_RUNTIME_DEPENDENCY",
+      "tests_this_run": "NOT_RUN",
+      "limitations": "No dependent completion or author test certification; PR167 explicitly investigation-only, provisional166 dependency not accepted."
     }
   ],
   "pending_reviews": [
@@ -7985,64 +8123,78 @@
   ],
   "last_reconciliation": {
     "kind": "HOURLY_GITHUB_RECONCILIATION",
-    "at": "2026-10-09T15:03:20Z",
-    "status": "NO_NEW_UNASSIGNED_REVIEW_WORK",
+    "at": "2026-10-09T16:01:51Z",
+    "status": "EXISTING_REVIEW_SCOPES_AND_PROVISIONAL_INVESTIGATION",
     "cloud_execution": {
       "provider": "cloud",
       "observations_current": true,
       "observed_phase": "running",
-      "spec_revision": "125"
+      "spec_revision": "136"
     },
-    "queue_blob_sha": "f4c04a8a0de073df2919c823c9607504b04dfce0",
+    "queue_blob_sha": "fc3bcf9c86978e3e235e1988f63c91836781596e",
     "observed_prs": [
       {
-        "pr": 160,
-        "head_sha": "37a6aa0bad86f3cb675bfeb234d932e45ff23094",
-        "base_sha": "e4badabe0ce850ceec59e4ae25aa1e7e0c266efb",
-        "branch": "codex/cloud-cold-entry-recipe-01",
-        "comment_ids": [
-          6082761937,
-          6082835016,
-          6082837566,
-          6082839866
-        ],
-        "status": "EXTERNAL_INDEPENDENT_COMPONENT_REVIEW_ALREADY_PRESENT",
-        "tests_this_run": "NOT_RUN",
-        "limitations": "External PASS/CI/tests not independently certified; PR163 published head differs from tested implementation and is not inferred accepted."
-      },
-      {
         "pr": 162,
-        "head_sha": "a6384e79c2976aa466ebda72574327fcf197bf66",
+        "head_sha": "b644bee22d1112e0c5b2b90e2548db9c60e752e1",
         "base_sha": "e4badabe0ce850ceec59e4ae25aa1e7e0c266efb",
         "branch": "codex/cloud-http-framing-audit-08",
         "comment_ids": [
           6083383700,
           6083404071,
           6083464729,
-          6083498672
+          6083498672,
+          6083557545,
+          6083594247,
+          6083688758
         ],
-        "status": "EXTERNAL_WORKER02_REPAIRED_HEAD_CHANGES_REQUIRED",
+        "status": "EXTERNAL_INDEPENDENT_COMPONENT_REVIEW_PRESENT",
         "tests_this_run": "NOT_RUN",
-        "limitations": "External PASS/CI/tests not independently certified; PR163 published head differs from tested implementation and is not inferred accepted."
+        "limitations": "No dependent completion or author test certification; PR167 explicitly investigation-only, provisional166 dependency not accepted."
       },
       {
-        "pr": 163,
-        "head_sha": "f5ddc251f5ad0492f92a5f22772582b9601c6b57",
-        "base_sha": "e4badabe0ce850ceec59e4ae25aa1e7e0c266efb",
-        "branch": "codex/cloud-wave1-07-active-runtime-upgrade",
+        "pr": 165,
+        "head_sha": "f40ea164b6ed6e1883bcbb094fc3cb24c2f7a07f",
+        "base_sha": "b414dbd175042e20eb17a50fd65e396d495820fd",
+        "branch": "codex/cloud-migration-sentinel-audit-08",
         "comment_ids": [
-          6083417997,
-          6083423665,
-          5471771722
+          6084336311,
+          6084393868,
+          6084400756
         ],
-        "status": "EXTERNAL_INDEPENDENT_COMPONENT_REVIEW_ALREADY_PRESENT",
+        "status": "EXTERNAL_INDEPENDENT_COMPONENT_REVIEW_PRESENT",
         "tests_this_run": "NOT_RUN",
-        "limitations": "External PASS/CI/tests not independently certified; PR163 published head differs from tested implementation and is not inferred accepted."
+        "limitations": "No dependent completion or author test certification; PR167 explicitly investigation-only, provisional166 dependency not accepted."
+      },
+      {
+        "pr": 166,
+        "head_sha": "4c981382e3e5dac8706361975dcad1813bc8dc50",
+        "base_sha": "b414dbd175042e20eb17a50fd65e396d495820fd",
+        "branch": "codex/cloud-wave1-07-runtime-continuation",
+        "comment_ids": [
+          5472323451,
+          6084383552,
+          5472356903,
+          5472403909,
+          6084486855
+        ],
+        "status": "EXTERNAL_WORKER09_REPAIRED_HEAD_REMAINING_BOUND_FINDING",
+        "tests_this_run": "NOT_RUN",
+        "limitations": "No dependent completion or author test certification; PR167 explicitly investigation-only, provisional166 dependency not accepted."
+      },
+      {
+        "pr": 167,
+        "head_sha": "f894e024a4ec5ce9b9158b3cea4d828ba90823a9",
+        "base_sha": "b414dbd175042e20eb17a50fd65e396d495820fd",
+        "branch": "codex/cloud-wave28-04-continuation-fixture",
+        "comment_ids": [],
+        "status": "AUTHOR_WORKER04_INVESTIGATION_ONLY_UNACCEPTED_RUNTIME_DEPENDENCY",
+        "tests_this_run": "NOT_RUN",
+        "limitations": "No dependent completion or author test certification; PR167 explicitly investigation-only, provisional166 dependency not accepted."
       }
     ],
-    "observed_codex_branch_count": 162,
+    "observed_codex_branch_count": 166,
     "branch_pagination_complete": true,
-    "tests": "NOT_RUN_EXISTING_INDEPENDENT_REVIEW_SCOPES",
+    "tests": "NOT_RUN_NO_READY_UNASSIGNED_REVIEW",
     "review_comments_posted": 0,
     "infrastructure_failures": 0,
     "provider_calls": 0,
