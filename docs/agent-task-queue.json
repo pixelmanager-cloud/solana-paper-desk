@@ -2971,7 +2971,23 @@
         "seconds": 329.356,
         "tree": "dd09bb1e8d98f3c9552f7232e3f8fa49a41b6029"
       },
-      "finding_resolved": true
+      "finding_resolved": true,
+      "deployment_preflight": {
+        "worker": "10",
+        "thread_id": "01a118fd-56d5-70b8-ad31-dba13e982082",
+        "turn_id": "01a12092-b0c4-749a-b258-6958c04b544f",
+        "cursor": "e6039648-56af-4049-8a6e-06eaaa8aba52:53",
+        "status": "REVIEW_RUNNING",
+        "scope": "Single-stream lifecycle, consistent backup and clean-completion-only restart"
+      },
+      "vps_stage": {
+        "status": "FULL_FIXTURE_TESTS_RUNNING_NOT_ACTIVATED",
+        "source_tree": "dd09bb1e8d98f3c9552f7232e3f8fa49a41b6029",
+        "directory": "/opt/solana-desk-tools/discovery-dd09bb1",
+        "archive_sha256": "1c009979663d1f48a023c508ec3a3c95fecd3c7d4e0ba6101e7c449099277b43",
+        "test_log": "/var/tmp/discovery-dd09bb1-tests.log",
+        "provider_calls": 0
+      }
     },
     "paper_policy_tuning": {
       "status": "PASS_INTEGRATED_OFFLINE_FOUNDATION",
@@ -3068,8 +3084,8 @@
         "reviewer": {
           "worker": "02",
           "thread_id": "01a118fc-666c-70b6-9fa8-2c7520f0a0bb",
-          "turn_id": "01a1208d-5f33-725b-b427-a6627a880cde",
-          "cursor": "a2dcfb97-463d-4188-9da3-48a81e644d23:113"
+          "turn_id": "01a12090-8604-74e8-aa79-cafe0752be58",
+          "cursor": "a2dcfb97-463d-4188-9da3-48a81e644d23:114"
         },
         "findings": [
           "Post-transition malformed suffix grammar inconsistent acrossreaders",
@@ -3110,12 +3126,17 @@
       "thread_id": "01a118fc-b862-7340-ab3a-e1115a3280a4",
       "turn_id": "01a12077-5270-7698-9cc4-75040843cb10",
       "cursor": "d3153436-2742-432e-8501-9c06b95f29ae:46",
-      "status": "DESKTOP_PASS_LINUX_REVIEW_PENDING",
+      "status": "PASS_SUPERSEDED_TREE",
       "note": "Initial scratch cherry-pick omitted intermediate150fix and conflicted; stopped invalid test run, rebuilt exactheadfiles before rerun. No integration.",
       "desktop": {
         "tests": 2393,
         "skips": 408,
         "seconds": 65.795
+      },
+      "linux": {
+        "tests": 2393,
+        "skips": 0,
+        "seconds": 1135.495
       }
     }
   },
