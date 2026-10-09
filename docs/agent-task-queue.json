@@ -3368,7 +3368,30 @@
       "independent_reviewer": "02",
       "runtime_compatibility_preflight_owner": "07",
       "scope": "Verified original mint/account bytes; metadataPointer/TokenMetadata/ImmutableOwner subset only after official-layout validation; all acquisition, pool/vault, entry, quote accounting and restart paths must agree. No blanket waiver, provider caps/signing/public exposure changes.",
-      "runtime_dependency": "Existing ledger already records150545\u21928098 transition; preserve originals and immutable receipts during any future reviewed successor upgrade.07preflight read-only, no overlapping implementation."
+      "runtime_dependency": "Existing ledger already records150545\u21928098 transition; preserve originals and immutable receipts during any future reviewed successor upgrade.07preflight read-only, no overlapping implementation.",
+      "active_assignments": [
+        {
+          "worker": "08",
+          "thread_id": "01a118fd-2563-7126-90d7-bd07693de0b2",
+          "turn_id": "01a120d0-227e-7361-89c3-d2b30a7ec4f6",
+          "cursor": "02d8669f-59ba-43bb-8691-b196829f4867:56",
+          "scope": "implementation"
+        },
+        {
+          "worker": "02",
+          "thread_id": "01a118fc-666c-70b6-9fa8-2c7520f0a0bb",
+          "turn_id": "01a120d0-6e0a-7161-ae3d-a2d296c43952",
+          "cursor": "a2dcfb97-463d-4188-9da3-48a81e644d23:123",
+          "scope": "independentreview"
+        },
+        {
+          "worker": "07",
+          "thread_id": "01a118fd-0f1c-749c-b85b-5e730937d0a8",
+          "turn_id": "01a120d0-81e1-76dc-8149-422023bb3e27",
+          "cursor": "3dd79f38-868a-433f-9b14-13e7ed0a6e90:69",
+          "scope": "readonlyruntimehandoffpreflight"
+        }
+      ]
     }
   },
   "native_reconciliation_review": {
