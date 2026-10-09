@@ -3626,7 +3626,7 @@
           "turn_id": "01a12122-d4fa-739c-afb5-78d9bcd693d5",
           "pr": 161,
           "head": "a52d4b488d0f0268a8e422c86343193702e1a0d4",
-          "status": "FINAL_HEAD_INDEPENDENT_PASS_CI_RUNNING",
+          "status": "INDEPENDENT_PASS_BOTH_FINAL_HEAD_CI_PASS",
           "scoped_tests": 6,
           "scoped_seconds": 11.03,
           "ci_runs": [
@@ -3642,7 +3642,12 @@
             "pass_run": 37945417597,
             "timeout_run": 37945423479,
             "timeout_log": "2526 tests OK in601.409s; job cancelled at10min, not accepted as successfulCI"
-          }
+          },
+          "ci_tests": 2526,
+          "ci_seconds": [
+            528.21,
+            535.704
+          ]
         },
         "review_url": "https://github.com/pixelmanager-cloud/solana-paper-desk/pull/160#issuecomment-6082835016"
       },
@@ -3756,7 +3761,7 @@
         }
       ],
       "transport_repair": {
-        "status": "PUBLISHED_INDEPENDENT_REVIEW_RUNNING",
+        "status": "CHANGES_REQUIRED_FRAMING_TRUNCATION_REPAIR_ASSIGNED",
         "owner": "08",
         "reviewer": "02",
         "base": "e4badabe0ce850ceec59e4ae25aa1e7e0c266efb",
@@ -3765,10 +3770,14 @@
         "turn_id": "01a12120-7ba4-76ae-9c1b-94ee573c13f7",
         "cursor": "02d8669f-59ba-43bb-8691-b196829f4867:67",
         "pr": 162,
-        "head": "37b01cded6f770069d8e24347736b93b733bf97a"
+        "head": "37b01cded6f770069d8e24347736b93b733bf97a",
+        "review_turn_id": "01a12128-95a6-77ca-b07e-092e0dde311f",
+        "review_url": "https://github.com/pixelmanager-cloud/solana-paper-desk/pull/162#issuecomment-6083404071",
+        "finding": "Real HTTPResponse accepts missing terminal trailer line, unterminated trailer, invalid chunk CRLF; three independent malformed-wire probes accepted.33 focused tests pass but miss cases.",
+        "repair_turn_id": "01a1212a-27f9-70a6-ac7e-c8f92ff1c2a1"
       },
       "active_runtime_repair": {
-        "status": "PUBLISHED_INDEPENDENT_REVIEW_RUNNING",
+        "status": "INDEPENDENT_PASS_CI_PENDING",
         "owner": "07",
         "reviewer": "09",
         "scope": "Existing one-hop runtime receipt for currenttoken2022ledger; preserveconfig/context/binding/grants/counters; no newexperiment/reset",
@@ -3776,8 +3785,21 @@
         "turn_id": "01a12120-9d81-71b0-a10b-ed623a0bc3cc",
         "cursor": "3dd79f38-868a-433f-9b14-13e7ed0a6e90:76",
         "pr": 163,
-        "head": "0dd147dac66e4e39e07970670ea13254543c53d7"
-      }
+        "head": "0dd147dac66e4e39e07970670ea13254543c53d7",
+        "review_turn_id": "01a12128-a7ff-7095-a63a-4a7c999e2714",
+        "review_tests": 41,
+        "review_seconds": 33.992,
+        "independent_probes": 2,
+        "review_url": "https://github.com/pixelmanager-cloud/solana-paper-desk/pull/163#issuecomment-6083423665"
+      },
+      "repair_combined_fixture": {
+        "owner": "04",
+        "thread_id": "01a118fc-b862-7340-ab3a-e1115a3280a4",
+        "status": "PREPARING_TEST_ONLY_COMPOSITION_FINAL_HEADS_PENDING",
+        "scope": "Guarded historyfirst actual chunked transport plus reviewed sameexperiment runtime receipt; defer fullsuite until final component heads",
+        "turn_id": "01a12129-aaff-75f1-b903-95b219463fc7"
+      },
+      "artifact_attachment_limit": "PR161/162/163 attach attempts rejected: thread attachment identity count exceeds100; GitHub PR identities persisted inqueue."
     }
   },
   "native_reconciliation_review": {
