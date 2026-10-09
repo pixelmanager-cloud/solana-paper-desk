@@ -116,7 +116,7 @@ class PaperCycleTests(unittest.TestCase):
                 else:
                     from urllib.parse import parse_qs,urlsplit
                     q={k:v[0] for k,v in parse_qs(urlsplit(request.full_url).query).items()}
-                    output=1_000_000 if q['inputMint']==SOL else outer.sell_output
+                    output=getattr(outer,'buy_output_raw',1_000_000) if q['inputMint']==SOL else (int(q['amount'])*outer.sell_output_per_unit_raw//1_000_000 if hasattr(outer,'sell_output_per_unit_raw') else outer.sell_output)
                     wire=canonical({'inputMint':q['inputMint'],'outputMint':q['outputMint'],'swapMode':'ExactIn',
                         'inAmount':q['amount'],'outAmount':str(output),'otherAmountThreshold':str(output*99//100),
                         'slippageBps':100,'routePlan':[{'percent':100,'swapInfo':{'inputMint':q['inputMint'],

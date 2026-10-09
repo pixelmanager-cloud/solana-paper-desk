@@ -109,7 +109,7 @@ def _known_safety_ceiling(e):
     return D(100) - measured
 
 
-def experimental_scores(e, *, mode, policy_version):
+def experimental_scores(e, *, mode, policy_version,token_profile_version=0):
     """JSON-persistable measured-component scores, not entry authorization.
 
     Explicit opt-in and version required. No numeric ownership defaults and no
@@ -118,10 +118,10 @@ def experimental_scores(e, *, mode, policy_version):
     """
     if mode != PAPER_EXPERIMENTAL:
         raise ValueError('Explicit PAPER_EXPERIMENTAL mode required')
-    validate_event(e, mode=mode, policy_version=policy_version)
+    validate_event(e, mode=mode, policy_version=policy_version,token_profile_version=token_profile_version)
     unknowns = experimental_ownership_unknowns(e)
     if policy_version == EXPERIMENTAL_OBSERVABLE_POLICY_VERSION:
-        numeric = _history_profile_scores(_observable_view(e))
+        numeric = _history_profile_scores(_observable_view(e,token_profile_version=token_profile_version))
     elif policy_version == 2:
         numeric = _history_profile_scores(e)
     elif unknowns:
@@ -156,17 +156,19 @@ def experimental_scores(e, *, mode, policy_version):
     if policy_version == EXPERIMENTAL_OBSERVABLE_POLICY_VERSION:
         import json
         from .model import canonical
-        result['score_version']='paper-observable-flow-momentum-v3'
-        result['signal_profile']=json.loads(canonical(observable_signal_profile(e)))
+        result['score_version']='paper-observable-effective-pricing-momentum-v3-profile2' if token_profile_version==2 else 'paper-observable-flow-momentum-v3'
+        if token_profile_version==2:result['volume_feature']='volume_vs_effective_pricing_reserves'
+        result['signal_profile']=json.loads(canonical(observable_signal_profile(e,token_profile_version=token_profile_version)))
         result['manipulation_penalty_basis']=['buyer_volume_concentration_proxy_v1'] + (['manip_safety'] if e['manip_safety'] is not None else [])
         result['risk_flags']=sorted(set(result['risk_flags'])|{'EXECUTION_UNVERIFIED','OBSERVABLE_PROXIES_NOT_SAFETY_PROOF'})
     return result
 
 
-def _observable_view(e):
+def _observable_view(e,token_profile_version=0):
     # Private arithmetic view only. Persisted event retains UNKNOWN legacy fields.
-    p=observable_signal_profile(e)['measurements']
-    return {**e,'flow':p['directional_flow_proxy_v1']['value'],
+    p=observable_signal_profile(e,token_profile_version=token_profile_version)['measurements']
+    from .model import BOOST_VOLUME_FEATURE
+    return {**e,**({'volume_vs_liq':e[BOOST_VOLUME_FEATURE]} if token_profile_version==2 else {}),'flow':p['directional_flow_proxy_v1']['value'],
             'wash_score':p['same_wallet_churn_proxy_v1']['value'],
             'manip_flow':p['buyer_volume_concentration_proxy_v1']['value']}
 
@@ -180,10 +182,12 @@ def experimental_gates(e, cfg, *, mode, policy_version):
     """
     if cfg.get('mode') != 'paper':
         raise ValueError('Experimental gates require paper configuration')
-    result = experimental_scores(e, mode=mode, policy_version=policy_version)
+    from .token2022_paper import selected
+    token_profile_version=selected(cfg)
+    result = experimental_scores(e, mode=mode, policy_version=policy_version,token_profile_version=token_profile_version)
     numeric = {key: dec(result[key]) if result[key] is not None else None
                for key in ('safety','momentum','flow','entry')}
-    view=_observable_view(e) if policy_version == EXPERIMENTAL_OBSERVABLE_POLICY_VERSION else e
+    view=_observable_view(e,token_profile_version=token_profile_version) if policy_version == EXPERIMENTAL_OBSERVABLE_POLICY_VERSION else e
     return _gates(view, cfg, numeric, omitted_ownership=result['ownership_component']['status'] == 'OMITTED',
                   developer_unknown=policy_version in (2, EXPERIMENTAL_OBSERVABLE_POLICY_VERSION) and e['dev_launches_7d'] is None,
                   holder_unknown=policy_version == EXPERIMENTAL_OBSERVABLE_POLICY_VERSION and e['holder_at'] is None,

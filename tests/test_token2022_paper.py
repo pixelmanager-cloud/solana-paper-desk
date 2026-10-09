@@ -99,8 +99,8 @@ class PolicyTests(unittest.TestCase):
 
     def test_config_requires_exact_explicit_paper_versions_no_event_waiver(self):
         cfg={'mode':'paper','paper_signal_policy_version':3,'paper_quote_execution_version':1,'paper_token_profile_version':1}
-        self.assertEqual(selected(cfg),1);self.assertEqual(selected({}),0)
-        for value in (True,None,0,2,'1',1.0):
+        self.assertEqual(selected(cfg),1);self.assertEqual(selected({**cfg,'paper_token_profile_version':2}),2);self.assertEqual(selected({}),0)
+        for value in (True,None,0,3,'1',1.0):
             with self.assertRaises(ValueError):selected({**cfg,'paper_token_profile_version':value})
         for changed in ({'mode':'live'},{'paper_signal_policy_version':2},{'paper_quote_execution_version':None}):
             with self.assertRaises(ValueError):selected({**cfg,**changed})
@@ -140,9 +140,10 @@ class AcquisitionProfileTests(unittest.TestCase):
 class VerticalProfileTests(unittest.TestCase):
     def setUp(self):
         self.f=cycle_fixtures.PaperCycleTests()
+        profile=getattr(self,'profile',1)
         admit=JobPersistence.admit
         def profiled(jobs,*args,**kwargs):
-            return admit(jobs,*args,**kwargs,paper_token_profile_version=1)
+            return admit(jobs,*args,**kwargs,paper_token_profile_version=profile)
         with patch.object(JobPersistence,'admit',profiled):self.f.setUp()
         self.addCleanup(self.f.doCleanups)
         f=self.f;protocol=f.f.protocol
@@ -173,7 +174,7 @@ class VerticalProfileTests(unittest.TestCase):
                 result['value'][0]=account(vault+b'\x02'+layout.tlv(7))
             return result
         protocol.rpc=wrapped
-        f.cfg={**f.cfg,'paper_token_profile_version':1}
+        f.cfg={**f.cfg,'paper_token_profile_version':profile}
         f.path=Path(f.f.tmp.name)/'token2022-new-experiment.sqlite'
         cycle.initialize(f.path,f.cfg)
         f.http_calls=[];f.sell_output=10_000_000

@@ -62,12 +62,16 @@ def parse_fee_config(account):
         'notice':'Decoded fee schedule only. A same-bank reserve/mint snapshot and supported pool profile are required to apply it.'}
 
 
-def standard_sol_fees(config,supply,base_reserve,quote_reserve,*,canonical,virtual_quote_reserves=0):
+def standard_sol_fees(config,supply,base_reserve,quote_reserve,*,canonical,virtual_quote_reserves=0,token_profile_version=0):
     if config.get('configuration_complete') is not True:raise ValueError('Dynamic fee configuration unverified')
     if type(canonical) is not bool:raise ValueError('Canonical pool identity required')
     if any(type(x) is not int or not 0<x<2**64 for x in (supply,base_reserve,quote_reserve)):raise ValueError('Positive bounded raw pool values required')
-    if type(virtual_quote_reserves) is not int or virtual_quote_reserves!=0:raise ValueError('Virtual reserve profile unsupported')
-    cap=quote_reserve*supply//base_reserve;fields=config['fields'];threshold=None
+    from .token2022_paper import check_version
+    check_version(token_profile_version)
+    if type(virtual_quote_reserves) is not int or not -(2**127)<=virtual_quote_reserves<2**127 or (virtual_quote_reserves!=0 and token_profile_version!=2):raise ValueError('Virtual reserve profile unsupported')
+    effective=quote_reserve+virtual_quote_reserves
+    if not 0<effective<2**64:raise ValueError('Invalid effective pricing reserve')
+    cap=effective*supply//base_reserve;fields=config['fields'];threshold=None
     if canonical:
         tiers=fields['fee_tiers']
         if not tiers:raise ValueError('Fee tiers empty')

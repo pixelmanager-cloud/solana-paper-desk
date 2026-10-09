@@ -26,7 +26,7 @@ def check_sell_event(inventory,bindings,fees,recipients,pool):
             'protocol_fee_recipient_token_account':names['protocol_fee_recipient_token_account'],'coin_creator':pool['coin_creator']}
         if any(fields[k]!=v for k,v in identities.items()):reasons.append('SELL_EVENT_IDENTITY_MISMATCH')
         amounts={'base_amount_in':recipients['input_raw'],'pool_base_token_reserves':pool['base_reserve_raw'],
-            'pool_quote_token_reserves':pool['quote_reserve_raw'],'quote_amount_out':expected['gross_quote_raw'],
+            'pool_quote_token_reserves':pool.get('gross_quote_reserve_raw',pool['quote_reserve_raw']),'quote_amount_out':expected['gross_quote_raw'],
             'lp_fee':expected['lp_fee_raw'],'protocol_fee':expected['protocol_total_raw'],
             'coin_creator_fee':expected['creator_fee_raw'],'user_quote_amount_out':expected['user_output_raw'],
             'buyback_fee':recipients.get('buyback_fee_raw','0')}

@@ -43,13 +43,14 @@ def _event_json(payload,cfg):
     # Only the checkpoint's hash-bound experiment config selects the policy.
     # Match engine.transition: experimental validation is market-only; operator
     # controls and monitor clocks always use the strict grammar.
+    from .token2022_paper import selected
     version=policy_version(cfg)
     if event.get('kind')=='quote_exit':
         from .quote_execution import config
         if not config(cfg):raise ValueError('Quote exit requires explicit quote configuration')
-        validate_event(event)
+        validate_event(event,token_profile_version=selected(cfg))
     elif version in (1,2,3) and event.get('kind')=='market':
-        validate_event(event,mode=PAPER_EXPERIMENTAL,policy_version=version)
+        validate_event(event,mode=PAPER_EXPERIMENTAL,policy_version=version,token_profile_version=selected(cfg))
     else:
         validate_event(event)
     return event

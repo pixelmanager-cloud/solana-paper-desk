@@ -102,7 +102,7 @@ def _history_window(pages,*,pool,start,end,input_hashes):
         raise ValueError('Exhausted matched history required')
     return sorted(set(hashes))
 
-def calculate(raw_transactions,*,pool,as_of,provenance,window_seconds=300,ttl_seconds=30,history_pages=None):
+def calculate(raw_transactions,*,pool,as_of,provenance,window_seconds=300,ttl_seconds=30,history_pages=None,token_profile_version=0):
     """Pure read-only calculation; callers must bind pool/mint/quote separately.
 
     Fixed five-minute window keeps unique_buyers_5m's meaning exact. Output
@@ -113,6 +113,8 @@ def calculate(raw_transactions,*,pool,as_of,provenance,window_seconds=300,ttl_se
     ownership and never populate legacy flow/wash/manipulation fields. Missing/invalid/conflicting/time-uncertain records withhold
     measurements rather than silently treating them as zero or safe.
     """
+    from .token2022_paper import check_version
+    check_version(token_profile_version)
     _integer(as_of)
     if type(window_seconds) is not int or window_seconds!=300:raise ValueError('Five-minute window required')
     if type(ttl_seconds) is not int or not 1<=ttl_seconds<=300:raise ValueError('Invalid component TTL')
@@ -130,7 +132,7 @@ def calculate(raw_transactions,*,pool,as_of,provenance,window_seconds=300,ttl_se
             'coverage_complete':False,'blockers':['WINDOW_COVERAGE_UNVERIFIED'],
             'observed_start':None,'observed_end':None},'fields':fields,
             'history_hashes':[],'coverage_authenticity':'UNVERIFIED_PROVIDER_DECLARATION',
-            'proxy_version':'observable-flow-churn-concentration-v1','source_hashes':[],'records_seen':0,'duplicate_records':0,'failed_records':0,
+            **({'reserve_basis':'EFFECTIVE_PRICING_NOT_PHYSICAL_LIQUIDITY','pool_profile_version':2} if token_profile_version==2 else {}),'proxy_version':'observable-flow-churn-concentration-v1','source_hashes':[],'records_seen':0,'duplicate_records':0,'failed_records':0,
             'trade_count':0,'provider_calls':0,'eligible_for_trading':False,
             'scope':'Observed pool sample only; event amounts are not authenticated fills or full route effects',
             'blockers':['WINDOW_COVERAGE_UNVERIFIED','POOL_MINT_QUOTE_BINDING_REQUIRED']}
@@ -175,9 +177,14 @@ def calculate(raw_transactions,*,pool,as_of,provenance,window_seconds=300,ttl_se
                 wallet=f['user']
                 if not isinstance(wallet,str) or not 1<=len(wallet)<=128:raise ValueError('Missing wallet')
                 reserve=_positive(f['pool_quote_token_reserves'])
+                if token_profile_version==2:
+                    virtual=f.get('virtual_quote_reserves')
+                    if type(virtual) is not int or not -(2**127)<=virtual<2**127 or type(f.get('can_boost')) is not bool:raise ValueError('Missing signed pricing profile')
+                    if virtual>0 and f['can_boost'] is not True:raise ValueError('Contradictory boost event')
+                    reserve=_positive(int(reserve)+virtual)
                 trades.append({'ts':timestamp,'slot':slot,'signature':key,
                                'path':tuple(map(int,path.split('.'))),'side':side,
-                               'liquidity_supported':type(f.get('virtual_quote_reserves')) is int and f['virtual_quote_reserves']==0 and f.get('can_boost') is False,
+                               'liquidity_supported':token_profile_version==2 or type(f.get('virtual_quote_reserves')) is int and f['virtual_quote_reserves']==0 and f.get('can_boost') is False,
                                'quote':quote,'base':base,'wallet':wallet,'reserve':reserve})
             for intent in observation['program_observations']:
                 if (intent.get('program')!=PUMPSWAP or intent.get('pool')!=pool
@@ -273,5 +280,12 @@ def calculate(raw_transactions,*,pool,as_of,provenance,window_seconds=300,ttl_se
         for name in ('directional_flow_proxy_v1','same_wallet_churn_proxy_v1','buyer_volume_concentration_proxy_v1'):
             fields[name]['blockers']=sorted(fatal)
     result['blockers']=sorted(set(result['blockers'])|fatal|{reason for field in fields.values() for reason in field['blockers']})
+    if token_profile_version==2:
+        from .model import BOOST_VOLUME_FEATURE,BOOST_VOLUME_FORMULA
+        fields[BOOST_VOLUME_FEATURE]=fields['volume_vs_liq']
+        fields['volume_vs_liq']={'status':'UNKNOWN','value':None,'observed_at':None,
+            'blockers':['HISTORICAL_PHYSICAL_FEE_BUCKETS_UNAVAILABLE']}
+        result['volume_feature']=BOOST_VOLUME_FEATURE
+        result['volume_formula']=BOOST_VOLUME_FORMULA
     result['manifest_hash']=digest(result)
     return result

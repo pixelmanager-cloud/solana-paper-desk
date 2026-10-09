@@ -20,7 +20,7 @@ from .live_observation import (QuoteObservation, SourceRecord, ProviderObservati
                                ingest_mint, ingest_quote)
 from .model import canonical, digest, decimal
 from .programs import address
-from .token2022_paper import selected, NAME
+from .token2022_paper import selected, NAME, profile_name
 from .original_byte_slot_transport import _parse
 from .original_byte_read_transport import _bounded_json
 
@@ -97,6 +97,7 @@ class _Book:
     event_hash: str
     quotes: tuple
     decimals: int | None
+    pool_evidence: dict | None = None
 
     def find(self, direction, raw):
         matches = [q for q in self.quotes if q.direction == direction and q.input_raw == raw]
@@ -112,7 +113,8 @@ class _Book:
 
     def record(self, quote, cfg):
         return {'status': STATUS, 'version': VERSION, 'direction': quote.direction,
-                **({'token_profile':{'version':selected(cfg),'name':NAME}} if selected(cfg) else {}),
+                **({'token_profile':{'version':selected(cfg),'name':profile_name(selected(cfg))}} if selected(cfg) else {}),
+                **({'paper_pool_evidence':self.pool_evidence} if selected(cfg)==2 else {}),
                 'input_raw': quote.input_raw, 'estimated_output_raw': quote.estimated_output_raw,
                 'provider_minimum_output_raw': quote.minimum_output_raw,
                 'simulated_output_raw': output_raw(quote, cfg), 'mint_decimals': self.decimals,
@@ -140,6 +142,10 @@ def _book(event, quotes, cfg):
         try:address(event.get('taker'))
         except ValueError:
             raise QuoteExecutionError('QUOTE_EVENT_WALLET_REQUIRED') from None
+    pool_proof=None
+    if selected(cfg)==2 and event.get('kind') in ('market','quote_exit'):
+        from .boosted_paper import replay_pool
+        pool_proof=replay_pool(event,cfg)
     validated = []; identities = set(); decimals = None; mint_hash = None
     for quote in quotes:
         if type(quote) is not QuoteObservation:
@@ -171,12 +177,15 @@ def _book(event, quotes, cfg):
                         (quote.source.raw_hash!=evidence['quote_hash'] or
                          quote.source.observed_at!=evidence['quote_at']))):
                 raise QuoteExecutionError('EXIT_QUOTE_SOURCE_BINDING_MISMATCH')
+        if selected(cfg)==2:
+            from .boosted_paper import validate_quote
+            validate_quote(event,quote,token,pool_proof)
         identity = (quote.direction, quote.input_raw)
         if identity in identities:
             raise QuoteExecutionError('DUPLICATE_QUOTE')
         identities.add(identity); validated.append(replayed)
         decimals = token.decimals; mint_hash = token.source.raw_hash
-    return _Book(digest(event), tuple(validated), decimals)
+    return _Book(digest(event), tuple(validated), decimals,deepcopy(event.get('paper_pool_evidence')) if selected(cfg)==2 else None)
 
 
 def validate_exit_valuation(event, outcome, cfg):
@@ -188,7 +197,7 @@ def validate_exit_valuation(event, outcome, cfg):
     This establishes local binding, never provider authenticity or actual fills.
     """
     from .model import validate_event
-    validate_event(event)
+    validate_event(event,token_profile_version=selected(cfg))
     if event.get('kind') != 'quote_exit' or outcome.get('side') != 'sell':
         raise QuoteExecutionError('EXIT_VALUATION_CONTEXT_REQUIRED')
     action = outcome.get('quote_execution')
@@ -235,7 +244,11 @@ def validate_position(mint, position, cfg):
         _original(quote_source)),mint=token,direction='buy',amount_raw=record['input_raw'],
         taker=position['taker'],expected_pool=position['pool'],now=at,
         max_age_seconds=cfg['price_ttl_seconds'])
-    book=_Book('',(quote,),token.decimals)
+    if selected(cfg)==2:
+        saved_event={'kind':'market','ts':at,'mint':mint,'pool':position['pool'],'taker':position['taker'],
+            'paper_pool_evidence':record['paper_pool_evidence']}
+        book=_book(saved_event,(quote,),cfg)
+    else:book=_Book('',(quote,),token.decimals)
     with localcontext() as ctx:
         ctx.prec=400
         if (canonical(book.record(quote,cfg))!=canonical(record)
@@ -295,3 +308,30 @@ def plan(state,event,cfg,quotes=()):
         for demand in outcome.get('quote_demands',[]):
             if demand not in demands:demands.append(demand)
     return {'event_hash':digest(event),'quote_demands':demands,'outcomes':outcomes}
+
+
+def validate_entry_roundtrip(event,outcome,cfg):
+    """Profile2 retains exact entry reverse capacity proof even after final close."""
+    record=outcome['roundtrip_quote_execution']
+    if type(record) is not dict or record.get('direction')!='sell':
+        raise QuoteExecutionError('ENTRY_REVERSE_RECORD_REQUIRED')
+    ms=SourceRecord(record['mint_source_id'],record['mint_observed_at'],record['mint_hash'],record['original_mint_json'])
+    qs=SourceRecord(record['quote_source_id'],record['quote_observed_at'],record['quote_hash'],record['original_quote_json'])
+    token=ingest_mint(lambda:ProviderObservation(ms.source_id,ms.observed_at,_original(ms)),
+        mint=event['mint'],now=event['ts'],max_age_seconds=cfg['price_ttl_seconds'],token_profile_version=selected(cfg))
+    observation=ingest_quote(lambda:ProviderObservation(qs.source_id,qs.observed_at,_original(qs)),
+        mint=token,direction='sell',amount_raw=record['input_raw'],taker=event['taker'],
+        expected_pool=event['pool'],now=event['ts'],max_age_seconds=cfg['price_ttl_seconds'])
+    book=_book(event,(observation,),cfg)
+    if (canonical(book.record(observation,cfg))!=canonical(record)
+            or record['input_raw']!=raw_quantity(outcome['quantity'],token.decimals)
+            or ms.raw_hash!=outcome['quote_execution']['mint_hash']):
+        raise QuoteExecutionError('ENTRY_REVERSE_SOURCE_BINDING_INVALID')
+    with localcontext() as ctx:
+        # Match the original entry arithmetic in bind_transition/plan exactly.
+        ctx.prec=400
+        amount=decimal(outcome['amount_sol']);fee=decimal(cfg['fixed_fee_sol'])
+        expected=(amount-units(output_raw(observation,cfg),9)+5*fee)/amount
+        if (decimal(outcome['estimated_cost_fraction'])!=expected
+                or expected>decimal(cfg['max_roundtrip_cost_fraction'])):
+            raise QuoteExecutionError('ENTRY_REVERSE_COST_BINDING_INVALID')

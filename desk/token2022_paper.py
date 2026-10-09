@@ -10,23 +10,29 @@ from .programs import address, unbase58
 
 VERSION=1
 NAME='metadata-only-immutable-owner-paper-v1'
+BOOST_NAME='metadata-only-boosted-quote-paper-v2'
+
+def profile_name(version):
+    check_version(version)
+    return BOOST_NAME if version==2 else NAME
+
 MAX_STATE_BYTES=8192
 
 
 def selected(cfg):
     if 'paper_token_profile_version' not in cfg:return 0
     value=cfg['paper_token_profile_version']
-    if (type(value) is not int or value!=VERSION or cfg.get('mode')!='paper'
+    if (type(value) is not int or value not in (VERSION,2) or cfg.get('mode')!='paper'
             or type(cfg.get('paper_signal_policy_version')) is not int
             or cfg['paper_signal_policy_version']!=3
             or type(cfg.get('paper_quote_execution_version')) is not int
             or cfg['paper_quote_execution_version']!=1):
-        raise ValueError('Explicit paper Token-2022 profile1 requires signal3/quote1')
+        raise ValueError('Explicit paper Token-2022 profiles1/2 require signal3/quote1')
     return value
 
 
 def check_version(value):
-    if type(value) is not int or value not in (0,VERSION):
+    if type(value) is not int or value not in (0,VERSION,2):
         raise ValueError('Unsupported paper token profile version')
 
 

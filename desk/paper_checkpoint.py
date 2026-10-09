@@ -1,4 +1,5 @@
 """Read-only consumer checks; never repair, initialize or replace ledger records."""
+from .token2022_paper import selected as selected_token_profile
 import json
 import sqlite3
 from decimal import localcontext
@@ -72,7 +73,7 @@ def validate_checkpoint(connection, payload):
 
 
 
-def read_checkpoint(connection):
+def read_checkpoint(connection, *, _implementation=None):
     """Return a verified saved state, or None only for a genuinely fresh ledger.
 
     Caller supplies a read transaction so evidence and checkpoint are one snapshot.
@@ -104,7 +105,9 @@ def read_checkpoint(connection):
         raise RecoveryRequired('EXPERIMENT_IDENTITY_INVALID') from None
     try:
         from .runtime_compatibility import require_runtime
-        require_runtime(connection)
+        # Internal callers may propagate the source freshly hashed in this
+        # same validation invocation. Default readers always hash for themselves.
+        require_runtime(connection,implementation=_implementation)
     except (ValueError, TypeError, KeyError, sqlite3.Error, OSError, RecursionError):
         raise RecoveryRequired('RUNTIME_IDENTITY_INVALID') from None
     return validate_checkpoint(connection, row[0])
@@ -170,7 +173,7 @@ def _validate_entry_policies(connection, state):
         # a quote-accounting/report caller's Decimal context.
         with localcontext() as context:
             context.prec = 28
-            expected = experimental_scores(event, mode=PAPER_EXPERIMENTAL, policy_version=version)
+            expected = experimental_scores(event, mode=PAPER_EXPERIMENTAL, policy_version=version,token_profile_version=selected_token_profile(cfg))
         if canonical(position.get('entry_policy')) != canonical(expected):
             raise ValueError('Experimental risk metadata changed')
         if position['entry_scores'] != {key:expected[key] for key in ('safety','momentum','flow','entry')}:
@@ -231,8 +234,13 @@ def validate_quote_positions(connection, state):
         observation = ingest_quote(lambda: ProviderObservation(qs.source_id,qs.observed_at,quote._original(qs)),
             mint=token,direction='sell',amount_raw=last['input_raw'],taker=position['taker'],
             expected_pool=position['pool'],now=at,max_age_seconds=cfg['price_ttl_seconds'])
+        if quote.selected(cfg)==2:
+            saved={'kind':'market','ts':at,'mint':mint,'pool':position['pool'],'taker':position['taker'],
+                   'paper_pool_evidence':last['paper_pool_evidence']}
+            last_book=quote._book(saved,(observation,),cfg)
+        else:last_book=quote._Book('',(observation,),token.decimals)
         if (token.decimals != position['quote_execution']['mint_decimals']
-                or canonical(quote._Book('',(observation,),token.decimals).record(observation,cfg)) != canonical(last)):
+                or canonical(last_book.record(observation,cfg)) != canonical(last)):
             raise ValueError('Last quote source binding changed')
         count, largest, total = connection.execute('''SELECT COUNT(*),
             MAX(length(CAST(o.payload AS BLOB))),SUM(length(CAST(o.payload AS BLOB)))
@@ -324,11 +332,11 @@ def _validate_quote_journal(connection, state, cfg, quote):
                 quote._original(qs)), mint=token, direction=side, amount_raw=record['input_raw'],
                 taker=event['taker'], expected_pool=event['pool'], now=event['ts'],
                 max_age_seconds=cfg['price_ttl_seconds'])
-            if canonical(quote._Book('', (observation,), token.decimals).record(observation,cfg)) != canonical(record):
+            if canonical((quote._book(event,(observation,),cfg) if quote.selected(cfg)==2 else quote._Book('', (observation,), token.decimals)).record(observation,cfg)) != canonical(record):
                 raise ValueError('Quote fill source binding changed')
             if event['kind'] == 'quote_exit':
                 from .model import validate_event
-                validate_event(event)  # exact strict exit grammar, never entry profile
+                validate_event(event,token_profile_version=selected_token_profile(cfg))  # exact strict exit grammar, never entry profile
                 quote._book(event, (observation,), cfg)
                 quote.validate_exit_valuation(event, outcome, cfg)
                 trade = inventory.get(mint)
@@ -342,6 +350,7 @@ def _validate_quote_journal(connection, state, cfg, quote):
             if fee != decimal(cfg['fixed_fee_sol']):
                 raise ValueError('Quote fee changed')
             if side == 'buy':
+                if quote.selected(cfg)==2:quote.validate_entry_roundtrip(event,outcome,cfg)
                 if (mint in inventory or raw != quote.output_raw(observation,cfg)
                         or decimal(outcome['amount_sol']) != observation.input_units):
                     raise ValueError('Quote buy quantity/debit changed')
