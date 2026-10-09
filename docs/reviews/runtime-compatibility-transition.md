@@ -72,3 +72,11 @@ real; ledger contents, budgets and test authorization are explicit synthetic dat
 Validation results and exact frozen successor will be appended after full Linux
 suite and independent review. Final runtime acceptance remains pending final source
 pin, worker01 interface integration and coordinator explicit transition.
+
+The first full Linux run executed 2,363 tests in289.877s with one regression in
+missing-config diagnostic ordering; that ordering is restored before the frozen
+rerun. The forward hardening rejects transition-only partial ledgers as nonfresh
+and verifies exact immutable trigger bodies, not names alone. Focused restart/
+reader/runtime checks passed37tests13.253s; dedicated compatibility checks passed
+9tests4.601s including a genuine old-source synthetic partial-position journal
+with retained0.689535quantity and cost basis. Final full-suite result follows.

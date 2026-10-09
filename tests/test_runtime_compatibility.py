@@ -125,3 +125,53 @@ paper_cycle.initialize(sys.argv[1],json.loads(Path('config.json').read_text()))
                 fcntl.flock(stream,fcntl.LOCK_EX|fcntl.LOCK_NB)
                 with self.assertRaises(ValueError):self.migrate()
             self.assertEqual(dump(self.ledger),before)
+
+    def test_empty_partial_transition_never_becomes_fresh(self):
+        fresh=self.root/'partial.sqlite';ledger=Ledger(fresh);self.addCleanup(ledger.close)
+        ledger.db.execute('CREATE TABLE paper_runtime_transition(id INTEGER PRIMARY KEY)')
+        before=list(ledger.db.iterdump())
+        with self.assertRaises(RecoveryRequired):read_checkpoint(ledger.db)
+        event={'schema_version':1,'kind':'clock','event_id':'forbidden-adoption','ts':T,'actor':'paper_monitor'}
+        with self.assertRaises(ValueError):ledger.apply(event,self.cfg,engine.transition,engine.initial_state)
+        self.assertEqual(list(ledger.db.iterdump()),before)
+
+    def test_fake_guard_and_changed_prefix_or_revoked_policy_fail_closed(self):
+        self.migrate()
+        with sqlite3.connect(self.ledger) as c:
+            c.execute('DROP TRIGGER paper_runtime_transition_update')
+            c.execute('CREATE TRIGGER paper_runtime_transition_update BEFORE UPDATE ON paper_runtime_transition BEGIN SELECT 1; END')
+            with self.assertRaises(ValueError):rc.require_runtime(c)
+            c.execute('DROP TRIGGER paper_runtime_transition_update')
+            c.execute(rc._guards()['paper_runtime_transition_update'])
+            c.execute("UPDATE events SET payload_hash=?",('0'*64,))
+            before=list(c.iterdump())
+            with self.assertRaises(ValueError):rc.require_runtime(c)
+            self.assertEqual(list(c.iterdump()),before)
+        self.policy.write_text('{"version":1,"transitions":[]}')
+        with sqlite3.connect(self.ledger) as c:
+            with self.assertRaises(RecoveryRequired):read_checkpoint(c)
+
+    def test_real_old_source_partial_position_continues_without_rewriting_basis(self):
+        import os
+        script='''import shutil,sys
+from tests.test_quote_execution_v3_seam import QuoteV3SeamTests
+from tests.helpers import T
+s=QuoteV3SeamTests();s.setUp();f=s.fixture;f.cfg=s.cfg
+try:
+ f.apply(s.market(),(f.buy,f.exit))
+ f.apply(s.market(T+1),(f.quote('sell',f.raw,20000000,at=T+1),f.quote('sell',f.raw*3//10,6000000,at=T+1)))
+ f.ledger.close();shutil.copyfile(f.path,sys.argv[1])
+finally:s.doCleanups()
+'''
+        result=subprocess.run([sys.executable,'-c',script,str(self.ledger)],cwd=self.oldroot,
+                              env={**os.environ,'PYTHONPATH':str(Path(__file__).resolve().parents[1])},
+                              capture_output=True,text=True,timeout=30)
+        self.assertEqual(result.returncode,0,result.stderr)
+        original=dump(self.ledger)
+        self.migrate()
+        with sqlite3.connect(self.ledger) as c:
+            state=read_checkpoint(c);position=next(iter(state['positions'].values()))
+            self.assertEqual(position['qty'],'0.689535')
+            self.assertGreater(float(position['cost_left']),0)
+            self.assertEqual(c.execute("SELECT value FROM metadata WHERE key='implementation_hash'").fetchone()[0],OLD)
+        self.assertTrue(set(original)<=set(dump(self.ledger)))

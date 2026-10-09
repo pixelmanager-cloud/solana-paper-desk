@@ -60,6 +60,13 @@ def _approved(predecessor,successor,config_hash):
         raise ValueError('Runtime transition is not reviewed')
 
 
+def _guards():
+    result={TABLE+'_insert':f"CREATE TRIGGER {TABLE}_insert BEFORE INSERT ON {TABLE} WHEN EXISTS(SELECT 1 FROM {TABLE} WHERE id=NEW.id) BEGIN SELECT RAISE(ABORT,'Runtime transition immutable'); END"}
+    for action in ('UPDATE','DELETE'):
+        result[TABLE+'_'+action.lower()]=f"CREATE TRIGGER {TABLE}_{action.lower()} BEFORE {action} ON {TABLE} BEGIN SELECT RAISE(ABORT,'Runtime transition immutable'); END"
+    return result
+
+
 def _prefix(c,table,limit):
     if type(limit) is not int or not 0<=limit<=10000:raise ValueError('Runtime journal bound')
     columns='seq,event_id,ts,payload,payload_hash' if table=='events' else 'seq,event_id,payload'
@@ -101,8 +108,8 @@ def require_runtime(c,*,implementation=None):
     columns=c.execute(f'PRAGMA table_info({TABLE})').fetchall()
     if [(r[1],r[2],r[5]) for r in columns]!=[('id','INTEGER',1),('payload','TEXT',0),('payload_hash','TEXT',0)]:
         raise ValueError('Malformed runtime transition schema')
-    triggers={r[0] for r in c.execute("SELECT name FROM sqlite_master WHERE type='trigger' AND tbl_name=?",(TABLE,))}
-    if triggers!={TABLE+'_insert',TABLE+'_update',TABLE+'_delete'}:raise ValueError('Partial runtime guards')
+    triggers=dict(c.execute("SELECT name,sql FROM sqlite_master WHERE type='trigger' AND tbl_name=?",(TABLE,)))
+    if triggers!=_guards():raise ValueError('Partial or malformed runtime guards')
     if c.execute(f'SELECT COUNT(*) FROM {TABLE}').fetchone()[0]!=1:raise ValueError('Partial runtime transition')
     row=c.execute(f'SELECT id,payload,payload_hash,length(CAST(payload AS BLOB)) FROM {TABLE}').fetchone()
     if row[0]!=1 or not 0<row[3]<=MAX_BYTES:raise ValueError('Runtime receipt bound')
@@ -163,9 +170,7 @@ def transition(research_db,evidence_db,ledger_db,cfg,*,predecessor,successor):
                             count=c.execute(f'SELECT COUNT(*) FROM {table}').fetchone()[0]
                             receipt[table+'_count']=count;receipt[table+'_hash']=_prefix(c,table,count)
                         c.execute(f'CREATE TABLE {TABLE}(id INTEGER PRIMARY KEY CHECK(id=1),payload TEXT NOT NULL,payload_hash TEXT NOT NULL)')
-                        c.execute(f"CREATE TRIGGER {TABLE}_insert BEFORE INSERT ON {TABLE} WHEN EXISTS(SELECT 1 FROM {TABLE} WHERE id=NEW.id) BEGIN SELECT RAISE(ABORT,'Runtime transition immutable'); END")
-                        for action in ('UPDATE','DELETE'):
-                            c.execute(f"CREATE TRIGGER {TABLE}_{action.lower()} BEFORE {action} ON {TABLE} BEGIN SELECT RAISE(ABORT,'Runtime transition immutable'); END")
+                        for sql in _guards().values():c.execute(sql)
                         c.execute(f'INSERT INTO {TABLE} VALUES(1,?,?)',(canonical(receipt),digest(receipt)))
                         require_runtime(c);c.commit()
                         return {'status':'RECORDED','implementation_hash':predecessor,'effective_runtime_hash':successor}

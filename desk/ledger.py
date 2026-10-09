@@ -39,6 +39,7 @@ class Ledger:
                     or self.db.execute('SELECT 1 FROM state LIMIT 1').fetchone()
                     or self.db.execute("SELECT 1 FROM metadata WHERE key IN "
                                        "('implementation_hash','config_hash','config') LIMIT 1").fetchone()
+                    or self.db.execute("SELECT 1 FROM sqlite_master WHERE type='table' AND name LIKE 'paper_runtime_%' LIMIT 1").fetchone()
                     or self.db.execute("SELECT 1 FROM sqlite_sequence WHERE name IN "
                                        "('events','outcomes') AND seq>0 LIMIT 1").fetchone())
 
@@ -125,17 +126,17 @@ class Ledger:
                     "SELECT 1 FROM outcomes o LEFT JOIN events e ON e.event_id=o.event_id "
                     "WHERE e.event_id IS NULL LIMIT 1").fetchone()):
                 raise ValueError("ledger event journal incomplete: recovery required; original records preserved")
-            if nonfresh:
-                from .runtime_compatibility import require_runtime
-                try: require_runtime(self.db, implementation=implementation)
-                except ValueError as error:
-                    raise ValueError('implementation changed or unversioned: explicit reviewed transition required') from error
             row = self.db.execute("SELECT value FROM metadata WHERE key='config_hash'").fetchone()
             if (row and row[0] != fingerprint) or (nonfresh and not row):
                 raise ValueError("config changed or unversioned: use a new experiment database")
             saved_config = self.db.execute("SELECT value FROM metadata WHERE key='config'").fetchone()
             if (saved_config and saved_config[0] != canonical(cfg)) or (nonfresh and not saved_config):
                 raise ValueError("config changed or unversioned: use a new experiment database")
+            if nonfresh:
+                from .runtime_compatibility import require_runtime
+                try: require_runtime(self.db, implementation=implementation)
+                except ValueError as error:
+                    raise ValueError('implementation changed or unversioned: explicit reviewed transition required') from error
             state = self._checkpoint(checkpoint[0]) if checkpoint else initial_state(cfg)
             self.db.execute("INSERT OR IGNORE INTO metadata VALUES('implementation_hash',?)", (implementation,))
             self.db.execute("INSERT OR IGNORE INTO metadata VALUES('config_hash',?)", (fingerprint,))

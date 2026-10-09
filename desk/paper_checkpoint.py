@@ -86,7 +86,8 @@ def read_checkpoint(connection):
     sequence = connection.execute(
         "SELECT 1 FROM sqlite_sequence WHERE name IN ('events','outcomes') AND seq>0 LIMIT 1").fetchone()
     if not row:
-        if events or outcomes or metadata or sequence:
+        runtime_record = connection.execute("SELECT 1 FROM sqlite_master WHERE type='table' AND name LIKE 'paper_runtime_%' LIMIT 1").fetchone()
+        if events or outcomes or metadata or sequence or runtime_record:
             raise RecoveryRequired('CHECKPOINT_MISSING')
         return None
     if not events or connection.execute(
