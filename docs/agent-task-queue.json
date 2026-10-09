@@ -4544,7 +4544,10 @@
               "reviewer": "02",
               "turn": "01a121eb-204f-76dd-9e38-c7c9dd8f189e",
               "result": "PASS",
-              "native_focused_seconds": 27.56
+              "native_focused_seconds": 27.56,
+              "final_head": "75c3679ccc11914dc5ff9f8f07fb95cc46712111",
+              "carry_turn": "01a121ee-cd2a-71c9-b6e5-23d01f74169a",
+              "carry": "PASS_UNCHANGED_TEST_BLOB_FINAL_DEPENDENCY"
             },
             "independent_final_review": {
               "head": "e2cf656fb25ed91a4053ae6c9db6dab6c64ed728",
@@ -4558,7 +4561,42 @@
               37973297370,
               37973292849
             ],
-            "terminal_pin_proposal_hash": "3e9ab263b09fad2fe43ecdc5fae97de69ab99a6e6d92bcaf28850cc6aa172ae0"
+            "terminal_pin_proposal_hash": "3e9ab263b09fad2fe43ecdc5fae97de69ab99a6e6d92bcaf28850cc6aa172ae0",
+            "terminal_pin_review": {
+              "turn": "01a121ee-8303-74d3-99c8-027c3418f35e",
+              "result": "CONDITIONAL_EXACT_PIN_PASS",
+              "digest": "3e9ab263b09fad2fe43ecdc5fae97de69ab99a6e6d92bcaf28850cc6aa172ae0"
+            },
+            "runtime_pin_review": {
+              "turn": "01a121ed-ebab-7334-9c9c-2ebf87d1de77",
+              "result": "CONDITIONAL_PIN_AND_POST_BACKUP_PASS"
+            },
+            "complete_inventory": {
+              "pages": 96,
+              "paper_attempt_ordinals": [
+                5,
+                6,
+                7,
+                8,
+                9,
+                10
+              ],
+              "cycle_attempt_ordinals": [
+                8,
+                9,
+                10
+              ],
+              "earlier_completed_history_ordinals": [
+                5,
+                6,
+                7
+              ],
+              "one_original_null_pass": true,
+              "admission_only_delta": "7->10",
+              "pending": false,
+              "provider_calls": 0,
+              "review_addendum_requested": true
+            }
           }
         }
       }
