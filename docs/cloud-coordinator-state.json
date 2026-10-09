@@ -1,6 +1,6 @@
 {
   "schema_version": 1,
-  "revision": 65,
+  "revision": 66,
   "repository": "pixelmanager-cloud/solana-paper-desk",
   "source_main_sha": "e298e15cd758932e81d2241130716632702f5bd0",
   "observed_date": "2026-10-08",
@@ -3544,6 +3544,92 @@
       "provider_calls": 0,
       "readiness": "BLOCKED_NO_SUPPORTED_BUDGET_FEASIBLE_PUBLIC_LEGACY_SEED; acquisition path in development",
       "schedule": "NOT_REPROBED_NO_DURABLE_BINDING_CLAIM"
+    },
+    {
+      "kind": "HOURLY_GITHUB_RECONCILIATION",
+      "at": "2026-10-09T07:02:58Z",
+      "status": "UNCHANGED_EXISTING_REVIEW_SCOPES",
+      "cloud_execution": {
+        "provider": "cloud",
+        "observations_current": true,
+        "observed_phase": "running",
+        "spec_revision": "105"
+      },
+      "queue_blob_sha": "00d62b318b3ed31fb7f74fd6e355c7820baacffa",
+      "current_worker_followups": {
+        "10": "PR124 author available",
+        "01": "PR126 window history transport published; graduation source recipe",
+        "02": "Independent PR126 reservation-bound transport review",
+        "03": "Independent PR125 observation CLI review",
+        "04": "PR124 scoped review PASS; available",
+        "05": "Platformblocked97/110; not retried",
+        "06": "Implement user-approved quote execution and engine contract",
+        "07": "Foundation combined PASS; available",
+        "08": "PR125 frozen; implement bounded one-cycle live paper orchestration with06/09/01",
+        "09": "Trusted market adapter measured feature mapping"
+      },
+      "observed_prs": [
+        {
+          "pr": 125,
+          "head_sha": "4e6a76a60e058ff082f25067bd169eba913a87c6",
+          "base_sha": "3fe3188afb1e842873ae14af1601afc981baa4fb",
+          "branch": "codex/cloud-observation-recipe-08",
+          "comment_ids": [
+            6074551587,
+            4226772666,
+            4226772668,
+            5465892166
+          ],
+          "status": "UNCHANGED_EXTERNAL_WORKER03_FINDINGS",
+          "tests_this_run": "NOT_RUN"
+        },
+        {
+          "pr": 126,
+          "head_sha": "35919a32cc7f19cdcfefee009c0d2bda9710f27d",
+          "base_sha": "747a9d3e58df049ac784fd2110bc02affd6127b7",
+          "branch": "codex/cloud-paper-history-source-01",
+          "comment_ids": [
+            6074602887,
+            6074620455,
+            6074651678,
+            6074709590
+          ],
+          "status": "UNCHANGED_RESERVED_WORKER02_REPAIRED_HEAD_NOT_REVIEWED",
+          "tests_this_run": "NOT_RUN"
+        },
+        {
+          "pr": 127,
+          "head_sha": "956fdbb2f235d356f9a1f1a20fea0c10f7ec244e",
+          "base_sha": "6206be8a7921e7a8877264f46923785573823499",
+          "branch": "codex/quote-execution-06",
+          "comment_ids": [
+            6074666117,
+            6074705102,
+            6074793817
+          ],
+          "status": "UNCHANGED_ASSIGNED_AUTHOR_HANDOFF_SCOPE",
+          "tests_this_run": "NOT_RUN"
+        },
+        {
+          "pr": 128,
+          "head_sha": "c19cdd542dfe8fedd7772ee9589e790ebb3db73a",
+          "base_sha": "55bfb4c7d1b3f8caa4de0c90683cf72c9d59d4e2",
+          "branch": "codex/cloud-paper-market-adapter-09",
+          "comment_ids": [
+            6074735635
+          ],
+          "status": "UNCHANGED_ASSIGNED_AUTHOR_HANDOFF_SCOPE",
+          "tests_this_run": "NOT_RUN"
+        }
+      ],
+      "observed_codex_branch_count": 122,
+      "branch_pagination_complete": true,
+      "tests": "NOT_RUN_NO_NEW_UNASSIGNED_SCOPE",
+      "review_comments_posted": 0,
+      "infrastructure_failures": 0,
+      "provider_calls": 0,
+      "readiness": "BLOCKED_NO_SUPPORTED_BUDGET_FEASIBLE_PUBLIC_LEGACY_SEED; acquisition path in development",
+      "schedule": "NOT_REPROBED_NO_DURABLE_BINDING_CLAIM"
     }
   ],
   "artifact_pr": {
@@ -6563,413 +6649,15 @@
   ],
   "last_reconciliation": {
     "kind": "HOURLY_GITHUB_RECONCILIATION",
-    "at": "2026-10-09T06:02:31Z",
-    "status": "EXISTING_REVIEW_AND_AUTHOR_SCOPES_NO_DUPLICATION",
+    "at": "2026-10-09T07:02:58Z",
+    "status": "UNCHANGED_EXISTING_REVIEW_SCOPES",
     "cloud_execution": {
       "provider": "cloud",
       "observations_current": true,
       "observed_phase": "running",
-      "spec_revision": "103"
+      "spec_revision": "105"
     },
     "queue_blob_sha": "00d62b318b3ed31fb7f74fd6e355c7820baacffa",
-    "external_claims": [
-      {
-        "id": "PR97-INDEPENDENT-REVIEW",
-        "worker": "05",
-        "thread_id": "01a118fc-dd83-7672-ac81-7445f85fe09f",
-        "host_id": "durable",
-        "status": "BLOCKED_PLATFORM_FILTER_ON_SCOPED_REVIEW",
-        "pr": 97,
-        "head": "c11bfad6f1a2debe323238ef746967310ba02349",
-        "base": "1a9f69595bf4c8c8814654a093fbba1bde93d5ad",
-        "wait_cursor": "b9784eaf-f3e5-457f-a98d-a386c23b37ea:48",
-        "turn_id": "01a11c6e-65ba-7787-b458-530144590287",
-        "scope": "Review changed code and existing regression tests only; earlier flagged custom probes not repeated; stop if blocked"
-      },
-      {
-        "id": "PAPER-RUNNER-LIFECYCLE",
-        "worker": "09",
-        "thread_id": "01a118fd-3f90-77d9-9549-c4497f5b10a6",
-        "host_id": "durable",
-        "status": "ACCEPTED_INTEGRATED_NOT_DEPLOYED",
-        "base": "9e43752daabf19b7e78e08e0b15d16d1c6e2a680",
-        "scope": "Minimal supervised runner using existing ledger/engine/watchdog, executable synthetic lifecycle and restart; no live authorization or screening policy changes",
-        "turn_id": "01a11eae-36ed-72bd-8c5d-ab7f42d99073",
-        "wait_cursor": "68a4d56e-d04a-40dc-ad15-e80a29c96b80:11",
-        "pr": 103,
-        "head": "7100483d800189b62efa14da33de3e21e7dd0f35"
-      },
-      {
-        "id": "EXPERIMENTAL-PAPER-OWNERSHIP-POLICY",
-        "worker": "02",
-        "thread_id": "01a118fc-666c-70b6-9fa8-2c7520f0a0bb",
-        "host_id": "durable",
-        "status": "ACCEPTED_INTEGRATED_NOT_DEPLOYED",
-        "base": "9e43752daabf19b7e78e08e0b15d16d1c6e2a680",
-        "scope": "Explicit paper-only unresolved-history risk policy using persisted diagnostics; known hazards reject; no fake completeness, engine changes or PR97 dependency",
-        "turn_id": "01a11eae-d80e-7427-8466-5db09d9ffa01",
-        "wait_cursor": "a2dcfb97-463d-4188-9da3-48a81e644d23:68",
-        "pr": 102,
-        "head": "ada4892b3df3138f3369aa9d64aaf60f778b0d7b"
-      },
-      {
-        "id": "PAPER-LIVE-OBSERVATION-ADAPTER",
-        "worker": "04",
-        "thread_id": "01a118fc-b862-7340-ab3a-e1115a3280a4",
-        "host_id": "durable",
-        "status": "ACCEPTED_INTEGRATED_NOT_DEPLOYED",
-        "base": "9e43752daabf19b7e78e08e0b15d16d1c6e2a680",
-        "scope": "Useful timestamped raw observation normalization with exact units/source hash, no invented metrics or provider calls",
-        "turn_id": "01a11eb0-22b3-75c2-b925-25a798d51404",
-        "wait_cursor": "d3153436-2742-432e-8501-9c06b95f29ae:14",
-        "pr": 104,
-        "head": "7146b821f932d85157a6357a2f44c6cf54d2f766"
-      },
-      {
-        "id": "PAPER-EXPERIMENT-RESULTS",
-        "worker": "10",
-        "thread_id": "01a118fd-56d5-70b8-ad31-dba13e982082",
-        "host_id": "durable",
-        "status": "PUBLISHED_PENDING_INDEPENDENT_REVIEW",
-        "base": "d36957a179816fb48224fdf262159a9885afb354",
-        "scope": "Read-only bounded existing-ledger performance report, config/version/provenance/closed trades/PnL/costs/drawdown/open inventory; no invented profitability threshold",
-        "pr": 105,
-        "head": "0c8481bc0e7b607a354cb3adaf9c91a9a53615e5",
-        "turn_id": "01a11eb5-42fc-77fc-a5c3-c58b117785ed",
-        "wait_cursor": "e6039648-56af-4049-8a6e-06eaaa8aba52:35"
-      },
-      {
-        "id": "PR102-INDEPENDENT-REVIEW",
-        "worker": "01",
-        "thread_id": "01a118fc-39bc-722c-b442-8bf5a749e0bb",
-        "host_id": "durable",
-        "status": "CHANGES_REQUESTED",
-        "pr": 102,
-        "head": "ada4892b3df3138f3369aa9d64aaf60f778b0d7b",
-        "scope": "Exact-head independent review and combined Linux suite; no integration",
-        "turn_id": "01a11ebd-9b09-7263-91c8-c69bc6c3b471",
-        "wait_cursor": "5e651fc7-2996-4765-974d-5c852257a005:77",
-        "review_url": "https://github.com/pixelmanager-cloud/solana-paper-desk/pull/102#issuecomment-6073805785",
-        "finding": "Present corrupt history can downgrade to incomplete risk; portable tests need read capability gating"
-      },
-      {
-        "id": "PR103-INDEPENDENT-REVIEW",
-        "worker": "06",
-        "thread_id": "01a118fc-f867-7233-8eec-c20659e70095",
-        "host_id": "durable",
-        "status": "PASS",
-        "pr": 103,
-        "head": "7100483d800189b62efa14da33de3e21e7dd0f35",
-        "scope": "Exact-head independent review and combined Linux suite; no integration",
-        "turn_id": "01a11ebd-aa79-7370-b796-8f66f317a16b",
-        "wait_cursor": "8f3328cf-bef6-441d-83f8-2d1f46b3b0df:82",
-        "review_url": "https://github.com/pixelmanager-cloud/solana-paper-desk/pull/103#issuecomment-6073816532"
-      },
-      {
-        "id": "PR104-INDEPENDENT-REVIEW",
-        "worker": "03",
-        "thread_id": "01a118fc-9478-778a-b77a-8f8f6ec7e0ad",
-        "host_id": "durable",
-        "status": "CHANGES_REQUESTED",
-        "pr": 104,
-        "head": "7146b821f932d85157a6357a2f44c6cf54d2f766",
-        "scope": "Exact-head independent review and combined Linux suite; no integration",
-        "turn_id": "01a11ebd-b9e3-751b-bd7b-60bee9d17906",
-        "wait_cursor": "0851f5ab-a903-4567-a6fe-4cbb4e6a7b96:24",
-        "review_id": "PRR_kwDOVAOttc8AAAABRcTcaA",
-        "findings": [
-          "Inconsistent absent delegate plus nonzero delegated amount accepted",
-          "Invalid vault native COption discriminator accepted"
-        ]
-      },
-      {
-        "id": "EXPERIMENTAL-OWNERSHIP-SCORING",
-        "worker": "02",
-        "thread_id": "01a118fc-666c-70b6-9fa8-2c7520f0a0bb",
-        "host_id": "durable",
-        "status": "ACCEPTED_INTEGRATED_NOT_DEPLOYED",
-        "scope": "model/strategy explicit unknown ownership handling and versioned experimental scoring; no live authorization",
-        "turn_id": "01a11ebe-5324-7576-a6bc-b4c8e85ea73b",
-        "wait_cursor": "a2dcfb97-463d-4188-9da3-48a81e644d23:72",
-        "pr": 106,
-        "head": "7a45e55ca2cfa9c3c5a7802724987493c89e0dd4"
-      },
-      {
-        "id": "LIVE-STRATEGY-FEATURES",
-        "worker": "09",
-        "thread_id": "01a118fd-3f90-77d9-9549-c4497f5b10a6",
-        "host_id": "durable",
-        "status": "PUBLISHED_PENDING_REVIEW",
-        "scope": "new bounded raw-trade feature producer; explicit missing inputs/coverage; no engine changes",
-        "turn_id": "01a11ebe-60c2-7569-9146-133915eac521",
-        "wait_cursor": "68a4d56e-d04a-40dc-ad15-e80a29c96b80:15",
-        "pr": 114,
-        "head": "eae754dd0104829ddd5ccc2bfd9a953fa65c8a3d"
-      },
-      {
-        "id": "PR105-INDEPENDENT-REVIEW",
-        "worker": "07",
-        "thread_id": "01a118fd-0f1c-749c-b85b-5e730937d0a8",
-        "host_id": "durable",
-        "status": "CHANGES_REQUESTED",
-        "pr": 105,
-        "head": "0c8481bc0e7b607a354cb3adaf9c91a9a53615e5",
-        "turn_id": "01a11ec0-562f-7633-8d64-a8e3c06a7720",
-        "wait_cursor": "3dd79f38-868a-433f-9b14-13e7ed0a6e90:34",
-        "finding": "P1 costbasis corruption accepted; reconstruct costs and realized PnL independently"
-      },
-      {
-        "id": "PAPER-RUNNER-DASHBOARD",
-        "worker": "10",
-        "thread_id": "01a118fd-56d5-70b8-ad31-dba13e982082",
-        "host_id": "durable",
-        "status": "PUBLISHED_PENDING_REVIEW",
-        "scope": "paper_view/dashboard actual saved runner state; no invented live readiness",
-        "pr": 111,
-        "head": "0d746d73462b8c2c4d90ec9fdf13a1a3e51124c9"
-      },
-      {
-        "id": "PR102-HISTORY-INTEGRITY-REPAIR",
-        "worker": "08",
-        "thread_id": "01a118fd-2563-7126-90d7-bd07693de0b2",
-        "host_id": "durable",
-        "status": "ACCEPTED_INTEGRATED_NOT_DEPLOYED",
-        "base": "ada4892b3df3138f3369aa9d64aaf60f778b0d7b",
-        "scope": "Reject present malformed or unbound history before experimental waiver; portability tests preserve read guard",
-        "pr": 109,
-        "head": "1acc2b51fba371b6da2be6759afe79efc7081e4b",
-        "turn_id": "01a11ec2-2bb1-708c-a448-fbe23b2dfb40",
-        "wait_cursor": "02d8669f-59ba-43bb-8691-b196829f4867:17"
-      },
-      {
-        "id": "ROUNDTRIP-ROUTE-WIRING",
-        "worker": "06",
-        "thread_id": "01a118fc-f867-7233-8eec-c20659e70095",
-        "host_id": "durable",
-        "status": "PUBLISHED_LIMITED_IDENTITY_FIX",
-        "scope": "Binds two original transaction identities; full route remains blocked by absent originals and buy-side checker",
-        "pr": 110,
-        "head": "e2ab73def0909f511d2973a48cccf421fab2a512",
-        "turn_id": "01a11ec2-fc80-7665-aae5-d95fcd1e8450"
-      },
-      {
-        "id": "BOUNDED-PAPER-OBSERVATION-COLLECTOR",
-        "worker": "04",
-        "thread_id": "01a118fc-b862-7340-ab3a-e1115a3280a4",
-        "host_id": "durable",
-        "status": "DISPATCHED",
-        "scope": "new collector using existing admitted budget/provider boundaries; no cloud calls",
-        "pr": 112,
-        "head": "466ff9f8b8d980b4047532d4dd50497587eea77a",
-        "turn_id": "01a11ec3-b3b0-731b-b9da-e59abc628b8c",
-        "wait_cursor": "d3153436-2742-432e-8501-9c06b95f29ae:15"
-      },
-      {
-        "id": "PR104-VAULT-CONTROL-REPAIR",
-        "worker": "01",
-        "thread_id": "01a118fc-39bc-722c-b442-8bf5a749e0bb",
-        "host_id": "durable",
-        "status": "ACCEPTED_INTEGRATED_NOT_DEPLOYED",
-        "base": "7146b821f932d85157a6357a2f44c6cf54d2f766",
-        "scope": "Raw vault discriminator/delegation validation and malformedmint containment; live_observation/tests only",
-        "pr": 107,
-        "head": "adcaa9c17de601dd74dfc6685aa465c46aae961c"
-      },
-      {
-        "id": "PR105-COST-BASIS-REPAIR",
-        "worker": "10",
-        "thread_id": "01a118fd-56d5-70b8-ad31-dba13e982082",
-        "host_id": "durable",
-        "status": "PUBLISHED_UNDER_REVIEW",
-        "scope": "Cost basis reconstruction and corruption regressions; before further dashboard work",
-        "pr": 113,
-        "head": "f89029a2669b4a2c4b891c4855a20c821a78cad5"
-      },
-      {
-        "id": "PR106-INDEPENDENT-REVIEW",
-        "worker": "03",
-        "thread_id": "01a118fc-9478-778a-b77a-8f8f6ec7e0ad",
-        "host_id": "durable",
-        "status": "PASS_COMPONENT_COMBINED_PENDING",
-        "scope": "Independent unknown scoring contract review"
-      },
-      {
-        "id": "PR107-INDEPENDENT-REREVIEW",
-        "worker": "03",
-        "thread_id": "01a118fc-9478-778a-b77a-8f8f6ec7e0ad",
-        "host_id": "durable",
-        "status": "PASS_COMPONENT_COMBINED_PENDING",
-        "scope": "Queued after106; replay vault findings against repair"
-      },
-      {
-        "id": "PR108-INDEPENDENT-REVIEW",
-        "worker": "07",
-        "thread_id": "01a118fd-0f1c-749c-b85b-5e730937d0a8",
-        "host_id": "durable",
-        "status": "REREVIEW_QUEUED_AFTER_113",
-        "scope": "Coordinator engine wiring and config/accounting isolation review",
-        "head": "90d8c59d1e98c3d09074a6f2fa4a029dbd420862"
-      },
-      {
-        "id": "PR109-INDEPENDENT-REREVIEW",
-        "worker": "01",
-        "thread_id": "01a118fc-39bc-722c-b442-8bf5a749e0bb",
-        "host_id": "durable",
-        "status": "PASS",
-        "scope": "Originalreviewer history corruption repair",
-        "turn_id": "01a11eca-56b5-76c0-9e2c-7597f4e9c797",
-        "wait_cursor": "5e651fc7-2996-4765-974d-5c852257a005:80"
-      },
-      {
-        "id": "EXPERIMENTAL-RUNNER-CONFIG",
-        "worker": "08",
-        "thread_id": "01a118fd-2563-7126-90d7-bd07693de0b2",
-        "host_id": "durable",
-        "status": "PUBLISHED_UNDER_REVIEW",
-        "scope": "RunnerCLI explicit experimentalcfg afterPR108; syntheticonly",
-        "pr": 116,
-        "head": "d9e4ed6b811b47376ac6ad604847edfcf94aa052"
-      },
-      {
-        "id": "PR110-INDEPENDENT-REVIEW",
-        "worker": "05",
-        "thread_id": "01a118fc-dd83-7672-ac81-7445f85fe09f",
-        "host_id": "durable",
-        "status": "BLOCKED_PLATFORM_FILTER",
-        "scope": "Unrelated new roundtripidentityreview; no PR97retry",
-        "turn_id": "01a11ecb-6170-738d-bf5c-1ba6aa90a8b1",
-        "wait_cursor": "b9784eaf-f3e5-457f-a98d-a386c23b37ea:49",
-        "reason": "Platform flagged possible cybersecurity risk during read-only review. No retry, rephrasing or alternate reviewer routing of blocked request.",
-        "pr": 110,
-        "head": "e2ab73def0909f511d2973a48cccf421fab2a512"
-      },
-      {
-        "id": "PR111-INDEPENDENT-REVIEW",
-        "worker": "06",
-        "thread_id": "01a118fc-f867-7233-8eec-c20659e70095",
-        "host_id": "durable",
-        "status": "CHANGES_REQUESTED",
-        "scope": "Savedrunner status/display read-only review",
-        "turn_id": "01a11ecc-2673-7544-adce-70c77801a741",
-        "wait_cursor": "8f3328cf-bef6-441d-83f8-2d1f46b3b0df:84",
-        "findings": [
-          "Malformed hashed events appear verified",
-          "Custom config runner commits but reports recovery required",
-          "History bounds applied after materialization"
-        ]
-      },
-      {
-        "id": "PR112-INDEPENDENT-REVIEW",
-        "worker": "02",
-        "thread_id": "01a118fc-666c-70b6-9fa8-2c7520f0a0bb",
-        "host_id": "durable",
-        "status": "CHANGES_REQUESTED",
-        "pr": 112,
-        "head": "466ff9f8b8d980b4047532d4dd50497587eea77a",
-        "scope": "Collector shared persistedbudget/admission/no-retry review including107prerequisite"
-      },
-      {
-        "id": "PAPER-READ-SOURCES",
-        "worker": "01",
-        "thread_id": "01a118fc-39bc-722c-b442-8bf5a749e0bb",
-        "host_id": "durable",
-        "status": "PUBLISHED_UNDER_REVIEW",
-        "scope": "Actual budgeted deadline bounded fixed-provider wrappers, no cloud calls",
-        "pr": 117,
-        "head": "cfb25987e9c5a2b8cddb769da9047ed7262081f5"
-      },
-      {
-        "id": "SOL-USD-OBSERVATION",
-        "worker": "09",
-        "thread_id": "01a118fd-3f90-77d9-9549-c4497f5b10a6",
-        "host_id": "durable",
-        "status": "PUBLISHED_UNDER_REVIEW",
-        "scope": "Jupiter SOL USD response parser and freshness/provenance; no peg assumption",
-        "pr": 118,
-        "head": "76225f565c12d0d8039343f6a196015da7fbe4b0"
-      },
-      {
-        "id": "PR114-INDEPENDENT-REVIEW",
-        "worker": "04",
-        "thread_id": "01a118fc-b862-7340-ab3a-e1115a3280a4",
-        "host_id": "durable",
-        "status": "CHANGES_REQUESTED_FINAL_TESTS_RUNNING",
-        "scope": "Raw observed feature/proxy coverage and semantics review"
-      },
-      {
-        "id": "PR111-DASHBOARD-REPAIR",
-        "worker": "06",
-        "thread_id": "01a118fc-f867-7233-8eec-c20659e70095",
-        "host_id": "durable",
-        "status": "PUBLISHED_UNDER_REVIEW",
-        "scope": "Fix bounded history validation and actual pinned custom config status",
-        "pr": 115,
-        "head": "418aa4e7a77b6e9ba43bd82fd9bb7374f62afa6b"
-      },
-      {
-        "id": "PR113-INDEPENDENT-REVIEW",
-        "worker": "07",
-        "thread_id": "01a118fd-0f1c-749c-b85b-5e730937d0a8",
-        "host_id": "durable",
-        "status": "DISPATCHED",
-        "pr": 113,
-        "head": "f89029a2669b4a2c4b891c4855a20c821a78cad5"
-      },
-      {
-        "id": "PR115-INDEPENDENT-REVIEW",
-        "worker": "10",
-        "thread_id": "01a118fd-56d5-70b8-ad31-dba13e982082",
-        "host_id": "durable",
-        "status": "DISPATCHED",
-        "pr": 115,
-        "head": "418aa4e7a77b6e9ba43bd82fd9bb7374f62afa6b"
-      },
-      {
-        "id": "PR116-INDEPENDENT-REVIEW",
-        "worker": "02",
-        "thread_id": "01a118fc-666c-70b6-9fa8-2c7520f0a0bb",
-        "host_id": "durable",
-        "status": "DISPATCHED",
-        "pr": 116,
-        "head": "d9e4ed6b811b47376ac6ad604847edfcf94aa052"
-      },
-      {
-        "id": "PR117-INDEPENDENT-REVIEW",
-        "worker": "06",
-        "thread_id": "01a118fc-f867-7233-8eec-c20659e70095",
-        "host_id": "durable",
-        "status": "DISPATCHED",
-        "pr": 117,
-        "head": "cfb25987e9c5a2b8cddb769da9047ed7262081f5"
-      },
-      {
-        "id": "PR118-INDEPENDENT-REVIEW",
-        "worker": "08",
-        "thread_id": "01a118fd-2563-7126-90d7-bd07693de0b2",
-        "host_id": "durable",
-        "status": "DISPATCHED",
-        "pr": 118,
-        "head": "76225f565c12d0d8039343f6a196015da7fbe4b0"
-      },
-      {
-        "id": "PR112-COLLECTOR-REPAIR",
-        "worker": "04",
-        "thread_id": "01a118fc-b862-7340-ab3a-e1115a3280a4",
-        "host_id": "durable",
-        "status": "DISPATCHED",
-        "pr": 112,
-        "head": "466ff9f8b8d980b4047532d4dd50497587eea77a"
-      },
-      {
-        "id": "PR114-FEATURE-REPAIR",
-        "worker": "09",
-        "thread_id": "01a118fd-3f90-77d9-9549-c4497f5b10a6",
-        "host_id": "durable",
-        "status": "DISPATCHED",
-        "pr": 114,
-        "head": "eae754dd0104829ddd5ccc2bfd9a953fa65c8a3d"
-      }
-    ],
     "current_worker_followups": {
       "10": "PR124 author available",
       "01": "PR126 window history transport published; graduation source recipe",
@@ -6988,73 +6676,57 @@
         "head_sha": "4e6a76a60e058ff082f25067bd169eba913a87c6",
         "base_sha": "3fe3188afb1e842873ae14af1601afc981baa4fb",
         "branch": "codex/cloud-observation-recipe-08",
-        "author_worker": "08",
-        "author_thread_id": "01a118fd-2563-7126-90d7-bd07693de0b2",
-        "ownership_evidence": "integration queue current_worker_followups and matching PR branch/body; original wave worker thread mapping",
         "comment_ids": [
           6074551587,
           4226772666,
           4226772668,
           5465892166
         ],
-        "status": "EXTERNAL_WORKER03_FINDINGS_PUBLISHED",
-        "tests_this_run": "NOT_RUN",
-        "limitations": "External results not reproduced by this run; no acceptance/CI certification."
+        "status": "UNCHANGED_EXTERNAL_WORKER03_FINDINGS",
+        "tests_this_run": "NOT_RUN"
       },
       {
         "pr": 126,
         "head_sha": "35919a32cc7f19cdcfefee009c0d2bda9710f27d",
         "base_sha": "747a9d3e58df049ac784fd2110bc02affd6127b7",
         "branch": "codex/cloud-paper-history-source-01",
-        "author_worker": "01",
-        "author_thread_id": "01a118fc-39bc-722c-b442-8bf5a749e0bb",
-        "ownership_evidence": "integration queue current_worker_followups and matching PR branch/body; original wave worker thread mapping",
         "comment_ids": [
           6074602887,
           6074620455,
           6074651678,
           6074709590
         ],
-        "status": "RESERVED_WORKER02_REPAIRED_HEAD_NOT_COVERED_BY_OLD_FINDINGS",
-        "tests_this_run": "NOT_RUN",
-        "limitations": "External results not reproduced by this run; no acceptance/CI certification."
+        "status": "UNCHANGED_RESERVED_WORKER02_REPAIRED_HEAD_NOT_REVIEWED",
+        "tests_this_run": "NOT_RUN"
       },
       {
         "pr": 127,
         "head_sha": "956fdbb2f235d356f9a1f1a20fea0c10f7ec244e",
         "base_sha": "6206be8a7921e7a8877264f46923785573823499",
         "branch": "codex/quote-execution-06",
-        "author_worker": "06",
-        "author_thread_id": "01a118fc-f867-7233-8eec-c20659e70095",
-        "ownership_evidence": "integration queue current_worker_followups and matching PR branch/body; original wave worker thread mapping",
         "comment_ids": [
           6074666117,
           6074705102,
           6074793817
         ],
-        "status": "ASSIGNED_AUTHOR_INTEGRATION_HANDOFF_SCOPE",
-        "tests_this_run": "NOT_RUN",
-        "limitations": "External results not reproduced by this run; no acceptance/CI certification."
+        "status": "UNCHANGED_ASSIGNED_AUTHOR_HANDOFF_SCOPE",
+        "tests_this_run": "NOT_RUN"
       },
       {
         "pr": 128,
         "head_sha": "c19cdd542dfe8fedd7772ee9589e790ebb3db73a",
         "base_sha": "55bfb4c7d1b3f8caa4de0c90683cf72c9d59d4e2",
         "branch": "codex/cloud-paper-market-adapter-09",
-        "author_worker": "09",
-        "author_thread_id": "01a118fd-3f90-77d9-9549-c4497f5b10a6",
-        "ownership_evidence": "integration queue current_worker_followups and matching PR branch/body; original wave worker thread mapping",
         "comment_ids": [
           6074735635
         ],
-        "status": "ASSIGNED_AUTHOR_INTEGRATION_HANDOFF_SCOPE",
-        "tests_this_run": "NOT_RUN",
-        "limitations": "External results not reproduced by this run; no acceptance/CI certification."
+        "status": "UNCHANGED_ASSIGNED_AUTHOR_HANDOFF_SCOPE",
+        "tests_this_run": "NOT_RUN"
       }
     ],
     "observed_codex_branch_count": 122,
     "branch_pagination_complete": true,
-    "tests": "NOT_RUN_EXISTING_RESERVED_SCOPES",
+    "tests": "NOT_RUN_NO_NEW_UNASSIGNED_SCOPE",
     "review_comments_posted": 0,
     "infrastructure_failures": 0,
     "provider_calls": 0,
