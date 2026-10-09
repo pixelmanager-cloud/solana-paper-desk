@@ -177,9 +177,11 @@ class PaperReadSources:
                     pacing_ticket = None
                 if type(response.status) is not int or response.status != 200: raise PaperReadError(code)
                 code = 'RESPONSE_HEADERS_INVALID'
-                if wire._header(response.headers, 'Transfer-Encoding') is not None: raise PaperReadError(code)
+                transfer = wire._header(response.headers, 'Transfer-Encoding')
+                if transfer is not None and transfer != 'chunked': raise PaperReadError(code)
                 if wire._header(response.headers, 'Content-Encoding', 'identity').lower() != 'identity': raise PaperReadError(code)
                 length = wire._header(response.headers, 'Content-Length')
+                if transfer is not None and length is not None: raise PaperReadError(code)
                 if length is not None:
                     if not 1 <= len(length) <= 20 or not length.isascii() or not length.isdecimal(): raise PaperReadError(code)
                     length = int(length)
@@ -189,6 +191,8 @@ class PaperReadSources:
                 remaining()
                 code = 'TRANSPORT_ERROR'
                 try:
+                    # urllib removes HTTP chunk framing; retain its unchanged
+                    # entity bytes, with the same bounded read and deadline.
                     observed = response.read(limit + 1)
                 except IncompleteRead as error:
                     if type(error.partial) is bytes and len(error.partial) <= limit:
