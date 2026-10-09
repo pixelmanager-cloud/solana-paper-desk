@@ -129,3 +129,17 @@ and preserves PR14421d9ed5's duplicate-free immutable config snapshot. PR142's
 reservation replacement repair/review is still required; this composition is not
 permission to activate monitoring. No deployment units or timers are supplied in
 this successor; those await the exporter contract and accepted runtime budget.
+
+The coordinator's read-only deployment preflight reports the existing
+`desk-paper-monitor.service` watchdog points to
+`/var/lib/solana-desk/active-paper.sqlite` with
+`/opt/solana-desk/config/paper.json` and an older release WorkingDirectory.
+That original strict config must remain intact. A new quote ledger requires a
+reviewed watchdog override selecting the exact matching experiment config and
+accepted release, or the old watchdog must remain disabled. A mismatched
+code/config fingerprint fails closed; do not reinterpret that as fresh marks.
+Dashboard and existing backups use the active-paper path, so the coordinator
+must also review that fixed path binding before adoption. No override or service
+activation is executed or supplied by this manual-only change. Future inactive
+unit artifacts must state these prerequisites; activation waits for the accepted
+release and exporter/budget/cycle reviews.
