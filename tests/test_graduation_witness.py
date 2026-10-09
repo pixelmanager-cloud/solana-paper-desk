@@ -95,6 +95,48 @@ class GraduationWitnessTests(unittest.TestCase):
             result=self.extract([raw,other],mint,pool)
             self.assertIn(blocker,result['blockers']);self.assertIsNone(result['graduated_at'])
 
+    def test_wrong_mint_sibling_under_target_parent_blocks_both_migrations(self):
+        for name in ('migrate','migrate_v2'):
+            for wrong_first in (False,True):
+                with self.subTest(name=name,wrong_first=wrong_first):
+                    raw,mint,pool=fixture(name)
+                    group=raw['meta']['innerInstructions'][0]['instructions']
+                    wrong=copy.deepcopy(group[0]);data=unbase58(wrong['data'])
+                    wrong['data']=base58(data[:48]+unbase58(g.SOL)+data[80:])
+                    group.insert(0 if wrong_first else 1,wrong)
+                    original=copy.deepcopy(raw)
+                    result=self.extract([raw],mint,pool)
+                    self.assertEqual(result['status'],'UNKNOWN')
+                    self.assertIsNone(result['graduated_at'])
+                    self.assertIn('MIGRATION_ACCOUNT_BINDING_MISMATCH',result['blockers'])
+                    self.assertEqual(result['source_hashes'],[g.digest(raw)])
+                    self.assertFalse(result['entry_authorized']);self.assertEqual(raw,original)
+
+    def test_independently_bound_other_mint_migrations_remain_irrelevant(self):
+        for name in ('migrate','migrate_v2'):
+            with self.subTest(name=name):
+                raw,mint,pool=fixture(name);other=copy.deepcopy(raw)
+                other_mint=str(Pubkey.from_bytes(bytes([10])*32))
+                curve=g._pda([b'bonding-curve',unbase58(other_mint)],g.PUMP)
+                authority=g._pda([b'pool-authority',unbase58(other_mint)],g.PUMP)
+                other_pool=g._pda([b'pool',b'\0\0',unbase58(authority),unbase58(other_mint),unbase58(g.SOL)],g.AMM)
+                spec=next(x for x in json.loads((Path(__file__).resolve().parents[1]/'desk/schemas/pump.json').read_text())['instructions'] if x['name']==name)
+                outer=other['transaction']['message']['instructions'][0]
+                changes={'mint':other_mint,'base_mint':other_mint,'bonding_curve':curve,'pool_authority':authority,'pool':other_pool}
+                for i,a in enumerate(spec['accounts']):
+                    if a['name'] in changes:outer['accounts'][i]=changes[a['name']]
+                ix=other['meta']['innerInstructions'][0]['instructions'][0];data=unbase58(ix['data'])
+                ix['data']=base58(data[:48]+unbase58(other_mint)+data[80:104]+unbase58(curve)+data[136:144]+unbase58(other_pool)+data[176:])
+                other['transaction']['signatures']=['other-mint-migration']
+                self.assertEqual(self.extract([raw,other],mint,pool)['graduated_at'],1000)
+                # Same transaction, different independently bound outer parent.
+                combined=copy.deepcopy(raw)
+                combined['transaction']['message']['instructions'].append(outer)
+                group=copy.deepcopy(other['meta']['innerInstructions'][0]);group['index']=1
+                combined['meta']['innerInstructions'].append(group)
+                result=self.extract([combined],mint,pool)
+                self.assertEqual(result['graduated_at'],1000);self.assertEqual(result['blockers'],[])
+
     def test_compiled_keys_and_notification_use_existing_decoder(self):
         raw,mint,pool=fixture(); message=raw['transaction']['message']
         keys=[message['accountKeys'][0]['pubkey']]
