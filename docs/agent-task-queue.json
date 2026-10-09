@@ -5313,7 +5313,7 @@
             "http403_retirement": {
               "owner": "07",
               "reviewer": "09",
-              "status": "INDEPENDENT_PASS_CI_RUNNING_NOT_DEPLOYED",
+              "status": "BOTH_CI_PASS_INTEGRATING",
               "scope": "Definitive retained Price403 read-only failed pass append-only retirement; originalNULL/charges/context preserved; rejectedcandidate neverretried; ambiguousI/O blocked",
               "worker_thread": "01a118fd-0f1c-749c-b85b-5e730937d0a8",
               "review_thread": "01a118fd-3f90-77d9-9549-c4497f5b10a6",
@@ -5383,15 +5383,32 @@
               "preservation_helper": {
                 "owner": "06",
                 "turn": "01a12279-b42c-77cd-8115-e9f2233b773e",
-                "status": "HOLD_HIDDEN_ROWID_NOT_COMPARED_FIX_REQUESTED",
+                "status": "GENERATED_ALIAS_FIXED_FINAL_REVIEW_RUNNING",
                 "scope": "Ten database original schema+rows unchanged; only exact first runtime and HTTP403 append-only certificates",
                 "pr": 181,
-                "head": "f30bbcbf3fff3c5fdad3d31acb76d70c93d0e0d4",
+                "head": "707f2f1cf16227a1123c2ea9ebcb3d2961d6d73b",
                 "attachment_error": "App limit100; not retried",
                 "root_focused_tests": 9,
                 "root_seconds": 0.461,
                 "reviewer": "03",
-                "review_turn": "01a1227c-a4cc-7704-9d9f-94f7b639ed46"
+                "review_turn": "01a1227c-a4cc-7704-9d9f-94f7b639ed46",
+                "ci_runs": [
+                  37991594602,
+                  37991589261
+                ],
+                "previous_rejected_head": "f30bbcbf3fff3c5fdad3d31acb76d70c93d0e0d4",
+                "review_history": [
+                  {
+                    "head": "f30bbcbf3fff3c5fdad3d31acb76d70c93d0e0d4",
+                    "finding": "Hidden rowid not compared",
+                    "turn": "01a1227c-a4cc-7704-9d9f-94f7b639ed46"
+                  },
+                  {
+                    "head": "0e9473f9f96d954b614cabd9e30b2c712f5d61e7",
+                    "finding": "Generated alias omitted by table_info",
+                    "turn": "01a1227f-cd3e-72e8-9332-666d2505ec88"
+                  }
+                ]
               },
               "final_validator_review": {
                 "reviewer": "09",
@@ -5403,7 +5420,12 @@
                 "run": 37990383006,
                 "tests": 2670,
                 "seconds": 595.663
-              }
+              },
+              "ci_tests": 2670,
+              "ci_seconds": [
+                595.663,
+                869.942
+              ]
             },
             "last_actionable_check": {
               "at": "2026-10-09T20:54:00Z",
