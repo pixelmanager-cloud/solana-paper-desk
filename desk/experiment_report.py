@@ -64,6 +64,7 @@ def _quote_fill(outcome, event, cfg):
         if _number(outcome['fee_sol']) != decimal(cfg['fixed_fee_sol']):
             raise ValueError()
         if outcome['side'] == 'buy':
+            if qe.selected(cfg)==2:qe.validate_entry_roundtrip(event,outcome,cfg)
             if _number(outcome['amount_sol']) != quote.input_units: raise ValueError()
         elif _number(outcome['proceeds_sol']) != qe.units(qe.output_raw(quote, cfg), 9) - decimal(cfg['fixed_fee_sol']):
             raise ValueError()

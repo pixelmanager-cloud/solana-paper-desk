@@ -472,6 +472,7 @@ def transition(state, e, cfg, *, _quote_book=None):
                    "scores": evidence, "estimated_cost_fraction": str(roundtrip),
                    "simulation": "quote_minimum_with_adverse_slippage" if quote_mode else "constant_product", "provenance": e["provenance"],
                    **({'quote_execution':_quote_book.record(quote,cfg),
+                       **({'roundtrip_quote_execution':_quote_book.record(exit_quote,cfg)} if qe.selected(cfg)==2 else {}),
                        'execution_status':qe.STATUS} if quote_mode else {}),
                    "bundle_audit": bundle_audit, **policy_record})
     risk(state, cfg, output)

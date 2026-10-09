@@ -348,6 +348,7 @@ def _validate_quote_journal(connection, state, cfg, quote):
             if fee != decimal(cfg['fixed_fee_sol']):
                 raise ValueError('Quote fee changed')
             if side == 'buy':
+                if quote.selected(cfg)==2:quote.validate_entry_roundtrip(event,outcome,cfg)
                 if (mint in inventory or raw != quote.output_raw(observation,cfg)
                         or decimal(outcome['amount_sol']) != observation.input_units):
                     raise ValueError('Quote buy quantity/debit changed')

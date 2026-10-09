@@ -78,6 +78,27 @@ class BoostCycleTests(unittest.TestCase):
   self.assertEqual(f.f.progress.admission(f.target.scan_id)['requests_used'],17)
   from desk.experiment_report import experiment_report
   self.assertIsNotNone(experiment_report(self.f.path,now=self.f.f.at))
+ def test_closed_entry_reverse_proof_is_required_and_replayed(self):
+  import sqlite3,json
+  self.test_actual_entry_mark_exit_restart_accounting_and_original_boundaries()
+  f=self.f
+  with sqlite3.connect(f.path) as c:
+   identity,payload=c.execute("SELECT rowid,payload FROM outcomes WHERE json_extract(payload,'$.side')='buy'").fetchone()
+   original=json.loads(payload)
+   self.assertIn('roundtrip_quote_execution',original)
+  from desk.experiment_report import experiment_report
+  from desk.paper_checkpoint import RecoveryRequired
+  for change in ('missing','hash','quantity','cost'):
+   forged=copy.deepcopy(original)
+   if change=='missing':forged.pop('roundtrip_quote_execution')
+   elif change=='hash':forged['roundtrip_quote_execution']['paper_pool_evidence']['raw_hash']='0'*64
+   elif change=='quantity':forged['roundtrip_quote_execution']['input_raw']+=1
+   else:forged['estimated_cost_fraction']='0'
+   with sqlite3.connect(f.path) as c:c.execute('UPDATE outcomes SET payload=? WHERE rowid=?',(canonical(forged),identity))
+   with self.assertRaises(RecoveryRequired):experiment_report(f.path,now=f.f.at)
+   with self.assertRaisesRegex(RecoveryRequired,'CHECKPOINT_INVALID'):cycle._state(f.path,f.cfg)
+  with sqlite3.connect(f.path) as c:c.execute('UPDATE outcomes SET payload=? WHERE rowid=?',(payload,identity))
+  self.assertIsNotNone(experiment_report(f.path,now=f.f.at))
  def test_actual_acquisition_and_monitoring_share_original_charges(self):
   from desk.ownership_acquisition import acquire
   f=self.f;request=f.f.progress.store.load(f.item.graduation_refs[0]);rows=f.f.progress.store.load(request['response_hash'])['data']

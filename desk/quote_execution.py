@@ -308,3 +308,29 @@ def plan(state,event,cfg,quotes=()):
         for demand in outcome.get('quote_demands',[]):
             if demand not in demands:demands.append(demand)
     return {'event_hash':digest(event),'quote_demands':demands,'outcomes':outcomes}
+
+
+def validate_entry_roundtrip(event,outcome,cfg):
+    """Profile2 retains exact entry reverse capacity proof even after final close."""
+    record=outcome['roundtrip_quote_execution']
+    if type(record) is not dict or record.get('direction')!='sell':
+        raise QuoteExecutionError('ENTRY_REVERSE_RECORD_REQUIRED')
+    ms=SourceRecord(record['mint_source_id'],record['mint_observed_at'],record['mint_hash'],record['original_mint_json'])
+    qs=SourceRecord(record['quote_source_id'],record['quote_observed_at'],record['quote_hash'],record['original_quote_json'])
+    token=ingest_mint(lambda:ProviderObservation(ms.source_id,ms.observed_at,_original(ms)),
+        mint=event['mint'],now=event['ts'],max_age_seconds=cfg['price_ttl_seconds'],token_profile_version=selected(cfg))
+    observation=ingest_quote(lambda:ProviderObservation(qs.source_id,qs.observed_at,_original(qs)),
+        mint=token,direction='sell',amount_raw=record['input_raw'],taker=event['taker'],
+        expected_pool=event['pool'],now=event['ts'],max_age_seconds=cfg['price_ttl_seconds'])
+    book=_book(event,(observation,),cfg)
+    if (canonical(book.record(observation,cfg))!=canonical(record)
+            or record['input_raw']!=raw_quantity(outcome['quantity'],token.decimals)
+            or ms.raw_hash!=outcome['quote_execution']['mint_hash']):
+        raise QuoteExecutionError('ENTRY_REVERSE_SOURCE_BINDING_INVALID')
+    with localcontext() as ctx:
+        ctx.prec=28
+        amount=decimal(outcome['amount_sol']);fee=decimal(cfg['fixed_fee_sol'])
+        expected=(amount-units(output_raw(observation,cfg),9)+5*fee)/amount
+        if (decimal(outcome['estimated_cost_fraction'])!=expected
+                or expected>decimal(cfg['max_roundtrip_cost_fraction'])):
+            raise QuoteExecutionError('ENTRY_REVERSE_COST_BINDING_INVALID')

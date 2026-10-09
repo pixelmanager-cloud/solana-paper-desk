@@ -40,7 +40,11 @@ mayhem/cashback/holder rewards/mutable creator/LP controls remain rejected.
 `reserve_sol` stays physical S for liquidity and sizing. Spot/capitalization and
 fee tiers use E. Every profile2 execution record retains original pool JSON,
 hash, timestamp and source ID. Replay recomputes policy from the original bytes,
-binds mint program/decimals/bank and checks event physical reserves.
+binds mint program/decimals/bank and checks event physical reserves. Entry
+pool/supply metadata is cross-checked against these originals. Profile2 BUY
+outcomes additionally retain `roundtrip_quote_execution`: closed-journal replay
+recomputes the original exact reverse capacity and roundtrip cost gate even
+after the position and its last-mark source have disappeared.
 
 For an exact sell input q, SDK gross output is floor(E*q/(base+q)); fees round
 up per the pinned SDK. The physical obligation is gross output minus LP fee,
