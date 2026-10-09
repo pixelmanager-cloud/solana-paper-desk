@@ -121,7 +121,7 @@ def read(c):
     return body,key
 
 
-def _ledger(path, cfg_hash, source, *, old_runtime_hash=None):
+def _ledger(path, cfg_hash, source, *, old_runtime_hash=None, original_source=None):
     """Trusted exact-source contract; validate saved state/history, never rebuild."""
     from .paper_checkpoint import validate_checkpoint, read_checkpoint
     with closing(sqlite3.connect(Path(path).as_uri()+'?mode=ro',uri=True)) as c:
@@ -144,7 +144,10 @@ def _ledger(path, cfg_hash, source, *, old_runtime_hash=None):
             receipt=c.execute(f'SELECT payload_hash FROM {runtime.TABLE} WHERE id=1').fetchone()
             if receipt!=(old_runtime_hash,):raise ValueError('Old runtime receipt mismatch')
         else:
-            if source!=runtime.implementation_hash() or metadata.get('implementation_hash')!=source:
+            # Original experiment identity remains pinned; only require_runtime's
+            # exact reviewed one-hop receipt can establish a different successor.
+            origin=source if original_source is None else original_source
+            if source!=runtime.implementation_hash() or metadata.get('implementation_hash')!=origin:
                 raise ValueError('New experiment source mismatch')
             read_checkpoint(c)
         result={'state':state,'metadata':metadata,'checkpoint_hash':digest(state),'config':cfg}
@@ -167,7 +170,7 @@ def validate_active(c,budget):
     if value is None:return None
     body,key=value;ctx=body['context']
     if (str(budget.path)!=ctx['evidence_db'] or str(budget.ledger)!=ctx['new_ledger_db']
-            or budget.config_hash!=body['new_config_hash'] or budget.code_hash!=body['new_source']):
+            or budget.config_hash!=body['new_config_hash']):
         raise ValueError('Retired or mismatched monitoring context')
     _pacing(ctx)
     old=_ledger(ctx['old_ledger_db'],body['old_config_hash'],body['old_source'],old_runtime_hash=body['old_runtime_hash'])
@@ -175,7 +178,8 @@ def validate_active(c,budget):
             or digest(old['metadata'])!=body['old_metadata_hash']
             or any(old[k]!=body['old_'+k] for k in ('events_count','events_hash','outcomes_count','outcomes_hash'))):
         raise ValueError('Retired experiment changed')
-    new=_ledger(ctx['new_ledger_db'],body['new_config_hash'],body['new_source'])
+    new=_ledger(ctx['new_ledger_db'],body['new_config_hash'],budget.code_hash,
+                original_source=body['new_source'])
     from .engine import initial_state
     if digest(initial_state(new['config']))!=body['new_initial_checkpoint_hash']:
         raise ValueError('Separate experiment initialization changed')
