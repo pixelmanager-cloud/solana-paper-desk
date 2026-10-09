@@ -3485,12 +3485,14 @@
       "operator_path_review": {
         "worker": "03",
         "thread_id": "01a118fc-9478-778a-b77a-8f8f6ec7e0ad",
-        "status": "REPAIR_REVIEW_RUNNING",
+        "status": "PASS",
         "head": "9e2337404bdc1f38edcf5b7d269e6a8e4a320a0c",
         "turn_id": "01a120e8-a488-73a8-a616-326ac558fe1d",
-        "cursor": "0851f5ab-a903-4567-a6fe-4cbb4e6a7b96:57",
+        "cursor": "0851f5ab-a903-4567-a6fe-4cbb4e6a7b96:58",
         "finding": "Uncaught RecursionError for bounded deeply nested malformed retained manifest; must preserve archive and continue backup retention",
-        "review_url": "https://github.com/pixelmanager-cloud/solana-paper-desk/pull/157#issuecomment-6082095008"
+        "review_url": "https://github.com/pixelmanager-cloud/solana-paper-desk/pull/157#issuecomment-6082095008",
+        "tests": 55,
+        "seconds": 5.178
       },
       "implementation_pr": {
         "number": 156,
@@ -3525,6 +3527,23 @@
         "decision_consumer_result": "success",
         "listener": "127.0.0.1:8765",
         "provider_calls": 0
+      },
+      "combined_fixture_verification": {
+        "worker": "04",
+        "thread_id": "01a118fc-b862-7340-ab3a-e1115a3280a4",
+        "status": "ASSIGNED",
+        "scope": "Actual Token2022 separate experiment + context handoff + held monitoring/exit/restart with preserved original ledger/charges; fullcombinedsuite onlyafterfinalheads"
+      },
+      "coordinator_handoff_operator_focused": {
+        "heads": [
+          "873786e712146d45b7249df23b7f31cb9f0c5b85",
+          "9e2337404bdc1f38edcf5b7d269e6a8e4a320a0c",
+          "bf42166f2b570015b75fc5c0f9689f5f5ecc377d"
+        ],
+        "tests": 41,
+        "seconds": 9.984,
+        "result": "PASS",
+        "scope": "handoff+selectedledger tests; doesnotwaive156sourcecontradiction"
       }
     }
   },
