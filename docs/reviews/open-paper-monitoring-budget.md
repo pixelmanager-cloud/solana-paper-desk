@@ -28,6 +28,7 @@ NOT rolling `window_used+1`: expiration can decrease the rolling count. No
 HistoryProgress counter or admission is synthesized, copied, increased or reset.
 
 The actual current checkpoint, saved config/code fingerprints, hashed entry event,
+active journal-verified entry (v3 entry_event_id; compatible v1 unique opened_at),
 original scan/admission, mint/pool/taker and remaining raw inventory authorize each
 reservation. Buy/candidate/history calls are excluded. Sell quantities must be
 positive and no larger than held inventory. Pool bank keys must exactly match the
@@ -54,3 +55,6 @@ owns held-position event production; worker10 checkpoint authority remains intac
 The cap cannot establish that all positions can be refreshed before strategy TTL,
 and an untrusted forward clock jump cannot be authenticated by a local counter.
 No provider/VPS/secrets calls, live acceptance or deployment are claimed.
+
+Completed historical BUY rows do not select or disqualify the current entry. The
+checkpoint still replays the whole journal; corrupted closed lifecycles reject.

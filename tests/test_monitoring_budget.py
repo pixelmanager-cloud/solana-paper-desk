@@ -191,6 +191,60 @@ class MonitoringBudgetTests(unittest.TestCase):
         with self.assertRaises(PaperReadError) as caught:self.read_unmocked()
         self.assertEqual(caught.exception.code,'MONITORING_OPEN_POSITION_REQUIRED');self.assertEqual(self.accounting()[1],0)
 
+    def reentered_v3(self):
+        from tests.test_quote_execution_v3_seam import QuoteV3SeamTests
+        case=QuoteV3SeamTests();case.setUp();self.addCleanup(case.doCleanups)
+        f=case.fixture;f.cfg=case.cfg
+        root=Path(f.tmp.name);jobs=JobPersistence(root/'research.sqlite')
+        store=EvidenceStore(root/'evidence.sqlite');progress=HistoryProgress(store)
+        with patch('desk.job_persistence.time.time',return_value=T):
+            scan=jobs.admit(f.mint,kind=BIRTH_ACQUISITION_V1,evidence_db=store.path)
+        progress.admit(scan,{'kind':'ownership_admission_v1','scan_id':scan,'mint':f.mint,'created':T})
+        first=case.market();first['paper_source_evidence']={'scan_id':scan,'collector_refs':[]}
+        self.assertTrue(any(r['type']=='fill' for r in f.apply(first,(f.buy,f.exit))))
+        budget=MonitoringBudget(store,f.path,f.cfg,clock=lambda:T);budget.provision()
+        source=PaperReadSources(progress,scan,monitoring_budget=budget)
+        with patch('desk.paper_read_sources.os.environ.get',return_value=KEY),patch('desk.paper_read_sources.build_opener') as opener:
+            opener.return_value.open.return_value=Response(canonical({'jsonrpc':'2.0','id':RPC_ID,'result':100}).encode())
+            source.rpc('getSlot',[{'commitment':'finalized'}],timeout_seconds=3)
+        close=case.market(T+1);close['danger']=True
+        self.assertTrue(any(r['type']=='fill' and r['side']=='sell' for r in f.apply(close,(f.quote('sell',f.raw,10_000_000,at=T+1),))))
+        self.assertEqual(f.state()['positions'],{})
+        at=f.state()['cooldowns'][f.mint]+1
+        second=case.market(at);second['paper_source_evidence']={'scan_id':scan,'collector_refs':[]}
+        self.assertTrue(any(r['type']=='fill' for r in f.apply(second,(f.quote('buy',10_000_000,1_000_000,at=at),f.quote('sell',f.raw,10_000_000,at=at)))))
+        return f,progress,scan,first,second,at
+
+    def test_actual_v3_buy_full_close_cooldown_rebuy_monitoring_binds_current_entry(self):
+        f,progress,scan,first,second,at=self.reentered_v3()
+        self.assertEqual(f.state()['positions'][f.mint]['entry_event_id'],second['event_id'])
+        self.assertNotEqual(first['event_id'],second['event_id'])
+        original=list(f.ledger.db.iterdump());admission=progress.admission(scan)
+        budget=MonitoringBudget(progress.store,f.path,f.cfg,clock=lambda:at)
+        with patch('desk.paper_read_sources.os.environ.get',return_value=KEY),patch('desk.paper_read_sources.build_opener') as opener:
+            opener.return_value.open.return_value=Response(canonical({'jsonrpc':'2.0','id':RPC_ID,'result':100}).encode())
+            PaperReadSources(progress,scan,monitoring_budget=budget).rpc('getSlot',[{'commitment':'finalized'}],timeout_seconds=3)
+        self.assertEqual(budget.snapshot()['total_used'],2)
+        self.assertEqual(progress.admission(scan),admission);self.assertEqual(list(f.ledger.db.iterdump()),original)
+
+    def test_reentry_cannot_select_closed_entry_or_waive_historical_corruption(self):
+        f,progress,scan,first,second,at=self.reentered_v3()
+        state=f.state();state['positions'][f.mint]['entry_event_id']=first['event_id']
+        f.ledger.db.execute('UPDATE state SET payload=? WHERE id=1',(canonical(state),))
+        source=PaperReadSources(progress,scan,monitoring_budget=MonitoringBudget(progress.store,f.path,f.cfg,clock=lambda:at))
+        with patch('desk.paper_read_sources.os.environ.get') as credential:
+            with self.assertRaises(PaperReadError):source.rpc('getSlot',[{'commitment':'finalized'}],timeout_seconds=3)
+        credential.assert_not_called()
+        state['positions'][f.mint]['entry_event_id']=second['event_id']
+        f.ledger.db.execute('UPDATE state SET payload=? WHERE id=1',(canonical(state),))
+        row=f.ledger.db.execute("SELECT seq,payload FROM outcomes WHERE event_id=? AND json_extract(payload,'$.side')='buy'",(first['event_id'],)).fetchone()
+        corrupted=json.loads(row[1]);corrupted['quote_execution']['quote_hash']='0'*64
+        f.ledger.db.execute('UPDATE outcomes SET payload=? WHERE seq=?',(canonical(corrupted),row[0]))
+        before=list(f.ledger.db.iterdump())
+        with patch('desk.paper_read_sources.os.environ.get') as credential:
+            with self.assertRaises(PaperReadError):source.rpc('getSlot',[{'commitment':'finalized'}],timeout_seconds=3)
+        credential.assert_not_called();self.assertEqual(list(f.ledger.db.iterdump()),before)
+
     def test_exhausted_investigation_still_unchanged_and_default_transport_rejects(self):
         for _ in range(18):self.assertTrue(self.progress.reserve(self.scan))
         original=self.progress.admission(self.scan)

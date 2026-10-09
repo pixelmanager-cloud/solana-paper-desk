@@ -146,8 +146,14 @@ class MonitoringBudget:
             c.execute('BEGIN')
             if c.execute('SELECT payload FROM state WHERE id=1').fetchone()[0] != payload:
                 raise MonitoringBlocked('MONITORING_CHECKPOINT_CHANGED')
+            # The checkpoint reader already verified active entry identity and
+            # replayed the entire original journal, including closed lifecycles.
+            # V3 pins entry_event_id; compatible v1 pins its unique opened_at buy.
+            # Neither historical BUY count nor arbitrary latest BUY is authority.
+            entry_id = position.get('entry_event_id')
             buys = [(identity, json.loads(raw)) for identity, raw in c.execute(
-                "SELECT event_id,payload FROM outcomes WHERE json_extract(payload,'$.type')='fill' AND json_extract(payload,'$.side')='buy' AND json_extract(payload,'$.mint')=?", (mint,))]
+                "SELECT o.event_id,o.payload FROM outcomes o JOIN events e ON e.event_id=o.event_id WHERE json_extract(o.payload,'$.type')='fill' AND json_extract(o.payload,'$.side')='buy' AND json_extract(o.payload,'$.mint')=? AND e.ts=? AND (? IS NULL OR o.event_id=?)",
+                (mint,position['opened_at'],entry_id,entry_id))]
             if len(buys) != 1:
                 raise MonitoringBlocked('MONITORING_ENTRY_IDENTITY_INVALID')
             event_row = c.execute('SELECT payload,payload_hash FROM events WHERE event_id=?', (buys[0][0],)).fetchone()
