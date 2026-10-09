@@ -59,7 +59,7 @@ class ExperimentalEngineTests(unittest.TestCase):
         with self.assertRaises(ValueError): self.apply(experimental(ts=T+1))
 
     def test_unsupported_config_rejects_before_mutating_state(self):
-        for version in (True, '1', 2, 0):
+        for version in (True, '1', 3, 0):
             cfg={**config(), 'experimental_policy_version':version}
             state=initial_state(cfg); before=copy.deepcopy(state)
             with self.assertRaises(ValueError): transition(state, experimental(), cfg)
@@ -81,3 +81,23 @@ class ExperimentalEngineTests(unittest.TestCase):
         out=self.apply({'schema_version':1,'event_id':'outage','ts':T+20,'kind':'clock','actor':'paper_monitor'})
         self.assertTrue(any(x['type']=='blocked_exit' for x in out))
         self.assertFalse(any(x['type']=='fill' for x in out))
+
+    def test_profile_two_omits_history_only_and_rejects_known_deployer_hazard(self):
+        cfg = {**self.cfg, 'experimental_policy_version': 2}
+        e = experimental()
+        e['paper_experimental']['policy_version'] = 2
+        for key in ('fresh_wallet_ratio', 'dev_launches_7d', 'manip_safety'):
+            e[key] = None
+            e['paper_experimental']['ownership_unknowns'][key] = {'status':'UNKNOWN','reasons':['HISTORY_UNAVAILABLE']}
+        state, out = transition(initial_state(cfg), e, cfg)
+        self.assertTrue(any(x.get('side') == 'buy' for x in out))
+        self.assertIsNone(out[0]['scores']['safety'])
+        self.assertEqual(out[0]['entry_policy']['policy_version'], 2)
+        bad=copy.deepcopy(e);bad['dev_launches_7d']=3
+        del bad['paper_experimental']['ownership_unknowns']['dev_launches_7d']
+        state,out=transition(initial_state(cfg),bad,cfg)
+        self.assertEqual(state['positions'],{})
+        self.assertIn('REPEAT_DEPLOYER',out[0]['reasons'])
+        bad=copy.deepcopy(e);bad['flow']=None
+        with self.assertRaises(ValueError):transition(initial_state(cfg),bad,cfg)
+        with self.assertRaises(ValueError):transition(initial_state(self.cfg),e,self.cfg)

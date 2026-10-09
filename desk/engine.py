@@ -216,9 +216,9 @@ def transition(state, e, cfg):
     # Config is fingerprinted by Ledger: selecting this experimental strategy
     # requires a new experiment, never an event-provided permission flag.
     version = cfg.get("experimental_policy_version")
-    if version is not None and (type(version) is not int or version != 1 or cfg.get("mode") != "paper"):
+    if version is not None and (type(version) is not int or version not in (1, 2) or cfg.get("mode") != "paper"):
         raise ValueError("Unsupported experimental paper policy configuration")
-    experimental = version == 1 and e.get("kind") == "market"
+    experimental = version in (1, 2) and e.get("kind") == "market"
     if experimental:
         validate_event(e, mode=PAPER_EXPERIMENTAL, policy_version=version)
     else:
