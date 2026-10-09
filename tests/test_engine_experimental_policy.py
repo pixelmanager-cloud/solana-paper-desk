@@ -124,3 +124,31 @@ class ExperimentalEngineTests(unittest.TestCase):
                 with self.assertRaises(ValueError):read_checkpoint(ledger.db)
                 self.assertEqual(list(ledger.db.iterdump()),before)
                 ledger.close()
+
+    def test_restart_rejects_nonentry_rebinding_and_conflicting_buy(self):
+        from desk.paper_checkpoint import read_checkpoint
+        for variant in ('nonentry', 'duplicate', 'quantity', 'policy'):
+            with self.subTest(variant=variant):
+                ledger=Ledger(Path(self.tmp.name)/f'buy-{variant}.sqlite')
+                entry=experimental()
+                ledger.apply(entry,self.cfg,transition,initial_state)
+                if variant=='nonentry':
+                    other=copy.deepcopy(entry);other['event_id']='nonentry-observation'
+                    self.assertEqual(ledger.apply(other,self.cfg,transition,initial_state),[])
+                    state=json.loads(ledger.db.execute('SELECT payload FROM state').fetchone()[0])
+                    state['positions']['SYNTHETIC_A']['entry_event_id']=other['event_id']
+                    ledger.db.execute('UPDATE state SET payload=?',(json.dumps(state),))
+                else:
+                    row=ledger.db.execute('SELECT payload FROM outcomes').fetchone()[0]
+                    if variant=='duplicate':
+                        ledger.db.execute('INSERT INTO outcomes(event_id,payload) VALUES(?,?)',(entry['event_id'],row))
+                    else:
+                        buy=json.loads(row)
+                        if variant=='quantity':buy['quantity']='1'
+                        else:buy['entry_policy']['risk_flags']=[]
+                        ledger.db.execute('UPDATE outcomes SET payload=?',(json.dumps(buy),))
+                before=list(ledger.db.iterdump())
+                with self.assertRaises(ValueError):read_checkpoint(ledger.db)
+                with self.assertRaises(ValueError):ledger.apply(entry,self.cfg,transition,initial_state)
+                self.assertEqual(list(ledger.db.iterdump()),before)
+                ledger.close()
