@@ -42,7 +42,8 @@ class PaperHistorySource:
         coverage = before['coverage']
         if coverage and coverage['next_cursor']:
             options['paginationToken'] = coverage['next_cursor']
-        if self.called or method != 'getTransactionsForAddress' or params != [query['address'], options]:
+        if (self.called or method != 'getTransactionsForAddress' or type(params) is not list
+                or canonical(params) != canonical([query['address'], options])):
             raise PaperReadError('HISTORY_BINDING_INVALID')
         body = canonical({'jsonrpc':'2.0','id':RPC_ID,'method':method,'params':params}).encode()
         if len(body) > MAX_REQUEST_BYTES: raise PaperReadError('REQUEST_INVALID')
