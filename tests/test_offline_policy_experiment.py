@@ -198,3 +198,40 @@ class OfflinePolicyExperimentTests(unittest.TestCase):
             code = main(['--training', str(self.training), '--trials', str(trials), '--now', str(T + 200)])
         self.assertEqual(code, 2)
         self.assertEqual(json.loads(out.getvalue())['reason'], 'DUPLICATE_TRIAL_JSON_KEY')
+
+    def test_real_cli_malformed_profile_and_window_shapes_reject_read_only(self):
+        from desk.experiment_report import experiment_report
+        trials = self.root / 'shape-trials.json'; trials.write_text(json.dumps(self.trials))
+        shapes = [(None, 'SIGNAL_PROFILE_SHAPE_INVALID'),
+                  ([], 'SIGNAL_PROFILE_SHAPE_INVALID'),
+                  ('user text', 'SIGNAL_PROFILE_SHAPE_INVALID')]
+        shapes += [({'window': value}, 'SIGNAL_WINDOW_SHAPE_INVALID')
+                   for value in (None, [], 'user text', {},
+                                 {'start_inclusive': True, 'end_inclusive': T},
+                                 {'start_inclusive': T + 1, 'end_inclusive': T})]
+        shapes.append(({}, 'SIGNAL_WINDOW_SHAPE_INVALID'))
+        for index, (profile, reason) in enumerate(shapes):
+            with self.subTest(profile=profile):
+                path = self.root / ('shape-' + str(index) + '.sqlite')
+                with closing(Ledger(path)) as ledger:
+                    ledger.apply(event(paper_signal_profile=profile), config(), transition, initial_state)
+                # Existing report validator accepts this unrelated V1 metadata;
+                # the offline window reader must reject explicitly, not crash.
+                experiment_report(path, now=T + 200)
+                before = self.dump(path)
+                with sqlite3.connect(path) as c:
+                    hashes = list(c.execute('SELECT event_id,payload_hash FROM events'))
+                out = io.StringIO()
+                with redirect_stdout(out), patch('socket.socket', side_effect=AssertionError('No network')):
+                    code = main(['--training', str(path), '--holdout', str(self.holdout),
+                                 '--trials', str(trials), '--now', str(T + 200)])
+                self.assertEqual(code, 2)
+                result = json.loads(out.getvalue())
+                self.assertEqual(result['status'], 'INVALID_INPUT')
+                self.assertEqual(result['reason'], reason)
+                self.assertFalse(result['entry_authorized'])
+                self.assertFalse(result['promotion_authorized'])
+                self.assertNotIn(str(path), out.getvalue())
+                self.assertEqual(before, self.dump(path))
+                with sqlite3.connect(path) as c:
+                    self.assertEqual(hashes, list(c.execute('SELECT event_id,payload_hash FROM events')))

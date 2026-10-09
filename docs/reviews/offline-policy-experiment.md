@@ -64,3 +64,11 @@ Dependency: honest comparison/ranking requires a separately reviewed original-bo
 candidate observation and outcome/population contract with portfolio-path semantics.
 This patch deliberately does not fabricate that contract or accepted evidence.
 Packaging is unchanged; run the research module from the repository checkout.
+
+
+Forward review repair: explicitly reject non-dict paper_signal_profile and missing,
+non-dict, unbounded-shape or unordered signal window bounds before field access.
+Existing V1 report validation does not constrain this unrelated metadata, so the
+offline reader must validate it itself. Real CLI tests cover null/list/string
+profiles and windows plus missing/invalid bounds, with source dumps and retained
+event hashes unchanged. No blanket AttributeError handling was introduced.

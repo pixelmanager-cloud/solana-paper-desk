@@ -53,8 +53,15 @@ def _snapshot(path, now):
         for event in events:
             times.extend(event[key] for key in ('holder_at', 'flow_at', 'momentum_at')
                          if event.get(key) is not None)
-            window = event.get('paper_signal_profile', {}).get('window', {})
-            if window:
+            if 'paper_signal_profile' in event:
+                profile = event['paper_signal_profile']
+                if type(profile) is not dict:
+                    raise InvalidExperiment('SIGNAL_PROFILE_SHAPE_INVALID')
+                window = profile.get('window')
+                if (type(window) is not dict
+                        or any(type(window.get(key)) is not int for key in ('start_inclusive', 'end_inclusive'))
+                        or not 0 <= window['start_inclusive'] <= window['end_inclusive']):
+                    raise InvalidExperiment('SIGNAL_WINDOW_SHAPE_INVALID')
                 times.extend(window[key] for key in ('start_inclusive', 'end_inclusive'))
         for fill in report.get('execution', {}).get('fills', []):
             times.extend(fill[key] for key in ('quote_observed_at', 'mint_observed_at'))
