@@ -3538,7 +3538,7 @@
         "status": "ASSIGNED",
         "scope": "Actual Token2022 separate experiment + context handoff + held monitoring/exit/restart with preserved original ledger/charges; fullcombinedsuite onlyafterfinalheads",
         "turn_id": "01a120eb-1173-7153-a4b3-64b92e3a5aad",
-        "cursor": "d3153436-2742-432e-8501-9c06b95f29ae:56"
+        "cursor": "d3153436-2742-432e-8501-9c06b95f29ae:57"
       },
       "coordinator_handoff_operator_focused": {
         "heads": [
@@ -3556,7 +3556,15 @@
         "thread_id": "01a118fc-39bc-722c-b442-b442-8bf5a749e0bb",
         "status": "ASSIGNED",
         "finding": "08actual2secPacer freshcollector+held4reads4.10s pass; coldentry10sdeadlineblocks; retainedfreshUSD6.15sentry needs full samepacer USDacquisitionrecipe verified",
-        "scope": "fixtureonly existingoperatorrecipe; no TTL/pacing/budget weakening"
+        "scope": "fixtureonly existingoperatorrecipe; no TTL/pacing/budget weakening",
+        "turn_id": "01a120ec-63a0-77cd-ba7a-b7c6127735a7",
+        "cursor": "5e651fc7-2996-4765-974d-5c852257a005:113"
+      },
+      "handoff_predecessor_verification": {
+        "files": 127,
+        "exact_source": "73edf437556ef093aa0e480eab8fc239552d6307",
+        "zip_sha256": "7119d5fd7e796d46e301253de4b7de7a778bbed6437fa054cb11b58a036dc037",
+        "result": "All archived source bytes match deployed predecessor"
       }
     }
   },
