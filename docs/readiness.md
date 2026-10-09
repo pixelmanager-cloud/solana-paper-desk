@@ -20,6 +20,8 @@ PR149 is integrated at `35e8454b7643565a61ddc894d422cb433b769dec` and installed 
 
 At 11:06 UTC the unchanged-budget sampler retained two more transactions for one mint. One used the legacy-named `migrate` instruction, but both original token-balance records identify Token-2022. It remains excluded without another provider call. Instruction name alone must not be treated as proof of the mint’s token program. No supported live candidate or paper fill has been observed.
 
+The user explicitly approved bounded continuous discovery: pause at 800,000 payload bytes or 20 stored observations per rolling hour, with a 64 MiB storage ceiling and no automatic investigations. Worker08 is implementing the separate listener; worker02 owns independent review. Restart-safe accounting, duplicate/malformed traffic, reconnects and storage/WAL exhaustion are required checks. This is not yet deployed; the existing sampler stays active until review, full Linux tests and exact-head CI pass. Investigation18/daily10/queue3 and monitoring60 remain unchanged.
+
 ## Paper-loop priority update — 2026-10-09
 
 The user changed the immediate target to an executable live-data paper experiment and forward iteration. In explicit experimental paper mode, unresolved ownership **history** may be retained as an acknowledged risk. Known hazards, corrupt or contradictory supplied evidence, and missing execution/price/freshness data are not waived. The older strict ownership milestone below remains the strict-mode policy, not a reason to stop independent paper-loop implementation. No unknown ownership percentage may be replaced by a fabricated safe value.

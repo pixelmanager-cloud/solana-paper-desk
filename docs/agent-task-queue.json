@@ -2851,6 +2851,49 @@
       "no_rerun_or_timeout_change": true,
       "finding": "Cancelled after604.539s with no assertion output or summary. Same-tree run passed2357 in233.442s; slowdown versus hang cannot be distinguished. Quiet output can hide failures until summary; cancellation is not a pass.",
       "next_if_recurs": "Verbose test names and periodic faulthandler dumps, preserving suite and10min timeout; no source repair established"
+    },
+    "continuous_discovery_preflight": {
+      "status": "USER_APPROVED_IMPLEMENTATION_DISPATCHED",
+      "worker": "08",
+      "thread_id": "01a118fd-2563-7126-90d7-bd07693de0b2",
+      "turn_id": "01a1205a-ac94-70d6-bb60-70c87ba13d8e",
+      "cursor": "02d8669f-59ba-43bb-8691-b196829f4867:48",
+      "scope": "Concrete smallest continuous-listening design, durable bytes/storage/dedup/reconnect caps; preserve investigation18/daily10/queue3 and monitoring60; no implementation or provider calls",
+      "user_authorization": "Explicit user answer: Build bounded continuous discovery (recommended). Hourly 800000 bytes or 20 stored observations, 64 MiB storage ceiling, no automatic investigations; investigation and monitoring limits unchanged.",
+      "proposed_caps": {
+        "payload_bytes_rolling_hour": 800000,
+        "payload_bytes_rolling_day": 19200000,
+        "stored_observations_hour": 20,
+        "stored_observations_day": 480,
+        "message_bytes": 200000,
+        "storage_high_water_bytes": 67108864
+      },
+      "proposal": "One existing migration-filter listener, durable counters across restart, count duplicates/malformed traffic, stop at caps preserve originals, bounded reconnect, idle receive does not reconnect, no automatic investigation",
+      "billing": "Continuous connection billing may differ; user approved described bounded scope; no purchase authorized",
+      "storage_observed": {
+        "db_bytes": 22687744,
+        "wal_bytes": 0,
+        "raw_records": 782,
+        "payload_bytes": 21724158
+      },
+      "question": "ANSWERED: approved bounded continuous discovery",
+      "implementation": {
+        "worker": "08",
+        "thread_id": "01a118fd-2563-7126-90d7-bd07693de0b2",
+        "turn_id": "01a1205d-30f1-70db-9efb-e28ee40c94db",
+        "cursor": "02d8669f-59ba-43bb-8691-b196829f4867:49",
+        "base": "aa24a7648b7d39972db17364b68788d913d96458",
+        "status": "DISPATCHED"
+      },
+      "independent_review": {
+        "worker": "02",
+        "thread_id": "01a118fc-666c-70b6-9fa8-2c7520f0a0bb",
+        "turn_id": "01a1205d-418c-760e-9bf0-a22770c45ab0",
+        "cursor": "a2dcfb97-463d-4188-9da3-48a81e644d23:106",
+        "status": "FAILURE_CONTRACT_COMPLETE_EXACT_HEAD_PENDING",
+        "requirements_relayed_to_author": true
+      },
+      "deployment": "NOT_DEPLOYED; retain sampler until exact-head review, full Linux tests and CI; keep paper runtime pinned"
     }
   },
   "native_reconciliation_review": {
