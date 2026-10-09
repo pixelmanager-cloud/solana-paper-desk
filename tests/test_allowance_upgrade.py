@@ -61,6 +61,35 @@ class ResearchUpgradeTests(unittest.TestCase):
         with self.assertRaises(ValueError):self.upgrade()
         with self.assertRaises(ValueError):self.admit()
 
+    def test_queue_25_preserves_existing_pending_semantics_and_lifetime18(self):
+        from solders.pubkey import Pubkey
+        from desk.job_persistence import BIRTH_ACQUISITION_V1
+        self.upgrade()
+        scans=[]
+        for i in range(25):
+            mint=str(Pubkey.from_bytes(bytes([i+1])*32))
+            with patch('desk.job_persistence.time.time',return_value=T):
+                scans.append(self.jobs.admit(mint,kind=BIRTH_ACQUISITION_V1,evidence_db=Path(self.tmp.name)/'evidence.sqlite'))
+        with self.jobs.connect() as c:
+            c.execute("UPDATE scans SET status='INTERRUPTED' WHERE id=?",(scans[0],))
+        with self.assertRaises(ValueError):self.admit()
+        with self.jobs.connect() as c:c.execute("UPDATE scans SET status='FAILED' WHERE id=?",(scans[1],))
+        self.admit()
+        self.assertTrue(all(self.jobs.descriptor(scan)['request_ceiling']==18 for scan in scans))
+
+    def test_real_cli_existing_only_and_idempotent(self):
+        import subprocess,sys,json
+        command=[sys.executable,'-m','desk.job_persistence','--research-db',str(self.jobs.path),'--provenance',policy.PROVENANCE]
+        first=subprocess.run(command,capture_output=True,text=True,timeout=10)
+        self.assertEqual(first.returncode,0,first.stderr)
+        second=subprocess.run(command,capture_output=True,text=True,timeout=10)
+        self.assertEqual(first.stdout,second.stdout)
+        self.assertEqual(json.loads(first.stdout)['daily'],1000)
+        command[4]=str(Path(self.tmp.name)/'absent.sqlite')
+        refused=subprocess.run(command,capture_output=True,text=True,timeout=10)
+        self.assertEqual(refused.returncode,2)
+        self.assertFalse(Path(command[4]).exists())
+
 
 class MonitoringUpgradeTests(unittest.TestCase):
     def setUp(self):
@@ -119,3 +148,17 @@ class MonitoringUpgradeTests(unittest.TestCase):
         self.upgrade()
         with self.f.store.connect() as c:c.execute(f'DROP TABLE {policy.MONITORING}')
         with self.assertRaises(ValueError):self.f.budget.snapshot()
+
+    def test_operator_seam_existing_only_under_locks_and_idempotent(self):
+        from desk.monitoring_budget import upgrade_existing
+        result=upgrade_existing(self.f.jobs.path,self.f.store.path,self.f.f.path,self.f.f.cfg,
+                                provenance=policy.PROVENANCE,clock=lambda:T)
+        self.assertEqual(result['budget']['cap'],3600)
+        again=upgrade_existing(self.f.jobs.path,self.f.store.path,self.f.f.path,self.f.f.cfg,
+                               provenance=policy.PROVENANCE,clock=lambda:T+1)
+        self.assertEqual(result['policy_hash'],again['policy_hash'])
+        self.assertEqual(self.f.accounting(),(0.0,0,None))
+        absent=Path(self.f.root)/'missing.sqlite'
+        with self.assertRaises(MonitoringBlocked):
+            upgrade_existing(absent,self.f.store.path,self.f.f.path,self.f.f.cfg,provenance=policy.PROVENANCE)
+        self.assertFalse(absent.exists())

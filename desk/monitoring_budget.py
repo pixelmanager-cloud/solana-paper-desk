@@ -68,14 +68,15 @@ class MonitoringBudget:
             return state, c.execute('SELECT payload FROM state WHERE id=1').fetchone()[0]
 
     def _compatible(self, c, metadata):
-        if metadata.get('implementation_hash') == self.code_hash:
-            return True
-        # Successor compatibility belongs to the separately reviewed runtime
-        # reader. No policy table alone authorizes a different implementation.
         try:
-            from .paper_code_compatibility import ensure
-            return ensure(c, self.code_hash) == self.code_hash
-        except (ImportError, ValueError):
+            from .runtime_compatibility import require_runtime
+        except ImportError:
+            # Standalone component retains the existing exact native-code rule;
+            # predecessor adoption requires worker07's reviewed resolver.
+            return metadata.get('implementation_hash') == self.code_hash
+        try:
+            return require_runtime(c, implementation=self.code_hash) == self.code_hash
+        except ValueError:
             return False
 
     def prepare_upgrade(self, c, *, at, provenance):
@@ -379,3 +380,56 @@ class MonitoringBudget:
             except BaseException:
                 c.rollback()
                 raise
+
+def upgrade_existing(research_db, evidence_db, ledger_db, cfg, *, provenance, clock=time.time):
+    """Explicit coordinator CLI seam: existing DBs only, no provisioning."""
+    from .paper_observe_cli import _worker_lock
+    from .paper_cycle import _lock
+    research=canonical_job_path(research_db)
+    evidence=canonical_ownership_path(evidence_db)
+    ledger=canonical_job_path(ledger_db)
+    if len({research,evidence,ledger})!=3 or not all(p.is_file() for p in (research,evidence,ledger)):
+        raise MonitoringBlocked('MONITORING_CONFIGURATION_INVALID')
+    with _worker_lock(research) as worker:
+        if worker is None:raise MonitoringBlocked('MONITORING_RESEARCH_BUSY')
+        with _lock(str(evidence)+'.ownership-invocation.lock') as locked:
+            if not locked:raise MonitoringBlocked('MONITORING_EVIDENCE_BUSY')
+            with _lock(str(ledger)+'.paper-cycle.lock') as locked:
+                if not locked:raise MonitoringBlocked('MONITORING_LEDGER_BUSY')
+                store=EvidenceStore(evidence,read_only=True)
+                store.read_only=False
+                # Existing only: neither constructor nor connection may create
+                # a database or table if deployment paths are wrong.
+                store.connect=lambda:sqlite3.connect(evidence.as_uri()+'?mode=rw',uri=True,
+                                                    timeout=20,isolation_level=None)
+                budget=MonitoringBudget(store,ledger,cfg,clock=clock)
+                budget._checkpoint()
+                with closing(store.connect()) as c:
+                    c.execute('BEGIN IMMEDIATE')
+                    try:
+                        prepared=budget.prepare_upgrade(c,at=clock(),provenance=provenance)
+                        budget.activate_upgrade(c,prepared)
+                        c.commit()
+                    except BaseException:
+                        c.rollback();raise
+                return {'status':'EXPLICITLY_ACTIVATED','policy_hash':prepared[1],
+                        'reservation_cutoff':prepared[0]['reservation_cutoff'],
+                        'budget':budget.snapshot(),
+                        'provider_pacing':'UNVERIFIED_SHARED_PACING_REQUIRED'}
+
+
+def main(argv=None):
+    import argparse
+    from .paper_cycle_cli import _config
+    parser=argparse.ArgumentParser(description='Explicit monitoring allowance upgrade; existing databases only')
+    for name in ('research-db','evidence-db','ledger-db','config','provenance'):
+        parser.add_argument('--'+name,required=True)
+    args=parser.parse_args(argv)
+    try:
+        result=upgrade_existing(args.research_db,args.evidence_db,args.ledger_db,_config(args.config),provenance=args.provenance)
+        print(json.dumps(result,sort_keys=True));return 0
+    except (ValueError,OSError,sqlite3.Error,TypeError,KeyError):
+        print(json.dumps({'status':'BLOCKED','blockers':['EXPLICIT_ALLOWANCE_UPGRADE_UNAVAILABLE']}));return 2
+
+
+if __name__=='__main__':raise SystemExit(main())

@@ -334,3 +334,28 @@ class _Worker:
             if changed != 1:
                 raise ValueError('Stale worker publication')
             c.execute('UPDATE scan_jobs SET claim_token=NULL WHERE scan_id=?', (claim.scan_id,))
+
+def main(argv=None):
+    import argparse
+    from .paper_observe_cli import _worker_lock
+    parser=argparse.ArgumentParser(description='Explicit research allowance upgrade; existing database only')
+    parser.add_argument('--research-db',required=True)
+    parser.add_argument('--provenance',required=True)
+    args=parser.parse_args(argv)
+    try:
+        path=canonical_job_path(args.research_db)
+        if not path.is_file():raise ValueError('Existing research database required')
+        with _worker_lock(path) as worker:
+            if worker is None:raise ValueError('Research worker busy')
+            jobs=JobPersistence.__new__(JobPersistence);jobs.path=path
+            def connect():
+                c=sqlite3.connect(path.as_uri()+'?mode=rw',uri=True,timeout=15)
+                c.row_factory=sqlite3.Row;c.execute('PRAGMA foreign_keys=ON');return c
+            jobs.connect=connect
+            body,key=jobs.upgrade_allowance(at=int(time.time()),provenance=args.provenance)
+        print(json.dumps({'status':'EXPLICITLY_ACTIVATED','policy_hash':key,'daily':body['daily'],'queued':body['queued']}));return 0
+    except (ValueError,OSError,sqlite3.Error,TypeError,KeyError):
+        print(json.dumps({'status':'BLOCKED','blockers':['EXPLICIT_ALLOWANCE_UPGRADE_UNAVAILABLE']}));return 2
+
+
+if __name__=='__main__':raise SystemExit(main())
