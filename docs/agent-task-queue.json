@@ -1662,7 +1662,7 @@
       "repair": "Bounded unambiguous buy ENTRY outcome must match original risk policy, scores, identity, initial quantity and cost; non-entry rebinding rejects"
     },
     "paper_fill_model_question": {
-      "status": "AWAITING_USER_PREFERENCE",
+      "status": "AWAITING_USER_EXPLICIT_CHOICE_REQUESTED_AGAIN",
       "current_gate": "Full transaction execution verification even for paper fills",
       "proposed_experimental_mode": "Fresh live quote simulations with explicit fee/slippage assumptions and execution-unverified label",
       "existing_authorization": "Ownership history risk only; do not silently waive execution proof while choice pending"
@@ -1834,7 +1834,7 @@
     },
     "pending_pr119": {
       "head": "9ecc4c7170e2d35a33cd9dc01bf03023f56806da",
-      "status": "REVIEW_04",
+      "status": "REVIEW_04_STATUS_RECOVERY_REQUESTED_NO_DUPLICATE",
       "repairs": 114
     },
     "pending_pr120": {
@@ -1859,18 +1859,33 @@
     "pending_pr122": {
       "head": "e1e9dc914469dc7c9999021104abf34116794237",
       "repairs": 118,
-      "status": "REVIEW_02",
-      "author_linux_tests": 2004
+      "status": "PASS_COMPONENT_REVIEW_02_CI_RUNNING",
+      "author_linux_tests": 2004,
+      "linux_tests": 2030
     },
     "pending_pr121": {
       "head": "747a9d3e58df049ac784fd2110bc02affd6127b7",
       "status": "REVIEW_03",
-      "author_linux_tests": 2008
+      "author_linux_tests": 2008,
+      "ci": "BOTH_SUCCESS"
     },
     "pending_pr123": {
       "head": "2bda1076c82c2e5b5427f60ce945e766bfe92322",
       "status": "REVIEW_07_COMBINED",
-      "scope": "Use pinned savedcfg for experimental market grammar only; strictcontrolsunchanged"
+      "scope": "Use pinned savedcfg for experimental market grammar only; strictcontrolsunchanged",
+      "ci": "BOTH_SUCCESS"
+    },
+    "current_worker_followups": {
+      "01": "PR121 bridge published; independent03review",
+      "02": "PR122 parser review PASS; available",
+      "03": "PR121 independentreview active",
+      "04": "PR119 independentreview active; statusrecoveryrequested",
+      "05": "Platformblocked97/110; not retried",
+      "06": "PR123 dashboardrepair published; independent07review",
+      "07": "Full combined paperloop+123 independentreview",
+      "08": "Bounded live observation CLI; noentries; depends120/121/122",
+      "09": "PR119/122 repairs published; available",
+      "10": "Tested operator runbook/new isolated syntheticexperiment commands"
     }
   },
   "native_reconciliation_review": {
