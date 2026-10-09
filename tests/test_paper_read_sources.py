@@ -2,14 +2,17 @@
 import base64
 from email.message import Message
 from http.client import HTTPResponse, IncompleteRead
+from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 import io
 import json
 from pathlib import Path
 import tempfile
+import threading
 import unittest
 from unittest.mock import patch
 from urllib.error import HTTPError
 from urllib.parse import urlsplit, parse_qs
+from urllib.request import Request, build_opener
 
 from desk import paper_read_sources as m
 from desk.evidence import EvidenceStore
@@ -163,6 +166,54 @@ class PaperReadTests(unittest.TestCase):
         with self.assertRaisesRegex(m.PaperReadError,'RESPONSE_TRUNCATED') as caught:
             self.call(self.chunked_response(frame))
         self.assertEqual(base64.b64decode(self.outcome(caught.exception)['response_bytes_base64']),raw)
+    def test_review_malformed_chunk_boundaries_never_acknowledge_success(self):
+        raw=self.body();prefix=f'{len(raw):x}\r\n'.encode()+raw
+        for tail in [b'\r\n0\r\n',b'\r\n0\r\nX-Test: yes\r\n',b'XX0\r\n\r\n']:
+            before=self.progress.admission('scan')['requests_used']
+            with self.assertRaisesRegex(m.PaperReadError,'RESPONSE_TRUNCATED') as caught:
+                self.call(self.chunked_response(prefix+tail))
+            outcome=self.outcome(caught.exception)
+            self.assertEqual(base64.b64decode(outcome['response_bytes_base64']),raw)
+            self.assertEqual(outcome['failure_code'],'RESPONSE_TRUNCATED')
+            self.assertEqual(HistoryProgress(EvidenceStore(self.path)).admission('scan')['requests_used'],before+1)
+    def test_chunked_plain_boundary_profile_rejects_extensions_trailers_and_invalid_sizes(self):
+        raw=self.body()
+        cases=[b'-1\r\n',b'+1\r\n',b' 1\r\n',b'1\n',b'0x1\r\n',b'1;foo=bar\r\n',b'1'*128,
+               f'{len(raw):x}\r\n'.encode()+raw+b'\r\n0\r\nX-Test: yes\r\n\r\n']
+        for framed in cases:
+            with self.assertRaisesRegex(m.PaperReadError,'RESPONSE_TRUNCATED'):
+                self.call(self.chunked_response(framed))
+    def test_chunked_framing_overhead_is_bounded(self):
+        with self.assertRaisesRegex(m.PaperReadError,'RESPONSE_TRUNCATED'):
+            self.call(self.chunked_response(b'1\r\nx\r\n'*14000+b'0\r\n\r\n'))
+    def test_real_loopback_chunked_success_and_review_failures(self):
+        class Handler(BaseHTTPRequestHandler):
+            def do_POST(inner):
+                inner.rfile.read(int(inner.headers['Content-Length']))
+                inner.wfile.write(b'HTTP/1.1 200 OK\r\nTransfer-Encoding: chunked\r\nConnection: close\r\n\r\n'+inner.server.fixture)
+                inner.close_connection=True
+            def log_message(inner,*args):pass
+        server=ThreadingHTTPServer(('127.0.0.1',0),Handler)
+        thread=threading.Thread(target=server.serve_forever,daemon=True);thread.start()
+        actual=build_opener(m.strict._NoRedirect())
+        class LocalOpener:
+            def open(inner,request,*,timeout):
+                return actual.open(Request(f'http://127.0.0.1:{server.server_port}/',data=request.data,
+                    headers={'Content-Type':'application/json'},method='POST'),timeout=timeout)
+        raw=self.body();prefix=f'{len(raw):x}\r\n'.encode()+raw
+        try:
+            with patch.object(m,'build_opener',return_value=LocalOpener()),patch.object(m.os.environ,'get',return_value=KEY):
+                for tail in [b'\r\n0\r\n\r\n',b'\r\n0\r\n',b'\r\n0\r\nX-Test: yes\r\n',b'XX0\r\n\r\n']:
+                    server.fixture=prefix+tail
+                    if tail==b'\r\n0\r\n\r\n':
+                        self.assertEqual(self.source.rpc('getAccountInfo',self.params,timeout_seconds=3),self.result)
+                    else:
+                        with self.assertRaisesRegex(m.PaperReadError,'RESPONSE_TRUNCATED') as caught:
+                            self.source.rpc('getAccountInfo',self.params,timeout_seconds=3)
+                        self.assertEqual(base64.b64decode(self.outcome(caught.exception)['response_bytes_base64']),raw)
+            self.assertEqual(self.progress.admission('scan')['requests_used'],4)
+        finally:
+            server.shutdown();server.server_close();thread.join()
     def test_chunked_oversized_entity_and_deadline_remain_blocked(self):
         raw=b'x'*(m.MAX_RESPONSE_BYTES+1)
         framed=f'{len(raw):x}\r\n'.encode()+raw+b'\r\n0\r\n\r\n'
@@ -170,7 +221,7 @@ class PaperReadTests(unittest.TestCase):
             self.call(self.chunked_response(framed))
         raw=self.body();framed=f'{len(raw):x}\r\n'.encode()+raw+b'\r\n0\r\n\r\n'
         with self.assertRaisesRegex(m.PaperReadError,'DEADLINE_EXCEEDED') as caught:
-            self.call(self.chunked_response(framed),clock=[1,1.5,2,5])
+            self.call(self.chunked_response(framed),clock=[1,1.5]+[2]*6+[5])
         self.assertEqual(base64.b64decode(self.outcome(caught.exception)['response_bytes_base64']),raw)
     def test_missing_credentials_charge_and_exhaustion_survives_reconstruction(self):
         with patch.object(m.os.environ,'get',return_value=None),patch.object(m,'build_opener',side_effect=AssertionError('network')):
