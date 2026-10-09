@@ -2925,7 +2925,21 @@
         }
       },
       "finding": "Independent02 on23d6591 reproduced real WS oversized frame reconnect instead of stop; charging conservative; author08repairrequested",
-      "combined_tree": "dd09bb1e8d98f3c9552f7232e3f8fa49a41b6029"
+      "combined_tree": "dd09bb1e8d98f3c9552f7232e3f8fa49a41b6029",
+      "ci_blocker": {
+        "head": "7bc51403ad122760acdc013857c49438d30d8af0",
+        "run": 37926336816,
+        "job": 113806070795,
+        "started_tests": false,
+        "reason": "Recent account payments failed or spending limit needs increase; GitHub billing annotation, exact cause ambiguous",
+        "action": "Worker09 read-only repo exposure audit and billing-limit distinction; user prior conditional public-repo authorization recorded, no visibilitychange yet",
+        "audit": {
+          "worker": "09",
+          "thread_id": "01a118fd-3f90-77d9-9549-c4497f5b10a6",
+          "turn_id": "01a12084-fb66-758a-adbf-78537934785d",
+          "cursor": "68a4d56e-d04a-40dc-ad15-e80a29c96b80:41"
+        }
+      }
     },
     "paper_policy_tuning": {
       "status": "PASS_INTEGRATED_OFFLINE_FOUNDATION",
