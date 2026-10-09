@@ -14,12 +14,14 @@ import math
 from pathlib import Path
 import sqlite3
 import time
+import uuid
+from contextlib import contextmanager
 
 from .evidence import EvidenceStore
 from .history_progress import HistoryProgress, canonical_ownership_path, ownership_lock_path
 from .job_persistence import JobPersistence, canonical_job_path
 from .model import digest
-from .paper_observation_collector import ObservationTarget, BoundedSource, collect_observations
+from .paper_observation_collector import ObservationTarget, BoundedSource, collect_observations, _admission, _Blocked
 from .paper_read_sources import PaperReadSources, PaperReadError
 from .providers import SOL
 from .sol_usd_observation import JupiterPriceResponse, TrustedSlotBounds, PRICE_URL, MAX_RESPONSE_BYTES, parse_sol_usd
@@ -54,6 +56,49 @@ def _attempt_record(progress, key, scan, source_id, method, params):
     return record
 
 
+@contextmanager
+def _worker_lock(path):
+    # Take the existing canonical worker lock without initializing or recovering
+    # the research queue: observation does not own dispatch recovery.
+    with open(canonical_job_path(str(path)+'.jobs-worker.lock'), 'a') as lock:
+        try:
+            fcntl.flock(lock, fcntl.LOCK_EX | fcntl.LOCK_NB)
+        except BlockingIOError:
+            yield None
+            return
+        yield lock
+
+
+def _existing_context(research, evidence, targets):
+    """Read-only admission check; never migrate either supplied database."""
+    jobs = JobPersistence.__new__(JobPersistence)
+    jobs.path = research
+    def readonly_jobs():
+        connection = sqlite3.connect(research.as_uri()+'?mode=ro', uri=True)
+        connection.row_factory = sqlite3.Row
+        return connection
+    jobs.connect = readonly_jobs
+    store = EvidenceStore(evidence, read_only=True)
+    progress = HistoryProgress.__new__(HistoryProgress)
+    progress.store = store
+    with store.connect() as c:
+        c.execute('SELECT hash,payload,raw_bytes FROM pages LIMIT 0')
+        c.execute('SELECT id,budget,query,coverage,status,attempts FROM ownership_history LIMIT 0')
+        c.execute('SELECT id,descriptor,state,prepared_source,prepared_used,completed_source_hash FROM ownership_admissions LIMIT 0')
+        c.execute('SELECT id,source_hash,used,ceiling FROM ownership_budgets LIMIT 0')
+    with jobs.connect() as c:
+        c.execute('SELECT id,mint,created,status,result FROM scans LIMIT 0')
+        c.execute('SELECT scan_id,kind,descriptor_version,descriptor,descriptor_hash,generation,claim_token FROM scan_jobs LIMIT 0')
+        marker = c.execute("SELECT version FROM scan_job_migrations WHERE name='legacy_screen_descriptors'").fetchone()
+        if marker is None or marker[0] != 1:
+            raise ValueError('Existing dispatch schema required')
+    for target in targets:
+        _admission(jobs, progress, target)
+    # No constructors that initialize schema, even after successful preflight.
+    store.read_only = False
+    return jobs, store, progress
+
+
 def observe(research_db, evidence_db, *, open_positions=(), candidates=(), sol_usd=False):
     """Save observations only. Existing IDs/counters are never created or reset.
 
@@ -68,7 +113,6 @@ def observe(research_db, evidence_db, *, open_positions=(), candidates=(), sol_u
     research, evidence = canonical_job_path(research_db), canonical_ownership_path(evidence_db)
     if research == evidence or not research.is_file() or not evidence.is_file():
         raise ValueError('Separate existing research and evidence databases required')
-    jobs = JobPersistence(research)
     output = {'kind': 'paper_observation_pass_v1', 'status': 'UNKNOWN', 'mode': 'OBSERVATION_ONLY',
               'eligible_for_trading': False, 'entries_enabled': False, 'quote_is_fill': False,
               'attempted_requests': 0, 'stopped_reason': None, 'observations': [],
@@ -76,18 +120,39 @@ def observe(research_db, evidence_db, *, open_positions=(), candidates=(), sol_u
               'requested_scan_ids': [t.scan_id for t in open_positions + candidates],
               'limits': {'pass_requests': 18, 'deadline_seconds': 10, 'price_bytes': 65536,
                          'account_quote_bytes': 2097152}}
-    with jobs.worker() as worker:
+    with _worker_lock(research) as worker:
         if worker is None:
             output['stopped_reason'] = 'RESEARCH_WORKER_BUSY'
             return output
-        store = EvidenceStore(evidence)
+        store = EvidenceStore(evidence, read_only=True)
         with open(ownership_lock_path(store, invocation=True), 'a') as lock:
             try:
                 fcntl.flock(lock, fcntl.LOCK_EX | fcntl.LOCK_NB)
             except BlockingIOError:
                 output['stopped_reason'] = 'EVIDENCE_INVOCATION_BUSY'
                 return output
-            progress = HistoryProgress(store)
+            try:
+                jobs, store, progress = _existing_context(research, evidence, open_positions+candidates)
+            except (_Blocked, ValueError, sqlite3.Error):
+                output['stopped_reason'] = 'PERSISTED_ADMISSION_REQUIRED'
+                return output
+            # Persist intent before any possible reservation/I/O. An interrupted
+            # invocation or failed pass remains unresolved across processes and
+            # target changes. There is deliberately no reset/clear CLI: recovery
+            # requires a separate source-bound reconciliation, not a healthy retry.
+            with store.connect() as c:
+                c.execute('CREATE TABLE IF NOT EXISTS paper_observation_passes(id TEXT PRIMARY KEY,intent_hash TEXT NOT NULL,outcome_hash TEXT)')
+                if c.execute('SELECT 1 FROM paper_observation_passes WHERE outcome_hash IS NULL LIMIT 1').fetchone():
+                    output['stopped_reason'] = 'OBSERVATION_RECOVERY_REQUIRED'
+                    return output
+            intent = {'kind': 'paper_observation_intent_v1', 'research_db': str(research),
+                      'evidence_db': str(evidence), 'targets': [vars(t) for t in open_positions+candidates],
+                      'sol_usd': sol_usd, 'admissions': {t.scan_id: progress.admission(t.scan_id)
+                                                     for t in open_positions+candidates}}
+            intent_hash = store.save(intent)
+            invocation_id = uuid.uuid4().hex
+            with store.connect() as c:
+                c.execute('INSERT INTO paper_observation_passes VALUES(?,?,NULL)', (invocation_id,intent_hash))
             started = last = time.monotonic()
             if type(started) not in (int, float) or not math.isfinite(started):
                 raise ValueError('Invalid monotonic clock')
@@ -190,6 +255,14 @@ def observe(research_db, evidence_db, *, open_positions=(), candidates=(), sol_u
             key = store.save(output)
             if key != digest(output):
                 raise ValueError('Observation persistence failed')
+            # Only an unambiguously completed pass permits a subsequent pass.
+            # Budget/validation stops without any requests are also complete;
+            # failures after a charged attempt remain conservatively latched.
+            if output['stopped_reason'] is None or all(
+                    progress.admission(scan) == admission for scan, admission in intent['admissions'].items()):
+                with store.connect() as c:
+                    c.execute('UPDATE paper_observation_passes SET outcome_hash=? WHERE id=? AND outcome_hash IS NULL',
+                              (key,invocation_id))
             return {**output, 'evidence_hash': key}
 
 
