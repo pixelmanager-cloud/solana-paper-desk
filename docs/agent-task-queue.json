@@ -4403,7 +4403,7 @@
             "thread_id": "01a118fd-0f1c-749c-b85b-5e730937d0a8",
             "reviewer": "09",
             "review_thread_id": "01a118fd-3f90-77d9-9549-c4497f5b10a6",
-            "status": "INTEGRATED_REVIEWED_POLICIES_FINAL_RELEASE_CI_REQUIRED",
+            "status": "MERGED_FINAL_RELEASE_STAGED_CI_PENDING",
             "pass_id": "d8600ce75e014e22b84c3fd8d10bf2c0",
             "intent_hash": "6f6cfd1efe9aa257638bd750ccd3c4099a3943a5d403132fa9d9d2a7b868fb7e",
             "retained_outcome_hash": "4352afa8e732c4f03eaf1cb788047aea58379fe3ef24edd05f5535e5680eb4a8",
@@ -4536,8 +4536,12 @@
             "vps_combined": {
               "commit": "ab02ab1f8d902fe0feef428414bf1aa9a626a59a",
               "path": "/opt/solana-desk-releases/ab02ab1",
-              "status": "FULL_SUITE_RUNNING_INACTIVE_SOURCE",
-              "production_changed": false
+              "status": "PASS",
+              "production_changed": false,
+              "tests": 2609,
+              "seconds": 998.336,
+              "skips": 0,
+              "log_sha256": "5f7c01c356dbe97a3cd179b517be6a939b203f22a62bc5c6e53987aaff774174"
             },
             "fixture_independent_review": {
               "head": "b1d94d5b5d299d8f59e0b9847101e833c43b44fc",
@@ -4595,7 +4599,7 @@
               "admission_only_delta": "7->10",
               "pending": false,
               "provider_calls": 0,
-              "review_addendum_requested": true,
+              "review_addendum_requested": false,
               "review_addendum": {
                 "turn": "01a121f0-d573-7046-9eb5-09ec81bffe52",
                 "result": "SAME_CONDITIONAL_PIN_APPROVAL_CONFIRMED"
@@ -4617,11 +4621,31 @@
               "tests": 2609,
               "seconds": 503.388
             },
-            "component_pr_state": "MERGED_LOCALLY_RECHECKED_HEADS",
+            "component_pr_state": "GITHUB_MERGED",
             "combined_ci_result": "BOTH_PASS",
             "integrated_runtime_policy": "config/runtime-extensions.json",
             "integrated_terminal_policy": "config/paper-terminal-reconciliation.json",
-            "production_reconciliation_applied": false
+            "production_reconciliation_applied": false,
+            "release": "5cbd0da982c71914241265110d9152d5387ef204",
+            "release_ci_runs": [
+              37975009064,
+              37975003976
+            ],
+            "fresh_candidate508": {
+              "mint": "FMEdNKevy8YCeXufwGgNAZCTAQNkh6N7TKEz9JMJpump",
+              "scan_id": "a8cd584d38c845b6a8c387ebbd18242b",
+              "pool": "CUcucwpR1f5yFpEXQ62VFgqUV98wQyNdc8z2qT44sPJX",
+              "token_policy": "PASS_TOKEN_POLICY",
+              "acquisition_calls": 4,
+              "intake_calls": 2,
+              "requests_used": 6,
+              "status": "EXCLUDED_FINALIZED_SLOT_COVERAGE_UNVERIFIED",
+              "history_id": "526e683a63f7008a08cf020957e236e0dd3fae7ad972127202a41c0597f2fc6f",
+              "acquisition_invocation": "7a00f5289e3c47d4b63f129ebfc63d36",
+              "intake_invocation": "518f2d7209e24ecbb847edd28752827d",
+              "entry_attempted": false,
+              "retry_authorized": false
+            }
           }
         }
       }
