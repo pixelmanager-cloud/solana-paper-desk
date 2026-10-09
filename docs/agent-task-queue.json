@@ -375,12 +375,12 @@
         "worker": "02",
         "thread_id": "01a118fc-666c-70b6-9fa8-2c7520f0a0bb",
         "host_id": "durable",
-        "status": "IN_PROGRESS",
+        "status": "PROFILE2_PUBLISHED_FINAL_REVIEW_PENDING",
         "scope": "model/strategy explicit unknown ownership handling and versioned experimental scoring; no live authorization",
         "turn_id": "01a11ebe-5324-7576-a6bc-b4c8e85ea73b",
         "wait_cursor": "a2dcfb97-463d-4188-9da3-48a81e644d23:72",
         "pr": 106,
-        "head": "b04b8e898ff9392181d142fa7626a106ffdce99d"
+        "head": "7a45e55ca2cfa9c3c5a7802724987493c89e0dd4"
       },
       {
         "id": "LIVE-STRATEGY-FEATURES",
@@ -444,7 +444,11 @@
         "thread_id": "01a118fc-b862-7340-ab3a-e1115a3280a4",
         "host_id": "durable",
         "status": "DISPATCHED",
-        "scope": "new collector using existing admitted budget/provider boundaries; no cloud calls"
+        "scope": "new collector using existing admitted budget/provider boundaries; no cloud calls",
+        "pr": 112,
+        "head": "466ff9f8b8d980b4047532d4dd50497587eea77a",
+        "turn_id": "01a11ec3-b3b0-731b-b9da-e59abc628b8c",
+        "wait_cursor": "d3153436-2742-432e-8501-9c06b95f29ae:15"
       },
       {
         "id": "PR104-VAULT-CONTROL-REPAIR",
@@ -510,8 +514,13 @@
         "worker": "05",
         "thread_id": "01a118fc-dd83-7672-ac81-7445f85fe09f",
         "host_id": "durable",
-        "status": "DISPATCHED",
-        "scope": "Unrelated new roundtripidentityreview; no PR97retry"
+        "status": "BLOCKED_PLATFORM_FILTER",
+        "scope": "Unrelated new roundtripidentityreview; no PR97retry",
+        "turn_id": "01a11ecb-6170-738d-bf5c-1ba6aa90a8b1",
+        "wait_cursor": "b9784eaf-f3e5-457f-a98d-a386c23b37ea:49",
+        "reason": "Platform flagged possible cybersecurity risk during read-only review. No retry, rephrasing or alternate reviewer routing of blocked request.",
+        "pr": 110,
+        "head": "e2ab73def0909f511d2973a48cccf421fab2a512"
       },
       {
         "id": "PR111-INDEPENDENT-REVIEW",
@@ -520,6 +529,16 @@
         "host_id": "durable",
         "status": "DISPATCHED",
         "scope": "Savedrunner status/display read-only review"
+      },
+      {
+        "id": "PR112-INDEPENDENT-REVIEW",
+        "worker": "02",
+        "thread_id": "01a118fc-666c-70b6-9fa8-2c7520f0a0bb",
+        "host_id": "durable",
+        "status": "DISPATCHED_AFTER_106_VALIDATION",
+        "pr": 112,
+        "head": "466ff9f8b8d980b4047532d4dd50497587eea77a",
+        "scope": "Collector shared persistedbudget/admission/no-retry review including107prerequisite"
       }
     ],
     "saved_launch_probe": {
@@ -1500,20 +1519,28 @@
       "ci": "SUCCESS",
       "live_acceptance": false,
       "merge_sha": "9d8c2a58429d53fff02df112d1c6762421b2ce60",
-      "source_identity": "Exact tested source; differences only coordinator queue/readiness docs"
+      "source_identity": "Exact tested source; differences only coordinator queue/readiness docs",
+      "integration_ci": {
+        "head": "87e026dca6c68b85abe8f4ccf2dff0307704b36c",
+        "runs": [
+          37880744144,
+          37880740856
+        ],
+        "status": "FIRST_SUCCESS_SECOND_LAST_SEEN_RUNNING"
+      }
     },
     "pending_pr108": {
-      "head": "3ec75b118068196b0a340de43957fdd5e1744715",
+      "head": "966581f608dbccc1ebccbb0a63ab3a757db5eece",
       "depends_on": {
         "pr": 106,
-        "head": "b04b8e898ff9392181d142fa7626a106ffdce99d"
+        "head": "7a45e55ca2cfa9c3c5a7802724987493c89e0dd4"
       },
       "status": "INDEPENDENT_REVIEW",
       "local_tests": {
-        "total": 1990,
-        "passed": 1595,
+        "total": 1995,
+        "passed": 1600,
         "skipped": 395,
-        "seconds": 35.893
+        "seconds": 35.818
       },
       "live_acceptance": false,
       "branch": "codex/paper-engine-policy-wiring"
