@@ -178,3 +178,57 @@ class PaperReadTests(unittest.TestCase):
             with self.assertRaisesRegex(m.PaperReadError,'ADMISSION_REQUIRED'):
                 self.source.quote(SOL,TAKER,10,TAKER,timeout_seconds=3)
         self.assertEqual(self.progress.admission('scan')['requests_used'],0)
+
+    def test_exact_price_bytes_and_charged_slot_time_witnesses(self):
+        price_raw=b' {"'+SOL.encode()+b'": {"usdPrice": 100.00, "blockId":105,"decimals":9}}\n'
+        requests=[]
+        class Opener:
+            def open(inner,request,*,timeout):
+                requests.append(request)
+                self.assertEqual(self.progress.admission('scan')['requests_used'],len(requests))
+                if request.method=='GET':return Response(price_raw)
+                body=json.loads(request.data)
+                if body['method']=='getSlot':
+                    self.assertEqual(body['params'],[{'commitment':'finalized'}]);return Response(self.body(110))
+                self.assertEqual(body['method'],'getBlockTime');self.assertEqual(body['params'],[105])
+                return Response(self.body(995))
+        with patch.object(m.os.environ,'get',return_value=KEY),patch.object(m,'build_opener',return_value=Opener()),patch.object(m.time,'time',return_value=998):
+            slot,slot_ref=self.source.rpc_with_evidence('getSlot',[{'commitment':'finalized'}],timeout_seconds=3)
+            price=self.source.sol_price(timeout_seconds=3)
+            actual_block=price['response'][SOL]['blockId']
+            block_time,time_ref=self.source.rpc_with_evidence('getBlockTime',[actual_block],timeout_seconds=3)
+        self.assertEqual((slot,actual_block,block_time),(110,105,995))
+        record=self.store.load(price['evidence_hash'])
+        self.assertEqual(base64.b64decode(record['response_bytes_base64']),price_raw)
+        self.assertNotEqual(canonical(price['response']).encode(),price_raw)
+        self.assertEqual(record['observed_at'],price['observed_at']);self.assertEqual(record['http_status'],200)
+        for ref in (slot_ref,time_ref,price['evidence_hash']):
+            saved=self.store.load(ref);self.assertIsNone(saved['failure_code']);self.assertEqual(saved['scan_id'],'scan')
+        self.assertEqual(self.store.load(time_ref)['params'],[actual_block])
+        self.assertEqual(self.progress.admission('scan')['requests_used'],3)
+
+    def test_price_parser_limit_exact_boundary_and_oversize(self):
+        body=canonical({SOL:{'usdPrice':100,'blockId':105,'decimals':9}}).encode()
+        raw=body+b' '*(m.MAX_PRICE_RESPONSE_BYTES-len(body))
+        result=self.call(Response(raw),kind='price')
+        self.assertEqual(len(base64.b64decode(self.store.load(result['evidence_hash'])['response_bytes_base64'])),65536)
+        with self.assertRaisesRegex(m.PaperReadError,'RESPONSE_OVERSIZED') as caught:self.call(Response(raw+b' '),kind='price')
+        saved=self.outcome(caught.exception);self.assertIsNone(saved['response_bytes_base64'])
+        self.assertEqual(saved['failure_code'],'RESPONSE_OVERSIZED')
+        response=Response(raw,[('Content-Length','65537')])
+        with self.assertRaisesRegex(m.PaperReadError,'RESPONSE_OVERSIZED'):self.call(response,kind='price')
+        self.assertEqual(response.reads,0)
+
+    def test_slot_time_grammar_before_charge_and_unknown_time_rejects(self):
+        variants=[('getSlot',[{'commitment':'confirmed'}]),('getSlot',[{'commitment':'finalized','other':True}]),('getBlockTime',[True]),('getBlockTime',[-1]),('getBlockTime',[2**63]),('getBlockTime',[1,2])]
+        with patch.object(m.os.environ,'get',side_effect=AssertionError('credential')):
+            for method,params in variants:
+                with self.assertRaisesRegex(m.PaperReadError,'REQUEST_INVALID'):self.source.rpc_with_evidence(method,params,timeout_seconds=3)
+        self.assertEqual(self.progress.admission('scan')['requests_used'],0)
+        raw=b'{"jsonrpc":"2.0","id":"paper-read-v1","result":null}'
+        with patch.object(m.os.environ,'get',return_value=KEY),patch.object(m,'build_opener') as b:
+            b.return_value.open.return_value=Response(raw)
+            with self.assertRaisesRegex(m.PaperReadError,'RESPONSE_INVALID') as caught:self.source.rpc_with_evidence('getBlockTime',[105],timeout_seconds=3)
+        saved=self.outcome(caught.exception);self.assertEqual(saved['params'],[105])
+        self.assertEqual(base64.b64decode(saved['response_bytes_base64']),raw)
+        self.assertEqual(self.progress.admission('scan')['requests_used'],1)

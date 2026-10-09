@@ -25,6 +25,7 @@ from .providers import SOL
 
 MAX_REQUEST_BYTES = 8192
 MAX_RESPONSE_BYTES = 2 * 1024 * 1024
+MAX_PRICE_RESPONSE_BYTES = 65536
 RPC_ID = 'paper-read-v1'
 
 
@@ -47,14 +48,28 @@ class PaperReadSources:
         self.scan_id = scan_id
 
     def rpc(self, method, params, *, timeout_seconds):
+        return self.rpc_with_evidence(method, params, timeout_seconds=timeout_seconds)[0]
+
+    def rpc_with_evidence(self, method, params, *, timeout_seconds):
+        """Return (unchanged result, original successful attempt evidence hash).
+
+        The record contains exact wire bytes and actual acquisition time. Slot
+        bounds/block-time associations remain trusted coordinator inputs.
+        """
         try:
-            if method not in ('getAccountInfo', 'getMultipleAccounts') or type(params) is not list or len(params) != 2:
-                raise ValueError()
-            keys, options = params
-            if method == 'getAccountInfo':
+            if type(params) is not list: raise ValueError()
+            if method == 'getSlot':
+                if params != [{'commitment': 'finalized'}]: raise ValueError()
+            elif method == 'getBlockTime':
+                if len(params) != 1 or type(params[0]) is not int or not 0 <= params[0] < 2**63: raise ValueError()
+            elif method == 'getAccountInfo':
+                if len(params) != 2: raise ValueError()
+                keys, options = params
                 address(keys)
                 if options != {'encoding': 'base64', 'commitment': 'confirmed'}: raise ValueError()
-            else:
+            elif method == 'getMultipleAccounts':
+                if len(params) != 2: raise ValueError()
+                keys, options = params
                 if type(keys) is not list or not 1 <= len(keys) <= 100: raise ValueError()
                 for key in keys: address(key)
                 if len(set(keys)) != len(keys): raise ValueError()
@@ -62,6 +77,8 @@ class PaperReadSources:
                         or options['encoding'] != 'base64' or options['commitment'] != 'confirmed'
                         or type(options['minContextSlot']) is not int or not 0 <= options['minContextSlot'] < 2**63):
                     raise ValueError()
+            else:
+                raise ValueError()
             request = {'jsonrpc': '2.0', 'id': RPC_ID, 'method': method, 'params': params}
             body = canonical(request).encode('utf-8')
             if len(body) > MAX_REQUEST_BYTES: raise ValueError()
@@ -79,12 +96,12 @@ class PaperReadSources:
             if len(body) > MAX_REQUEST_BYTES: raise ValueError()
         except Exception:
             raise PaperReadError('REQUEST_INVALID') from None
-        return self._attempt('jupiter_probe', query, body, timeout_seconds)
+        return self._attempt('jupiter_probe', query, body, timeout_seconds)[0]
 
     def sol_price(self, *, timeout_seconds):
         """Original SOL-only Price V3 response; usdPrice/blockId require parsing."""
         query = {'ids': SOL}
-        return self._attempt('jupiter_price_v3', query, urlencode(query).encode('ascii'), timeout_seconds)
+        return self._attempt('jupiter_price_v3', query, urlencode(query).encode('ascii'), timeout_seconds)[0]
 
     def _attempt(self, method, params, request_bytes, timeout_seconds):
         if type(timeout_seconds) not in (int, float) or not math.isfinite(timeout_seconds) or not 0 < timeout_seconds <= 15:
@@ -108,6 +125,7 @@ class PaperReadSources:
         except Exception:
             raise PaperReadError('ADMISSION_REQUIRED') from None
         raw = None
+        http_status = None
         completed = None
         code = 'CREDENTIAL_UNAVAILABLE'
         result = None
@@ -131,6 +149,7 @@ class PaperReadSources:
             opener = build_opener(strict._NoRedirect())
             with opener.open(request, timeout=remaining()) as response:
                 code = 'HTTP_REJECTED'
+                http_status = response.status if type(response.status) is int else None
                 if type(response.status) is not int or response.status != 200: raise PaperReadError(code)
                 code = 'RESPONSE_HEADERS_INVALID'
                 if wire._header(response.headers, 'Transfer-Encoding') is not None: raise PaperReadError(code)
@@ -139,18 +158,20 @@ class PaperReadSources:
                 if length is not None:
                     if not 1 <= len(length) <= 20 or not length.isascii() or not length.isdecimal(): raise PaperReadError(code)
                     length = int(length)
-                    if length > MAX_RESPONSE_BYTES: raise PaperReadError('RESPONSE_OVERSIZED')
+                    limit = MAX_PRICE_RESPONSE_BYTES if method == 'jupiter_price_v3' else MAX_RESPONSE_BYTES
+                    if length > limit: raise PaperReadError('RESPONSE_OVERSIZED')
+                limit = MAX_PRICE_RESPONSE_BYTES if method == 'jupiter_price_v3' else MAX_RESPONSE_BYTES
                 remaining()
                 code = 'TRANSPORT_ERROR'
                 try:
-                    observed = response.read(MAX_RESPONSE_BYTES + 1)
+                    observed = response.read(limit + 1)
                 except IncompleteRead as error:
-                    if type(error.partial) is bytes and len(error.partial) <= MAX_RESPONSE_BYTES:
+                    if type(error.partial) is bytes and len(error.partial) <= limit:
                         raw = error.partial
                         raise PaperReadError('RESPONSE_TRUNCATED') from None
                     raise PaperReadError('RESPONSE_OVERSIZED') from None
                 if type(observed) is not bytes: raise PaperReadError('RESPONSE_INVALID')
-                if len(observed) > MAX_RESPONSE_BYTES: raise PaperReadError('RESPONSE_OVERSIZED')
+                if len(observed) > limit: raise PaperReadError('RESPONSE_OVERSIZED')
                 raw = observed
                 if length is not None and len(raw) != length: raise PaperReadError('RESPONSE_TRUNCATED')
             code = 'CLOCK_INVALID'
@@ -184,6 +205,7 @@ class PaperReadSources:
         except Exception as error:
             if isinstance(error, HTTPError):
                 code = 'HTTP_REJECTED'
+                http_status = error.code if type(error.code) is int else None
                 try: error.close()
                 except Exception: pass
             elif isinstance(error, strict.CoordinatorRPCError): code = 'HTTP_REJECTED'
@@ -200,7 +222,7 @@ class PaperReadSources:
                   'source_id': self.price_source_id if method == 'jupiter_price_v3' else self.quote_source_id if method == 'jupiter_probe' else self.rpc_source_id,
                   'method': method, 'params': params, 'request_bytes_base64': base64.b64encode(request_bytes).decode(),
                   'response_bytes_base64': None if raw is None else base64.b64encode(raw).decode(),
-                  'observed_at': completed, 'failure_code': code}
+                  'observed_at': completed, 'http_status': http_status, 'failure_code': code}
         try:
             evidence_hash = self.progress.store.save(record)
             if evidence_hash != digest(record): raise ValueError()
@@ -209,8 +231,9 @@ class PaperReadSources:
         if code is not None: raise PaperReadError(code, evidence_hash) from None
         if method == 'jupiter_price_v3':
             return {'kind': 'sol_usd_price_probe', 'observed_at': completed, 'request': params,
-                    'response': result, 'notice': 'Provider valuation estimate, not executable price or independently verified block.'}
+                    'response': result, 'evidence_hash': evidence_hash, 'http_status': http_status,
+                    'notice': 'Provider valuation estimate, not executable price or independently verified block.'}, evidence_hash
         if method == 'jupiter_probe':
             return {'kind': 'unsigned_route_probe', 'observed_at': completed, 'request': params,
-                    'response': result, 'notice': 'No signing or submission. Quote is not a guaranteed fill.'}
-        return result
+                            'response': result, 'notice': 'No signing or submission. Quote is not a guaranteed fill.'}, evidence_hash
+        return result, evidence_hash
