@@ -70,6 +70,10 @@ class PoolObservation:
     risk_flags: tuple[str, ...] = ('RESERVE_SPOT_NOT_EXECUTION_PRICE', 'FEE_POLICY_REQUIRED',
                                    'OWNERSHIP_HISTORY_UNKNOWN', 'STRATEGY_FEATURES_UNKNOWN')
     executable_fill_proof: None = None
+    gross_reserve_lamports: int | None = None
+    accrued_protocol_fees_lamports: int | None = None
+    accrued_creator_fees_lamports: int | None = None
+    virtual_quote_reserves_lamports: int | None = None
 
 
 @dataclass(frozen=True)
@@ -193,12 +197,20 @@ def ingest_pool(reader: Callable[[], ProviderObservation], *, mint: str, pool: s
         raise ObservationError('Malformed atomic pool capture') from error
     if result['reasons'] or not result['liquidity_control_verified']:
         raise ObservationError('Unsafe pool: ' + ','.join(result['reasons']))
+    if token_profile_version == 1 and not (
+            result['quote_reserve_raw'] == result['spendable_quote_reserve_raw'] == result['effective_quote_reserve_raw']
+            and result['boost_reserves_raw'] == '0'):
+        raise ObservationError('Nonboosted reserve accounting mismatch')
     decimals = result['base_mint_policy']['decimals']
     tokens = _whole(result['base_reserve_raw'], positive=True)
     lamports = _whole(result['quote_reserve_raw'], positive=True)
     token_units, sol_units = _units(tokens, decimals), _units(lamports, 9)
     return PoolObservation(mint, pool, result['slot'], decimals, tokens, lamports,
-                           token_units, sol_units, _ratio(sol_units, token_units), source)
+                           token_units, sol_units, _ratio(sol_units, token_units), source,
+                           gross_reserve_lamports=int(result['gross_quote_reserve_raw']),
+                           accrued_protocol_fees_lamports=int(result['accrued_protocol_fees_raw']),
+                           accrued_creator_fees_lamports=int(result['accrued_creator_fees_raw']),
+                           virtual_quote_reserves_lamports=int(result['virtual_quote_reserves_raw']))
 
 
 def ingest_quote(reader: Callable[[], ProviderObservation], *, mint: MintObservation,
