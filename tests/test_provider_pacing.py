@@ -30,18 +30,31 @@ class Clock:
             fn,self.hook=self.hook,None;fn()
 
 
-def race(path,barrier,out):
+class SharedClock:
+    """Two real processes share deterministic grant time, not scheduler latency."""
+    def __init__(self,value):self.value=value
+    def time(self):
+        with self.value.get_lock():return self.value.value
+    def sleep(self,seconds):
+        with self.value.get_lock():self.value.value+=seconds
+
+
+def race(path,start,out,clock):
     try:
-        pacer=p.Pacer(path);barrier.wait(5)
+        pacer=p.Pacer(path,clock=clock.time,monotonic=clock.time,sleep=clock.sleep)
+        if not start.wait(5):raise AssertionError('Fixture start was not released')
         ticket=pacer.acquire('helius',timeout_seconds=2)
-        at=time.time();pacer.finish('helius',ticket)
-        out.send(('OK',at))
-    except Exception as error:out.send(('FAIL',type(error).__name__))
+        at=clock.time()
+        with sqlite3.connect(path) as c:
+            due=c.execute("SELECT next_at FROM state WHERE provider='helius'").fetchone()[0]
+        pacer.finish('helius',ticket)
+        out.send(('OK',at,due))
+    except Exception as error:out.send(('FAIL',type(error).__name__,getattr(error,'code',None)))
     finally:out.close()
 
 
-def dies_after_grant(path):
-    p.Pacer(path).acquire('helius',timeout_seconds=1)
+def dies_after_grant(path,clock):
+    p.Pacer(path,clock=clock.time,monotonic=clock.time,sleep=clock.sleep).acquire('helius',timeout_seconds=1)
     os._exit(19)
 
 
@@ -130,23 +143,61 @@ class PacingTests(unittest.TestCase):
             at=time.monotonic()
             with self.assertRaises(p.PacingError):self.slot('helius',timeout_seconds=1)
             self.assertLess(time.monotonic()-at,.5)
-    def test_multiprocess_slot_race_actual_spacing_and_restart_death(self):
-        ctx=multiprocessing.get_context('spawn');barrier=ctx.Barrier(2);children=[];readers=[]
-        for _ in range(2):
-            reader,writer=ctx.Pipe(False);child=ctx.Process(target=race,args=(str(self.path),barrier,writer));child.start();writer.close();readers.append(reader);children.append(child)
+    def child_slot(self,ctx,clock):
+        start=ctx.Event();reader,writer=ctx.Pipe(False)
+        child=ctx.Process(target=race,args=(str(self.path),start,writer,clock))
+        child.start();writer.close();start.set()
         try:
-            results=[]
-            for r in readers:self.assertTrue(r.poll(5));results.append(r.recv());r.close()
-            for child in children:child.join(5);self.assertEqual(child.exitcode,0)
-            self.assertTrue(all(r[0]=='OK' for r in results),results)
-            times=sorted(r[1] for r in results);self.assertGreaterEqual(times[1]-times[0],.095)
-            child=ctx.Process(target=dies_after_grant,args=(str(self.path),));children.append(child);child.start();child.join(5);self.assertEqual(child.exitcode,19)
-            with sqlite3.connect(self.path) as c:due=c.execute("SELECT next_at FROM state WHERE provider='helius'").fetchone()[0]
-            with self.assertRaisesRegex(p.PacingError,'OUTCOME_PENDING'):p.Pacer(self.path).acquire('helius',timeout_seconds=1)
-            self.assertGreaterEqual(due,0)
+            self.assertTrue(reader.poll(5),'Fixture child produced no result')
+            result=reader.recv();child.join(5);self.assertEqual(child.exitcode,0)
+            return result
         finally:
-            for child in children:
-                if child.is_alive():child.kill();child.join(2)
+            reader.close()
+            if child.is_alive():child.kill();child.join(2)
+
+    def test_multiprocess_overlap_refuses_exact_pending_code_without_changing_grant(self):
+        ctx=multiprocessing.get_context('spawn');clock=SharedClock(ctx.Value('d',100))
+        owner=p.Pacer(self.path,clock=clock.time,monotonic=clock.time,sleep=clock.sleep)
+        ticket=owner.acquire('helius',timeout_seconds=1)
+        def state():
+            with sqlite3.connect(self.path) as c:
+                return c.execute("SELECT next_at,blocked_until,high_water,pending FROM state WHERE provider='helius'").fetchone()
+        before=state();self.assertEqual(before[3],ticket)
+        # First owner cannot acknowledge until child has actually refused. This
+        # is the schedule that the old 'both OK' assertion incorrectly rejected.
+        result=self.child_slot(ctx,clock)
+        self.assertEqual(result,('FAIL','PacingError','PACING_OUTCOME_PENDING'))
+        self.assertEqual(state(),before)
+        owner.finish('helius',ticket)
+        self.assertIsNone(state()[3])
+        # A NEW explicit invocation after matching acknowledgment may acquire;
+        # the helper never retries a refused invocation or clears another guard.
+        following=self.child_slot(ctx,clock)
+        self.assertEqual(following[0],'OK',following)
+        self.assertGreaterEqual(following[1],before[0])
+        self.assertGreaterEqual(following[2]-before[0],.1)
+
+    def test_multiprocess_acknowledged_slot_spacing_and_restart_death(self):
+        ctx=multiprocessing.get_context('spawn');clock=SharedClock(ctx.Value('d',100))
+        # Serial acknowledgments distinguish cadence from unresolved-outcome
+        # refusal; no assumption that simultaneous requests both succeed.
+        first=self.child_slot(ctx,clock);second=self.child_slot(ctx,clock)
+        self.assertEqual(first[0],'OK',first);self.assertEqual(second[0],'OK',second)
+        self.assertGreaterEqual(second[1],first[2])
+        self.assertGreaterEqual(second[2]-first[2],.1)
+        child=ctx.Process(target=dies_after_grant,args=(str(self.path),clock))
+        child.start()
+        try:
+            child.join(5);self.assertEqual(child.exitcode,19)
+            with sqlite3.connect(self.path) as c:
+                pending=c.execute("SELECT pending FROM state WHERE provider='helius'").fetchone()[0]
+            self.assertIsNotNone(pending)
+            with self.assertRaisesRegex(p.PacingError,'OUTCOME_PENDING'):
+                p.Pacer(self.path,clock=clock.time,monotonic=clock.time,sleep=clock.sleep).acquire('helius',timeout_seconds=1)
+            with sqlite3.connect(self.path) as c:
+                self.assertEqual(c.execute("SELECT pending FROM state WHERE provider='helius'").fetchone()[0],pending)
+        finally:
+            if child.is_alive():child.kill();child.join(2)
 
 
 class ConnectorTests(unittest.TestCase):
