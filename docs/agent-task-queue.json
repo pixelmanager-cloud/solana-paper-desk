@@ -3960,7 +3960,7 @@
         "first_live_entry": false
       },
       "migration_sentinel_diagnosis": {
-        "status": "READ_ONLY_ASSIGNED",
+        "status": "NARROW_REPAIR_AND_PRESERVED_RUNTIME_CONTINUATION_ASSIGNED",
         "owner": "08",
         "thread_id": "01a118fd-2563-7126-90d7-bd07693de0b2",
         "reviewer": "02",
@@ -3971,7 +3971,7 @@
         "runtime_preflight_thread_id": "01a118fd-0f1c-749c-b85b-5e730937d0a8",
         "runtime_constraint": "Current immutable one-hop receipt already used; no reset/overwrite/new experiment",
         "turn_id": "01a12150-f176-7644-90fe-44547aeef208",
-        "review_turn_id": "01a12151-93fb-7385-adf8-0ddb85e8f909",
+        "review_turn_id": "01a12152-ff74-7797-b518-a039e7ef8bdf",
         "runtime_preflight_turn_id": "01a12151-3461-765e-8206-e5120d9cf0d1",
         "runtime_preflight_result": "Current API cannot safely perform second upgrade. Proposed bounded append-only continuation preserving original receipt and immutable history; no implementation authorized yet.",
         "offline_discovery": {
@@ -3980,7 +3980,20 @@
           "wsol_event_examples": 0,
           "decode_rejected": 20,
           "provider_calls": 0
-        }
+        },
+        "independent_diagnosis": "02 confirmed208byte exact event layout and all WSOL pool PDAs/bindings; event lacks explicit upstream prose; original retained transaction establishes observed sentinel case",
+        "public_transaction_hash": "39b3c945a27e6c3db21d6ede1a29a8644ec673889531ddc73edd0b88780bc524",
+        "runtime_reviewer": "09",
+        "runtime_reviewer_thread_id": "01a118fd-3f90-77d9-9549-c4497f5b10a6",
+        "repair_contract": "Only complete direct successful migrate_v2 with outerWSOL and all canonicalbindings; preserve raw/effectivequotes; legacy/defaultouter/arbitraryquotesreject",
+        "runtime_contract": "Bounded append-only second receipt with exact externalpin, preserve original receipt and all identity/usage; archivedoldbinaryfence; no reset",
+        "implementation_turn_id": "01a12154-3b1f-7339-9123-7ee4d0541887",
+        "runtime_implementation_turn_id": "01a12154-4bd8-7272-bdcd-f1d3235bdbea",
+        "runtime_review_preflight_turn_id": "01a12154-5fe6-73fe-996c-2dd864fed6a4",
+        "combined_fixture_owner": "04",
+        "combined_fixture_thread_id": "01a118fc-b862-7340-ab3a-e1115a3280a4",
+        "combined_fixture_status": "PREPARING_DEPENDENT_TEST_NO_FULL_SUITE_UNTIL_FINAL_HEADS",
+        "root_original_replay": "OBSERVED, meta.err null, complete event2.49; only migration binding/witness blockers reproduced; no provider calls"
       }
     }
   },
