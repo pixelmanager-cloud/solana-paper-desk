@@ -178,6 +178,46 @@ def validate_event(event, *, mode=PAPER_STRICT, policy_version=None):
         raise ValueError("event_id is required")
     if type(event.get("ts")) is not int or event["ts"] < 0:
         raise ValueError("ts must be integer UTC epoch seconds")
+    if event.get('kind')=='quote_exit':
+        from .programs import address
+        required={'schema_version','event_id','kind','exit_contract_version','ts','mint','pool','taker',
+            'provenance','price_at','route_available','danger','known_hazards','current_quantity_raw',
+            'mint_decimals','source_evidence','execution_status','entry_authorized'}
+        if (set(event)!=required or type(event['schema_version']) is not int
+                or type(event['exit_contract_version']) is not int or event['exit_contract_version']!=1
+                or event['execution_status']!='EXECUTION_UNVERIFIED' or event['entry_authorized'] is not False
+                or event['provenance'] not in ('SYNTHETIC_TEST_ONLY','PUBLIC_MAINNET_CAPTURE_NOT_TRADING_EVIDENCE')
+                or event['route_available'] is not True or type(event['danger']) is not bool
+                or type(event['price_at']) is not int or not 0<=event['ts']-event['price_at']<=10
+                or type(event['current_quantity_raw']) is not int or not 0<event['current_quantity_raw']<2**64
+                or type(event['mint_decimals']) is not int or not 0<=event['mint_decimals']<=255):
+            raise ValueError('Invalid quote exit event')
+        for key in ('mint','pool','taker'):address(event[key])
+        hazards=event['known_hazards']
+        if (type(hazards) is not list or len(hazards)>32
+                or any(type(x) is not str or not 1<=len(x)<=128 for x in hazards)
+                or event['danger']!=bool(hazards)):
+            raise ValueError('Invalid quote exit hazards')
+        source=event['source_evidence']
+        keys={'collector_refs','mint_hash','pool_hash','quote_hash','rpc_source_id','quote_source_id',
+              'mint_at','pool_at','quote_at','mint_slot','pool_slot'}
+        if type(source) is not dict or set(source)!=keys:raise ValueError('Invalid exit source evidence')
+        refs=source['collector_refs']
+        if type(refs) is not list or not 1<=len(refs)<=20:raise ValueError('Invalid exit references')
+        for value in refs+[source[k] for k in ('mint_hash','pool_hash','quote_hash')]:
+            if type(value) is not str or len(value)!=64 or any(c not in '0123456789abcdef' for c in value):
+                raise ValueError('Invalid exit source hash')
+        if len(set(refs))!=len(refs):raise ValueError('Duplicate exit references')
+        for key in ('rpc_source_id','quote_source_id'):
+            if type(source[key]) is not str or not 1<=len(source[key])<=256:raise ValueError('Invalid exit source ID')
+        for key in ('mint_at','pool_at','quote_at'):
+            if type(source[key]) is not int or not 0<=event['ts']-source[key]<=10:raise ValueError('Stale exit source')
+        for key in ('mint_slot','pool_slot'):
+            if type(source[key]) is not int or not 0<=source[key]<2**64:raise ValueError('Invalid exit slot')
+        if source['quote_at']!=event['price_at']:raise ValueError('Exit price time mismatch')
+        if event['event_id']!='paper-exit:'+digest({k:v for k,v in event.items() if k!='event_id'}):
+            raise ValueError('Exit event hash mismatch')
+        return
     if event.get("kind") == "clock":
         if event.get("actor") != "paper_monitor":raise ValueError("paper monitor clock required")
         if set(event)!={"schema_version","event_id","ts","kind","actor"}:raise ValueError("Clock event cannot contain market assertions")
