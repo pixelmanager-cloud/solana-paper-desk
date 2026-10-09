@@ -139,3 +139,24 @@ def validate_entry_policies(connection, state):
             raise ValueError('Experimental risk metadata changed')
         if position['entry_scores'] != {key:expected[key] for key in ('safety','momentum','flow','entry')}:
             raise ValueError('Experimental entry scores changed')
+
+        count, largest = connection.execute(
+            'SELECT COUNT(*),MAX(length(CAST(payload AS BLOB))) FROM outcomes WHERE event_id=?',
+            (identity,)).fetchone()
+        if not 0 < count <= 64 or largest > 2 * 1024 * 1024:
+            raise ValueError('Experimental entry outcomes unavailable')
+        outcomes = [json.loads(row[0]) for row in connection.execute(
+            'SELECT payload FROM outcomes WHERE event_id=?', (identity,))]
+        if any(not isinstance(outcome, dict) for outcome in outcomes):
+            raise ValueError('Invalid experimental entry outcome')
+        buys = [o for o in outcomes if o.get('type') == 'fill' and o.get('side') == 'buy']
+        if len(buys) != 1:
+            raise ValueError('Experimental entry buy unavailable or ambiguous')
+        buy = buys[0]
+        if (buy.get('reason') != 'ENTRY' or buy.get('mint') != mint
+                or buy.get('provenance') != position['provenance']
+                or canonical(buy.get('entry_policy')) != canonical(expected)
+                or buy.get('scores') != position['entry_scores']
+                or decimal(buy['quantity']) != decimal(position['initial_qty'])
+                or decimal(buy['amount_sol']) + decimal(buy['fee_sol']) != decimal(position['initial_cost'])):
+            raise ValueError('Experimental entry buy binding mismatch')
