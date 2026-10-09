@@ -1558,7 +1558,7 @@
       "target": "entry -> monitoring -> full exit -> accounting -> restart",
       "readiness": false,
       "policy_answer": "Allow with an explicit risk flag; still reject known hazards",
-      "scheduled_heartbeat": "PAUSED_BY_USER_WHILE_CHANGING_DIRECTION; dispatched worker tasks continue; do not automatically resume old schedule"
+      "scheduled_heartbeat": "ACTIVE: user asked keep working without stopping; updated paper-loop recovery scope"
     },
     "paper_loop_review": {
       "prs": {
@@ -1895,7 +1895,7 @@
     "current_worker_followups": {
       "01": "Repair126 cross-budget reservation binding",
       "02": "Review frozen126 repair9174515; precise graduation capture gap audit",
-      "03": "Budget feasibility audit complete;125 frozen repair rereview next",
+      "03": "Independent129 repair review at f21f036",
       "04": "Independent128 adapter/profile review",
       "05": "Platformblocked97/110; not retried",
       "06": "Repair127 explicit v3 engine gates; coordinate trusted taker",
@@ -1986,7 +1986,7 @@
     },
     "coordinator_resume": {
       "reason": "User asked why coordinator stopped; resumed dispatch and integration follow-up",
-      "scheduled_task": "REMAINS_PAUSED_BY_USER",
+      "scheduled_task": "ACTIVE_UPDATED_PAPER_LOOP_SCOPE",
       "live_acceptance": false
     },
     "runtime_monitoring_budget": {
@@ -2017,6 +2017,13 @@
       "08": "01a11fbf-b2ff-75a8-9e9b-ae2a9b92b661",
       "09": "01a11fbf-e43e-7735-b06e-7ae91c74b164",
       "10": "01a11fbf-f50a-770c-9878-97127d0b60f5"
+    },
+    "pending_pr129": {
+      "head": "f21f0362c0793fa4579c3f3466575ebc6ca29341",
+      "repairs": 125,
+      "reviewer": "03",
+      "status": "INDEPENDENT_REVIEW_ACTIVE",
+      "live_acceptance": false
     }
   },
   "native_reconciliation_review": {

@@ -14,7 +14,7 @@ Remaining critical path: live complete ownership/exposure evidence for a support
 
 The user changed the immediate target to an executable live-data paper experiment and forward iteration. In explicit experimental paper mode, unresolved ownership **history** may be retained as an acknowledged risk. Known hazards, corrupt or contradictory supplied evidence, and missing execution/price/freshness data are not waived. The older strict ownership milestone below remains the strict-mode policy, not a reason to stop independent paper-loop implementation. No unknown ownership percentage may be replaced by a fabricated safe value.
 
-The desktop scheduled coordinator is paused at the user's request. Explicitly dispatched workers continue; the desktop retains exclusive integration and deployment ownership.
+The desktop recovery schedule was resumed on 2026-10-09 after the user asked to keep working without stopping. It uses the current paper-loop scope; the desktop retains exclusive integration and deployment ownership.
 
 A local scratch combination of PR103 runner and PR105 reporting demonstrated synthetic entry, refresh, full exit, accounting and idempotent replay: one closed trade, zero open positions, zero duplicate outcomes, net modeled PnL -0.00311195414305567903948828490 SOL. This is offline synthetic evidence only. PR103 has independent component review and passing exact-head CI; PR105 review is pending. PR102 with independently reviewed PR109 repair is integrated: present corrupt history rejects instead of receiving the missing-history waiver. Combined Linux 1,990 tests passed with no skips; desktop 1,990 tests passed with 408 platform skips. Both exact-head CI checks passed. This policy component still cannot authorize a live entry.
 
@@ -24,7 +24,7 @@ Live loop gaps are now assigned concretely: explicit unknown-compatible experime
 
 The paper-loop and bounded live-data foundation is integrated at `27bc668599a33562832d0da60966d9ad1f8c2f9c`. The source matches independently reviewed tree `346fb09130aea3c1a92c2cf4b7050fb6b8377316` except coordinator documentation. The combined Linux suite passed 2,136 tests with zero skips; desktop ran 2,136 with 408 platform skips. Exact component heads have successful CI. This is not yet deployed or live-paper readiness.
 
-The user approved an explicit new quote-based paper experiment: fresh live quotes, recorded fees and adverse slippage, and EXECUTION_UNVERIFIED labels. Unknown ownership history remains visibly flagged; known hazards still reject. Remaining implementation is the quote execution engine, measured-feature event adapter, and bounded one-cycle orchestration, followed by combined verification and coordinator-only live validation. PR125 observation CLI and PR126 window transport are under independent review. The scheduled desktop task remains paused.
+The user approved an explicit new quote-based paper experiment: fresh live quotes, recorded fees and adverse slippage, and EXECUTION_UNVERIFIED labels. Unknown ownership history remains visibly flagged; known hazards still reject. Remaining implementation is the quote execution engine, measured-feature event adapter, and bounded one-cycle orchestration, followed by combined verification and coordinator-only live validation. PR125 observation CLI and PR126 window transport are under independent review. The desktop recovery schedule is active under the updated paper-loop scope.
 
 ## Earlier deployed milestones (historical counts)
 
