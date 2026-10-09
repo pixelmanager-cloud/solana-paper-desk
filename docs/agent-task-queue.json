@@ -1,5 +1,5 @@
 {
-  "status": "INTEGRATION_REVIEW_BLOCKED",
+  "status": "PAPER_LOOP_IMPLEMENTATION_ACTIVE",
   "repository": "https://github.com/pixelmanager-cloud/solana-paper-desk",
   "cloud_environment": {
     "name": "solana-paper-desk",
@@ -17,7 +17,7 @@
       "No secrets or production databases in GitHub/cloud fixtures",
       "No cloud worker VPS deployment credentials",
       "Preserve API budgets and fail-closed gates",
-      "Ownership milestone precedes strategy/execution work"
+      "Explicit experimental paper mode permits unknown ownership history with visible risk flags; known hazards reject"
     ],
     "idle_policy": "On worker completion or coordinator waiting point, reuse an idle worker for unclaimed dependency-ready work; keep doing coordinator work meanwhile. No busywork or duplicate claims."
   },
@@ -1651,7 +1651,7 @@
         "pr": 106,
         "head": "7a45e55ca2cfa9c3c5a7802724987493c89e0dd4"
       },
-      "status": "JOURNALED_BUY_BINDING_REREVIEW",
+      "status": "ACCEPTED_INTEGRATED_NOT_DEPLOYED",
       "local_tests": {
         "total": 1997,
         "skipped": 395,
@@ -1659,7 +1659,8 @@
       },
       "live_acceptance": false,
       "branch": "codex/paper-engine-policy-wiring",
-      "repair": "Bounded unambiguous buy ENTRY outcome must match original risk policy, scores, identity, initial quantity and cost; non-entry rebinding rejects"
+      "repair": "Bounded unambiguous buy ENTRY outcome must match original risk policy, scores, identity, initial quantity and cost; non-entry rebinding rejects",
+      "merge": "27bc668599a33562832d0da60966d9ad1f8c2f9c"
     },
     "paper_fill_model_question": {
       "status": "APPROVED_BY_USER",
@@ -1700,17 +1701,19 @@
     },
     "pending_pr113": {
       "head": "f89029a2669b4a2c4b891c4855a20c821a78cad5",
-      "status": "INDEPENDENT_REVIEW_07",
+      "status": "ACCEPTED_INTEGRATED_NOT_DEPLOYED",
       "includes_pr105": true,
       "linux_author_tests": 1970,
-      "live_acceptance": false
+      "live_acceptance": false,
+      "merge": "27bc668599a33562832d0da60966d9ad1f8c2f9c"
     },
     "pending_pr116": {
       "head": "d9e4ed6b811b47376ac6ad604847edfcf94aa052",
-      "status": "INDEPENDENT_REVIEW_02",
+      "status": "ACCEPTED_INTEGRATED_NOT_DEPLOYED",
       "dependency_pr108": "b1b9c1256f83e09ee8393b0061ae16f4c36f5c60",
       "linux_author_tests": 2003,
-      "live_acceptance": false
+      "live_acceptance": false,
+      "merge": "27bc668599a33562832d0da60966d9ad1f8c2f9c"
     },
     "pending_pr112": {
       "head": "466ff9f8b8d980b4047532d4dd50497587eea77a",
@@ -1756,16 +1759,18 @@
     },
     "pending_pr115": {
       "head": "418aa4e7a77b6e9ba43bd82fd9bb7374f62afa6b",
-      "status": "INDEPENDENT_REVIEW_10_CI_FAILURE_DIAGNOSIS_06",
+      "status": "ACCEPTED_INTEGRATED_NOT_DEPLOYED",
       "includes_pr111": true,
       "author_linux_tests": 2007,
-      "live_acceptance": false
+      "live_acceptance": false,
+      "merge": "27bc668599a33562832d0da60966d9ad1f8c2f9c"
     },
     "pending_pr117": {
       "head": "cfb25987e9c5a2b8cddb769da9047ed7262081f5",
-      "status": "INDEPENDENT_REVIEW_06",
+      "status": "ACCEPTED_INTEGRATED_NOT_DEPLOYED",
       "author": "01",
-      "live_acceptance": false
+      "live_acceptance": false,
+      "merge": "27bc668599a33562832d0da60966d9ad1f8c2f9c"
     },
     "ci_infrastructure_blocker": {
       "status": "RECOVERED_EXACT_PR108_CI_SUCCESS",
@@ -1838,8 +1843,10 @@
     },
     "pending_pr119": {
       "head": "9ecc4c7170e2d35a33cd9dc01bf03023f56806da",
-      "status": "REVIEW_04_STATUS_RECOVERY_REQUESTED_NO_DUPLICATE",
-      "repairs": 114
+      "status": "ACCEPTED_INTEGRATED_NOT_DEPLOYED",
+      "repairs": 114,
+      "merge": "27bc668599a33562832d0da60966d9ad1f8c2f9c",
+      "live_acceptance": false
     },
     "pending_pr120": {
       "head": "da08fc44fe9b2b2c73545b40090a2b622d43b450",
@@ -1863,31 +1870,37 @@
     "pending_pr122": {
       "head": "e1e9dc914469dc7c9999021104abf34116794237",
       "repairs": 118,
-      "status": "PASS_COMPONENT_REVIEW_02_CI_RUNNING",
+      "status": "ACCEPTED_INTEGRATED_NOT_DEPLOYED",
       "author_linux_tests": 2004,
-      "linux_tests": 2030
+      "linux_tests": 2030,
+      "merge": "27bc668599a33562832d0da60966d9ad1f8c2f9c",
+      "live_acceptance": false
     },
     "pending_pr121": {
       "head": "747a9d3e58df049ac784fd2110bc02affd6127b7",
-      "status": "REVIEW_03",
+      "status": "ACCEPTED_INTEGRATED_NOT_DEPLOYED",
       "author_linux_tests": 2008,
-      "ci": "BOTH_SUCCESS"
+      "ci": "BOTH_SUCCESS",
+      "merge": "27bc668599a33562832d0da60966d9ad1f8c2f9c",
+      "live_acceptance": false
     },
     "pending_pr123": {
       "head": "2bda1076c82c2e5b5427f60ce945e766bfe92322",
-      "status": "REVIEW_07_COMBINED",
+      "status": "ACCEPTED_INTEGRATED_NOT_DEPLOYED",
       "scope": "Use pinned savedcfg for experimental market grammar only; strictcontrolsunchanged",
-      "ci": "BOTH_SUCCESS"
+      "ci": "BOTH_SUCCESS",
+      "merge": "27bc668599a33562832d0da60966d9ad1f8c2f9c",
+      "live_acceptance": false
     },
     "current_worker_followups": {
-      "01": "Trade-window acquisition recipe within existing18 budget",
-      "02": "PR122 parser review PASS; available",
-      "03": "PR121 independentreview active",
-      "04": "PR124 operator runbook review",
+      "01": "PR126 window history transport published; graduation source recipe",
+      "02": "Independent PR126 reservation-bound transport review",
+      "03": "Independent PR125 observation CLI review",
+      "04": "PR124 scoped review PASS; available",
       "05": "Platformblocked97/110; not retried",
       "06": "Implement user-approved quote execution and engine contract",
-      "07": "Final live foundation combined review",
-      "08": "Finish bounded observation CLI then runner handoff",
+      "07": "Foundation combined PASS; available",
+      "08": "PR125 frozen; implement bounded one-cycle live paper orchestration with06/09/01",
       "09": "Trusted market adapter measured feature mapping",
       "10": "PR124 author available"
     },
@@ -1904,18 +1917,46 @@
       ],
       "repair": "2bda1076c82c2e5b5427f60ce945e766bfe92322",
       "tree": "346fb09130aea3c1a92c2cf4b7050fb6b8377316",
-      "status": "FULL_COMBINED_TESTS_AND_REVIEW_07",
+      "status": "ACCEPTED_INTEGRATED_NOT_DEPLOYED",
       "live_acceptance": false,
       "mac_tests": {
         "total": 2136,
         "skipped": 408,
         "seconds": 41.812
-      }
+      },
+      "merge": "27bc668599a33562832d0da60966d9ad1f8c2f9c",
+      "linux_tests": {
+        "total": 2136,
+        "skipped": 0,
+        "seconds": 247.734
+      },
+      "manifest_sha256": "79e97e61d8e5f4e26107fe10cd84213ba871e89159bcbe1b65693a1f5fc1ddf8",
+      "source_identity": "Exact reviewed source tree; only AGENTS and coordinator queue differ",
+      "ci": "Exact component heads rechecked; each has successful CI"
     },
     "paper_signal_profile": {
       "owner": "09",
       "scope": "Explicit versioned observable flow/churn/concentration profile with actual measurements and labels; no silent legacy certainty or safe defaults",
       "engine_owner": "06"
+    },
+    "pending_pr125": {
+      "head": "4e6a76a60e058ff082f25067bd169eba913a87c6",
+      "status": "INDEPENDENT_REVIEW_03",
+      "author_linux_tests": 2083,
+      "reviewer_thread": "01a118fc-9478-778a-b77a-8f8f6ec7e0ad",
+      "live_acceptance": false
+    },
+    "pending_pr126": {
+      "head": "f39a6b818d0804beb8eac11b5d8a3c9092b0d81a",
+      "status": "INDEPENDENT_REVIEW_02",
+      "reviewer_thread": "01a118fc-666c-70b6-9fa8-2c7520f0a0bb",
+      "live_acceptance": false
+    },
+    "pending_pr124": {
+      "head": "07d44a35f04eb3e61caafd700a49bd171999f79b",
+      "status": "SCOPED_REVIEW_04_PASS_NOT_INTEGRATED",
+      "focused_tests": 12,
+      "ci": "BOTH_SUCCESS"
     }
   },
   "native_reconciliation_review": {
