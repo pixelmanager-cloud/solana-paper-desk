@@ -2678,7 +2678,7 @@
       "source_config_recheck": "2026-10-09T10:29Z: deployed15054558 source matches active ledger implementation hash; canonical config digest matches ledger. No provider calls."
     },
     "discovery_migration_diagnostic": {
-      "status": "FILTER_SCHEDULED_SAMPLE_CONNECTED_NO_EVENTS",
+      "status": "FILTER_VERIFIED_REAL_MIGRATIONS_UNSUPPORTED_TOKEN2022",
       "thread_id": "01a118fd-2563-7126-90d7-bd07693de0b2",
       "turn_id": "01a12021-caf7-76c3-9edb-15c8f26cf55b",
       "cursor": "02d8669f-59ba-43bb-8691-b196829f4867:45",
@@ -2717,14 +2717,31 @@
         "manual_extra_sample": false
       },
       "latest_scheduled_sample": {
-        "started_at": "2026-10-09T10:36:15Z",
-        "completed_at": "2026-10-09T10:36:36Z",
-        "status": "CONNECTED_NO_EVENTS",
+        "completed_at": "2026-10-09T10:51:38Z",
         "exit_status": 0,
-        "new_records": 0,
-        "received_bytes": 0,
-        "last_raw_seq": 778,
-        "limits_changed": false
+        "new_records": 2,
+        "seqs": [
+          779,
+          780
+        ],
+        "supported_legacy_candidates": 0,
+        "observed_migrations": [
+          {
+            "mint": "9VgmpRGVAB5YGy8bwwuBXAcfVm5MHsSeupUgzGQTpump",
+            "pool": "HZHa6EEGVAfvLM2pTFbcf22mjNF8FcAQYZMgxjtVavg1",
+            "token_program": "Token2022",
+            "signature": "2ByUjiPBvTFAgqJ94a8Bsaz4jY6PJ3z663T6X6sh4FBABf6ao5AAQJeTXCXCs7NfBuhEYXDXvgG1sGdaVxUHQwn6"
+          },
+          {
+            "mint": "DrqFMHFbDBUvx2NX4qnnaja8QvRrtaXdDpFwdEavpump",
+            "pool": "4pMKLAG4K14MQdPc8SXbGPMDDaNATHfkS8rAPZwDS8Z4",
+            "token_program": "Token2022",
+            "signature": "2rS9MuBSwq5sXQR6CbqnSDbDLyxa8gWexVXCSc11FKBFvRwMHkryFkrDfCk8eXCPykjT3T8Qokm3PoJnhexubPbF"
+          }
+        ],
+        "admitted": false,
+        "additional_investigation_requests": 0,
+        "scope": "Confirmed raw discovery observations only; excluded by existing Token2022 policy, no finalized entry authority"
       }
     },
     "live_migration_operator_preflight": {
@@ -2740,7 +2757,7 @@
       "fixture_tests": 40
     },
     "migration_slot_intake_repair": {
-      "status": "PR149_INDEPENDENT_REVIEW_AND_CI_PENDING",
+      "status": "ACCEPTED_INTEGRATION_PENDING_VPS_TESTS",
       "worker": "01",
       "reviewer": "02",
       "thread_id": "01a118fc-39bc-722c-b442-8bf5a749e0bb",
@@ -2752,7 +2769,7 @@
       "deployment": "NOT_AUTHORIZED_PENDING_REVIEW_CI_COMBINED_TESTS_AND_EXPERIMENT_IDENTITY",
       "review_thread_id": "01a118fc-666c-70b6-9fa8-2c7520f0a0bb",
       "review_turn_id": "01a12041-c9a2-74b7-9ae8-2f46c953615e",
-      "review_cursor": "a2dcfb97-463d-4188-9da3-48a81e644d23:103",
+      "review_cursor": "a2dcfb97-463d-4188-9da3-48a81e644d23:104",
       "compatibility_preflight": "02 fixture PASS unchanged b84 exporter/loader/witness accepts normally charged single-slot manifest; +1investigationusage, no ledger fingerprint change. Exact implementation review pending.",
       "deployment_plan": "Isolated reviewed operator acquisition release; unchanged afe2845 ledger/watchdog/dashboard/heldcycle; no ledger reset or monitoring reprovision",
       "author_cursor": "5e651fc7-2996-4765-974d-5c852257a005:107",
@@ -2762,8 +2779,14 @@
         "worker": "06",
         "thread_id": "01a118fc-f867-7233-8eec-c20659e70095",
         "turn_id": "01a12042-5ab5-7144-9cf3-504cd2d9817a",
-        "cursor": "8f3328cf-bef6-441d-83f8-2d1f46b3b0df:111",
-        "status": "RUNNING_EXACT_HEAD"
+        "cursor": "8f3328cf-bef6-441d-83f8-2d1f46b3b0df:113",
+        "status": "PASS",
+        "tests": 2357,
+        "skips": 0,
+        "seconds": 168.7,
+        "manifest_files": 444,
+        "manifest_unchanged": true,
+        "old_runtime_compatibility": "PASS; requests3to4to13, original source and implementation pin unchanged"
       },
       "desktop_focused": {
         "tests": 18,
@@ -2779,7 +2802,23 @@
         "head": "7d47cdeb8ee2c1f5aa911ca4c8354810409fd468"
       },
       "source_tree": "8336a0222f3fbecaaaea76e334040d5716bc32de",
-      "local_archive_sha256": "95a7ff33e9a7909c2ffdcf54b87b8142d0ac241af0ecd2fd876f268011af2e28"
+      "local_archive_sha256": "95a7ff33e9a7909c2ffdcf54b87b8142d0ac241af0ecd2fd876f268011af2e28",
+      "vps_validation": {
+        "status": "RUNNING_FIXTURES_ONLY",
+        "path": "/var/tmp/solana-intake-validation-7d47cde",
+        "archive_sha256": "95a7ff33e9a7909c2ffdcf54b87b8142d0ac241af0ecd2fd876f268011af2e28",
+        "active_services_unchanged": true
+      },
+      "independent_review": {
+        "result": "PASS",
+        "reviewer": "02",
+        "head": "7d47cdeb8ee2c1f5aa911ca4c8354810409fd468",
+        "tests": 2357,
+        "skips": 0,
+        "seconds": 257.178,
+        "additional_probes": "Crash/cutoff/contradiction and separate-process oldb84 compatibility passed"
+      },
+      "source_identity": "Only coordinator docs differ between integrated working tree and reviewed PR149 source"
     }
   },
   "native_reconciliation_review": {

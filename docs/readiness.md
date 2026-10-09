@@ -14,6 +14,8 @@ Backup `daily-20261009T100239Z` includes the new paper ledger. A copied empty ba
 
 The corrected migration discovery filter completed its first unchanged-budget scheduled sample at 10:21:35 UTC with CONNECTED_NO_EVENTS (zero records). Operator-path review also identified a concrete intake gap: oldest-first birth history can miss a known migration within the shared 18-request budget. A narrow finalized-slot acquisition repair is assigned to worker01, with independent review by worker02; it is not deployed and grants no entry authority.
 
+At 10:51 UTC the corrected discovery sample retained two real migrate_v2 transactions with complete migration events. Both base tokens use Token-2022 and remain excluded by the existing policy; neither was admitted and no investigation request was spent on them. PR149’s bounded migration-slot intake repair passed independent review and two full Linux runs (2,357 tests, zero skips), with exact-head CI successful. It is being integrated as separate operator tooling; active ledger services remain pinned to the original reviewed runtime.
+
 ## Paper-loop priority update — 2026-10-09
 
 The user changed the immediate target to an executable live-data paper experiment and forward iteration. In explicit experimental paper mode, unresolved ownership **history** may be retained as an acknowledged risk. Known hazards, corrupt or contradictory supplied evidence, and missing execution/price/freshness data are not waived. The older strict ownership milestone below remains the strict-mode policy, not a reason to stop independent paper-loop implementation. No unknown ownership percentage may be replaced by a fabricated safe value.
