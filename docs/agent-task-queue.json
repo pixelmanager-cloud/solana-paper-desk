@@ -4199,7 +4199,7 @@
           "monitoring_total_used": 0
         },
         "retained_slot_target": {
-          "status": "INDEPENDENT_REVIEW_REQUESTED",
+          "status": "REVIEW_PASS_EXPORTED_DRY_RUN_PASS",
           "reviewer": "06",
           "thread_id": "01a118fc-f867-7233-8eec-c20659e70095",
           "scope": "Select existing complete slot454908373 query from validated retained refs; no original changes or bound increase",
@@ -4208,7 +4208,67 @@
           "provider_calls": 0,
           "requests_used": 6,
           "root_witness": "OBSERVED_MIGRATION original39b3c945a27e6c3db21d6ede1a29a8644ec673889531ddc73edd0b88780bc524",
-          "script": "work/export-retained-slot222.py"
+          "script": "work/export-retained-slot222.py",
+          "review_turn_id": "01a1218d-11fd-7236-83b6-a27c55eaa826",
+          "review": "PASS_SOURCE_SCOPE_WITH_ROOT_PRODUCTION_CHECKS",
+          "cursor_chain": "null -> 454908373:1138 -> null; terminal data[]",
+          "saved_findings": [],
+          "dry_run_requests": 0
+        },
+        "live_entry_attempt": {
+          "status": "BLOCKED_NO_TRADE",
+          "unit": "desk-entry-seq222-5746912",
+          "scan_id": "d796b12f49594e8097cc6cbb46299edb",
+          "requests_before": 6,
+          "request_ceiling": 18,
+          "tool": "tools/history_first_paper_entry.py",
+          "release": "5746912cd88b9527e2b196a2edefc66b72c257a0",
+          "invocation_id": "4d4a463a077e41f98aa646e7f620ebcc",
+          "blocker": "SOURCE_CONTENT_REJECTED",
+          "cycle_requests": 3,
+          "preparation_requests": 1,
+          "requests_after": 10,
+          "outcome_hash": "4352afa8e732c4f03eaf1cb788047aea58379fe3ef24edd05f5535e5680eb4a8",
+          "retained_snapshot": "96a8c9adee5b6df4c9d5b8b3a755b157408b2b029c23788a5d40601774955c9a",
+          "offline_exact_reasons": [
+            "LP_TOKEN_PROGRAM_UNSUPPORTED",
+            "ACCRUED_POOL_FEES_REQUIRE_RESERVE_ADJUSTMENT",
+            "VIRTUAL_RESERVES_REQUIRE_SPECIAL_PRICING"
+          ],
+          "jupiter_calls": 0,
+          "positions": 0,
+          "outcomes": 0
+        },
+        "pool_compatibility_diagnosis": {
+          "owner": "08",
+          "thread_id": "01a118fd-2563-7126-90d7-bd07693de0b2",
+          "status": "NARROW_LP_AND_PROVEN_NONBOOSTED_FEE_IMPLEMENTATION_ASSIGNED",
+          "snapshot_file": "work/seq222-public-pool-snapshot.json",
+          "offline_recent_envelopes": 200,
+          "migration_observations": 184,
+          "matched_lp_initializations": 135,
+          "token2022_lp_initializations": 135,
+          "legacy_lp_initializations": 0,
+          "decode_rejected": 12,
+          "provider_calls": 0,
+          "turn_id": "01a12192-8d9e-7451-ab97-660e61856a26",
+          "independent_reviewer": "02",
+          "review_thread_id": "01a118fc-666c-70b6-9fa8-2c7520f0a0bb",
+          "runtime_path_assessment": {
+            "owner": "07",
+            "thread_id": "01a118fd-0f1c-749c-b85b-5e730937d0a8",
+            "scope": "One bounded append-only exact-pinned extension journal max4additionaledges; preserveoriginal2receipts/alltables/config/counters; oldbinaryfences",
+            "status": "IMPLEMENTATION_ASSIGNED",
+            "assessment_turn": "01a12193-b5ac-7547-b4c0-91dfc6b8abf4",
+            "reviewer": "09",
+            "review_thread_id": "01a118fd-3f90-77d9-9549-c4497f5b10a6"
+          },
+          "diagnosis_turn": "01a12192-8d9e-7451-ab97-660e61856a26",
+          "independent_review_turn": "01a12194-1955-714c-b4b7-a1b94d8461ee",
+          "scope": "Profile1 exact82byte canonical initialized LP Token2022/noextensions/poolauthority/nofreeze/supply0; proven nonboost signedvirtual+protocolfees+creatorfees==0; netphysical=vault-fees=effectivepricing; subtractonce; preserveoriginals; rejectnonzeroboost and allotherhazards",
+          "candidate222_net_quote_lamports": 256923009,
+          "candidate222_virtual_quote_lamports": 17583918620,
+          "candidate222_remains_rejected": true
         }
       }
     }
