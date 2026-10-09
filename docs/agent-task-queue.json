@@ -279,31 +279,268 @@
         "worker": "09",
         "thread_id": "01a118fd-3f90-77d9-9549-c4497f5b10a6",
         "host_id": "durable",
-        "status": "IN_PROGRESS",
+        "status": "ACCEPTED_INTEGRATED_NOT_DEPLOYED",
         "base": "9e43752daabf19b7e78e08e0b15d16d1c6e2a680",
         "scope": "Minimal supervised runner using existing ledger/engine/watchdog, executable synthetic lifecycle and restart; no live authorization or screening policy changes",
         "turn_id": "01a11eae-36ed-72bd-8c5d-ab7f42d99073",
-        "wait_cursor": "68a4d56e-d04a-40dc-ad15-e80a29c96b80:10"
+        "wait_cursor": "68a4d56e-d04a-40dc-ad15-e80a29c96b80:11",
+        "pr": 103,
+        "head": "7100483d800189b62efa14da33de3e21e7dd0f35"
       },
       {
         "id": "EXPERIMENTAL-PAPER-OWNERSHIP-POLICY",
         "worker": "02",
         "thread_id": "01a118fc-666c-70b6-9fa8-2c7520f0a0bb",
         "host_id": "durable",
-        "status": "IN_PROGRESS",
+        "status": "ACCEPTED_INTEGRATED_NOT_DEPLOYED",
         "base": "9e43752daabf19b7e78e08e0b15d16d1c6e2a680",
         "scope": "Explicit paper-only unresolved-history risk policy using persisted diagnostics; known hazards reject; no fake completeness, engine changes or PR97 dependency",
         "turn_id": "01a11eae-d80e-7427-8466-5db09d9ffa01",
-        "wait_cursor": "a2dcfb97-463d-4188-9da3-48a81e644d23:68"
+        "wait_cursor": "a2dcfb97-463d-4188-9da3-48a81e644d23:68",
+        "pr": 102,
+        "head": "ada4892b3df3138f3369aa9d64aaf60f778b0d7b"
       },
       {
         "id": "PAPER-LIVE-OBSERVATION-ADAPTER",
         "worker": "04",
         "thread_id": "01a118fc-b862-7340-ab3a-e1115a3280a4",
         "host_id": "durable",
-        "status": "DISPATCHED",
+        "status": "PUBLISHED_PENDING_INDEPENDENT_REVIEW",
         "base": "9e43752daabf19b7e78e08e0b15d16d1c6e2a680",
-        "scope": "Useful timestamped raw observation normalization with exact units/source hash, no invented metrics or provider calls"
+        "scope": "Useful timestamped raw observation normalization with exact units/source hash, no invented metrics or provider calls",
+        "turn_id": "01a11eb0-22b3-75c2-b925-25a798d51404",
+        "wait_cursor": "d3153436-2742-432e-8501-9c06b95f29ae:14",
+        "pr": 104,
+        "head": "7146b821f932d85157a6357a2f44c6cf54d2f766"
+      },
+      {
+        "id": "PAPER-EXPERIMENT-RESULTS",
+        "worker": "10",
+        "thread_id": "01a118fd-56d5-70b8-ad31-dba13e982082",
+        "host_id": "durable",
+        "status": "PUBLISHED_PENDING_INDEPENDENT_REVIEW",
+        "base": "d36957a179816fb48224fdf262159a9885afb354",
+        "scope": "Read-only bounded existing-ledger performance report, config/version/provenance/closed trades/PnL/costs/drawdown/open inventory; no invented profitability threshold",
+        "pr": 105,
+        "head": "0c8481bc0e7b607a354cb3adaf9c91a9a53615e5",
+        "turn_id": "01a11eb5-42fc-77fc-a5c3-c58b117785ed",
+        "wait_cursor": "e6039648-56af-4049-8a6e-06eaaa8aba52:35"
+      },
+      {
+        "id": "PR102-INDEPENDENT-REVIEW",
+        "worker": "01",
+        "thread_id": "01a118fc-39bc-722c-b442-8bf5a749e0bb",
+        "host_id": "durable",
+        "status": "CHANGES_REQUESTED",
+        "pr": 102,
+        "head": "ada4892b3df3138f3369aa9d64aaf60f778b0d7b",
+        "scope": "Exact-head independent review and combined Linux suite; no integration",
+        "turn_id": "01a11ebd-9b09-7263-91c8-c69bc6c3b471",
+        "wait_cursor": "5e651fc7-2996-4765-974d-5c852257a005:77",
+        "review_url": "https://github.com/pixelmanager-cloud/solana-paper-desk/pull/102#issuecomment-6073805785",
+        "finding": "Present corrupt history can downgrade to incomplete risk; portable tests need read capability gating"
+      },
+      {
+        "id": "PR103-INDEPENDENT-REVIEW",
+        "worker": "06",
+        "thread_id": "01a118fc-f867-7233-8eec-c20659e70095",
+        "host_id": "durable",
+        "status": "PASS",
+        "pr": 103,
+        "head": "7100483d800189b62efa14da33de3e21e7dd0f35",
+        "scope": "Exact-head independent review and combined Linux suite; no integration",
+        "turn_id": "01a11ebd-aa79-7370-b796-8f66f317a16b",
+        "wait_cursor": "8f3328cf-bef6-441d-83f8-2d1f46b3b0df:82",
+        "review_url": "https://github.com/pixelmanager-cloud/solana-paper-desk/pull/103#issuecomment-6073816532"
+      },
+      {
+        "id": "PR104-INDEPENDENT-REVIEW",
+        "worker": "03",
+        "thread_id": "01a118fc-9478-778a-b77a-8f8f6ec7e0ad",
+        "host_id": "durable",
+        "status": "CHANGES_REQUESTED",
+        "pr": 104,
+        "head": "7146b821f932d85157a6357a2f44c6cf54d2f766",
+        "scope": "Exact-head independent review and combined Linux suite; no integration",
+        "turn_id": "01a11ebd-b9e3-751b-bd7b-60bee9d17906",
+        "wait_cursor": "0851f5ab-a903-4567-a6fe-4cbb4e6a7b96:24",
+        "review_id": "PRR_kwDOVAOttc8AAAABRcTcaA",
+        "findings": [
+          "Inconsistent absent delegate plus nonzero delegated amount accepted",
+          "Invalid vault native COption discriminator accepted"
+        ]
+      },
+      {
+        "id": "EXPERIMENTAL-OWNERSHIP-SCORING",
+        "worker": "02",
+        "thread_id": "01a118fc-666c-70b6-9fa8-2c7520f0a0bb",
+        "host_id": "durable",
+        "status": "PROFILE2_PUBLISHED_FINAL_REVIEW_PENDING",
+        "scope": "model/strategy explicit unknown ownership handling and versioned experimental scoring; no live authorization",
+        "turn_id": "01a11ebe-5324-7576-a6bc-b4c8e85ea73b",
+        "wait_cursor": "a2dcfb97-463d-4188-9da3-48a81e644d23:72",
+        "pr": 106,
+        "head": "7a45e55ca2cfa9c3c5a7802724987493c89e0dd4"
+      },
+      {
+        "id": "LIVE-STRATEGY-FEATURES",
+        "worker": "09",
+        "thread_id": "01a118fd-3f90-77d9-9549-c4497f5b10a6",
+        "host_id": "durable",
+        "status": "IN_PROGRESS",
+        "scope": "new bounded raw-trade feature producer; explicit missing inputs/coverage; no engine changes",
+        "turn_id": "01a11ebe-60c2-7569-9146-133915eac521",
+        "wait_cursor": "68a4d56e-d04a-40dc-ad15-e80a29c96b80:13"
+      },
+      {
+        "id": "PR105-INDEPENDENT-REVIEW",
+        "worker": "07",
+        "thread_id": "01a118fd-0f1c-749c-b85b-5e730937d0a8",
+        "host_id": "durable",
+        "status": "CHANGES_REQUESTED",
+        "pr": 105,
+        "head": "0c8481bc0e7b607a354cb3adaf9c91a9a53615e5",
+        "turn_id": "01a11ec0-562f-7633-8d64-a8e3c06a7720",
+        "wait_cursor": "3dd79f38-868a-433f-9b14-13e7ed0a6e90:34",
+        "finding": "P1 costbasis corruption accepted; reconstruct costs and realized PnL independently"
+      },
+      {
+        "id": "PAPER-RUNNER-DASHBOARD",
+        "worker": "10",
+        "thread_id": "01a118fd-56d5-70b8-ad31-dba13e982082",
+        "host_id": "durable",
+        "status": "PUBLISHED_PENDING_REVIEW",
+        "scope": "paper_view/dashboard actual saved runner state; no invented live readiness",
+        "pr": 111,
+        "head": "0d746d73462b8c2c4d90ec9fdf13a1a3e51124c9"
+      },
+      {
+        "id": "PR102-HISTORY-INTEGRITY-REPAIR",
+        "worker": "08",
+        "thread_id": "01a118fd-2563-7126-90d7-bd07693de0b2",
+        "host_id": "durable",
+        "status": "ACCEPTED_INTEGRATED_NOT_DEPLOYED",
+        "base": "ada4892b3df3138f3369aa9d64aaf60f778b0d7b",
+        "scope": "Reject present malformed or unbound history before experimental waiver; portability tests preserve read guard",
+        "pr": 109,
+        "head": "1acc2b51fba371b6da2be6759afe79efc7081e4b",
+        "turn_id": "01a11ec2-2bb1-708c-a448-fbe23b2dfb40",
+        "wait_cursor": "02d8669f-59ba-43bb-8691-b196829f4867:17"
+      },
+      {
+        "id": "ROUNDTRIP-ROUTE-WIRING",
+        "worker": "06",
+        "thread_id": "01a118fc-f867-7233-8eec-c20659e70095",
+        "host_id": "durable",
+        "status": "PUBLISHED_LIMITED_IDENTITY_FIX",
+        "scope": "Binds two original transaction identities; full route remains blocked by absent originals and buy-side checker",
+        "pr": 110,
+        "head": "e2ab73def0909f511d2973a48cccf421fab2a512",
+        "turn_id": "01a11ec2-fc80-7665-aae5-d95fcd1e8450"
+      },
+      {
+        "id": "BOUNDED-PAPER-OBSERVATION-COLLECTOR",
+        "worker": "04",
+        "thread_id": "01a118fc-b862-7340-ab3a-e1115a3280a4",
+        "host_id": "durable",
+        "status": "DISPATCHED",
+        "scope": "new collector using existing admitted budget/provider boundaries; no cloud calls",
+        "pr": 112,
+        "head": "466ff9f8b8d980b4047532d4dd50497587eea77a",
+        "turn_id": "01a11ec3-b3b0-731b-b9da-e59abc628b8c",
+        "wait_cursor": "d3153436-2742-432e-8501-9c06b95f29ae:15"
+      },
+      {
+        "id": "PR104-VAULT-CONTROL-REPAIR",
+        "worker": "01",
+        "thread_id": "01a118fc-39bc-722c-b442-8bf5a749e0bb",
+        "host_id": "durable",
+        "status": "DISPATCHED",
+        "base": "7146b821f932d85157a6357a2f44c6cf54d2f766",
+        "scope": "Raw vault discriminator/delegation validation and malformedmint containment; live_observation/tests only",
+        "pr": 107,
+        "head": "adcaa9c17de601dd74dfc6685aa465c46aae961c"
+      },
+      {
+        "id": "PR105-COST-BASIS-REPAIR",
+        "worker": "10",
+        "thread_id": "01a118fd-56d5-70b8-ad31-dba13e982082",
+        "host_id": "durable",
+        "status": "DISPATCHED",
+        "scope": "Cost basis reconstruction and corruption regressions; before further dashboard work"
+      },
+      {
+        "id": "PR106-INDEPENDENT-REVIEW",
+        "worker": "03",
+        "thread_id": "01a118fc-9478-778a-b77a-8f8f6ec7e0ad",
+        "host_id": "durable",
+        "status": "DISPATCHED",
+        "scope": "Independent unknown scoring contract review"
+      },
+      {
+        "id": "PR107-INDEPENDENT-REREVIEW",
+        "worker": "03",
+        "thread_id": "01a118fc-9478-778a-b77a-8f8f6ec7e0ad",
+        "host_id": "durable",
+        "status": "DISPATCHED",
+        "scope": "Queued after106; replay vault findings against repair"
+      },
+      {
+        "id": "PR108-INDEPENDENT-REVIEW",
+        "worker": "07",
+        "thread_id": "01a118fd-0f1c-749c-b85b-5e730937d0a8",
+        "host_id": "durable",
+        "status": "DISPATCHED",
+        "scope": "Coordinator engine wiring and config/accounting isolation review"
+      },
+      {
+        "id": "PR109-INDEPENDENT-REREVIEW",
+        "worker": "01",
+        "thread_id": "01a118fc-39bc-722c-b442-8bf5a749e0bb",
+        "host_id": "durable",
+        "status": "PASS",
+        "scope": "Originalreviewer history corruption repair",
+        "turn_id": "01a11eca-56b5-76c0-9e2c-7597f4e9c797",
+        "wait_cursor": "5e651fc7-2996-4765-974d-5c852257a005:80"
+      },
+      {
+        "id": "EXPERIMENTAL-RUNNER-CONFIG",
+        "worker": "08",
+        "thread_id": "01a118fd-2563-7126-90d7-bd07693de0b2",
+        "host_id": "durable",
+        "status": "DISPATCHED",
+        "scope": "RunnerCLI explicit experimentalcfg afterPR108; syntheticonly"
+      },
+      {
+        "id": "PR110-INDEPENDENT-REVIEW",
+        "worker": "05",
+        "thread_id": "01a118fc-dd83-7672-ac81-7445f85fe09f",
+        "host_id": "durable",
+        "status": "BLOCKED_PLATFORM_FILTER",
+        "scope": "Unrelated new roundtripidentityreview; no PR97retry",
+        "turn_id": "01a11ecb-6170-738d-bf5c-1ba6aa90a8b1",
+        "wait_cursor": "b9784eaf-f3e5-457f-a98d-a386c23b37ea:49",
+        "reason": "Platform flagged possible cybersecurity risk during read-only review. No retry, rephrasing or alternate reviewer routing of blocked request.",
+        "pr": 110,
+        "head": "e2ab73def0909f511d2973a48cccf421fab2a512"
+      },
+      {
+        "id": "PR111-INDEPENDENT-REVIEW",
+        "worker": "06",
+        "thread_id": "01a118fc-f867-7233-8eec-c20659e70095",
+        "host_id": "durable",
+        "status": "DISPATCHED",
+        "scope": "Savedrunner status/display read-only review"
+      },
+      {
+        "id": "PR112-INDEPENDENT-REVIEW",
+        "worker": "02",
+        "thread_id": "01a118fc-666c-70b6-9fa8-2c7520f0a0bb",
+        "host_id": "durable",
+        "status": "DISPATCHED_AFTER_106_VALIDATION",
+        "pr": 112,
+        "head": "466ff9f8b8d980b4047532d4dd50497587eea77a",
+        "scope": "Collector shared persistedbudget/admission/no-retry review including107prerequisite"
       }
     ],
     "saved_launch_probe": {
@@ -1208,6 +1445,140 @@
       "readiness": false,
       "policy_answer": "Allow with an explicit risk flag; still reject known hazards",
       "scheduled_heartbeat": "PAUSED_BY_USER_WHILE_CHANGING_DIRECTION; dispatched worker tasks continue; do not automatically resume old schedule"
+    },
+    "paper_loop_review": {
+      "prs": {
+        "102": "ada4892b3df3138f3369aa9d64aaf60f778b0d7b",
+        "103": "7100483d800189b62efa14da33de3e21e7dd0f35",
+        "104": "7146b821f932d85157a6357a2f44c6cf54d2f766",
+        "105": "0c8481bc0e7b607a354cb3adaf9c91a9a53615e5"
+      },
+      "status": "SCRATCH_COMBINATION_AND_INDEPENDENT_REVIEWS",
+      "live_acceptance": false,
+      "scheduled_task": "PAUSED_BY_USER",
+      "combined_tree": "76fcc66045fe8bbb48041fa149fc54cafeded09b",
+      "portability_delta": "8 persisted PR102 tests require Linux OFD reads; guard unchanged,2puretests still run",
+      "initial_mac_tests": {
+        "total": 1993,
+        "failures": 7,
+        "skipped": 395,
+        "seconds": 35.908
+      },
+      "smoke": {
+        "provenance": "SYNTHETIC_TEST_ONLY",
+        "entry_refresh_exit": true,
+        "repeated_outcomes": 0,
+        "closed_trades": 1,
+        "open_positions": 0,
+        "realized_pnl_sol": "-0.00311195414305567903948828490",
+        "live_acceptance": false
+      },
+      "production_check": {
+        "dashboard": "active",
+        "paper": "NOT_CONFIGURED",
+        "runner": "NOT_CONNECTED",
+        "automatic_entry_enabled": false
+      },
+      "repaired_mac_tests": {
+        "total": 2001,
+        "passed": 1598,
+        "skipped": 403,
+        "seconds": 36.161,
+        "failures": 0,
+        "tree": "76fcc66045fe8bbb48041fa149fc54cafeded09b",
+        "limitation": "Includes test-only portability delta; PR102 integrity finding still blocks acceptance"
+      },
+      "repair_candidate_tests": {
+        "tree": "f4bbbcbc341b8f9fb71dc07fe7e47925df3e041f",
+        "total": 2026,
+        "skipped": 408,
+        "seconds": 36.226,
+        "failures": 0,
+        "limitation": "Scratch only, includes unaccepted original105 whose reportingfinding remains; no readinessapproval"
+      }
+    },
+    "pending_pr103": {
+      "status": "ACCEPTED_INTEGRATED_NOT_DEPLOYED",
+      "head": "7100483d800189b62efa14da33de3e21e7dd0f35",
+      "review_url": "https://github.com/pixelmanager-cloud/solana-paper-desk/pull/103#issuecomment-6073816532",
+      "independent_tree": "3cfb190862009f8e944194ed90bd8c71da223338",
+      "linux_tests": {
+        "total": 1974,
+        "skipped": 0,
+        "seconds": 132.078
+      },
+      "mac_tests": {
+        "total": 1974,
+        "skipped": 395,
+        "seconds": 35.946,
+        "tree": "7ebe035ee708cbe034f47c9934add4e74b94d857"
+      },
+      "manifest_sha256": "8331cf3eb312a33e9265a014216035203e2201675c9afb5e5dac89010787eb30",
+      "ci_runs": [
+        37879706255,
+        37879658388
+      ],
+      "ci": "SUCCESS",
+      "live_acceptance": false,
+      "merge_sha": "9d8c2a58429d53fff02df112d1c6762421b2ce60",
+      "source_identity": "Exact tested source; differences only coordinator queue/readiness docs",
+      "integration_ci": {
+        "head": "87e026dca6c68b85abe8f4ccf2dff0307704b36c",
+        "runs": [
+          37880744144,
+          37880740856
+        ],
+        "status": "BOTH_SUCCESS"
+      }
+    },
+    "pending_pr108": {
+      "head": "966581f608dbccc1ebccbb0a63ab3a757db5eece",
+      "depends_on": {
+        "pr": 106,
+        "head": "7a45e55ca2cfa9c3c5a7802724987493c89e0dd4"
+      },
+      "status": "REPAIRING_RESTART_RISK_METADATA_BINDING_FINDING",
+      "local_tests": {
+        "total": 1995,
+        "passed": 1600,
+        "skipped": 395,
+        "seconds": 35.818
+      },
+      "live_acceptance": false,
+      "branch": "codex/paper-engine-policy-wiring"
+    },
+    "paper_fill_model_question": {
+      "status": "AWAITING_USER_PREFERENCE",
+      "current_gate": "Full transaction execution verification even for paper fills",
+      "proposed_experimental_mode": "Fresh live quote simulations with explicit fee/slippage assumptions and execution-unverified label",
+      "existing_authorization": "Ownership history risk only; do not silently waive execution proof while choice pending"
+    },
+    "pending_pr109": {
+      "status": "ACCEPTED_INTEGRATED_NOT_DEPLOYED",
+      "head": "1acc2b51fba371b6da2be6759afe79efc7081e4b",
+      "includes_pr102": "ada4892b3df3138f3369aa9d64aaf60f778b0d7b",
+      "review_url": "https://github.com/pixelmanager-cloud/solana-paper-desk/pull/109#issuecomment-6073948533",
+      "independent_tree": "0d4d9813b010460992874b34fbf7152340c8c79c",
+      "linux_tests": {
+        "total": 1990,
+        "skipped": 0,
+        "seconds": 171.627
+      },
+      "local_tests": {
+        "total": 1990,
+        "skipped": 408,
+        "seconds": 35.693,
+        "tree": "75739c892cce3e351e1064a8a4a5fc006104df16"
+      },
+      "ci_runs": [
+        37881174475,
+        37881107177
+      ],
+      "ci": "SUCCESS",
+      "manifest_sha256": "121978b3850e7fba403fcfe4d295eb3f25c31d12b607a93ae0113f3c58849c0b",
+      "live_acceptance": false,
+      "merge_sha": "010fe66ac7718ffe7fb88798a33faf1825cc05d9",
+      "source_identity": "Exact tested source; only coordinator queue differs"
     }
   },
   "native_reconciliation_review": {
