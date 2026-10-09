@@ -186,6 +186,28 @@ class PaperReadTests(unittest.TestCase):
     def test_chunked_framing_overhead_is_bounded(self):
         with self.assertRaisesRegex(m.PaperReadError,'RESPONSE_TRUNCATED'):
             self.call(self.chunked_response(b'1\r\nx\r\n'*14000+b'0\r\n\r\n'))
+    def test_review_deadline_inside_chunk_decoder_retains_received_entity(self):
+        raw=self.body();framed=f'{len(raw):x}\r\n'.encode()+raw+b'\r\n0\r\n\r\n'
+        with self.assertRaisesRegex(m.PaperReadError,'DEADLINE_EXCEEDED') as caught:
+            self.call(self.chunked_response(framed),clock=[1]*5+[5]*10)
+        outcome=self.outcome(caught.exception)
+        self.assertEqual(base64.b64decode(outcome['response_bytes_base64']),raw)
+        self.assertEqual(outcome['failure_code'],'DEADLINE_EXCEEDED')
+        self.assertEqual(HistoryProgress(EvidenceStore(self.path)).admission('scan')['requests_used'],1)
+    def test_chunked_partial_data_and_transport_failure_preserve_only_entity(self):
+        raw=self.body();prefix=f'{len(raw):x}\r\n'.encode()
+        with self.assertRaisesRegex(m.PaperReadError,'RESPONSE_TRUNCATED') as caught:
+            self.call(self.chunked_response(prefix+raw[:17]))
+        self.assertEqual(base64.b64decode(self.outcome(caught.exception)['response_bytes_base64']),raw[:17])
+        response=self.chunked_response(prefix+raw+b'\r\n0\r\n\r\n')
+        original=response._safe_read
+        def interrupted(amount):
+            if amount==2:raise OSError('fixture-only transport failure')
+            return original(amount)
+        with patch.object(response,'_safe_read',side_effect=interrupted),self.assertRaisesRegex(m.PaperReadError,'TRANSPORT_ERROR') as caught:
+            self.call(response)
+        self.assertEqual(base64.b64decode(self.outcome(caught.exception)['response_bytes_base64']),raw)
+        self.assertEqual(self.progress.admission('scan')['requests_used'],2)
     def test_real_loopback_chunked_success_and_review_failures(self):
         class Handler(BaseHTTPRequestHandler):
             def do_POST(inner):
