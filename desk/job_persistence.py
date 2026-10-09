@@ -118,6 +118,32 @@ class JobPersistence:
                      VALUES(?,?,?,?,?)''', (descriptor['scan_id'], descriptor['kind'],
                      DESCRIPTOR_VERSION, canonical(descriptor), digest(descriptor)))
 
+    def upgrade_allowance(self, *, at, provenance):
+        """Explicit atomic policy activation; retained admissions never reset."""
+        from . import allowance_policy as policy
+        if type(at) is not int or not 0 <= at < 2**63 or provenance != policy.PROVENANCE:
+            raise ValueError('ALLOWANCE_UPGRADE_INVALID')
+        canonical_job_path(self.path)
+        with self.connect() as c:
+            c.execute('BEGIN IMMEDIATE')
+            try:
+                limits = policy.research_limits(c, self.path)
+                if limits == (policy.NEW_DAILY, policy.NEW_QUEUE):
+                    return policy.read(c, policy.RESEARCH)
+                latest = c.execute('SELECT max(created) FROM scans').fetchone()[0]
+                if latest is not None and at < latest:
+                    raise ValueError('ALLOWANCE_CLOCK_ROLLBACK')
+                body = {'kind':'research_allowance_upgrade_v1','research_db':str(self.path),
+                        'daily':policy.NEW_DAILY,'queued':policy.NEW_QUEUE,
+                        'previous_daily':10,'previous_queued':3,'at':at,'provenance':provenance}
+                key = policy.install(c, policy.RESEARCH, body)
+                c.execute('INSERT INTO scan_job_migrations VALUES(?,1)', (policy.MARKER,))
+                c.commit()
+                return body, key
+            except BaseException:
+                c.rollback()
+                raise
+
     def admit(self, mint, *, kind=SCREEN, evidence_db=None):
         address(mint)
         if kind not in (SCREEN, BIRTH_ACQUISITION_V1):
@@ -129,10 +155,12 @@ class JobPersistence:
         with self.connect() as c:
             c.execute('BEGIN IMMEDIATE')
             pending="status IN ('QUEUED','RUNNING') OR (status='INTERRUPTED' AND EXISTS(SELECT 1 FROM scan_jobs j WHERE j.scan_id=scans.id AND j.kind='BIRTH_ACQUISITION_V1'))"
-            if c.execute('SELECT count(*) FROM scans WHERE '+pending).fetchone()[0] >= 3:
+            from .allowance_policy import research_limits
+            daily,queued=research_limits(c,self.path)
+            if c.execute('SELECT count(*) FROM scans WHERE '+pending).fetchone()[0] >= queued:
                 raise ValueError('Queue full. Wait for the current scans to finish.')
-            if c.execute('SELECT count(*) FROM scans WHERE created>?', (created-86400,)).fetchone()[0] >= 10:
-                raise ValueError('Daily budget reached: 10 scans per rolling 24 hours.')
+            if c.execute('SELECT count(*) FROM scans WHERE created>?', (created-86400,)).fetchone()[0] >= daily:
+                raise ValueError(f'Daily budget reached: {daily} scans per rolling 24 hours.')
             if c.execute('SELECT 1 FROM scans WHERE mint=? AND ('+pending+')', (mint,)).fetchone():
                 raise ValueError('This token already has a pending scan.')
             c.execute('INSERT INTO scans VALUES(?,?,?,?,?)', (uid, mint, created, 'QUEUED', None))
