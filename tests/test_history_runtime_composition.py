@@ -270,7 +270,7 @@ class HistoryRuntimeCompositionTests(unittest.TestCase):
                     with h.store.connect() as c:
                         pages = [h.store.load(key) for (key,) in c.execute('SELECT hash FROM pages')]
                         self.assertEqual(c.execute('SELECT count(*) FROM paper_observation_passes WHERE outcome_hash IS NULL').fetchone()[0], 1)
-                    self.assertTrue(any(page.get('method') == 'getTransactionsForAddress'
+                    self.assertTrue(any(isinstance(page, dict) and page.get('method') == 'getTransactionsForAddress'
                         and page.get('response_bytes_base64') == base64.b64encode(b'{').decode()
                         for page in pages))
                     return
@@ -283,7 +283,7 @@ class HistoryRuntimeCompositionTests(unittest.TestCase):
                 self.assertEqual(f.f.progress.admission(h.target.scan_id)['requests_used'], 15 if continuation else 9)
                 with h.store.connect() as c:
                     pages = [h.store.load(key) for (key,) in c.execute('SELECT hash FROM pages')]
-                self.assertTrue(any(page.get('method') == 'getTransactionsForAddress'
+                self.assertTrue(any(isinstance(page, dict) and page.get('method') == 'getTransactionsForAddress'
                     and page.get('response_bytes_base64') == base64.b64encode(history_bodies[0]).decode()
                     and page.get('source_id') == transport.PaperReadSources.rpc_source_id for page in pages))
                 if fee_profile:
