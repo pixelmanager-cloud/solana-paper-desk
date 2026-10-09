@@ -15,7 +15,7 @@ import time
 import unittest
 from unittest.mock import patch
 
-from desk import paper_cycle, paper_read_sources as transport, quote_execution
+from desk import paper_cycle, paper_read_sources as transport
 from desk.model import canonical
 from desk.monitoring_budget import MonitoringBudget
 from desk.programs import unbase58
@@ -147,23 +147,27 @@ class HistoryRuntimeCompositionTests(unittest.TestCase):
                     and page.get('response_bytes_base64') == base64.b64encode(history_bodies[0]).decode()
                     and page.get('source_id') == transport.PaperReadSources.rpc_source_id for page in pages))
                 admission = f.f.progress.admission(h.target.scan_id)
-                position = paper_cycle._state(h.new, h.cfg)['positions'][h.target.mint]
-                item = replace(f.item, graduation_refs=(), known_hazards=('SYNTHETIC_KNOWN_HAZARD',),
-                    target=replace(h.target, amount_raw=quote_execution.raw_quantity(position['qty'], 6)))
-                result = paper_cycle.run_once(h.research, h.evidence, h.new, h.cfg,
-                    position_targets=(item,), candidates=(), dependency_blockers=(), monitoring=True)
-                self.assertEqual(result['status'], 'COMPLETE', result)
-                self.assertEqual(result['monitoring_attempted_requests'], 4)
-                self.assertEqual(f.f.progress.admission(h.target.scan_id), admission)
-                self.assertEqual(paper_cycle._state(h.new, h.cfg)['positions'], {})
+                held = paper_cycle._state(h.new, h.cfg)['positions'][h.target.mint]
                 budget = MonitoringBudget(h.store, h.new, h.cfg)
-                snapshot = budget.snapshot()
-                self.assertEqual(snapshot['total_used'], 5)
+                source = transport.PaperReadSources(f.f.progress, h.target.scan_id,
+                                                   monitoring_budget=budget)
+                value, key = source.rpc_with_evidence('getSlot', [{'commitment': 'finalized'}],
+                                                     timeout_seconds=15)
+                self.assertEqual(value, 110)
+                retained = h.store.load(key)
+                self.assertEqual(retained['source_id'], source.rpc_source_id)
+                self.assertIsNone(retained['failure_code'])
+                self.assertEqual(retained['monitoring_reservation']['id'], 2)
+                self.assertEqual(f.f.progress.admission(h.target.scan_id), admission)
+                self.assertEqual(paper_cycle._state(h.new, h.cfg)['positions'][h.target.mint], held)
+                snapshot = MonitoringBudget(h.store, h.new, h.cfg).snapshot()
+                self.assertEqual(snapshot['total_used'], 2)
                 self.assertEqual(snapshot['blockers'], [])
-                restart = paper_cycle.run_once(h.research, h.evidence, h.new, h.cfg,
-                    candidates=(), dependency_blockers=(), monitoring=True)
-                self.assertEqual(restart['status'], 'COMPLETE', restart)
-                self.assertEqual(restart['attempted_requests'], 0)
+                before = dump(h.evidence), len(f.http_calls)
+                with self.assertRaises(ValueError):
+                    op.invoke(live=True, systemd_credentials=True)
+                self.assertEqual((dump(h.evidence), len(f.http_calls)), before)
+                self.assertEqual(MonitoringBudget(h.store, h.new, h.cfg).snapshot()['total_used'], 2)
         self.assertEqual(dump(h.old), retired)
         with h.store.connect() as c:
             self.assertEqual(c.execute('SELECT * FROM paper_monitoring_reservations WHERE id=1').fetchall(), original_reservations)
