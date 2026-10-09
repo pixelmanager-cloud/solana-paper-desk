@@ -3,12 +3,13 @@
 Caller holds research then evidence invocation lock. Construct immediately before
 advance; never use this adapter with an independently charged RPC wrapper.
 """
+import json
 import math
 import time
 
 from .history_progress import HistoryProgress
 from .paper_read_sources import PaperReadSources, PaperReadError, MAX_REQUEST_BYTES, RPC_ID
-from .model import canonical
+from .model import canonical, digest
 from . import original_byte_slot_transport as wire
 
 
@@ -17,11 +18,9 @@ class PaperHistorySource:
         if not isinstance(progress, HistoryProgress):
             raise PaperReadError('HISTORY_BINDING_INVALID')
         self.progress, self.scan_id, self.history_id = progress, scan_id, history_id
-        self.before = progress.snapshot(history_id)
-        with progress.store.connect() as connection:
-            row = connection.execute('SELECT budget FROM ownership_history WHERE id=?', (history_id,)).fetchone()
+        self.before, self.admission_before = self._bound_snapshot()
         query = self.before['query']
-        if (not row or row[0] != scan_id or 'slot_range' in query
+        if ('slot_range' in query
                 or query['token_accounts_filter'] != 'none' or query['end'] - query['start'] != 301
                 or self.before['status'] == 'DONE'):
             raise PaperReadError('HISTORY_BINDING_INVALID')
@@ -31,6 +30,32 @@ class PaperHistorySource:
         self.deadline = self.started + timeout_seconds
         self.called = False
         self.evidence_hash = None
+
+    def _bound_snapshot(self):
+        """Read owning row, derived identity and its admission in one transaction."""
+        try:
+            with self.progress.store.connect() as connection:
+                connection.execute('BEGIN')
+                row = connection.execute(
+                    'SELECT budget,query,coverage,status,attempts FROM ownership_history WHERE id=?',
+                    (self.history_id,)).fetchone()
+                if not row or row[0] != self.scan_id:
+                    raise ValueError()
+                query = json.loads(row[1])
+                if (canonical(query) != row[1]
+                        or digest({'budget': self.scan_id, 'query': query}) != self.history_id):
+                    raise ValueError()
+                admission = HistoryProgress.inspect_admission(connection, self.scan_id)
+                if admission is None or admission['state'] not in ('ADMITTED', 'SEALED'):
+                    raise ValueError()
+                state = {'id': self.history_id, 'query': query,
+                         'coverage': json.loads(row[2]) if row[2] else None,
+                         'status': row[3], 'attempts': row[4],
+                         'requests_used': admission['requests_used'],
+                         'request_ceiling': admission['request_ceiling']}
+                return state, admission
+        except Exception:
+            raise PaperReadError('HISTORY_BINDING_INVALID') from None
 
     def __call__(self, method, params):
         before = self.before
@@ -47,8 +72,10 @@ class PaperHistorySource:
             raise PaperReadError('HISTORY_BINDING_INVALID')
         body = canonical({'jsonrpc':'2.0','id':RPC_ID,'method':method,'params':params}).encode()
         if len(body) > MAX_REQUEST_BYTES: raise PaperReadError('REQUEST_INVALID')
-        current = self.progress.snapshot(self.history_id)
-        if (current['query'] != query or current['coverage'] != coverage
+        current, admission = self._bound_snapshot()
+        expected_admission = {**self.admission_before,
+                              'requests_used': before['requests_used'] + 1}
+        if (admission != expected_admission or current['query'] != query or current['coverage'] != coverage
                 or current['status'] != 'PENDING' or current['attempts'] != before['attempts'] + 1
                 or current['requests_used'] != before['requests_used'] + 1):
             raise PaperReadError('HISTORY_RESERVATION_REQUIRED')
@@ -60,10 +87,14 @@ class PaperHistorySource:
         owner = self
         class ReservedProgress:
             store = owner.progress.store
-            def admission(self, identity): return owner.progress.admission(identity)
+            def admission(self, identity):
+                state, bound_admission = owner._bound_snapshot()
+                if identity != owner.scan_id or state != current or bound_admission != expected_admission:
+                    raise PaperReadError('HISTORY_RESERVATION_REQUIRED')
+                return bound_admission
             def reserve(self, identity):
-                state = owner.progress.snapshot(owner.history_id)
-                if identity != owner.scan_id or state != current:
+                state, bound_admission = owner._bound_snapshot()
+                if identity != owner.scan_id or state != current or bound_admission != expected_admission:
                     raise PaperReadError('HISTORY_RESERVATION_REQUIRED')
                 return True  # advance already durably charged this exact invocation.
         adapter.progress = ReservedProgress()

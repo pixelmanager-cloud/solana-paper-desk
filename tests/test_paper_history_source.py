@@ -75,3 +75,63 @@ class HistorySourceTests(unittest.TestCase):
         with self.assertRaises(PaperReadError):PaperHistorySource(self.progress,'scan',self.key,timeout_seconds=True)
         other=self.progress.create('scan',MINT,700,1001,slot_range={'gte':0,'lt':100})
         with self.assertRaises(PaperReadError):PaperHistorySource(self.progress,'scan',other,timeout_seconds=3)
+
+    def test_cross_budget_substitution_and_restart_reject_before_io(self):
+        from desk.history_progress import HistoryProgress
+        self.progress.admit('other',{'kind':'ownership_admission_v1','scan_id':'other','mint':MINT,'created':100})
+        source=PaperHistorySource(self.progress,'scan',self.key,timeout_seconds=3)
+        with self.store.connect() as connection:
+            connection.execute('UPDATE ownership_history SET budget=? WHERE id=?',('other',self.key))
+        with patch.object(transport.os.environ,'get') as credential,patch.object(transport,'build_opener') as opener:
+            state=self.progress.advance(self.key,source)
+        credential.assert_not_called();opener.assert_not_called()
+        self.assertEqual(state['status'],'RETRYABLE_ERROR')
+        self.assertEqual(self.progress.admission('scan')['requests_used'],0)
+        self.assertEqual(self.progress.admission('other')['requests_used'],1)
+        self.assertIsNone(source.evidence_hash)
+        reopened=HistoryProgress(self.store)
+        for scan in ('scan','other'):
+            with self.assertRaises(PaperReadError):PaperHistorySource(reopened,scan,self.key,timeout_seconds=3)
+        self.assertEqual(reopened.admission('scan')['requests_used'],0)
+        self.assertEqual(reopened.admission('other')['requests_used'],1)
+
+    def test_budget_substitution_at_transport_reservation_boundary_rejects(self):
+        self.progress.admit('other',{'kind':'ownership_admission_v1','scan_id':'other','mint':MINT,'created':100})
+        source=PaperHistorySource(self.progress,'scan',self.key,timeout_seconds=3)
+        read=source._bound_snapshot
+        calls=0
+        def rebound():
+            nonlocal calls
+            calls+=1
+            # Call-time check passes, then transport admission/reservation rechecks.
+            if calls==2:
+                with self.store.connect() as connection:
+                    connection.execute('UPDATE ownership_history SET budget=? WHERE id=?',('other',self.key))
+            return read()
+        with patch.object(source,'_bound_snapshot',side_effect=rebound),patch.object(transport.os.environ,'get') as credential,patch.object(transport,'build_opener') as opener:
+            state=self.progress.advance(self.key,source)
+        credential.assert_not_called();opener.assert_not_called()
+        self.assertEqual(state['status'],'RETRYABLE_ERROR')
+        self.assertEqual(self.progress.admission('scan')['requests_used'],1)
+        self.assertEqual(self.progress.admission('other')['requests_used'],0)
+
+    def test_interrupted_attempt_restart_preserves_window_and_counter(self):
+        from desk.history_progress import HistoryProgress
+        class Interrupted(BaseException):pass
+        class Opener:
+            def open(inner,request,*,timeout):raise Interrupted()
+        with patch.object(transport.os.environ,'get',return_value=KEY),patch.object(transport,'build_opener',return_value=Opener()):
+            with self.assertRaises(Interrupted):
+                self.progress.advance(self.key,PaperHistorySource(self.progress,'scan',self.key,timeout_seconds=3))
+        self.progress=HistoryProgress(self.store)
+        before=self.progress.snapshot(self.key)
+        self.assertEqual(before['requests_used'],1);self.assertEqual(before['attempts'],1)
+        self.assertEqual(before['status'],'PENDING');self.assertIsNone(before['coverage'])
+        class Success:
+            def open(inner,request,*,timeout):
+                self.assertEqual(self.progress.admission('scan')['requests_used'],2)
+                return Response(canonical({'jsonrpc':'2.0','id':'paper-read-v1','result':{'data':[]}}).encode())
+        with patch.object(transport.os.environ,'get',return_value=KEY),patch.object(transport,'build_opener',return_value=Success()):
+            after=self.progress.advance(self.key,PaperHistorySource(self.progress,'scan',self.key,timeout_seconds=3))
+        self.assertEqual(after['query'],before['query']);self.assertEqual(after['requests_used'],2)
+        self.assertEqual(after['attempts'],2);self.assertEqual(after['status'],'DONE')
