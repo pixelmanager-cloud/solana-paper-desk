@@ -6,7 +6,7 @@ import unittest
 from unittest.mock import patch
 from solders.pubkey import Pubkey
 from desk import graduation_witness as g
-from desk.programs import unbase58
+from desk.programs import instruction, unbase58
 from desk.security import base58
 
 
@@ -38,6 +38,86 @@ class GraduationWitnessTests(unittest.TestCase):
     def extract(self, raw, mint, pool, **kwargs):
         return g.extract_graduation(raw,mint=mint,pool=pool,now=kwargs.get('now',2000),
                                    provenance='SYNTHETIC_TEST_ONLY')
+
+    def sentinel_fixture(self, name='migrate_v2'):
+        # Synthetic reconstruction of the supplied excerpt's quote distinction;
+        # synthetic identities/time, not the full retained mainnet transaction.
+        raw,mint,pool=fixture(name)
+        ix=raw['meta']['innerInstructions'][0]['instructions'][0]
+        ix['data']=base58(unbase58(ix['data'])[:-32]+bytes(32))
+        return raw,mint,pool
+
+    def test_migrate_v2_native_sentinel_preserves_raw_quote_and_effective_pool_quote(self):
+        raw,mint,pool=self.sentinel_fixture();original=copy.deepcopy(raw)
+        with patch('socket.socket',side_effect=AssertionError('network forbidden')):
+            result=self.extract([raw],mint,pool)
+        self.assertEqual(result['status'],'OBSERVED_MIGRATION')
+        self.assertEqual(result['graduated_at'],1000)
+        self.assertEqual(result['witnesses'][0]['event_quote_mint'],g.NATIVE_SOL_SENTINEL)
+        self.assertEqual(result['witnesses'][0]['quote_mint'],g.SOL)
+        self.assertEqual(result['witnesses'][0]['payload_hash'],g.digest(original))
+        self.assertEqual(result['source_hashes'],[g.digest(original)])
+        self.assertEqual(result['provenance'],'SYNTHETIC_TEST_ONLY')
+        self.assertFalse(result['entry_authorized']);self.assertEqual(raw,original)
+
+    def test_supplied_public_event_original_hash_layout_and_wsol_pool_binding(self):
+        excerpt=json.loads((Path(__file__).resolve().parents[1]/'fixtures/migration_quote_sentinel_excerpt.json').read_text())
+        event=excerpt['event'];original=copy.deepcopy(event)
+        self.assertEqual(g.digest(event),'0fdaf2a531590ae451229d99345d546713f06ec7f1d043b9534e0bf89697ba46')
+        self.assertEqual(len(unbase58(event['data'])),208)
+        decoded=instruction(event);f=decoded['fields']
+        self.assertEqual(decoded['status'],'EVENT_DECODED');self.assertTrue(decoded['schema_complete'])
+        self.assertEqual(decoded['schema_file'],'pump.json')
+        self.assertEqual(f['quote_mint'],g.NATIVE_SOL_SENTINEL)
+        self.assertEqual(f['timestamp'],excerpt['blockTime'])
+        self.assertEqual(f['bonding_curve'],g._pda([b'bonding-curve',unbase58(f['mint'])],g.PUMP))
+        authority=g._pda([b'pool-authority',unbase58(f['mint'])],g.PUMP)
+        self.assertEqual(f['pool'],g._pda([b'pool',b'\0\0',unbase58(authority),unbase58(f['mint']),unbase58(g.SOL)],g.AMM))
+        self.assertEqual(event,original)
+
+    def test_sentinel_does_not_expand_legacy_migrate_or_arbitrary_quotes(self):
+        raw,mint,pool=self.sentinel_fixture('migrate')
+        self.assertIn('MIGRATION_ACCOUNT_BINDING_MISMATCH',self.extract([raw],mint,pool)['blockers'])
+        for quote in (g.NATIVE_SOL_SENTINEL,mint):
+            raw,mint,pool=self.sentinel_fixture();outer=raw['transaction']['message']['instructions'][0]
+            spec=json.loads((Path(__file__).resolve().parents[1]/'desk/schemas/pump.json').read_text())['instructions']
+            spec=next(x for x in spec if x['name']=='migrate_v2')
+            outer['accounts'][next(i for i,a in enumerate(spec['accounts']) if a['name']=='quote_mint')]=quote
+            self.assertIsNone(self.extract([raw],mint,pool)['graduated_at'])
+        raw,mint,pool=self.sentinel_fixture();ix=raw['meta']['innerInstructions'][0]['instructions'][0]
+        ix['data']=base58(unbase58(ix['data'])[:-32]+unbase58(mint))
+        self.assertIsNone(self.extract([raw],mint,pool)['graduated_at'])
+
+    def test_sentinel_requires_success_complete_direct_event_and_every_binding(self):
+        changes=('failed','nested','noheight','parent','authority','outer_args','outer_program',
+                 'outer_mint','outer_curve','outer_pool','outer_authority','outer_user',
+                 'event_mint','event_curve','event_pool','event_user','time','suffix','truncated','noncanonical_pool')
+        spec=next(x for x in json.loads((Path(__file__).resolve().parents[1]/'desk/schemas/pump.json').read_text())['instructions'] if x['name']=='migrate_v2')
+        for change in changes:
+            with self.subTest(change=change):
+                raw,mint,pool=self.sentinel_fixture();ix=raw['meta']['innerInstructions'][0]['instructions'][0]
+                outer=raw['transaction']['message']['instructions'][0];data=unbase58(ix['data'])
+                if change=='failed':raw['meta']['err']='fixture failure'
+                elif change=='nested':ix['stackHeight']=3
+                elif change=='noheight':ix.pop('stackHeight')
+                elif change=='parent':raw['meta']['innerInstructions'][0]['index']=1
+                elif change=='authority':ix['accounts']=[mint]
+                elif change=='outer_args':outer['data']=base58(unbase58(outer['data'])+b'\0')
+                elif change=='outer_program':outer['programId']=g.AMM
+                elif change.startswith('outer_') or change=='noncanonical_pool':
+                    field={'mint':'base_mint','curve':'bonding_curve','authority':'pool_authority'}.get(change[6:],change[6:]) if change!='noncanonical_pool' else 'pool'
+                    outer['accounts'][next(i for i,a in enumerate(spec['accounts']) if a['name']==field)]=g.SOL
+                    if change=='noncanonical_pool':
+                        pool=g.SOL;ix['data']=base58(data[:144]+unbase58(pool)+data[176:])
+                elif change.startswith('event_'):
+                    offset={'user':16,'mint':48,'curve':104,'pool':144}[change[6:]]
+                    ix['data']=base58(data[:offset]+unbase58(g.SOL)+data[offset+32:])
+                elif change=='time':raw['blockTime']=999
+                elif change=='suffix':ix['data']=base58(data+b'\0')
+                elif change=='truncated':ix['data']=base58(data[:-1])
+                original=copy.deepcopy(raw);result=self.extract([raw],mint,pool)
+                self.assertEqual(result['status'],'UNKNOWN');self.assertIsNone(result['graduated_at'])
+                self.assertFalse(result['entry_authorized']);self.assertEqual(raw,original)
 
     def test_both_pinned_migrations_preserve_original_historical_time_and_source(self):
         for name in ('migrate','migrate_v2'):
