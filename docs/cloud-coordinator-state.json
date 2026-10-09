@@ -1,6 +1,6 @@
 {
   "schema_version": 1,
-  "revision": 68,
+  "revision": 69,
   "repository": "pixelmanager-cloud/solana-paper-desk",
   "source_main_sha": "e298e15cd758932e81d2241130716632702f5bd0",
   "observed_date": "2026-10-08",
@@ -3886,6 +3886,240 @@
       "provider_calls": 0,
       "readiness": "BLOCKED_NO_SUPPORTED_BUDGET_FEASIBLE_PUBLIC_LEGACY_SEED; acquisition path in development",
       "schedule": "NOT_REPROBED_NO_DURABLE_BINDING_CLAIM"
+    },
+    {
+      "kind": "HOURLY_GITHUB_RECONCILIATION",
+      "at": "2026-10-09T09:54:47Z",
+      "status": "NO_NEW_UNASSIGNED_REVIEW_WORK",
+      "cloud_execution": {
+        "provider": "cloud",
+        "observations_current": true,
+        "observed_phase": "running",
+        "spec_revision": "112"
+      },
+      "queue_blob_sha": "6c051924d41e0683867f85a7d3a77c74ee26c239",
+      "current_worker_followups": {
+        "10": "143 repaira006published,04rereview",
+        "01": "147targetexport published review04",
+        "02": "Independent142 approvedmonitoringbudget review",
+        "03": "142current activeentry binding repair forlegitimate reentry",
+        "04": "147independentreview;143a006repairPASS",
+        "05": "Platformblocked97/110; not retried",
+        "06": "Exactcombined c5534d2 Linux regression, no source edits",
+        "07": "146scopedPASS;145c615PASS",
+        "08": "Wire139+142 concrete published APIs in separate138 successor",
+        "09": "146published reviewPASS; inactive monitorunits withactual147API"
+      },
+      "observed_prs": [
+        {
+          "pr": 138,
+          "head_sha": "5774e2549877d891b0f3f93a43352497a3166d7b",
+          "base_sha": "969e612a2053a61139a136fa2adeba18f543ba59",
+          "branch": "codex/cloud-paper-cycle-08",
+          "comment_ids": [
+            6077789805,
+            6077792998,
+            6077830233,
+            6077839871,
+            6077849206,
+            6077893658,
+            6077919429,
+            6077964845,
+            6077992167,
+            6078035679,
+            6078095763,
+            6078159025,
+            6078175729,
+            6078198627,
+            6078205317,
+            6078332424,
+            6078355819,
+            6078416378
+          ],
+          "status": "EXTERNAL_COMPONENT_REVIEW_OR_RESERVED_SUCCESSOR_ALREADY_PRESENT",
+          "tests_this_run": "NOT_RUN",
+          "limitations": "External component/combined results retained as observations only; no review, acceptance or live-readiness certification by this run."
+        },
+        {
+          "pr": 139,
+          "head_sha": "2a533b4872ab4bbd26acc3f36c3f63653b4f1ce4",
+          "base_sha": "9d294b41f629317b6c2bd0ad6f24d9e20d4d7620",
+          "branch": "codex/exit-observation-06",
+          "comment_ids": [
+            6077841763,
+            6077850099,
+            6077953531,
+            6077974053,
+            6078063844
+          ],
+          "status": "EXTERNAL_COMPONENT_REVIEW_OR_RESERVED_SUCCESSOR_ALREADY_PRESENT",
+          "tests_this_run": "NOT_RUN",
+          "limitations": "External component/combined results retained as observations only; no review, acceptance or live-readiness certification by this run."
+        },
+        {
+          "pr": 140,
+          "head_sha": "a678c45153ea8a7002c97fe011ca850e1b1ff39c",
+          "base_sha": "0ff3b94e2d25926bafae62d229d52c0505443d54",
+          "branch": "codex/cloud-paper-cycle-cli-09",
+          "comment_ids": [
+            6077930556,
+            5468084877,
+            6077948532,
+            5468100014,
+            6078142550,
+            6078169472
+          ],
+          "status": "EXTERNAL_COMPONENT_REVIEW_OR_RESERVED_SUCCESSOR_ALREADY_PRESENT",
+          "tests_this_run": "NOT_RUN",
+          "limitations": "External component/combined results retained as observations only; no review, acceptance or live-readiness certification by this run."
+        },
+        {
+          "pr": 141,
+          "head_sha": "7e782441e39b8c8ab232dba15f50cbe40fcb4271",
+          "base_sha": "2a533b4872ab4bbd26acc3f36c3f63653b4f1ce4",
+          "branch": "codex/cloud-quote-exit-report-01",
+          "comment_ids": [
+            6077983663,
+            6078030376,
+            6078064834,
+            6078125411,
+            6078239291
+          ],
+          "status": "EXTERNAL_COMPONENT_REVIEW_OR_RESERVED_SUCCESSOR_ALREADY_PRESENT",
+          "tests_this_run": "NOT_RUN",
+          "limitations": "External component/combined results retained as observations only; no review, acceptance or live-readiness certification by this run."
+        },
+        {
+          "pr": 142,
+          "head_sha": "34c2400818d791ebbb9da5971449b98313e3980e",
+          "base_sha": "d05d963a4cc8cda7d1943c7c3b1edcf7fb18aa6d",
+          "branch": "codex/open-paper-monitoring-budget-03",
+          "comment_ids": [
+            6078060221,
+            6078083113,
+            6078100300,
+            6078136434,
+            6078145980,
+            6078203529,
+            6078314819,
+            6078330419,
+            6078339560,
+            6078412706,
+            6078472295,
+            6078529751
+          ],
+          "status": "EXTERNAL_COMPONENT_REVIEW_OR_RESERVED_SUCCESSOR_ALREADY_PRESENT",
+          "tests_this_run": "NOT_RUN",
+          "limitations": "External component/combined results retained as observations only; no review, acceptance or live-readiness certification by this run."
+        },
+        {
+          "pr": 143,
+          "head_sha": "a006cdac07e0ff8b2e348cdc86ca5526f5e7b73a",
+          "base_sha": "d05d963a4cc8cda7d1943c7c3b1edcf7fb18aa6d",
+          "branch": "codex/cloud-wave1-10-exit-readers",
+          "comment_ids": [
+            6078071886,
+            6078097377,
+            6078121861,
+            6078136460,
+            6078174882,
+            6078206972,
+            6078208810,
+            6078272060,
+            6078293009,
+            6078301884,
+            6078344890
+          ],
+          "status": "EXTERNAL_COMPONENT_REVIEW_OR_RESERVED_SUCCESSOR_ALREADY_PRESENT",
+          "tests_this_run": "NOT_RUN",
+          "limitations": "External component/combined results retained as observations only; no review, acceptance or live-readiness certification by this run."
+        },
+        {
+          "pr": 144,
+          "head_sha": "21d9ed5211d2a22dcb21da6d90f0cbda03f46a51",
+          "base_sha": "a678c45153ea8a7002c97fe011ca850e1b1ff39c",
+          "branch": "codex/cycle-cli-config-repair-06",
+          "comment_ids": [
+            6078167492,
+            5468246814
+          ],
+          "status": "EXTERNAL_COMPONENT_REVIEW_OR_RESERVED_SUCCESSOR_ALREADY_PRESENT",
+          "tests_this_run": "NOT_RUN",
+          "limitations": "External component/combined results retained as observations only; no review, acceptance or live-readiness certification by this run."
+        },
+        {
+          "pr": 145,
+          "head_sha": "c615743e743f2de32c90570a90a51d06cb533f28",
+          "base_sha": "709dc6b5cbfe74e1c88c6ee5763f3559c608e6d2",
+          "branch": "codex/cloud-paper-cycle-final-08",
+          "comment_ids": [
+            6078212744,
+            6078235853,
+            5468305740,
+            6078266257,
+            5468311902,
+            6078283220,
+            5468332969,
+            6078307761,
+            6078344517,
+            6078366260,
+            6078372029
+          ],
+          "status": "EXTERNAL_COMPONENT_REVIEW_OR_RESERVED_SUCCESSOR_ALREADY_PRESENT",
+          "tests_this_run": "NOT_RUN",
+          "limitations": "External component/combined results retained as observations only; no review, acceptance or live-readiness certification by this run."
+        },
+        {
+          "pr": 146,
+          "head_sha": "7e95377cb0aa4a14d20f20626cccadea8ed7e30f",
+          "base_sha": "709dc6b5cbfe74e1c88c6ee5763f3559c608e6d2",
+          "branch": "codex/cloud-paper-monitor-cli-09",
+          "comment_ids": [
+            6078348487,
+            5468384894
+          ],
+          "status": "EXTERNAL_COMPONENT_REVIEW_OR_RESERVED_SUCCESSOR_ALREADY_PRESENT",
+          "tests_this_run": "NOT_RUN",
+          "limitations": "External component/combined results retained as observations only; no review, acceptance or live-readiness certification by this run."
+        },
+        {
+          "pr": 147,
+          "head_sha": "38bd53311b5cee6b40b36a3eab764685699af224",
+          "base_sha": "a678c45153ea8a7002c97fe011ca850e1b1ff39c",
+          "branch": "codex/cloud-paper-target-export-01",
+          "comment_ids": [
+            6078398208,
+            6078451302,
+            6078502464
+          ],
+          "status": "EXTERNAL_COMPONENT_REVIEW_OR_RESERVED_SUCCESSOR_ALREADY_PRESENT",
+          "tests_this_run": "NOT_RUN",
+          "limitations": "External component/combined results retained as observations only; no review, acceptance or live-readiness certification by this run."
+        },
+        {
+          "pr": 148,
+          "head_sha": "aeff04124aaa2ba710c3c8f230c9577cd6b7a3d5",
+          "base_sha": "d2ce14309c04ebe24d590c530373a55643088835",
+          "branch": "codex/cloud-paper-monitor-service-09",
+          "comment_ids": [
+            6078499271,
+            5468488997,
+            6078589117
+          ],
+          "status": "EXTERNAL_COMPONENT_REVIEW_OR_RESERVED_SUCCESSOR_ALREADY_PRESENT",
+          "tests_this_run": "NOT_RUN",
+          "limitations": "External component/combined results retained as observations only; no review, acceptance or live-readiness certification by this run."
+        }
+      ],
+      "observed_codex_branch_count": 146,
+      "branch_pagination_complete": true,
+      "tests": "NOT_RUN_EXISTING_INDEPENDENT_REVIEWS",
+      "review_comments_posted": 0,
+      "infrastructure_failures": 0,
+      "provider_calls": 0,
+      "readiness": "BLOCKED_NO_SUPPORTED_BUDGET_FEASIBLE_PUBLIC_LEGACY_SEED; acquisition path in development",
+      "schedule": "NOT_REPROBED_NO_DURABLE_BINDING_CLAIM",
+      "scope_limit": "60/hour monitoring policy is external scope data; current reviewer18 ceiling unchanged; no certification of alternate policy."
     }
   ],
   "artifact_pr": {
@@ -5979,6 +6213,205 @@
       "status": "EXTERNAL_INDEPENDENT_REVIEW_ALREADY_PUBLISHED",
       "tests_this_run": "NOT_RUN",
       "limitations": "External results not reproduced by this reconciliation; no acceptance or live-readiness certification."
+    },
+    {
+      "pr": 138,
+      "head_sha": "5774e2549877d891b0f3f93a43352497a3166d7b",
+      "base_sha": "969e612a2053a61139a136fa2adeba18f543ba59",
+      "branch": "codex/cloud-paper-cycle-08",
+      "comment_ids": [
+        6077789805,
+        6077792998,
+        6077830233,
+        6077839871,
+        6077849206,
+        6077893658,
+        6077919429,
+        6077964845,
+        6077992167,
+        6078035679,
+        6078095763,
+        6078159025,
+        6078175729,
+        6078198627,
+        6078205317,
+        6078332424,
+        6078355819,
+        6078416378
+      ],
+      "status": "EXTERNAL_COMPONENT_REVIEW_OR_RESERVED_SUCCESSOR_ALREADY_PRESENT",
+      "tests_this_run": "NOT_RUN",
+      "limitations": "External component/combined results retained as observations only; no review, acceptance or live-readiness certification by this run."
+    },
+    {
+      "pr": 139,
+      "head_sha": "2a533b4872ab4bbd26acc3f36c3f63653b4f1ce4",
+      "base_sha": "9d294b41f629317b6c2bd0ad6f24d9e20d4d7620",
+      "branch": "codex/exit-observation-06",
+      "comment_ids": [
+        6077841763,
+        6077850099,
+        6077953531,
+        6077974053,
+        6078063844
+      ],
+      "status": "EXTERNAL_COMPONENT_REVIEW_OR_RESERVED_SUCCESSOR_ALREADY_PRESENT",
+      "tests_this_run": "NOT_RUN",
+      "limitations": "External component/combined results retained as observations only; no review, acceptance or live-readiness certification by this run."
+    },
+    {
+      "pr": 140,
+      "head_sha": "a678c45153ea8a7002c97fe011ca850e1b1ff39c",
+      "base_sha": "0ff3b94e2d25926bafae62d229d52c0505443d54",
+      "branch": "codex/cloud-paper-cycle-cli-09",
+      "comment_ids": [
+        6077930556,
+        5468084877,
+        6077948532,
+        5468100014,
+        6078142550,
+        6078169472
+      ],
+      "status": "EXTERNAL_COMPONENT_REVIEW_OR_RESERVED_SUCCESSOR_ALREADY_PRESENT",
+      "tests_this_run": "NOT_RUN",
+      "limitations": "External component/combined results retained as observations only; no review, acceptance or live-readiness certification by this run."
+    },
+    {
+      "pr": 141,
+      "head_sha": "7e782441e39b8c8ab232dba15f50cbe40fcb4271",
+      "base_sha": "2a533b4872ab4bbd26acc3f36c3f63653b4f1ce4",
+      "branch": "codex/cloud-quote-exit-report-01",
+      "comment_ids": [
+        6077983663,
+        6078030376,
+        6078064834,
+        6078125411,
+        6078239291
+      ],
+      "status": "EXTERNAL_COMPONENT_REVIEW_OR_RESERVED_SUCCESSOR_ALREADY_PRESENT",
+      "tests_this_run": "NOT_RUN",
+      "limitations": "External component/combined results retained as observations only; no review, acceptance or live-readiness certification by this run."
+    },
+    {
+      "pr": 142,
+      "head_sha": "34c2400818d791ebbb9da5971449b98313e3980e",
+      "base_sha": "d05d963a4cc8cda7d1943c7c3b1edcf7fb18aa6d",
+      "branch": "codex/open-paper-monitoring-budget-03",
+      "comment_ids": [
+        6078060221,
+        6078083113,
+        6078100300,
+        6078136434,
+        6078145980,
+        6078203529,
+        6078314819,
+        6078330419,
+        6078339560,
+        6078412706,
+        6078472295,
+        6078529751
+      ],
+      "status": "EXTERNAL_COMPONENT_REVIEW_OR_RESERVED_SUCCESSOR_ALREADY_PRESENT",
+      "tests_this_run": "NOT_RUN",
+      "limitations": "External component/combined results retained as observations only; no review, acceptance or live-readiness certification by this run."
+    },
+    {
+      "pr": 143,
+      "head_sha": "a006cdac07e0ff8b2e348cdc86ca5526f5e7b73a",
+      "base_sha": "d05d963a4cc8cda7d1943c7c3b1edcf7fb18aa6d",
+      "branch": "codex/cloud-wave1-10-exit-readers",
+      "comment_ids": [
+        6078071886,
+        6078097377,
+        6078121861,
+        6078136460,
+        6078174882,
+        6078206972,
+        6078208810,
+        6078272060,
+        6078293009,
+        6078301884,
+        6078344890
+      ],
+      "status": "EXTERNAL_COMPONENT_REVIEW_OR_RESERVED_SUCCESSOR_ALREADY_PRESENT",
+      "tests_this_run": "NOT_RUN",
+      "limitations": "External component/combined results retained as observations only; no review, acceptance or live-readiness certification by this run."
+    },
+    {
+      "pr": 144,
+      "head_sha": "21d9ed5211d2a22dcb21da6d90f0cbda03f46a51",
+      "base_sha": "a678c45153ea8a7002c97fe011ca850e1b1ff39c",
+      "branch": "codex/cycle-cli-config-repair-06",
+      "comment_ids": [
+        6078167492,
+        5468246814
+      ],
+      "status": "EXTERNAL_COMPONENT_REVIEW_OR_RESERVED_SUCCESSOR_ALREADY_PRESENT",
+      "tests_this_run": "NOT_RUN",
+      "limitations": "External component/combined results retained as observations only; no review, acceptance or live-readiness certification by this run."
+    },
+    {
+      "pr": 145,
+      "head_sha": "c615743e743f2de32c90570a90a51d06cb533f28",
+      "base_sha": "709dc6b5cbfe74e1c88c6ee5763f3559c608e6d2",
+      "branch": "codex/cloud-paper-cycle-final-08",
+      "comment_ids": [
+        6078212744,
+        6078235853,
+        5468305740,
+        6078266257,
+        5468311902,
+        6078283220,
+        5468332969,
+        6078307761,
+        6078344517,
+        6078366260,
+        6078372029
+      ],
+      "status": "EXTERNAL_COMPONENT_REVIEW_OR_RESERVED_SUCCESSOR_ALREADY_PRESENT",
+      "tests_this_run": "NOT_RUN",
+      "limitations": "External component/combined results retained as observations only; no review, acceptance or live-readiness certification by this run."
+    },
+    {
+      "pr": 146,
+      "head_sha": "7e95377cb0aa4a14d20f20626cccadea8ed7e30f",
+      "base_sha": "709dc6b5cbfe74e1c88c6ee5763f3559c608e6d2",
+      "branch": "codex/cloud-paper-monitor-cli-09",
+      "comment_ids": [
+        6078348487,
+        5468384894
+      ],
+      "status": "EXTERNAL_COMPONENT_REVIEW_OR_RESERVED_SUCCESSOR_ALREADY_PRESENT",
+      "tests_this_run": "NOT_RUN",
+      "limitations": "External component/combined results retained as observations only; no review, acceptance or live-readiness certification by this run."
+    },
+    {
+      "pr": 147,
+      "head_sha": "38bd53311b5cee6b40b36a3eab764685699af224",
+      "base_sha": "a678c45153ea8a7002c97fe011ca850e1b1ff39c",
+      "branch": "codex/cloud-paper-target-export-01",
+      "comment_ids": [
+        6078398208,
+        6078451302,
+        6078502464
+      ],
+      "status": "EXTERNAL_COMPONENT_REVIEW_OR_RESERVED_SUCCESSOR_ALREADY_PRESENT",
+      "tests_this_run": "NOT_RUN",
+      "limitations": "External component/combined results retained as observations only; no review, acceptance or live-readiness certification by this run."
+    },
+    {
+      "pr": 148,
+      "head_sha": "aeff04124aaa2ba710c3c8f230c9577cd6b7a3d5",
+      "base_sha": "d2ce14309c04ebe24d590c530373a55643088835",
+      "branch": "codex/cloud-paper-monitor-service-09",
+      "comment_ids": [
+        6078499271,
+        5468488997,
+        6078589117
+      ],
+      "status": "EXTERNAL_COMPONENT_REVIEW_OR_RESERVED_SUCCESSOR_ALREADY_PRESENT",
+      "tests_this_run": "NOT_RUN",
+      "limitations": "External component/combined results retained as observations only; no review, acceptance or live-readiness certification by this run."
     }
   ],
   "pending_reviews": [
@@ -7041,173 +7474,237 @@
   ],
   "last_reconciliation": {
     "kind": "HOURLY_GITHUB_RECONCILIATION",
-    "at": "2026-10-09T08:56:25Z",
-    "status": "EXISTING_INDEPENDENT_REVIEWS_AND_RESERVED_REPAIRS",
+    "at": "2026-10-09T09:54:47Z",
+    "status": "NO_NEW_UNASSIGNED_REVIEW_WORK",
     "cloud_execution": {
       "provider": "cloud",
       "observations_current": true,
       "observed_phase": "running",
-      "spec_revision": "109"
+      "spec_revision": "112"
     },
-    "queue_blob_sha": "4a7433d0557a5bc52c696a6b32f18ef593a1de6d",
+    "queue_blob_sha": "6c051924d41e0683867f85a7d3a77c74ee26c239",
     "current_worker_followups": {
-      "10": "137 frozen under07 review",
-      "01": "136 frozen under03 review",
-      "02": "Rereview135e10b0a8",
-      "03": "136 scopedPASS; ready for08 cycle exactreview",
-      "04": "Rereview134 bound repair on publication; previous134HOLD",
+      "10": "143 repaira006published,04rereview",
+      "01": "147targetexport published review04",
+      "02": "Independent142 approvedmonitoringbudget review",
+      "03": "142current activeentry binding repair forlegitimate reentry",
+      "04": "147independentreview;143a006repairPASS",
       "05": "Platformblocked97/110; not retried",
-      "06": "Priority134 event-size repair then held-position exit contract",
-      "07": "Independent137 checkpoint and finalquote/accounting Linux",
-      "08": "Resume one-cycle orchestration on130/131 contracts, no budget expansion",
-      "09": "Repair135 scoped contradictory migration event; then08 operator wrapper contract"
+      "06": "Exactcombined c5534d2 Linux regression, no source edits",
+      "07": "146scopedPASS;145c615PASS",
+      "08": "Wire139+142 concrete published APIs in separate138 successor",
+      "09": "146published reviewPASS; inactive monitorunits withactual147API"
     },
     "observed_prs": [
       {
-        "pr": 129,
-        "head_sha": "f21f0362c0793fa4579c3f3466575ebc6ca29341",
-        "base_sha": "4e6a76a60e058ff082f25067bd169eba913a87c6",
-        "branch": "codex/cloud-observation-repair-08",
+        "pr": 138,
+        "head_sha": "5774e2549877d891b0f3f93a43352497a3166d7b",
+        "base_sha": "969e612a2053a61139a136fa2adeba18f543ba59",
+        "branch": "codex/cloud-paper-cycle-08",
         "comment_ids": [
-          6077366979,
-          5467761772
+          6077789805,
+          6077792998,
+          6077830233,
+          6077839871,
+          6077849206,
+          6077893658,
+          6077919429,
+          6077964845,
+          6077992167,
+          6078035679,
+          6078095763,
+          6078159025,
+          6078175729,
+          6078198627,
+          6078205317,
+          6078332424,
+          6078355819,
+          6078416378
         ],
-        "status": "EXTERNAL_INDEPENDENT_REVIEW_ALREADY_PUBLISHED",
+        "status": "EXTERNAL_COMPONENT_REVIEW_OR_RESERVED_SUCCESSOR_ALREADY_PRESENT",
         "tests_this_run": "NOT_RUN",
-        "limitations": "External results not reproduced by this reconciliation; no acceptance or live-readiness certification."
+        "limitations": "External component/combined results retained as observations only; no review, acceptance or live-readiness certification by this run."
       },
       {
-        "pr": 130,
-        "head_sha": "7441e94042e0d05d1760472483752a65f3820100",
-        "base_sha": "35bf30e228f03e3b395bcf9836fd28da4fb5d3f9",
-        "branch": "codex/cloud-paper-market-window-repair-09",
+        "pr": 139,
+        "head_sha": "2a533b4872ab4bbd26acc3f36c3f63653b4f1ce4",
+        "base_sha": "9d294b41f629317b6c2bd0ad6f24d9e20d4d7620",
+        "branch": "codex/exit-observation-06",
         "comment_ids": [
-          6077429128,
-          6077440949,
-          6077447629,
-          6077522356,
-          6077598921,
-          6077618735
+          6077841763,
+          6077850099,
+          6077953531,
+          6077974053,
+          6078063844
         ],
-        "status": "EXTERNAL_INDEPENDENT_REVIEW_ALREADY_PUBLISHED",
+        "status": "EXTERNAL_COMPONENT_REVIEW_OR_RESERVED_SUCCESSOR_ALREADY_PRESENT",
         "tests_this_run": "NOT_RUN",
-        "limitations": "External results not reproduced by this reconciliation; no acceptance or live-readiness certification."
+        "limitations": "External component/combined results retained as observations only; no review, acceptance or live-readiness certification by this run."
       },
       {
-        "pr": 131,
-        "head_sha": "455149e42088bb9201d3ce3097efda01e6116d2e",
-        "base_sha": "9174515b5a175076949490ea212124be0d0f2998",
-        "branch": "codex/history-construction-deadline",
+        "pr": 140,
+        "head_sha": "a678c45153ea8a7002c97fe011ca850e1b1ff39c",
+        "base_sha": "0ff3b94e2d25926bafae62d229d52c0505443d54",
+        "branch": "codex/cloud-paper-cycle-cli-09",
         "comment_ids": [
-          6077418547,
-          6077463758,
-          5467837413
+          6077930556,
+          5468084877,
+          6077948532,
+          5468100014,
+          6078142550,
+          6078169472
         ],
-        "status": "EXTERNAL_INDEPENDENT_REVIEW_ALREADY_PUBLISHED",
+        "status": "EXTERNAL_COMPONENT_REVIEW_OR_RESERVED_SUCCESSOR_ALREADY_PRESENT",
         "tests_this_run": "NOT_RUN",
-        "limitations": "External results not reproduced by this reconciliation; no acceptance or live-readiness certification."
+        "limitations": "External component/combined results retained as observations only; no review, acceptance or live-readiness certification by this run."
       },
       {
-        "pr": 132,
-        "head_sha": "6d8f4a9b7039feae450f839783e151e2068b8242",
-        "base_sha": "d7bfd9826b8a8e84469ea4e90a0514aab5741d46",
-        "branch": "codex/quote-execution-v3-repair-06",
+        "pr": 141,
+        "head_sha": "7e782441e39b8c8ab232dba15f50cbe40fcb4271",
+        "base_sha": "2a533b4872ab4bbd26acc3f36c3f63653b4f1ce4",
+        "branch": "codex/cloud-quote-exit-report-01",
         "comment_ids": [
-          6077404396,
-          6077463648,
-          6077471231,
-          6077472411,
-          6077475566,
-          5467806166,
-          6077623128
+          6077983663,
+          6078030376,
+          6078064834,
+          6078125411,
+          6078239291
         ],
-        "status": "EXTERNAL_INDEPENDENT_REVIEW_ALREADY_PUBLISHED",
+        "status": "EXTERNAL_COMPONENT_REVIEW_OR_RESERVED_SUCCESSOR_ALREADY_PRESENT",
         "tests_this_run": "NOT_RUN",
-        "limitations": "External results not reproduced by this reconciliation; no acceptance or live-readiness certification."
+        "limitations": "External component/combined results retained as observations only; no review, acceptance or live-readiness certification by this run."
       },
       {
-        "pr": 133,
-        "head_sha": "bd388f6bc2149214c6e24956f4220ea87ac34c9c",
-        "base_sha": "f49172cb29a3ef4adca5d87a1ad510b87908a144",
-        "branch": "codex/cloud-quote-report-dust-01",
+        "pr": 142,
+        "head_sha": "34c2400818d791ebbb9da5971449b98313e3980e",
+        "base_sha": "d05d963a4cc8cda7d1943c7c3b1edcf7fb18aa6d",
+        "branch": "codex/open-paper-monitoring-budget-03",
         "comment_ids": [
-          6077462326,
-          5467807055,
-          6077570532
+          6078060221,
+          6078083113,
+          6078100300,
+          6078136434,
+          6078145980,
+          6078203529,
+          6078314819,
+          6078330419,
+          6078339560,
+          6078412706,
+          6078472295,
+          6078529751
         ],
-        "status": "EXTERNAL_INDEPENDENT_REVIEW_ALREADY_PUBLISHED",
+        "status": "EXTERNAL_COMPONENT_REVIEW_OR_RESERVED_SUCCESSOR_ALREADY_PRESENT",
         "tests_this_run": "NOT_RUN",
-        "limitations": "External results not reproduced by this reconciliation; no acceptance or live-readiness certification."
+        "limitations": "External component/combined results retained as observations only; no review, acceptance or live-readiness certification by this run."
       },
       {
-        "pr": 134,
-        "head_sha": "a4a86254368e9060deb145174d77415f128a0146",
-        "base_sha": "7441e94042e0d05d1760472483752a65f3820100",
-        "branch": "codex/adapter-token-handoff-06",
+        "pr": 143,
+        "head_sha": "a006cdac07e0ff8b2e348cdc86ca5526f5e7b73a",
+        "base_sha": "d05d963a4cc8cda7d1943c7c3b1edcf7fb18aa6d",
+        "branch": "codex/cloud-wave1-10-exit-readers",
         "comment_ids": [
-          6077552071,
-          6077585674,
-          6077625365,
-          6077713302,
-          6077719407
+          6078071886,
+          6078097377,
+          6078121861,
+          6078136460,
+          6078174882,
+          6078206972,
+          6078208810,
+          6078272060,
+          6078293009,
+          6078301884,
+          6078344890
         ],
-        "status": "EXTERNAL_WORKER04_CHANGES_REQUIRED",
+        "status": "EXTERNAL_COMPONENT_REVIEW_OR_RESERVED_SUCCESSOR_ALREADY_PRESENT",
         "tests_this_run": "NOT_RUN",
-        "limitations": "External results not reproduced by this reconciliation; no acceptance or live-readiness certification."
+        "limitations": "External component/combined results retained as observations only; no review, acceptance or live-readiness certification by this run."
       },
       {
-        "pr": 135,
-        "head_sha": "e10b0a8269d8c1a9e26e09aaf67de9f2690cbf8b",
-        "base_sha": "777f044d3564b92731e11e44426bf54f2ceb4d5b",
-        "branch": "codex/cloud-graduation-witness-09",
+        "pr": 144,
+        "head_sha": "21d9ed5211d2a22dcb21da6d90f0cbda03f46a51",
+        "base_sha": "a678c45153ea8a7002c97fe011ca850e1b1ff39c",
+        "branch": "codex/cycle-cli-config-repair-06",
         "comment_ids": [
-          6077621278,
-          6077640003,
-          6077658793,
-          6077688403
+          6078167492,
+          5468246814
         ],
-        "status": "RESERVED_WORKER02_REPAIRED_HEAD_PENDING_REREVIEW",
+        "status": "EXTERNAL_COMPONENT_REVIEW_OR_RESERVED_SUCCESSOR_ALREADY_PRESENT",
         "tests_this_run": "NOT_RUN",
-        "limitations": "External results not reproduced by this reconciliation; no acceptance or live-readiness certification."
+        "limitations": "External component/combined results retained as observations only; no review, acceptance or live-readiness certification by this run."
       },
       {
-        "pr": 136,
-        "head_sha": "d6e4a18eb3efdd0c31ab89648b14f343165e11bc",
-        "base_sha": "bd388f6bc2149214c6e24956f4220ea87ac34c9c",
-        "branch": "codex/cloud-quote-report-labels-01",
+        "pr": 145,
+        "head_sha": "c615743e743f2de32c90570a90a51d06cb533f28",
+        "base_sha": "709dc6b5cbfe74e1c88c6ee5763f3559c608e6d2",
+        "branch": "codex/cloud-paper-cycle-final-08",
         "comment_ids": [
-          6077654382,
-          5467881489
+          6078212744,
+          6078235853,
+          5468305740,
+          6078266257,
+          5468311902,
+          6078283220,
+          5468332969,
+          6078307761,
+          6078344517,
+          6078366260,
+          6078372029
         ],
-        "status": "EXTERNAL_INDEPENDENT_REVIEW_ALREADY_PUBLISHED",
+        "status": "EXTERNAL_COMPONENT_REVIEW_OR_RESERVED_SUCCESSOR_ALREADY_PRESENT",
         "tests_this_run": "NOT_RUN",
-        "limitations": "External results not reproduced by this reconciliation; no acceptance or live-readiness certification."
+        "limitations": "External component/combined results retained as observations only; no review, acceptance or live-readiness certification by this run."
       },
       {
-        "pr": 137,
-        "head_sha": "2f90d6002c4f818765e126816a88f6497bdd7528",
-        "base_sha": "3025eabdee0150ccd95a7526c143f98180a3c03f",
-        "branch": "codex/cloud-wave1-10-v3-readers",
+        "pr": 146,
+        "head_sha": "7e95377cb0aa4a14d20f20626cccadea8ed7e30f",
+        "base_sha": "709dc6b5cbfe74e1c88c6ee5763f3559c608e6d2",
+        "branch": "codex/cloud-paper-monitor-cli-09",
         "comment_ids": [
-          6077648069,
-          6077659300,
-          6077660440,
-          6077680866,
-          5467922631
+          6078348487,
+          5468384894
         ],
-        "status": "EXTERNAL_INDEPENDENT_REVIEW_ALREADY_PUBLISHED",
+        "status": "EXTERNAL_COMPONENT_REVIEW_OR_RESERVED_SUCCESSOR_ALREADY_PRESENT",
         "tests_this_run": "NOT_RUN",
-        "limitations": "External results not reproduced by this reconciliation; no acceptance or live-readiness certification."
+        "limitations": "External component/combined results retained as observations only; no review, acceptance or live-readiness certification by this run."
+      },
+      {
+        "pr": 147,
+        "head_sha": "38bd53311b5cee6b40b36a3eab764685699af224",
+        "base_sha": "a678c45153ea8a7002c97fe011ca850e1b1ff39c",
+        "branch": "codex/cloud-paper-target-export-01",
+        "comment_ids": [
+          6078398208,
+          6078451302,
+          6078502464
+        ],
+        "status": "EXTERNAL_COMPONENT_REVIEW_OR_RESERVED_SUCCESSOR_ALREADY_PRESENT",
+        "tests_this_run": "NOT_RUN",
+        "limitations": "External component/combined results retained as observations only; no review, acceptance or live-readiness certification by this run."
+      },
+      {
+        "pr": 148,
+        "head_sha": "aeff04124aaa2ba710c3c8f230c9577cd6b7a3d5",
+        "base_sha": "d2ce14309c04ebe24d590c530373a55643088835",
+        "branch": "codex/cloud-paper-monitor-service-09",
+        "comment_ids": [
+          6078499271,
+          5468488997,
+          6078589117
+        ],
+        "status": "EXTERNAL_COMPONENT_REVIEW_OR_RESERVED_SUCCESSOR_ALREADY_PRESENT",
+        "tests_this_run": "NOT_RUN",
+        "limitations": "External component/combined results retained as observations only; no review, acceptance or live-readiness certification by this run."
       }
     ],
-    "observed_codex_branch_count": 133,
+    "observed_codex_branch_count": 146,
     "branch_pagination_complete": true,
-    "tests": "NOT_RUN_NO_NEW_UNASSIGNED_REVIEW",
+    "tests": "NOT_RUN_EXISTING_INDEPENDENT_REVIEWS",
     "review_comments_posted": 0,
     "infrastructure_failures": 0,
     "provider_calls": 0,
     "readiness": "BLOCKED_NO_SUPPORTED_BUDGET_FEASIBLE_PUBLIC_LEGACY_SEED; acquisition path in development",
-    "schedule": "NOT_REPROBED_NO_DURABLE_BINDING_CLAIM"
+    "schedule": "NOT_REPROBED_NO_DURABLE_BINDING_CLAIM",
+    "scope_limit": "60/hour monitoring policy is external scope data; current reviewer18 ceiling unchanged; no certification of alternate policy."
   },
   "supplemental_validations": [
     {
