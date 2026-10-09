@@ -146,3 +146,51 @@ class PaperExperimentalScoringTests(unittest.TestCase):
         with self.assertRaises(ValueError):score(e)
         cfg=config();cfg['mode']='live'
         with self.assertRaises(ValueError):experimental_gates(experimental(),cfg,mode=PAPER_EXPERIMENTAL,policy_version=1)
+
+
+class PaperExperimentalHistoryProfileTests(unittest.TestCase):
+    def event(self):
+        e=experimental();e['paper_experimental']['policy_version']=2
+        for key in ('fresh_wallet_ratio','dev_launches_7d','manip_safety'):
+            e[key]=None;e['paper_experimental']['ownership_unknowns'][key]={'status':'UNKNOWN','reasons':['OWNERSHIP_HISTORY_INCOMPLETE']}
+        return e
+
+    def score(self,e):return experimental_scores(e,mode=PAPER_EXPERIMENTAL,policy_version=2)
+    def gates(self,e):return experimental_gates(e,config(),mode=PAPER_EXPERIMENTAL,policy_version=2)
+
+    def test_history_dependent_omissions_explicit_no_safety_or_fake_zero(self):
+        e=self.event();before=copy.deepcopy(e);s=self.score(e)
+        self.assertEqual(s['policy_version'],2);self.assertEqual(s['score_version'],'paper-experimental-history-components-v2')
+        self.assertIsNone(s['safety']);self.assertEqual(s['manipulation_safety']['status'],'UNKNOWN')
+        self.assertIsNone(s['manipulation_safety']['value']);self.assertTrue(s['manipulation_safety']['reasons'])
+        self.assertEqual(s['manipulation_penalty_basis'],['manip_flow'])
+        self.assertEqual(set(s['omitted_components']),set(OWNERSHIP_METRICS)|{'fresh_wallet_ratio','dev_launches_7d','manip_safety'})
+        self.assertEqual(self.gates(e),[]);self.assertEqual(e,before)
+        self.assertEqual(json.loads(canonical(s)),s)
+        with self.assertRaises(ValueError):validate_event(e)
+        with self.assertRaises(ValueError):experimental_scores(e,mode=PAPER_EXPERIMENTAL,policy_version=1)
+
+    def test_known_bad_developer_wallet_and_manipulation_not_erased(self):
+        for key,value,reason in (('dev_launches_7d',3,'REPEAT_DEPLOYER'),('manip_safety',1,'ENTRY_SCORE')):
+            e=self.event();e[key]=value;del e['paper_experimental']['ownership_unknowns'][key]
+            s=self.score(e);self.assertNotIn(key,s['omitted_components']);self.assertIn(reason,self.gates(e))
+        e=self.event();e['fresh_wallet_ratio']=1;e['top10_pct']=20
+        for key in ('fresh_wallet_ratio','top10_pct'):del e['paper_experimental']['ownership_unknowns'][key]
+        self.assertIn('KNOWN_OWNERSHIP_HAZARD',self.gates(e))
+
+    def test_manipulation_safety_unknown_never_shown_as_safe_scalar(self):
+        e=experimental();full=event()
+        for key in OWNERSHIP_METRICS:e[key]=full[key]
+        e['paper_experimental'].update(policy_version=2,ownership_unknowns={'manip_safety':{'status':'UNKNOWN','reasons':['CLASSIFIER_UNAVAILABLE']}})
+        e['manip_safety']=None
+        s=self.score(e);self.assertIsNone(s['safety']);self.assertEqual(s['manipulation_safety']['status'],'UNKNOWN')
+        self.assertEqual(s['entry_basis'],'FLOW_MOMENTUM_30_25')
+
+    def test_remaining_flow_momentum_price_and_controls_still_mandatory(self):
+        for key in ('flow','manip_flow','net_buy_ratio','unique_buyers_5m','volume_vs_liq','wash_score','drawdown_from_high',
+                    'sol_usd','reserve_sol','reserve_tokens','market_cap_usd','price_at','pool_fee_bps','route_available','danger'):
+            e=self.event();e[key]=None
+            with self.subTest(key=key):
+                with self.assertRaises(ValueError):self.score(e)
+        e=self.event();e['danger']=True;self.assertIn('DANGER',self.gates(e))
+        e=self.event();e['mint_revoked']=False;self.assertIn('UNVERIFIED_SAFETY',self.gates(e))
