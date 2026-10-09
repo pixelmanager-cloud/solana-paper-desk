@@ -256,6 +256,9 @@ def _collect_held(target, source, budget, store, token_profile_version=0):
         refs.append(key); captures.append(payload)
         return key
     verify_pool(target.pool,target.mint,rpc,capture=capture,token_profile_version=token_profile_version)
+    atomic_mint=captures[0]['result']['value'][captures[0]['params'][0].index(target.mint)]
+    if raw['value']['owner']!=atomic_mint['owner']:
+        raise CycleBlocked('MINT_POOL_TOKEN_PROGRAM_MISMATCH')
     pool_at = acquisitions[-1]
     pool = ingest_pool(lambda:ProviderObservation(source.rpc_source_id,pool_at,captures[0]),
         mint=target.mint,pool=target.pool,now=budget.now(),max_age_seconds=10,token_profile_version=token_profile_version)

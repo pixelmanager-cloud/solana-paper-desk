@@ -205,6 +205,9 @@ def _replay_collected(collected, context, load_evidence):
                and r.get('result')==quote_raw and r.get('acquired_at')==collected.quote.source.observed_at for r in records.values()):
         raise ValueError('quote envelope binding')
     def reader(source,payload):return lambda:ProviderObservation(source.source_id,source.observed_at,payload)
+    atomic_account=pool_raw['result']['value'][pool_raw['params'][0].index(target.mint)]
+    if mint_raw['account']['owner']!=atomic_account['owner']:
+        raise ValueError('Separate mint and atomic pool mint program owners disagree')
     mint=ingest_mint(reader(collected.mint.source,mint_raw),mint=target.mint,now=context.now,token_profile_version=context.token_profile_version)
     pool=ingest_pool(reader(collected.pool.source,pool_raw),mint=target.mint,pool=target.pool,now=context.now,token_profile_version=context.token_profile_version)
     quote=ingest_quote(reader(collected.quote.source,quote_raw),mint=mint,direction=collected.direction,

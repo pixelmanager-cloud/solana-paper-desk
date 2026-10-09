@@ -110,6 +110,8 @@ def collect_observations(*, jobs: JobPersistence, progress: HistoryProgress,
     Returned quotes/spot marks never assert fill or event eligibility. SOL/USDC
     quotes alone cannot establish USD valuation; no peg is assumed.
     """
+    from .token2022_paper import check_version
+    check_version(token_profile_version)
     if (type(jobs) is not JobPersistence or type(progress) is not HistoryProgress
             or type(request_ceiling) is not int or not 1 <= request_ceiling <= 18
             or type(deadline_seconds) not in (int, float) or not math.isfinite(deadline_seconds)
@@ -223,6 +225,9 @@ def collect_observations(*, jobs: JobPersistence, progress: HistoryProgress,
                 refs.append(key); pool_capture.append(payload)
                 return key
             verify_pool(target.pool, target.mint, rpc, capture=capture_pool,token_profile_version=token_profile_version)
+            atomic_mint=pool_capture[0]['result']['value'][pool_capture[0]['params'][0].index(target.mint)]
+            if mint_payload['account']['owner']!=atomic_mint['owner']:
+                raise _Blocked('MINT_POOL_TOKEN_PROGRAM_MISMATCH', True)
             pool_at = pool_acquisitions[-1]
             pool = ingest_pool(lambda: ProviderObservation(source.rpc_source_id, pool_at, pool_capture[0]),
                                mint=target.mint, pool=target.pool, now=timestamp(), max_age_seconds=max_age_seconds,token_profile_version=token_profile_version)
