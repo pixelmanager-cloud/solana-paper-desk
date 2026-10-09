@@ -78,17 +78,17 @@ def initialize(path, filter_address=AUTHORITY, *, hour_bytes=HOUR_BYTES, hour_re
     with sqlite3.connect(path) as c:
         c.execute('PRAGMA journal_mode=DELETE')
         c.executescript('''
-        CREATE TABLE settings(id INTEGER PRIMARY KEY CHECK(id=1),version INTEGER NOT NULL,filter TEXT NOT NULL,high_water REAL NOT NULL);
+        CREATE TABLE settings(id INTEGER PRIMARY KEY CHECK(id=1),version INTEGER NOT NULL,filter TEXT NOT NULL,high_water REAL NOT NULL,last_reservation INTEGER NOT NULL);
         CREATE TABLE policies(id INTEGER PRIMARY KEY,at REAL NOT NULL,hour_bytes INTEGER NOT NULL,hour_records INTEGER NOT NULL,storage_bytes INTEGER NOT NULL);
         CREATE TABLE reservations(id INTEGER PRIMARY KEY,at REAL NOT NULL,kind TEXT NOT NULL);
-        CREATE TABLE completions(id INTEGER PRIMARY KEY REFERENCES reservations(id),at REAL NOT NULL,bytes INTEGER NOT NULL,records INTEGER NOT NULL,code TEXT NOT NULL,frame_hash TEXT);
+        CREATE TABLE completions(id INTEGER PRIMARY KEY REFERENCES reservations(id),at REAL NOT NULL,bytes INTEGER NOT NULL CHECK(bytes BETWEEN 0 AND 200000),records INTEGER NOT NULL CHECK(records IN (0,1)),code TEXT NOT NULL,frame_hash TEXT);
         CREATE TABLE frames(id INTEGER PRIMARY KEY REFERENCES reservations(id),payload BLOB NOT NULL,sha256 TEXT NOT NULL);
         CREATE TABLE raw_events(seq INTEGER PRIMARY KEY,source_id TEXT UNIQUE NOT NULL,received_at REAL NOT NULL,slot INTEGER NOT NULL,payload TEXT NOT NULL,payload_hash TEXT NOT NULL);
         CREATE INDEX completions_time ON completions(at);
         CREATE INDEX reservations_time_kind ON reservations(kind,at);
         CREATE INDEX frames_hash ON frames(sha256);
         ''')
-        c.execute('INSERT INTO settings VALUES(1,1,?,0)', (filter_address,))
+        c.execute('INSERT INTO settings VALUES(1,2,?,0,0)', (filter_address,))
         c.execute('INSERT INTO policies VALUES(1,0,?,?,?)',policy)
         for table in ('reservations','completions','frames','raw_events','policies'):
             for action in ('UPDATE','DELETE'):
@@ -96,6 +96,7 @@ def initialize(path, filter_address=AUTHORITY, *, hour_bytes=HOUR_BYTES, hour_re
             c.execute(f"CREATE TRIGGER {table}_insert BEFORE INSERT ON {table} WHEN EXISTS(SELECT 1 FROM {table} WHERE rowid=NEW.rowid) BEGIN SELECT RAISE(ABORT,'Duplicate discovery identity'); END")
         c.execute("CREATE TRIGGER raw_identity BEFORE INSERT ON raw_events WHEN EXISTS(SELECT 1 FROM raw_events WHERE source_id=NEW.source_id) BEGIN SELECT RAISE(ABORT,'Duplicate discovery source'); END")
         c.execute("CREATE TRIGGER settings_identity BEFORE UPDATE ON settings WHEN NEW.id!=OLD.id OR NEW.version!=OLD.version OR NEW.filter!=OLD.filter BEGIN SELECT RAISE(ABORT,'Fixed discovery identity'); END")
+        c.execute("CREATE TRIGGER settings_monotonic BEFORE UPDATE ON settings WHEN NEW.high_water<OLD.high_water OR NEW.last_reservation NOT IN (OLD.last_reservation,OLD.last_reservation+1) BEGIN SELECT RAISE(ABORT,'Discovery counters are monotonic'); END")
         c.execute("CREATE TRIGGER settings_delete BEFORE DELETE ON settings BEGIN SELECT RAISE(ABORT,'Fixed discovery identity'); END")
         c.execute("CREATE TRIGGER settings_insert BEFORE INSERT ON settings WHEN EXISTS(SELECT 1 FROM settings) BEGIN SELECT RAISE(ABORT,'Fixed discovery identity'); END")
 
@@ -116,9 +117,12 @@ class Store:
     def close(self): self.c.close()
 
     def _validate(self):
-        row = self.c.execute('SELECT version,filter,high_water FROM settings WHERE id=1').fetchone()
-        if row is None or row[0] != 1: raise Blocked('DISCOVERY_IDENTITY_INVALID')
+        row = self.c.execute('SELECT version,filter,high_water,last_reservation FROM settings WHERE id=1').fetchone()
+        if row is None or row[0] != 2: raise Blocked('DISCOVERY_IDENTITY_INVALID')
         address(row[1]); self.filter = row[1]
+        count,smallest,largest=self.c.execute('SELECT count(*),COALESCE(min(id),0),COALESCE(max(id),0) FROM reservations').fetchone()
+        if type(row[3]) is not int or row[3]!=count or row[3]!=largest or (count and smallest!=1):
+            raise Blocked('DISCOVERY_ACCOUNTING_INVALID')
         policies=self.c.execute('SELECT id,at,hour_bytes,hour_records,storage_bytes FROM policies ORDER BY id').fetchall()
         if not policies or [r[0] for r in policies]!=list(range(1,len(policies)+1)):
             raise Blocked('DISCOVERY_POLICY_INVALID')
@@ -146,11 +150,13 @@ class Store:
                 frame = self.c.execute('SELECT payload,sha256 FROM frames WHERE id=?',(identity,)).fetchone()
                 if (not frame or hashlib.sha256(frame[0]).hexdigest()!=frame_hash or frame[1]!=frame_hash
                         or used!=len(frame[0])): raise Blocked('DISCOVERY_ORIGINAL_INVALID')
-                if records==1:
+                if records==1 or code in ('DUPLICATE','CONFLICT'):
                     original=json.loads(frame[0])
                     event=original.get('params',{}).get('result',{})
                     saved=self.c.execute('SELECT slot,payload_hash FROM raw_events WHERE source_id=?',('confirmed:'+str(event.get('signature')),)).fetchone()
-                    if saved!=(event.get('slot'),digest(original)):
+                    expected=(event.get('slot'),digest(original))
+                    if (saved is None or (code=='CONFLICT' and saved==expected)
+                            or (code!='CONFLICT' and saved!=expected)):
                         raise Blocked('DISCOVERY_ORIGINAL_INVALID')
 
     @property
@@ -230,8 +236,9 @@ class Store:
             if kind=='RECEIVE' and (hour[0]+MESSAGE>self.policy[0] or hour[1]+1>self.policy[1] or day[0]+MESSAGE>24*self.policy[0] or day[1]+1>24*self.policy[1]):
                 raise Blocked('DISCOVERY_TRAFFIC_LIMIT')
             if kind=='CONNECT' and hour[2]>=RECONNECTS: raise Blocked('DISCOVERY_RECONNECT_LIMIT')
-            self.c.execute('UPDATE settings SET high_water=? WHERE id=1',(now,))
-            identity=self.c.execute('INSERT INTO reservations(at,kind) VALUES(?,?)',(now,kind)).lastrowid
+            identity=self.c.execute('SELECT last_reservation+1 FROM settings WHERE id=1').fetchone()[0]
+            self.c.execute('UPDATE settings SET high_water=?,last_reservation=? WHERE id=1',(now,identity))
+            self.c.execute('INSERT INTO reservations(id,at,kind) VALUES(?,?,?)',(identity,now,kind))
             self.c.commit();return identity
         except BaseException:self.c.rollback();raise
 

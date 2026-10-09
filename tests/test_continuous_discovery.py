@@ -208,7 +208,7 @@ class DiscoveryTests(unittest.TestCase):
         script='\n'.join(line for line in original if not line.startswith(('INSERT INTO "reservations"','INSERT INTO "completions"','INSERT INTO "frames"')))
         with sqlite3.connect(restored) as c:c.executescript(script)
         before=restored.read_bytes()
-        with self.assertRaisesRegex(d.Blocked,'ORIGINAL'):d.Store(restored,clock=lambda:101)
+        with self.assertRaisesRegex(d.Blocked,'ORIGINAL|ACCOUNTING'):d.Store(restored,clock=lambda:101)
         self.assertEqual(restored.read_bytes(),before)
         self.assertEqual(self.store.status()['hour_bytes'],len(notification()))
 
@@ -216,6 +216,24 @@ class DiscoveryTests(unittest.TestCase):
         self.receive(notification());original=list(self.store.c.iterdump())
         restored=Path(self.tmp.name)/'partial-time.sqlite'
         script='\n'.join(line.replace(',100.0,',',101.0,') if line.startswith('INSERT INTO "raw_events"') else line for line in original)
+        with sqlite3.connect(restored) as c:c.executescript(script)
+        before=restored.read_bytes()
+        with self.assertRaisesRegex(d.Blocked,'ORIGINAL|ACCOUNTING'):d.Store(restored,clock=lambda:101)
+        self.assertEqual(restored.read_bytes(),before)
+
+    def test_failed_attempt_partial_restore_cannot_erase_charge_with_metadata_retained(self):
+        identity=self.store.reserve('RECEIVE');self.store.complete(identity,code='SOURCE_FAILURE')
+        original=list(self.store.c.iterdump());restored=Path(self.tmp.name)/'partial-failure.sqlite'
+        script='\n'.join(line for line in original if not line.startswith(('INSERT INTO "reservations"','INSERT INTO "completions"')))
+        with sqlite3.connect(restored) as c:c.executescript(script)
+        before=restored.read_bytes()
+        with self.assertRaisesRegex(d.Blocked,'ACCOUNTING'):d.Store(restored,clock=lambda:101)
+        self.assertEqual(restored.read_bytes(),before)
+
+    def test_completed_duplicate_cannot_survive_missing_original_as_healthy(self):
+        self.receive(notification());self.receive(notification())
+        original=list(self.store.c.iterdump());restored=Path(self.tmp.name)/'partial-duplicate.sqlite'
+        script='\n'.join(line for line in original if not line.startswith('INSERT INTO "raw_events"'))
         with sqlite3.connect(restored) as c:c.executescript(script)
         before=restored.read_bytes()
         with self.assertRaisesRegex(d.Blocked,'ORIGINAL'):d.Store(restored,clock=lambda:101)
@@ -227,7 +245,7 @@ class DiscoveryTests(unittest.TestCase):
         script='\n'.join(line for line in original if not line.startswith('INSERT INTO "raw_events"'))
         with sqlite3.connect(restored) as c:c.executescript(script)
         before=restored.read_bytes()
-        with self.assertRaisesRegex(d.Blocked,'ORIGINAL'):d.Store(restored,clock=lambda:101)
+        with self.assertRaisesRegex(d.Blocked,'ORIGINAL|ACCOUNTING'):d.Store(restored,clock=lambda:101)
         self.assertEqual(restored.read_bytes(),before)
 
     def test_ambiguous_old_connect_recovered_attempt_remains_charged_current_hour(self):
