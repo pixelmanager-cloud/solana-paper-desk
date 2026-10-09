@@ -2635,7 +2635,7 @@
       }
     ],
     "latest_backup_before_runtime": "daily-20261009T095803Z",
-    "current_live_entry_blocker": "Three admitted legacy candidates have no retained migration witness; first two canonical migrated pools independently observed absent. Stop further requests on those candidates now. No live paper fill.",
+    "current_live_entry_blocker": "Intake repair reviewed and installed separately. Three legacy investigations lack migration witnesses; first two canonical pools absent. New raw migrations779/780 are Token2022 and excluded; no supported live candidate or paper fill. No further investigation calls spent on excluded candidates.",
     "paper_runtime_deployment": {
       "source_commit": "b84e20dd3a464be0c5a06f4252b4118a402190e0",
       "source_tree": "afe2845a6067ea63bf1e16528a3dcd0f80783127",
@@ -2757,7 +2757,7 @@
       "fixture_tests": 40
     },
     "migration_slot_intake_repair": {
-      "status": "ACCEPTED_INTEGRATION_PENDING_VPS_TESTS",
+      "status": "REVIEWED_TOOL_INSTALLED_AWAITING_SUPPORTED_CANDIDATE",
       "worker": "01",
       "reviewer": "02",
       "thread_id": "01a118fc-39bc-722c-b442-8bf5a749e0bb",
@@ -2766,7 +2766,16 @@
       "scope": "Explicit bounded finalized observed-slot history, existing immutable BIRTH cutoff and shared18 reservations, retained manifests/witness matching; no hint-based eligibility or budget resets",
       "pr": 149,
       "head": "7d47cdeb8ee2c1f5aa911ca4c8354810409fd468",
-      "deployment": "NOT_AUTHORIZED_PENDING_REVIEW_CI_COMBINED_TESTS_AND_EXPERIMENT_IDENTITY",
+      "deployment": {
+        "path": "/opt/solana-desk-tools/7d47cde",
+        "head": "7d47cdeb8ee2c1f5aa911ca4c8354810409fd468",
+        "archive_sha256": "95a7ff33e9a7909c2ffdcf54b87b8142d0ac241af0ecd2fd876f268011af2e28",
+        "service_uid_help": "PASS",
+        "active_services": "All remain /opt/solana-desk-releases/afe2845",
+        "provider_calls": 0,
+        "ledger_reset": false,
+        "monitoring_reprovision": false
+      },
       "review_thread_id": "01a118fc-666c-70b6-9fa8-2c7520f0a0bb",
       "review_turn_id": "01a12041-c9a2-74b7-9ae8-2f46c953615e",
       "review_cursor": "a2dcfb97-463d-4188-9da3-48a81e644d23:104",
@@ -2804,10 +2813,13 @@
       "source_tree": "8336a0222f3fbecaaaea76e334040d5716bc32de",
       "local_archive_sha256": "95a7ff33e9a7909c2ffdcf54b87b8142d0ac241af0ecd2fd876f268011af2e28",
       "vps_validation": {
-        "status": "RUNNING_FIXTURES_ONLY",
+        "status": "PASS_SERVICE_UID",
         "path": "/var/tmp/solana-intake-validation-7d47cde",
         "archive_sha256": "95a7ff33e9a7909c2ffdcf54b87b8142d0ac241af0ecd2fd876f268011af2e28",
-        "active_services_unchanged": true
+        "active_services_unchanged": true,
+        "tests": 2357,
+        "skips": 0,
+        "seconds": 481.312
       },
       "independent_review": {
         "result": "PASS",
@@ -2818,7 +2830,13 @@
         "seconds": 257.178,
         "additional_probes": "Crash/cutoff/contradiction and separate-process oldb84 compatibility passed"
       },
-      "source_identity": "Only coordinator docs differ between integrated working tree and reviewed PR149 source"
+      "source_identity": "Only coordinator docs differ between integrated working tree and reviewed PR149 source",
+      "integration_commit": "35e8454b7643565a61ddc894d422cb433b769dec",
+      "integration_ci": {
+        "successful_run": 37920258511,
+        "head": "35e8454b7643565a61ddc894d422cb433b769dec",
+        "duplicate_run_pending": 37920252871
+      }
     }
   },
   "native_reconciliation_review": {
