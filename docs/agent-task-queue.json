@@ -3867,7 +3867,8 @@
             1.1473
           ],
           "review_url": "https://github.com/pixelmanager-cloud/solana-paper-desk/pull/164#issuecomment-6083736736",
-          "caveat": "Nestedtimingnotadditive; fixturetimestampaginghypothesisnotyetproven; no liveproviders/readinessclaim"
+          "caveat": "Nestedtimingnotadditive; fixturetimestampaginghypothesisnotyetproven; no liveproviders/readinessclaim",
+          "final": "FourcloudheldexitsPASS6.424\u20136.445s; controlledolderfixturedatareproducesCOMPLETE/noBUY\u2192STALE_MOMENTUM; originaltimeoutcauseunresolved butserialVPSnativecyclePASS7.874s. No deadline/source changes."
         },
         "ci_status": "BOTH_SUCCESS",
         "ci_tests": 2545,
@@ -3879,13 +3880,44 @@
       },
       "artifact_attachment_limit": "PR161/162/163 attach attempts rejected: thread attachment identity count exceeds100; GitHub PR identities persisted inqueue.",
       "repair_vps_validation": {
-        "status": "RUNNING_INACTIVE_SOURCE_ONLY",
+        "status": "PASS_COMPONENT_COMPOSITION",
         "source": "31b249e1dfbb16c12ec89235a7137afab4de989fd05ded52a0231ebdfb9667ae",
         "archive_sha256": "e8d8c2f940d6d611068009d1b34fa04fc1fb5f2609cda405f0b85e9117461027",
         "path": "/opt/solana-desk-releases/review-31b249e",
         "log": "/var/tmp/paper-review-31b249e/full.log",
         "session_id": 82946,
-        "scope": "Approved161+162+163 composition; final04test and externalruntimepin notyetincluded; no productionmutation/providercalls"
+        "scope": "Approved161+162+163 composition; final04test and externalruntimepin notyetincluded; no productionmutation/providercalls",
+        "tests": 2543,
+        "seconds": 741.976,
+        "skips": 0
+      },
+      "repair_release_candidate": {
+        "head": "b414dbd175042e20eb17a50fd65e396d495820fd",
+        "source": "31b249e1dfbb16c12ec89235a7137afab4de989fd05ded52a0231ebdfb9667ae",
+        "archive_sha256": "9a65d84e810f4db36d1aa4be62c735720492e7bd03201a45eb32d88a89e619b0",
+        "path": "/opt/solana-desk-releases/b414dbd",
+        "status": "STAGED_NOT_DEPLOYED_FINAL_CI_RUNNING",
+        "ci_runs": [
+          37950823871,
+          37950815849
+        ],
+        "vps_full_cycle_probe_session": 49875,
+        "vps_full_cycle_probe": {
+          "result": "PASS",
+          "tests": 1,
+          "seconds": 23.374,
+          "entry_wrapper_seconds": 11.10021445993334,
+          "held_cycle_seconds": 7.874243927188218,
+          "entry": "BUY ENTRY",
+          "exit": "SELL DANGER",
+          "restart": "COMPLETE_ZERO_CALLS_EMPTY_POSITIONS",
+          "investigation_total": 9,
+          "monitoring_calls": 4,
+          "monitoring_total": 5,
+          "log": "/var/tmp/paper-review-31b249e/full-cycle-probe.log",
+          "log_sha256": "7bd986585cb1a9ac9cab14397c6aba8ff7a28b9e7d7f4663d61bf0703ea30dba",
+          "provenance": "SYNTHETIC_TEST_ONLY_NORMAL_CLOCK_ALL_NATIVE_GATES"
+        }
       }
     }
   },
