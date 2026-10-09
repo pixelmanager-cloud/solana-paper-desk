@@ -8,6 +8,7 @@ from urllib.parse import parse_qs, urlsplit
 from .dashboard_diagnostics import DashboardDiagnostics
 from .screen import screen
 from .job_persistence import JobPersistence, BIRTH_ACQUISITION_V1
+from .backup import selected_paper_ledger
 
 
 class Jobs:
@@ -48,6 +49,12 @@ class Jobs:
 
 
 def handler(jobs,port,*,evidence_db=None):
+    data=Path(jobs.db).parent
+    try:
+        selected=selected_paper_ledger(data)
+        selection_valid=True
+    except (OSError,ValueError):
+        selected=None;selection_valid=False
     diagnostics = DashboardDiagnostics(jobs.db, evidence_db if evidence_db is not None
                                        else Path(jobs.db).parent/'evidence.sqlite')
     class Handler(BaseHTTPRequestHandler):
@@ -82,7 +89,18 @@ def handler(jobs,port,*,evidence_db=None):
                 return self.respond(status,body)
             if self.path=='/api/paper':
                 from .paper_view import paper_status
-                return self.respond(200,paper_status(Path(jobs.db).parent/'active-paper.sqlite'))
+                try:
+                    if not selection_valid or selected_paper_ledger(data)!=selected:
+                        raise ValueError('Paper ledger selection changed')
+                    result=paper_status(selected[0] if selected is not None else data/'active-paper.sqlite')
+                    if selected_paper_ledger(data)!=selected:raise ValueError('Paper ledger selection changed')
+                except (OSError,ValueError):
+                    result={'mode':'PAPER_ONLY','status':'LEDGER_UNAVAILABLE','automatic_entry_enabled':False,
+                            'runner_status':'NOT_CONNECTED','runner_liveness':'UNKNOWN',
+                            'cash_sol':None,'realized_pnl_sol':None,'estimated_equity_sol':None,
+                            'positions':[],'recent_outcomes':[],
+                            'reason':'PAPER_LEDGER_SELECTION_INVALID'}
+                return self.respond(200,result)
             if self.path=='/api/decisions':
                 from .decision_runner import recent_decisions
                 return self.respond(200,recent_decisions(Path(jobs.db).parent/'paper-decisions.sqlite'))
@@ -126,6 +144,9 @@ def handler(jobs,port,*,evidence_db=None):
 
 def serve(db,port=8765):
     if not 1024<=port<=65535:raise ValueError('Invalid port')
+    # Refuse an invalid explicit selection before research recovery/schema work
+    # or the background scanner starts. No fallback to the original ledger.
+    selected_paper_ledger(Path(db).resolve().parent)
     from .evidence import EvidenceStore
     evidence=EvidenceStore(Path(db).parent/'evidence.sqlite')
     jobs=Jobs(db,scanner=lambda mint:screen(mint,history_capture=evidence.save))
