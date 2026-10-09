@@ -7,7 +7,9 @@ from pathlib import Path
 import unittest
 
 from desk import engine, quote_execution as qe
-from desk.model import digest
+from desk.model import digest,canonical
+from desk.ledger import Ledger
+from desk.paper_view import _history_preflight
 from desk.security import entry_token_policy, TOKEN_2022
 from tests import test_paper_market_adapter as fixtures
 
@@ -22,6 +24,51 @@ class TokenHandoffTests(unittest.TestCase):
 
     def plan(self,event):
         return qe.plan(engine.initial_state(self.cfg),event,self.cfg,(self.f.observation.quote,))
+
+    def metadata_collector(self):
+        f=self.f;original=f.fixture.sources[f.target.scan_id];size=[0]
+        def rpc(method,params,**options):
+            payload=original.rpc(method,params,**options)
+            if method=='getAccountInfo':payload['value']['unknown_retained_metadata']='x'*size[0]
+            return payload
+        f.fixture.sources[f.target.scan_id]=replace(original,rpc=rpc)
+        def collect(count):
+            size[0]=count
+            f.observation=f.fixture.collect(candidates=(f.target,)).observations[0]
+            self.assertIsNone(f.observation.failure)
+            return f.build()
+        return collect
+
+    def test_actual_collector_near_journal_boundary_positive_then_beyond_rejected(self):
+        collect=self.metadata_collector();base=collect(0)
+        overhead=len(canonical(base['event']).encode())
+        # One original field appears in account plus the twice-preserved original
+        # mint observation. ASCII byte growth is exactly three per source byte.
+        count=(262144-overhead)//3
+        good=collect(count);e=good['event'];self.assertIsNotNone(e)
+        size=len(canonical(e).encode());self.assertLessEqual(size,262144)
+        self.assertGreaterEqual(size,262142)
+        self.assertEqual(entry_token_policy(e),[])
+        ledger=Ledger(Path(self.f.fixture.tmp.name)/'size-bound.sqlite');self.addCleanup(ledger.close)
+        outcomes=ledger.apply(e,self.cfg,qe.bind_transition(e,(self.f.observation.quote,)),engine.initial_state)
+        self.assertTrue(any(o.get('type')=='reject' for o in outcomes))
+        _history_preflight(ledger.db)  # actual consumer accepts the committed event
+        bad=collect(count+1);self.assertIsNone(bad['event'])
+        self.assertIn('PAPER_EVENT_BYTE_LIMIT_EXCEEDED',bad['blockers'])
+        self.assertGreater(len(canonical(bad['draft']).encode()),262144)
+        self.assertEqual(bad['draft']['token_evidence']['account']['unknown_retained_metadata'],'x'*(count+1))
+        self.assertEqual(ledger.db.execute('SELECT COUNT(*) FROM events').fetchone()[0],1)
+
+    def test_reviewed_100000_byte_unknown_metadata_preserved_not_published(self):
+        out=self.metadata_collector()(100000);source=self.f.observation.mint.source
+        self.assertLess(len(source.original_json.encode()),262144)
+        self.assertIsNone(out['event'])
+        self.assertEqual(out['blockers'],['PAPER_EVENT_BYTE_LIMIT_EXCEEDED'])
+        self.assertGreater(len(canonical(out['draft']).encode()),262144)
+        self.assertEqual(out['draft']['token_evidence']['original_json'],source.original_json)
+        self.assertEqual(out['draft']['token_evidence']['account']['unknown_retained_metadata'],'x'*100000)
+        for key in self.f.observation.evidence_refs:
+            self.assertEqual(digest(self.f.fixture.progress.store.load(key)),key)
 
     def test_original_mint_account_and_source_identity_reach_actual_entry_policy(self):
         f=self.f;original=json.loads(f.observation.mint.source.original_json)
