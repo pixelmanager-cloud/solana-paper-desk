@@ -1,9 +1,11 @@
 from __future__ import annotations
 
 from datetime import datetime, timezone
+from copy import deepcopy
 
 from .model import D, ONE, ZERO, decimal as dec, validate_event, digest
-from .strategy import gates, scores, size, swap_quote
+from .strategy import gates, scores, size, swap_quote, experimental_scores, experimental_gates
+from .model import PAPER_EXPERIMENTAL
 from .bundles import audit
 from .security import entry_token_policy, sellability_gate
 
@@ -141,7 +143,8 @@ def sell(state, e, cfg, fraction, reason, output):
     state["day_gross_losses"] = str(dec(state["day_gross_losses"]) + max(ZERO, -pnl))
     output.append({"type": "fill", "side": "sell", "mint": e["mint"], "reason": reason,
                    "quantity": str(qty), "proceeds_sol": str(proceeds), "fee_sol": str(fee),
-                   "realized_pnl_sol": str(pnl), "simulation": "constant_product"})
+                   "realized_pnl_sol": str(pnl), "simulation": "constant_product",
+                   **({"entry_policy": deepcopy(p["entry_policy"])} if "entry_policy" in p else {})})
     if dec(p["qty"]) <= D("1e-20"):
         state["loss_streak"] = state["loss_streak"] + 1 if dec(p["trade_pnl"]) < 0 else 0
         del state["positions"][e["mint"]]
@@ -210,7 +213,16 @@ def manage_position(state, e, cfg, output):
 
 
 def transition(state, e, cfg):
-    validate_event(e)
+    # Config is fingerprinted by Ledger: selecting this experimental strategy
+    # requires a new experiment, never an event-provided permission flag.
+    version = cfg.get("experimental_policy_version")
+    if version is not None and (type(version) is not int or version != 1 or cfg.get("mode") != "paper"):
+        raise ValueError("Unsupported experimental paper policy configuration")
+    experimental = version == 1 and e.get("kind") == "market"
+    if experimental:
+        validate_event(e, mode=PAPER_EXPERIMENTAL, policy_version=version)
+    else:
+        validate_event(e)
     output = []
     if e["ts"] < state["last_ts"]:
         return state, [{"type": "reject", "reason": "OUT_OF_ORDER"}]
@@ -254,8 +266,11 @@ def transition(state, e, cfg):
         state["mode"] = "STOPPED"
     if was_open:
         return state, output
-    scored = scores(e)
-    reasons = gates(e, cfg, scored)
+    policy = experimental_scores(e, mode=PAPER_EXPERIMENTAL, policy_version=version) if experimental else None
+    scored = ({key: dec(policy[key]) if policy[key] is not None else None
+               for key in ("safety", "momentum", "flow", "entry")} if policy else scores(e))
+    reasons = (experimental_gates(e, cfg, mode=PAPER_EXPERIMENTAL, policy_version=version)
+               if experimental else gates(e, cfg, scored))
     # Live adapters are unfinished. JSON assertions cannot authorize real-data fills.
     if e["provenance"] != "SYNTHETIC_TEST_ONLY":
         reasons.append("LIVE_FEATURE_ADAPTER_NOT_READY")
@@ -272,10 +287,11 @@ def transition(state, e, cfg):
         reasons.append("ENTRY_THROTTLE")
     if any(e["ts"] - p["mark_at"] > cfg["price_ttl_seconds"] for p in state["positions"].values()):
         reasons.append("STALE_PORTFOLIO")
-    evidence = {k: str(v) for k, v in scored.items()}
+    evidence = {k: str(v) if v is not None else None for k, v in scored.items()}
+    policy_record = {"entry_policy": deepcopy(policy)} if policy is not None else {}
     if reasons:
         return state, output + [{"type": "reject", "reason": reasons[0], "reasons": reasons,
-                                 "mint": mint, "scores": evidence, "bundle_audit": bundle_audit}]
+                                 "mint": mint, "scores": evidence, "bundle_audit": bundle_audit, **policy_record}]
     budget = max(ZERO, dec(cfg["daily_pause_fraction"]) * dec(state["day_start_equity"])
                  - dec(state["day_gross_losses"]))
     allocated_risk = exposure(state) * dec(cfg["stress_loss_fraction"])
@@ -309,13 +325,13 @@ def transition(state, e, cfg):
         "stage": 0, "stop_ratio": str(ONE - dec(cfg["stop_fraction"])),
         "peak_ratio": "1", "touched_15": False,
         "mark_value": str(max(ZERO, expected_sell - fee)), "mark_at": e["price_at"],
-        "pool": e["pool"], "entry_scores": evidence, "provenance":e["provenance"], "taker":e.get("taker"),
+        "pool": e["pool"], "entry_scores": evidence, "provenance":e["provenance"], "taker":e.get("taker"), **deepcopy(policy_record),
     }
     state["last_entry_minute"] = e["ts"] // 60
     output.append({"type": "fill", "side": "buy", "mint": mint, "reason": "ENTRY",
                    "amount_sol": str(amount), "quantity": str(qty), "fee_sol": str(fee),
                    "scores": evidence, "estimated_cost_fraction": str(roundtrip),
                    "simulation": "constant_product", "provenance": e["provenance"],
-                   "bundle_audit": bundle_audit})
+                   "bundle_audit": bundle_audit, **policy_record})
     risk(state, cfg, output)
     return state, output
