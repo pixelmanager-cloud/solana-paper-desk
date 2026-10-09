@@ -1893,16 +1893,16 @@
       "live_acceptance": false
     },
     "current_worker_followups": {
-      "01": "136 frozen under03 review",
+      "01": "136PASS; coordinate06newexit-onlykind report successor",
       "02": "Rereview135e10b0a8",
-      "03": "136 scopedPASS; ready for08 cycle exactreview",
+      "03": "Implement approved separate persisted60/hour sharedheldposition monitoring allowance; coordinate08/06",
       "04": "Rereview134 bound repair on publication; previous134HOLD",
       "05": "Platformblocked97/110; not retried",
       "06": "Priority134 event-size repair then held-position exit contract",
       "07": "Independent137 checkpoint and finalquote/accounting Linux",
       "08": "Resume one-cycle orchestration on130/131 contracts, no budget expansion",
-      "09": "Repair135 scoped contradictory migration event; then08 operator wrapper contract",
-      "10": "137 frozen under07 review"
+      "09": "135repair under02review; implement08operatorCLI/manualoneshot",
+      "10": "137PASS; coordinate06newexit-onlykind consumer successor"
     },
     "paper_live_foundation_candidate": {
       "base": "3fe3188",
@@ -2008,10 +2008,14 @@
       "live_acceptance": false
     },
     "runtime_monitoring_budget": {
-      "status": "AWAITING_USER_APPROVAL",
+      "status": "APPROVED_IMPLEMENTATION03",
       "proposal": "Separate 60 read-only provider requests per hour shared across open paper positions; preserve 18 investigation cap and daily10/queue3",
       "reason": "Audited minimal fresh acquisition plus entry, separate mark, exit costs19-20 requests; current fixed18 cannot support sustained positions",
-      "approved": false
+      "approved": true,
+      "user_approval": "I approve the allowance. use whatever you need.",
+      "scope": "60 read-only provider requests per rolling hour shared across verified open paper positions; existing18 investigation/daily10/queue3 unchanged",
+      "worker": "03",
+      "thread_id": "01a118fc-9478-778a-b77a-8f8f6ec7e0ad"
     },
     "latest_runtime_check": {
       "dashboard": "active",
@@ -2151,8 +2155,8 @@
       "scope": "Raw-unit-aware quote partial report accounting"
     },
     "pending_pr134": {
-      "head": "a4a86254368e9060deb145174d77415f128a0146",
-      "status": "CHANGES_REQUESTED04_REPAIR06",
+      "head": "aaaa8e41ea08f73ba1b6b2b0525b03bd45e2a1bb",
+      "status": "BOUND_REPAIR_REREVIEW04",
       "scope": "Original validated mint account handoff to actual entry token policy",
       "author": "06",
       "reviewer": "04",
@@ -2180,11 +2184,17 @@
     },
     "pending_pr137": {
       "head": "2f90d6002c4f818765e126816a88f6497bdd7528",
-      "status": "INDEPENDENT_REVIEW07",
+      "status": "PASS07_FINAL_RELEASE_COMBINATION_PENDING",
       "author": "10",
       "reviewer": "07",
       "scope": "Validate quote checkpoints and journal accounting before readers and duplicate delivery",
-      "local_focused_tests": 8
+      "local_focused_tests": 8,
+      "linux_tests": 2193,
+      "linux_skips": 0,
+      "linux_seconds": 206.311,
+      "reviewed_tree": "8b1cc691e4b7aef2da8480e74162fc048931b9bf",
+      "source_identity_match": true,
+      "independent_assertions": 92
     },
     "pending_exit_observation": {
       "worker": "06",
