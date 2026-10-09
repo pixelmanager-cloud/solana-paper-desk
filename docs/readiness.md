@@ -26,6 +26,8 @@ The user also authorized paper entry-eligibility tuning to search for profitable
 
 The user authorized increasing downstream capacity. Coordinator initially selected100/day,queue10,monitor600/hour; the user then requested a further increase, and the current targets are1,000 investigation admissions/day,queue25,and3,600 monitoring requests/rolling hour; per-investigation lifetime18 remains. Worker01 implements the explicit durable upgrade and worker04 reviews it. Existing10/3/60 remain active until reviewed migration preserves charged usage, source identity, originals and recovery state. No counter reset or silent escalation is authorized.
 
+PR150 offline policy proposal foundation is integrated at176f278 after independent exact-head5778b01 review,2,371 Linux tests with zero skips and both successful CI runs. Malformed profile/window handling is repaired. Source differs from reviewedtreefc689dcf only in coordinator documents. This foundation validates recorded accounting and chronology but cannot rank unobserved counterfactual outcomes or activate tuning. Live runtime remains unchanged.
+
 ## Paper-loop priority update — 2026-10-09
 
 The user changed the immediate target to an executable live-data paper experiment and forward iteration. In explicit experimental paper mode, unresolved ownership **history** may be retained as an acknowledged risk. Known hazards, corrupt or contradictory supplied evidence, and missing execution/price/freshness data are not waived. The older strict ownership milestone below remains the strict-mode policy, not a reason to stop independent paper-loop implementation. No unknown ownership percentage may be replaced by a fabricated safe value.

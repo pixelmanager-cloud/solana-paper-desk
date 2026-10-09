@@ -2923,7 +2923,7 @@
       }
     },
     "paper_policy_tuning": {
-      "status": "REPAIRED_EXACT_HEAD_REREVIEW",
+      "status": "PASS_INTEGRATED_OFFLINE_FOUNDATION",
       "authorization": "User explicitly authorized tool to tweak entry eligibility to seek a profitable setting; paper only.",
       "worker": "03",
       "thread_id": "01a118fc-9478-778a-b77a-8f8f6ec7e0ad",
@@ -2948,7 +2948,7 @@
         "worker": "06",
         "thread_id": "01a118fc-f867-7233-8eec-c20659e70095",
         "turn_id": "01a1206b-fa67-75b2-89bb-bb91dbe2a120",
-        "cursor": "8f3328cf-bef6-441d-83f8-2d1f46b3b0df:119"
+        "cursor": "8f3328cf-bef6-441d-83f8-2d1f46b3b0df:122"
       },
       "limitation": "Foundation only: aggregate evidence cannot rank counterfactual thresholds; automatic tuning remains incomplete",
       "coordinator_review": {
@@ -2966,11 +2966,15 @@
       "finding": "Malformed retained paper_signal_profile null/list/string raises uncaught AttributeError; explicit shape validation required",
       "repair_dispatched_to": "03",
       "independent_linux": {
-        "tests": 2370,
+        "tests": 2371,
         "skips": 0,
-        "seconds": 171.05
+        "seconds": 169.061
       },
-      "ci": "Both exacthead033957f runsSUCCESS"
+      "ci": "Both repaired exacthead5778b01 SUCCESS",
+      "integration_commit": "176f27806752fff339a678b0afd2ea3aa57f6f60",
+      "reviewed_tree": "fc689dcf40de71a90a49dbf5faf6200896756668",
+      "finding_resolved": true,
+      "source_identity": "Only coordinator queue/readiness differ from independent exacthead"
     },
     "downstream_allowance_upgrade": {
       "status": "IMPLEMENTATION_AND_INDEPENDENT_PREFLIGHT_DISPATCHED",
