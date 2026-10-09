@@ -1894,8 +1894,8 @@
     },
     "current_worker_followups": {
       "01": "Repair126 cross-budget reservation binding",
-      "02": "126 review changes required; await exact frozen repair",
-      "03": "125 review changes required; await exact frozen repair",
+      "02": "Review frozen126 repair9174515; precise graduation capture gap audit",
+      "03": "Budget feasibility audit complete;125 frozen repair rereview next",
       "04": "Independent128 adapter/profile review",
       "05": "Platformblocked97/110; not retried",
       "06": "Repair127 explicit v3 engine gates; coordinate trusted taker",
@@ -1951,13 +1951,14 @@
       ]
     },
     "pending_pr126": {
-      "head": "35919a32cc7f19cdcfefee009c0d2bda9710f27d",
-      "status": "CHANGES_REQUIRED_AUTHOR01_REPAIR_ACTIVE",
+      "head": "9174515b5a175076949490ea212124be0d0f2998",
+      "status": "REPAIRED_FROZEN_REVIEW02",
       "reviewer_thread": "01a118fc-666c-70b6-9fa8-2c7520f0a0bb",
       "live_acceptance": false,
       "findings": [
         "Persisted cross-budget reservation rebinding permits uncharged scan I/O"
-      ]
+      ],
+      "local_focused_tests": 9
     },
     "pending_pr124": {
       "head": "07d44a35f04eb3e61caafd700a49bd171999f79b",
@@ -1969,7 +1970,8 @@
       "head": "956fdbb2f235d356f9a1f1a20fea0c10f7ec244e",
       "status": "REVIEW07_AND_AUTHOR06_PROFILE_REPAIR",
       "author_linux_tests": 2097,
-      "known_seam": "Unconditional bundle evidence gate blocks approved explicit unknown-history profile"
+      "known_seam": "Unconditional bundle evidence gate blocks approved explicit unknown-history profile",
+      "ci": "BOTH_SUCCESS at original frozen head"
     },
     "pending_pr128": {
       "head": "c19cdd542dfe8fedd7772ee9589e790ebb3db73a",
@@ -1978,12 +1980,31 @@
       "known_seams": [
         "Decision clock advances window endpoint beyond captured evidence",
         "Builder lacks trusted taker required by quote execution"
-      ]
+      ],
+      "ci": "BOTH_SUCCESS at original frozen head"
     },
     "coordinator_resume": {
       "reason": "User asked why coordinator stopped; resumed dispatch and integration follow-up",
       "scheduled_task": "REMAINS_PAUSED_BY_USER",
       "live_acceptance": false
+    },
+    "runtime_monitoring_budget": {
+      "status": "AWAITING_USER_APPROVAL",
+      "proposal": "Separate 60 read-only provider requests per hour shared across open paper positions; preserve 18 investigation cap and daily10/queue3",
+      "reason": "Audited minimal fresh acquisition plus entry, separate mark, exit costs19-20 requests; current fixed18 cannot support sustained positions",
+      "approved": false
+    },
+    "latest_runtime_check": {
+      "dashboard": "active",
+      "paper": "NOT_CONFIGURED",
+      "runner": "NOT_CONNECTED",
+      "positions": 0,
+      "provider_calls": 0,
+      "source": "Direct loopback API via existing SSH; read-only research schema has8scans/8jobs"
+    },
+    "integration_ci_latest": {
+      "head": "55bfb4c7d1b3f8caa4de0c90683cf72c9d59d4e2",
+      "status": "BOTH_SUCCESS"
     }
   },
   "native_reconciliation_review": {
