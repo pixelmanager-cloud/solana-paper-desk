@@ -1894,15 +1894,15 @@
     },
     "current_worker_followups": {
       "01": "136PASS; coordinate06newexit-onlykind report successor",
-      "02": "Rereview135e10b0a8",
+      "02": "138PASS; available toreview03approvedmonitoringbudget onpublication",
       "03": "Implement approved separate persisted60/hour sharedheldposition monitoring allowance; coordinate08/06",
-      "04": "Rereview134 bound repair on publication; previous134HOLD",
+      "04": "Independent139 held-position exit review;134PASS",
       "05": "Platformblocked97/110; not retried",
       "06": "Priority134 event-size repair then held-position exit contract",
-      "07": "Independent137 checkpoint and finalquote/accounting Linux",
-      "08": "Resume one-cycle orchestration on130/131 contracts, no budget expansion",
-      "09": "135repair under02review; implement08operatorCLI/manualoneshot",
-      "10": "137PASS; coordinate06newexit-onlykind consumer successor"
+      "07": "Independent140 manualoperatorCLI; finalquote2237PASS",
+      "08": "138frozen review02; wire139 and approvedbudget03 successor",
+      "09": "140 frozen under07review; available for next concrete task",
+      "10": "Fix137 missing-dependency publication CI then quote_exit checkpoint/view successor"
     },
     "paper_live_foundation_candidate": {
       "base": "3fe3188",
@@ -1986,21 +1986,25 @@
     },
     "pending_pr127": {
       "head": "956fdbb2f235d356f9a1f1a20fea0c10f7ec244e",
-      "status": "REVIEW07_AND_AUTHOR06_PROFILE_REPAIR",
+      "status": "ACCEPTED_INTEGRATED_NOT_DEPLOYED",
       "author_linux_tests": 2097,
       "known_seam": "Unconditional bundle evidence gate blocks approved explicit unknown-history profile",
       "ci": "BOTH_SUCCESS at original frozen head",
-      "independent_finding": "Fresh quote mint decimals can conflict with saved entry and change raw exit quantity; repair assigned06, independent07 rereview required"
+      "independent_finding": "Fresh quote mint decimals can conflict with saved entry and change raw exit quantity; repair assigned06, independent07 rereview required",
+      "integration_commit": "9b03e4532a3902e1f4521e99a04b8a071c2e28d6",
+      "source_identity_match": true
     },
     "pending_pr128": {
       "head": "c19cdd542dfe8fedd7772ee9589e790ebb3db73a",
-      "status": "REVIEW04_AND_AUTHOR09_CLOCK_REPAIR",
+      "status": "ACCEPTED_INTEGRATED_NOT_DEPLOYED",
       "author_linux_tests": 2079,
       "known_seams": [
         "Decision clock advances window endpoint beyond captured evidence",
         "Builder lacks trusted taker required by quote execution"
       ],
-      "ci": "BOTH_SUCCESS at original frozen head"
+      "ci": "BOTH_SUCCESS at original frozen head",
+      "integration_commit": "9b03e4532a3902e1f4521e99a04b8a071c2e28d6",
+      "source_identity_match": true
     },
     "coordinator_resume": {
       "reason": "User asked why coordinator stopped; resumed dispatch and integration follow-up",
@@ -2067,12 +2071,14 @@
       "head": "7441e94042e0d05d1760472483752a65f3820100",
       "repairs": 128,
       "reviewer": "04",
-      "status": "SCOPED_PASS04_FINAL_COMBINATION_PENDING",
+      "status": "ACCEPTED_INTEGRATED_NOT_DEPLOYED",
       "author_linux_tests": 2167,
       "linux_tests": 2167,
       "linux_skips": 0,
       "linux_seconds": 881.14,
-      "reviewed_tree": "ad64760bb92996c763bded993d6edf0a255d24cb"
+      "reviewed_tree": "ad64760bb92996c763bded993d6edf0a255d24cb",
+      "integration_commit": "9b03e4532a3902e1f4521e99a04b8a071c2e28d6",
+      "source_identity_match": true
     },
     "pending_pr131": {
       "head": "455149e42088bb9201d3ce3097efda01e6116d2e",
@@ -2139,52 +2145,76 @@
           137
         ],
         "live_acceptance": false
+      },
+      "mac_repaired_quote_candidate": {
+        "tests": 2237,
+        "skips": 408,
+        "seconds": 47.057,
+        "result": "PASS",
+        "live_acceptance": false
       }
     },
     "pending_pr132": {
       "head": "6d8f4a9b7039feae450f839783e151e2068b8242",
       "repairs": 127,
-      "status": "SCOPED_PASS07_FINAL_COMBINATION_PENDING",
+      "status": "ACCEPTED_INTEGRATED_NOT_DEPLOYED",
       "config_contract": "Canonical paper_signal_policy_version=3 + paper_quote_execution_version=1; omission of experimental_policy_version preferred, matching3 alias accepted by6d8f4a9",
       "author_linux_tests": 2173,
-      "ci": "Both exact6d8f4a9 checks SUCCESS"
+      "ci": "Both exact6d8f4a9 checks SUCCESS",
+      "integration_commit": "9b03e4532a3902e1f4521e99a04b8a071c2e28d6",
+      "source_identity_match": true
     },
     "pending_pr133": {
       "head": "bd388f6bc2149214c6e24956f4220ea87ac34c9c",
-      "status": "SCOPED_PASS07_FINAL_COMBINATION_PENDING",
-      "scope": "Raw-unit-aware quote partial report accounting"
+      "status": "ACCEPTED_INTEGRATED_NOT_DEPLOYED",
+      "scope": "Raw-unit-aware quote partial report accounting",
+      "integration_commit": "9b03e4532a3902e1f4521e99a04b8a071c2e28d6",
+      "source_identity_match": true
     },
     "pending_pr134": {
       "head": "aaaa8e41ea08f73ba1b6b2b0525b03bd45e2a1bb",
-      "status": "BOUND_REPAIR_REREVIEW04",
+      "status": "ACCEPTED_INTEGRATED_NOT_DEPLOYED",
       "scope": "Original validated mint account handoff to actual entry token policy",
       "author": "06",
       "reviewer": "04",
-      "finding": "Retained raw account metadata can enlarge event beyond262144byte journal reader limit; reject beforepublication preserving source"
+      "finding": "Retained raw account metadata can enlarge event beyond262144byte journal reader limit; reject beforepublication preserving source",
+      "focused_tests": 45,
+      "integration_commit": "9b03e4532a3902e1f4521e99a04b8a071c2e28d6",
+      "source_identity_match": true
     },
     "pending_pr135": {
       "head": "e10b0a8269d8c1a9e26e09aaf67de9f2690cbf8b",
-      "status": "REPAIR_PUBLISHED_REREVIEW02",
+      "status": "ACCEPTED_INTEGRATED_NOT_DEPLOYED",
       "author": "09",
       "reviewer": "02",
       "scope": "Retained raw migration witness extractor; runtime trusted source binding still required",
       "linux_author_tests": 2143,
       "finding": "Wrong-mint event scoped to target migration instruction silently skipped; contradictory evidence must reject",
-      "local_focused_tests": 9
+      "local_focused_tests": 9,
+      "linux_tests": 2156,
+      "linux_skips": 0,
+      "focused_tests": 9,
+      "independent_cases": 14,
+      "reviewed_tree": "8ba952a0d49ecba82bf3558fdca06146b425ac16",
+      "ci": "Both exacthead SUCCESS",
+      "integration_commit": "9b03e4532a3902e1f4521e99a04b8a071c2e28d6",
+      "source_identity_match": true
     },
     "pending_pr136": {
       "head": "d6e4a18eb3efdd0c31ab89648b14f343165e11bc",
-      "status": "SCOPED_PASS03_FINAL_COMBINATION_PENDING",
+      "status": "ACCEPTED_INTEGRATED_NOT_DEPLOYED",
       "author": "01",
       "reviewer": "03",
       "scope": "Visible unverified quote execution assumptions and retained risks",
       "focused_tests": 34,
       "independent_probes": 3,
-      "reviewed_tree": "71b6fed8d516fd1aeffacc147d80cd6f26dacf31"
+      "reviewed_tree": "71b6fed8d516fd1aeffacc147d80cd6f26dacf31",
+      "integration_commit": "9b03e4532a3902e1f4521e99a04b8a071c2e28d6",
+      "source_identity_match": true
     },
     "pending_pr137": {
-      "head": "2f90d6002c4f818765e126816a88f6497bdd7528",
-      "status": "PASS07_FINAL_RELEASE_COMBINATION_PENDING",
+      "head": "1586389f18fed037ba9021f801572fe5031560cb",
+      "status": "ACCEPTED_INTEGRATED_NOT_DEPLOYED",
       "author": "10",
       "reviewer": "07",
       "scope": "Validate quote checkpoints and journal accounting before readers and duplicate delivery",
@@ -2194,13 +2224,57 @@
       "linux_seconds": 206.311,
       "reviewed_tree": "8b1cc691e4b7aef2da8480e74162fc048931b9bf",
       "source_identity_match": true,
-      "independent_assertions": 92
+      "independent_assertions": 92,
+      "ci": "Both exact1586389 checks SUCCESS beforeintegration;15 sourceblobs matchreview",
+      "publication_identity": "All15 source blobs match coordinator finalcandidate;3 original authored blobs unchanged;07reviewtransfer confirmed",
+      "integration_commit": "9b03e4532a3902e1f4521e99a04b8a071c2e28d6"
     },
     "pending_exit_observation": {
       "worker": "06",
       "thread_id": "01a118fc-f867-7233-8eec-c20659e70095",
       "status": "DISPATCHED",
       "scope": "Existing-position fresh SELL observation must not require entry buy-window metrics or hide known hazards; no new entry authority"
+    },
+    "pending_pr138": {
+      "head": "5774e2549877d891b0f3f93a43352497a3166d7b",
+      "status": "SCOPED_PASS02_FINAL_COMBINATION_PENDING",
+      "worker": "08",
+      "reviewer": "02",
+      "scope": "Bounded one-cycle history/observation/quote/ledger intent and restart; exit-only/monitorbudget successors pending",
+      "linux_tests": 2261,
+      "linux_skips": 0,
+      "linux_seconds": 278.267,
+      "independent_probes": 7,
+      "reviewed_tree": "5592468609d88f0868772a440653ed1fe570c399"
+    },
+    "pending_pr139": {
+      "head": "2a533b4872ab4bbd26acc3f36c3f63653b4f1ce4",
+      "status": "INDEPENDENT_REVIEW04",
+      "worker": "06",
+      "reviewer": "04",
+      "scope": "Existing held-position quote_exit event, no entry-only history/USD/window features; consumer successors needed"
+    },
+    "pending_pr140": {
+      "head": "a678c45153ea8a7002c97fe011ca850e1b1ff39c",
+      "status": "INDEPENDENT_REVIEW07",
+      "worker": "09",
+      "reviewer": "07",
+      "scope": "Manual paper_cycle_cli init/once and operator guide",
+      "attachment_status": "App attachment count limit100 reached; linked by durablequeue"
+    },
+    "pending_quote_integration": {
+      "status": "ACCEPTED_INTEGRATED_NOT_DEPLOYED",
+      "source_tree": "e44bc086fb7cd8431cd3f86eaf3b31087690fd9d",
+      "source_match": true,
+      "linux_tests": 2237,
+      "linux_skips": 0,
+      "linux_seconds": 203.579,
+      "mac_tests": 2237,
+      "mac_skips": 408,
+      "manifest_sha256": "c44c786c1c93607fb9bcb8b32c66d4d432e450051f9fa446fa1b0cea42082b65",
+      "scope": "127/128 with130/132/133/134/135/136/137 finalrepairs; existing125/126/129/131 unchanged; excludes138 onward",
+      "integration_commit": "9b03e4532a3902e1f4521e99a04b8a071c2e28d6",
+      "ci": "All finalcomponentheads rechecked unchanged/SUCCESS"
     }
   },
   "native_reconciliation_review": {

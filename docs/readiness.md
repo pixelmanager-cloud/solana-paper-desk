@@ -22,6 +22,10 @@ Live loop gaps are now assigned concretely: explicit unknown-compatible experime
 
 ## Latest integration — 2026-10-09
 
+Quote-based paper execution, raw source-bound market/graduation adapters, checkpoint validation, and explicit unverified reporting are integrated at `9b03e4532a3902e1f4521e99a04b8a071c2e28d6`. Source matches independently reviewed tree `e44bc086fb7cd8431cd3f86eaf3b31087690fd9d` except coordinator documentation. All 2,237 Linux tests passed with zero skips; desktop passed the same suite with 408 platform skips. All final component heads passed CI and were rechecked before integration. Not deployed or live-paper accepted. Remaining: cycle/operator CLI integration, exit-only observations and reader/report consumers, approved shared monitoring allowance, final combined validation and bounded live runtime verification.
+
+The user explicitly approved up to 60 read-only provider requests per rolling hour shared across verified open paper positions. Its durable reservation implementation and review are in progress; investigation18/daily10/queue3 stay unchanged.
+
 Bounded history and observation acquisition is integrated through `92a2331`. Exact source matches independently reviewed tree `eda96e8606437bd58a7d2ebd27936726bf984622` apart from coordinator documentation. Combined Linux: 2,169 tests, zero skips; desktop: 2,169 tests with 408 platform skips. Exact component CI passed. The CLI preserves shared counters and latches interrupted or charged failed passes. The pending enclosing cycle must additionally cover history-call ambiguity. No provider calls, deployment, or live paper fills occurred in this integration.
 
 The paper-loop and bounded live-data foundation is integrated at `27bc668599a33562832d0da60966d9ad1f8c2f9c`. The source matches independently reviewed tree `346fb09130aea3c1a92c2cf4b7050fb6b8377316` except coordinator documentation. The combined Linux suite passed 2,136 tests with zero skips; desktop ran 2,136 with 408 platform skips. Exact component heads have successful CI. This is not yet deployed or live-paper readiness.
