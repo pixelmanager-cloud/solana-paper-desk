@@ -3361,7 +3361,7 @@
       }
     },
     "token2022_paper_support": {
-      "status": "TOKEN_SOURCE_BINDING_REPAIR_AND_HANDOFF_REVIEW",
+      "status": "REPAIRED_TOKEN_REVIEW_AND_FINAL_COMBINED_VALIDATION",
       "authorization": "2026-10-09 user: I think we need to modify the token2022 limitations as most tokens seem to be token2022 and we cannot open positions. Explicit approval to replace blanket exclusion with narrow versioned paper-only support; known hazards and unreviewed extensions still reject.",
       "base": "89f4317",
       "implementation_owner": "08",
@@ -3412,12 +3412,12 @@
         "cursor": "3dd79f38-868a-433f-9b14-13e7ed0a6e90:74",
         "format_fence": "Budget row2\u21923 with immutablegrant2 preserved; reservationbindingcolumn/trigger; frozenoldbinarymustnotmutateonclockrollback/exhaustion/reserve",
         "pr": 158,
-        "head": "bf42166f2b570015b75fc5c0f9689f5f5ecc377d"
+        "head": "275d8728187564ef0509d8f6dbd136cea241945f"
       },
       "operator_path_implementation": {
         "worker": "10",
         "thread_id": "01a118fd-56d5-70b8-ad31-dba13e982082",
-        "status": "REPAIR_REVIEW_RUNNING",
+        "status": "INDEPENDENT_PASS_CI_SUCCESS",
         "scope": "explicitselectedpaperledger fordashboard + backupselectedandoriginalledger; legacydefaultunchanged",
         "turn_id": "01a120d4-e3be-7730-a8fe-a9d9323f1184",
         "cursor": "e6039648-56af-4049-8a6e-06eaaa8aba52:60",
@@ -3466,9 +3466,9 @@
         "thread_id": "01a118fd-3f90-77d9-9549-c4497f5b10a6",
         "status": "PASS",
         "required_probe": "Old73edf43binarycannotreserveafterhandoff; failedattemptdoesnotmutatebudget; immutableoriginalgrant/receiptandusagepreserved",
-        "turn_id": "01a120e8-8f2c-77f5-9c45-8671ab7154bd",
-        "cursor": "68a4d56e-d04a-40dc-ad15-e80a29c96b80:56",
-        "head": "bf42166f2b570015b75fc5c0f9689f5f5ecc377d",
+        "turn_id": "01a120ee-b297-71a7-89a6-15e9ee30cb17",
+        "cursor": "68a4d56e-d04a-40dc-ad15-e80a29c96b80:57",
+        "head": "275d8728187564ef0509d8f6dbd136cea241945f",
         "tests": 55,
         "seconds": 41.017,
         "adversarial_probes": 2,
@@ -3484,7 +3484,10 @@
         "new_ledger": "/var/lib/solana-desk/token2022-paper.sqlite",
         "new_config": "/etc/solana-paper/paper-token2022-reviewed.json",
         "original_ledger_preserved": "/var/lib/solana-desk/active-paper.sqlite",
-        "old_runtime_receipt_hash": "927f443a16c0c52285987d7afd88ba0d544e847727c9aed4b01a020e6eea7adc"
+        "old_runtime_receipt_hash": "927f443a16c0c52285987d7afd88ba0d544e847727c9aed4b01a020e6eea7adc",
+        "candidate_implementation_hash": "0fe08c215d591fb972b59749329abcea5c30fbbf5483ea313695ffd175aa433e",
+        "policy_review_worker": "09",
+        "policy_review_status": "ASSIGNED_EXACT_EDGE"
       },
       "operator_path_review": {
         "worker": "03",
@@ -3500,10 +3503,10 @@
       },
       "implementation_pr": {
         "number": 156,
-        "head": "873786e712146d45b7249df23b7f31cb9f0c5b85",
+        "head": "d02d9068f29321ae78771d10f13a4dacc5cf33ef",
         "reviewer": "02",
         "review_turn_id": "01a120e2-1c96-7125-aacb-3882479902fd",
-        "status": "CHANGES_REQUIRED",
+        "status": "REPAIR_REVIEW_RUNNING",
         "ci_runs": [
           37937387209,
           37937313642
@@ -3535,7 +3538,7 @@
       "combined_fixture_verification": {
         "worker": "04",
         "thread_id": "01a118fc-b862-7340-ab3a-e1115a3280a4",
-        "status": "ASSIGNED",
+        "status": "FINAL_REPAIRED_COMPOSITION_AND_FULL_SUITE_ASSIGNED",
         "scope": "Actual Token2022 separate experiment + context handoff + held monitoring/exit/restart with preserved original ledger/charges; fullcombinedsuite onlyafterfinalheads",
         "turn_id": "01a120eb-1173-7153-a4b3-64b92e3a5aad",
         "cursor": "d3153436-2742-432e-8501-9c06b95f29ae:57"
@@ -3565,6 +3568,12 @@
         "exact_source": "73edf437556ef093aa0e480eab8fc239552d6307",
         "zip_sha256": "7119d5fd7e796d46e301253de4b7de7a778bbed6437fa054cb11b58a036dc037",
         "result": "All archived source bytes match deployed predecessor"
+      },
+      "coordinator_repaired_token_focused": {
+        "tests": 21,
+        "seconds": 4.78,
+        "result": "PASS",
+        "head": "d02d9068f29321ae78771d10f13a4dacc5cf33ef"
       }
     }
   },
