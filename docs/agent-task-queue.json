@@ -1427,9 +1427,8 @@
       }
     },
     "latest_cloud_reconciliation": {
-      "pr10_head": "477f2b4007610d0f37ea58c48991537502b8efdc",
-      "at": "2026-10-09T02:54:27Z",
-      "status": "UNCHANGED_NO_NEW_UNASSIGNED_REVIEW_WORK"
+      "pr10_head": "32b9755d79ce2c793d4fd04c92980e2ae9ace47b",
+      "status": "PROTOCOL_STILL_EXCLUSIVE_DESKTOP_INTEGRATION; scheduled_execution_unverified"
     },
     "desktop_pause": {
       "at": "2026-10-08T18:02Z",
@@ -1654,6 +1653,25 @@
       ],
       "status": "COMPONENT_REVIEWS_PASS_COMBINED_TESTING",
       "reviewer": "03",
+      "live_acceptance": false,
+      "local_tests": {
+        "total": 2016,
+        "skipped": 408,
+        "seconds": 35.836,
+        "tree": "bdbc2edd475e2d6ee2411ffe879e6714b1f58c2e"
+      }
+    },
+    "pending_pr115": {
+      "head": "418aa4e7a77b6e9ba43bd82fd9bb7374f62afa6b",
+      "status": "INDEPENDENT_REVIEW_10_CI_FAILURE_DIAGNOSIS_06",
+      "includes_pr111": true,
+      "author_linux_tests": 2007,
+      "live_acceptance": false
+    },
+    "pending_pr117": {
+      "head": "cfb25987e9c5a2b8cddb769da9047ed7262081f5",
+      "status": "INDEPENDENT_REVIEW_06",
+      "author": "01",
       "live_acceptance": false
     }
   },
