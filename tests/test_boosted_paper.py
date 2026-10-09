@@ -139,6 +139,26 @@ class BoostCycleTests(unittest.TestCase):
    elif mutate=='physical':forged['quote_execution']['paper_pool_evidence']['original_json']='{}'
    else:forged['quote_execution']['token_profile']['name']='old-profile'
    with self.assertRaises((ValueError,KeyError)):qe.validate_position(f.target.mint,forged,f.cfg)
+ def test_detached_entry_pool_binding_and_stale_original_are_not_replayed(self):
+  import sqlite3,json
+  f=self.f;entry=f.actual_cycle();self.assertEqual(entry['status'],'COMPLETE',entry)
+  with sqlite3.connect(f.path) as c:event=json.loads(c.execute('SELECT payload FROM events WHERE event_id=?',(entry['events'][0],)).fetchone()[0])
+  for change in ('hash','slot','clock','basis','name','legacy_numeric'):
+   forged=copy.deepcopy(event)
+   if change=='hash':forged['paper_source_evidence']['pool_hash']='0'*64
+   elif change=='slot':forged['paper_source_evidence']['pool_slot']+=1
+   elif change=='clock':forged['ts']+=11
+   elif change=='basis':forged['paper_signal_profile']['volume_formula']='invented'
+   elif change=='name':forged['paper_signal_profile']['name']='observable-flow-churn-concentration-v1'
+   else:forged['volume_vs_liq']='1'
+   with self.assertRaises(ValueError):
+    if change in ('hash','slot','clock'):replay_pool(forged,f.cfg)
+    else:
+     from desk.model import observable_signal_profile
+     observable_signal_profile(forged,token_profile_version=2)
+  from desk.model import observable_signal_profile
+  for profile in (0,1):
+   with self.assertRaises(ValueError):observable_signal_profile(event,token_profile_version=profile)
  def test_held_physical_capacity_failure_preserves_ledger_and_charged_originals(self):
   f=self.f;entry=f.actual_cycle();self.assertEqual(entry['status'],'COMPLETE',entry)
   p=cycle._state(f.path,f.cfg)['positions'][f.target.mint]

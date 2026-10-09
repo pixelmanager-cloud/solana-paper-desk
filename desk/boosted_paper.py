@@ -25,6 +25,9 @@ def replay_pool(event,cfg):
     if event['kind']=='market' and 'reserve_sol' in event:
         if event.get('paper_signal_profile',{}).get('volume_reserve_basis')!='EFFECTIVE_PRICING_NOT_PHYSICAL_LIQUIDITY':
             raise ValueError('Versioned historical pricing denominator required')
+        original=event['paper_source_evidence']
+        if (record.raw_hash!=original['pool_hash'] or record.observed_at!=original['pool_at']
+                or observed.slot!=original['pool_slot']):raise ValueError('Entry pool source mismatch')
         if decimal(event['reserve_sol'])!=observed.reserve_sol or decimal(event['reserve_tokens'])!=observed.reserve_tokens:
             raise ValueError('Physical sizing reserve mismatch')
     if event['kind']=='quote_exit':
@@ -48,6 +51,15 @@ def validate_quote(event,quote,token,proof):
     policy=mint_policy(atomic,mint=event['mint'],token_profile_version=2)
     from .quote_execution import _original
     separate=_original(token.source)['account']
+    if token.source.source_id!=event['paper_pool_evidence']['source_id']:
+        raise ValueError('Mint/pool source roster mismatch')
+    if event['kind']=='market' and 'reserve_sol' in event:
+        e=event['paper_source_evidence']
+        if (token.source.raw_hash!=e['mint_hash'] or token.source.observed_at!=e['mint_at']
+                or token.slot!=e['mint_slot'] or str(policy['supply_raw'])!=e['valuation_supply_raw']
+                or pool['slot']!=e['valuation_supply_slot']
+                or event['paper_pool_evidence']['observed_at']!=e['valuation_supply_at']):
+            raise ValueError('Entry mint/supply source mismatch')
     if (separate['owner']!=atomic['owner'] or policy['decimals']!=token.decimals
             or pool['slot']<token.slot or pool['slot']-token.slot>16):
         raise ValueError('Mint/bank source mismatch')
