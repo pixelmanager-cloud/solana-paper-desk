@@ -7,6 +7,7 @@ and corrupted accounting require recovery, never a new window/counter.
 """
 from contextlib import closing
 import json
+import math
 from pathlib import Path
 import sqlite3
 import time
@@ -77,8 +78,8 @@ class MonitoringBudget:
                     self._accounting(c)
                     c.commit()
                     return
-                c.execute('CREATE TABLE paper_monitoring_budget(id INTEGER PRIMARY KEY CHECK(id=1),version INTEGER NOT NULL,ledger TEXT NOT NULL,config_hash TEXT NOT NULL,code_hash TEXT NOT NULL,cap INTEGER NOT NULL,window_seconds INTEGER NOT NULL,high_water INTEGER NOT NULL,total INTEGER NOT NULL,blocked TEXT)')
-                c.execute('CREATE TABLE paper_monitoring_reservations(id INTEGER PRIMARY KEY,at INTEGER NOT NULL,scan_id TEXT NOT NULL,mint TEXT NOT NULL,checkpoint_hash TEXT NOT NULL,method TEXT NOT NULL,params_hash TEXT NOT NULL)')
+                c.execute('CREATE TABLE paper_monitoring_budget(id INTEGER PRIMARY KEY CHECK(id=1),version INTEGER NOT NULL,ledger TEXT NOT NULL,config_hash TEXT NOT NULL,code_hash TEXT NOT NULL,cap INTEGER NOT NULL,window_seconds INTEGER NOT NULL,high_water REAL NOT NULL,total INTEGER NOT NULL,blocked TEXT)')
+                c.execute('CREATE TABLE paper_monitoring_reservations(id INTEGER PRIMARY KEY,at REAL NOT NULL,scan_id TEXT NOT NULL,mint TEXT NOT NULL,checkpoint_hash TEXT NOT NULL,method TEXT NOT NULL,params_hash TEXT NOT NULL)')
                 c.execute('CREATE TABLE paper_monitoring_outcomes(reservation_id INTEGER PRIMARY KEY REFERENCES paper_monitoring_reservations(id),evidence_hash TEXT NOT NULL)')
                 for table in ('paper_monitoring_reservations', 'paper_monitoring_outcomes'):
                     for action in ('UPDATE', 'DELETE'):
@@ -93,7 +94,8 @@ class MonitoringBudget:
     def _accounting(self, c):
         row = c.execute('SELECT version,ledger,config_hash,code_hash,cap,window_seconds,high_water,total,blocked FROM paper_monitoring_budget WHERE id=1').fetchone()
         if (row is None or row[:6] != (VERSION, str(self.ledger), self.config_hash, self.code_hash, CAP, WINDOW_SECONDS)
-                or type(row[6]) is not int or type(row[7]) is not int or not 0 <= row[6] < 2**63 or row[7] < 0):
+                or type(row[6]) not in (int,float) or not math.isfinite(row[6])
+                or type(row[7]) is not int or not 0 <= row[6] < 2**63 or row[7] < 0):
             raise MonitoringBlocked('MONITORING_ACCOUNTING_INVALID')
         count, largest, earliest, latest = c.execute('SELECT count(*),max(id),min(at),max(at) FROM paper_monitoring_reservations').fetchone()
         if (count != row[7] or (largest or 0) != count
@@ -181,9 +183,8 @@ class MonitoringBudget:
             admission, position, original, raw, checkpoint_hash = self._held(progress, scan_id)
             self._request(method, params, position, original, admission['descriptor']['mint'], raw)
             now = self.clock()
-            if type(now) not in (int, float) or not 0 <= now < 2**63:
+            if type(now) not in (int, float) or not math.isfinite(now) or not 0 <= now < 2**63:
                 raise MonitoringBlocked('MONITORING_CLOCK_INVALID')
-            now = int(now)
             with self.store.connect() as c:
                 c.execute('BEGIN IMMEDIATE')
                 try:
@@ -222,9 +223,8 @@ class MonitoringBudget:
         """Read-only diagnostics and monotonic sequence; never refresh/reset state."""
         self._checkpoint()
         now = self.clock()
-        if type(now) not in (int, float) or not 0 <= now < 2**63:
+        if type(now) not in (int, float) or not math.isfinite(now) or not 0 <= now < 2**63:
             raise MonitoringBlocked('MONITORING_CLOCK_INVALID')
-        now = int(now)
         with self.store.connect() as c:
             c.execute('BEGIN')
             row = self._accounting(c)
