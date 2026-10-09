@@ -2647,7 +2647,16 @@
       }
     ],
     "latest_backup_before_runtime": "daily-20261009T095803Z",
-    "current_live_entry_blocker": "Reviewed intake tool installed. Latest sampled migrations779\u2013782 all have Token2022 base tokens; none admitted. Legacy migrate instruction name alone is not a token-program pass. Previous three legacy investigations lack migration witnesses; first two canonical pools absent. No supported live candidate or paper fill.",
+    "current_live_entry_blocker": {
+      "status": "NO_SUPPORTED_DISCOVERED_CANDIDATE",
+      "observations": 57,
+      "unique_migration_mints_identified": 39,
+      "token_2022_mints": 39,
+      "legacy_candidates": 0,
+      "decode_errors_excluded": 3,
+      "policy_change": "Token2022 narrowpaperprofile question pending; no implementation/waiver",
+      "no_first_live_paper_entry": true
+    },
     "paper_runtime_deployment": {
       "source_commit": "b84e20dd3a464be0c5a06f4252b4118a402190e0",
       "source_tree": "afe2845a6067ea63bf1e16528a3dcd0f80783127",
@@ -3097,7 +3106,7 @@
       "source_identity": "Only coordinator queue/readiness differ from independent exacthead"
     },
     "downstream_allowance_upgrade": {
-      "status": "REPAIR_INTEGRATED_AWAITING_FINAL_CI",
+      "status": "DEPLOYED_VERIFIED_NO_LIVE_PAPER_ENTRY",
       "authorization": "User explicitly requested another increase beyond100/day and600/hour. Coordinator targets1000/day,queue25,monitor3600/hour; ceilings subject to provider pacing.",
       "limits": {
         "daily_admissions": 1000,
@@ -3116,7 +3125,7 @@
         "cursor": "0851f5ab-a903-4567-a6fe-4cbb4e6a7b96:52"
       },
       "constraints": "Explicit durable upgrade only; no counter reset, reprovision, forged source identity, historical evidence or checkpoint rewrite. Existing defaults do not silently escalate. Runtime compatibility required.",
-      "deployment": "Not active; original10/3/60 remain until independent review/fullLinux/CI and safe coordinator upgrade",
+      "deployment": "Active1000/day queue25 monitoring3600/hour; lifetime18 unchanged; exact73edf43 release with reviewed8098 successor",
       "preflight": "Complete; author notified: versioned receipt policy cutoff, old+new rolling usage, explicit pinned runtime successor compatibility preserving original metadata/checkpoints, atomic idempotent upgrade",
       "pacing": "Shared provider pacing required; heldpositions priority; no assumed paid tier, uncharged retry or provider purchase. Existing usage retained.",
       "supersedes": {
@@ -3246,12 +3255,12 @@
       "integration_commit": "5baa47bff2b1b613827551594642c9b89136f5e5",
       "source_match": "Frozen96c7b055 exact except coordinator queue/readiness and separately independently reviewed external transition pin",
       "integration_ci": {
-        "head": "358109813fa302569543de213d44e66889979de7",
+        "head": "73edf437556ef093aa0e480eab8fc239552d6307",
         "runs": [
-          37932061735,
-          37932054540
+          37934485831,
+          37934481728
         ],
-        "status": "ONE_SUCCESS_ONE_PACING_RACE_TEST_FAILURE"
+        "status": "BOTH_SUCCESS"
       },
       "deployment_preflight": {
         "worker": "10",
@@ -3262,12 +3271,14 @@
         "actual_service_config_check": "Watchdog and held-cycle already use correct /etc/solana-paper/paper-quote-reviewed.json; no ExecStartPre blocker in effective units. Preserve existing commands. Discovery is isolated and old sampler disabled."
       },
       "release_stage": {
-        "head": "358109813fa302569543de213d44e66889979de7",
-        "path": "/opt/solana-desk-releases/3581098",
-        "archive_sha256": "a1118a66554f0cbad203c8917464b08f6352e015e8e317b133743f025c9ca80c",
+        "head": "73edf437556ef093aa0e480eab8fc239552d6307",
+        "path": "/opt/solana-desk-releases/73edf43",
+        "archive_sha256": "d4d302022b88dd5641a1af7a626d580e42fc4346f6c84294ad124f289cffbaa0",
         "implementation_hash": "8098b4033adff886006e2f6af5ccb0ce4bfa02e242f5fb1b4c7402c05ddaa8c9",
-        "status": "STAGED_NOT_ACTIVATED",
-        "matched_source_files": 462
+        "status": "DEPLOYED_VERIFIED",
+        "matched_source_files": 462,
+        "service_account_focused_tests": 22,
+        "service_account_focused_seconds": 2.828
       },
       "ci_repair": {
         "author_thread": "01a118fc-f867-7233-8eec-c20659e70095",
@@ -3294,6 +3305,36 @@
         "source_manifest_unchanged": true,
         "ci_success_run": 37933563506,
         "integration_commit": "729b370defd3d734afa7d735d7c42a70b9fa6877"
+      },
+      "production_activation": {
+        "release": "73edf437556ef093aa0e480eab8fc239552d6307",
+        "source_path": "/opt/solana-desk-releases/73edf43",
+        "at": "2026-10-09T13:14:56Z",
+        "pre_backup": "/var/backups/solana-desk/pre-upgrade-73edf43/daily-20261009T131408Z",
+        "post_backup": "/var/backups/solana-desk/post-upgrade-73edf43/daily-20261009T131456Z",
+        "runtime_transition": "RECORDED",
+        "research_policy_hash": "346bcc22488e1616b18800d96ee3504262f2cdeeb0dc16563bb11fbfb5176338",
+        "monitoring_policy_hash": "126f67fbf6c0e2aca2a8ff31c26b1f72928d84533ba67e36450b2517b8220bf8",
+        "original_tables_verified": 34,
+        "permitted_changes": [
+          "research.scan_job_migrations adds explicitmarker",
+          "evidence.paper_monitoring_budget version2 cap3600 only"
+        ],
+        "pacing_db": "/var/lib/solana-desk/provider-pacing.sqlite",
+        "pacing_initial_backup": "/var/backups/solana-desk/pre-upgrade-73edf43/provider-pacing-initial.sqlite",
+        "pacing_backup_sha256": "cd83cf9905943cbe818d6496b334fcde8168481c1c48d451bd98fc80206733ed",
+        "pacing_seconds_per_provider": 2,
+        "pacing_backoff_seconds": 30,
+        "service_checks": "DashboardHTTP200private127.0.0.1:8765; held-cycle/watchdog/decisions exit0; matchingWorkingDirectory and pacingENV; timersresumed; discoveryseparateactive",
+        "checkpoint_valid": true,
+        "paper_cash": "5",
+        "positions": 0,
+        "outcomes": 0,
+        "monitoring_used": 0,
+        "provider_calls": 0,
+        "automatic_entry": false,
+        "first_entry_notification_due": false,
+        "limitation": "Dailybuilt-inbackup excludesdiscovery/pacing; standaloneprotectedpacingbackup saved; discoveryofflinebackup remains session-completion protocol; never restoreoldcounters."
       }
     },
     "discovery_policy_combined_review": {
