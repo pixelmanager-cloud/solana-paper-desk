@@ -19,6 +19,7 @@ import re
 from .live_observation import (QuoteObservation, SourceRecord, ProviderObservation,
                                ingest_mint, ingest_quote)
 from .model import canonical, digest, decimal
+from .programs import address
 from .original_byte_slot_transport import _parse
 from .original_byte_read_transport import _bounded_json
 
@@ -132,6 +133,10 @@ def _book(event, quotes, cfg):
         raise QuoteExecutionError('QUOTE_EXECUTION_CONFIG_REQUIRED')
     if type(quotes) is not tuple or len(quotes) > MAX_QUOTES:
         raise QuoteExecutionError('QUOTE_SET_INVALID')
+    if event.get('kind')=='market':
+        try:address(event.get('taker'))
+        except ValueError:
+            raise QuoteExecutionError('QUOTE_EVENT_WALLET_REQUIRED') from None
     validated = []; identities = set(); decimals = None; mint_hash = None
     for quote in quotes:
         if type(quote) is not QuoteObservation:
