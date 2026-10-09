@@ -2853,7 +2853,7 @@
       "next_if_recurs": "Verbose test names and periodic faulthandler dumps, preserving suite and10min timeout; no source repair established"
     },
     "continuous_discovery_preflight": {
-      "status": "CHANGES_REQUIRED_REAL_OVERSIZE_RECONNECT",
+      "status": "OVERSIZE_REPAIRED_REREVIEW_PENDING",
       "worker": "08",
       "thread_id": "01a118fd-2563-7126-90d7-bd07693de0b2",
       "turn_id": "01a1205a-ac94-70d6-bb60-70c87ba13d8e",
@@ -2899,12 +2899,12 @@
       "deployment": "NOT_DEPLOYED; retain sampler until exact-head review, full Linux tests and CI; keep paper runtime pinned",
       "allowance_change": "Author08 and reviewer02 notified; not deployed; preserve prior charged usage and originals",
       "latest_periodic_sample": {
-        "checked_utc": "2026-10-09T11:39Z",
+        "checked_utc": "2026-10-09T11:54Z",
         "new_records_after_seq782": 0,
         "extra_provider_calls": 0
       },
       "pr": 151,
-      "head": "5b96cbf0d0bbd86ea219911d3ac07fc5bb939e7f",
+      "head": "7bc51403ad122760acdc013857c49438d30d8af0",
       "capacity_benchmark": {
         "worker": "06",
         "status": "PRELIMINARY_REPORTED",
@@ -2924,7 +2924,8 @@
           "scope": "Old c72d3c1 synthetic host only; not VPS guarantee"
         }
       },
-      "finding": "Independent02 on23d6591 reproduced real WS oversized frame reconnect instead of stop; charging conservative; author08repairrequested"
+      "finding": "Independent02 on23d6591 reproduced real WS oversized frame reconnect instead of stop; charging conservative; author08repairrequested",
+      "combined_tree": "dd09bb1e8d98f3c9552f7232e3f8fa49a41b6029"
     },
     "paper_policy_tuning": {
       "status": "PASS_INTEGRATED_OFFLINE_FOUNDATION",
@@ -2981,7 +2982,7 @@
       "source_identity": "Only coordinator queue/readiness differ from independent exacthead"
     },
     "downstream_allowance_upgrade": {
-      "status": "IMPLEMENTATION_AND_INDEPENDENT_PREFLIGHT_DISPATCHED",
+      "status": "DRAFT_POLICY_REVIEW_PENDING_RUNTIME_AND_PACING",
       "authorization": "User explicitly requested another increase beyond100/day and600/hour. Coordinator targets1000/day,queue25,monitor3600/hour; ceilings subject to provider pacing.",
       "limits": {
         "daily_admissions": 1000,
@@ -2994,10 +2995,10 @@
       "turn_id": "01a1206f-f358-7693-8ac3-4d59f106990f",
       "cursor": "5e651fc7-2996-4765-974d-5c852257a005:108",
       "reviewer": {
-        "worker": "04",
-        "thread_id": "01a118fc-b862-7340-ab3a-e1115a3280a4",
-        "turn_id": "01a12070-02dd-71e9-a228-7859f14d3cc5",
-        "cursor": "d3153436-2742-432e-8501-9c06b95f29ae:45"
+        "worker": "03",
+        "thread_id": "01a118fc-9478-778a-b77a-8f8f6ec7e0ad",
+        "turn_id": "01a12083-dc0c-71eb-94c2-827d87868444",
+        "cursor": "0851f5ab-a903-4567-a6fe-4cbb4e6a7b96:49"
       },
       "constraints": "Explicit durable upgrade only; no counter reset, reprovision, forged source identity, historical evidence or checkpoint rewrite. Existing defaults do not silently escalate. Runtime compatibility required.",
       "deployment": "Not active; original10/3/60 remain until independent review/fullLinux/CI and safe coordinator upgrade",
@@ -3033,7 +3034,9 @@
         "scope": "Durable shared Helius/Jupiter pacing/backoff, heldpositionpriority, preserve callerbudget charges, no hidden retries",
         "turn_id": "01a1207f-badc-7720-b415-aa1bc5476197",
         "cursor": "8f3328cf-bef6-441d-83f8-2d1f46b3b0df:123"
-      }
+      },
+      "pr": 153,
+      "head": "8471ab34714be186ba6a477b72756af2cd5403b3"
     },
     "discovery_policy_combined_review": {
       "prs": {
