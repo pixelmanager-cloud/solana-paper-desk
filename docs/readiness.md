@@ -8,6 +8,8 @@ The reviewed transport/runtime composition is deployed at `b414dbd175042e20eb17a
 
 Live candidate222 passed Token-2022 policy and completed history transport successfully using six charged investigation requests. Intake rejected a migration-event quote-mint binding: the outer migrate_v2 account is WSOL while the complete direct event contains the default public key. Independent worker02 verified the full event layout and canonical bindings. Worker08 is implementing a narrow migrate_v2-only default-SOL event interpretation, preserving the raw quote separately; worker07 is implementing a bounded append-only runtime continuation, with independent review by09. Worker04 is preparing the combined paper-cycle regression. No original evidence is normalized, no counters reset, and no entry forced. The ledger remains 5 simulated SOL, zero positions and zero outcomes.
 
+The narrow migration fix PR165 `f40ea164` passed independent review and both full Linux CI runs (2,549 tests each), and is integrated locally at `5b03b269`. PR166 final receipt-read repair `76f1b078` and the exact continuation policy pin passed independent review. Combined PR167 `9ebbdb27` has source `8c675296c36cd6b088a25aae0c7fcf8d65bdc26673bfdffa49012368acb06427`; final CI and an inactive VPS full suite are running. A preceding exact combined fixture passed entry/four-read exit/restart on the VPS in23.278s and independently in18.555s, while an earlier cloud deadline failure remains recorded. These are fixture results only; no successor runtime is deployed yet.
+
 ## Historical deployment and validation records
 
 The records below describe earlier states and are retained for provenance; the current status above supersedes them.

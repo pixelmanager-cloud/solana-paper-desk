@@ -3992,7 +3992,7 @@
         "runtime_review_preflight_turn_id": "01a12154-5fe6-73fe-996c-2dd864fed6a4",
         "combined_fixture_owner": "04",
         "combined_fixture_thread_id": "01a118fc-b862-7340-ab3a-e1115a3280a4",
-        "combined_fixture_status": "PREPARING_DEPENDENT_TEST_NO_FULL_SUITE_UNTIL_FINAL_HEADS",
+        "combined_fixture_status": "HELD_CYCLE_DEADLINE_FAILURE_TIMING_DIAGNOSIS_ASSIGNED",
         "root_original_replay": "OBSERVED, meta.err null, complete event2.49; only migration binding/witness blockers reproduced; no provider calls",
         "pr": 165,
         "head": "f40ea164b6ed6e1883bcbb094fc3cb24c2f7a07f",
@@ -4018,19 +4018,22 @@
         },
         "runtime_pr": {
           "number": 166,
-          "head": "1ae4ebf65cdec47fd98b469f3fd7ab8f23bca9eb",
+          "head": "76f1b0786bcd714014038ba0f1960adc39ebbfdf",
           "reviewer": "09",
-          "status": "HOLD_BOUNDED_FIRST_RECEIPT_READ_REPAIR_ASSIGNED",
+          "status": "INDEPENDENT_PASS_FINAL_CI_RUNNING",
           "ci_runs": [
-            37954555536,
-            37954516947
+            37956170687,
+            37956179843
           ],
           "attachment": "identity count exceeds100; not retried",
-          "review_turn_id": "01a1215c-8999-73cc-93fb-b24844c874b4",
+          "review_turn_id": "01a12167-8206-72b9-974b-1468698f2afd",
           "finding": "First receipt payload materialized before SQL size/type and exact schema/guards;3147904bytes reached_parse before2MiBrejection",
-          "review_tests": 36,
-          "review_seconds": 36.036,
-          "independent_probes": 2
+          "review_tests": 38,
+          "review_seconds": 43.005,
+          "independent_probes": 2,
+          "repair_head": "4c981382e3e5dac8706361975dcad1813bc8dc50",
+          "second_finding": "Same scalar preflight needed for continuation receipt itself; repair assigned",
+          "independent_probe_seconds": 4.125
         },
         "root_combined_focused": {
           "tests": 31,
@@ -4052,6 +4055,62 @@
           "tests": 2549,
           "seconds": 455.715,
           "skips": 0
+        },
+        "combined_fixture_failure": {
+          "head": "f894e024a4ec5ce9b9158b3cea4d828ba90823a9",
+          "turn_id": "01a12163-51fd-7795-9e9c-2a7b7478a5b5",
+          "test_seconds": 32.281,
+          "held_status": "BLOCKED",
+          "blocker": "CYCLE_DEADLINE_UNAVAILABLE",
+          "held_requests": 4,
+          "sell": false,
+          "restart": "NOT_REACHED",
+          "reviewer": "06",
+          "thread_id": "01a118fc-f867-7233-8eec-c20659e70095",
+          "publication": "PR167 f894e024a4ec5ce9b9158b3cea4d828ba90823a9"
+        },
+        "integration_commit": "5b03b269c1f32bda6e7970fc6139508a90474a7d",
+        "vps_serial_fixture": {
+          "status": "PASS",
+          "head": "f894e024a4ec5ce9b9158b3cea4d828ba90823a9",
+          "source": "2dcd7e1eb83399093b28ff86703951a6028cc8e8659dcef513f37a2a4abf6c6d",
+          "archive_sha256": "d709d56e3ce180608fd9956e90f5ee43a22fb122d5b1d61719351e18757fffd8",
+          "tests": 1,
+          "seconds": 23.278,
+          "scope": "Synthetic native-clock guarded entry BUY, actual4readheldSELL, emptyrestart; alloriginalfirstreceipt/usagepreservationassertions",
+          "log": "/var/tmp/paper-review-continuation/serial-f894.log",
+          "live": false,
+          "deployment": false,
+          "caveat": "166 boundedread repair not yet composed; cloudtimeout preserved"
+        },
+        "final_composition": {
+          "pr": 167,
+          "head": "9ebbdb277a808e5b731f5ae87f20718896803633",
+          "source": "8c675296c36cd6b088a25aae0c7fcf8d65bdc26673bfdffa49012368acb06427",
+          "policy_review": "09_PASS_CONDITIONAL_UNCHANGED_SOURCE",
+          "root_focused_tests": 33,
+          "root_focused_seconds": 17.382,
+          "archive_sha256": "65c4cd1f4a48a006ab00d71acef9b01041f6a27e2651a598ec75b611b0cd088c",
+          "vps_path": "/opt/solana-desk-releases/review-sentinel-8c67529",
+          "vps_log": "/var/tmp/paper-review-sentinel-8c67529/full.log",
+          "vps_status": "FULL_LINUX_RUNNING",
+          "ci_runs": [
+            37956360968,
+            37956354827
+          ],
+          "vps_session_id": 81205,
+          "policy_review_turn": "01a12167-8206-72b9-974b-1468698f2afd"
+        },
+        "timing_review": {
+          "worker": "06",
+          "turn_id": "01a12164-147c-7012-a82f-4310edd92037",
+          "status": "PASS_ONE_INDEPENDENT_SAMPLE_ORIGINAL_TIMEOUT_UNRESOLVED",
+          "fixture_head": "f894e024a4ec5ce9b9158b3cea4d828ba90823a9",
+          "total_seconds": 18.555,
+          "held_seconds": 6.62,
+          "hash_scans": 98,
+          "hash_seconds": 1.213,
+          "implementation_change": "NONE_WARRANTED"
         }
       }
     }
