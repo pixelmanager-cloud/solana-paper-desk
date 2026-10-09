@@ -132,7 +132,16 @@ def _history(c,cfg):
 
 
 def require_runtime(c,*,implementation=None):
-    """Shared writer/reader hook; accepts one exact approved edge, no chains."""
+    """Shared reader/writer hook: native, one edge, or one reviewed continuation."""
+    names={r[0] for r in c.execute("SELECT name FROM sqlite_master WHERE type='table' AND name LIKE 'paper_runtime_%'")}
+    if 'paper_runtime_continuation' in names:
+        from .runtime_continuation import require_continuation
+        return require_continuation(c,implementation=implementation)
+    return _require_first(c,implementation=implementation)
+
+
+def _require_first(c,*,implementation=None,continuation=False):
+    """Validate unchanged v1 receipt; only continuation validator permits its table."""
     current=implementation_hash() if implementation is None else implementation
     metadata=dict(c.execute("SELECT key,value FROM metadata WHERE key IN ('implementation_hash','config_hash','config')"))
     original=metadata.get('implementation_hash');cfg_hash=metadata.get('config_hash')
@@ -143,7 +152,8 @@ def require_runtime(c,*,implementation=None):
     if not names:
         if original!=current:raise ValueError('implementation changed: explicit reviewed transition required')
         return current
-    if names!={TABLE}:raise ValueError('Partial runtime transition schema')
+    expected={TABLE,'paper_runtime_continuation'} if continuation else {TABLE}
+    if names!=expected:raise ValueError('Partial runtime transition schema')
     if c.execute("SELECT sql FROM sqlite_master WHERE type='table' AND name=?",(TABLE,)).fetchone() != (_schema(),):
         raise ValueError('Malformed runtime table semantics')
     columns=c.execute(f'PRAGMA table_info({TABLE})').fetchall()
