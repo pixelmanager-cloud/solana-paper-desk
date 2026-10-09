@@ -168,9 +168,13 @@ class QuoteV3SeamTests(unittest.TestCase):
         self.assertEqual(state,before)
         _,outcomes=qe.bind_transition(built,(f.observation.quote,))(copy.deepcopy(state),built,self.cfg)
         self.assertEqual(planned['outcomes'],outcomes)
-        # Trusted wallet binding is repaired, but producer still omits the raw
-        # account evidence required by the unchanged entry token policy.
-        self.assertIn('TOKEN_EVIDENCE_MISSING_OR_MISMATCHED',outcomes[-1]['reasons'])
+        # Original bound mint account now reaches the unchanged token gate.
+        # This adverse measured-window fixture must still reject known churn.
+        from desk.security import entry_token_policy
+        self.assertEqual(entry_token_policy(built),[])
+        self.assertEqual(built['token_evidence']['source_hash'],built['paper_source_evidence']['mint_hash'])
+        self.assertNotIn('TOKEN_EVIDENCE_MISSING_OR_MISMATCHED',outcomes[-1]['reasons'])
+        self.assertIn('MOMENTUM_OR_OBSERVED_CHURN',outcomes[-1]['reasons'])
         self.assertFalse(planned['quote_demands'])
         for value in (None,'invalid','So11111111111111111111111111111111111111112'):
             bad=copy.deepcopy(built);bad['taker']=value
