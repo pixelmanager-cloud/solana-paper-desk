@@ -288,7 +288,7 @@ with store.connect() as c:assert list(c.iterdump())==original
                 return self.connection.execute(sql,*args)
         # Full SQL dump includes first bytes; comparing it proves no mutation but
         # never substitutes for the instrumented production reader below.
-        cases=('oversize','blob_payload','oversize_hash','blob_hash','bad_id','empty','schema','guards')
+        cases=('oversize','oversize_utf8','blob_payload','oversize_hash','blob_hash','bad_id','empty','schema','guards')
         for case in cases:
             with self.subTest(case=case):
                 database=self.root/('first-preflight-'+case+'.sqlite')
@@ -304,6 +304,7 @@ with store.connect() as c:assert list(c.iterdump())==original
                     else:
                         c.execute('DROP TRIGGER paper_runtime_transition_update')
                         if case=='oversize':c.execute('UPDATE paper_runtime_transition SET payload=?',('x'*(runtime.MAX_BYTES+1),))
+                        if case=='oversize_utf8':c.execute('UPDATE paper_runtime_transition SET payload=?',('😀'*(runtime.MAX_BYTES//4+1),))
                         if case=='blob_payload':c.execute('UPDATE paper_runtime_transition SET payload=?',(b'{}',))
                         if case=='oversize_hash':c.execute('UPDATE paper_runtime_transition SET payload_hash=?',('0'*(runtime.MAX_BYTES+1),))
                         if case=='blob_hash':c.execute('UPDATE paper_runtime_transition SET payload_hash=?',(b'0'*64,))
@@ -316,5 +317,47 @@ with store.connect() as c:assert list(c.iterdump())==original
                     c.commit();before=list(c.iterdump());probe=Probe(c)
                     with patch.object(runtime,'_parse',side_effect=AssertionError('Parser called before first SQL preflight')) as parser:
                         with self.assertRaises(ValueError):continuation._first(probe)
+                        parser.assert_not_called()
+                    self.assertEqual(probe.payload_reads,0);self.assertEqual(list(c.iterdump()),before)
+
+    def test_second_receipt_preflight_never_loads_oversize_or_malformed_payload(self):
+        self.upgrade()
+        class Probe:
+            def __init__(self,connection):self.connection=connection;self.payload_reads=0
+            def execute(self,sql,*args):
+                if sql.startswith('SELECT payload,payload_hash FROM paper_runtime_'):
+                    self.payload_reads+=1
+                    raise AssertionError('Receipt payload loaded before second SQL preflight rejected it')
+                return self.connection.execute(sql,*args)
+        cases=('oversize','oversize_utf8','blob_payload','oversize_hash','blob_hash','bad_id','empty','schema','guards')
+        for case in cases:
+            with self.subTest(case=case):
+                database=self.root/('second-preflight-'+case+'.sqlite')
+                with sqlite3.connect(self.f.new) as origin,sqlite3.connect(database) as c:
+                    origin.backup(c)
+                    if case=='guards':
+                        c.execute('DROP TRIGGER '+continuation.TABLE+'_update')
+                        c.execute(f'CREATE TRIGGER {continuation.TABLE}_update BEFORE UPDATE ON {continuation.TABLE} BEGIN SELECT 1; END')
+                    elif case=='schema':
+                        row=c.execute(f'SELECT * FROM {continuation.TABLE}').fetchone()
+                        c.execute('DROP TABLE '+continuation.TABLE)
+                        c.execute(f'CREATE TABLE {continuation.TABLE}(id INTEGER,payload TEXT,payload_hash TEXT)')
+                        c.execute(f'INSERT INTO {continuation.TABLE} VALUES(?,?,?)',row)
+                    else:
+                        c.execute('DROP TRIGGER '+continuation.TABLE+'_update')
+                        if case=='oversize':c.execute(f'UPDATE {continuation.TABLE} SET payload=?',('x'*(runtime.MAX_BYTES+1),))
+                        if case=='oversize_utf8':c.execute(f'UPDATE {continuation.TABLE} SET payload=?',('😀'*(runtime.MAX_BYTES//4+1),))
+                        if case=='blob_payload':c.execute(f'UPDATE {continuation.TABLE} SET payload=?',(b'{}',))
+                        if case=='oversize_hash':c.execute(f'UPDATE {continuation.TABLE} SET payload_hash=?',('0'*(runtime.MAX_BYTES+1),))
+                        if case=='blob_hash':c.execute(f'UPDATE {continuation.TABLE} SET payload_hash=?',(b'0'*64,))
+                        if case=='bad_id':
+                            c.execute('PRAGMA ignore_check_constraints=ON');c.execute(f'UPDATE {continuation.TABLE} SET id=2')
+                        if case=='empty':
+                            c.execute('DROP TRIGGER '+continuation.TABLE+'_delete');c.execute(f'DELETE FROM {continuation.TABLE}')
+                            c.execute(continuation._guards()[continuation.TABLE+'_delete'])
+                        c.execute(continuation._guards()[continuation.TABLE+'_update'])
+                    c.commit();before=list(c.iterdump());probe=Probe(c)
+                    with patch.object(runtime,'_parse',side_effect=AssertionError('Parser called before second SQL preflight')) as parser:
+                        with self.assertRaises(ValueError):continuation.require_continuation(probe)
                         parser.assert_not_called()
                     self.assertEqual(probe.payload_reads,0);self.assertEqual(list(c.iterdump()),before)

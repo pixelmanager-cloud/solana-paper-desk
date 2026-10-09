@@ -87,11 +87,13 @@ def require_continuation(c,*,implementation=None):
     if dict(c.execute("SELECT name,sql FROM sqlite_master WHERE type='trigger' AND tbl_name=?",(TABLE,)))!=_guards():
         raise ValueError('Malformed continuation guards')
     if c.execute(f'SELECT COUNT(*) FROM {TABLE}').fetchone()[0]!=1:raise ValueError('Partial continuation')
-    row=c.execute(f'SELECT id,payload,payload_hash,length(CAST(payload AS BLOB)) FROM {TABLE}').fetchone()
-    if row[0]!=1 or not 0<row[3]<=runtime.MAX_BYTES:raise ValueError('Continuation receipt bound')
-    receipt=runtime._parse(row[1]);first,first_hash=_first(c)
+    shape=c.execute(f'SELECT id,typeof(payload),typeof(payload_hash),length(CAST(payload AS BLOB)),length(CAST(payload_hash AS BLOB)) FROM {TABLE}').fetchone()
+    if shape is None or shape[0]!=1 or shape[1:3]!=('text','text') or not 0<shape[3]<=runtime.MAX_BYTES or shape[4]!=64:
+        raise ValueError('Continuation receipt type or byte bound')
+    row=c.execute(f'SELECT payload,payload_hash FROM {TABLE} WHERE id=1').fetchone()
+    receipt=runtime._parse(row[0]);first,first_hash=_first(c)
     if (type(receipt) is not dict or set(receipt)!=FIELDS or type(receipt['version']) is not int
-            or receipt['version']!=1 or digest(receipt)!=row[2]
+            or receipt['version']!=1 or not runtime._hash(row[1]) or digest(receipt)!=row[1]
             or receipt['first_receipt_hash']!=first_hash or receipt['predecessor']!=first.get('successor')
             or receipt['successor']!=current or receipt['successor']==first.get('predecessor')
             or receipt['config_hash']!=first.get('config_hash')):
