@@ -44,7 +44,11 @@ def _event_json(payload,cfg):
     # Match engine.transition: experimental validation is market-only; operator
     # controls and monitor clocks always use the strict grammar.
     version=policy_version(cfg)
-    if version in (1,2,3) and event.get('kind')=='market':
+    if event.get('kind')=='quote_exit':
+        from .quote_execution import config
+        if not config(cfg):raise ValueError('Quote exit requires explicit quote configuration')
+        validate_event(event)
+    elif version in (1,2,3) and event.get('kind')=='market':
         validate_event(event,mode=PAPER_EXPERIMENTAL,policy_version=version)
     else:
         validate_event(event)
@@ -60,7 +64,7 @@ def _runner_evidence(c,state,marker,now,ttl,cfg):
     if marker is not None and marker!='SYNTHETIC_TEST_ONLY':
         raise RecoveryRequired('RUNNER_MARKER_UNSUPPORTED')
     _history_preflight(c)
-    bootstrap=None;last=None;market=None;total=0;count=0
+    bootstrap=None;last=None;market=None;exit_observation=None;total=0;count=0
     for seq,event_id,ts,payload,key in c.execute('SELECT seq,event_id,ts,payload,payload_hash FROM events ORDER BY seq LIMIT 10001'):
         count+=1;total+=len(payload.encode())
         if count>10000 or len(payload.encode())>256*1024 or total>16*1024*1024:
@@ -73,11 +77,14 @@ def _runner_evidence(c,state,marker,now,ttl,cfg):
             raise RecoveryRequired('RUNNER_EVENT_INVALID')
         if event_id=='paper-runner:init':bootstrap=(seq,event)
         last={'event_id':event_id,'kind':event.get('kind'),'ts':ts,'payload_hash':key}
-        if event.get('kind')=='market':
+        if event.get('kind') in ('market','quote_exit'):
             if marker is not None and event.get('provenance')!='SYNTHETIC_TEST_ONLY':
                 raise RecoveryRequired('RUNNER_PROVENANCE_MISMATCH')
-            if market is None or ts>=market['ts']:
+            if event['kind']=='market' and (market is None or ts>=market['ts']):
                 market={**last,'provenance':event.get('provenance','UNKNOWN')}
+            if event['kind']=='quote_exit' and (exit_observation is None or ts>=exit_observation['ts']):
+                exit_observation={**last,'observed_at':event['price_at']}
+
     if marker is not None:
         init={'schema_version':1,'event_id':'paper-runner:init','ts':0,'kind':'clock','actor':'paper_monitor'}
         if bootstrap!=(1,init) or any(p['provenance']!=marker for p in state['positions'].values()):
@@ -89,6 +96,11 @@ def _runner_evidence(c,state,marker,now,ttl,cfg):
             'runner_provenance':marker,'runner_liveness':'UNKNOWN',
             'last_event_age_seconds':age,'last_market_at':market['ts'] if market else None,
             'last_market_age_seconds':market_age,
+            'last_exit_observation_at':exit_observation['observed_at'] if exit_observation else None,
+            'last_exit_observation_age_seconds':now-exit_observation['observed_at'] if exit_observation else None,
+            'last_exit_observation_currentness':('NO_EXIT_OBSERVATION' if exit_observation is None else
+                'FUTURE' if now<exit_observation['observed_at'] else
+                'RECENT_SAVED_OBSERVATION' if now-exit_observation['observed_at']<=ttl else 'STALE'),
             'last_market_currentness':('NO_MARKET_OBSERVATION' if market is None else
                                       'FUTURE' if market_age<0 else 'RECENT_SAVED_OBSERVATION' if market_age<=ttl else 'STALE'),
             'last_run_evidence':last if initialized and count>1 else None,
