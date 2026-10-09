@@ -4403,7 +4403,7 @@
             "thread_id": "01a118fd-0f1c-749c-b85b-5e730937d0a8",
             "reviewer": "09",
             "review_thread_id": "01a118fd-3f90-77d9-9549-c4497f5b10a6",
-            "status": "LOADER_FIX_PUBLISHED_MONITORING_RETENTION_FIX_PENDING",
+            "status": "SENSITIVE_PASS_FINAL_COMBINED_CI_AND_VPS_RUNNING",
             "pass_id": "d8600ce75e014e22b84c3fd8d10bf2c0",
             "intent_hash": "6f6cfd1efe9aa257638bd750ccd3c4099a3943a5d403132fa9d9d2a7b868fb7e",
             "retained_outcome_hash": "4352afa8e732c4f03eaf1cb788047aea58379fe3ef24edd05f5535e5680eb4a8",
@@ -4442,14 +4442,14 @@
             "classification_review": "Dedicated subtype only after explicit fullyvalidated mint/pool knownhazard allowlist; malformed/unknown/identity/time/persist errors staylatched; not generic ObservationError or textmatch",
             "classification_focused_tests": 30,
             "pr": 172,
-            "head": "e32559cda9095b27d92fbdeebb98fc36457f5714",
+            "head": "e2cf656fb25ed91a4053ae6c9db6dab6c64ed728",
             "review_requested_head": "99aba03843c238f08ad627c4df884e77d3e3c488",
             "ci_runs": [
               37971466355,
               37971568991
             ],
             "artifact_attachment": "FAILED thread attachment identity count exceeds 100",
-            "review_turn": "01a121df-2b97-7308-9819-747b791c023f",
+            "review_turn": "01a121ec-0fac-76f7-9a58-c36cabd92fb5",
             "classification_exact_review_turn": "01a121df-c0af-7194-8b1a-8cc0a60cbf6c",
             "operations_review_owner": "06",
             "root_focused": {
@@ -4458,7 +4458,7 @@
               "seconds": 4.269,
               "result": "PASS"
             },
-            "implementation_hash": "1944da4c47840df5d39d1d19528a3b8ba87444763311365ee43a42cb62a90fc1",
+            "implementation_hash": "3f819c9e0907ce6d8e63a585fb5917dbf10bee9620755e92cc844e510cd7a077",
             "independent_review": {
               "head": "99aba03843c238f08ad627c4df884e77d3e3c488",
               "result": "HOLD",
@@ -4504,7 +4504,61 @@
                 "verifier exact source argument",
                 "saved witness readback"
               ]
-            }
+            },
+            "loader_review": {
+              "head": "e32559cda9095b27d92fbdeebb98fc36457f5714",
+              "turn": "01a121e7-c200-74b0-8754-b835db290a81",
+              "result": "PASS",
+              "dedicated_tests": 26,
+              "seconds": 9.827,
+              "independent_probes": 3,
+              "overall_pr": "HELD_MONITORING_REGRESSION"
+            },
+            "fixture": {
+              "pr": 173,
+              "head": "75c3679ccc11914dc5ff9f8f07fb95cc46712111",
+              "turn": "01a121e7-d39e-70ba-b45e-392f2f8bcf0a",
+              "result": "ONE_COMPOSITION_PASS40.142s",
+              "reviewer": "02",
+              "status": "INDEPENDENT_REVIEW_REQUESTED",
+              "artifact_attachment": "FAILED thread attachment identity count exceeds 100",
+              "ci_runs": [
+                37973584129,
+                37973575822
+              ],
+              "tree": "0e12b0f97c39675c4e0b07cf225b611649616190",
+              "root_combined_tree_identical": true
+            },
+            "restart_review": {
+              "turn": "01a121e8-b928-758f-9d20-c8468ab702be",
+              "result": "SCOPED_OPERATIONAL_PASS_CONDITIONAL_FINAL_SOURCE_PINS_AND_ALL_GATES"
+            },
+            "vps_combined": {
+              "commit": "ab02ab1f8d902fe0feef428414bf1aa9a626a59a",
+              "path": "/opt/solana-desk-releases/ab02ab1",
+              "status": "FULL_SUITE_RUNNING_INACTIVE_SOURCE",
+              "production_changed": false
+            },
+            "fixture_independent_review": {
+              "head": "b1d94d5b5d299d8f59e0b9847101e833c43b44fc",
+              "reviewer": "02",
+              "turn": "01a121eb-204f-76dd-9e38-c7c9dd8f189e",
+              "result": "PASS",
+              "native_focused_seconds": 27.56
+            },
+            "independent_final_review": {
+              "head": "e2cf656fb25ed91a4053ae6c9db6dab6c64ed728",
+              "result": "PASS",
+              "turn": "01a121ec-0fac-76f7-9a58-c36cabd92fb5",
+              "tests": 81,
+              "seconds": 35.151,
+              "independent_probes": 2
+            },
+            "final_ci_runs": [
+              37973297370,
+              37973292849
+            ],
+            "terminal_pin_proposal_hash": "3e9ab263b09fad2fe43ecdc5fae97de69ab99a6e6d92bcaf28850cc6aa172ae0"
           }
         }
       }
