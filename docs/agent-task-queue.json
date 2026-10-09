@@ -1895,7 +1895,7 @@
     "current_worker_followups": {
       "01": "Report exact raw-unit partial dust repair; experiment_report.py only",
       "02": "Independent131deadline and126combined review",
-      "03": "Independent129restart latch review",
+      "03": "Final combined129+131 acquisition Linux review",
       "04": "Independent130 adapter clock/taker review",
       "05": "Platformblocked97/110; not retried",
       "06": "127 explicit v3 and mint decimal binding repair",
@@ -1952,13 +1952,24 @@
     },
     "pending_pr126": {
       "head": "9174515b5a175076949490ea212124be0d0f2998",
-      "status": "BUDGET_BINDING_FIXED_DEADLINE_REPAIR131_REVIEW",
+      "status": "ACCEPTED_INTEGRATED_NOT_DEPLOYED",
       "reviewer_thread": "01a118fc-666c-70b6-9fa8-2c7520f0a0bb",
       "live_acceptance": false,
       "findings": [
         "Persisted cross-budget reservation rebinding permits uncharged scan I/O"
       ],
-      "local_focused_tests": 9
+      "local_focused_tests": 9,
+      "merge": "716131cb1926b364badb4c7d7a25324d5918afbf",
+      "independent_tree": "3ab03d8d11212f5f09767d50757d14bbf834566c",
+      "linux_tests": 2147,
+      "linux_skips": 0,
+      "local_combined": {
+        "total": 2147,
+        "skipped": 408,
+        "seconds": 41.635
+      },
+      "ci": "BOTH_SUCCESS exact131head",
+      "manifest_sha256": "b3ab1898158b16e06589151975472553e098cc75ac5471bea6836fff2ecf55a0"
     },
     "pending_pr124": {
       "head": "07d44a35f04eb3e61caafd700a49bd171999f79b",
@@ -2022,8 +2033,10 @@
       "head": "f21f0362c0793fa4579c3f3466575ebc6ca29341",
       "repairs": 125,
       "reviewer": "03",
-      "status": "INDEPENDENT_REVIEW_ACTIVE",
-      "live_acceptance": false
+      "status": "SCOPED_PASS_FINAL_ACQUISITION_COMBINED_REVIEW",
+      "live_acceptance": false,
+      "linux_tests": 2158,
+      "independent_tree": "4b9176df5ad492a398a37542bd4d727fb2ad7a15"
     },
     "pending_pr130": {
       "head": "7441e94042e0d05d1760472483752a65f3820100",
@@ -2037,13 +2050,24 @@
       "repairs": 126,
       "author": "desktop",
       "reviewer": "02",
-      "status": "INDEPENDENT_COMBINED_REVIEW_ACTIVE",
+      "status": "ACCEPTED_INTEGRATED_NOT_DEPLOYED",
       "local_tests": {
         "total": 2019,
         "skipped": 408,
         "seconds": 35.917
       },
-      "local_focused": 29
+      "local_focused": 29,
+      "merge": "716131cb1926b364badb4c7d7a25324d5918afbf",
+      "independent_tree": "3ab03d8d11212f5f09767d50757d14bbf834566c",
+      "linux_tests": 2147,
+      "linux_skips": 0,
+      "local_combined": {
+        "total": 2147,
+        "skipped": 408,
+        "seconds": 41.635
+      },
+      "ci": "BOTH_SUCCESS exact131head",
+      "manifest_sha256": "b3ab1898158b16e06589151975472553e098cc75ac5471bea6836fff2ecf55a0"
     },
     "combined_pending_smoke": {
       "base": "55bfb4c",
@@ -2059,6 +2083,17 @@
       "tests": 64,
       "status": "FOCUSED_PASS_KNOWN_PENDING127_CHECKPOINT_FINDINGS",
       "live_acceptance": false
+    },
+    "pending_pr132": {
+      "head": "748acb4be91489c6993f0db383bb67c286aeba1d",
+      "repairs": 127,
+      "status": "REVIEW07_TEST_SEAM_REPAIR06",
+      "config_contract": "paper_signal_policy_version=3; paper_quote_execution_version=1; no experimental_policy_version"
+    },
+    "pending_pr133": {
+      "head": "bd388f6bc2149214c6e24956f4220ea87ac34c9c",
+      "status": "INDEPENDENT_REVIEW07",
+      "scope": "Raw-unit-aware quote partial report accounting"
     }
   },
   "native_reconciliation_review": {
