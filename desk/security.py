@@ -34,7 +34,7 @@ def mint_policy(account, *, mint=None, token_profile_version=0):
     if not isinstance(account, dict):
         return {"decision": "SKIP", "reasons": ["MINT_ACCOUNT_MISSING"]}
     owner = account.get("owner")
-    if owner == TOKEN_2022 and token_profile_version==1:
+    if owner == TOKEN_2022 and token_profile_version in (1,2):
         from .token2022_paper import mint_base
         try:data=mint_base(account_bytes(account),mint)
         except (ValueError,TypeError):
@@ -89,7 +89,7 @@ def holding_policy(account, mint, wallet, *, token_profile_version=0):
     if not isinstance(account, dict):
         return {"decision":"SKIP","reasons":["UNSUPPORTED_HOLDING_ACCOUNT"]}
     owner=account.get("owner")
-    if owner==TOKEN_2022 and token_profile_version==1:
+    if owner==TOKEN_2022 and token_profile_version in (1,2):
         from .token2022_paper import account_base
         try:data=account_base(account_bytes(account))
         except (ValueError,TypeError):

@@ -236,10 +236,11 @@ def ingest_pool(reader: Callable[[], ProviderObservation], *, mint: str, pool: s
         raise ObservationError('Nonboosted reserve accounting mismatch')
     decimals = result['base_mint_policy']['decimals']
     tokens = _whole(result['base_reserve_raw'], positive=True)
-    lamports = _whole(result['quote_reserve_raw'], positive=True)
+    lamports = _whole(result['spendable_quote_reserve_raw'] if token_profile_version==2 else result['quote_reserve_raw'], positive=True)
+    pricing_lamports = _whole(result['effective_quote_reserve_raw'] if token_profile_version==2 else result['quote_reserve_raw'], positive=True)
     token_units, sol_units = _units(tokens, decimals), _units(lamports, 9)
     return PoolObservation(mint, pool, result['slot'], decimals, tokens, lamports,
-                           token_units, sol_units, _ratio(sol_units, token_units), source,
+                           token_units, sol_units, _ratio(_units(pricing_lamports,9), token_units), source,
                            gross_reserve_lamports=int(result['gross_quote_reserve_raw']),
                            accrued_protocol_fees_lamports=int(result['accrued_protocol_fees_raw']),
                            accrued_creator_fees_lamports=int(result['accrued_creator_fees_raw']),

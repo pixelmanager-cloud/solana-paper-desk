@@ -2,7 +2,7 @@
 from dataclasses import dataclass
 
 from . import quote_execution as qe
-from .model import digest, validate_event
+from .model import digest, validate_event, canonical
 from .paper_market_adapter import _replay_collected
 from .paper_observation_collector import TargetObservation, ObservationTarget
 
@@ -59,8 +59,12 @@ def build_exit_event(collected, *, context, position, cfg, load_evidence):
             'danger':bool(context.known_hazards),'known_hazards':list(context.known_hazards),
             'current_quantity_raw':quantity,'mint_decimals':mint.decimals,'source_evidence':evidence,
             'execution_status':'EXECUTION_UNVERIFIED','entry_authorized':False}
+        if context.token_profile_version==2:
+            from .paper_market_adapter import pool_evidence
+            e['paper_pool_evidence']=pool_evidence(pool)
         e['event_id']='paper-exit:'+digest(e)
-        validate_event(e)
+        if len(canonical(e).encode())>256*1024:raise ValueError('Exit event byte ceiling')
+        validate_event(e,token_profile_version=context.token_profile_version)
         qe._book(e,(quote,),cfg)  # exact original-byte quote caps/binding before publication
         out['event']=e
     except (ValueError,TypeError,KeyError,AttributeError,IndexError,OSError,RecursionError):

@@ -14,6 +14,9 @@ EXPERIMENTAL_POLICY_VERSION = 1
 EXPERIMENTAL_HISTORY_POLICY_VERSION = 2
 EXPERIMENTAL_OBSERVABLE_POLICY_VERSION = 3
 OBSERVABLE_SIGNAL_PROFILE = 'observable-flow-churn-concentration-v1'
+BOOST_SIGNAL_PROFILE = 'observable-flow-churn-concentration-effective-pricing-v2'
+BOOST_VOLUME_FEATURE = 'volume_vs_effective_pricing_reserves'
+BOOST_VOLUME_FORMULA = 'window_quote_principal / (2 * (latest_event_quote_vault + latest_event_signed_virtual_reserve))'
 OBSERVABLE_FORMULAS = {
     'directional_flow_proxy_v1': '100*buy_quote/total_quote',
     'same_wallet_churn_proxy_v1': 'sum(2*min(wallet_buy_quote,wallet_sell_quote))/total_quote',
@@ -104,16 +107,25 @@ def load_config(path):
 
 
 
-def observable_signal_profile(event):
+def observable_signal_profile(event, *, token_profile_version=0):
     """Validate an explicit v3 experimental signal contract, not source trust."""
     from .programs import address
     address(event.get('taker'))  # v3 execution identity; old profiles unchanged
+    from .token2022_paper import check_version
+    check_version(token_profile_version)
+    boosted=token_profile_version==2
+    volume_name=BOOST_VOLUME_FEATURE if boosted else 'volume_vs_liq'
     p=event.get('paper_signal_profile')
-    if (type(p) is not dict or p.get('name')!=OBSERVABLE_SIGNAL_PROFILE
-            or type(p.get('version')) is not int or p['version']!=1
+    if (type(p) is not dict or p.get('name')!=(BOOST_SIGNAL_PROFILE if boosted else OBSERVABLE_SIGNAL_PROFILE)
+            or type(p.get('version')) is not int or p['version']!=(2 if boosted else 1)
             or p.get('formulas')!=OBSERVABLE_FORMULAS
             or p.get('limitations')!=OBSERVABLE_LIMITATIONS):
         raise ValueError('Explicit observable signal profile required')
+    if boosted and (event.get('volume_vs_liq','missing') is not None
+            or p.get('volume_feature')!=BOOST_VOLUME_FEATURE
+            or p.get('volume_formula')!=BOOST_VOLUME_FORMULA
+            or p.get('volume_reserve_basis')!='EFFECTIVE_PRICING_NOT_PHYSICAL_LIQUIDITY'):
+        raise ValueError('Versioned pricing volume feature required')
     if any(event.get(key) is not None or key not in event for key in ('flow','wash_score','manip_flow')):
         raise ValueError('Observable proxies cannot replace legacy proof fields')
     if event.get('flow_confirmed') is not False:
@@ -137,7 +149,7 @@ def observable_signal_profile(event):
     if p.get('holder_freshness')!=expected_holder:
         raise ValueError('Explicit original holder freshness status required')
     m=p.get('measurements')
-    names=set(OBSERVABLE_FORMULAS)|{'net_buy_ratio','unique_buyers_5m','volume_vs_liq','drawdown_from_high'}
+    names=set(OBSERVABLE_FORMULAS)|{'net_buy_ratio','unique_buyers_5m',volume_name,'drawdown_from_high'}
     if type(m) is not dict or set(m)!=names:
         raise ValueError('Original observable measurements required')
     for name,row in m.items():
@@ -148,7 +160,7 @@ def observable_signal_profile(event):
             raise ValueError('Stale observable component')
         value=decimal(row.get('value'))
         upper=100 if name=='directional_flow_proxy_v1' else ONE
-        if value<0 or name not in ('unique_buyers_5m','volume_vs_liq') and value>upper:
+        if value<0 or name not in ('unique_buyers_5m',volume_name) and value>upper:
             raise ValueError('Invalid observable component range')
         if name not in OBSERVABLE_FORMULAS and row['value']!=event.get(name):
             raise ValueError('Observable measurement/event mismatch')
@@ -157,7 +169,7 @@ def observable_signal_profile(event):
     return p
 
 
-def validate_event(event, *, mode=PAPER_STRICT, policy_version=None):
+def validate_event(event, *, mode=PAPER_STRICT, policy_version=None,token_profile_version=0):
     # Never infer opt-in from event JSON; existing engine calls remain strict.
     if mode not in (PAPER_STRICT, PAPER_EXPERIMENTAL):
         raise ValueError('Unsupported event policy mode')
@@ -170,7 +182,7 @@ def validate_event(event, *, mode=PAPER_STRICT, policy_version=None):
         raise ValueError('Experimental policy applies only to market events')
     unknowns = experimental_ownership_unknowns(event) if experimental else {}
     observable = experimental and policy_version == EXPERIMENTAL_OBSERVABLE_POLICY_VERSION
-    if observable:observable_signal_profile(event)
+    if observable:observable_signal_profile(event,token_profile_version=token_profile_version)
     if experimental and event['paper_experimental']['policy_version'] != policy_version:
         raise ValueError('Experimental event/caller policy version mismatch')
 
@@ -185,6 +197,7 @@ def validate_event(event, *, mode=PAPER_STRICT, policy_version=None):
         required={'schema_version','event_id','kind','exit_contract_version','ts','mint','pool','taker',
             'provenance','price_at','route_available','danger','known_hazards','current_quantity_raw',
             'mint_decimals','source_evidence','execution_status','entry_authorized'}
+        if token_profile_version==2:required.add('paper_pool_evidence')
         if (set(event)!=required or type(event['schema_version']) is not int
                 or type(event['exit_contract_version']) is not int or event['exit_contract_version']!=1
                 or event['execution_status']!='EXECUTION_UNVERIFIED' or event['entry_authorized'] is not False
@@ -258,7 +271,7 @@ def validate_event(event, *, mode=PAPER_STRICT, policy_version=None):
             continue
         if not ZERO <= decimal(event.get(key)) <= ONE:
             raise ValueError(f"{key} must be 0..1")
-    for key in ("unique_buyers_5m", "volume_vs_liq", "dev_launches_7d"):
+    for key in ("unique_buyers_5m", BOOST_VOLUME_FEATURE if observable and token_profile_version==2 else "volume_vs_liq", "dev_launches_7d"):
         if key in unknowns or observable and key in ("flow", "wash_score", "manip_flow"):
             continue
         if decimal(event.get(key)) < 0:

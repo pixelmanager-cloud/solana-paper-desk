@@ -4,6 +4,7 @@ Usage: python -m desk.experiment_report /path/to/paper.sqlite [--now EPOCH]
 JSON goes to stdout; invalid/partial evidence exits nonzero without repairing it.
 """
 import argparse
+from .token2022_paper import selected as selected_token_profile
 import json
 import sqlite3
 import time
@@ -54,7 +55,7 @@ def _quote_fill(outcome, event, cfg):
             source = event['source_evidence']
             if token.slot != source['mint_slot'] or token.source.observed_at != source['mint_at']:
                 raise ValueError()
-        book = qe._book(event, (quote,), cfg) if event['kind'] == 'quote_exit' else qe._Book('', (quote,), token.decimals)
+        book = qe._book(event, (quote,), cfg) if event['kind'] == 'quote_exit' or qe.selected(cfg)==2 else qe._Book('', (quote,), token.decimals)
         if qe.canonical(book.record(quote, cfg)) != qe.canonical(record):
             raise ValueError()
         raw = qe.output_raw(quote, cfg) if outcome['side'] == 'buy' else quote.input_raw
@@ -78,7 +79,7 @@ def _entry_risk_flags(event, outcome, cfg):
     from .strategy import experimental_scores
     with localcontext() as policy_context:
         policy_context.prec = 28  # Original saved policy representation, independent of accounting precision.
-        expected = experimental_scores(event, mode=PAPER_EXPERIMENTAL, policy_version=version)
+        expected = experimental_scores(event, mode=PAPER_EXPERIMENTAL, policy_version=version,token_profile_version=selected_token_profile(cfg))
     if canonical(outcome.get('entry_policy')) != canonical(expected):
         raise RecoveryRequired('REPORT_ENTRY_RISK_BINDING_INVALID')
     return list(expected['risk_flags'])
@@ -132,7 +133,7 @@ def experiment_report(path, *, now=None):
             if event['kind'] == 'quote_exit':
                 try:
                     if not quote_mode: raise ValueError()
-                    validate_event(event)  # Confirmed strict exit dispatcher, never entry-profile validation.
+                    validate_event(event,token_profile_version=selected_token_profile(cfg))  # Confirmed strict exit dispatcher, never entry-profile validation.
                 except (ValueError, TypeError, KeyError):
                     raise RecoveryRequired('QUOTE_EXIT_EVENT_INVALID') from None
             events[event_id] = event

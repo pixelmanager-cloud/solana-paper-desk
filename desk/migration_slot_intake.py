@@ -226,7 +226,7 @@ def main(argv=None):
     for name in ('research-db','evidence-db','scan-id','mint','pool','signature','slot','provenance'):
         p.add_argument('--'+name,required=True,type=int if name=='slot' else str)
     p.add_argument('--systemd-credentials',action='store_true')
-    p.add_argument('--paper-token-profile-version',type=int,choices=(1,),default=0)
+    p.add_argument('--paper-token-profile-version',type=int,choices=(1,2),default=0)
     a=p.parse_args(argv)
     try:
         loader=None

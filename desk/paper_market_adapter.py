@@ -15,7 +15,8 @@ from .live_observation import ProviderObservation, ingest_mint, ingest_pool, ing
 from .live_strategy_features import calculate
 from .model import (canonical, digest, decimal, validate_event, PAPER_EXPERIMENTAL,
                     EXPERIMENTAL_HISTORY_FIELDS, OWNERSHIP_HISTORY_RISK,
-                    OBSERVABLE_SIGNAL_PROFILE, OBSERVABLE_FORMULAS, OBSERVABLE_LIMITATIONS)
+                    OBSERVABLE_SIGNAL_PROFILE, OBSERVABLE_FORMULAS, OBSERVABLE_LIMITATIONS,
+                    BOOST_SIGNAL_PROFILE,BOOST_VOLUME_FEATURE,BOOST_VOLUME_FORMULA)
 from .paper_observation_collector import TargetObservation, ObservationTarget
 from .sol_usd_observation import parse_sol_usd
 from .security import mint_policy
@@ -76,8 +77,9 @@ def build_market_event(collected, *, context, load_evidence, raw_trades=(),
     if type(history_as_of) is not int or not 0<=context.now-history_as_of<=30:
         out['blockers']=sorted(blockers|{'CAPTURED_HISTORY_WINDOW_STALE_OR_FUTURE'});return out
     features=calculate(raw_trades,pool=target.pool,as_of=history_as_of,
-                       provenance=context.provenance,history_pages=history_pages)
-    names=set(OBSERVABLE_FORMULAS)|{'net_buy_ratio','unique_buyers_5m','volume_vs_liq','drawdown_from_high'}
+                       provenance=context.provenance,history_pages=history_pages,token_profile_version=context.token_profile_version)
+    volume_name=BOOST_VOLUME_FEATURE if context.token_profile_version==2 else 'volume_vs_liq'
+    names=set(OBSERVABLE_FORMULAS)|{'net_buy_ratio','unique_buyers_5m',volume_name,'drawdown_from_high'}
     measurements={name:features['fields'][name] for name in sorted(names)}
     for name,row in measurements.items():
         if row['status']!='MEASURED_WINDOW':blockers.add('MISSING_WINDOW_MEASUREMENT:'+name)
@@ -141,7 +143,7 @@ def build_market_event(collected, *, context, load_evidence, raw_trades=(),
     for name in EXPERIMENTAL_HISTORY_FIELDS:
         e[name]=None
         e['paper_experimental']['ownership_unknowns'][name]={'status':'UNKNOWN','reasons':['CURRENT_OWNERSHIP_HISTORY_MEASUREMENT_UNAVAILABLE']}
-    for name in ('net_buy_ratio','unique_buyers_5m','volume_vs_liq','drawdown_from_high'):e[name]=measurements[name]['value']
+    for name in ('net_buy_ratio','unique_buyers_5m',volume_name,'drawdown_from_high'):e[name]=measurements[name]['value']
     if usd and usd.usd_price is not None:
         with localcontext() as ctx:
             ctx.prec=100
@@ -151,6 +153,11 @@ def build_market_event(collected, *, context, load_evidence, raw_trades=(),
             'valuation_basis':'CURRENT_RESERVE_SPOT_TIMES_SUPPLY_NOT_EXECUTABLE_PRICE',
             'trusted_slot_bounds':{'now':usd.bounds.now,'observed_at':usd.bounds.observed_at,
                 'min_slot':usd.bounds.min_slot,'max_slot':usd.bounds.max_slot,'block_times':list(usd.bounds.block_times)}}
+    if context.token_profile_version==2:
+        e['volume_vs_liq']=None
+        profile.update(name=BOOST_SIGNAL_PROFILE,version=2,volume_feature=BOOST_VOLUME_FEATURE,volume_formula=BOOST_VOLUME_FORMULA)
+        profile['volume_reserve_basis']='EFFECTIVE_PRICING_NOT_PHYSICAL_LIQUIDITY'
+        e['paper_pool_evidence']=pool_evidence(pool)
     e['event_id']='paper-market:'+digest(e)
     out['draft']=e
     # Match the existing journal reader ceiling; retain original evidence in its
@@ -158,7 +165,7 @@ def build_market_event(collected, *, context, load_evidence, raw_trades=(),
     if len(canonical(e).encode())>256*1024:
         blockers.add('PAPER_EVENT_BYTE_LIMIT_EXCEEDED')
     if not blockers:
-        try:validate_event(e,mode=PAPER_EXPERIMENTAL,policy_version=3)
+        try:validate_event(e,mode=PAPER_EXPERIMENTAL,policy_version=3,token_profile_version=context.token_profile_version)
         except (ValueError,TypeError):blockers.add('EXPERIMENTAL_EVENT_CONTRACT_INVALID')
     if not blockers:out['event']=e
     out['blockers']=sorted(blockers)
@@ -219,3 +226,8 @@ def _replay_collected(collected, context, load_evidence):
     if atomic_mint['decision']!='PASS_TOKEN_POLICY' or atomic_mint['decimals']!=mint.decimals or atomic_supply<=0:
         raise ValueError('atomic supply binding')
     return target,mint,pool,quote,mint_raw,atomic_supply,records
+
+
+def pool_evidence(pool):
+    return {'source_id':pool.source.source_id,'observed_at':pool.source.observed_at,
+            'raw_hash':pool.source.raw_hash,'original_json':pool.source.original_json}

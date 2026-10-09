@@ -316,9 +316,9 @@ def transition(state, e, cfg, *, _quote_book=None):
     # Until that validator is installed, validate_event rejects V3 unchanged.
     experimental = version in (1, 2, 3) and e.get("kind") == "market"
     if experimental:
-        validate_event(e, mode=PAPER_EXPERIMENTAL, policy_version=version)
+        validate_event(e, mode=PAPER_EXPERIMENTAL, policy_version=version,token_profile_version=qe.selected(cfg))
     else:
-        validate_event(e)
+        validate_event(e,token_profile_version=qe.selected(cfg))
     if e.get('kind')=='quote_exit':
         if not quote_mode:raise qe.QuoteExecutionError('QUOTE_EXECUTION_CONFIG_REQUIRED')
         if e['mint'] not in state['positions']:
@@ -375,7 +375,7 @@ def transition(state, e, cfg, *, _quote_book=None):
         # Preserve the existing policy journal representation. High precision
         # raw-unit accounting must not alter checkpoint-recomputed score strings.
         if quote_mode:policy_context.prec=28
-        policy = experimental_scores(e, mode=PAPER_EXPERIMENTAL, policy_version=version) if experimental else None
+        policy = experimental_scores(e, mode=PAPER_EXPERIMENTAL, policy_version=version,token_profile_version=qe.selected(cfg)) if experimental else None
         scored = ({key: dec(policy[key]) if policy[key] is not None else None
                    for key in ("safety", "momentum", "flow", "entry")} if policy else scores(e))
         reasons = (experimental_gates(e, cfg, mode=PAPER_EXPERIMENTAL, policy_version=version)
