@@ -198,6 +198,10 @@ def build_market_event(collected, *, context, load_evidence, raw_trades=(),
                 'min_slot':usd.bounds.min_slot,'max_slot':usd.bounds.max_slot,'block_times':list(usd.bounds.block_times)}}
     e['event_id']='paper-market:'+digest(e)
     out['draft']=e
+    # Match the existing journal reader ceiling; retain original evidence in its
+    # store and diagnostic draft, but never publish an unreadable ledger event.
+    if len(canonical(e).encode())>256*1024:
+        blockers.add('PAPER_EVENT_BYTE_LIMIT_EXCEEDED')
     if not blockers:
         try:validate_event(e,mode=PAPER_EXPERIMENTAL,policy_version=3)
         except (ValueError,TypeError):blockers.add('EXPERIMENTAL_EVENT_CONTRACT_INVALID')
