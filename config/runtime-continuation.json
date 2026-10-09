@@ -1,1 +1,1 @@
-{"version":1,"continuations":[]}
+{"continuations":[{"config_hash":"30406d9cb727b3e518687dbb4c20820483bf51384f0edfb14a94f8221e2b595e","context":{"evidence_db":"/var/lib/solana-desk/evidence.sqlite","ledger_db":"/var/lib/solana-desk/token2022-paper.sqlite","research_db":"/var/lib/solana-desk/research.sqlite"},"first_receipt_hash":"104329395b99a60b1da22f8085c8fd2832510570b3c4e875937dc0aa6ba6df46","predecessor":"31b249e1dfbb16c12ec89235a7137afab4de989fd05ded52a0231ebdfb9667ae","successor":"8c675296c36cd6b088a25aae0c7fcf8d65bdc26673bfdffa49012368acb06427"}],"version":1}
