@@ -309,7 +309,7 @@
         "base": "9e43752daabf19b7e78e08e0b15d16d1c6e2a680",
         "scope": "Useful timestamped raw observation normalization with exact units/source hash, no invented metrics or provider calls",
         "turn_id": "01a11eb0-22b3-75c2-b925-25a798d51404",
-        "wait_cursor": "d3153436-2742-432e-8501-9c06b95f29ae:12",
+        "wait_cursor": "d3153436-2742-432e-8501-9c06b95f29ae:14",
         "pr": 104,
         "head": "7146b821f932d85157a6357a2f44c6cf54d2f766"
       },
@@ -331,24 +331,27 @@
         "worker": "01",
         "thread_id": "01a118fc-39bc-722c-b442-8bf5a749e0bb",
         "host_id": "durable",
-        "status": "IN_PROGRESS",
+        "status": "CHANGES_REQUESTED",
         "pr": 102,
         "head": "ada4892b3df3138f3369aa9d64aaf60f778b0d7b",
         "scope": "Exact-head independent review and combined Linux suite; no integration",
         "turn_id": "01a11ebd-9b09-7263-91c8-c69bc6c3b471",
-        "wait_cursor": "5e651fc7-2996-4765-974d-5c852257a005:77"
+        "wait_cursor": "5e651fc7-2996-4765-974d-5c852257a005:77",
+        "review_url": "https://github.com/pixelmanager-cloud/solana-paper-desk/pull/102#issuecomment-6073805785",
+        "finding": "Present corrupt history can downgrade to incomplete risk; portable tests need read capability gating"
       },
       {
         "id": "PR103-INDEPENDENT-REVIEW",
         "worker": "06",
         "thread_id": "01a118fc-f867-7233-8eec-c20659e70095",
         "host_id": "durable",
-        "status": "IN_PROGRESS",
+        "status": "PASS",
         "pr": 103,
         "head": "7100483d800189b62efa14da33de3e21e7dd0f35",
         "scope": "Exact-head independent review and combined Linux suite; no integration",
         "turn_id": "01a11ebd-aa79-7370-b796-8f66f317a16b",
-        "wait_cursor": "8f3328cf-bef6-441d-83f8-2d1f46b3b0df:81"
+        "wait_cursor": "8f3328cf-bef6-441d-83f8-2d1f46b3b0df:82",
+        "review_url": "https://github.com/pixelmanager-cloud/solana-paper-desk/pull/103#issuecomment-6073816532"
       },
       {
         "id": "PR104-INDEPENDENT-REVIEW",
@@ -398,6 +401,31 @@
         "host_id": "durable",
         "status": "DISPATCHED",
         "scope": "paper_view/dashboard actual saved runner state; no invented live readiness"
+      },
+      {
+        "id": "PR102-HISTORY-INTEGRITY-REPAIR",
+        "worker": "08",
+        "thread_id": "01a118fd-2563-7126-90d7-bd07693de0b2",
+        "host_id": "durable",
+        "status": "DISPATCHED",
+        "base": "ada4892b3df3138f3369aa9d64aaf60f778b0d7b",
+        "scope": "Reject present malformed or unbound history before experimental waiver; portability tests preserve read guard"
+      },
+      {
+        "id": "ROUNDTRIP-ROUTE-WIRING",
+        "worker": "06",
+        "thread_id": "01a118fc-f867-7233-8eec-c20659e70095",
+        "host_id": "durable",
+        "status": "DISPATCHED",
+        "scope": "roundtrip existing supported route checker wiring; no eligibility or missing proof fabrication"
+      },
+      {
+        "id": "BOUNDED-PAPER-OBSERVATION-COLLECTOR",
+        "worker": "04",
+        "thread_id": "01a118fc-b862-7340-ab3a-e1115a3280a4",
+        "host_id": "durable",
+        "status": "DISPATCHED",
+        "scope": "new collector using existing admitted budget/provider boundaries; no cloud calls"
       }
     ],
     "saved_launch_probe": {
@@ -1335,7 +1363,40 @@
         "paper": "NOT_CONFIGURED",
         "runner": "NOT_CONNECTED",
         "automatic_entry_enabled": false
+      },
+      "repaired_mac_tests": {
+        "total": 2001,
+        "passed": 1598,
+        "skipped": 403,
+        "seconds": 36.161,
+        "failures": 0,
+        "tree": "76fcc66045fe8bbb48041fa149fc54cafeded09b",
+        "limitation": "Includes test-only portability delta; PR102 integrity finding still blocks acceptance"
       }
+    },
+    "pending_pr103": {
+      "status": "REVIEWED_READY_TO_INTEGRATE",
+      "head": "7100483d800189b62efa14da33de3e21e7dd0f35",
+      "review_url": "https://github.com/pixelmanager-cloud/solana-paper-desk/pull/103#issuecomment-6073816532",
+      "independent_tree": "3cfb190862009f8e944194ed90bd8c71da223338",
+      "linux_tests": {
+        "total": 1974,
+        "skipped": 0,
+        "seconds": 132.078
+      },
+      "mac_tests": {
+        "total": 1974,
+        "skipped": 395,
+        "seconds": 35.946,
+        "tree": "7ebe035ee708cbe034f47c9934add4e74b94d857"
+      },
+      "manifest_sha256": "8331cf3eb312a33e9265a014216035203e2201675c9afb5e5dac89010787eb30",
+      "ci_runs": [
+        37879706255,
+        37879658388
+      ],
+      "ci": "SUCCESS",
+      "live_acceptance": false
     }
   },
   "native_reconciliation_review": {

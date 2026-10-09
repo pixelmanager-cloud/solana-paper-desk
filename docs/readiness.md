@@ -10,6 +10,16 @@ Dashboard is active on 127.0.0.1:8765; decision and monitor services exited succ
 
 Remaining critical path: live complete ownership/exposure evidence for a supported candidate; authenticated route/effect and exact quantity/cost evidence; measured current strategy features and a trusted source-bound entry adapter; durable supervised entry/refresh/exit integration; forward observation. Signed messages, parsed events, zero balance residuals and diagnostic receipt coverage alone do not satisfy those gates. No eligible live entry has been demonstrated.
 
+## Paper-loop priority update — 2026-10-09
+
+The user changed the immediate target to an executable live-data paper experiment and forward iteration. In explicit experimental paper mode, unresolved ownership **history** may be retained as an acknowledged risk. Known hazards, corrupt or contradictory supplied evidence, and missing execution/price/freshness data are not waived. The older strict ownership milestone below remains the strict-mode policy, not a reason to stop independent paper-loop implementation. No unknown ownership percentage may be replaced by a fabricated safe value.
+
+The desktop scheduled coordinator is paused at the user's request. Explicitly dispatched workers continue; the desktop retains exclusive integration and deployment ownership.
+
+A local scratch combination of PR103 runner and PR105 reporting demonstrated synthetic entry, refresh, full exit, accounting and idempotent replay: one closed trade, zero open positions, zero duplicate outcomes, net modeled PnL -0.00311195414305567903948828490 SOL. This is offline synthetic evidence only. PR103 has independent component review and passing exact-head CI; PR105 review is pending. PR102's experimental risk adapter needs a repair: present corrupt history must not be downgraded to missing history. Its final entry decision still rejects; it is not integrated.
+
+Live loop gaps are now assigned concretely: explicit unknown-compatible experimental scoring; measured rolling trade features; trusted live observation/event wiring; supported route and exact-cost evidence; actual runner state in the dashboard. Fresh production inspection still reports dashboard active, paper NOT_CONFIGURED, runner NOT_CONNECTED and automatic entry false. No live paper fill or readiness has been claimed.
+
 ## Earlier deployed milestones (historical counts)
 
 
