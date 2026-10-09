@@ -193,6 +193,9 @@ def activate(research_db,evidence_db,old_ledger_db,new_ledger_db,pacing_db,new_c
         raise ValueError('Existing canonical successor paths required')
     if supplied!=[pins['context'][k] for k in ('research_db','evidence_db','old_ledger_db','new_ledger_db','pacing_db')]:raise ValueError('Successor context mismatch')
     if at is not None and at!=pins['at']:raise ValueError('Exact reviewed time required')
+    # CLI arguments are strings; internal binding/ledger helpers require Path.
+    # Convert only AFTER canonical spelling and exact reviewed pin validation.
+    research_db,evidence_db,old_ledger_db,new_ledger_db,pacing_db=map(Path,supplied)
     with ExitStack() as locks:
         if locks.enter_context(_worker_lock(research_db)) is None:raise ValueError('Research busy')
         if not locks.enter_context(_lock(str(evidence_db)+'.ownership-invocation.lock')):raise ValueError('Evidence busy')

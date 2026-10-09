@@ -1,5 +1,9 @@
 """Synthetic contexts and transports; genuine first-handoff fixture, no live I/O."""
 import copy
+import json
+import subprocess
+import sys
+from pathlib import Path
 import sqlite3
 import unittest
 from unittest.mock import patch
@@ -225,3 +229,56 @@ class MonitoringSuccessorTests(unittest.TestCase):
             with self.assertRaisesRegex(RuntimeError,'synthetic interruption'):self.activate()
         self.assertEqual(dump(self.f.evidence),before)
         self.assertEqual(self.activate()['status'],'BOUND')
+
+
+    def cli(self,*,arguments=None):
+        cfg=self.f.root/'successor-config.json';cfg.write_text(canonical(self.cfg))
+        pins=self.f.root/'successor-pin.json';pins.write_text(canonical(self.pin))
+        # Only reviewed fixture policy paths are supplied. All path conversion,
+        # dispatch binding, locks, ledger/accounting proofs and append are real.
+        script="""import sys
+from pathlib import Path
+from desk import monitoring_handoff as handoff, monitoring_successor as successor, runtime_compatibility as runtime
+handoff.POLICY=Path(sys.argv[1]);successor.POLICY=Path(sys.argv[2]);runtime.POLICY=Path(sys.argv[3])
+raise SystemExit(handoff.main(sys.argv[4:]))
+"""
+        values={'--research-db':str(self.f.research),'--evidence-db':str(self.f.evidence),
+                '--old-ledger-db':str(self.f.new),'--new-ledger-db':str(self.next),
+                '--pacing-db':str(self.f.pacing),'--new-config':str(cfg),'--reviewed-pins':str(pins)}
+        values.update(arguments or {})
+        command=[sys.executable,'-c',script,str(self.f.policy),str(self.policy),str(self.f.f.policy),'--successor']
+        for key,value in values.items():command.extend((key,value))
+        return subprocess.run(command,capture_output=True,text=True,timeout=30)
+
+    def test_real_cli_successor_activation_and_exact_replay_preserve_originals(self):
+        paths=(self.f.old,self.f.new,self.next,self.f.research,self.f.pacing)
+        originals={p:dump(p) for p in paths}
+        with self.f.store.connect() as c:
+            first=c.execute('SELECT * FROM '+handoff.TABLE).fetchall()
+            budget=c.execute('SELECT * FROM paper_monitoring_budget').fetchall()
+        result=self.cli()
+        self.assertEqual(result.returncode,0,result.stdout+result.stderr)
+        self.assertEqual(result.stderr,'')
+        self.assertEqual(json.loads(result.stdout)['status'],'BOUND')
+        self.assertEqual(json.loads(result.stdout)['binding_hash'],digest(self.pin))
+        for path,before in originals.items():self.assertEqual(dump(path),before)
+        with self.f.store.connect() as c:
+            self.assertEqual(c.execute('SELECT * FROM '+handoff.TABLE).fetchall(),first)
+            self.assertEqual(c.execute('SELECT * FROM paper_monitoring_budget').fetchall(),budget)
+        before=dump(self.f.evidence);result=self.cli()
+        self.assertEqual(result.returncode,0,result.stdout+result.stderr)
+        self.assertEqual(json.loads(result.stdout)['status'],'ALREADY_BOUND')
+        self.assertEqual(dump(self.f.evidence),before)
+
+    def test_real_cli_noncanonical_or_mismatched_paths_refuse_without_mutation(self):
+        before=dump(self.f.evidence)
+        # Normalization happens only AFTER canonical spelling and exact pin
+        # equality: an alias must never acquire a different lock for the DB.
+        alias=str(self.f.research.parent)+'/./'+self.f.research.name
+        for arguments in ({'--research-db':alias},{'--research-db':str(self.f.evidence)}):
+            with self.subTest(arguments=arguments):
+                result=self.cli(arguments=arguments)
+                self.assertEqual(result.returncode,2,result.stdout+result.stderr)
+                self.assertEqual(result.stderr,'')
+                self.assertEqual(json.loads(result.stdout)['status'],'UNAVAILABLE')
+                self.assertEqual(dump(self.f.evidence),before)
