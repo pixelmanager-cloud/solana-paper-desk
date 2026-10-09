@@ -209,6 +209,8 @@ class MonitoringBudget:
         # Check restored/corrupt completed rows against original hash-addressed
         # transport receipts, not merely count/min/max. Pending rows never permit
         # subsequent I/O, so they cannot silently become replacement allowances.
+        from .monitoring_successor import rows as successor_rows
+        history=successor_rows(c,handoff) if handoff else []
         for identity, at, scan, mint, checkpoint, method, params_hash, evidence_hash in c.execute(
                 'SELECT r.id,r.at,r.scan_id,r.mint,r.checkpoint_hash,r.method,r.params_hash,o.evidence_hash FROM paper_monitoring_reservations r JOIN paper_monitoring_outcomes o ON o.reservation_id=r.id'):
             try:
@@ -218,6 +220,8 @@ class MonitoringBudget:
                 raise MonitoringBlocked('MONITORING_ACCOUNTING_INVALID') from None
             if handoff and identity>handoff[0]['reservation_cutoff'] and receipt.get('context_hash')!=handoff[1]:
                 raise MonitoringBlocked('MONITORING_CONTEXT_BINDING_INVALID')
+            expected_successor=next((k for v,k in reversed(history) if identity>v['reservation_cutoff']),None)
+            if receipt.get('successor_context_hash')!=expected_successor:raise MonitoringBlocked('MONITORING_CONTEXT_BINDING_INVALID')
             new_receipt=bool(upgraded and identity>grant['reservation_cutoff'])
             cap=policy.NEW_MONITORING if new_receipt else CAP
             kind='open_paper_monitoring_reservation_v2' if new_receipt else 'open_paper_monitoring_reservation_v1'
@@ -331,7 +335,9 @@ class MonitoringBudget:
                     clock_floor = max(row[6], transition[0]['at']) if transition else row[6]
                     from .monitoring_handoff import read as read_handoff
                     handoff=read_handoff(c)
-                    if handoff:clock_floor=max(clock_floor,handoff[0]['at'])
+                    from .monitoring_successor import active as active_handoff
+                    successor=active_handoff(c,handoff) if handoff else None
+                    if successor:clock_floor=max(clock_floor,successor[0]['at'])
                     if now < clock_floor:
                         c.execute("UPDATE paper_monitoring_budget SET blocked='CLOCK_ROLLBACK' WHERE id=1")
                         c.commit()
@@ -346,7 +352,9 @@ class MonitoringBudget:
                         raise MonitoringBlocked('MONITORING_REQUEST_BUDGET_EXHAUSTED')
                     identity = row[7]+1
                     values=(identity, now, scan_id, admission['descriptor']['mint'], checkpoint_hash, method, digest(params))
-                    if handoff:
+                    if handoff and successor[1]!=handoff[1]:
+                        c.execute('INSERT INTO paper_monitoring_reservations(id,at,scan_id,mint,checkpoint_hash,method,params_hash,context_hash,successor_context_hash) VALUES(?,?,?,?,?,?,?,?,?)',values+(handoff[1],successor[1]))
+                    elif handoff:
                         c.execute('INSERT INTO paper_monitoring_reservations(id,at,scan_id,mint,checkpoint_hash,method,params_hash,context_hash) VALUES(?,?,?,?,?,?,?,?)',values+(handoff[1],))
                     else:c.execute('INSERT INTO paper_monitoring_reservations VALUES(?,?,?,?,?,?,?)',values)
                     c.execute('UPDATE paper_monitoring_budget SET total=? WHERE id=1', (identity,))
@@ -363,6 +371,7 @@ class MonitoringBudget:
                     'investigation_requests_used':admission['requests_used']}
             if row[0] in (2,3):receipt['policy_hash']=transition_hash
             if handoff:receipt['context_hash']=handoff[1]
+            if handoff and successor[1]!=handoff[1]:receipt['successor_context_hash']=successor[1]
             return receipt
         except MonitoringBlocked:
             raise
@@ -382,7 +391,9 @@ class MonitoringBudget:
             clock_floor = max(row[6], transition[0]['at']) if transition else row[6]
             from .monitoring_handoff import read as read_handoff
             handoff=read_handoff(c)
-            if handoff:clock_floor=max(clock_floor,handoff[0]['at'])
+            from .monitoring_successor import active as active_handoff
+            tail=active_handoff(c,handoff) if handoff else None
+            if tail:clock_floor=max(clock_floor,tail[0]['at'])
             used = c.execute('SELECT count(*) FROM paper_monitoring_reservations WHERE at>?', (now-WINDOW_SECONDS,)).fetchone()[0]
             pending = bool(c.execute('SELECT 1 FROM paper_monitoring_reservations r LEFT JOIN paper_monitoring_outcomes o ON o.reservation_id=r.id WHERE o.reservation_id IS NULL LIMIT 1').fetchone())
         blockers = []

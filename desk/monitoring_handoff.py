@@ -90,10 +90,15 @@ def read(c):
     fence=c.execute('SELECT sql FROM sqlite_master WHERE name=?',(FENCE,)).fetchall()
     version_fence=c.execute('SELECT sql FROM sqlite_master WHERE name=?',(VERSION_FENCE,)).fetchall()
     if value is None:
-        if fence or version_fence or any(r[1]=='context_hash' for r in columns):raise ValueError('Partial handoff publication')
+        if (fence or version_fence or any(r[1] in ('context_hash','successor_context_hash') for r in columns)
+                or c.execute("SELECT 1 FROM sqlite_master WHERE name LIKE 'paper_monitoring_context_successors%' LIMIT 1").fetchone()):raise ValueError('Partial handoff publication')
         return None
-    if ([r[1:3] for r in columns]!=[('id','INTEGER'),('at','REAL'),('scan_id','TEXT'),('mint','TEXT'),
+    from . import monitoring_successor as successor
+    extended=any(r[1]=='successor_context_hash' for r in columns)
+    expected_columns=[('id','INTEGER'),('at','REAL'),('scan_id','TEXT'),('mint','TEXT'),
             ('checkpoint_hash','TEXT'),('method','TEXT'),('params_hash','TEXT'),('context_hash','TEXT')]
+    if extended:expected_columns.append(('successor_context_hash','TEXT'))
+    if ([r[1:3] for r in columns]!=expected_columns
             or fence!=[(_fence(),)] or version_fence!=[(_version_fence(),)]):raise ValueError('Handoff reservation fence invalid')
     body,key=value
     if (set(body)!=FIELDS or body['kind']!='separate_paper_monitoring_handoff_v1'
@@ -118,10 +123,11 @@ def read(c):
     if c.execute('SELECT 1 FROM paper_monitoring_reservations WHERE (id<=? AND context_hash IS NOT NULL) OR (id>? AND (context_hash IS NULL OR context_hash!=? OR at<?)) LIMIT 1',
                  (body['reservation_cutoff'],body['reservation_cutoff'],key,body['at'])).fetchone():
         raise ValueError('Monitoring context suffix invalid')
+    successor.rows(c,(body,key))
     return body,key
 
 
-def _ledger(path, cfg_hash, source, *, old_runtime_hash=None, original_source=None):
+def _ledger(path, cfg_hash, source, *, old_runtime_hash=None, original_source=None, historical=False):
     """Trusted exact-source contract; validate saved state/history, never rebuild."""
     from .paper_checkpoint import validate_checkpoint, read_checkpoint
     with closing(sqlite3.connect(Path(path).as_uri()+'?mode=ro',uri=True)) as c:
@@ -147,9 +153,9 @@ def _ledger(path, cfg_hash, source, *, old_runtime_hash=None, original_source=No
             # Original experiment identity remains pinned; only require_runtime's
             # exact reviewed one-hop receipt can establish a different successor.
             origin=source if original_source is None else original_source
-            if source!=runtime.implementation_hash() or metadata.get('implementation_hash')!=origin:
+            if (not historical and source!=runtime.implementation_hash()) or metadata.get('implementation_hash')!=origin:
                 raise ValueError('New experiment source mismatch')
-            read_checkpoint(c)
+            if not historical:read_checkpoint(c)
         result={'state':state,'metadata':metadata,'checkpoint_hash':digest(state),'config':cfg}
         for table in ('events','outcomes'):
             count=c.execute(f'SELECT COUNT(*) FROM {table}').fetchone()[0]
@@ -168,20 +174,35 @@ def validate_active(c,budget):
     """Current readers must use only the reviewed successor experiment."""
     value=read(c)
     if value is None:return None
-    body,key=value;ctx=body['context']
+    body,key=value
+    from . import monitoring_successor as successor
+    history=successor.rows(c,value)
+    tail=history[-1][0] if history else body
+    ctx=tail['context']
     if (str(budget.path)!=ctx['evidence_db'] or str(budget.ledger)!=ctx['new_ledger_db']
-            or budget.config_hash!=body['new_config_hash']):
+            or budget.config_hash!=tail['new_config_hash']):
         raise ValueError('Retired or mismatched monitoring context')
     _pacing(ctx)
-    old=_ledger(ctx['old_ledger_db'],body['old_config_hash'],body['old_source'],old_runtime_hash=body['old_runtime_hash'])
+    old=_ledger(body['context']['old_ledger_db'],body['old_config_hash'],body['old_source'],old_runtime_hash=body['old_runtime_hash'])
     if (old['state']['positions'] or old['checkpoint_hash']!=body['old_checkpoint_hash']
             or digest(old['metadata'])!=body['old_metadata_hash']
             or any(old[k]!=body['old_'+k] for k in ('events_count','events_hash','outcomes_count','outcomes_hash'))):
         raise ValueError('Retired experiment changed')
-    new=_ledger(ctx['new_ledger_db'],body['new_config_hash'],budget.code_hash,
-                original_source=body['new_source'])
+    for edge,_ in history:
+        successor.validate_retired(edge)
+        baseline=edge['budget']
+        current=c.execute('SELECT version,ledger,config_hash,code_hash,cap,window_seconds,high_water,total,blocked FROM paper_monitoring_budget WHERE id=1').fetchone()
+        if (current is None or list(current[:6])!=baseline[:6] or current[6]<baseline[6] or current[7]<baseline[7]
+                or (baseline[8] is not None and current[8]!=baseline[8])):raise ValueError('Successor accounting baseline changed')
+    new=_ledger(ctx['new_ledger_db'],tail['new_config_hash'],budget.code_hash,
+                original_source=tail.get('new_origin',tail['new_source']),historical=budget.code_hash!=runtime.implementation_hash())
+    if history:
+        if digest(new['metadata'])!=tail['new_metadata_hash']:raise ValueError('Successor original metadata changed')
+        with closing(sqlite3.connect(Path(ctx['new_ledger_db']).as_uri()+'?mode=ro',uri=True)) as current:
+            if runtime._prefix(current,'events',1)!=tail['new_events_hash'] or runtime._prefix(current,'outcomes',0)!=tail['new_outcomes_hash']:
+                raise ValueError('Successor original initialization journal changed')
     from .engine import initial_state
-    if digest(initial_state(new['config']))!=body['new_initial_checkpoint_hash']:
+    if digest(initial_state(new['config']))!=tail.get('new_checkpoint_hash',body['new_initial_checkpoint_hash']):
         raise ValueError('Separate experiment initialization changed')
     research=Path(ctx['research_db'])
     from .job_persistence import canonical_job_path
@@ -278,13 +299,22 @@ def main(argv=None):
     parser=argparse.ArgumentParser(description='Explicit existing monitoring allowance handoff; separate experiment')
     for name in ('research-db','evidence-db','old-ledger-db','new-ledger-db','pacing-db','new-config','reviewed-pins'):
         parser.add_argument('--'+name,required=True)
+    parser.add_argument('--successor',action='store_true',help='Explicit bounded successor, never reprovision')
     args=parser.parse_args(argv)
     try:
-        result=activate(args.research_db,args.evidence_db,args.old_ledger_db,args.new_ledger_db,args.pacing_db,
+        action=activate_successor if args.successor else activate
+        result=action(args.research_db,args.evidence_db,args.old_ledger_db,args.new_ledger_db,args.pacing_db,
                         _config(args.new_config),pins=_json(args.reviewed_pins))
         print(json.dumps(result,sort_keys=True));return 0
     except (ValueError,OSError,sqlite3.Error,TypeError,KeyError,RecursionError):
         print(json.dumps({'status':'UNAVAILABLE','blockers':['REVIEWED_EXISTING_MONITORING_HANDOFF_REQUIRED']}));return 2
+
+
+
+def activate_successor(*args,**kwargs):
+    """Explicit independently reviewed successor; original activate remains immutable."""
+    from .monitoring_successor import activate
+    return activate(*args,**kwargs)
 
 
 if __name__=='__main__':raise SystemExit(main())
