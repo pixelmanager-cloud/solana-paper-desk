@@ -2635,7 +2635,7 @@
       }
     ],
     "latest_backup_before_runtime": "daily-20261009T095803Z",
-    "current_live_entry_blocker": "Intake repair reviewed and installed separately. Three legacy investigations lack migration witnesses; first two canonical pools absent. New raw migrations779/780 are Token2022 and excluded; no supported live candidate or paper fill. No further investigation calls spent on excluded candidates.",
+    "current_live_entry_blocker": "Reviewed intake tool installed. Latest sampled migrations779\u2013782 all have Token2022 base tokens; none admitted. Legacy migrate instruction name alone is not a token-program pass. Previous three legacy investigations lack migration witnesses; first two canonical pools absent. No supported live candidate or paper fill.",
     "paper_runtime_deployment": {
       "source_commit": "b84e20dd3a464be0c5a06f4252b4118a402190e0",
       "source_tree": "afe2845a6067ea63bf1e16528a3dcd0f80783127",
@@ -2717,31 +2717,29 @@
         "manual_extra_sample": false
       },
       "latest_scheduled_sample": {
-        "completed_at": "2026-10-09T10:51:38Z",
+        "completed_at": "2026-10-09T11:06:40Z",
         "exit_status": 0,
         "new_records": 2,
+        "received_bytes": 40026,
         "seqs": [
-          779,
-          780
+          781,
+          782
         ],
+        "mint": "HBDb6ydFDVMTGGaWHoXREVY6591NTz5ejHKg2MKKpump",
+        "pool": "9hQbsxcTL3UCXYputt4e893xyTx8tpb2CRFQHU8hYygb",
+        "slots": [
+          454848061,
+          454848063
+        ],
+        "instruction_names": [
+          "migrate",
+          "migrate_v2"
+        ],
+        "actual_balance_token_program": "TokenzQdBNbLqP5VEhdkAS6EPFLC1PHnBqCXEpPxuEb",
+        "scope": "Raw confirmed observations only. Legacy instruction name/fixed account is insufficient: both captures token balances identify Token2022. Current policy excludes; no acquisition or additional provider calls.",
         "supported_legacy_candidates": 0,
-        "observed_migrations": [
-          {
-            "mint": "9VgmpRGVAB5YGy8bwwuBXAcfVm5MHsSeupUgzGQTpump",
-            "pool": "HZHa6EEGVAfvLM2pTFbcf22mjNF8FcAQYZMgxjtVavg1",
-            "token_program": "Token2022",
-            "signature": "2ByUjiPBvTFAgqJ94a8Bsaz4jY6PJ3z663T6X6sh4FBABf6ao5AAQJeTXCXCs7NfBuhEYXDXvgG1sGdaVxUHQwn6"
-          },
-          {
-            "mint": "DrqFMHFbDBUvx2NX4qnnaja8QvRrtaXdDpFwdEavpump",
-            "pool": "4pMKLAG4K14MQdPc8SXbGPMDDaNATHfkS8rAPZwDS8Z4",
-            "token_program": "Token2022",
-            "signature": "2rS9MuBSwq5sXQR6CbqnSDbDLyxa8gWexVXCSc11FKBFvRwMHkryFkrDfCk8eXCPykjT3T8Qokm3PoJnhexubPbF"
-          }
-        ],
         "admitted": false,
-        "additional_investigation_requests": 0,
-        "scope": "Confirmed raw discovery observations only; excluded by existing Token2022 policy, no finalized entry authority"
+        "additional_investigation_requests": 0
       }
     },
     "live_migration_operator_preflight": {
@@ -2835,8 +2833,24 @@
       "integration_ci": {
         "successful_run": 37920258511,
         "head": "35e8454b7643565a61ddc894d422cb433b769dec",
-        "duplicate_run_pending": 37920252871
+        "duplicate_run": {
+          "id": 37920252871,
+          "conclusion": "cancelled",
+          "detail": "10minute workflow ceiling during unittest; log has no assertion failure or summary; diagnostic dispatched"
+        }
       }
+    },
+    "ci_timeout_diagnostic": {
+      "status": "COMPLETE_CAUSE_UNDETERMINED",
+      "worker": "06",
+      "thread_id": "01a118fc-f867-7233-8eec-c20659e70095",
+      "turn_id": "01a12055-4380-71ea-ade6-2e8217ff6961",
+      "cursor": "8f3328cf-bef6-441d-83f8-2d1f46b3b0df:116",
+      "run": 37920252871,
+      "exact_head": "35e8454b7643565a61ddc894d422cb433b769dec",
+      "no_rerun_or_timeout_change": true,
+      "finding": "Cancelled after604.539s with no assertion output or summary. Same-tree run passed2357 in233.442s; slowdown versus hang cannot be distinguished. Quiet output can hide failures until summary; cancellation is not a pass.",
+      "next_if_recurs": "Verbose test names and periodic faulthandler dumps, preserving suite and10min timeout; no source repair established"
     }
   },
   "native_reconciliation_review": {
