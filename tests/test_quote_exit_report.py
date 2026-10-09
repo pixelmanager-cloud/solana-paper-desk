@@ -34,6 +34,9 @@ class ExitReportTests(unittest.TestCase):
         before=list(c.f.ledger.db.iterdump());r=experiment_report(c.f.path,now=T+1)
         self.assertEqual(before,list(c.f.ledger.db.iterdump()))
         self.assertEqual(r['closed_trade_count'],1);self.assertEqual(r['open_position_count'],0)
+        self.assertEqual(r['market_observation_count'],1)
+        self.assertEqual(r['observation_span_basis'],'MARKET_AND_QUOTE_EXIT_EVENT_TIMES')
+        self.assertEqual(r['observation_span_seconds'],1)
         self.assertEqual(r['buy_fill_count'],1);self.assertEqual(r['quote_exit_observation_count'],1)
         label=r['execution']['fills'][-1]
         self.assertEqual(label['exit_source_evidence'],e['source_evidence'])
