@@ -4595,7 +4595,27 @@
               "admission_only_delta": "7->10",
               "pending": false,
               "provider_calls": 0,
-              "review_addendum_requested": true
+              "review_addendum_requested": true,
+              "review_addendum": {
+                "turn": "01a121f0-d573-7046-9eb5-09ec81bffe52",
+                "result": "SAME_CONDITIONAL_PIN_APPROVAL_CONFIRMED"
+              }
+            },
+            "component_ci_result": {
+              "head": "e2cf656fb25ed91a4053ae6c9db6dab6c64ed728",
+              "result": "BOTH_PASS",
+              "tests": 2608,
+              "runs": {
+                "37973297370": 471.978,
+                "37973292849": 617.832
+              }
+            },
+            "combined_ci_first": {
+              "run": 37973575822,
+              "head": "75c3679ccc11914dc5ff9f8f07fb95cc46712111",
+              "result": "PASS",
+              "tests": 2609,
+              "seconds": 503.388
             }
           }
         }
