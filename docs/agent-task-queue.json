@@ -5267,7 +5267,7 @@
             "cli_path_repair": {
               "owner": "07",
               "thread_id": "01a118fd-0f1c-749c-b85b-5e730937d0a8",
-              "status": "INDEPENDENT_PASS_CI_PENDING",
+              "status": "INTEGRATED_NOT_DEPLOYED",
               "scope": "Canonical successor CLI Path normalization and real regression; independent03 required",
               "turn_id": "01a12263-3a23-7471-b96c-ce7e3a036d16",
               "pr": 179,
@@ -5279,7 +5279,13 @@
               "attachment": "App limit100; failed179attach recorded, no retry",
               "review_turn": "01a12267-dbbd-745d-afe6-16f6d7f4eca9",
               "review_tests": 12,
-              "review_seconds": 37.991
+              "review_seconds": 37.991,
+              "integration_merge": "0cd515c873e5980425020fc62ab5b5def52e887c",
+              "ci_tests": 2663,
+              "ci_seconds": [
+                859.24,
+                856.922
+              ]
             },
             "holder_reward_diagnosis": {
               "owner": "08",
@@ -5307,13 +5313,27 @@
             "http403_retirement": {
               "owner": "07",
               "reviewer": "09",
-              "status": "IMPLEMENTATION_AUTHORIZED_AFTER_CONDITIONAL_DESIGN_REVIEW",
+              "status": "IMPLEMENTING_FIXTURE_SETUP_CORRECTIONS_NO_PASS_CLAIM",
               "scope": "Definitive retained Price403 read-only failed pass append-only retirement; originalNULL/charges/context preserved; rejectedcandidate neverretried; ambiguousI/O blocked",
               "worker_thread": "01a118fd-0f1c-749c-b85b-5e730937d0a8",
               "review_thread": "01a118fd-3f90-77d9-9549-c4497f5b10a6",
               "design_review_turn": "01a1226c-88e4-7056-af4c-b5b10326cc10",
               "constraints": "Exact retained HTTP403 only, body unavailable explicit, complete8\u219213 inventory, failedattempt omittedfromresult separatelypinned, unchangedledger/pacerclosure, no retry/reset, ambiguousI/O blocked",
-              "public_records": "work/candidate703-failure-proof.json"
+              "public_records": "work/candidate703-failure-proof.json",
+              "turn_id": "01a1226b-c074-729a-8a65-924efbdbaf10",
+              "record_shape_review_turn": "01a1226d-4683-7594-b70c-ae2f2463c5ea",
+              "actual_five_attempts": "work/candidate703-five-attempts.json",
+              "actual_attempt_hashes_verified": true,
+              "review_cursor": "68a4d56e-d04a-40dc-ad15-e80a29c96b80:97",
+              "worker_cursor": "3dd79f38-868a-433f-9b14-13e7ed0a6e90:116"
+            },
+            "last_actionable_check": {
+              "at": "2026-10-09T20:54:00Z",
+              "pr179_head": "a3595f896098290a0db27db279594f6838246a9f",
+              "ci": "Both in progress",
+              "recovery_worker": "active",
+              "provider_calls": "held for user Price permission/firewall check and exact failed-pass recovery",
+              "live_buy": false
             }
           }
         }
