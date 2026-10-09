@@ -16,6 +16,7 @@ import uuid
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 from desk import paper_cycle as cycle, paper_cycle_cli as cli, provider_pacing as pacing
 from desk.paper_history_source import PaperHistorySource
+from desk.paper_observation_collector import _Blocked
 from desk.model import digest
 
 
@@ -65,6 +66,7 @@ def execute(config, research_db, evidence_db, ledger_db, targets, *, live=False,
     if positions or len(candidates) != 1 or usd:
         raise ValueError('Exactly one candidate and no retained USD or positions required')
     item = candidates[0]
+    if item.known_hazards: raise ValueError('Known target hazard')
     if live and item.provenance != 'PUBLIC_MAINNET_CAPTURE_NOT_TRADING_EVIDENCE':
         raise ValueError('Public mainnet provenance required')
     pin = _pacer()  # Before credentials, admission preparation or provider spend.
@@ -112,7 +114,7 @@ def main(argv=None):
         summary={k:result[k] for k in ('status','blockers','attempted_requests','execution_status','live_readiness') if k in result}
         summary['outcomes']=[{k:r[k] for k in ('type','side','reason') if k in r} for r in result.get('outcomes',[])]
         print(json.dumps(summary,sort_keys=True));return 0 if result['status'] in ('DRY_RUN','COMPLETE') else 2
-    except (ValueError,OSError,sqlite3.Error,KeyError,TypeError,OverflowError,RecursionError):
+    except (_Blocked,ValueError,OSError,sqlite3.Error,KeyError,TypeError,OverflowError,RecursionError):
         print(json.dumps({'status':'BLOCKED','blockers':['HISTORY_FIRST_PREFLIGHT_OR_ACQUISITION_UNAVAILABLE'],
                           'execution_status':'EXECUTION_UNVERIFIED','live_readiness':False}));return 2
 
