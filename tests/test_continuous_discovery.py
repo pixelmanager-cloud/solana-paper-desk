@@ -200,6 +200,42 @@ class DiscoveryTests(unittest.TestCase):
         self.assertEqual(self.store.status()['hour_bytes'],before)
         self.assertEqual(self.store.c.execute('SELECT count(*) FROM raw_events').fetchone()[0],1)
 
+    def test_partial_restore_retained_raw_cannot_reset_charged_accounting(self):
+        self.receive(notification())
+        original=list(self.store.c.iterdump())
+        restored=Path(self.tmp.name)/'partial.sqlite'
+        # Simulated incomplete restore, not automatic repair or production deletion.
+        script='\n'.join(line for line in original if not line.startswith(('INSERT INTO "reservations"','INSERT INTO "completions"','INSERT INTO "frames"')))
+        with sqlite3.connect(restored) as c:c.executescript(script)
+        before=restored.read_bytes()
+        with self.assertRaisesRegex(d.Blocked,'ORIGINAL'):d.Store(restored,clock=lambda:101)
+        self.assertEqual(restored.read_bytes(),before)
+        self.assertEqual(self.store.status()['hour_bytes'],len(notification()))
+
+    def test_restored_raw_timestamp_cannot_claim_freshness_against_original_receipt(self):
+        self.receive(notification());original=list(self.store.c.iterdump())
+        restored=Path(self.tmp.name)/'partial-time.sqlite'
+        script='\n'.join(line.replace(',100.0,',',101.0,') if line.startswith('INSERT INTO "raw_events"') else line for line in original)
+        with sqlite3.connect(restored) as c:c.executescript(script)
+        before=restored.read_bytes()
+        with self.assertRaisesRegex(d.Blocked,'ORIGINAL'):d.Store(restored,clock=lambda:101)
+        self.assertEqual(restored.read_bytes(),before)
+
+    def test_partial_restore_missing_raw_never_reconstructs_from_frame(self):
+        self.receive(notification());original=list(self.store.c.iterdump())
+        restored=Path(self.tmp.name)/'partial-raw.sqlite'
+        script='\n'.join(line for line in original if not line.startswith('INSERT INTO "raw_events"'))
+        with sqlite3.connect(restored) as c:c.executescript(script)
+        before=restored.read_bytes()
+        with self.assertRaisesRegex(d.Blocked,'ORIGINAL'):d.Store(restored,clock=lambda:101)
+        self.assertEqual(restored.read_bytes(),before)
+
+    def test_ambiguous_old_connect_recovered_attempt_remains_charged_current_hour(self):
+        identity=self.store.reserve('CONNECT');self.now+=3601
+        with d.worker(self.path):self.store.recover()
+        self.assertEqual(self.store.status()['hour_connect_attempts'],1)
+        self.assertEqual(self.store.c.execute('SELECT code FROM completions WHERE id=?',(identity,)).fetchone()[0],'INTERRUPTED')
+
     def test_actual_module_cli_new_policy_and_missing_listen_no_creation(self):
         import subprocess,sys
         target=Path(self.tmp.name)/'cli.sqlite'

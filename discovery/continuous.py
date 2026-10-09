@@ -84,6 +84,9 @@ def initialize(path, filter_address=AUTHORITY, *, hour_bytes=HOUR_BYTES, hour_re
         CREATE TABLE completions(id INTEGER PRIMARY KEY REFERENCES reservations(id),at REAL NOT NULL,bytes INTEGER NOT NULL,records INTEGER NOT NULL,code TEXT NOT NULL,frame_hash TEXT);
         CREATE TABLE frames(id INTEGER PRIMARY KEY REFERENCES reservations(id),payload BLOB NOT NULL,sha256 TEXT NOT NULL);
         CREATE TABLE raw_events(seq INTEGER PRIMARY KEY,source_id TEXT UNIQUE NOT NULL,received_at REAL NOT NULL,slot INTEGER NOT NULL,payload TEXT NOT NULL,payload_hash TEXT NOT NULL);
+        CREATE INDEX completions_time ON completions(at);
+        CREATE INDEX reservations_time_kind ON reservations(kind,at);
+        CREATE INDEX frames_hash ON frames(sha256);
         ''')
         c.execute('INSERT INTO settings VALUES(1,1,?,0)', (filter_address,))
         c.execute('INSERT INTO policies VALUES(1,0,?,?,?)',policy)
@@ -127,9 +130,10 @@ class Store:
             raise Blocked('DISCOVERY_ACCOUNTING_INVALID')
         if self.c.execute('SELECT 1 FROM frames f LEFT JOIN completions o ON o.id=f.id WHERE o.id IS NULL OR o.frame_hash!=f.sha256 LIMIT 1').fetchone():
             raise Blocked('DISCOVERY_ORIGINAL_INVALID')
-        for payload,h,source,slot in self.c.execute('SELECT payload,payload_hash,source_id,slot FROM raw_events'):
+        for payload,h,source,slot,received in self.c.execute('SELECT payload,payload_hash,source_id,slot,received_at FROM raw_events'):
             raw=json.loads(payload)
-            if (digest(raw)!=h or raw.get('params',{}).get('result',{}).get('signature')!=source.removeprefix('confirmed:')
+            receipt=self.c.execute('SELECT 1 FROM frames f JOIN completions o ON o.id=f.id WHERE f.sha256=? AND o.frame_hash=f.sha256 AND o.records=1 AND o.code="RECEIVED" AND o.at=? LIMIT 1',(hashlib.sha256(payload.encode()).hexdigest(),received)).fetchone()
+            if (receipt is None or digest(raw)!=h or raw.get('params',{}).get('result',{}).get('signature')!=source.removeprefix('confirmed:')
                     or raw.get('params',{}).get('result',{}).get('slot')!=slot):
                 raise Blocked('DISCOVERY_ORIGINAL_INVALID')
         for identity, at, kind, completed, used, records, code, frame_hash in self.c.execute('SELECT r.id,r.at,r.kind,o.at,o.bytes,o.records,o.code,o.frame_hash FROM reservations r LEFT JOIN completions o ON o.id=r.id'):
@@ -142,6 +146,12 @@ class Store:
                 frame = self.c.execute('SELECT payload,sha256 FROM frames WHERE id=?',(identity,)).fetchone()
                 if (not frame or hashlib.sha256(frame[0]).hexdigest()!=frame_hash or frame[1]!=frame_hash
                         or used!=len(frame[0])): raise Blocked('DISCOVERY_ORIGINAL_INVALID')
+                if records==1:
+                    original=json.loads(frame[0])
+                    event=original.get('params',{}).get('result',{})
+                    saved=self.c.execute('SELECT slot,payload_hash FROM raw_events WHERE source_id=?',('confirmed:'+str(event.get('signature')),)).fetchone()
+                    if saved!=(event.get('slot'),digest(original)):
+                        raise Blocked('DISCOVERY_ORIGINAL_INVALID')
 
     @property
     def policy(self):
@@ -185,7 +195,7 @@ class Store:
         def window(seconds):
             b,r=self.c.execute('SELECT COALESCE(sum(bytes),0),COALESCE(sum(records),0) FROM completions WHERE at>?',(now-seconds,)).fetchone()
             pending=self.c.execute("SELECT count(*) FROM reservations r LEFT JOIN completions o ON o.id=r.id WHERE o.id IS NULL AND r.kind='RECEIVE'").fetchone()[0]
-            connects=self.c.execute("SELECT count(*) FROM reservations WHERE kind='CONNECT' AND at>?",(now-seconds,)).fetchone()[0]
+            connects=self.c.execute("SELECT count(*) FROM reservations r LEFT JOIN completions o ON o.id=r.id WHERE r.kind='CONNECT' AND (o.id IS NULL OR o.at>?)",(now-seconds,)).fetchone()[0]
             return b+pending*MESSAGE,r+pending,connects
         return window(3600),window(86400)
 
