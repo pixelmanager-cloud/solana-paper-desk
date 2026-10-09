@@ -22,6 +22,7 @@ from .history_progress import HistoryProgress
 from .model import canonical, digest
 from .programs import address
 from .providers import SOL
+from . import provider_pacing
 
 MAX_REQUEST_BYTES = 8192
 MAX_RESPONSE_BYTES = 2 * 1024 * 1024
@@ -143,11 +144,17 @@ class PaperReadSources:
         completed = None
         code = 'CREDENTIAL_UNAVAILABLE'
         result = None
+        pacer = None
+        pacing_ticket = None
+        pacing_release = True
+        provider = 'jupiter' if method in ('jupiter_probe', 'jupiter_price_v3') else 'helius'
         def remaining():
             now = time.monotonic()
             if not math.isfinite(now) or now < started or now >= deadline: raise PaperReadError('DEADLINE_EXCEEDED')
             return deadline - now
         try:
+            pacer = provider_pacing.configured(priority='held' if self.monitoring_budget is not None else 'investigation')
+            if pacer is not None: pacing_ticket = pacer.acquire(provider, timeout_seconds=remaining())
             name = 'JUPITER_API_KEY' if method in ('jupiter_probe', 'jupiter_price_v3') else 'HELIUS_API_KEY'
             key = os.environ.get(name)
             if type(key) is not str or not 1 <= len(key) <= 512 or any(not 33 <= ord(c) <= 126 for c in key):
@@ -164,6 +171,10 @@ class PaperReadSources:
             with opener.open(request, timeout=remaining()) as response:
                 code = 'HTTP_REJECTED'
                 http_status = response.status if type(response.status) is int else None
+                if pacer is not None and provider_pacing.should_throttle(response.status, response.headers):
+                    pacing_release = False
+                    pacer.throttle(provider, response.headers, ticket=pacing_ticket)
+                    pacing_ticket = None
                 if type(response.status) is not int or response.status != 200: raise PaperReadError(code)
                 code = 'RESPONSE_HEADERS_INVALID'
                 if wire._header(response.headers, 'Transfer-Encoding') is not None: raise PaperReadError(code)
@@ -220,9 +231,22 @@ class PaperReadSources:
             if isinstance(error, HTTPError):
                 code = 'HTTP_REJECTED'
                 http_status = error.code if type(error.code) is int else None
+                if pacer is not None and provider_pacing.should_throttle(error.code, error.headers):
+                    pacing_release = False
+                    try:
+                        pacer.throttle(provider, error.headers, ticket=pacing_ticket)
+                        pacing_ticket = None
+                    except provider_pacing.PacingError as pacing_error: code = pacing_error.code
                 try: error.close()
                 except Exception: pass
             elif isinstance(error, strict.CoordinatorRPCError): code = 'HTTP_REJECTED'
+            elif isinstance(error, provider_pacing.PacingError): code = error.code
+        if pacing_ticket is not None and pacing_release:
+            try:
+                pacer.finish(provider, pacing_ticket)
+                remaining()
+            except provider_pacing.PacingError as error: code = error.code
+            except PaperReadError as error: code = error.code
         if raw is not None and completed is None:
             # Retain acquisition time for bounded partial/invalid observations
             # when the clock is available; never erase the original failure.
