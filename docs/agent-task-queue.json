@@ -2674,7 +2674,8 @@
         "exit_status": 0,
         "next_run": "2026-10-09T10:12:39Z",
         "scope": "Real scheduled empty-position invocation; no live entry or exit evidence"
-      }
+      },
+      "source_config_recheck": "2026-10-09T10:29Z: deployed15054558 source matches active ledger implementation hash; canonical config digest matches ledger. No provider calls."
     },
     "discovery_migration_diagnostic": {
       "status": "FILTER_SCHEDULED_SAMPLE_CONNECTED_NO_EVENTS",
@@ -2714,6 +2715,16 @@
         "last_raw_seq": 778,
         "limits_changed": false,
         "manual_extra_sample": false
+      },
+      "latest_scheduled_sample": {
+        "started_at": "2026-10-09T10:36:15Z",
+        "completed_at": "2026-10-09T10:36:36Z",
+        "status": "CONNECTED_NO_EVENTS",
+        "exit_status": 0,
+        "new_records": 0,
+        "received_bytes": 0,
+        "last_raw_seq": 778,
+        "limits_changed": false
       }
     },
     "live_migration_operator_preflight": {
@@ -2729,7 +2740,7 @@
       "fixture_tests": 40
     },
     "migration_slot_intake_repair": {
-      "status": "IMPLEMENTATION_DISPATCHED",
+      "status": "IMPLEMENTATION_AND_COMPATIBILITY_TEST_IN_PROGRESS",
       "worker": "01",
       "reviewer": "02",
       "thread_id": "01a118fc-39bc-722c-b442-8bf5a749e0bb",
@@ -2744,7 +2755,8 @@
       "review_cursor": "a2dcfb97-463d-4188-9da3-48a81e644d23:102",
       "compatibility_preflight": "02 fixture PASS unchanged b84 exporter/loader/witness accepts normally charged single-slot manifest; +1investigationusage, no ledger fingerprint change. Exact implementation review pending.",
       "deployment_plan": "Isolated reviewed operator acquisition release; unchanged afe2845 ledger/watchdog/dashboard/heldcycle; no ledger reset or monitoring reprovision",
-      "author_cursor": "5e651fc7-2996-4765-974d-5c852257a005:104"
+      "author_cursor": "5e651fc7-2996-4765-974d-5c852257a005:106",
+      "author_progress": "35 focused tests PASS; exact old b84 cycle compatibility proof in progress; no published head yet"
     }
   },
   "native_reconciliation_review": {
