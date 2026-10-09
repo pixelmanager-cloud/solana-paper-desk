@@ -175,3 +175,58 @@ finally:s.doCleanups()
             self.assertGreater(float(position['cost_left']),0)
             self.assertEqual(c.execute("SELECT value FROM metadata WHERE key='implementation_hash'").fetchone()[0],OLD)
         self.assertTrue(set(original)<=set(dump(self.ledger)))
+
+    def test_unsupported_suffix_rejected_consistently_before_duplicate_or_reporting(self):
+        self.migrate()
+        event={'schema_version':99,'kind':'future_unreviewed','event_id':'future','ts':T,'actor':'paper_monitor'}
+        with sqlite3.connect(self.ledger) as c:
+            state=json.loads(c.execute('SELECT payload FROM state WHERE id=1').fetchone()[0]);state['last_ts']=T
+            c.execute('INSERT INTO events(event_id,ts,payload,payload_hash) VALUES(?,?,?,?)',('future',T,canonical(event),digest(event)))
+            c.execute('UPDATE state SET payload=? WHERE id=1',(canonical(state),))
+        before=dump(self.ledger)
+        with sqlite3.connect(self.ledger) as c:
+            with self.assertRaises(ValueError):rc.require_runtime(c)
+            with self.assertRaises(RecoveryRequired):read_checkpoint(c)
+        with self.assertRaises(RecoveryRequired):paper_cycle._state(self.ledger,self.cfg)
+        ledger=Ledger(self.ledger,must_exist=True)
+        try:
+            with self.assertRaises(ValueError):ledger.apply(event,self.cfg,engine.transition,engine.initial_state)
+            with self.assertRaises(ValueError):ledger.report()
+        finally:ledger.close()
+        self.assertEqual(paper_status(self.ledger,now=T)['status'],'RECOVERY_REQUIRED')
+        self.assertEqual(before,dump(self.ledger))
+
+    def test_recomputed_baseline_with_correct_guards_still_requires_valid_checkpoint(self):
+        self.migrate()
+        with sqlite3.connect(self.ledger) as c:
+            row=json.loads(c.execute('SELECT payload FROM paper_runtime_transition').fetchone()[0]);row['original_checkpoint']={}
+            c.execute('DROP TRIGGER paper_runtime_transition_update')
+            c.execute('UPDATE paper_runtime_transition SET payload=?,payload_hash=?',(canonical(row),digest(row)))
+            c.execute(rc._guards()['paper_runtime_transition_update'])
+            with self.assertRaises(ValueError):rc.require_runtime(c)
+            with self.assertRaises(RecoveryRequired):read_checkpoint(c)
+
+    def test_suffix_preflight_bounds_before_body_materialization(self):
+        self.migrate()
+        with sqlite3.connect(self.ledger) as c:
+            huge=' '*262145
+            c.execute('INSERT INTO events(event_id,ts,payload,payload_hash) VALUES(?,?,?,?)',('oversize',T,huge,'0'*64))
+            queries=[];c.set_trace_callback(queries.append)
+            with self.assertRaises(ValueError):rc.require_runtime(c)
+            c.set_trace_callback(None)
+            self.assertFalse(any('SELECT event_id,ts,payload,payload_hash FROM events' in q for q in queries))
+
+    def test_review_noop_guard_and_rehashed_empty_snapshot_reproduction(self):
+        self.migrate()
+        with sqlite3.connect(self.ledger) as c:
+            for action in ('INSERT','UPDATE','DELETE'):
+                name='paper_runtime_transition_'+action.lower()
+                c.execute('DROP TRIGGER '+name)
+                c.execute(f'CREATE TRIGGER {name} BEFORE {action} ON paper_runtime_transition BEGIN SELECT 1; END')
+            receipt=json.loads(c.execute('SELECT payload FROM paper_runtime_transition').fetchone()[0])
+            receipt['original_checkpoint']={}
+            c.execute('UPDATE paper_runtime_transition SET payload=?,payload_hash=?',(canonical(receipt),digest(receipt)))
+            before=list(c.iterdump())
+            with self.assertRaises(ValueError):rc.require_runtime(c)
+            with self.assertRaises(RecoveryRequired):read_checkpoint(c)
+            self.assertEqual(list(c.iterdump()),before)

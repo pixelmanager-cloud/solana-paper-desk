@@ -80,3 +80,16 @@ and verifies exact immutable trigger bodies, not names alone. Focused restart/
 reader/runtime checks passed37tests13.253s; dedicated compatibility checks passed
 9tests4.601s including a genuine old-source synthetic partial-position journal
 with retained0.689535quantity and cost basis. Final full-suite result follows.
+
+Independent review found two draft defects: later unsupported event grammar could
+pass some consumers, and named no-op triggers could undermine a baseline receipt.
+Forward repair checks exact table and trigger SQL, validates bounded full retained
+suffix event grammar/hash/outcome links before any runtime acknowledgment, and
+validates the original checkpoint against copies of its exact original prefix in a
+bounded temporary in-memory verifier. It writes no rebuilt state to any ledger.
+`Ledger.report` uses the same resolver. Tests reproduce schema99/future suffix,
+all three named no-op guards with rehashed empty checkpoint, malformed baseline
+with correct guards, and oversized suffix preflight before materialization.
+The intermediate full rerun was stopped for these concrete findings; no PASS is
+claimed for that abandoned run. Focused repair checks41tests22.280s passed; final
+source full-suite validation is pending frozen repair review.

@@ -60,6 +60,10 @@ def _approved(predecessor,successor,config_hash):
         raise ValueError('Runtime transition is not reviewed')
 
 
+def _schema():
+    return f'CREATE TABLE {TABLE}(id INTEGER PRIMARY KEY CHECK(id=1),payload TEXT NOT NULL,payload_hash TEXT NOT NULL)'
+
+
 def _guards():
     result={TABLE+'_insert':f"CREATE TRIGGER {TABLE}_insert BEFORE INSERT ON {TABLE} WHEN EXISTS(SELECT 1 FROM {TABLE} WHERE id=NEW.id) BEGIN SELECT RAISE(ABORT,'Runtime transition immutable'); END"}
     for action in ('UPDATE','DELETE'):
@@ -78,7 +82,8 @@ def _prefix(c,table,limit):
 
 
 def _history(c,cfg):
-    from .paper_view import _event_json
+    from .paper_view import _event_json, _history_preflight
+    _history_preflight(c)
     for table in ('events','outcomes'):
         count=c.execute(f'SELECT COUNT(*) FROM {table}').fetchone()[0]
         _prefix(c,table,count)
@@ -105,6 +110,8 @@ def require_runtime(c,*,implementation=None):
         if original!=current:raise ValueError('implementation changed: explicit reviewed transition required')
         return current
     if names!={TABLE}:raise ValueError('Partial runtime transition schema')
+    if c.execute("SELECT sql FROM sqlite_master WHERE type='table' AND name=?",(TABLE,)).fetchone() != (_schema(),):
+        raise ValueError('Malformed runtime table semantics')
     columns=c.execute(f'PRAGMA table_info({TABLE})').fetchall()
     if [(r[1],r[2],r[5]) for r in columns]!=[('id','INTEGER',1),('payload','TEXT',0),('payload_hash','TEXT',0)]:
         raise ValueError('Malformed runtime transition schema')
@@ -126,7 +133,27 @@ def require_runtime(c,*,implementation=None):
     for table in ('events','outcomes'):
         if _prefix(c,table,receipt[table+'_count'])!=receipt[table+'_hash']:
             raise ValueError('Runtime original journal changed')
+    _history(c,cfg)
+    _baseline(c,receipt)
     return current
+
+
+def _baseline(c,receipt):
+    """Validate preserved checkpoint against its bounded ORIGINAL prefix only."""
+    from .paper_checkpoint import validate_checkpoint
+    metadata=receipt['original_metadata']
+    if len(metadata)>64 or any(type(k) is not str or type(v) is not str for k,v in metadata.items()):
+        raise ValueError('Malformed original metadata snapshot')
+    with closing(sqlite3.connect(':memory:')) as baseline:
+        baseline.execute('CREATE TABLE metadata(key TEXT PRIMARY KEY,value TEXT NOT NULL)')
+        baseline.execute('CREATE TABLE events(seq INTEGER PRIMARY KEY,event_id TEXT,ts INTEGER,payload TEXT,payload_hash TEXT)')
+        baseline.execute('CREATE TABLE outcomes(seq INTEGER PRIMARY KEY,event_id TEXT,payload TEXT)')
+        baseline.executemany('INSERT INTO metadata VALUES(?,?)',metadata.items())
+        for table,columns in (('events','seq,event_id,ts,payload,payload_hash'),('outcomes','seq,event_id,payload')):
+            rows=c.execute(f'SELECT {columns} FROM {table} WHERE seq<=? ORDER BY seq',(receipt[table+'_count'],))
+            marks=','.join('?' for _ in columns.split(','))
+            baseline.executemany(f'INSERT INTO {table} VALUES({marks})',rows)
+        validate_checkpoint(baseline,canonical(receipt['original_checkpoint']))
 
 
 def transition(research_db,evidence_db,ledger_db,cfg,*,predecessor,successor):
@@ -169,7 +196,7 @@ def transition(research_db,evidence_db,ledger_db,cfg,*,predecessor,successor):
                         for table in ('events','outcomes'):
                             count=c.execute(f'SELECT COUNT(*) FROM {table}').fetchone()[0]
                             receipt[table+'_count']=count;receipt[table+'_hash']=_prefix(c,table,count)
-                        c.execute(f'CREATE TABLE {TABLE}(id INTEGER PRIMARY KEY CHECK(id=1),payload TEXT NOT NULL,payload_hash TEXT NOT NULL)')
+                        c.execute(_schema())
                         for sql in _guards().values():c.execute(sql)
                         c.execute(f'INSERT INTO {TABLE} VALUES(1,?,?)',(canonical(receipt),digest(receipt)))
                         require_runtime(c);c.commit()

@@ -182,6 +182,9 @@ class Ledger:
         row = self.db.execute("SELECT payload FROM state WHERE id=1").fetchone()
         if not row and self._has_experiment_records():
             raise ValueError("ledger checkpoint missing: recovery required; original records preserved")
+        if row:
+            from .runtime_compatibility import require_runtime
+            require_runtime(self.db)
         state = self._checkpoint(row[0]) if row else None
         outcomes = [json.loads(r[0]) for r in self.db.execute("SELECT payload FROM outcomes ORDER BY seq")]
         counts = {}
