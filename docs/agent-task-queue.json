@@ -1764,7 +1764,7 @@
       "live_acceptance": false
     },
     "ci_infrastructure_blocker": {
-      "status": "BLOCKED_GITHUB_BILLING",
+      "status": "USER_FIXED_RUNNER_STARTED_REVALIDATING",
       "run_id": 37882624392,
       "check_run_id": 113665504091,
       "head": "90d8c59d1e98c3d09074a6f2fa4a029dbd420862",
@@ -1773,9 +1773,10 @@
     },
     "pending_pr118": {
       "head": "76225f565c12d0d8039343f6a196015da7fbe4b0",
-      "status": "INDEPENDENT_REVIEW_08_AFTER_MAPPING",
+      "status": "CHANGES_REQUIRED_REPAIR_09",
       "author_linux_tests": 2001,
-      "live_acceptance": false
+      "live_acceptance": false,
+      "finding": "Extreme exponent escapes decimal.InvalidOperation; caller successful raw-byte reference and trusted block-time acquisition missing."
     },
     "pending_pr114": {
       "head": "eae754dd0104829ddd5ccc2bfd9a953fa65c8a3d",
@@ -1786,6 +1787,42 @@
         "Failed-record bank time contradictions escape coverage validation"
       ],
       "live_acceptance": false
+    },
+    "ci_retries": [
+      37882617485,
+      37882624392,
+      37881681707,
+      37882452877,
+      37882473309,
+      37882518766,
+      37883406407,
+      37883768990
+    ],
+    "repository_visibility_policy": {
+      "current": "PRIVATE",
+      "user_authorization": "Make public if Actions minutes/spending limits recur, after secrets/private-data inspection; do not publish if inspection finds exposure."
+    },
+    "paper_loop_acceptance_candidate": {
+      "base": "c0347d836560b365550d077c4f600ac3d140d4b5",
+      "heads": {
+        "108": "90d8c59d1e98c3d09074a6f2fa4a029dbd420862",
+        "113": "f89029a2669b4a2c4b891c4855a20c821a78cad5",
+        "115": "418aa4e7a77b6e9ba43bd82fd9bb7374f62afa6b",
+        "116": "d9e4ed6b811b47376ac6ad604847edfcf94aa052",
+        "117": "cfb25987e9c5a2b8cddb769da9047ed7262081f5"
+      },
+      "status": "COMBINED_TESTING_REVIEW_07",
+      "live_acceptance": false
+    },
+    "pending_pr119": {
+      "head": "9ecc4c7170e2d35a33cd9dc01bf03023f56806da",
+      "status": "REVIEW_04",
+      "repairs": 114
+    },
+    "pending_pr120": {
+      "head": "da08fc44fe9b2b2c73545b40090a2b622d43b450",
+      "status": "REVIEW_02",
+      "repairs": 112
     }
   },
   "native_reconciliation_review": {
