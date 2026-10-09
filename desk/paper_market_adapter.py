@@ -65,53 +65,7 @@ def build_market_event(collected, *, context, load_evidence, raw_trades=(),
         out['blockers']=['COORDINATOR_TARGET_BINDING_MISMATCH'];return out
     if collected.failure:blockers.add('COLLECTOR_OBSERVATION_REJECTED')
     try:
-        if collected.failure or any(x is None for x in (collected.mint,collected.pool,collected.quote)):
-            raise ValueError('missing collection')
-        if not 1<=len(collected.evidence_refs)<=20:raise ValueError('reference bound')
-        records={};total=0
-        for key in collected.evidence_refs:
-            if type(key) is not str or len(key)!=64:raise ValueError('bad reference')
-            try:record=load_evidence(key)
-            except Exception:raise ValueError('retained evidence unavailable') from None
-            encoded=canonical(record).encode();total+=len(encoded)
-            if len(encoded)>2*1024*1024 or total>8*1024*1024 or digest(record)!=key:raise ValueError('record mismatch')
-            records[key]=record
-        def original(source,identity):
-            if (source.source_id!=identity or len(source.original_json.encode())>2*1024*1024
-                    or not 0<=context.now-source.observed_at<=10):raise ValueError('source/time mismatch')
-            payload=json.loads(source.original_json)
-            if digest(payload)!=source.raw_hash:raise ValueError('source checksum')
-            return payload
-        mint_raw=original(collected.mint.source,context.rpc_source_id)
-        pool_raw=original(collected.pool.source,context.rpc_source_id)
-        quote_raw=original(collected.quote.source,context.quote_source_id)
-        mint_envelope=mint_raw['original_rpc_observation']
-        if (mint_envelope not in records.values() or mint_envelope['source_id']!=context.rpc_source_id
-                or mint_envelope['params']!=[target.mint,{'encoding':'base64','commitment':'confirmed'}]
-                or mint_envelope['method']!='getAccountInfo'
-                or mint_envelope['acquired_at']!=collected.mint.source.observed_at
-                or mint_raw['account']!=mint_envelope['result']['value']
-                or mint_raw['slot']!=mint_envelope['result']['context']['slot']):raise ValueError('mint binding')
-        if pool_raw not in records.values():raise ValueError('pool capture missing')
-        if not any(r.get('method')=='getMultipleAccounts' and r.get('source_id')==context.rpc_source_id
-                   and r.get('params')==pool_raw['params'] and r.get('result')==pool_raw['result']
-                   and r.get('acquired_at')==collected.pool.source.observed_at for r in records.values()):
-            raise ValueError('pool envelope binding')
-        if not any(r.get('method')=='jupiter_probe' and r.get('source_id')==context.quote_source_id
-                   and r.get('params')==[quote_raw['request']['inputMint'],quote_raw['request']['outputMint'],target.amount_raw,target.taker]
-                   and r.get('result')==quote_raw and r.get('acquired_at')==collected.quote.source.observed_at for r in records.values()):
-            raise ValueError('quote envelope binding')
-        def reader(source,payload):return lambda:ProviderObservation(source.source_id,source.observed_at,payload)
-        mint=ingest_mint(reader(collected.mint.source,mint_raw),mint=target.mint,now=context.now)
-        pool=ingest_pool(reader(collected.pool.source,pool_raw),mint=target.mint,pool=target.pool,now=context.now)
-        quote=ingest_quote(reader(collected.quote.source,quote_raw),mint=mint,direction=collected.direction,
-                           amount_raw=target.amount_raw,taker=target.taker,expected_pool=target.pool,now=context.now)
-        if (mint!=collected.mint or pool!=collected.pool or quote!=collected.quote
-                or pool.decimals!=mint.decimals or pool.slot<mint.slot):raise ValueError('typed normalized mutation')
-        atomic_mint=mint_policy(pool_raw['result']['value'][pool_raw['params'][0].index(target.mint)])
-        atomic_supply=int(atomic_mint['supply_raw'])
-        if atomic_mint['decision']!='PASS_TOKEN_POLICY' or atomic_mint['decimals']!=mint.decimals or atomic_supply<=0:
-            raise ValueError('atomic supply binding')
+        target,mint,pool,quote,mint_raw,atomic_supply,records=_replay_collected(collected,context,load_evidence)
         out['evidence_refs']=sorted(records)
     except (ValueError,TypeError,KeyError,AttributeError,IndexError,OSError,RecursionError):
         out['blockers']=sorted(blockers|{'COLLECTOR_SOURCE_BINDING_OR_CONTENT_INVALID'});return out
@@ -208,3 +162,56 @@ def build_market_event(collected, *, context, load_evidence, raw_trades=(),
     if not blockers:out['event']=e
     out['blockers']=sorted(blockers)
     return out
+
+
+def _replay_collected(collected, context, load_evidence):
+    """Shared original collector envelope replay; no event or permission flags."""
+    target=collected.target
+    if collected.failure or any(x is None for x in (collected.mint,collected.pool,collected.quote)):
+        raise ValueError('missing collection')
+    if not 1<=len(collected.evidence_refs)<=20:raise ValueError('reference bound')
+    records={};total=0
+    for key in collected.evidence_refs:
+        if type(key) is not str or len(key)!=64:raise ValueError('bad reference')
+        try:record=load_evidence(key)
+        except Exception:raise ValueError('retained evidence unavailable') from None
+        encoded=canonical(record).encode();total+=len(encoded)
+        if len(encoded)>2*1024*1024 or total>8*1024*1024 or digest(record)!=key:raise ValueError('record mismatch')
+        records[key]=record
+    def original(source,identity):
+        if (source.source_id!=identity or len(source.original_json.encode())>2*1024*1024
+                or not 0<=context.now-source.observed_at<=10):raise ValueError('source/time mismatch')
+        payload=json.loads(source.original_json)
+        if digest(payload)!=source.raw_hash:raise ValueError('source checksum')
+        return payload
+    mint_raw=original(collected.mint.source,context.rpc_source_id)
+    pool_raw=original(collected.pool.source,context.rpc_source_id)
+    quote_raw=original(collected.quote.source,context.quote_source_id)
+    mint_envelope=mint_raw['original_rpc_observation']
+    if (mint_envelope not in records.values() or mint_envelope['source_id']!=context.rpc_source_id
+            or mint_envelope['params']!=[target.mint,{'encoding':'base64','commitment':'confirmed'}]
+            or mint_envelope['method']!='getAccountInfo'
+            or mint_envelope['acquired_at']!=collected.mint.source.observed_at
+            or mint_raw['account']!=mint_envelope['result']['value']
+            or mint_raw['slot']!=mint_envelope['result']['context']['slot']):raise ValueError('mint binding')
+    if pool_raw not in records.values():raise ValueError('pool capture missing')
+    if not any(r.get('method')=='getMultipleAccounts' and r.get('source_id')==context.rpc_source_id
+               and r.get('params')==pool_raw['params'] and r.get('result')==pool_raw['result']
+               and r.get('acquired_at')==collected.pool.source.observed_at for r in records.values()):
+        raise ValueError('pool envelope binding')
+    if not any(r.get('method')=='jupiter_probe' and r.get('source_id')==context.quote_source_id
+               and r.get('params')==[quote_raw['request']['inputMint'],quote_raw['request']['outputMint'],target.amount_raw,target.taker]
+               and r.get('result')==quote_raw and r.get('acquired_at')==collected.quote.source.observed_at for r in records.values()):
+        raise ValueError('quote envelope binding')
+    def reader(source,payload):return lambda:ProviderObservation(source.source_id,source.observed_at,payload)
+    mint=ingest_mint(reader(collected.mint.source,mint_raw),mint=target.mint,now=context.now)
+    pool=ingest_pool(reader(collected.pool.source,pool_raw),mint=target.mint,pool=target.pool,now=context.now)
+    quote=ingest_quote(reader(collected.quote.source,quote_raw),mint=mint,direction=collected.direction,
+                       amount_raw=target.amount_raw,taker=target.taker,expected_pool=target.pool,now=context.now)
+    if (mint!=collected.mint or pool!=collected.pool or quote!=collected.quote
+            or pool.decimals!=mint.decimals or pool.slot<mint.slot):raise ValueError('typed normalized mutation')
+    atomic_mint=mint_policy(pool_raw['result']['value'][pool_raw['params'][0].index(target.mint)])
+    atomic_supply=int(atomic_mint['supply_raw'])
+    if atomic_mint['decision']!='PASS_TOKEN_POLICY' or atomic_mint['decimals']!=mint.decimals or atomic_supply<=0:
+        raise ValueError('atomic supply binding')
+    return target,mint,pool,quote,mint_raw,atomic_supply,records
