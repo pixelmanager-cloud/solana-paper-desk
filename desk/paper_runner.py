@@ -29,7 +29,7 @@ def _validate_fixture_event(event,cfg):
     # is evidence to validate, never permission to select experimental mode.
     version=cfg.get('experimental_policy_version') if cfg is not None else None
     if version is not None:
-        if type(version) is not int or version!=1 or cfg.get('mode')!='paper':
+        if type(version) is not int or version not in (1,2) or cfg.get('mode')!='paper':
             raise ValueError('Unsupported experimental paper policy configuration')
         validate_event(event,mode=PAPER_EXPERIMENTAL,policy_version=version)
     else:
