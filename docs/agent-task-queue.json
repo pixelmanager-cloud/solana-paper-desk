@@ -409,25 +409,34 @@
         "worker": "10",
         "thread_id": "01a118fd-56d5-70b8-ad31-dba13e982082",
         "host_id": "durable",
-        "status": "DISPATCHED",
-        "scope": "paper_view/dashboard actual saved runner state; no invented live readiness"
+        "status": "PUBLISHED_PENDING_REVIEW",
+        "scope": "paper_view/dashboard actual saved runner state; no invented live readiness",
+        "pr": 111,
+        "head": "0d746d73462b8c2c4d90ec9fdf13a1a3e51124c9"
       },
       {
         "id": "PR102-HISTORY-INTEGRITY-REPAIR",
         "worker": "08",
         "thread_id": "01a118fd-2563-7126-90d7-bd07693de0b2",
         "host_id": "durable",
-        "status": "DISPATCHED",
+        "status": "PUBLISHED_PENDING_REVIEW",
         "base": "ada4892b3df3138f3369aa9d64aaf60f778b0d7b",
-        "scope": "Reject present malformed or unbound history before experimental waiver; portability tests preserve read guard"
+        "scope": "Reject present malformed or unbound history before experimental waiver; portability tests preserve read guard",
+        "pr": 109,
+        "head": "1acc2b51fba371b6da2be6759afe79efc7081e4b",
+        "turn_id": "01a11ec2-2bb1-708c-a448-fbe23b2dfb40",
+        "wait_cursor": "02d8669f-59ba-43bb-8691-b196829f4867:17"
       },
       {
         "id": "ROUNDTRIP-ROUTE-WIRING",
         "worker": "06",
         "thread_id": "01a118fc-f867-7233-8eec-c20659e70095",
         "host_id": "durable",
-        "status": "DISPATCHED",
-        "scope": "roundtrip existing supported route checker wiring; no eligibility or missing proof fabrication"
+        "status": "PUBLISHED_LIMITED_IDENTITY_FIX",
+        "scope": "Binds two original transaction identities; full route remains blocked by absent originals and buy-side checker",
+        "pr": 110,
+        "head": "e2ab73def0909f511d2973a48cccf421fab2a512",
+        "turn_id": "01a11ec2-fc80-7665-aae5-d95fcd1e8450"
       },
       {
         "id": "BOUNDED-PAPER-OBSERVATION-COLLECTOR",
@@ -479,6 +488,38 @@
         "host_id": "durable",
         "status": "DISPATCHED",
         "scope": "Coordinator engine wiring and config/accounting isolation review"
+      },
+      {
+        "id": "PR109-INDEPENDENT-REREVIEW",
+        "worker": "01",
+        "thread_id": "01a118fc-39bc-722c-b442-8bf5a749e0bb",
+        "host_id": "durable",
+        "status": "DISPATCHED",
+        "scope": "Originalreviewer history corruption repair"
+      },
+      {
+        "id": "EXPERIMENTAL-RUNNER-CONFIG",
+        "worker": "08",
+        "thread_id": "01a118fd-2563-7126-90d7-bd07693de0b2",
+        "host_id": "durable",
+        "status": "DISPATCHED",
+        "scope": "RunnerCLI explicit experimentalcfg afterPR108; syntheticonly"
+      },
+      {
+        "id": "PR110-INDEPENDENT-REVIEW",
+        "worker": "05",
+        "thread_id": "01a118fc-dd83-7672-ac81-7445f85fe09f",
+        "host_id": "durable",
+        "status": "DISPATCHED",
+        "scope": "Unrelated new roundtripidentityreview; no PR97retry"
+      },
+      {
+        "id": "PR111-INDEPENDENT-REVIEW",
+        "worker": "06",
+        "thread_id": "01a118fc-f867-7233-8eec-c20659e70095",
+        "host_id": "durable",
+        "status": "DISPATCHED",
+        "scope": "Savedrunner status/display read-only review"
       }
     ],
     "saved_launch_probe": {
@@ -1425,6 +1466,14 @@
         "failures": 0,
         "tree": "76fcc66045fe8bbb48041fa149fc54cafeded09b",
         "limitation": "Includes test-only portability delta; PR102 integrity finding still blocks acceptance"
+      },
+      "repair_candidate_tests": {
+        "tree": "f4bbbcbc341b8f9fb71dc07fe7e47925df3e041f",
+        "total": 2026,
+        "skipped": 408,
+        "seconds": 36.226,
+        "failures": 0,
+        "limitation": "Scratch only, includes unaccepted original105 whose reportingfinding remains; no readinessapproval"
       }
     },
     "pending_pr103": {
@@ -1468,6 +1517,12 @@
       },
       "live_acceptance": false,
       "branch": "codex/paper-engine-policy-wiring"
+    },
+    "paper_fill_model_question": {
+      "status": "AWAITING_USER_PREFERENCE",
+      "current_gate": "Full transaction execution verification even for paper fills",
+      "proposed_experimental_mode": "Fresh live quote simulations with explicit fee/slippage assumptions and execution-unverified label",
+      "existing_authorization": "Ownership history risk only; do not silently waive execution proof while choice pending"
     }
   },
   "native_reconciliation_review": {
