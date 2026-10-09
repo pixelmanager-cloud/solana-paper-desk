@@ -7,6 +7,7 @@ Original bounded wire outcomes are saved in the existing evidence store before
 return/raise; the collector independently saves its original parsed responses.
 """
 import base64
+from collections import deque
 import math
 import os
 import time
@@ -115,6 +116,7 @@ class PaperReadSources:
             if type(monitoring_budget) is not MonitoringBudget:
                 raise PaperReadError('MONITORING_CONFIGURATION_INVALID')
         self.monitoring_budget = monitoring_budget
+        self.attempt_evidence_refs = deque(maxlen=18)  # bounded recent diagnostics, never a request ceiling
 
     def rpc(self, method, params, *, timeout_seconds):
         return self.rpc_with_evidence(method, params, timeout_seconds=timeout_seconds)[0]
@@ -342,6 +344,10 @@ class PaperReadSources:
                 self.monitoring_budget.retain_outcome(monitoring_reservation, evidence_hash)
         except Exception:
             raise PaperReadError('OUTCOME_PERSISTENCE_FAILED') from None
+        # Complete mandatory monitoring persistence before diagnostic tracking.
+        # Reused held sources may legitimately exceed investigation18; older
+        # trace refs fall out of memory while every original remains durable.
+        self.attempt_evidence_refs.append(evidence_hash)
         if code is not None: raise PaperReadError(code, evidence_hash) from None
         if method == 'jupiter_price_v3':
             return {'kind': 'sol_usd_price_probe', 'observed_at': completed, 'request': params,

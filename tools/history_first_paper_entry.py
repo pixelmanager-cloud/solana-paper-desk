@@ -37,10 +37,9 @@ def _context(research_db, evidence_db, ledger_db, cfg, item):
                 state = cycle._state(ledger, cfg)
                 if state['positions']: raise ValueError('No open positions permitted')
                 if state['mode'] != 'RUNNING': raise ValueError('Entry mode not running')
-                with store.connect() as c:
-                    found = c.execute("SELECT 1 FROM sqlite_master WHERE type='table' AND name='paper_observation_passes'").fetchone()
-                    if found and c.execute('SELECT 1 FROM paper_observation_passes WHERE outcome_hash IS NULL LIMIT 1').fetchone():
-                        raise ValueError('Observation recovery required')
+                from desk.paper_terminal_reconciliation import gate
+                blocked=gate(store,research,(item.target.scan_id,),ledger_locked=str(ledger))
+                if blocked:raise ValueError('Observation recovery required: '+blocked)
                 graduation = cycle._graduation(store, item, int(time.time()))
                 if graduation['status'] != 'OBSERVED_MIGRATION': raise ValueError('Retained migration required')
                 admission = progress.admission(item.target.scan_id)

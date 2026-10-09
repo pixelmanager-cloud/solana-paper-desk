@@ -29,6 +29,39 @@ class ObservationError(ValueError):
     pass
 
 
+MINT_POLICY_REJECTIONS = frozenset({'ACTIVE_MINT_AUTHORITY','ACTIVE_FREEZE_AUTHORITY'})
+POOL_POLICY_REJECTIONS = frozenset({'OUTSTANDING_WITHDRAWABLE_LP_SUPPLY','POOL_SELL_DISABLED_BY_CONFIG',
+    'BOOST_POOL_UNSUPPORTED','MAYHEM_POOL','CASHBACK_POOL_REQUIRES_FEE_POLICY',
+    'HOLDER_REWARD_POOL_REQUIRES_FEE_POLICY','ACCRUED_POOL_FEES_REQUIRE_RESERVE_ADJUSTMENT',
+    'VIRTUAL_RESERVES_REQUIRE_SPECIAL_PRICING'})
+
+
+class PolicyRejection(ObservationError):
+    """Successfully evaluated raw policy found only explicitly known negatives.
+
+    This is a terminal rejection diagnostic, never permission to retry or enter.
+    Raw transport/accounting proof is independently required by the cycle.
+    """
+    def __init__(self, domain, reasons):
+        permitted = MINT_POLICY_REJECTIONS if domain == 'mint' else POOL_POLICY_REJECTIONS if domain == 'pool' else ()
+        if not reasons or not set(reasons) <= permitted:
+            raise ValueError('Unsupported terminal policy classification')
+        # Accrued/virtual pricing by itself is unsupported syntax, not proof of
+        # a positive boost. Only the evaluated profile1 boost reason qualifies.
+        if domain == 'pool' and set(reasons) & {'ACCRUED_POOL_FEES_REQUIRE_RESERVE_ADJUSTMENT','VIRTUAL_RESERVES_REQUIRE_SPECIAL_PRICING'} and 'BOOST_POOL_UNSUPPORTED' not in reasons:
+            raise ValueError('Unclassified reserve profile')
+        self.domain, self.reasons = domain, tuple(sorted(set(reasons)))
+        super().__init__('Unsafe ' + domain + ': ' + ','.join(reasons))
+
+
+def _policy_rejection(domain, reasons):
+    try:
+        error = PolicyRejection(domain, reasons)
+    except ValueError:
+        error = ObservationError('Unsafe ' + domain + ': ' + ','.join(reasons))
+    raise error
+
+
 @dataclass(frozen=True)
 class ProviderObservation:
     source_id: str
@@ -154,7 +187,7 @@ def ingest_mint(reader: Callable[[], ProviderObservation], *, mint: str,
     except (ValueError, TypeError, KeyError, IndexError, AttributeError, OverflowError) as error:
         raise ObservationError('Malformed raw mint account') from error
     if policy['decision'] != 'PASS_TOKEN_POLICY':
-        raise ObservationError('Unsafe mint: ' + ','.join(policy['reasons']))
+        _policy_rejection('mint',policy['reasons'])
     return MintObservation(mint, slot, policy['decimals'], _whole(policy['supply_raw'], positive=True),
                            None, None, source)
 
@@ -196,7 +229,7 @@ def ingest_pool(reader: Callable[[], ProviderObservation], *, mint: str, pool: s
     except (KeyError, TypeError, AttributeError, IndexError) as error:
         raise ObservationError('Malformed atomic pool capture') from error
     if result['reasons'] or not result['liquidity_control_verified']:
-        raise ObservationError('Unsafe pool: ' + ','.join(result['reasons']))
+        _policy_rejection('pool',result['reasons'])
     if token_profile_version == 1 and not (
             result['quote_reserve_raw'] == result['spendable_quote_reserve_raw'] == result['effective_quote_reserve_raw']
             and result['boost_reserves_raw'] == '0'):
