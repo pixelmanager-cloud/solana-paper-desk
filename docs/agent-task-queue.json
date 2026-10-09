@@ -328,7 +328,25 @@
         "base": "9e43752daabf19b7e78e08e0b15d16d1c6e2a680",
         "scope": "Exact diff, independent fixtures, full combined Linux validation; excludes PR97",
         "turn_id": "01a11ea7-c061-776d-9cc3-9e567a2c88cd",
-        "wait_cursor": "8f3328cf-bef6-441d-83f8-2d1f46b3b0df:78"
+        "wait_cursor": "8f3328cf-bef6-441d-83f8-2d1f46b3b0df:79"
+      },
+      {
+        "id": "PAPER-RUNNER-LIFECYCLE",
+        "worker": "09",
+        "thread_id": "01a118fd-3f90-77d9-9549-c4497f5b10a6",
+        "host_id": "durable",
+        "status": "DISPATCHED",
+        "base": "9e43752daabf19b7e78e08e0b15d16d1c6e2a680",
+        "scope": "Minimal supervised runner using existing ledger/engine/watchdog, executable synthetic lifecycle and restart; no live authorization or screening policy changes"
+      },
+      {
+        "id": "EXPERIMENTAL-PAPER-OWNERSHIP-POLICY",
+        "worker": "02",
+        "thread_id": "01a118fc-666c-70b6-9fa8-2c7520f0a0bb",
+        "host_id": "durable",
+        "status": "DISPATCHED",
+        "base": "9e43752daabf19b7e78e08e0b15d16d1c6e2a680",
+        "scope": "Explicit paper-only unresolved-history risk policy using persisted diagnostics; known hazards reject; no fake completeness, engine changes or PR97 dependency"
       }
     ],
     "saved_launch_probe": {
@@ -1195,7 +1213,30 @@
       "status": "LOCAL_PASS_INDEPENDENT_REVIEWS_AND_COMBINED_LINUX_PENDING",
       "log": "work/pool-cli-setup-tests.log",
       "live_acceptance": false,
-      "local_result": "ntimes/codex-primary-runtime/dependencies/python/lib/python3.12/multiprocessing/popen_fork.py:66: DeprecationWarning: This process (pid=53072) is multi-threaded, use of fork() may lead to deadlocks in the child.\n  self.pid = os.fork()\n----------------------------------------------------------------------\nRan 1959 tests in 34.800s\n\nOK (skipped=395)\n"
+      "local_result": "ntimes/codex-primary-runtime/dependencies/python/lib/python3.12/multiprocessing/popen_fork.py:66: DeprecationWarning: This process (pid=53072) is multi-threaded, use of fork() may lead to deadlocks in the child.\n  self.pid = os.fork()\n----------------------------------------------------------------------\nRan 1959 tests in 34.800s\n\nOK (skipped=395)\n",
+      "ci": {
+        "100": {
+          "head": "44c3d37653511b49387268be5ba9cf58d23058dc",
+          "successful_runs": [
+            37878282993,
+            37878235586
+          ]
+        },
+        "101": {
+          "head": "7fbd4a7ca0c435b5bf63f864f0db6dc13a5ef423",
+          "successful_runs": [
+            37878290153,
+            37878263337
+          ]
+        }
+      }
+    },
+    "priority_change": {
+      "user_instruction": "Stop expanding screening architecture; wire paper entry and exit loop now",
+      "scope": "User explicitly permits unresolved ownership HISTORY for paper-only entries with visible risk flag; known hazards remain rejected. Freeze screening expansion; preserve unknown evidence and non-ownership required freshness/price/quantity/cost gates.",
+      "target": "entry -> monitoring -> full exit -> accounting -> restart",
+      "readiness": false,
+      "policy_answer": "Allow with an explicit risk flag; still reject known hazards"
     }
   },
   "native_reconciliation_review": {
