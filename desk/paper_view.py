@@ -5,7 +5,7 @@ import time
 from contextlib import closing
 from pathlib import Path
 from .model import decimal as dec,ZERO,digest,validate_event,PAPER_EXPERIMENTAL
-from .paper_checkpoint import read_checkpoint,RecoveryRequired
+from .paper_checkpoint import read_checkpoint,RecoveryRequired,policy_version
 
 
 def _implementation_hash():
@@ -43,10 +43,8 @@ def _event_json(payload,cfg):
     # Only the checkpoint's hash-bound experiment config selects the policy.
     # Match engine.transition: experimental validation is market-only; operator
     # controls and monitor clocks always use the strict grammar.
-    version=cfg.get('experimental_policy_version')
-    if version is not None and (type(version) is not int or version not in (1,2) or cfg.get('mode')!='paper'):
-        raise ValueError('Unsupported experimental paper policy configuration')
-    if version in (1,2) and event.get('kind')=='market':
+    version=policy_version(cfg)
+    if version in (1,2,3) and event.get('kind')=='market':
         validate_event(event,mode=PAPER_EXPERIMENTAL,policy_version=version)
     else:
         validate_event(event)
@@ -136,6 +134,12 @@ def paper_status(path,*,now=None,expected_config=None):
                     'mark_at':at,'mark_age_seconds':now-at,'mark_status':status if fresh or blocked else 'STALE',
                     'exit_blocked':blocked,'provenance':p.get('provenance','UNKNOWN'),
                     'valuation_verified':False})
+                if 'entry_policy' in p:
+                    positions[-1]['entry_policy']=p['entry_policy']
+                if 'quote_execution' in p:
+                    positions[-1]['execution_status']='EXECUTION_UNVERIFIED'
+                    positions[-1]['quote_execution']={key:value for key,value in p['quote_execution'].items()
+                                                     if key not in ('original_quote_json','original_mint_json')}
             # One read transaction binds outcomes and state to the same checkpoint.
             outcomes=[{'event_id':r[0],'ts':r[1],'outcome':json.loads(r[2])} for r in c.execute(
                 'SELECT o.event_id,e.ts,o.payload FROM outcomes o JOIN events e ON e.event_id=o.event_id ORDER BY o.seq DESC LIMIT 50')]
@@ -144,6 +148,9 @@ def paper_status(path,*,now=None,expected_config=None):
                 cash_sol=str(cash),realized_pnl_sol=str(realized),positions=positions,recent_outcomes=outcomes,
                 estimated_equity_sol=str(cash+marks) if all_fresh else None,
                 valuation_status='MODEL_ESTIMATE' if all_fresh else 'STALE_OR_EXIT_UNVERIFIED')
+            if cfg.get('paper_quote_execution_version') is not None:
+                result['execution_status']='EXECUTION_UNVERIFIED'
+                result['notice']+=' Quote-based paper execution is EXECUTION_UNVERIFIED; source authentication, transaction validity and actual fills are not established.'
             return result
     except RecoveryRequired as exc:
         return {**result,'status':'RECOVERY_REQUIRED','recovery_reason':str(exc),
