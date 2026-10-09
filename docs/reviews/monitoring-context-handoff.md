@@ -68,7 +68,7 @@ an old process writing its old ledger, and such writes cause successor refusal.
 blobs from b550100f5e760faec0d566c6b389d1e62b145062, byte-identical to 73edf43's
 entire desk domain. ZIP SHA256:
 7119d5fd7e796d46e301253de4b7de7a778bbed6437fa054cb11b58a036dc037.
-Every old subprocess recomputes desk hash
+The archived setup and frozen-binary spending probe recompute desk hash
 8098b4033adff886006e2f6af5ccb0ce4bfa02e242f5fb1b4c7402c05ddaa8c9.
 The earlier original-source archive remains unchanged and constructs genuine
 15054558... identity before explicit synthetic 15054558 -> 8098 receipt/grant.
@@ -101,8 +101,23 @@ allowlist is unedited. Existing research/evidence/pacing must be reused, not cop
 or reprovisioned. Root stops old execution and initializes the new experiment
 explicitly only after independent review; source/profile activation is separate.
 
-Focused component validation so far: Python3.12 Linux, 71 tests / 46.270s / OK,
-zero skips (handoff, monitoring, allowance, runtime). Additional dedicated CLI and
-old-held-position regressions and final full Linux suite are running. Exact final
-results and source manifest will be appended after completion. No code/gate edits
-outside monitoring_budget + the handoff module, dedicated fixtures/tests/report.
+Final Python3.12.14 Linux validation on bf42166f2b570015b75fc5c0f9689f5f5ecc377d,
+tree28653d45680c61535bd916b4ee0c60774fac0fde:
+
+- `python -m unittest discover -q`: 2471 tests, 304.363s, OK, zero skips.
+- Dedicated final handoff suite: 16 tests, 15.601s, OK, zero skips.
+- Focused handoff/monitoring/allowance/runtime suite: 71 tests, 46.270s, OK,
+  zero skips; the final two additional dedicated regressions cover old-held
+  refusal and actual explicit CLI/replay. No duplicated imported TestCase counts.
+
+Tested component desk hash
+467b4bd3d9a9dc06402393d2dc63a10a7e42d834edfe8388a9176fa4d3023bc5
+is NOT the final combined deployment hash. Source manifest SHA256
+1451b3d547da4c5681e15fb09be8fbf08fe809ac52e3c5bf41eef83411b40cc8.
+Full log SHA256 745a04ef5609f23fa529e6c66a3f31da0d5f7dcf4a2825c07908f23377e7b7d5.
+Artifacts remain in /workspace/work/agent07-successor-preflight/ as
+handoff-{source-manifest.txt,manifest.json,full-linux.log,final-focused.log,dedicated.log}.
+No code/gate edits outside monitoring_budget + the handoff module, dedicated
+fixtures/tests/report and empty handoff policy. Independent09 review, PR156/157
+composition and final reviewed pins remain dependencies; no production readiness
+or activation is claimed. This validation update changes only the report.
