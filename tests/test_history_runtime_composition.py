@@ -10,13 +10,15 @@ from http.client import HTTPResponse
 import inspect
 import io
 import json
+from pathlib import Path
+import sqlite3
 import textwrap
 import time
 import unittest
 from unittest.mock import patch
 
-from desk import paper_cycle, paper_read_sources as transport
-from desk.model import canonical
+from desk import paper_cycle, paper_read_sources as transport, quote_execution
+from desk.model import canonical, digest
 from desk.monitoring_budget import MonitoringBudget
 from desk.programs import unbase58
 from desk.providers import SOL
@@ -29,14 +31,30 @@ from tests.test_runtime_compatibility import dump
 
 
 class HistoryRuntimeCompositionTests(unittest.TestCase):
+    def test_synthetic_sentinel_entry_exit_continuation_preserves_originals(self):
+        # Retained public event stays unchanged. Its representation is reused
+        # only in a separately constructed synthetic current-time transaction.
+        path = Path(__file__).parents[1]/'fixtures/migration_quote_sentinel_excerpt.json'
+        original_bytes = path.read_bytes()
+        excerpt = json.loads(original_bytes)
+        self.assertEqual(digest(excerpt['event']),
+            '0fdaf2a531590ae451229d99345d546713f06ec7f1d043b9534e0bf89697ba46')
+        self._scenario(continuation=True,
+            event_quote_bytes=unbase58(excerpt['event']['data'])[-32:])
+        self.assertEqual(path.read_bytes(), original_bytes)
+
     def test_chunked_history_guarded_entry_runtime_receipt_and_monitoring_restart(self):
         self._scenario()
 
     def test_invalid_chunked_history_retains_charge_and_blocks_restart_without_retry(self):
         self._scenario(invalid_history=True)
 
-    def _scenario(self, invalid_history=False):
-        u = runtime_fixture.MonitoringRuntimeUpgradeTests()
+    def _scenario(self, invalid_history=False, continuation=False, event_quote_bytes=None):
+        if continuation:
+            from tests import test_runtime_continuation
+            u = test_runtime_continuation.RuntimeContinuationTests()
+        else:
+            u = runtime_fixture.MonitoringRuntimeUpgradeTests()
         u.setUp()
         self.addCleanup(u.doCleanups)
         op = operator_fixture.HistoryFirstTests()
@@ -47,18 +65,29 @@ class HistoryRuntimeCompositionTests(unittest.TestCase):
         now = int(time.time())
         manifest = old_store.load(f.item.graduation_refs[0])
         response = copy.deepcopy(old_store.load(manifest['response_hash']))
+        if continuation:
+            from tests.test_graduation_witness import fixture
+            raw, mint, pool = fixture('migrate_v2')
+            self.assertEqual((mint, pool), (h.target.mint, h.target.pool))
+            response['data'] = [raw]
+            # Six already charged fixture reads remain part of this admission.
+            for _ in range(6):
+                self.assertTrue(h.f.context.progress.reserve(h.target.scan_id))
         raw = response['data'][0]
         raw['blockTime'] = now - 600
         ix = raw['meta']['innerInstructions'][0]['instructions'][0]
         data = bytearray(unbase58(ix['data']))
         data[136:144] = raw['blockTime'].to_bytes(8, 'little', signed=True)
+        if continuation:
+            data[-32:] = event_quote_bytes
         ix['data'] = base58(data)
+        graduated_at = raw['blockTime']
         manifest = {**manifest, 'response_hash': h.store.save(response)}
         ref = h.store.save(manifest)
         h.f.context.protocol = f.f.protocol
         h.f.context.at = now
         f.f, f.target, f.path, f.cfg = h.f.context, h.target, h.new, h.cfg
-        f.item = replace(f.item, target=h.target, graduated_at=now-600,
+        f.item = replace(f.item, target=h.target, graduated_at=graduated_at,
                          history_as_of=now, graduation_refs=(ref,),
                          provenance='PUBLIC_MAINNET_CAPTURE_NOT_TRADING_EVIDENCE')
         # Public operator grammar is exercised with explicitly synthetic bytes;
@@ -79,8 +108,14 @@ class HistoryRuntimeCompositionTests(unittest.TestCase):
         with h.store.connect() as c:
             original_reservations = c.execute('SELECT * FROM paper_monitoring_reservations').fetchall()
             original_outcomes = c.execute('SELECT * FROM paper_monitoring_outcomes').fetchall()
+        if continuation:
+            with sqlite3.connect(h.new) as c:
+                first_receipt = c.execute('SELECT payload,payload_hash FROM paper_runtime_transition').fetchone()
+            preserved = tuple(dump(path) for path in (h.old, h.evidence, h.research, h.pacing))
         with patch.dict('os.environ', environment):
             self.assertEqual(u.upgrade()['status'], 'RECORDED')
+            if continuation:
+                self.assertEqual(tuple(dump(path) for path in (h.old, h.evidence, h.research, h.pacing)), preserved)
             code = textwrap.dedent(inspect.getsource(f.actual_cycle))
             start, end = code.index('    class Opener:'), code.index('    with ExitStack()')
             namespace = {**vars(wire_fixture), 'outer': f}
@@ -140,7 +175,7 @@ class HistoryRuntimeCompositionTests(unittest.TestCase):
                 self.assertEqual(entry['status'], 'COMPLETE', entry)
                 self.assertTrue(any(row.get('side') == 'buy' for row in entry['outcomes']))
                 self.assertEqual(len(history_bodies), 1)
-                self.assertEqual(f.f.progress.admission(h.target.scan_id)['requests_used'], 9)
+                self.assertEqual(f.f.progress.admission(h.target.scan_id)['requests_used'], 15 if continuation else 9)
                 with h.store.connect() as c:
                     pages = [h.store.load(key) for (key,) in c.execute('SELECT hash FROM pages')]
                 self.assertTrue(any(page.get('method') == 'getTransactionsForAddress'
@@ -148,6 +183,30 @@ class HistoryRuntimeCompositionTests(unittest.TestCase):
                     and page.get('source_id') == transport.PaperReadSources.rpc_source_id for page in pages))
                 admission = f.f.progress.admission(h.target.scan_id)
                 held = paper_cycle._state(h.new, h.cfg)['positions'][h.target.mint]
+                if continuation:
+                    item = replace(f.item, graduation_refs=(), known_hazards=('SYNTHETIC_KNOWN_HAZARD',),
+                        target=replace(h.target, amount_raw=quote_execution.raw_quantity(held['qty'], 6)))
+                    result = paper_cycle.run_once(h.research, h.evidence, h.new, h.cfg,
+                        position_targets=(item,), candidates=(), dependency_blockers=(), monitoring=True)
+                    self.assertEqual(result['status'], 'COMPLETE', result)
+                    self.assertEqual(result['monitoring_attempted_requests'], 4)
+                    self.assertTrue(any(row.get('side') == 'sell' for row in result['outcomes']))
+                    self.assertEqual(paper_cycle._state(h.new, h.cfg)['positions'], {})
+                    self.assertEqual(f.f.progress.admission(h.target.scan_id), admission)
+                    self.assertEqual(MonitoringBudget(h.store, h.new, h.cfg).snapshot()['total_used'], 5)
+                    restart = paper_cycle.run_once(h.research, h.evidence, h.new, h.cfg,
+                        candidates=(), dependency_blockers=(), monitoring=True)
+                    self.assertEqual(restart['status'], 'COMPLETE', restart)
+                    self.assertEqual(restart['attempted_requests'], 0)
+                    with sqlite3.connect(h.new) as c:
+                        self.assertEqual(c.execute('SELECT payload,payload_hash FROM paper_runtime_transition').fetchone(), first_receipt)
+                    self.assertEqual(h.store.load(ref)['response_hash'], digest(response))
+                    self.assertEqual(h.store.load(digest(response))['data'][0], raw)
+                    self.assertEqual(dump(h.old), retired)
+                    with h.store.connect() as c:
+                        self.assertEqual(c.execute('SELECT * FROM paper_monitoring_reservations WHERE id=1').fetchall(), original_reservations)
+                        self.assertEqual(c.execute('SELECT * FROM paper_monitoring_outcomes WHERE reservation_id=1').fetchall(), original_outcomes)
+                    return
                 budget = MonitoringBudget(h.store, h.new, h.cfg)
                 source = transport.PaperReadSources(f.f.progress, h.target.scan_id,
                                                    monitoring_budget=budget)
