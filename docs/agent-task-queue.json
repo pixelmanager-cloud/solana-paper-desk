@@ -1895,7 +1895,7 @@
     "current_worker_followups": {
       "01": "Separate report successor: visible EXECUTION_UNVERIFIED assumptions/risk/source labels;133 frozen",
       "02": "Independent135 migration witness review",
-      "03": "Final combined129+131 acquisition Linux review",
+      "03": "Acquisition final PASS; available for independent08 cycle review on publication",
       "04": "Complete130 review then134 raw mint handoff exact-head review",
       "05": "Platformblocked97/110; not retried",
       "06": "134 published; fix stale combined132 test expectation append-only",
@@ -1941,14 +1941,21 @@
     },
     "pending_pr125": {
       "head": "4e6a76a60e058ff082f25067bd169eba913a87c6",
-      "status": "CHANGES_REQUIRED_AUTHOR08_REPAIR_ACTIVE",
+      "status": "ACCEPTED_INTEGRATED_NOT_DEPLOYED",
       "author_linux_tests": 2083,
       "reviewer_thread": "01a118fc-9478-778a-b77a-8f8f6ec7e0ad",
       "live_acceptance": false,
       "findings": [
         "Restart after ambiguous or interrupted request lacks durable resolution latch",
         "Invalid existing DB mutated before admission validation and locks"
-      ]
+      ],
+      "integration_commit": "92a2331",
+      "reviewed_tree": "eda96e8606437bd58a7d2ebd27936726bf984622",
+      "linux_tests": 2169,
+      "linux_skips": 0,
+      "linux_seconds": 367.544,
+      "ci": "Exact component heads SUCCESS",
+      "source_identity_match": true
     },
     "pending_pr126": {
       "head": "9174515b5a175076949490ea212124be0d0f2998",
@@ -2033,9 +2040,9 @@
       "head": "f21f0362c0793fa4579c3f3466575ebc6ca29341",
       "repairs": 125,
       "reviewer": "03",
-      "status": "SCOPED_PASS_FINAL_ACQUISITION_COMBINED_REVIEW",
+      "status": "ACCEPTED_INTEGRATED_NOT_DEPLOYED",
       "live_acceptance": false,
-      "linux_tests": 2158,
+      "linux_tests": 2169,
       "independent_tree": "4b9176df5ad492a398a37542bd4d727fb2ad7a15",
       "mac_final_combined": {
         "tests": 2169,
@@ -2043,7 +2050,14 @@
         "seconds": 42.106,
         "result": "PASS",
         "scope": "Accepted foundation +126/131+125/129; no provider calls"
-      }
+      },
+      "integration_commit": "92a2331",
+      "reviewed_tree": "eda96e8606437bd58a7d2ebd27936726bf984622",
+      "linux_skips": 0,
+      "linux_seconds": 367.544,
+      "ci": "Exact component heads SUCCESS",
+      "source_identity_match": true,
+      "manifest_sha256": "76512e58ed832612e30f658274c2f4077590bb74e18396c845287abda4d505d8"
     },
     "pending_pr130": {
       "head": "7441e94042e0d05d1760472483752a65f3820100",

@@ -22,6 +22,8 @@ Live loop gaps are now assigned concretely: explicit unknown-compatible experime
 
 ## Latest integration — 2026-10-09
 
+Bounded history and observation acquisition is integrated through `92a2331`. Exact source matches independently reviewed tree `eda96e8606437bd58a7d2ebd27936726bf984622` apart from coordinator documentation. Combined Linux: 2,169 tests, zero skips; desktop: 2,169 tests with 408 platform skips. Exact component CI passed. The CLI preserves shared counters and latches interrupted or charged failed passes. The pending enclosing cycle must additionally cover history-call ambiguity. No provider calls, deployment, or live paper fills occurred in this integration.
+
 The paper-loop and bounded live-data foundation is integrated at `27bc668599a33562832d0da60966d9ad1f8c2f9c`. The source matches independently reviewed tree `346fb09130aea3c1a92c2cf4b7050fb6b8377316` except coordinator documentation. The combined Linux suite passed 2,136 tests with zero skips; desktop ran 2,136 with 408 platform skips. Exact component heads have successful CI. This is not yet deployed or live-paper readiness.
 
 The user approved an explicit new quote-based paper experiment: fresh live quotes, recorded fees and adverse slippage, and EXECUTION_UNVERIFIED labels. Unknown ownership history remains visibly flagged; known hazards still reject. Remaining implementation is the quote execution engine, measured-feature event adapter, and bounded one-cycle orchestration, followed by combined verification and coordinator-only live validation. PR125 observation CLI and PR126 window transport are under independent review. The desktop recovery schedule is active under the updated paper-loop scope.
