@@ -3361,7 +3361,7 @@
       }
     },
     "token2022_paper_support": {
-      "status": "AUTHORIZED_IMPLEMENTATION_DISPATCH",
+      "status": "TOKEN_IMPLEMENTATION_AND_HANDOFF_IN_PROGRESS",
       "authorization": "2026-10-09 user: I think we need to modify the token2022 limitations as most tokens seem to be token2022 and we cannot open positions. Explicit approval to replace blanket exclusion with narrow versioned paper-only support; known hazards and unreviewed extensions still reject.",
       "base": "89f4317",
       "implementation_owner": "08",
@@ -3374,14 +3374,14 @@
           "worker": "08",
           "thread_id": "01a118fd-2563-7126-90d7-bd07693de0b2",
           "turn_id": "01a120d0-227e-7361-89c3-d2b30a7ec4f6",
-          "cursor": "02d8669f-59ba-43bb-8691-b196829f4867:56",
+          "cursor": "02d8669f-59ba-43bb-8691-b196829f4867:59",
           "scope": "implementation"
         },
         {
           "worker": "02",
           "thread_id": "01a118fc-666c-70b6-9fa8-2c7520f0a0bb",
           "turn_id": "01a120d0-6e0a-7161-ae3d-a2d296c43952",
-          "cursor": "a2dcfb97-463d-4188-9da3-48a81e644d23:123",
+          "cursor": "a2dcfb97-463d-4188-9da3-48a81e644d23:124",
           "scope": "independentreview"
         },
         {
@@ -3391,7 +3391,59 @@
           "cursor": "3dd79f38-868a-433f-9b14-13e7ed0a6e90:69",
           "scope": "readonlyruntimehandoffpreflight"
         }
-      ]
+      ],
+      "runtime_preflight": {
+        "status": "COMPLETE_INTERFACE_PENDING_FROM08",
+        "worker": "07",
+        "cursor": "3dd79f38-868a-433f-9b14-13e7ed0a6e90:70",
+        "findings": [
+          "Existing immutable single runtime receipt cannot advance again",
+          "Existingledgerrequiresoriginalconfigbytes",
+          "Monitoring pins oldledger/config/successor independently"
+        ],
+        "next": "08 explicit configcontract; prefer separate namedpaperexperiment + appendonly budgetcontext handoff ifnewconfig. Preserveoldledger and allchargedusage; never reprovision/reset."
+      },
+      "handoff_implementation": {
+        "worker": "07",
+        "thread_id": "01a118fd-0f1c-749c-b85b-5e730937d0a8",
+        "status": "ASSIGNED",
+        "scope": "appendonly sharedmonitoringbudget context handoff to separatelynamedexplicitexperiment; preserveoldledger and allchargedusage; oldcontextrefusesfuturespending",
+        "turn_id": "01a120d4-4af6-7312-b596-f76f72a26835",
+        "cursor": "3dd79f38-868a-433f-9b14-13e7ed0a6e90:71"
+      },
+      "operator_path_implementation": {
+        "worker": "10",
+        "thread_id": "01a118fd-56d5-70b8-ad31-dba13e982082",
+        "status": "ASSIGNED",
+        "scope": "explicitselectedpaperledger fordashboard + backupselectedandoriginalledger; legacydefaultunchanged",
+        "turn_id": "01a120d4-e3be-7730-a8fe-a9d9323f1184",
+        "cursor": "e6039648-56af-4049-8a6e-06eaaa8aba52:59"
+      },
+      "bounded_live_shape_probe": {
+        "scan_id": "f5470ca34d0d45d1af2db086fd18eca6",
+        "mint": "B9QoDnpv77Pf39aDnC5bNLZttdNsUZKBBcBAaMMpump",
+        "provider_calls": 1,
+        "requests_used": 1,
+        "status": "UNSUPPORTED_TOKEN",
+        "eligible_for_trading": false,
+        "evidence_hash": "ebe2b7be2612af8e80196125432043ff88cd02eb253a0bc7ac809c2d7d6247e8",
+        "account_bytes": 391,
+        "extensions": [
+          {
+            "id": 18,
+            "name": "MetadataPointer",
+            "length": 64
+          },
+          {
+            "id": 19,
+            "name": "TokenMetadata",
+            "length": 153
+          }
+        ],
+        "mint_authority_option": 0,
+        "freeze_authority_option": 0,
+        "note": "Diagnosticinventoryonly; noeligibilitygrant. Originalpublicaccountbytes sent08offlinefixture; no credentials."
+      }
     }
   },
   "native_reconciliation_review": {
