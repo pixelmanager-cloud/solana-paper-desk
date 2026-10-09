@@ -3015,7 +3015,7 @@
         "completed_connections": 1,
         "subscription_control_frames": 1,
         "pending_receives": 1,
-        "retained_observations": 6,
+        "retained_observations": 18,
         "charged_including_pending_bytes": 289341,
         "charged_including_pending_slots": 4,
         "original_launch_records_preserved": 782,
@@ -3029,7 +3029,8 @@
         "lifecycle": "After clean24h completion verify Result=success/ExecMainStatus=0, inspect final summary, take offline backup under canonical lock, then explicitly start SAME DB. BLOCKED/forced stop stays stopped for inspection. Never reinitialize or restore older counters.",
         "unique_base_mints": 4,
         "base_token_program": "Token-2022; excluded by current policy",
-        "last_inspected_seq": 6
+        "last_inspected_seq": 18,
+        "eligibility_check": "Original migration events decoded; seq12 legacy quote-side balance is not migration mint. All decoded migration mints remain Token2022 excluded. No provider investigation calls."
       },
       "token_program_blocker_audit": {
         "worker": "08",
@@ -3096,7 +3097,7 @@
       "source_identity": "Only coordinator queue/readiness differ from independent exacthead"
     },
     "downstream_allowance_upgrade": {
-      "status": "SCOPED_PASS_COMBINED_RUNTIME_VALIDATION_PENDING",
+      "status": "COMBINED_LINUX_PASS_INTEGRATING",
       "authorization": "User explicitly requested another increase beyond100/day and600/hour. Coordinator targets1000/day,queue25,monitor3600/hour; ceilings subject to provider pacing.",
       "limits": {
         "daily_admissions": 1000,
@@ -3228,10 +3229,13 @@
         "implementation_hash": "8098b4033adff886006e2f6af5ccb0ce4bfa02e242f5fb1b4c7402c05ddaa8c9",
         "path": "/opt/solana-desk-releases/upgrade-8098b403",
         "archive_sha256": "58be97542257a490cb399a79f56fc71b89e2e8bc17246d738b5b4f92097f95f9",
-        "status": "FULL_FIXTURE_TESTS_RUNNING_NOT_ACTIVATED",
+        "status": "PASS_NOT_ACTIVATED",
         "test_log": "/var/tmp/upgrade-8098b403-tests.log",
         "session_id": 86143,
-        "provider_calls": 0
+        "provider_calls": 0,
+        "tests": 2454,
+        "skips": 0,
+        "seconds": 588.54
       }
     },
     "discovery_policy_combined_review": {
