@@ -279,42 +279,125 @@
         "worker": "09",
         "thread_id": "01a118fd-3f90-77d9-9549-c4497f5b10a6",
         "host_id": "durable",
-        "status": "IN_PROGRESS",
+        "status": "PUBLISHED_PENDING_INDEPENDENT_REVIEW",
         "base": "9e43752daabf19b7e78e08e0b15d16d1c6e2a680",
         "scope": "Minimal supervised runner using existing ledger/engine/watchdog, executable synthetic lifecycle and restart; no live authorization or screening policy changes",
         "turn_id": "01a11eae-36ed-72bd-8c5d-ab7f42d99073",
-        "wait_cursor": "68a4d56e-d04a-40dc-ad15-e80a29c96b80:11"
+        "wait_cursor": "68a4d56e-d04a-40dc-ad15-e80a29c96b80:11",
+        "pr": 103,
+        "head": "7100483d800189b62efa14da33de3e21e7dd0f35"
       },
       {
         "id": "EXPERIMENTAL-PAPER-OWNERSHIP-POLICY",
         "worker": "02",
         "thread_id": "01a118fc-666c-70b6-9fa8-2c7520f0a0bb",
         "host_id": "durable",
-        "status": "IN_PROGRESS",
+        "status": "PUBLISHED_PENDING_INDEPENDENT_REVIEW",
         "base": "9e43752daabf19b7e78e08e0b15d16d1c6e2a680",
         "scope": "Explicit paper-only unresolved-history risk policy using persisted diagnostics; known hazards reject; no fake completeness, engine changes or PR97 dependency",
         "turn_id": "01a11eae-d80e-7427-8466-5db09d9ffa01",
-        "wait_cursor": "a2dcfb97-463d-4188-9da3-48a81e644d23:68"
+        "wait_cursor": "a2dcfb97-463d-4188-9da3-48a81e644d23:68",
+        "pr": 102,
+        "head": "ada4892b3df3138f3369aa9d64aaf60f778b0d7b"
       },
       {
         "id": "PAPER-LIVE-OBSERVATION-ADAPTER",
         "worker": "04",
         "thread_id": "01a118fc-b862-7340-ab3a-e1115a3280a4",
         "host_id": "durable",
-        "status": "IN_PROGRESS",
+        "status": "PUBLISHED_PENDING_INDEPENDENT_REVIEW",
         "base": "9e43752daabf19b7e78e08e0b15d16d1c6e2a680",
         "scope": "Useful timestamped raw observation normalization with exact units/source hash, no invented metrics or provider calls",
         "turn_id": "01a11eb0-22b3-75c2-b925-25a798d51404",
-        "wait_cursor": "d3153436-2742-432e-8501-9c06b95f29ae:12"
+        "wait_cursor": "d3153436-2742-432e-8501-9c06b95f29ae:12",
+        "pr": 104,
+        "head": "7146b821f932d85157a6357a2f44c6cf54d2f766"
       },
       {
         "id": "PAPER-EXPERIMENT-RESULTS",
         "worker": "10",
         "thread_id": "01a118fd-56d5-70b8-ad31-dba13e982082",
         "host_id": "durable",
-        "status": "DISPATCHED",
+        "status": "PUBLISHED_PENDING_INDEPENDENT_REVIEW",
         "base": "d36957a179816fb48224fdf262159a9885afb354",
-        "scope": "Read-only bounded existing-ledger performance report, config/version/provenance/closed trades/PnL/costs/drawdown/open inventory; no invented profitability threshold"
+        "scope": "Read-only bounded existing-ledger performance report, config/version/provenance/closed trades/PnL/costs/drawdown/open inventory; no invented profitability threshold",
+        "pr": 105,
+        "head": "0c8481bc0e7b607a354cb3adaf9c91a9a53615e5",
+        "turn_id": "01a11eb5-42fc-77fc-a5c3-c58b117785ed",
+        "wait_cursor": "e6039648-56af-4049-8a6e-06eaaa8aba52:35"
+      },
+      {
+        "id": "PR102-INDEPENDENT-REVIEW",
+        "worker": "01",
+        "thread_id": "01a118fc-39bc-722c-b442-8bf5a749e0bb",
+        "host_id": "durable",
+        "status": "IN_PROGRESS",
+        "pr": 102,
+        "head": "ada4892b3df3138f3369aa9d64aaf60f778b0d7b",
+        "scope": "Exact-head independent review and combined Linux suite; no integration",
+        "turn_id": "01a11ebd-9b09-7263-91c8-c69bc6c3b471",
+        "wait_cursor": "5e651fc7-2996-4765-974d-5c852257a005:77"
+      },
+      {
+        "id": "PR103-INDEPENDENT-REVIEW",
+        "worker": "06",
+        "thread_id": "01a118fc-f867-7233-8eec-c20659e70095",
+        "host_id": "durable",
+        "status": "IN_PROGRESS",
+        "pr": 103,
+        "head": "7100483d800189b62efa14da33de3e21e7dd0f35",
+        "scope": "Exact-head independent review and combined Linux suite; no integration",
+        "turn_id": "01a11ebd-aa79-7370-b796-8f66f317a16b",
+        "wait_cursor": "8f3328cf-bef6-441d-83f8-2d1f46b3b0df:81"
+      },
+      {
+        "id": "PR104-INDEPENDENT-REVIEW",
+        "worker": "03",
+        "thread_id": "01a118fc-9478-778a-b77a-8f8f6ec7e0ad",
+        "host_id": "durable",
+        "status": "IN_PROGRESS",
+        "pr": 104,
+        "head": "7146b821f932d85157a6357a2f44c6cf54d2f766",
+        "scope": "Exact-head independent review and combined Linux suite; no integration",
+        "turn_id": "01a11ebd-b9e3-751b-bd7b-60bee9d17906",
+        "wait_cursor": "0851f5ab-a903-4567-a6fe-4cbb4e6a7b96:23"
+      },
+      {
+        "id": "EXPERIMENTAL-OWNERSHIP-SCORING",
+        "worker": "02",
+        "thread_id": "01a118fc-666c-70b6-9fa8-2c7520f0a0bb",
+        "host_id": "durable",
+        "status": "IN_PROGRESS",
+        "scope": "model/strategy explicit unknown ownership handling and versioned experimental scoring; no live authorization",
+        "turn_id": "01a11ebe-5324-7576-a6bc-b4c8e85ea73b",
+        "wait_cursor": "a2dcfb97-463d-4188-9da3-48a81e644d23:71"
+      },
+      {
+        "id": "LIVE-STRATEGY-FEATURES",
+        "worker": "09",
+        "thread_id": "01a118fd-3f90-77d9-9549-c4497f5b10a6",
+        "host_id": "durable",
+        "status": "IN_PROGRESS",
+        "scope": "new bounded raw-trade feature producer; explicit missing inputs/coverage; no engine changes",
+        "turn_id": "01a11ebe-60c2-7569-9146-133915eac521",
+        "wait_cursor": "68a4d56e-d04a-40dc-ad15-e80a29c96b80:13"
+      },
+      {
+        "id": "PR105-INDEPENDENT-REVIEW",
+        "worker": "07",
+        "thread_id": "01a118fd-0f1c-749c-b85b-5e730937d0a8",
+        "host_id": "durable",
+        "status": "DISPATCHED",
+        "pr": 105,
+        "head": "0c8481bc0e7b607a354cb3adaf9c91a9a53615e5"
+      },
+      {
+        "id": "PAPER-RUNNER-DASHBOARD",
+        "worker": "10",
+        "thread_id": "01a118fd-56d5-70b8-ad31-dba13e982082",
+        "host_id": "durable",
+        "status": "DISPATCHED",
+        "scope": "paper_view/dashboard actual saved runner state; no invented live readiness"
       }
     ],
     "saved_launch_probe": {
@@ -1219,6 +1302,40 @@
       "readiness": false,
       "policy_answer": "Allow with an explicit risk flag; still reject known hazards",
       "scheduled_heartbeat": "PAUSED_BY_USER_WHILE_CHANGING_DIRECTION; dispatched worker tasks continue; do not automatically resume old schedule"
+    },
+    "paper_loop_review": {
+      "prs": {
+        "102": "ada4892b3df3138f3369aa9d64aaf60f778b0d7b",
+        "103": "7100483d800189b62efa14da33de3e21e7dd0f35",
+        "104": "7146b821f932d85157a6357a2f44c6cf54d2f766",
+        "105": "0c8481bc0e7b607a354cb3adaf9c91a9a53615e5"
+      },
+      "status": "SCRATCH_COMBINATION_AND_INDEPENDENT_REVIEWS",
+      "live_acceptance": false,
+      "scheduled_task": "PAUSED_BY_USER",
+      "combined_tree": "76fcc66045fe8bbb48041fa149fc54cafeded09b",
+      "portability_delta": "8 persisted PR102 tests require Linux OFD reads; guard unchanged,2puretests still run",
+      "initial_mac_tests": {
+        "total": 1993,
+        "failures": 7,
+        "skipped": 395,
+        "seconds": 35.908
+      },
+      "smoke": {
+        "provenance": "SYNTHETIC_TEST_ONLY",
+        "entry_refresh_exit": true,
+        "repeated_outcomes": 0,
+        "closed_trades": 1,
+        "open_positions": 0,
+        "realized_pnl_sol": "-0.00311195414305567903948828490",
+        "live_acceptance": false
+      },
+      "production_check": {
+        "dashboard": "active",
+        "paper": "NOT_CONFIGURED",
+        "runner": "NOT_CONNECTED",
+        "automatic_entry_enabled": false
+      }
     }
   },
   "native_reconciliation_review": {
