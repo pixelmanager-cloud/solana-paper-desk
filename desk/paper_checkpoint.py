@@ -227,7 +227,7 @@ def validate_quote_positions(connection, state):
         if at > state['last_ts']:
             raise ValueError('Future saved quote record')
         token = ingest_mint(lambda: ProviderObservation(ms.source_id,ms.observed_at,quote._original(ms)),
-            mint=mint,now=at,max_age_seconds=cfg['price_ttl_seconds'])
+            mint=mint,now=at,max_age_seconds=cfg['price_ttl_seconds'],token_profile_version=quote.selected(cfg))
         observation = ingest_quote(lambda: ProviderObservation(qs.source_id,qs.observed_at,quote._original(qs)),
             mint=token,direction='sell',amount_raw=last['input_raw'],taker=position['taker'],
             expected_pool=position['pool'],now=at,max_age_seconds=cfg['price_ttl_seconds'])
@@ -318,7 +318,8 @@ def _validate_quote_journal(connection, state, cfg, quote):
             qs = SourceRecord(record['quote_source_id'], record['quote_observed_at'],
                               record['quote_hash'], record['original_quote_json'])
             token = ingest_mint(lambda: ProviderObservation(ms.source_id, ms.observed_at,
-                quote._original(ms)), mint=mint, now=event['ts'], max_age_seconds=cfg['price_ttl_seconds'])
+                quote._original(ms)), mint=mint, now=event['ts'], max_age_seconds=cfg['price_ttl_seconds'],
+                token_profile_version=quote.selected(cfg))
             observation = ingest_quote(lambda: ProviderObservation(qs.source_id, qs.observed_at,
                 quote._original(qs)), mint=token, direction=side, amount_raw=record['input_raw'],
                 taker=event['taker'], expected_pool=event['pool'], now=event['ts'],

@@ -136,7 +136,7 @@ def _ratio(numerator, denominator):
 
 
 def ingest_mint(reader: Callable[[], ProviderObservation], *, mint: str,
-                now: int, max_age_seconds: int = 10) -> MintObservation:
+                now: int, max_age_seconds: int = 10, token_profile_version: int = 0) -> MintObservation:
     """Read existing inspect_mint output; recompute controls from its raw account."""
     address(mint)
     payload, source = _read(reader, now, max_age_seconds)
@@ -146,7 +146,7 @@ def ingest_mint(reader: Callable[[], ProviderObservation], *, mint: str,
     if type(slot) is not int or slot < 0:
         raise ObservationError('Mint bank missing')
     try:
-        policy = mint_policy(payload.get('account'))
+        policy = mint_policy(payload.get('account'),mint=mint,token_profile_version=token_profile_version)
     except (ValueError, TypeError, KeyError, IndexError, AttributeError, OverflowError) as error:
         raise ObservationError('Malformed raw mint account') from error
     if policy['decision'] != 'PASS_TOKEN_POLICY':
@@ -156,7 +156,7 @@ def ingest_mint(reader: Callable[[], ProviderObservation], *, mint: str,
 
 
 def ingest_pool(reader: Callable[[], ProviderObservation], *, mint: str, pool: str,
-                now: int, max_age_seconds: int = 10) -> PoolObservation:
+                now: int, max_age_seconds: int = 10, token_profile_version: int = 0) -> PoolObservation:
     """Replay exact saved verify_pool capture, without trusting normalized results."""
     payload, source = _read(reader, now, max_age_seconds)
     if payload.get('kind') != 'pool_snapshot' or payload.get('method') != 'getMultipleAccounts':
@@ -176,7 +176,7 @@ def ingest_pool(reader: Callable[[], ProviderObservation], *, mint: str, pool: s
         return digest(envelope)
 
     try:
-        result = verify_pool(pool, mint, replay, capture=captured)
+        result = verify_pool(pool, mint, replay, capture=captured,token_profile_version=token_profile_version)
         # The verifier binds these first two original accounts to the vaults
         # and rejects delegates. Check the remaining legacy control invariants
         # at this ingestion boundary without rewriting the capture.

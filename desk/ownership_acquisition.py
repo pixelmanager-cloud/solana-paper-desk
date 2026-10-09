@@ -78,14 +78,14 @@ class _Setup:
         self.read()
 
 
-def _policy(setup):
-    try:return mint_policy(setup['mint']['value'])
+def _policy(setup, *, mint=None, token_profile_version=0):
+    try:return mint_policy(setup['mint']['value'],mint=mint,token_profile_version=token_profile_version)
     except (ValueError,KeyError,TypeError,IndexError):
         return {'decision':'SKIP','reasons':['INVALID_MINT_EVIDENCE']}
 
 
 def _source(descriptor,setup,admission,coverage,status):
-    policy=_policy(setup) if setup['mint_hash'] else {'decision':'SKIP','reasons':['MINT_EVIDENCE_UNAVAILABLE']}
+    policy=_policy(setup,mint=descriptor['mint'],token_profile_version=descriptor.get('paper_token_profile_version',0)) if setup['mint_hash'] else {'decision':'SKIP','reasons':['MINT_EVIDENCE_UNAVAILABLE']}
     unknowns=[status,'OWNERSHIP_ACCEPTANCE_NOT_ESTABLISHED']
     if coverage:unknowns+=coverage['reasons']
     report={'mint':descriptor['mint'],'observed_at':descriptor['admitted_at'],'mode':'RESEARCH_ONLY','decision':'SKIP',
@@ -152,8 +152,10 @@ def _publish(worker,claim,progress,descriptor,setup,admission):
     return report
 
 
-def acquire(research_db,evidence_db,rpc,*,mint=None,scan_id=None):
+def acquire(research_db,evidence_db,rpc,*,mint=None,scan_id=None,paper_token_profile_version=0):
     """Create one admitted seed or resume its ID; <=4 acquisition attempts total, <=2 new pages/invocation."""
+    from .token2022_paper import check_version
+    check_version(paper_token_profile_version)
     if (mint is None)==(scan_id is None):raise ValueError('Specify exactly one mint or acquisition scan ID')
     if mint is not None:address(mint)
     if scan_id is not None and (not isinstance(scan_id,str) or not scan_id):raise ValueError('Acquisition scan ID required')
@@ -164,14 +166,15 @@ def acquire(research_db,evidence_db,rpc,*,mint=None,scan_id=None):
         if worker is None:return {'scan_id':scan_id,'status':'BUSY','provider_calls':0,'eligible_for_trading':False}
         if scan_id is not None:
             descriptor=jobs.descriptor(scan_id)
-            if descriptor['kind']!=BIRTH_ACQUISITION_V1 or descriptor['evidence_db']!=str(evidence):
+            if (descriptor['kind']!=BIRTH_ACQUISITION_V1 or descriptor['evidence_db']!=str(evidence)
+                    or descriptor.get('paper_token_profile_version',0)!=paper_token_profile_version):
                 raise ValueError('Acquisition database/dispatch mismatch')
         store=EvidenceStore(evidence)
         with open(ownership_lock_path(store,invocation=True),'a') as lock:
             try:fcntl.flock(lock,fcntl.LOCK_EX|fcntl.LOCK_NB)
             except BlockingIOError:return {'scan_id':scan_id,'status':'BUSY','provider_calls':0,'eligible_for_trading':False}
             if scan_id is None:
-                scan_id=jobs.admit(mint,kind=BIRTH_ACQUISITION_V1,evidence_db=store.path)
+                scan_id=jobs.admit(mint,kind=BIRTH_ACQUISITION_V1,evidence_db=store.path,paper_token_profile_version=paper_token_profile_version)
                 descriptor=jobs.descriptor(scan_id)
             progress=HistoryProgress(store)
             budget_descriptor={'kind':'ownership_admission_v1','scan_id':scan_id,'mint':descriptor['mint'],'created':descriptor['admitted_at']}
@@ -203,7 +206,7 @@ def acquire(research_db,evidence_db,rpc,*,mint=None,scan_id=None):
                     if not request('mint_hash','getAccountInfo',[descriptor['mint'],{'encoding':'base64','commitment':'confirmed'}]):
                         status='ACQUISITION_REQUEST_LIMIT_REACHED'
                     state=setup.read()
-                if status is None and _policy(state)['decision']!='PASS_TOKEN_POLICY':status='UNSUPPORTED_TOKEN'
+                if status is None and _policy(state,mint=descriptor['mint'],token_profile_version=paper_token_profile_version)['decision']!='PASS_TOKEN_POLICY':status='UNSUPPORTED_TOKEN'
                 if status is None and not state['cutoff_hash']:
                     if not request('cutoff_hash','getSlot',[{'commitment':'finalized'}]):status='ACQUISITION_REQUEST_LIMIT_REACHED'
                     state=setup.read()

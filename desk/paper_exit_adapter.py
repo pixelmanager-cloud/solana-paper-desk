@@ -15,6 +15,7 @@ class ExitContext:
     quote_source_id: str
     provenance: str
     known_hazards: tuple[str, ...] = ()
+    token_profile_version: int = 0
 
 
 def build_exit_event(collected, *, context, position, cfg, load_evidence):
@@ -34,6 +35,8 @@ def build_exit_event(collected, *, context, position, cfg, load_evidence):
     out={'kind':'paper_exit_adapter_v1','event':None,'blockers':[],
          'entry_authorized':False,'execution_verified':False}
     try:
+        from .token2022_paper import selected
+        if context.token_profile_version!=selected(cfg):raise ValueError('Exit token profile mismatch')
         if (not qe.config(cfg) or type(collected) is not TargetObservation
                 or collected.target!=context.target or collected.direction!='sell'):
             raise ValueError('Exit collection required')

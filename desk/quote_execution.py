@@ -20,6 +20,7 @@ from .live_observation import (QuoteObservation, SourceRecord, ProviderObservati
                                ingest_mint, ingest_quote)
 from .model import canonical, digest, decimal
 from .programs import address
+from .token2022_paper import selected
 from .original_byte_slot_transport import _parse
 from .original_byte_read_transport import _bounded_json
 
@@ -34,6 +35,7 @@ class QuoteExecutionError(ValueError):
 
 
 def config(cfg):
+    selected(cfg)
     version = cfg.get('paper_quote_execution_version')
     if version is None:
         return False
@@ -151,7 +153,7 @@ def _book(event, quotes, cfg):
         original = _original(quote.source)
         token = ingest_mint(lambda: ProviderObservation(quote.mint_source.source_id,
             quote.mint_source.observed_at, token_payload), mint=event['mint'], now=event['ts'],
-            max_age_seconds=cfg['price_ttl_seconds'])
+            max_age_seconds=cfg['price_ttl_seconds'],token_profile_version=selected(cfg))
         replayed = ingest_quote(lambda: ProviderObservation(quote.source.source_id,
             quote.source.observed_at, original), mint=token, direction=quote.direction,
             amount_raw=quote.input_raw, taker=event.get('taker'), now=event['ts'],
@@ -205,7 +207,7 @@ def validate_exit_valuation(event, outcome, cfg):
     qs = SourceRecord(record['quote_source_id'], record['quote_observed_at'],
                       record['quote_hash'], record['original_quote_json'])
     token = ingest_mint(lambda: ProviderObservation(ms.source_id, ms.observed_at, _original(ms)),
-        mint=event['mint'], now=event['ts'], max_age_seconds=cfg['price_ttl_seconds'])
+        mint=event['mint'], now=event['ts'], max_age_seconds=cfg['price_ttl_seconds'],token_profile_version=selected(cfg))
     observation = ingest_quote(lambda: ProviderObservation(qs.source_id, qs.observed_at, _original(qs)),
         mint=token, direction='sell', amount_raw=record['input_raw'], taker=event['taker'],
         expected_pool=event['pool'], now=event['ts'], max_age_seconds=cfg['price_ttl_seconds'])
@@ -227,7 +229,7 @@ def validate_position(mint, position, cfg):
                             record['mint_hash'],record['original_mint_json'])
     at=position['opened_at']
     token=ingest_mint(lambda:ProviderObservation(mint_source.source_id,mint_source.observed_at,
-        _original(mint_source)),mint=mint,now=at,max_age_seconds=cfg['price_ttl_seconds'])
+        _original(mint_source)),mint=mint,now=at,max_age_seconds=cfg['price_ttl_seconds'],token_profile_version=selected(cfg))
     quote=ingest_quote(lambda:ProviderObservation(quote_source.source_id,quote_source.observed_at,
         _original(quote_source)),mint=token,direction='buy',amount_raw=record['input_raw'],
         taker=position['taker'],expected_pool=position['pool'],now=at,
