@@ -155,6 +155,15 @@ class MonitoringBudgetTests(unittest.TestCase):
         with self.assertRaises(PaperReadError) as caught:self.read_unmocked()
         self.assertEqual(caught.exception.code,'MONITORING_RECOVERY_REQUIRED');self.assertEqual(self.accounting()[1],1)
 
+    def test_subsecond_rollback_survives_restart_without_rounding(self):
+        self.now=T+0.75;self.read()
+        self.assertEqual(self.accounting()[0],T+0.75)
+        self.budget=MonitoringBudget(self.store,self.f.path,self.f.cfg,clock=lambda:T+0.5)
+        with patch('desk.paper_read_sources.os.environ.get') as credentials:
+            with self.assertRaises(PaperReadError) as caught:self.read_unmocked()
+        credentials.assert_not_called();self.assertEqual(caught.exception.code,'MONITORING_CLOCK_ROLLBACK')
+        self.assertEqual(self.accounting()[1],1)
+
     def test_candidate_buy_history_other_identity_and_oversize_refused_before_io(self):
         from desk.security import base58
         candidate=self.admit(base58(bytes([32])*32))
