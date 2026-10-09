@@ -4301,7 +4301,12 @@
             "pin_review": "CONDITIONAL_PASS_RECHECK_LOCKED_ANCHORS_FINAL_CI",
             "pin_review_turn": "01a121af-80c2-74ef-a452-235b245966dd",
             "activation_review": "PASS_WITH_SPECIFIED_INDEPENDENT_TRAP_CLEANUP_APPLIED",
-            "activation_review_turn": "01a121b1-c2bf-737d-a40a-98e654e4f812"
+            "activation_review_turn": "01a121b1-c2bf-737d-a40a-98e654e4f812",
+            "published_integration": "490d8960566ad4c0c9e81c0ab474bef18a355a46",
+            "integration_ci_runs": [
+              37967760895,
+              37967756196
+            ]
           },
           "diagnosis_turn": "01a12192-8d9e-7451-ab97-660e61856a26",
           "independent_review_turn": "01a12194-1955-714c-b4b7-a1b94d8461ee",
@@ -4397,7 +4402,7 @@
             "thread_id": "01a118fd-0f1c-749c-b85b-5e730937d0a8",
             "reviewer": "09",
             "review_thread_id": "01a118fd-3f90-77d9-9549-c4497f5b10a6",
-            "status": "MINIMAL_DESIGN_REQUESTED_NO_MUTATION",
+            "status": "IMPLEMENTATION_AUTHORIZED_EXACT_PUBLIC_PROOF_SENT",
             "pass_id": "d8600ce75e014e22b84c3fd8d10bf2c0",
             "intent_hash": "6f6cfd1efe9aa257638bd750ccd3c4099a3943a5d403132fa9d9d2a7b868fb7e",
             "retained_outcome_hash": "4352afa8e732c4f03eaf1cb788047aea58379fe3ef24edd05f5535e5680eb4a8",
@@ -4407,7 +4412,24 @@
             "design_review_turn": "01a121bb-ad1b-7756-97ff-d041e03d33a5",
             "fixture_owner": "04",
             "fixture_thread_id": "01a118fc-b862-7340-ab3a-e1115a3280a4",
-            "fixture_status": "PREPARING_SYNTHETIC_FAILED_A_THEN_VALID_B_CONTRACT"
+            "fixture_status": "A_3CHARGED_REJECT_AND_GLOBAL_RESTART_BLOCK_CONFIRMED_WAITING_API",
+            "design_review": "PreserveNULLpass; explicitreviewedlegacyassociation; no genericexception autoresolution; retirefailedscan; preservecharges",
+            "proof_file": "work/terminal-rejection-public-proof.json",
+            "attempt_hashes": [
+              "5fc5caa16818e63891c9fdea7bb7826c1dd80d149803a69991338272685fa4fc",
+              "363b8cf31f410964b20a92cf931ab21a324e5da7832ec159d3d8526b3893cbaa",
+              "0a42e9a83430b2aae7df6ae92659ab328195192e50b7f3c92c8113d352f3ebe3"
+            ],
+            "attempt_ordinals": [
+              8,
+              9,
+              10
+            ],
+            "invocation_id": "4d4a463a077e41f98aa646e7f620ebcc",
+            "invocation_start_microseconds": 1791564502120007,
+            "invocation_end_microseconds": 1791564509227403,
+            "invocation_exit": 2,
+            "fixture_turn": "01a121be-c550-7790-adeb-aa3596f07dd1"
           }
         }
       }
