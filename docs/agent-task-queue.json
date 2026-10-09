@@ -3647,7 +3647,8 @@
           "ci_seconds": [
             528.21,
             535.704
-          ]
+          ],
+          "integration_commit": "4365006f3b8de7dde13a0bbef200a04f74646cd4"
         },
         "review_url": "https://github.com/pixelmanager-cloud/solana-paper-desk/pull/160#issuecomment-6082835016"
       },
@@ -3761,7 +3762,7 @@
         }
       ],
       "transport_repair": {
-        "status": "CHANGES_REQUIRED_FRAMING_TRUNCATION_REPAIR_ASSIGNED",
+        "status": "CHANGES_REQUIRED_BETWEEN_CHUNK_DEADLINE_BYTE_RETENTION",
         "owner": "08",
         "reviewer": "02",
         "base": "e4badabe0ce850ceec59e4ae25aa1e7e0c266efb",
@@ -3770,11 +3771,13 @@
         "turn_id": "01a12120-7ba4-76ae-9c1b-94ee573c13f7",
         "cursor": "02d8669f-59ba-43bb-8691-b196829f4867:67",
         "pr": 162,
-        "head": "37b01cded6f770069d8e24347736b93b733bf97a",
-        "review_turn_id": "01a12128-95a6-77ca-b07e-092e0dde311f",
+        "head": "a6384e79c2976aa466ebda72574327fcf197bf66",
+        "review_turn_id": "01a1212d-3bd1-778a-8d0b-92965ca552e4",
         "review_url": "https://github.com/pixelmanager-cloud/solana-paper-desk/pull/162#issuecomment-6083404071",
         "finding": "Real HTTPResponse accepts missing terminal trailer line, unterminated trailer, invalid chunk CRLF; three independent malformed-wire probes accepted.33 focused tests pass but miss cases.",
-        "repair_turn_id": "01a1212a-27f9-70a6-ac7e-c8f92ff1c2a1"
+        "repair_turn_id": "01a1212a-27f9-70a6-ac7e-c8f92ff1c2a1",
+        "second_review_url": "https://github.com/pixelmanager-cloud/solana-paper-desk/pull/162#issuecomment-6083498672",
+        "second_finding": "Original3framingattacksreject; deadlineafterdatachunk loses accumulatedentitybytes.37focusedpass;08repairassigned; candidate3f17sourcepinprovisionalnotapproved."
       },
       "active_runtime_repair": {
         "status": "INDEPENDENT_PASS_CI_PENDING",
@@ -3785,12 +3788,18 @@
         "turn_id": "01a12120-9d81-71b0-a10b-ed623a0bc3cc",
         "cursor": "3dd79f38-868a-433f-9b14-13e7ed0a6e90:76",
         "pr": 163,
-        "head": "0dd147dac66e4e39e07970670ea13254543c53d7",
+        "head": "f5ddc251f5ad0492f92a5f22772582b9601c6b57",
         "review_turn_id": "01a12128-a7ff-7095-a63a-4a7c999e2714",
         "review_tests": 41,
         "review_seconds": 33.992,
         "independent_probes": 2,
-        "review_url": "https://github.com/pixelmanager-cloud/solana-paper-desk/pull/163#issuecomment-6083423665"
+        "review_url": "https://github.com/pixelmanager-cloud/solana-paper-desk/pull/163#issuecomment-6083423665",
+        "previous_reviewed_head": "0dd147dac66e4e39e07970670ea13254543c53d7",
+        "final_delta": "Validation report only; desk/tests identical; approval carry requested",
+        "ci_runs": [
+          37948355714,
+          37948347787
+        ]
       },
       "repair_combined_fixture": {
         "owner": "04",
