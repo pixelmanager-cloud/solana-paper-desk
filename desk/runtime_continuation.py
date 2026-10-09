@@ -52,10 +52,27 @@ def _guards():
 
 
 def _first(c):
+    """Validate SQL contract and bounds BEFORE loading any first-receipt bytes."""
+    names={r[0] for r in c.execute("SELECT name FROM sqlite_master WHERE type='table' AND name LIKE 'paper_runtime_%'")}
+    if names not in ({runtime.TABLE},{runtime.TABLE,TABLE}):
+        raise ValueError('Partial runtime transition schema')
+    if c.execute("SELECT sql FROM sqlite_master WHERE type='table' AND name=?",(runtime.TABLE,)).fetchone()!=(runtime._schema(),):
+        raise ValueError('Malformed first runtime table')
+    columns=c.execute(f'PRAGMA table_info({runtime.TABLE})').fetchall()
+    if [(r[1],r[2],r[5]) for r in columns]!=[('id','INTEGER',1),('payload','TEXT',0),('payload_hash','TEXT',0)]:
+        raise ValueError('Malformed first runtime columns')
+    if dict(c.execute("SELECT name,sql FROM sqlite_master WHERE type='trigger' AND tbl_name=?",(runtime.TABLE,)))!=runtime._guards():
+        raise ValueError('Malformed first runtime guards')
+    if c.execute(f'SELECT COUNT(*) FROM {runtime.TABLE}').fetchone()[0]!=1:
+        raise ValueError('Partial first runtime receipt')
+    # These expressions return scalars, not untrusted payload/hash contents.
+    shape=c.execute(f'SELECT id,typeof(payload),typeof(payload_hash),length(CAST(payload AS BLOB)),length(CAST(payload_hash AS BLOB)) FROM {runtime.TABLE}').fetchone()
+    if shape is None or shape[0]!=1 or shape[1:3]!=('text','text') or not 0<shape[3]<=runtime.MAX_BYTES or shape[4]!=64:
+        raise ValueError('First runtime receipt type or byte bound')
     row=c.execute(f'SELECT payload,payload_hash FROM {runtime.TABLE} WHERE id=1').fetchone()
-    if row is None:raise ValueError('First runtime receipt missing')
     receipt=runtime._parse(row[0])
-    if type(receipt) is not dict or digest(receipt)!=row[1]:raise ValueError('First receipt hash invalid')
+    if type(receipt) is not dict or not runtime._hash(row[1]) or digest(receipt)!=row[1]:
+        raise ValueError('First receipt hash invalid')
     return receipt,row[1]
 
 

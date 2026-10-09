@@ -277,3 +277,44 @@ with store.connect() as c:assert list(c.iterdump())==original
                     (f'INSERT OR REPLACE INTO {continuation.TABLE} VALUES(?,?,?)',row)):
                 with self.assertRaises(sqlite3.Error):c.execute(query,params)
         self.assertEqual(self.snapshot(),before)
+
+    def test_first_receipt_preflight_never_loads_oversize_or_malformed_payload(self):
+        class Probe:
+            def __init__(self,connection):self.connection=connection;self.payload_reads=0
+            def execute(self,sql,*args):
+                if sql.startswith('SELECT payload,payload_hash FROM paper_runtime_transition'):
+                    self.payload_reads+=1
+                    raise AssertionError('First payload loaded before SQL preflight rejected it')
+                return self.connection.execute(sql,*args)
+        # Full SQL dump includes first bytes; comparing it proves no mutation but
+        # never substitutes for the instrumented production reader below.
+        cases=('oversize','blob_payload','oversize_hash','blob_hash','bad_id','empty','schema','guards')
+        for case in cases:
+            with self.subTest(case=case):
+                database=self.root/('first-preflight-'+case+'.sqlite')
+                with sqlite3.connect(self.f.new) as origin,sqlite3.connect(database) as c:
+                    origin.backup(c)
+                    if case=='guards':
+                        c.execute('DROP TRIGGER paper_runtime_transition_update')
+                        c.execute('CREATE TRIGGER paper_runtime_transition_update BEFORE UPDATE ON paper_runtime_transition BEGIN SELECT 1; END')
+                    elif case=='schema':
+                        c.execute('DROP TABLE paper_runtime_transition')
+                        c.execute('CREATE TABLE paper_runtime_transition(id INTEGER,payload TEXT,payload_hash TEXT)')
+                        c.execute('INSERT INTO paper_runtime_transition VALUES(1,?,?)',self.first)
+                    else:
+                        c.execute('DROP TRIGGER paper_runtime_transition_update')
+                        if case=='oversize':c.execute('UPDATE paper_runtime_transition SET payload=?',('x'*(runtime.MAX_BYTES+1),))
+                        if case=='blob_payload':c.execute('UPDATE paper_runtime_transition SET payload=?',(b'{}',))
+                        if case=='oversize_hash':c.execute('UPDATE paper_runtime_transition SET payload_hash=?',('0'*(runtime.MAX_BYTES+1),))
+                        if case=='blob_hash':c.execute('UPDATE paper_runtime_transition SET payload_hash=?',(b'0'*64,))
+                        if case=='bad_id':
+                            c.execute('PRAGMA ignore_check_constraints=ON');c.execute('UPDATE paper_runtime_transition SET id=2')
+                        if case=='empty':
+                            c.execute('DROP TRIGGER paper_runtime_transition_delete');c.execute('DELETE FROM paper_runtime_transition')
+                            c.execute(runtime._guards()['paper_runtime_transition_delete'])
+                        c.execute(runtime._guards()['paper_runtime_transition_update'])
+                    c.commit();before=list(c.iterdump());probe=Probe(c)
+                    with patch.object(runtime,'_parse',side_effect=AssertionError('Parser called before first SQL preflight')) as parser:
+                        with self.assertRaises(ValueError):continuation._first(probe)
+                        parser.assert_not_called()
+                    self.assertEqual(probe.payload_reads,0);self.assertEqual(list(c.iterdump()),before)
