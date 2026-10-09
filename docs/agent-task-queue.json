@@ -1893,16 +1893,16 @@
       "live_acceptance": false
     },
     "current_worker_followups": {
-      "01": "Separate report successor: visible EXECUTION_UNVERIFIED assumptions/risk/source labels;133 frozen",
+      "01": "136 frozen under03 review",
       "02": "Independent135 migration witness review",
-      "03": "Acquisition final PASS; available for independent08 cycle review on publication",
+      "03": "Independent136 labels then ready08cycle review",
       "04": "Complete130 review then134 raw mint handoff exact-head review",
       "05": "Platformblocked97/110; not retried",
-      "06": "134 published; fix stale combined132 test expectation append-only",
-      "07": "Review1326d8f+133bd388f;10 checkpoint pending final combined Linux",
+      "06": "134 frozen; reproduce/fix held-position exit-only observation on sell-only window or entry hazards; coordinate08, review04",
+      "07": "Independent137 checkpoint and finalquote/accounting Linux",
       "08": "Resume one-cycle orchestration on130/131 contracts, no budget expansion",
-      "09": "135 frozen awaiting02 review; available for next concrete orchestration followup",
-      "10": "Checkpoint/view quote and v3 journal verification before read/duplicate"
+      "09": "Coordinate08 callable contract for separate manual CLI wrapper;135 under02 review",
+      "10": "137 frozen under07 review"
     },
     "paper_live_foundation_candidate": {
       "base": "3fe3188",
@@ -2063,8 +2063,12 @@
       "head": "7441e94042e0d05d1760472483752a65f3820100",
       "repairs": 128,
       "reviewer": "04",
-      "status": "INDEPENDENT_REVIEW_ACTIVE",
-      "author_linux_tests": 2167
+      "status": "SCOPED_PASS04_FINAL_COMBINATION_PENDING",
+      "author_linux_tests": 2167,
+      "linux_tests": 2167,
+      "linux_skips": 0,
+      "linux_seconds": 881.14,
+      "reviewed_tree": "ad64760bb92996c763bded993d6edf0a255d24cb"
     },
     "pending_pr131": {
       "head": "455149e42088bb9201d3ce3097efda01e6116d2e",
@@ -2108,24 +2112,47 @@
         "tests": 12,
         "result": "PASS",
         "scope": "1326d8f+133bd388f with130;134 not yet applied"
+      },
+      "latest_22_tests": "132/133/134/135 PASS;1378testsPASS; full local combined pending",
+      "mac_full_quote_candidate": {
+        "tests": 2233,
+        "skips": 408,
+        "seconds": 46.148,
+        "result": "PASS",
+        "components": [
+          125,
+          126,
+          127,
+          128,
+          129,
+          130,
+          131,
+          132,
+          133,
+          134,
+          135,
+          136,
+          137
+        ],
+        "live_acceptance": false
       }
     },
     "pending_pr132": {
       "head": "6d8f4a9b7039feae450f839783e151e2068b8242",
       "repairs": 127,
-      "status": "INDEPENDENT_REVIEW07",
+      "status": "SCOPED_PASS07_FINAL_COMBINATION_PENDING",
       "config_contract": "Canonical paper_signal_policy_version=3 + paper_quote_execution_version=1; omission of experimental_policy_version preferred, matching3 alias accepted by6d8f4a9",
       "author_linux_tests": 2173,
       "ci": "Both exact6d8f4a9 checks SUCCESS"
     },
     "pending_pr133": {
       "head": "bd388f6bc2149214c6e24956f4220ea87ac34c9c",
-      "status": "INDEPENDENT_REVIEW07",
+      "status": "SCOPED_PASS07_FINAL_COMBINATION_PENDING",
       "scope": "Raw-unit-aware quote partial report accounting"
     },
     "pending_pr134": {
-      "head": "8395a36ffdd01ffc38d3f9abe3f2574b4718a2ab",
-      "status": "REVIEW04_WITH_APPEND_ONLY_TEST_REPAIR_PENDING",
+      "head": "a4a86254368e9060deb145174d77415f128a0146",
+      "status": "INDEPENDENT_REVIEW04_TEST_EXPECTATION_FIXED",
       "scope": "Original validated mint account handoff to actual entry token policy",
       "author": "06",
       "reviewer": "04",
@@ -2138,6 +2165,27 @@
       "reviewer": "02",
       "scope": "Retained raw migration witness extractor; runtime trusted source binding still required",
       "linux_author_tests": 2143
+    },
+    "pending_pr136": {
+      "head": "d6e4a18eb3efdd0c31ab89648b14f343165e11bc",
+      "status": "INDEPENDENT_REVIEW03",
+      "author": "01",
+      "reviewer": "03",
+      "scope": "Visible unverified quote execution assumptions and retained risks"
+    },
+    "pending_pr137": {
+      "head": "2f90d6002c4f818765e126816a88f6497bdd7528",
+      "status": "INDEPENDENT_REVIEW07",
+      "author": "10",
+      "reviewer": "07",
+      "scope": "Validate quote checkpoints and journal accounting before readers and duplicate delivery",
+      "local_focused_tests": 8
+    },
+    "pending_exit_observation": {
+      "worker": "06",
+      "thread_id": "01a118fc-f867-7233-8eec-c20659e70095",
+      "status": "DISPATCHED",
+      "scope": "Existing-position fresh SELL observation must not require entry buy-window metrics or hide known hazards; no new entry authority"
     }
   },
   "native_reconciliation_review": {
