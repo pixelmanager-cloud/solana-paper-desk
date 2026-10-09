@@ -1808,8 +1808,20 @@
       37883768990
     ],
     "repository_visibility_policy": {
-      "current": "PRIVATE",
-      "user_authorization": "Make public if Actions minutes/spending limits recur, after secrets/private-data inspection; do not publish if inspection finds exposure."
+      "current": "PUBLIC",
+      "user_authorization": "Explicit approval: Make the existing repo public, including that history",
+      "verified": true,
+      "ci_retries": [
+        37926336816,
+        37926332538,
+        37927697538,
+        37927691520,
+        37927523068,
+        37927466101,
+        37926668176,
+        37926662352
+      ],
+      "status": "CI_RETRIES_RUNNING_AFTER_PUBLICATION"
     },
     "paper_loop_acceptance_candidate": {
       "base": "c0347d836560b365550d077c4f600ac3d140d4b5",
@@ -2853,7 +2865,7 @@
       "next_if_recurs": "Verbose test names and periodic faulthandler dumps, preserving suite and10min timeout; no source repair established"
     },
     "continuous_discovery_preflight": {
-      "status": "OVERSIZE_REPAIRED_REREVIEW_PENDING",
+      "status": "INDEPENDENT_PASS_CI_RETRY_RUNNING",
       "worker": "08",
       "thread_id": "01a118fd-2563-7126-90d7-bd07693de0b2",
       "turn_id": "01a1205a-ac94-70d6-bb60-70c87ba13d8e",
@@ -2890,11 +2902,15 @@
         "thread_id": "01a118fc-666c-70b6-9fa8-2c7520f0a0bb",
         "turn_id": "01a1206d-97ef-731c-a06d-620ad48a4412",
         "cursor": "a2dcfb97-463d-4188-9da3-48a81e644d23:109",
-        "status": "CHANGES_REQUIRED",
+        "status": "PASS_FINAL_COMBINED_HEAD",
         "requirements_relayed_to_author": true,
         "linux_tests": 2379,
         "linux_skips": 0,
-        "linux_seconds": 299.185
+        "linux_seconds": 299.185,
+        "tests": 2397,
+        "skips": 0,
+        "seconds": 329.356,
+        "tree": "dd09bb1e8d98f3c9552f7232e3f8fa49a41b6029"
       },
       "deployment": "NOT_DEPLOYED; retain sampler until exact-head review, full Linux tests and CI; keep paper runtime pinned",
       "allowance_change": "Author08 and reviewer02 notified; not deployed; preserve prior charged usage and originals",
@@ -2939,8 +2955,23 @@
           "turn_id": "01a12084-fb66-758a-adbf-78537934785d",
           "cursor": "68a4d56e-d04a-40dc-ad15-e80a29c96b80:41"
         },
-        "billing_diagnostic": "Read-only user billingusage endpoint404; gh reports missing user scope. No scope expansion requested; failedpayment versus spendinglimit remainsunknown."
-      }
+        "billing_diagnostic": "Read-only user billingusage endpoint404; gh reports missing user scope. No scope expansion requested; failedpayment versus spendinglimit remainsunknown.",
+        "exposure_audit": "09checked449files/799commits/1289blobs/123zipentries; no recognizedcredentials, but deployment/privatecoordination/historymetadata tracked. Userasked billingfix or explicitpublichistorydecision; no visibilitychange.",
+        "user_decision": "Explicitly approved: Make the existing repo public, including that history",
+        "visibility": "PUBLIC verified via gh repo view",
+        "ci_retry_runs": [
+          37926336816,
+          37926332538
+        ],
+        "status": "PUBLICATION_COMPLETE_CI_RETRY_REQUESTED"
+      },
+      "independent_linux": {
+        "tests": 2397,
+        "skips": 0,
+        "seconds": 329.356,
+        "tree": "dd09bb1e8d98f3c9552f7232e3f8fa49a41b6029"
+      },
+      "finding_resolved": true
     },
     "paper_policy_tuning": {
       "status": "PASS_INTEGRATED_OFFLINE_FOUNDATION",
@@ -2997,7 +3028,7 @@
       "source_identity": "Only coordinator queue/readiness differ from independent exacthead"
     },
     "downstream_allowance_upgrade": {
-      "status": "DRAFT_POLICY_REVIEW_PENDING_RUNTIME_AND_PACING",
+      "status": "CHANGES_REQUIRED_REPAIRS_REQUESTED",
       "authorization": "User explicitly requested another increase beyond100/day and600/hour. Coordinator targets1000/day,queue25,monitor3600/hour; ceilings subject to provider pacing.",
       "limits": {
         "daily_admissions": 1000,
@@ -3013,7 +3044,7 @@
         "worker": "03",
         "thread_id": "01a118fc-9478-778a-b77a-8f8f6ec7e0ad",
         "turn_id": "01a12083-dc0c-71eb-94c2-827d87868444",
-        "cursor": "0851f5ab-a903-4567-a6fe-4cbb4e6a7b96:49"
+        "cursor": "0851f5ab-a903-4567-a6fe-4cbb4e6a7b96:50"
       },
       "constraints": "Explicit durable upgrade only; no counter reset, reprovision, forged source identity, historical evidence or checkpoint rewrite. Existing defaults do not silently escalate. Runtime compatibility required.",
       "deployment": "Not active; original10/3/60 remain until independent review/fullLinux/CI and safe coordinator upgrade",
@@ -3032,13 +3063,13 @@
         "status": "FORWARD_FIXES_PENDING_REREVIEW",
         "scope": "Explicit exact predecessor-successor compatibility; preserve originals; no job or monitoring policy edits",
         "pr": 152,
-        "head": "000840c88a139280fd3608795e1444499c524cda",
+        "head": "965a2b1f62f92980805eb6b2bbc9f6750b381e10",
         "interface": "runtime_compatibility.require_runtime(connection, implementation=code_hash)",
         "reviewer": {
           "worker": "02",
           "thread_id": "01a118fc-666c-70b6-9fa8-2c7520f0a0bb",
-          "turn_id": "01a12080-675e-7602-9253-9a1375c90217",
-          "cursor": "a2dcfb97-463d-4188-9da3-48a81e644d23:110"
+          "turn_id": "01a1208d-5f33-725b-b427-a6627a880cde",
+          "cursor": "a2dcfb97-463d-4188-9da3-48a81e644d23:113"
         },
         "findings": [
           "Post-transition malformed suffix grammar inconsistent acrossreaders",
@@ -3049,13 +3080,25 @@
       "provider_pacing": {
         "worker": "06",
         "thread_id": "01a118fc-f867-7233-8eec-c20659e70095",
-        "status": "IMPLEMENTATION_DISPATCHED",
+        "status": "EXACT_HEAD_REVIEW_DISPATCHED",
         "scope": "Durable shared Helius/Jupiter pacing/backoff, heldpositionpriority, preserve callerbudget charges, no hidden retries",
         "turn_id": "01a1207f-badc-7720-b415-aa1bc5476197",
-        "cursor": "8f3328cf-bef6-441d-83f8-2d1f46b3b0df:123"
+        "cursor": "8f3328cf-bef6-441d-83f8-2d1f46b3b0df:123",
+        "pr": 154,
+        "head": "ecf143987c8b9063aee1178edf493cc8f1edcb95",
+        "reviewer_worker": "09",
+        "reviewer": {
+          "thread_id": "01a118fd-3f90-77d9-9549-c4497f5b10a6",
+          "turn_id": "01a1208d-1582-7744-a67c-4d03acd6f229",
+          "cursor": "68a4d56e-d04a-40dc-ad15-e80a29c96b80:45"
+        }
       },
       "pr": 153,
-      "head": "a70c69ffc1fad6c51e482076e99b9ee34e98c952"
+      "head": "a70c69ffc1fad6c51e482076e99b9ee34e98c952",
+      "findings": [
+        "Independent03 epoch finding on a70c69f",
+        "Wrong/corrupt research context allows monitoring policy upgrade under unrelated worker lock"
+      ]
     },
     "discovery_policy_combined_review": {
       "prs": {
