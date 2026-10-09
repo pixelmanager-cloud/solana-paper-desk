@@ -1662,10 +1662,14 @@
       "repair": "Bounded unambiguous buy ENTRY outcome must match original risk policy, scores, identity, initial quantity and cost; non-entry rebinding rejects"
     },
     "paper_fill_model_question": {
-      "status": "AWAITING_USER_EXPLICIT_CHOICE_REQUESTED_AGAIN",
-      "current_gate": "Full transaction execution verification even for paper fills",
-      "proposed_experimental_mode": "Fresh live quote simulations with explicit fee/slippage assumptions and execution-unverified label",
-      "existing_authorization": "Ownership history risk only; do not silently waive execution proof while choice pending"
+      "status": "APPROVED_BY_USER",
+      "answer": "Yes",
+      "approved_mode": "Fresh live quotes for simulated paper fills with explicit fee/slippage assumptions and execution-unverified label",
+      "limits": "Paperonly; no signing/broadcast/funds; knownhazardsreject; originaldata/budgets/privateaccesspreserved",
+      "execution_owner": "06",
+      "market_adapter_owner": "09",
+      "runner_owner": "08",
+      "integration_owner": "desktop"
     },
     "pending_pr109": {
       "status": "ACCEPTED_INTEGRATED_NOT_DEPLOYED",
@@ -1876,16 +1880,32 @@
       "ci": "BOTH_SUCCESS"
     },
     "current_worker_followups": {
-      "01": "PR121 bridge published; independent03review",
+      "01": "Trade-window acquisition recipe within existing18 budget",
       "02": "PR122 parser review PASS; available",
       "03": "PR121 independentreview active",
-      "04": "PR119 independentreview active; statusrecoveryrequested",
+      "04": "PR124 operator runbook review",
       "05": "Platformblocked97/110; not retried",
-      "06": "PR123 dashboardrepair published; independent07review",
-      "07": "Full combined paperloop+123 independentreview",
-      "08": "Bounded live observation CLI; noentries; depends120/121/122",
-      "09": "PR119/122 repairs published; available",
-      "10": "Tested operator runbook/new isolated syntheticexperiment commands"
+      "06": "Implement user-approved quote execution and engine contract",
+      "07": "Final live foundation combined review",
+      "08": "Finish bounded observation CLI then runner handoff",
+      "09": "Trusted market adapter measured feature mapping",
+      "10": "PR124 author available"
+    },
+    "paper_live_foundation_candidate": {
+      "base": "3fe3188",
+      "heads": [
+        108,
+        113,
+        115,
+        116,
+        119,
+        121,
+        122
+      ],
+      "repair": "2bda1076c82c2e5b5427f60ce945e766bfe92322",
+      "tree": "346fb09130aea3c1a92c2cf4b7050fb6b8377316",
+      "status": "FULL_COMBINED_TESTS_AND_REVIEW_07",
+      "live_acceptance": false
     }
   },
   "native_reconciliation_review": {
