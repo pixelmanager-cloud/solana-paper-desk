@@ -1,7 +1,8 @@
 """Pure, versioned decision and sizing functions. Monetary inputs are SOL."""
 from .model import (D, ONE, ZERO, clip, decimal as dec, digest, validate_event,
     PAPER_EXPERIMENTAL, EXPERIMENTAL_POLICY_VERSION, OWNERSHIP_METRICS,
-    OWNERSHIP_HISTORY_RISK, experimental_ownership_unknowns, EXPERIMENTAL_HISTORY_FIELDS)
+    OWNERSHIP_HISTORY_RISK, experimental_ownership_unknowns, EXPERIMENTAL_HISTORY_FIELDS,
+    EXPERIMENTAL_OBSERVABLE_POLICY_VERSION, observable_signal_profile)
 
 EXPERIMENTAL_SCORE_VERSION = 'paper-experimental-flow-momentum-v1'
 
@@ -27,7 +28,7 @@ def gates(e, cfg, scored):
     return _gates(e, cfg, scored)
 
 
-def _gates(e, cfg, scored, *, omitted_ownership=False, developer_unknown=False):
+def _gates(e, cfg, scored, *, omitted_ownership=False, developer_unknown=False, holder_unknown=False, observable_proxy=False):
     reasons = []
     if e.get("venue") != "pumpswap" or not e["graduated"]:
         reasons.append("UNSUPPORTED_POOL")
@@ -49,6 +50,7 @@ def _gates(e, cfg, scored, *, omitted_ownership=False, developer_unknown=False):
     if not developer_unknown and dec(e["dev_launches_7d"]) >= 3:
         reasons.append("REPEAT_DEPLOYER")
     for prefix in ("price", "holder", "flow", "momentum"):
+        if prefix == "holder" and holder_unknown:continue
         if e["ts"] - e[prefix + "_at"] > cfg[prefix + "_ttl_seconds"]:
             reasons.append("STALE_" + prefix.upper())
     if not omitted_ownership and scored["safety"] < 55:
@@ -58,7 +60,7 @@ def _gates(e, cfg, scored, *, omitted_ownership=False, developer_unknown=False):
         # measured hazard. This is a rejection bound, never an asserted score.
         reasons.append("KNOWN_OWNERSHIP_HAZARD")
     if scored["momentum"] < 40 or dec(e["wash_score"]) > D(".3"):
-        reasons.append("MOMENTUM_OR_WASH")
+        reasons.append("MOMENTUM_OR_OBSERVED_CHURN" if observable_proxy else "MOMENTUM_OR_WASH")
     threshold = 60 if e["flow_confirmed"] else 68
     if scored["entry"] < threshold:
         reasons.append("ENTRY_SCORE")
@@ -118,7 +120,9 @@ def experimental_scores(e, *, mode, policy_version):
         raise ValueError('Explicit PAPER_EXPERIMENTAL mode required')
     validate_event(e, mode=mode, policy_version=policy_version)
     unknowns = experimental_ownership_unknowns(e)
-    if policy_version == 2:
+    if policy_version == EXPERIMENTAL_OBSERVABLE_POLICY_VERSION:
+        numeric = _history_profile_scores(_observable_view(e))
+    elif policy_version == 2:
         numeric = _history_profile_scores(e)
     elif unknowns:
         momentum = D(100) * (D('.35') * dec(e['net_buy_ratio'])
@@ -144,12 +148,27 @@ def experimental_scores(e, *, mode, policy_version):
         'confidence': str(clip((numeric['entry'] - 60) / 40, ZERO, ONE)),
         'entry_authorized': False, 'ownership_verified': False,
         'ownership_complete': False, 'source_authenticated': False}
-    if policy_version == 2:
+    if policy_version in (2, EXPERIMENTAL_OBSERVABLE_POLICY_VERSION):
         result['omitted_components'] = sorted(unknowns)
         result['manipulation_safety'] = {'status': 'UNKNOWN' if e['manip_safety'] is None else 'MEASURED',
             'value': e['manip_safety'], 'reasons': list(unknowns.get('manip_safety', {}).get('reasons', []))}
         result['manipulation_penalty_basis'] = ['manip_flow'] + (['manip_safety'] if e['manip_safety'] is not None else [])
+    if policy_version == EXPERIMENTAL_OBSERVABLE_POLICY_VERSION:
+        import json
+        from .model import canonical
+        result['score_version']='paper-observable-flow-momentum-v3'
+        result['signal_profile']=json.loads(canonical(observable_signal_profile(e)))
+        result['manipulation_penalty_basis']=['buyer_volume_concentration_proxy_v1'] + (['manip_safety'] if e['manip_safety'] is not None else [])
+        result['risk_flags']=sorted(set(result['risk_flags'])|{'EXECUTION_UNVERIFIED','OBSERVABLE_PROXIES_NOT_SAFETY_PROOF'})
     return result
+
+
+def _observable_view(e):
+    # Private arithmetic view only. Persisted event retains UNKNOWN legacy fields.
+    p=observable_signal_profile(e)['measurements']
+    return {**e,'flow':p['directional_flow_proxy_v1']['value'],
+            'wash_score':p['same_wallet_churn_proxy_v1']['value'],
+            'manip_flow':p['buyer_volume_concentration_proxy_v1']['value']}
 
 
 def experimental_gates(e, cfg, *, mode, policy_version):
@@ -164,8 +183,11 @@ def experimental_gates(e, cfg, *, mode, policy_version):
     result = experimental_scores(e, mode=mode, policy_version=policy_version)
     numeric = {key: dec(result[key]) if result[key] is not None else None
                for key in ('safety','momentum','flow','entry')}
-    return _gates(e, cfg, numeric, omitted_ownership=result['ownership_component']['status'] == 'OMITTED',
-                  developer_unknown=policy_version == 2 and e['dev_launches_7d'] is None)
+    view=_observable_view(e) if policy_version == EXPERIMENTAL_OBSERVABLE_POLICY_VERSION else e
+    return _gates(view, cfg, numeric, omitted_ownership=result['ownership_component']['status'] == 'OMITTED',
+                  developer_unknown=policy_version in (2, EXPERIMENTAL_OBSERVABLE_POLICY_VERSION) and e['dev_launches_7d'] is None,
+                  holder_unknown=policy_version == EXPERIMENTAL_OBSERVABLE_POLICY_VERSION and e['holder_at'] is None,
+                  observable_proxy=policy_version == EXPERIMENTAL_OBSERVABLE_POLICY_VERSION)
 
 
 def _history_profile_scores(e):
