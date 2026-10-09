@@ -283,7 +283,7 @@
         "base": "9e43752daabf19b7e78e08e0b15d16d1c6e2a680",
         "scope": "Minimal supervised runner using existing ledger/engine/watchdog, executable synthetic lifecycle and restart; no live authorization or screening policy changes",
         "turn_id": "01a11eae-36ed-72bd-8c5d-ab7f42d99073",
-        "wait_cursor": "68a4d56e-d04a-40dc-ad15-e80a29c96b80:10"
+        "wait_cursor": "68a4d56e-d04a-40dc-ad15-e80a29c96b80:11"
       },
       {
         "id": "EXPERIMENTAL-PAPER-OWNERSHIP-POLICY",
@@ -301,9 +301,20 @@
         "worker": "04",
         "thread_id": "01a118fc-b862-7340-ab3a-e1115a3280a4",
         "host_id": "durable",
-        "status": "DISPATCHED",
+        "status": "IN_PROGRESS",
         "base": "9e43752daabf19b7e78e08e0b15d16d1c6e2a680",
-        "scope": "Useful timestamped raw observation normalization with exact units/source hash, no invented metrics or provider calls"
+        "scope": "Useful timestamped raw observation normalization with exact units/source hash, no invented metrics or provider calls",
+        "turn_id": "01a11eb0-22b3-75c2-b925-25a798d51404",
+        "wait_cursor": "d3153436-2742-432e-8501-9c06b95f29ae:12"
+      },
+      {
+        "id": "PAPER-EXPERIMENT-RESULTS",
+        "worker": "10",
+        "thread_id": "01a118fd-56d5-70b8-ad31-dba13e982082",
+        "host_id": "durable",
+        "status": "DISPATCHED",
+        "base": "d36957a179816fb48224fdf262159a9885afb354",
+        "scope": "Read-only bounded existing-ledger performance report, config/version/provenance/closed trades/PnL/costs/drawdown/open inventory; no invented profitability threshold"
       }
     ],
     "saved_launch_probe": {
