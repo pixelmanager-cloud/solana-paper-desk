@@ -3623,19 +3623,26 @@
           "reviewer": "06",
           "base": "e4badabe0ce850ceec59e4ae25aa1e7e0c266efb",
           "scope": "external tools wrapper; explicit loaders/pacer/credentials, pre-spend checkpoint/source/config/pending-state refusal, dryrun default, existingAPI historyfirst; no desk changes",
-          "turn_id": "01a1210d-2cbc-71b7-87e2-ee225da13d75",
+          "turn_id": "01a12122-d4fa-739c-afb5-78d9bcd693d5",
           "pr": 161,
-          "head": "62e458a1e40a9e0a16af34d9d9900f285227279e",
-          "status": "INDEPENDENT_PASS_ONE_CI_PASS_OTHER_RUNNING",
+          "head": "a52d4b488d0f0268a8e422c86343193702e1a0d4",
+          "status": "FINAL_HEAD_INDEPENDENT_PASS_CI_RUNNING",
           "scoped_tests": 6,
           "scoped_seconds": 11.03,
           "ci_runs": [
-            37944586830,
-            37944647325
+            37946974511,
+            37946965486
           ],
-          "review_turn_id": "01a12118-744e-7352-a28d-e2d7912cbeb0",
+          "review_turn_id": "01a12127-cf0b-743c-b63a-c2518d430395",
           "targeted_tests": 8,
-          "independent_probes": 16
+          "independent_probes": 16,
+          "coordinator_delta_review": "Only workflow timeout10->20; runtime/test deadlines unchanged; source approval carry requested06",
+          "previous_ci": {
+            "head": "62e458a1e40a9e0a16af34d9d9900f285227279e",
+            "pass_run": 37945417597,
+            "timeout_run": 37945423479,
+            "timeout_log": "2526 tests OK in601.409s; job cancelled at10min, not accepted as successfulCI"
+          }
         },
         "review_url": "https://github.com/pixelmanager-cloud/solana-paper-desk/pull/160#issuecomment-6082835016"
       },
@@ -3704,7 +3711,15 @@
         "monitoring_used": 0,
         "private_listener": "127.0.0.1:8765",
         "setup_note": "New ledger inherited0644; selected-ledger backup correctly rejected. Tightened0600, restarted selected services and backuppassed. Parentprivate; nooriginalledgeralteration.",
-        "first_entry_notified": false
+        "first_entry_notified": false,
+        "pacing_backup": {
+          "path": "/var/backups/solana-desk/pacing-coordinator/20261009T145509Z.sqlite",
+          "sha256": "deeeec9ca8219c97dde2b914b98d7eb2a2cdb5e933102ffa3cb15b3d12d71bd4",
+          "mode": "0600",
+          "integrity": "ok",
+          "pending": null,
+          "method": "SQLite online consistent snapshot; no providercalls or counter mutation"
+        }
       },
       "live_candidates": [
         {
@@ -3741,17 +3756,27 @@
         }
       ],
       "transport_repair": {
-        "status": "ASSIGNED_CONFIRMED_LIVE_HTTP_CHUNKED",
+        "status": "PUBLISHED_INDEPENDENT_REVIEW_RUNNING",
         "owner": "08",
         "reviewer": "02",
         "base": "e4badabe0ce850ceec59e4ae25aa1e7e0c266efb",
-        "scope": "Only unambiguous singlechunked transfer coding with bounded originalentitybytes; rejectduplicates/CLconflicts/compression; noothergatechanges"
+        "scope": "Only unambiguous singlechunked transfer coding with bounded originalentitybytes; rejectduplicates/CLconflicts/compression; noothergatechanges",
+        "thread_id": "01a118fd-2563-7126-90d7-bd07693de0b2",
+        "turn_id": "01a12120-7ba4-76ae-9c1b-94ee573c13f7",
+        "cursor": "02d8669f-59ba-43bb-8691-b196829f4867:67",
+        "pr": 162,
+        "head": "37b01cded6f770069d8e24347736b93b733bf97a"
       },
       "active_runtime_repair": {
-        "status": "ASSIGNED",
+        "status": "PUBLISHED_INDEPENDENT_REVIEW_RUNNING",
         "owner": "07",
         "reviewer": "09",
-        "scope": "Existing one-hop runtime receipt for currenttoken2022ledger; preserveconfig/context/binding/grants/counters; no newexperiment/reset"
+        "scope": "Existing one-hop runtime receipt for currenttoken2022ledger; preserveconfig/context/binding/grants/counters; no newexperiment/reset",
+        "thread_id": "01a118fd-0f1c-749c-b85b-5e730937d0a8",
+        "turn_id": "01a12120-9d81-71b0-a10b-ed623a0bc3cc",
+        "cursor": "3dd79f38-868a-433f-9b14-13e7ed0a6e90:76",
+        "pr": 163,
+        "head": "0dd147dac66e4e39e07970670ea13254543c53d7"
       }
     }
   },
