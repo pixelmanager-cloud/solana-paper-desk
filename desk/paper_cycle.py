@@ -3,7 +3,8 @@
 Trusted caller injects sources/context, holds stable single-host database paths,
 reports pending dependency blockers, and never derives permission from event JSON.
 Research worker -> evidence invocation -> cycle ledger locks. All reads spend the
-original admitted lifetime 18; no monitoring allowance, admission or reset here.
+original admitted lifetime 18 for candidates. Explicitly provisioned held-position
+monitoring uses the separate shared rolling allowance; neither path admits/resets.
 """
 from contextlib import contextmanager, closing
 from dataclasses import dataclass, asdict
@@ -24,11 +25,14 @@ from .paper_checkpoint import read_checkpoint, RecoveryRequired
 from .paper_observe_cli import _worker_lock, _existing_context, _attempt_record
 from .history_progress import canonical_ownership_path, ownership_lock_path
 from .job_persistence import canonical_job_path
-from .paper_observation_collector import ObservationTarget, BoundedSource, collect_observations, _Blocked
+from .paper_observation_collector import ObservationTarget, BoundedSource, collect_observations, TargetObservation, _Blocked
 from .paper_read_sources import PaperReadSources, PaperReadError, RPC_ID
 from .paper_history_source import PaperHistorySource
+from .paper_exit_adapter import ExitContext, build_exit_event
 from .paper_market_adapter import MarketContext, build_market_event, OBSERVABLE_FLOW_CHURN_CONCENTRATION_V1
-from .live_observation import ProviderObservation, ingest_quote
+from .live_observation import ProviderObservation, ingest_quote, ingest_mint, ingest_pool, ObservationError
+from .monitoring_budget import MonitoringBudget, MonitoringBlocked
+from .pools import verify_pool
 from .providers import SOL
 from .original_byte_slot_transport import _parse
 from urllib.parse import urlencode
@@ -142,6 +146,7 @@ class _Budget:
         self.progress, self.wall_clock, self.monotonic = progress, wall_clock, monotonic
         self.start = self.last = monotonic()
         self.attempted = 0
+        self.monitoring_attempted = 0
         self.remaining()
 
     def now(self):
@@ -179,6 +184,85 @@ class _Budget:
             raise CycleBlocked('SHARED_BUDGET_CHARGE_OR_IDENTITY_MISMATCH')
         self.remaining()
         return result
+
+
+class _HeldBudget:
+    """Compare durable monotonic monitoring charges, never rolling count deltas."""
+    def __init__(self, parent, monitoring):
+        self.parent, self.monitoring = parent, monitoring
+    def now(self): return self.parent.now()
+    def remaining(self): return self.parent.remaining()
+    def call(self, scan, invoke):
+        admission = self.parent.progress.admission(scan)
+        before = self.monitoring.snapshot()
+        if before['blockers']: raise CycleBlocked(before['blockers'][0])
+        timeout = self.remaining()
+        self.parent.monitoring_attempted += 1
+        try:
+            result = invoke(timeout)
+        except PaperReadError as error:
+            raise CycleBlocked(error.code) from error
+        after = self.monitoring.snapshot()
+        if (after['total_used'] != before['total_used']+1
+                or self.parent.progress.admission(scan) != admission):
+            raise CycleBlocked('MONITORING_CHARGE_OR_ADMISSION_MISMATCH')
+        if after['blockers'] and after['blockers'] != ['MONITORING_REQUEST_BUDGET_EXHAUSTED']:
+            raise CycleBlocked(after['blockers'][0])
+        self.remaining()
+        return result
+
+
+def _collect_held(target, source, budget, store):
+    """Exit-only typed ingestion; investigation collector remains unchanged.
+
+    Preserve the same original envelope grammar used by the exit producer. Each
+    source call is independently fenced by the provisioned monitoring sequence.
+    """
+    refs = []
+    def request(method, params, invoke, identity):
+        original = json.loads(canonical(params)); started = budget.now()
+        response = budget.call(target.scan_id, invoke)
+        completed = budget.now()
+        envelope = {'source_id':identity,'acquired_at':completed,'started_at':started,
+                    'method':method,'params':original,'result':response}
+        key = store.save(envelope)
+        if key != digest(envelope): raise CycleBlocked('ORIGINAL_RESPONSE_PERSISTENCE_FAILED')
+        refs.append(key)
+        if params != original: raise CycleBlocked('SOURCE_REQUEST_MUTATED')
+        if completed < started or completed-started > 10:
+            raise CycleBlocked('SOURCE_RESPONSE_STALE')
+        return response, completed, envelope
+    params = [target.mint, {'encoding':'base64','commitment':'confirmed'}]
+    raw, at, envelope = request('getAccountInfo',params,
+        lambda timeout:source.rpc('getAccountInfo',params,timeout_seconds=timeout),source.rpc_source_id)
+    token = ingest_mint(lambda:ProviderObservation(source.rpc_source_id,at,
+        {'mint':target.mint,'observed_at':at,'slot':raw.get('context',{}).get('slot'),
+         'account':raw.get('value'),'original_rpc_observation':envelope}),
+        mint=target.mint,now=budget.now(),max_age_seconds=10)
+    acquisitions = []; captures = []
+    def rpc(method, params):
+        result, at, _ = request(method,params,
+            lambda timeout:source.rpc(method,params,timeout_seconds=timeout),source.rpc_source_id)
+        acquisitions.append(at)
+        return result
+    def capture(payload):
+        key = store.save(payload)
+        if key != digest(payload): raise CycleBlocked('POOL_CAPTURE_PERSISTENCE_FAILED')
+        refs.append(key); captures.append(payload)
+        return key
+    verify_pool(target.pool,target.mint,rpc,capture=capture)
+    pool_at = acquisitions[-1]
+    pool = ingest_pool(lambda:ProviderObservation(source.rpc_source_id,pool_at,captures[0]),
+        mint=target.mint,pool=target.pool,now=budget.now(),max_age_seconds=10)
+    if token.decimals != pool.decimals or pool.slot < token.slot:
+        raise CycleBlocked('MINT_POOL_BANK_MISMATCH')
+    args = [target.mint,SOL,target.amount_raw,target.taker]
+    payload, _, _ = request('jupiter_probe',args,
+        lambda timeout:source.quote(*args,timeout_seconds=timeout),source.quote_source_id)
+    quote = ingest_quote(lambda:ProviderObservation(source.quote_source_id,payload.get('observed_at'),payload),
+        mint=token,direction='sell',amount_raw=target.amount_raw,taker=target.taker,
+        expected_pool=target.pool,now=budget.now(),max_age_seconds=10)
+    return TargetObservation(target,'sell',token,pool,quote,None,tuple(refs))
 
 
 def _history(progress, item, budget, source_factory):
@@ -307,7 +391,7 @@ def fulfill_quotes(state, cfg, event_builder, collected, source, budget):
 
 
 def run_once(research_db, evidence_db, ledger_db, cfg, *, position_targets=(), candidates=(),
-             dependency_blockers, controls=(), usd_evidence_refs=(), source_factory=PaperReadSources,
+             dependency_blockers, controls=(), usd_evidence_refs=(), monitoring=False, source_factory=PaperReadSources,
              history_source_factory=PaperHistorySource, wall_clock=time.time, monotonic=time.monotonic):
     """Trusted callable, no automatic runner activation or permission from JSON.
 
@@ -316,7 +400,7 @@ def run_once(research_db, evidence_db, ledger_db, cfg, *, position_targets=(), c
     ledger position must have its original admission and exact current raw size.
     """
     _config(cfg)
-    if type(position_targets) is not tuple or type(candidates) is not tuple:
+    if type(monitoring) is not bool or type(position_targets) is not tuple or type(candidates) is not tuple:
         raise ValueError('Explicit bounded cycle target tuples required')
     items = position_targets+candidates
     if (type(position_targets) is not tuple or type(candidates) is not tuple or len(items)>18
@@ -346,6 +430,10 @@ def run_once(research_db, evidence_db, ledger_db, cfg, *, position_targets=(), c
                 try:
                     jobs, store, progress = _existing_context(research,evidence,tuple(x.target for x in items))
                     state = _state(path,cfg)
+                    allowance = MonitoringBudget(store,path,cfg,clock=wall_clock) if monitoring else None
+                    if allowance is not None: allowance.snapshot()  # Never provision on a read path.
+                except MonitoringBlocked as error:
+                    return {**result,'blockers':[error.code]}
                 except RecoveryRequired as error:
                     return {**result,'status':'RECOVERY_REQUIRED','blockers':[str(error)]}
                 except CycleBlocked as error:
@@ -401,45 +489,58 @@ def run_once(research_db, evidence_db, ledger_db, cfg, *, position_targets=(), c
                         if not is_position and (state['mode']!='RUNNING' or target.mint in state['positions']):
                             result['diagnostics'].append({'scan_id':target.scan_id,'blockers':['ENTRY_CONTROL_OR_EXISTING_POSITION']})
                             continue
-                        graduation = _graduation(store,item,budget.now())
-                        result['diagnostics'].append({'scan_id':target.scan_id,'graduation':graduation})
-                        if graduation['status']!='OBSERVED_MIGRATION':
-                            raise CycleBlocked('RETAINED_MIGRATION_WITNESS_REQUIRED')
-                        if budget.attempted >= 18:
-                            raise CycleBlocked('CYCLE_REQUEST_BUDGET_EXHAUSTED')
-                        source = source_factory(progress,target.scan_id)
-                        collector = collect_observations(jobs=jobs,progress=progress,
-                            sources={target.scan_id:BoundedSource(source.rpc_source_id,source.quote_source_id,source.rpc,source.quote)},
-                            open_positions=(target,) if is_position else (), candidates=() if is_position else (target,),
-                            request_ceiling=18-budget.attempted,deadline_seconds=budget.remaining(),max_age_seconds=10,
-                            wall_clock=wall_clock,monotonic=monotonic)
-                        budget.attempted += collector.attempted_requests
-                        if collector.stopped_reason or not collector.observations or collector.observations[0].failure:
-                            raise CycleBlocked(collector.stopped_reason or (collector.observations[0].failure if collector.observations else 'OBSERVATIONS_INCOMPLETE'))
-                        collected = collector.observations[0]
-                        as_of, raw, pages = _history(progress,item,budget,history_source_factory)
-                        if usd is None:
-                            try:
-                                usd = _usd(progress,source,target.scan_id,budget,usd_evidence_refs)
-                            except CycleBlocked:
-                                raise
-                            except (ValueError,TypeError,KeyError,AttributeError):
-                                raise CycleBlocked('USD_ORIGINAL_BINDING_INVALID') from None
-                            result['usd_evidence_refs']=list(usd[-1])
+                        if not is_position:
+                            graduation = _graduation(store,item,budget.now())
+                            result['diagnostics'].append({'scan_id':target.scan_id,'graduation':graduation})
+                            if graduation['status']!='OBSERVED_MIGRATION':
+                                raise CycleBlocked('RETAINED_MIGRATION_WITNESS_REQUIRED')
+                        action_budget = _HeldBudget(budget,allowance) if is_position and allowance is not None else budget
+                        if is_position and allowance is not None:
+                            source = source_factory(progress,target.scan_id,monitoring_budget=allowance)
+                            collected = _collect_held(target,source,action_budget,store)
+                        else:
+                            if budget.attempted >= 18:
+                                raise CycleBlocked('CYCLE_REQUEST_BUDGET_EXHAUSTED')
+                            source = source_factory(progress,target.scan_id)
+                            collector = collect_observations(jobs=jobs,progress=progress,
+                                sources={target.scan_id:BoundedSource(source.rpc_source_id,source.quote_source_id,source.rpc,source.quote)},
+                                open_positions=(target,) if is_position else (), candidates=() if is_position else (target,),
+                                request_ceiling=18-budget.attempted,deadline_seconds=budget.remaining(),max_age_seconds=10,
+                                wall_clock=wall_clock,monotonic=monotonic)
+                            budget.attempted += collector.attempted_requests
+                            if collector.stopped_reason or not collector.observations or collector.observations[0].failure:
+                                raise CycleBlocked(collector.stopped_reason or (collector.observations[0].failure if collector.observations else 'OBSERVATIONS_INCOMPLETE'))
+                            collected = collector.observations[0]
+                        if not is_position:
+                            as_of, raw, pages = _history(progress,item,budget,history_source_factory)
+                            if usd is None:
+                                try:
+                                    usd = _usd(progress,source,target.scan_id,budget,usd_evidence_refs)
+                                except CycleBlocked:
+                                    raise
+                                except (ValueError,TypeError,KeyError,AttributeError):
+                                    raise CycleBlocked('USD_ORIGINAL_BINDING_INVALID') from None
+                                result['usd_evidence_refs']=list(usd[-1])
                         diagnostic = None
                         def event_builder():
                             nonlocal diagnostic
                             now = budget.now()
-                            context = MarketContext(now,target,source.rpc_source_id,source.quote_source_id,
-                                item.provenance,graduation['graduated_at'],item.holder_at,item.known_hazards,item.pool_fee_bps,as_of)
-                            response,at,low,high,times,_refs = usd
-                            diagnostic = build_market_event(collected,context=context,load_evidence=store.load,
-                                raw_trades=raw,history_pages=pages,usd_response=response,
-                                usd_bounds=TrustedSlotBounds(now,at,low,high,times),strategy_profile=OBSERVABLE_FLOW_CHURN_CONCENTRATION_V1)
+                            if is_position:
+                                context = ExitContext(now,target,source.rpc_source_id,source.quote_source_id,
+                                                      item.provenance,item.known_hazards)
+                                diagnostic = build_exit_event(collected,context=context,
+                                    position=state['positions'][target.mint],cfg=cfg,load_evidence=store.load)
+                            else:
+                                context = MarketContext(now,target,source.rpc_source_id,source.quote_source_id,
+                                    item.provenance,graduation['graduated_at'],item.holder_at,item.known_hazards,item.pool_fee_bps,as_of)
+                                response,at,low,high,times,_refs = usd
+                                diagnostic = build_market_event(collected,context=context,load_evidence=store.load,
+                                    raw_trades=raw,history_pages=pages,usd_response=response,
+                                    usd_bounds=TrustedSlotBounds(now,at,low,high,times),strategy_profile=OBSERVABLE_FLOW_CHURN_CONCENTRATION_V1)
                             if diagnostic['event'] is None:
                                 result['diagnostics'].append({'scan_id':target.scan_id,'blockers':diagnostic['blockers']})
                             return diagnostic['event']
-                        event, quotes, planned = fulfill_quotes(state,cfg,event_builder,collected,source,budget)
+                        event, quotes, planned = fulfill_quotes(state,cfg,event_builder,collected,source,action_budget)
                         result['diagnostics'].append({'scan_id':target.scan_id,'blockers':diagnostic['blockers'],
                                                       'planned_outcomes':planned['outcomes']})
                         deliver(event,quotes)
@@ -447,7 +548,9 @@ def run_once(research_db, evidence_db, ledger_db, cfg, *, position_targets=(), c
                         if is_position and any(x['type']=='blocked_exit' for x in planned['outcomes']):
                             raise CycleBlocked('UNRESOLVED_POSITION_EXIT')
                     result['status']='COMPLETE'
-                except CycleBlocked as error:
+                except ObservationError:
+                    result['blockers'].append('HELD_OBSERVATION_CONTENT_REJECTED')
+                except (CycleBlocked, MonitoringBlocked) as error:
                     result['blockers'].append(error.code)
                 except RecoveryRequired as error:
                     result['status']='RECOVERY_REQUIRED';result['blockers'].append(str(error))
@@ -461,11 +564,17 @@ def run_once(research_db, evidence_db, ledger_db, cfg, *, position_targets=(), c
                     else:raise
                 finally:
                     ledger.close()
-                    result['attempted_requests']=budget.attempted
+                    result['attempted_requests']=budget.attempted+budget.monitoring_attempted
+                    result['investigation_attempted_requests']=budget.attempted
+                    result['monitoring_attempted_requests']=budget.monitoring_attempted
+                    if allowance is not None:
+                        try: result['monitoring_budget']=allowance.snapshot()
+                        except (MonitoringBlocked,RecoveryRequired,sqlite3.Error):
+                            result['monitoring_budget']={'status':'RECOVERY_REQUIRED','blockers':['MONITORING_SNAPSHOT_UNAVAILABLE']}
                     result['budget']={scan:{'used':progress.admission(scan)['requests_used'],
                         'ceiling':progress.admission(scan)['request_ceiling']} for scan in intent['admissions']}
                 outcome = store.save(result)
-                if result['status']=='COMPLETE' or (budget.attempted==0 and all(
+                if result['status']=='COMPLETE' or (budget.attempted==0 and budget.monitoring_attempted==0 and all(
                         progress.admission(scan)==admission for scan,admission in intent['admissions'].items())):
                     with store.connect() as c:c.execute('UPDATE paper_observation_passes SET outcome_hash=? WHERE id=?',(outcome,identity))
                 return {**result,'evidence_hash':outcome}

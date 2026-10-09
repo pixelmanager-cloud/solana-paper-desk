@@ -33,6 +33,11 @@ from desk.programs import unbase58
 from desk.security import base58
 
 
+def dump(path):
+    with sqlite3.connect(path) as connection:
+        return list(connection.iterdump())
+
+
 class PaperCycleTests(unittest.TestCase):
     def setUp(self):
         self.f=collector_fixtures.PaperObservationCollectorTests();self.f.setUp();self.addCleanup(self.f.doCleanups)
@@ -69,7 +74,7 @@ class PaperCycleTests(unittest.TestCase):
         args.update(kwargs)
         return cycle.run_once(self.f.jobs.path,self.f.progress.store.path,self.path,self.cfg,**args)
 
-    def actual_cycle(self, *, positions=(), candidates=None, usd_refs=()):
+    def actual_cycle(self, *, positions=(), candidates=None, usd_refs=(), monitoring=False):
         # Actual transport/collector/history/parser/builder/engine/checkpoint;
         # HTTPS open is replaced by explicitly synthetic original wire bytes.
         outer=self
@@ -123,7 +128,7 @@ class PaperCycleTests(unittest.TestCase):
             stack.enter_context(patch.object(cycle.time,'time',return_value=self.f.at))
             stack.enter_context(patch.object(cycle.time,'monotonic',return_value=1))
             return self.run_cycle(position_targets=positions,candidates=(self.item,) if candidates is None else candidates,
-                                  source_factory=transport.PaperReadSources,usd_evidence_refs=usd_refs)
+                                  source_factory=transport.PaperReadSources,usd_evidence_refs=usd_refs,monitoring=monitoring)
 
     def test_actual_entry_mark_full_exit_restart_originals_and_costs(self):
         self.http_calls=[];self.sell_output=10_000_000
@@ -182,58 +187,201 @@ class PaperCycleTests(unittest.TestCase):
         self.assertEqual(self.actual_cycle(candidates=())['attempted_requests'],0)
         self.assertEqual(self.f.progress.admission(self.target.scan_id)['requests_used'],18)
 
-    def test_actual_known_hazard_held_position_reports_current_upstream_seam(self):
+    def test_actual_known_hazard_held_position_exits_without_entry_profile(self):
         self.http_calls=[];self.sell_output=10_000_000
-        entry=self.actual_cycle();state=cycle._state(self.path,self.cfg)
+        self.actual_cycle();state=cycle._state(self.path,self.cfg)
         item=replace(self.item,target=replace(self.target,amount_raw=qe.raw_quantity(state['positions'][self.target.mint]['qty'],6)),
-                     known_hazards=('SYNTHETIC_KNOWN_HAZARD',))
-        result=self.actual_cycle(positions=(item,),candidates=(),usd_refs=tuple(entry['usd_evidence_refs']))
-        self.assertEqual(result['status'],'BLOCKED')
-        self.assertIn('MARKET_PRODUCER_BLOCKED',result['blockers'])
-        self.assertTrue(any('SYNTHETIC_KNOWN_HAZARD' in x.get('blockers',[]) for x in result['diagnostics']))
-        self.assertFalse(any(x['type']=='fill' for x in result['outcomes']))
-        self.assertEqual(self.f.progress.admission(self.target.scan_id)['requests_used'],13)
+                     known_hazards=('SYNTHETIC_KNOWN_HAZARD',),graduation_refs=())
+        result=self.actual_cycle(positions=(item,),candidates=())
+        self.assertEqual(result['status'],'COMPLETE',result)
+        sale=next(x for x in result['outcomes'] if x.get('side')=='sell')
+        self.assertEqual(sale['reason'],'DANGER')
+        self.assertEqual(cycle._state(self.path,self.cfg)['positions'],{})
+        self.assertEqual(result['attempted_requests'],4)
 
-    def test_fresh_usd_every_pass_exhausts18_without_promising_continuous_runtime(self):
+    def test_unprovisioned_legacy_allowance_still_exhausts_investigation18(self):
         self.http_calls=[];self.sell_output=10_000_000
-        entry=self.actual_cycle();self.assertEqual(entry['status'],'COMPLETE')
-        p=cycle._state(self.path,self.cfg)['positions'][self.target.mint]
+        self.actual_cycle();p=cycle._state(self.path,self.cfg)['positions'][self.target.mint]
         item=replace(self.item,target=replace(self.target,amount_raw=qe.raw_quantity(p['qty'],6)))
-        mark=self.actual_cycle(positions=(item,),candidates=())
-        self.assertEqual(mark['attempted_requests'],7);self.assertEqual(mark['budget'][self.target.scan_id]['used'],16)
-        self.sell_output=7_000_000
+        for used in (13,17):
+            mark=self.actual_cycle(positions=(item,),candidates=())
+            self.assertEqual(mark['attempted_requests'],4)
+            self.assertEqual(mark['budget'][self.target.scan_id]['used'],used)
         stopped=self.actual_cycle(positions=(item,),candidates=())
-        self.assertEqual(stopped['attempted_requests'],2)
+        self.assertEqual(stopped['attempted_requests'],1)
         self.assertEqual(stopped['budget'][self.target.scan_id]['used'],18)
         self.assertIn('SHARED_REQUEST_BUDGET_EXHAUSTED',stopped['blockers'])
         self.assertFalse(any(x['type']=='fill' for x in stopped['outcomes']))
-        self.assertIn(self.target.mint,cycle._state(self.path,self.cfg)['positions'])
         count=len(self.http_calls)
         retry=self.actual_cycle(positions=(item,),candidates=())
         self.assertEqual(retry['status'],'RECOVERY_REQUIRED');self.assertEqual(len(self.http_calls),count)
 
-    def test_old_usd_originals_remain_old_and_refuse_before_fill(self):
+    def test_held_exit_does_not_restamp_or_require_old_entry_usd_history(self):
         self.http_calls=[];self.sell_output=10_000_000
         entry=self.actual_cycle();p=cycle._state(self.path,self.cfg)['positions'][self.target.mint]
-        item=replace(self.item,target=replace(self.target,amount_raw=qe.raw_quantity(p['qty'],6)))
-        self.f.at+=31
-        # Captured history also needs freshness; neither source is restamped.
-        stopped=self.actual_cycle(positions=(item,),candidates=(),usd_refs=tuple(entry['usd_evidence_refs']))
-        self.assertEqual(stopped['status'],'BLOCKED');self.assertIn('MARKET_PRODUCER_BLOCKED',stopped['blockers'])
-        self.assertTrue(any('CAPTURED_HISTORY_WINDOW_STALE_OR_FUTURE' in x.get('blockers',[]) for x in stopped['diagnostics']))
+        item=replace(self.item,target=replace(self.target,amount_raw=qe.raw_quantity(p['qty'],6)),graduation_refs=())
+        self.f.at+=31;self.sell_output=7_000_000
+        result=self.actual_cycle(positions=(item,),candidates=(),usd_refs=tuple(entry['usd_evidence_refs']))
+        self.assertEqual(result['status'],'COMPLETE',result)
         original=self.f.progress.store.load(entry['usd_evidence_refs'][0])
         self.assertEqual(original['observed_at'],self.f.at-31)
-        self.assertFalse(any(x['type']=='fill' for x in stopped['outcomes']))
+        self.assertEqual(result['usd_evidence_refs'],[])
+        self.assertEqual(next(x for x in result['outcomes'] if x.get('side')=='sell')['reason'],'STOP')
 
-    def test_usd_original_ref_substitution_is_controlled_and_no_fill(self):
+    def test_candidate_usd_original_ref_substitution_is_controlled_and_no_fill(self):
         self.http_calls=[];self.sell_output=10_000_000
-        entry=self.actual_cycle();p=cycle._state(self.path,self.cfg)['positions'][self.target.mint]
+        result=self.actual_cycle(usd_refs=('0'*64,'1'*64,'2'*64))
+        self.assertEqual(result['blockers'],['USD_ORIGINAL_BINDING_INVALID'])
+        self.assertEqual(result['attempted_requests'],5)
+        self.assertFalse(any(x['type']=='fill' for x in result['outcomes']))
+
+    def monitoring_fixture(self):
+        self.http_calls=[];self.sell_output=10_000_000
+        entry=self.actual_cycle();self.assertEqual(entry['status'],'COMPLETE',entry)
+        p=cycle._state(self.path,self.cfg)['positions'][self.target.mint]
+        item=replace(self.item,target=replace(self.target,amount_raw=qe.raw_quantity(p['qty'],6)),graduation_refs=())
+        allowance=cycle.MonitoringBudget(self.f.progress.store,self.path,self.cfg,clock=lambda:self.f.at)
+        allowance.provision()  # Explicit synthetic coordinator operation, never run_once.
+        return item,allowance
+
+    def test_monitoring_actual_partial_full_restart_preserves_investigation_and_costs(self):
+        item,allowance=self.monitoring_fixture()
+        original=self.f.progress.admission(self.target.scan_id)
+        self.sell_output=30_000_000
+        partial=self.actual_cycle(positions=(item,),candidates=(),monitoring=True)
+        self.assertEqual(partial['status'],'COMPLETE',partial)
+        self.assertEqual(partial['monitoring_attempted_requests'],5)
+        self.assertEqual(partial['investigation_attempted_requests'],0)
+        sold=next(x for x in partial['outcomes'] if x.get('side')=='sell')
+        self.assertEqual(sold['quote_execution']['input_raw'],item.target.amount_raw*3//10)
+        # Three RPC reads, full-size valuation, ONE exact partial quote.
+        self.assertEqual(len(self.http_calls),14)
+        p=cycle._state(self.path,self.cfg)['positions'][self.target.mint]
+        item=replace(item,target=replace(item.target,amount_raw=qe.raw_quantity(p['qty'],6)))
+        self.sell_output=6_000_000
+        complete=self.actual_cycle(positions=(item,),candidates=(),monitoring=True)
+        self.assertEqual(complete['status'],'COMPLETE',complete)
+        self.assertEqual(complete['monitoring_attempted_requests'],4)
+        self.assertEqual(self.f.progress.admission(self.target.scan_id),original)
+        self.assertEqual(allowance.snapshot()['total_used'],9)
+        final=cycle._state(self.path,self.cfg)
+        self.assertEqual(final['positions'],{})
+        before=len(self.http_calls)
+        restart=self.actual_cycle(candidates=(),monitoring=True)
+        self.assertEqual(restart['status'],'COMPLETE',restart)
+        self.assertEqual(restart['attempted_requests'],0);self.assertEqual(len(self.http_calls),before)
+        self.assertEqual(allowance.snapshot()['total_used'],9)
+        from desk.experiment_report import experiment_report
+        # Actual read-only report must accept exit journals; costs are retained.
+        actual=experiment_report(self.path,now=self.f.at)
+        self.assertIsNotNone(actual)
+
+    def test_monitoring_requires_explicit_provision_without_schema_creation(self):
+        self.http_calls=[];self.sell_output=10_000_000
+        self.actual_cycle();p=cycle._state(self.path,self.cfg)['positions'][self.target.mint]
         item=replace(self.item,target=replace(self.target,amount_raw=qe.raw_quantity(p['qty'],6)))
-        refs=tuple(reversed(entry['usd_evidence_refs']))
-        stopped=self.actual_cycle(positions=(item,),candidates=(),usd_refs=refs)
-        self.assertEqual(stopped['blockers'],['USD_ORIGINAL_BINDING_INVALID'])
-        self.assertEqual(stopped['attempted_requests'],4)
-        self.assertFalse(any(x['type']=='fill' for x in stopped['outcomes']))
+        before=len(self.http_calls);ledger=dump(self.path);evidence=dump(self.f.progress.store.path)
+        result=self.actual_cycle(positions=(item,),candidates=(),monitoring=True)
+        self.assertEqual(result['status'],'BLOCKED');self.assertEqual(len(self.http_calls),before)
+        self.assertEqual(dump(self.path),ledger);self.assertEqual(dump(self.f.progress.store.path),evidence)
+
+    def test_monitoring_can_refresh_held_after18_but_never_candidate(self):
+        item,allowance=self.monitoring_fixture()
+        while self.f.progress.admission(self.target.scan_id)['requests_used']<18:
+            self.assertTrue(self.f.progress.reserve(self.target.scan_id))
+        result=self.actual_cycle(positions=(item,),candidates=(),monitoring=True)
+        self.assertEqual(result['status'],'COMPLETE',result)
+        self.assertEqual(result['monitoring_attempted_requests'],4)
+        self.assertEqual(result['budget'][self.target.scan_id]['used'],18)
+        self.assertEqual(allowance.snapshot()['total_used'],4)
+
+    def test_monitoring_cap_exhaustion_no_retry_or_investigation_fallback(self):
+        item,allowance=self.monitoring_fixture()
+        for _ in range(15):
+            result=self.actual_cycle(positions=(item,),candidates=(),monitoring=True)
+            self.assertEqual(result['status'],'COMPLETE',result)
+        self.assertEqual(allowance.snapshot()['total_used'],60)
+        before=len(self.http_calls);ledger=dump(self.path)
+        result=self.actual_cycle(positions=(item,),candidates=(),monitoring=True)
+        self.assertIn('MONITORING_REQUEST_BUDGET_EXHAUSTED',result['blockers'])
+        self.assertEqual(result['attempted_requests'],0);self.assertEqual(len(self.http_calls),before)
+        self.assertEqual(dump(self.path),ledger)
+        self.assertEqual(self.f.progress.admission(self.target.scan_id)['requests_used'],9)
+
+    def test_monitoring_charged_source_failure_latched_before_restart_or_candidates(self):
+        item,allowance=self.monitoring_fixture()
+        def failure(*args,**kwargs):raise OSError('SYNTHETIC_TEST_ONLY')
+        before=self.f.progress.admission(self.target.scan_id)
+        with patch.object(transport,'build_opener',side_effect=failure),patch.object(transport.os.environ,'get',return_value='SYNTHETIC_TEST_ONLY'),patch.object(transport.time,'time',return_value=self.f.at):
+            result=self.run_cycle(position_targets=(item,),candidates=(),monitoring=True,source_factory=transport.PaperReadSources)
+        self.assertEqual(result['status'],'BLOCKED');self.assertEqual(result['monitoring_attempted_requests'],1)
+        self.assertEqual(allowance.snapshot()['total_used'],1)
+        self.assertEqual(self.f.progress.admission(self.target.scan_id),before)
+        restart=self.actual_cycle(positions=(item,),candidates=(),monitoring=True)
+        self.assertIn(restart['status'],('RECOVERY_REQUIRED','BLOCKED'))
+        self.assertEqual(restart['attempted_requests'],0)
+
+    def test_monitoring_positions_first_candidate_still_uses_exhausted18(self):
+        item,allowance=self.monitoring_fixture()
+        while self.f.progress.admission(self.target.scan_id)['requests_used']<18:
+            self.assertTrue(self.f.progress.reserve(self.target.scan_id))
+        self.sell_output=7_000_000
+        result=self.actual_cycle(positions=(item,),candidates=(self.item,),monitoring=True)
+        self.assertEqual(result['monitoring_attempted_requests'],4)
+        self.assertEqual(result['investigation_attempted_requests'],0)
+        self.assertTrue(any(x.get('side')=='sell' for x in result['outcomes']))
+        self.assertIn('SHARED_REQUEST_BUDGET_EXHAUSTED',result['blockers'])
+        self.assertEqual(allowance.snapshot()['total_used'],4)
+        self.assertEqual(result['budget'][self.target.scan_id]['used'],18)
+        self.assertEqual(cycle._state(self.path,self.cfg)['positions'],{})
+
+    def test_monitoring_source_without_charge_rejected_and_restart_latched(self):
+        item,allowance=self.monitoring_fixture()
+        outer=self
+        class Uncharged:
+            rpc_source_id=transport.PaperReadSources.rpc_source_id
+            quote_source_id=transport.PaperReadSources.quote_source_id
+            def __init__(self,*args,**kwargs):pass
+            def rpc(self,*args,**kwargs):return outer.f.protocol.rpc(*args)
+        result=self.run_cycle(position_targets=(item,),candidates=(),monitoring=True,source_factory=Uncharged)
+        self.assertIn('MONITORING_CHARGE_OR_ADMISSION_MISMATCH',result['blockers'])
+        self.assertFalse(any(x['type']=='fill' for x in result['outcomes']))
+        self.assertEqual(allowance.snapshot()['total_used'],0)
+        restart=self.actual_cycle(positions=(item,),candidates=(),monitoring=True)
+        self.assertEqual(restart['status'],'RECOVERY_REQUIRED')
+        self.assertEqual(restart['attempted_requests'],0)
+
+    def test_monitoring_process_interruption_after_reservation_retains_whole_cycle_intent(self):
+        item,allowance=self.monitoring_fixture()
+        outer=self
+        class Interrupted(transport.PaperReadSources):
+            def rpc(self,method,params,*,timeout_seconds):
+                self.monitoring_budget.reserve_read(self.progress,self.scan_id,method,params)
+                raise SystemExit('SYNTHETIC_TEST_ONLY crash boundary')
+        before=dump(self.path)
+        with self.assertRaises(SystemExit):
+            self.run_cycle(position_targets=(item,),candidates=(),monitoring=True,source_factory=Interrupted)
+        self.assertEqual(dump(self.path),before)
+        self.assertEqual(allowance.snapshot()['total_used'],1)
+        self.assertIn('MONITORING_OUTCOME_PENDING',allowance.snapshot()['blockers'])
+        restart=self.actual_cycle(positions=(item,),candidates=(),monitoring=True)
+        self.assertEqual(restart['status'],'RECOVERY_REQUIRED')
+        self.assertEqual(restart['attempted_requests'],0)
+        self.assertEqual(self.f.progress.admission(self.target.scan_id)['requests_used'],9)
+
+    def test_monitoring_unsellable_original_keeps_position_and_latches_restart(self):
+        item,allowance=self.monitoring_fixture()
+        original=cycle._state(self.path,self.cfg)['positions'][self.target.mint]
+        self.sell_output=0  # SYNTHETIC unusable exact-size route, never a fabricated price.
+        result=self.actual_cycle(positions=(item,),candidates=(),monitoring=True)
+        self.assertIn('HELD_OBSERVATION_CONTENT_REJECTED',result['blockers'])
+        self.assertFalse(any(x['type']=='fill' for x in result['outcomes']))
+        self.assertEqual(cycle._state(self.path,self.cfg)['positions'][self.target.mint],original)
+        self.assertEqual(allowance.snapshot()['total_used'],4)
+        count=len(self.http_calls)
+        restart=self.actual_cycle(positions=(item,),candidates=(),monitoring=True)
+        self.assertEqual(restart['status'],'RECOVERY_REQUIRED')
+        self.assertEqual(len(self.http_calls),count)
 
     def test_explicit_pending_dependency_blocks_before_paths_and_sources(self):
         result=cycle.run_once('missing-research','missing-evidence','missing-ledger',self.cfg,
