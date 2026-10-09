@@ -3171,7 +3171,8 @@
           "prior_security_probes": 7,
           "status": "PASS",
           "head": "78b0a8c20fc75c45be392f45943619f60997f895"
-        }
+        },
+        "ci": "Both exact78b0a8c checks SUCCESS"
       },
       "ownership_clarification": "01budgetpoliciesonly;07exclusive runtimecompatibility/readers. Duplicateintentcorrected immediately; overlapinterface requested.",
       "provider_pacing": {
@@ -3214,11 +3215,13 @@
       "production_pin_review": {
         "worker": "09",
         "thread_id": "01a118fd-3f90-77d9-9549-c4497f5b10a6",
-        "status": "DISPATCHED_NOT_ACTIVATED",
+        "status": "INDEPENDENT_PASS_NOT_ACTIVATED",
         "successor_hash": "8098b4033adff886006e2f6af5ccb0ce4bfa02e242f5fb1b4c7402c05ddaa8c9",
         "read_only_context_preflight": "PASS actual reviewed _research_binding against production read-only,4 admissions have matching jobs/setup",
         "turn_id": "01a120a4-46e4-7490-a19b-c44955e6c743",
-        "cursor": "68a4d56e-d04a-40dc-ad15-e80a29c96b80:48"
+        "cursor": "68a4d56e-d04a-40dc-ad15-e80a29c96b80:49",
+        "production_config_digest_verified": "1a095e98a3b7a168ffb16573e799179d5a89bf1afc39757020e76a1a6fbb1eb7",
+        "ledger_bound_config_matches": true
       },
       "vps_stage": {
         "source_commit": "96c7b0558a207321d693b132eb2b8b72c5854b36",
