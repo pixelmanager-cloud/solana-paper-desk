@@ -3084,7 +3084,7 @@
       "source_identity": "Only coordinator queue/readiness differ from independent exacthead"
     },
     "downstream_allowance_upgrade": {
-      "status": "CHANGES_REQUIRED_REPAIRS_REQUESTED",
+      "status": "FORWARD_REPAIR_INDEPENDENT_REREVIEW_DISPATCHED",
       "authorization": "User explicitly requested another increase beyond100/day and600/hour. Coordinator targets1000/day,queue25,monitor3600/hour; ceilings subject to provider pacing.",
       "limits": {
         "daily_admissions": 1000,
@@ -3145,10 +3145,12 @@
           "worker": "04",
           "thread_id": "01a118fc-b862-7340-ab3a-e1115a3280a4",
           "turn_id": "01a12097-7f00-761e-bf22-ced51442305f",
-          "cursor": "d3153436-2742-432e-8501-9c06b95f29ae:49",
+          "cursor": "d3153436-2742-432e-8501-9c06b95f29ae:50",
           "base": "a5bed0e68d8cfd72edcdf3033148e32b5a075068",
           "head": "d0cfc34f167a39e814c400425640b5a91ec1ea85",
-          "status": "SUPERSEDED_STOP_REQUESTED"
+          "status": "STOPPED_SUPERSEDED_NO_FULL_PASS",
+          "completed_tests": 110,
+          "exit_code": 143
         }
       },
       "ownership_clarification": "01budgetpoliciesonly;07exclusive runtimecompatibility/readers. Duplicateintentcorrected immediately; overlapinterface requested.",
@@ -3174,7 +3176,7 @@
         "linux_seconds": 257.566
       },
       "pr": 153,
-      "head": "a70c69ffc1fad6c51e482076e99b9ee34e98c952",
+      "head": "af2077308f17d3f2a7a0cbc6ed630ea0a5f1d764",
       "findings": [
         "Independent03 epoch finding on a70c69f",
         "Wrong/corrupt research context allows monitoring policy upgrade under unrelated worker lock"
