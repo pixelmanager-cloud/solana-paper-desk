@@ -2903,10 +2903,19 @@
         "extra_provider_calls": 0
       },
       "pr": 151,
-      "head": "c72d3c1ac1f16a724c0688ac59f0540d78d34247"
+      "head": "c72d3c1ac1f16a724c0688ac59f0540d78d34247",
+      "capacity_benchmark": {
+        "worker": "06",
+        "status": "DISPATCHED",
+        "head": "c72d3c1ac1f16a724c0688ac59f0540d78d34247",
+        "scope": "Offline synthetic bounded100MB performance/storage scaling, no provider/VPS",
+        "thread_id": "01a118fc-f867-7233-8eec-c20659e70095",
+        "turn_id": "01a12071-c811-7665-b8f9-3db33287fcd6",
+        "cursor": "8f3328cf-bef6-441d-83f8-2d1f46b3b0df:120"
+      }
     },
     "paper_policy_tuning": {
-      "status": "PR150_IN_INDEPENDENT_REVIEW",
+      "status": "PR150_CHANGES_REQUESTED",
       "authorization": "User explicitly authorized tool to tweak entry eligibility to seek a profitable setting; paper only.",
       "worker": "03",
       "thread_id": "01a118fc-9478-778a-b77a-8f8f6ec7e0ad",
@@ -2931,7 +2940,7 @@
         "worker": "06",
         "thread_id": "01a118fc-f867-7233-8eec-c20659e70095",
         "turn_id": "01a1206b-fa67-75b2-89bb-bb91dbe2a120",
-        "cursor": "8f3328cf-bef6-441d-83f8-2d1f46b3b0df:118"
+        "cursor": "8f3328cf-bef6-441d-83f8-2d1f46b3b0df:119"
       },
       "limitation": "Foundation only: aggregate evidence cannot rank counterfactual thresholds; automatic tuning remains incomplete",
       "coordinator_review": {
@@ -2945,7 +2954,15 @@
           "seconds": 65.445,
           "status": "PASS_LINUX_REQUIRED"
         }
-      }
+      },
+      "finding": "Malformed retained paper_signal_profile null/list/string raises uncaught AttributeError; explicit shape validation required",
+      "repair_dispatched_to": "03",
+      "independent_linux": {
+        "tests": 2370,
+        "skips": 0,
+        "seconds": 171.05
+      },
+      "ci": "Both exacthead033957f runsSUCCESS"
     },
     "downstream_allowance_upgrade": {
       "status": "IMPLEMENTATION_AND_INDEPENDENT_PREFLIGHT_DISPATCHED",
@@ -2964,10 +2981,11 @@
         "worker": "04",
         "thread_id": "01a118fc-b862-7340-ab3a-e1115a3280a4",
         "turn_id": "01a12070-02dd-71e9-a228-7859f14d3cc5",
-        "cursor": "d3153436-2742-432e-8501-9c06b95f29ae:43"
+        "cursor": "d3153436-2742-432e-8501-9c06b95f29ae:45"
       },
       "constraints": "Explicit durable upgrade only; no counter reset, reprovision, forged source identity, historical evidence or checkpoint rewrite. Existing defaults do not silently escalate. Runtime compatibility required.",
-      "deployment": "Not active; original10/3/60 remain until independent review/fullLinux/CI and safe coordinator upgrade"
+      "deployment": "Not active; original10/3/60 remain until independent review/fullLinux/CI and safe coordinator upgrade",
+      "preflight": "Complete; author notified: versioned receipt policy cutoff, old+new rolling usage, explicit pinned runtime successor compatibility preserving original metadata/checkpoints, atomic idempotent upgrade"
     }
   },
   "native_reconciliation_review": {
