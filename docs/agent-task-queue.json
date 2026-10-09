@@ -4651,6 +4651,18 @@
                 "exception": "ValueError: Unsupported transaction version",
                 "payload_hash": "620b1de88e24e56648352bea0907219935ab54739072261a83a8fcab1ce0c1f3",
                 "seven_other_rows_decode": true
+              },
+              "offline_replay": {
+                "pages_hash_verified": true,
+                "provider_calls": 0,
+                "script": "work/replay-seq508-history.py",
+                "current_source_coverage": "HISTORY_DECODE_GAP",
+                "migration_blockers": [
+                  "MALFORMED_RAW_TRANSACTION_OR_TIME",
+                  "MIGRATION_INSTRUCTION_SCOPE_UNAVAILABLE",
+                  "MIGRATION_WITNESS_ABSENT"
+                ],
+                "limitation": "No retry or entry authorization; re-evaluate retained pages on reviewed decoder head"
               }
             },
             "release_ci_result": {
@@ -4695,7 +4707,14 @@
               "terminal_receipt": "5ee4f0819319231ceea4dd4a4c09a8990a7b17e26936a460550f087279cbe129",
               "capture_hash": "da20be9e1a2d8e5a6754ffc086718158c8de4fbd17458e7f735101582db2e437",
               "buy": false,
-              "retry_authorized": false
+              "retry_authorized": false,
+              "offline_reserves_lamports": {
+                "spendable": 2666323439,
+                "effective": 20250828729,
+                "boost": 17584505290,
+                "protocol_fees": 0,
+                "creator_fees": 0
+              }
             },
             "post_entry_verification": {
               "source": "3f819c9e0907ce6d8e63a585fb5917dbf10bee9620755e92cc844e510cd7a077",
@@ -4723,14 +4742,53 @@
                 "thread_id": "01a118fc-666c-70b6-9fa8-2c7520f0a0bb",
                 "turn_id": "01a1220b-ad95-7452-b9a1-23cf54dfb717",
                 "status": "INDEPENDENT_DESIGN_REVIEW",
-                "scope": "Boost compatibility contract read-only review"
+                "scope": "Boost compatibility contract read-only review",
+                "design_result": "Separate versioned signal subprofile required for effective-pricing denominator; originalphysicalfeature cannotbe silentlyrelabelled",
+                "design_followup_turn": "01a1220e-39dd-7337-82c1-1dbff3c14acc"
               },
               {
                 "owner": "01",
                 "thread_id": "01a118fc-39bc-722c-b442-8bf5a749e0bb",
-                "turn_id": "01a1220b-5e50-71a5-a80a-10e55e8222ef",
-                "status": "READ_ONLY_DIAGNOSIS",
-                "scope": "Canonical version1 successful jsonParsed history semantics, authentic retained row; no whitelist-only fix"
+                "turn_id": "01a1220d-d482-76ab-b798-9adc185ce03f",
+                "status": "IMPLEMENTATION_ASSIGNED",
+                "scope": "Canonical version1 successful jsonParsed history semantics, authentic retained row; no whitelist-only fix",
+                "diagnosis_turn": "01a1220b-5e50-71a5-a80a-10e55e8222ef"
+              },
+              {
+                "owner": "09",
+                "thread_id": "01a118fd-3f90-77d9-9549-c4497f5b10a6",
+                "status": "INDEPENDENT_PARSED_V1_DESIGN_REVIEW",
+                "scope": "Canonical parsedv1 shape, privileges, config, indices and preservedfailclosedlimitations",
+                "turn_id": "01a1220d-e554-7106-90a2-5ea4e303c015",
+                "design_result": "RPC writable demotion is not originalheaderorder; canonicalbounds64keys/64outer/12signatures; data pubkeys neednotroster"
+              },
+              {
+                "owner": "06",
+                "thread_id": "01a118fc-f867-7233-8eec-c20659e70095",
+                "turn_id": "01a1220f-43ef-7773-a7ec-642407439204",
+                "status": "OPS_DEPENDENCIES_IDENTIFIED",
+                "scope": "Second handoff blocked by single receipt and oldterminalcert activecontext validation"
+              },
+              {
+                "owner": "07",
+                "thread_id": "01a118fd-0f1c-749c-b85b-5e730937d0a8",
+                "turn_id": "01a12210-930b-77bf-8971-ce6a1837290d",
+                "status": "IMPLEMENTATION_ASSIGNED",
+                "scope": "Bounded append-only successor monitoring context preserving historical terminalproof and globalaccounting"
+              },
+              {
+                "owner": "03",
+                "thread_id": "01a118fc-9478-778a-b77a-8f8f6ec7e0ad",
+                "turn_id": "01a12210-a314-7073-9eaf-9bc8a1671cfd",
+                "status": "DESIGN_REVIEW_COMPLETE_SOURCE_PENDING",
+                "scope": "Successor handoff and historicalterminalproof independentlyreviewed"
+              },
+              {
+                "owner": "04",
+                "thread_id": "01a118fc-b862-7340-ab3a-e1115a3280a4",
+                "status": "COMPOSITION_TEST_PREPARATION",
+                "scope": "tests/test_profile2_runtime_composition.py only; oldcerts+nonzerousage+distinctprofile2BUYSELLrestart",
+                "turn_id": "01a12210-b0ec-70a1-be61-da2866e221fe"
               }
             ]
           }
