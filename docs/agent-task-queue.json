@@ -3245,7 +3245,7 @@
           37932061735,
           37932054540
         ],
-        "status": "RUN37932054540_FAILED_PACING_MULTIPROCESS_RACE"
+        "status": "ONE_SUCCESS_ONE_PACING_RACE_TEST_FAILURE"
       },
       "deployment_preflight": {
         "worker": "10",
@@ -3260,14 +3260,20 @@
         "path": "/opt/solana-desk-releases/3581098",
         "archive_sha256": "a1118a66554f0cbad203c8917464b08f6352e015e8e317b133743f025c9ca80c",
         "implementation_hash": "8098b4033adff886006e2f6af5ccb0ce4bfa02e242f5fb1b4c7402c05ddaa8c9",
-        "status": "STAGED_NOT_ACTIVATED"
+        "status": "STAGED_NOT_ACTIVATED",
+        "matched_source_files": 462
       },
       "ci_repair": {
         "author_thread": "01a118fc-f867-7233-8eec-c20659e70095",
         "review_thread": "01a118fd-3f90-77d9-9549-c4497f5b10a6",
         "base": "358109813fa302569543de213d44e66889979de7",
         "failure": "test_multiprocess_slot_race_actual_spacing_and_restart_death line141: one child PacingError; other OK. Full2454tests309.411s onefailure. VPSsame frozen code2454passed. Diagnose rather than blind retry.",
-        "status": "ASSIGNED"
+        "status": "ASSIGNED",
+        "author_turn": "01a120b8-339a-71d5-82b8-5d36eac2a179",
+        "author_cursor": "8f3328cf-bef6-441d-83f8-2d1f46b3b0df:127",
+        "review_turn": "01a120b8-44f4-703a-b6d6-5e837b263c66",
+        "review_cursor": "68a4d56e-d04a-40dc-ad15-e80a29c96b80:51",
+        "independent_diagnosis": "09 deterministic two-client probe: pending outcome refusal expected, first ticket preserved, next call succeeds after matching acknowledgement. CIhelper omitted exact error; test success assumption invalid. Testonly repair assigned."
       }
     },
     "discovery_policy_combined_review": {
