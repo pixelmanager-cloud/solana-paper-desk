@@ -1687,6 +1687,16 @@
       "status": "INDEPENDENT_REVIEW_08_AFTER_MAPPING",
       "author_linux_tests": 2001,
       "live_acceptance": false
+    },
+    "pending_pr114": {
+      "head": "eae754dd0104829ddd5ccc2bfd9a953fa65c8a3d",
+      "status": "CHANGES_REQUIRED_REPAIR_ASSIGNED_09",
+      "reviewer": "04",
+      "findings": [
+        "Partial multi-swap events wrongly promote complete-window proxies",
+        "Failed-record bank time contradictions escape coverage validation"
+      ],
+      "live_acceptance": false
     }
   },
   "native_reconciliation_review": {
