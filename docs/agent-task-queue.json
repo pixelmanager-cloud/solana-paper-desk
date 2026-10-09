@@ -1,5 +1,5 @@
 {
-  "status": "PROFILE2_NATIVE_HELD_CYCLE_PERFORMANCE_REPAIR_NO_LIVE_BUY",
+  "status": "REVIEWED_PROFILE2_INTEGRATING_FULL_VPS_PENDING_NO_BUY",
   "repository": "https://github.com/pixelmanager-cloud/solana-paper-desk",
   "cloud_environment": {
     "name": "solana-paper-desk",
@@ -5014,7 +5014,9 @@
             "local_deployment_helper_hashes": {
               "work/plan-profile2-successor.py": "94bf5af2aee451bc032b93ab274e1ef78db40e7021fc5a12ab867be3249d759c",
               "work/verify-profile2-originals.py": "17445143cff67b58b7b5fe96c9a12998384537bb9fb59669e5eb27f48f233626",
-              "work/backup-profile2-transition.py": "da98decd4949b988fb9ce3bdfc62a8507fb0c336b2ce111871d617a5bf8c7358"
+              "work/backup-profile2-transition.py": "da98decd4949b988fb9ce3bdfc62a8507fb0c336b2ce111871d617a5bf8c7358",
+              "work/verify-profile2-active-context.py": "beeebaee50e002f37fb9eedefb8e8002889da9678681b3f2a31b009cb248e922",
+              "work/start-reviewed-profile2.sh": "f768fa69b1574dd85c42087e9455e86d02789232b46ef77c714290d7554e8daf"
             },
             "serial_vps_fixture": {
               "head": "72cd2eec30f0e6f80cef3bb431cf4d065b028aba",
@@ -5031,11 +5033,11 @@
               "owner": "07",
               "reviewer": "03",
               "base": "72cd2eec30f0e6f80cef3bb431cf4d065b028aba",
-              "status": "IMPLEMENTATION_ACTIVE_DESIGN_REVIEWED",
+              "status": "INDEPENDENT_PASS_BOTH_CI_PASS",
               "scope": "Profile and optimize repeated validation without weakening deadline,TTL,pacing,accounting or evidence",
               "production_changed": false,
               "turn": "01a12238-25c0-7795-934e-e1d983a5317d",
-              "review_turn": "01a12238-3685-7189-b7c5-30752e5fabbc",
+              "review_turn": "01a12246-0cab-741b-8e1c-2d8cd0e17bde",
               "files": [
                 "desk/monitoring_handoff.py",
                 "desk/monitoring_budget.py",
@@ -5053,7 +5055,29 @@
                 "restart_requests": 0,
                 "source_hash_calls_before": 431,
                 "source_hash_calls_after_intermediate_profile": 193
-              }
+              },
+              "pr": 178,
+              "head": "d442c5690d8d9cda7aaecebd9bac11035a5dc800",
+              "source": "00b7c30229f1a3d0e2f117e7a2b0d3d0ea8862bf8936449f400d8e0711f8f3b2",
+              "ci_runs": [
+                37984534670,
+                37984466998
+              ],
+              "attachment_error": "thread attachment identity count exceeds100",
+              "independent_review": {
+                "reviewer": "03",
+                "turn": "01a12246-0cab-741b-8e1c-2d8cd0e17bde",
+                "head": "d442c5690d8d9cda7aaecebd9bac11035a5dc800",
+                "tree": "b5f662717f3e4f516ce56f120e44e8029b0abedc",
+                "result": "PASS",
+                "tests": 82,
+                "seconds": 136.144,
+                "probes": "fresh post-I/O validation/outcome rollback/same-snapshot checkpointstate andpayload"
+              },
+              "ci_success": [
+                37984466998,
+                37984534670
+              ]
             },
             "vps_profile": {
               "unit": "desk-profile2-profile-72cd2ee",
@@ -5068,6 +5092,42 @@
               "source_hash_seconds": 21.471,
               "validate_active_calls": 96,
               "validate_active_cumulative_seconds": 26.414
+            },
+            "repaired_vps_native": {
+              "head": "d442c5690d8d9cda7aaecebd9bac11035a5dc800",
+              "unit": "desk-profile2-native-d442c56",
+              "invocation": "8670141d9081485eaa1b74196753a139",
+              "tests": 1,
+              "seconds": 58.335,
+              "cpu_seconds": 35.898,
+              "result": "PASS_SYNTHETIC_NOT_LIVE"
+            },
+            "repaired_vps_fullsuite": {
+              "head": "d442c5690d8d9cda7aaecebd9bac11035a5dc800",
+              "unit": "desk-fixture-d442c56",
+              "status": "RUNNING",
+              "invocation": "84d684ac8971435e824bd7b09b08235b"
+            },
+            "final_context_helper_review": {
+              "reviewer": "06",
+              "turn": "01a12248-b67d-75cb-aeb5-24c22e00a4e9",
+              "result": "SCOPED_PASS",
+              "preconditions": [
+                "exactpacingENV",
+                "allwritersstopped",
+                "separateoriginalpreservationcomparison"
+              ],
+              "production_executed": false
+            },
+            "startup_helper_review": {
+              "reviewer": "06",
+              "turn": "01a1224a-3dbe-7418-8057-93580bcb4200",
+              "result": "CONDITIONAL_PASS_PINNED_LEDGER_BINDING_FIXED",
+              "fixes": [
+                "Startupnewledger equals hash-verifiedpin context andbackup",
+                "Cleanupfailures explicitlylogged preservingoriginalexit"
+              ],
+              "production_executed": false
             }
           }
         }
