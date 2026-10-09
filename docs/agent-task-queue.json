@@ -1905,7 +1905,17 @@
       "repair": "2bda1076c82c2e5b5427f60ce945e766bfe92322",
       "tree": "346fb09130aea3c1a92c2cf4b7050fb6b8377316",
       "status": "FULL_COMBINED_TESTS_AND_REVIEW_07",
-      "live_acceptance": false
+      "live_acceptance": false,
+      "mac_tests": {
+        "total": 2136,
+        "skipped": 408,
+        "seconds": 41.812
+      }
+    },
+    "paper_signal_profile": {
+      "owner": "09",
+      "scope": "Explicit versioned observable flow/churn/concentration profile with actual measurements and labels; no silent legacy certainty or safe defaults",
+      "engine_owner": "06"
     }
   },
   "native_reconciliation_review": {
