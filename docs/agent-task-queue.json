@@ -305,7 +305,7 @@
         "worker": "04",
         "thread_id": "01a118fc-b862-7340-ab3a-e1115a3280a4",
         "host_id": "durable",
-        "status": "PUBLISHED_PENDING_INDEPENDENT_REVIEW",
+        "status": "ACCEPTED_INTEGRATED_NOT_DEPLOYED",
         "base": "9e43752daabf19b7e78e08e0b15d16d1c6e2a680",
         "scope": "Useful timestamped raw observation normalization with exact units/source hash, no invented metrics or provider calls",
         "turn_id": "01a11eb0-22b3-75c2-b925-25a798d51404",
@@ -375,7 +375,7 @@
         "worker": "02",
         "thread_id": "01a118fc-666c-70b6-9fa8-2c7520f0a0bb",
         "host_id": "durable",
-        "status": "PASS_COMPONENT_REVIEW",
+        "status": "ACCEPTED_INTEGRATED_NOT_DEPLOYED",
         "scope": "model/strategy explicit unknown ownership handling and versioned experimental scoring; no live authorization",
         "turn_id": "01a11ebe-5324-7576-a6bc-b4c8e85ea73b",
         "wait_cursor": "a2dcfb97-463d-4188-9da3-48a81e644d23:72",
@@ -457,7 +457,7 @@
         "worker": "01",
         "thread_id": "01a118fc-39bc-722c-b442-8bf5a749e0bb",
         "host_id": "durable",
-        "status": "PASS_COMPONENT_REVIEW",
+        "status": "ACCEPTED_INTEGRATED_NOT_DEPLOYED",
         "base": "7146b821f932d85157a6357a2f44c6cf54d2f766",
         "scope": "Raw vault discriminator/delegation validation and malformedmint containment; live_observation/tests only",
         "pr": 107,
@@ -1725,7 +1725,7 @@
         "7a45e55ca2cfa9c3c5a7802724987493c89e0dd4",
         "adcaa9c17de601dd74dfc6685aa465c46aae961c"
       ],
-      "status": "COMPONENT_REVIEWS_PASS_COMBINED_TESTING",
+      "status": "ACCEPTED_INTEGRATED_NOT_DEPLOYED",
       "reviewer": "03",
       "live_acceptance": false,
       "local_tests": {
@@ -1733,7 +1733,22 @@
         "skipped": 408,
         "seconds": 35.836,
         "tree": "bdbc2edd475e2d6ee2411ffe879e6714b1f58c2e"
-      }
+      },
+      "merge_sha": "6876230848b036ee4a0a8f218cc061bfa1d241d4",
+      "linux_tests": {
+        "total": 2016,
+        "skipped": 0,
+        "seconds": 297.281,
+        "focused": 57
+      },
+      "manifest_sha256": "6de27f9fc011a93ce23183fa1b900da19d734a55ff1d57df3f857f4323c19deb",
+      "ci_success_runs": [
+        37881221014,
+        37881217608,
+        37880977089,
+        37880945248
+      ],
+      "source_identity": "Matches independently tested combined tree bdbc2edd475e2d6ee2411ffe879e6714b1f58c2e except coordinator queue"
     },
     "pending_pr115": {
       "head": "418aa4e7a77b6e9ba43bd82fd9bb7374f62afa6b",
