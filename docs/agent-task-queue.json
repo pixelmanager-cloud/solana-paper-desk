@@ -3361,7 +3361,7 @@
       }
     },
     "token2022_paper_support": {
-      "status": "REPAIRED_TOKEN_REVIEW_AND_FINAL_COMBINED_VALIDATION",
+      "status": "FINAL_COMBINED_CI_AND_VPS_TESTS_RUNNING",
       "authorization": "2026-10-09 user: I think we need to modify the token2022 limitations as most tokens seem to be token2022 and we cannot open positions. Explicit approval to replace blanket exclusion with narrow versioned paper-only support; known hazards and unreviewed extensions still reject.",
       "base": "89f4317",
       "implementation_owner": "08",
@@ -3548,7 +3548,15 @@
         "tree": "a19b18c5970bacbe13f3456c4702b0ac989416a4",
         "focused_status": "PASS",
         "focused_seconds": 92.99,
-        "root_test_diff_review": "101-line real handoff/token entry/partial/full exit/restart regression reviewed; no source/budget/checkpoint bypass found"
+        "root_test_diff_review": "101-line real handoff/token entry/partial/full exit/restart regression reviewed; no source/budget/checkpoint bypass found",
+        "pr": 159,
+        "publication_head": "a96ed913879902ecbde09a232cf32a6d48e380b6",
+        "publication_delta": "Only independently reviewed monitoring-handoff policy from frozen test head7b4f328",
+        "ci_runs": [
+          37941346774,
+          37941498820
+        ],
+        "ci_status": "ONE_SUCCESS_ONE_RUNNING"
       },
       "coordinator_handoff_operator_focused": {
         "heads": [
@@ -3563,12 +3571,16 @@
       },
       "cold_entry_timing": {
         "worker": "01",
-        "thread_id": "01a118fc-39bc-722c-b442-b442-8bf5a749e0bb",
-        "status": "ASSIGNED",
+        "thread_id": "01a118fc-39bc-722c-b442-8bf5a749e0bb",
+        "status": "FIXTURE_BUY_VERIFIED_OPERATOR_RECIPE_PUBLICATION",
         "finding": "08actual2secPacer freshcollector+held4reads4.10s pass; coldentry10sdeadlineblocks; retainedfreshUSD6.15sentry needs full samepacer USDacquisitionrecipe verified",
         "scope": "fixtureonly existingoperatorrecipe; no TTL/pacing/budget weakening",
         "turn_id": "01a120ec-63a0-77cd-ba7a-b7c6127735a7",
-        "cursor": "5e651fc7-2996-4765-974d-5c852257a005:113"
+        "cursor": "5e651fc7-2996-4765-974d-5c852257a005:115",
+        "result": "Same scan and durable2sec pacer; exact retained history_as_of yields BUY8.20s,9 total requests including preparation. CLI-shaped target loses window identity and times out. No TTL/cap changes.",
+        "reviewer": "06",
+        "reviewer_thread_id": "01a118fc-f867-7233-8eec-c20659e70095",
+        "next": "Publish existingAPI recipe and narrow external helper only if needed; independent06 review before live use"
       },
       "handoff_predecessor_verification": {
         "files": 127,
