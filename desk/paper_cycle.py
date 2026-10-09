@@ -223,11 +223,14 @@ def _collect_held(target, source, budget, store):
         original = json.loads(canonical(params)); started = budget.now()
         response = budget.call(target.scan_id, invoke)
         completed = budget.now()
-        envelope = {'source_id':identity,'acquired_at':completed,'started_at':started,
+        acquired = response.get('observed_at') if method == 'jupiter_probe' else completed
+        envelope = {'source_id':identity,'acquired_at':acquired,'started_at':started,
                     'method':method,'params':original,'result':response}
         key = store.save(envelope)
         if key != digest(envelope): raise CycleBlocked('ORIGINAL_RESPONSE_PERSISTENCE_FAILED')
         refs.append(key)
+        if type(acquired) is not int or not started <= acquired <= completed:
+            raise CycleBlocked('SOURCE_ACQUISITION_CLOCK_INVALID')
         if params != original: raise CycleBlocked('SOURCE_REQUEST_MUTATED')
         if completed < started or completed-started > 10:
             raise CycleBlocked('SOURCE_RESPONSE_STALE')

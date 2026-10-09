@@ -383,6 +383,39 @@ class PaperCycleTests(unittest.TestCase):
         self.assertEqual(restart['status'],'RECOVERY_REQUIRED')
         self.assertEqual(len(self.http_calls),count)
 
+    def test_monitoring_quote_return_clock_boundary_keeps_original_source_time(self):
+        item,allowance=self.monitoring_fixture()
+        original=transport.PaperReadSources.quote;at=self.f.at
+        def boundary(source,*args,**kwargs):
+            result=original(source,*args,**kwargs)
+            self.f.at+=1
+            return result
+        with patch.object(transport.PaperReadSources,'quote',boundary):
+            result=self.actual_cycle(positions=(item,),candidates=(),monitoring=True)
+        self.assertEqual(result['status'],'COMPLETE',result)
+        self.assertEqual(allowance.snapshot()['total_used'],4)
+        self.assertIn(self.target.mint,cycle._state(self.path,self.cfg)['positions'])
+        with sqlite3.connect(self.path) as c:
+            event=json.loads(c.execute("SELECT payload FROM events WHERE json_extract(payload,'$.kind')='quote_exit'").fetchone()[0])
+        self.assertEqual(event['source_evidence']['quote_at'],at)
+        self.assertEqual(event['ts'],at+1)
+
+    def test_monitoring_late_local_completion_is_not_hidden_by_original_quote_time(self):
+        item,allowance=self.monitoring_fixture()
+        original=transport.PaperReadSources.quote
+        def boundary(source,*args,**kwargs):
+            result=original(source,*args,**kwargs)
+            self.f.at+=11
+            return result
+        with patch.object(transport.PaperReadSources,'quote',boundary):
+            result=self.actual_cycle(positions=(item,),candidates=(),monitoring=True)
+        self.assertIn('SOURCE_RESPONSE_STALE',result['blockers'])
+        self.assertFalse(any(x['type']=='fill' for x in result['outcomes']))
+        self.assertEqual(allowance.snapshot()['total_used'],4)
+        retry=self.actual_cycle(positions=(item,),candidates=(),monitoring=True)
+        self.assertEqual(retry['status'],'RECOVERY_REQUIRED')
+        self.assertEqual(retry['attempted_requests'],0)
+
     def test_explicit_pending_dependency_blocks_before_paths_and_sources(self):
         result=cycle.run_once('missing-research','missing-evidence','missing-ledger',self.cfg,
                               dependency_blockers=('CHECKPOINT_QUOTE_PROFILE3_PENDING',))
