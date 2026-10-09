@@ -134,7 +134,7 @@ def calculate(raw_transactions,*,pool,as_of,provenance,window_seconds=300,ttl_se
             'trade_count':0,'provider_calls':0,'eligible_for_trading':False,
             'scope':'Observed pool sample only; event amounts are not authenticated fills or full route effects',
             'blockers':['WINDOW_COVERAGE_UNVERIFIED','POOL_MINT_QUOTE_BINDING_REQUIRED']}
-    fatal=set(); trades=[]; identities={}; hashes=[]; input_hashes=[]; total=0
+    fatal=set(); trades=[]; record_times=[]; identities={}; hashes=[]; input_hashes=[]; total=0
     try:
         for payload in raw_transactions:
             result['records_seen']+=1
@@ -151,6 +151,9 @@ def calculate(raw_transactions,*,pool,as_of,provenance,window_seconds=300,ttl_se
             timestamp=_integer(observation['block_time']);slot=_integer(observation['slot'])
             if timestamp>as_of:fatal.add('FUTURE_TRANSACTION_TIME');continue
             if timestamp<start:continue
+            # Bank metadata constrains the window even when execution failed
+            # or the record contributes no supported trade volume.
+            record_times.append((slot,timestamp))
             if observation['status']=='FAILED':result['failed_records']+=1;continue
             paths=set(); record_trades=len(trades)
             for row in observation['program_observations']:
@@ -176,10 +179,28 @@ def calculate(raw_transactions,*,pool,as_of,provenance,window_seconds=300,ttl_se
                                'path':tuple(map(int,path.split('.'))),'side':side,
                                'liquidity_supported':type(f.get('virtual_quote_reserves')) is int and f['virtual_quote_reserves']==0 and f.get('can_boost') is False,
                                'quote':quote,'base':base,'wallet':wallet,'reserve':reserve})
-            if len(trades)==record_trades and any(row.get('pool')==pool and row.get('kind') in ('BUY_INTENT','SELL_INTENT') for row in observation['program_observations']):
-                fatal.add('TRADE_INTENT_WITHOUT_COMPLETE_EVENT')
+            for intent in observation['program_observations']:
+                if (intent.get('program')!=PUMPSWAP or intent.get('pool')!=pool
+                        or intent.get('kind') not in ('BUY_INTENT','SELL_INTENT')):continue
+                path=intent['instruction']
+                # Flat inner paths omit CPI ancestry. Do not guess which nested
+                # invocation produced an event merely from its outer index.
+                if re.fullmatch(r'\d+',path) is None:
+                    fatal.add('TRADE_INVOCATION_EVENT_BINDING_UNRESOLVED');continue
+                side='buy' if intent['kind']=='BUY_INTENT' else 'sell'
+                matches=[trade for trade in trades[record_trades:]
+                         if trade['path'][0]==int(path) and len(trade['path'])==2
+                         and trade['side']==side and trade['wallet']==intent.get('wallet')]
+                if not matches:fatal.add('TRADE_INTENT_WITHOUT_COMPLETE_EVENT')
+                elif len(matches)!=1:fatal.add('TRADE_INVOCATION_EVENT_BINDING_UNRESOLVED')
     except (ValueError,KeyError,TypeError,OverflowError,RecursionError):
         fatal.add('MALFORMED_OR_BOUNDED_INPUT_UNAVAILABLE')
+    ordered_times=sorted(record_times)
+    if any(a[1]>b[1] for a,b in zip(ordered_times,ordered_times[1:]) if a[0]!=b[0]):
+        fatal.add('CHAIN_TIME_SLOT_ORDER_CONFLICT')
+    slot_times={}
+    for slot,timestamp in record_times:slot_times.setdefault(slot,set()).add(timestamp)
+    if any(len(times)>1 for times in slot_times.values()):fatal.add('SAME_SLOT_CHAIN_TIME_CONFLICT')
     coverage=False
     if history_pages is not None:
         try:
@@ -195,12 +216,6 @@ def calculate(raw_transactions,*,pool,as_of,provenance,window_seconds=300,ttl_se
     if trades:
         result['window']['observed_start']=min(t['ts'] for t in trades)
         result['window']['observed_end']=max(t['ts'] for t in trades)
-        ordered=sorted(trades,key=lambda t:(t['slot'],t['path']))
-        if any(a['ts']>b['ts'] for a,b in zip(ordered,ordered[1:]) if a['slot']!=b['slot']):
-            fatal.add('CHAIN_TIME_SLOT_ORDER_CONFLICT')
-        slot_times={}
-        for trade in trades:slot_times.setdefault(trade['slot'],set()).add(trade['ts'])
-        if any(len(times)>1 for times in slot_times.values()):fatal.add('SAME_SLOT_CHAIN_TIME_CONFLICT')
         observed=max(t['ts'] for t in trades)
         if as_of-observed>ttl_seconds:fatal.add('TRADE_COMPONENT_STALE')
     if fatal-{'TRADE_COMPONENT_STALE'}:
