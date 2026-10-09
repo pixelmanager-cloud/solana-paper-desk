@@ -1,6 +1,6 @@
 {
   "schema_version": 1,
-  "revision": 62,
+  "revision": 63,
   "repository": "pixelmanager-cloud/solana-paper-desk",
   "source_main_sha": "e298e15cd758932e81d2241130716632702f5bd0",
   "observed_date": "2026-10-08",
@@ -373,6 +373,13 @@
       "action": "Side-effect-free current-state preflight or pre-open unsupported-mode rejection; do not ignore active WAL via immutable flag; add file/content invariance regressions.",
       "resolved_head_sha": "4f3573330b1b193579d733afab19b259297fa5df",
       "resolution_review_id": 5451939899
+    },
+    {
+      "kind": "REVIEW_SCOPE",
+      "pr": 108,
+      "head_sha": "966581f608dbccc1ebccbb0a63ab3a757db5eece",
+      "comment_id": 6073971965,
+      "reason": "Experimental unknown-ownership fill policy conflicts with current no-relaxed-gates reviewer scope; require reconciled contract, no scope-dependent disposition."
     }
   ],
   "events": [
@@ -2266,6 +2273,279 @@
       "provider_calls": 0,
       "readiness": "BLOCKED_NO_SUPPORTED_BUDGET_FEASIBLE_PUBLIC_LEGACY_SEED; acquisition path in development",
       "schedule": "NOT_REPROBED_NO_DURABLE_BINDING_CLAIM"
+    },
+    {
+      "kind": "HOURLY_GITHUB_RECONCILIATION",
+      "at": "2026-10-09T03:58:19Z",
+      "status": "INPUT_SCOPE_BLOCKER_EXPERIMENTAL_POLICY",
+      "cloud_execution": {
+        "provider": "cloud",
+        "observations_current": true,
+        "observed_phase": "running",
+        "spec_revision": "98"
+      },
+      "queue_blob_sha": "71a3143fcdcad38f400d7b44f044ca627c932c3c",
+      "external_claims": [
+        {
+          "id": "PR97-INDEPENDENT-REVIEW",
+          "worker": "05",
+          "thread_id": "01a118fc-dd83-7672-ac81-7445f85fe09f",
+          "host_id": "durable",
+          "status": "BLOCKED_PLATFORM_FILTER_ON_SCOPED_REVIEW",
+          "pr": 97,
+          "head": "c11bfad6f1a2debe323238ef746967310ba02349",
+          "base": "1a9f69595bf4c8c8814654a093fbba1bde93d5ad",
+          "wait_cursor": "b9784eaf-f3e5-457f-a98d-a386c23b37ea:48",
+          "turn_id": "01a11c6e-65ba-7787-b458-530144590287",
+          "scope": "Review changed code and existing regression tests only; earlier flagged custom probes not repeated; stop if blocked"
+        },
+        {
+          "id": "PAPER-RUNNER-LIFECYCLE",
+          "worker": "09",
+          "thread_id": "01a118fd-3f90-77d9-9549-c4497f5b10a6",
+          "host_id": "durable",
+          "status": "ACCEPTED_INTEGRATED_NOT_DEPLOYED",
+          "base": "9e43752daabf19b7e78e08e0b15d16d1c6e2a680",
+          "scope": "Minimal supervised runner using existing ledger/engine/watchdog, executable synthetic lifecycle and restart; no live authorization or screening policy changes",
+          "turn_id": "01a11eae-36ed-72bd-8c5d-ab7f42d99073",
+          "wait_cursor": "68a4d56e-d04a-40dc-ad15-e80a29c96b80:11",
+          "pr": 103,
+          "head": "7100483d800189b62efa14da33de3e21e7dd0f35"
+        },
+        {
+          "id": "EXPERIMENTAL-PAPER-OWNERSHIP-POLICY",
+          "worker": "02",
+          "thread_id": "01a118fc-666c-70b6-9fa8-2c7520f0a0bb",
+          "host_id": "durable",
+          "status": "PUBLISHED_PENDING_INDEPENDENT_REVIEW",
+          "base": "9e43752daabf19b7e78e08e0b15d16d1c6e2a680",
+          "scope": "Explicit paper-only unresolved-history risk policy using persisted diagnostics; known hazards reject; no fake completeness, engine changes or PR97 dependency",
+          "turn_id": "01a11eae-d80e-7427-8466-5db09d9ffa01",
+          "wait_cursor": "a2dcfb97-463d-4188-9da3-48a81e644d23:68",
+          "pr": 102,
+          "head": "ada4892b3df3138f3369aa9d64aaf60f778b0d7b"
+        },
+        {
+          "id": "PAPER-LIVE-OBSERVATION-ADAPTER",
+          "worker": "04",
+          "thread_id": "01a118fc-b862-7340-ab3a-e1115a3280a4",
+          "host_id": "durable",
+          "status": "PUBLISHED_PENDING_INDEPENDENT_REVIEW",
+          "base": "9e43752daabf19b7e78e08e0b15d16d1c6e2a680",
+          "scope": "Useful timestamped raw observation normalization with exact units/source hash, no invented metrics or provider calls",
+          "turn_id": "01a11eb0-22b3-75c2-b925-25a798d51404",
+          "wait_cursor": "d3153436-2742-432e-8501-9c06b95f29ae:14",
+          "pr": 104,
+          "head": "7146b821f932d85157a6357a2f44c6cf54d2f766"
+        },
+        {
+          "id": "PAPER-EXPERIMENT-RESULTS",
+          "worker": "10",
+          "thread_id": "01a118fd-56d5-70b8-ad31-dba13e982082",
+          "host_id": "durable",
+          "status": "PUBLISHED_PENDING_INDEPENDENT_REVIEW",
+          "base": "d36957a179816fb48224fdf262159a9885afb354",
+          "scope": "Read-only bounded existing-ledger performance report, config/version/provenance/closed trades/PnL/costs/drawdown/open inventory; no invented profitability threshold",
+          "pr": 105,
+          "head": "0c8481bc0e7b607a354cb3adaf9c91a9a53615e5",
+          "turn_id": "01a11eb5-42fc-77fc-a5c3-c58b117785ed",
+          "wait_cursor": "e6039648-56af-4049-8a6e-06eaaa8aba52:35"
+        },
+        {
+          "id": "PR102-INDEPENDENT-REVIEW",
+          "worker": "01",
+          "thread_id": "01a118fc-39bc-722c-b442-8bf5a749e0bb",
+          "host_id": "durable",
+          "status": "CHANGES_REQUESTED",
+          "pr": 102,
+          "head": "ada4892b3df3138f3369aa9d64aaf60f778b0d7b",
+          "scope": "Exact-head independent review and combined Linux suite; no integration",
+          "turn_id": "01a11ebd-9b09-7263-91c8-c69bc6c3b471",
+          "wait_cursor": "5e651fc7-2996-4765-974d-5c852257a005:77",
+          "review_url": "https://github.com/pixelmanager-cloud/solana-paper-desk/pull/102#issuecomment-6073805785",
+          "finding": "Present corrupt history can downgrade to incomplete risk; portable tests need read capability gating"
+        },
+        {
+          "id": "PR103-INDEPENDENT-REVIEW",
+          "worker": "06",
+          "thread_id": "01a118fc-f867-7233-8eec-c20659e70095",
+          "host_id": "durable",
+          "status": "PASS",
+          "pr": 103,
+          "head": "7100483d800189b62efa14da33de3e21e7dd0f35",
+          "scope": "Exact-head independent review and combined Linux suite; no integration",
+          "turn_id": "01a11ebd-aa79-7370-b796-8f66f317a16b",
+          "wait_cursor": "8f3328cf-bef6-441d-83f8-2d1f46b3b0df:82",
+          "review_url": "https://github.com/pixelmanager-cloud/solana-paper-desk/pull/103#issuecomment-6073816532"
+        },
+        {
+          "id": "PR104-INDEPENDENT-REVIEW",
+          "worker": "03",
+          "thread_id": "01a118fc-9478-778a-b77a-8f8f6ec7e0ad",
+          "host_id": "durable",
+          "status": "IN_PROGRESS",
+          "pr": 104,
+          "head": "7146b821f932d85157a6357a2f44c6cf54d2f766",
+          "scope": "Exact-head independent review and combined Linux suite; no integration",
+          "turn_id": "01a11ebd-b9e3-751b-bd7b-60bee9d17906",
+          "wait_cursor": "0851f5ab-a903-4567-a6fe-4cbb4e6a7b96:23"
+        },
+        {
+          "id": "EXPERIMENTAL-OWNERSHIP-SCORING",
+          "worker": "02",
+          "thread_id": "01a118fc-666c-70b6-9fa8-2c7520f0a0bb",
+          "host_id": "durable",
+          "status": "IN_PROGRESS",
+          "scope": "model/strategy explicit unknown ownership handling and versioned experimental scoring; no live authorization",
+          "turn_id": "01a11ebe-5324-7576-a6bc-b4c8e85ea73b",
+          "wait_cursor": "a2dcfb97-463d-4188-9da3-48a81e644d23:71"
+        },
+        {
+          "id": "LIVE-STRATEGY-FEATURES",
+          "worker": "09",
+          "thread_id": "01a118fd-3f90-77d9-9549-c4497f5b10a6",
+          "host_id": "durable",
+          "status": "IN_PROGRESS",
+          "scope": "new bounded raw-trade feature producer; explicit missing inputs/coverage; no engine changes",
+          "turn_id": "01a11ebe-60c2-7569-9146-133915eac521",
+          "wait_cursor": "68a4d56e-d04a-40dc-ad15-e80a29c96b80:13"
+        },
+        {
+          "id": "PR105-INDEPENDENT-REVIEW",
+          "worker": "07",
+          "thread_id": "01a118fd-0f1c-749c-b85b-5e730937d0a8",
+          "host_id": "durable",
+          "status": "DISPATCHED",
+          "pr": 105,
+          "head": "0c8481bc0e7b607a354cb3adaf9c91a9a53615e5"
+        },
+        {
+          "id": "PAPER-RUNNER-DASHBOARD",
+          "worker": "10",
+          "thread_id": "01a118fd-56d5-70b8-ad31-dba13e982082",
+          "host_id": "durable",
+          "status": "DISPATCHED",
+          "scope": "paper_view/dashboard actual saved runner state; no invented live readiness"
+        },
+        {
+          "id": "PR102-HISTORY-INTEGRITY-REPAIR",
+          "worker": "08",
+          "thread_id": "01a118fd-2563-7126-90d7-bd07693de0b2",
+          "host_id": "durable",
+          "status": "DISPATCHED",
+          "base": "ada4892b3df3138f3369aa9d64aaf60f778b0d7b",
+          "scope": "Reject present malformed or unbound history before experimental waiver; portability tests preserve read guard"
+        },
+        {
+          "id": "ROUNDTRIP-ROUTE-WIRING",
+          "worker": "06",
+          "thread_id": "01a118fc-f867-7233-8eec-c20659e70095",
+          "host_id": "durable",
+          "status": "DISPATCHED",
+          "scope": "roundtrip existing supported route checker wiring; no eligibility or missing proof fabrication"
+        },
+        {
+          "id": "BOUNDED-PAPER-OBSERVATION-COLLECTOR",
+          "worker": "04",
+          "thread_id": "01a118fc-b862-7340-ab3a-e1115a3280a4",
+          "host_id": "durable",
+          "status": "DISPATCHED",
+          "scope": "new collector using existing admitted budget/provider boundaries; no cloud calls"
+        }
+      ],
+      "observed_prs": [
+        {
+          "pr": 106,
+          "head_sha": "7a45e55ca2cfa9c3c5a7802724987493c89e0dd4",
+          "base_sha": "87e026dca6c68b85abe8f4ccf2dff0307704b36c",
+          "branch": "codex/cloud-paper-scoring-02",
+          "existing_comment_ids": [
+            6073877063,
+            6073910771,
+            5465540840
+          ],
+          "status": "EXISTING_WORKER_SCOPE_OR_REVIEW_RECONCILE_BEFORE_DUPLICATION",
+          "tests_this_run": "NOT_RUN",
+          "limitations": "No full independent review or CI certification in this reconciliation."
+        },
+        {
+          "pr": 107,
+          "head_sha": "adcaa9c17de601dd74dfc6685aa465c46aae961c",
+          "base_sha": "7146b821f932d85157a6357a2f44c6cf54d2f766",
+          "branch": "codex/cloud-live-observation-controls-01",
+          "existing_comment_ids": [
+            6073898243
+          ],
+          "status": "EXISTING_WORKER_SCOPE_OR_REVIEW_RECONCILE_BEFORE_DUPLICATION",
+          "tests_this_run": "NOT_RUN",
+          "limitations": "No full independent review or CI certification in this reconciliation."
+        },
+        {
+          "pr": 108,
+          "head_sha": "966581f608dbccc1ebccbb0a63ab3a757db5eece",
+          "base_sha": "87e026dca6c68b85abe8f4ccf2dff0307704b36c",
+          "branch": "codex/paper-engine-policy-wiring",
+          "existing_comment_ids": [],
+          "status": "REVIEW_SCOPE_BLOCKED_NO_RELAXED_GATES",
+          "tests_this_run": "NOT_RUN",
+          "limitations": "No full independent review or CI certification in this reconciliation."
+        },
+        {
+          "pr": 109,
+          "head_sha": "1acc2b51fba371b6da2be6759afe79efc7081e4b",
+          "base_sha": "ada4892b3df3138f3369aa9d64aaf60f778b0d7b",
+          "branch": "codex/cloud-08-experimental-history-repair",
+          "existing_comment_ids": [
+            5465525783,
+            6073948533
+          ],
+          "status": "EXISTING_WORKER_SCOPE_OR_REVIEW_RECONCILE_BEFORE_DUPLICATION",
+          "tests_this_run": "NOT_RUN",
+          "limitations": "No full independent review or CI certification in this reconciliation."
+        },
+        {
+          "pr": 110,
+          "head_sha": "e2ab73def0909f511d2973a48cccf421fab2a512",
+          "base_sha": "87e026dca6c68b85abe8f4ccf2dff0307704b36c",
+          "branch": "codex/roundtrip-route-connector-06",
+          "existing_comment_ids": [],
+          "status": "EXISTING_WORKER_SCOPE_OR_REVIEW_RECONCILE_BEFORE_DUPLICATION",
+          "tests_this_run": "NOT_RUN",
+          "limitations": "No full independent review or CI certification in this reconciliation."
+        },
+        {
+          "pr": 111,
+          "head_sha": "0d746d73462b8c2c4d90ec9fdf13a1a3e51124c9",
+          "base_sha": "87e026dca6c68b85abe8f4ccf2dff0307704b36c",
+          "branch": "codex/cloud-wave1-10-loop-visibility",
+          "existing_comment_ids": [
+            6073946802
+          ],
+          "status": "EXISTING_WORKER_SCOPE_OR_REVIEW_RECONCILE_BEFORE_DUPLICATION",
+          "tests_this_run": "NOT_RUN",
+          "limitations": "No full independent review or CI certification in this reconciliation."
+        },
+        {
+          "pr": 112,
+          "head_sha": "466ff9f8b8d980b4047532d4dd50497587eea77a",
+          "base_sha": "7146b821f932d85157a6357a2f44c6cf54d2f766",
+          "branch": "codex/cloud-wave8-04-observation-collector",
+          "existing_comment_ids": [],
+          "status": "EXISTING_WORKER_SCOPE_OR_REVIEW_RECONCILE_BEFORE_DUPLICATION",
+          "tests_this_run": "NOT_RUN",
+          "limitations": "No full independent review or CI certification in this reconciliation."
+        }
+      ],
+      "observed_codex_branch_count": 105,
+      "branch_pagination_complete": true,
+      "tests": "NOT_RUN_SCOPE_RECONCILIATION_REQUIRED",
+      "review_comments_posted": 1,
+      "comment_id": 6073971965,
+      "comment_pr": 108,
+      "infrastructure_failures": 0,
+      "provider_calls": 0,
+      "readiness": "BLOCKED_NO_SUPPORTED_BUDGET_FEASIBLE_PUBLIC_LEGACY_SEED; acquisition path in development",
+      "schedule": "NOT_REPROBED_NO_DURABLE_BINDING_CLAIM"
     }
   ],
   "artifact_pr": {
@@ -3999,6 +4279,87 @@
       "status": "EXTERNAL_WORKER06_EXACT_HEAD_REVIEW_ALREADY_PUBLISHED",
       "tests_this_run": "NOT_RUN",
       "limitations": "External results not reproduced by this run; no approval or acceptance inferred. PR97 blocked scope not retried."
+    },
+    {
+      "pr": 106,
+      "head_sha": "7a45e55ca2cfa9c3c5a7802724987493c89e0dd4",
+      "base_sha": "87e026dca6c68b85abe8f4ccf2dff0307704b36c",
+      "branch": "codex/cloud-paper-scoring-02",
+      "existing_comment_ids": [
+        6073877063,
+        6073910771,
+        5465540840
+      ],
+      "status": "EXISTING_WORKER_SCOPE_OR_REVIEW_RECONCILE_BEFORE_DUPLICATION",
+      "tests_this_run": "NOT_RUN",
+      "limitations": "No full independent review or CI certification in this reconciliation."
+    },
+    {
+      "pr": 107,
+      "head_sha": "adcaa9c17de601dd74dfc6685aa465c46aae961c",
+      "base_sha": "7146b821f932d85157a6357a2f44c6cf54d2f766",
+      "branch": "codex/cloud-live-observation-controls-01",
+      "existing_comment_ids": [
+        6073898243
+      ],
+      "status": "EXISTING_WORKER_SCOPE_OR_REVIEW_RECONCILE_BEFORE_DUPLICATION",
+      "tests_this_run": "NOT_RUN",
+      "limitations": "No full independent review or CI certification in this reconciliation."
+    },
+    {
+      "pr": 108,
+      "head_sha": "966581f608dbccc1ebccbb0a63ab3a757db5eece",
+      "base_sha": "87e026dca6c68b85abe8f4ccf2dff0307704b36c",
+      "branch": "codex/paper-engine-policy-wiring",
+      "existing_comment_ids": [],
+      "status": "REVIEW_SCOPE_BLOCKED_NO_RELAXED_GATES",
+      "tests_this_run": "NOT_RUN",
+      "limitations": "No full independent review or CI certification in this reconciliation."
+    },
+    {
+      "pr": 109,
+      "head_sha": "1acc2b51fba371b6da2be6759afe79efc7081e4b",
+      "base_sha": "ada4892b3df3138f3369aa9d64aaf60f778b0d7b",
+      "branch": "codex/cloud-08-experimental-history-repair",
+      "existing_comment_ids": [
+        5465525783,
+        6073948533
+      ],
+      "status": "EXISTING_WORKER_SCOPE_OR_REVIEW_RECONCILE_BEFORE_DUPLICATION",
+      "tests_this_run": "NOT_RUN",
+      "limitations": "No full independent review or CI certification in this reconciliation."
+    },
+    {
+      "pr": 110,
+      "head_sha": "e2ab73def0909f511d2973a48cccf421fab2a512",
+      "base_sha": "87e026dca6c68b85abe8f4ccf2dff0307704b36c",
+      "branch": "codex/roundtrip-route-connector-06",
+      "existing_comment_ids": [],
+      "status": "EXISTING_WORKER_SCOPE_OR_REVIEW_RECONCILE_BEFORE_DUPLICATION",
+      "tests_this_run": "NOT_RUN",
+      "limitations": "No full independent review or CI certification in this reconciliation."
+    },
+    {
+      "pr": 111,
+      "head_sha": "0d746d73462b8c2c4d90ec9fdf13a1a3e51124c9",
+      "base_sha": "87e026dca6c68b85abe8f4ccf2dff0307704b36c",
+      "branch": "codex/cloud-wave1-10-loop-visibility",
+      "existing_comment_ids": [
+        6073946802
+      ],
+      "status": "EXISTING_WORKER_SCOPE_OR_REVIEW_RECONCILE_BEFORE_DUPLICATION",
+      "tests_this_run": "NOT_RUN",
+      "limitations": "No full independent review or CI certification in this reconciliation."
+    },
+    {
+      "pr": 112,
+      "head_sha": "466ff9f8b8d980b4047532d4dd50497587eea77a",
+      "base_sha": "7146b821f932d85157a6357a2f44c6cf54d2f766",
+      "branch": "codex/cloud-wave8-04-observation-collector",
+      "existing_comment_ids": [],
+      "status": "EXISTING_WORKER_SCOPE_OR_REVIEW_RECONCILE_BEFORE_DUPLICATION",
+      "tests_this_run": "NOT_RUN",
+      "limitations": "No full independent review or CI certification in this reconciliation."
     }
   ],
   "pending_reviews": [
@@ -4352,6 +4713,159 @@
         "wait_cursor": "b9784eaf-f3e5-457f-a98d-a386c23b37ea:48",
         "turn_id": "01a11c6e-65ba-7787-b458-530144590287",
         "scope": "Review changed code and existing regression tests only; earlier flagged custom probes not repeated; stop if blocked"
+      },
+      {
+        "id": "PAPER-RUNNER-LIFECYCLE",
+        "worker": "09",
+        "thread_id": "01a118fd-3f90-77d9-9549-c4497f5b10a6",
+        "host_id": "durable",
+        "status": "ACCEPTED_INTEGRATED_NOT_DEPLOYED",
+        "base": "9e43752daabf19b7e78e08e0b15d16d1c6e2a680",
+        "scope": "Minimal supervised runner using existing ledger/engine/watchdog, executable synthetic lifecycle and restart; no live authorization or screening policy changes",
+        "turn_id": "01a11eae-36ed-72bd-8c5d-ab7f42d99073",
+        "wait_cursor": "68a4d56e-d04a-40dc-ad15-e80a29c96b80:11",
+        "pr": 103,
+        "head": "7100483d800189b62efa14da33de3e21e7dd0f35"
+      },
+      {
+        "id": "EXPERIMENTAL-PAPER-OWNERSHIP-POLICY",
+        "worker": "02",
+        "thread_id": "01a118fc-666c-70b6-9fa8-2c7520f0a0bb",
+        "host_id": "durable",
+        "status": "PUBLISHED_PENDING_INDEPENDENT_REVIEW",
+        "base": "9e43752daabf19b7e78e08e0b15d16d1c6e2a680",
+        "scope": "Explicit paper-only unresolved-history risk policy using persisted diagnostics; known hazards reject; no fake completeness, engine changes or PR97 dependency",
+        "turn_id": "01a11eae-d80e-7427-8466-5db09d9ffa01",
+        "wait_cursor": "a2dcfb97-463d-4188-9da3-48a81e644d23:68",
+        "pr": 102,
+        "head": "ada4892b3df3138f3369aa9d64aaf60f778b0d7b"
+      },
+      {
+        "id": "PAPER-LIVE-OBSERVATION-ADAPTER",
+        "worker": "04",
+        "thread_id": "01a118fc-b862-7340-ab3a-e1115a3280a4",
+        "host_id": "durable",
+        "status": "PUBLISHED_PENDING_INDEPENDENT_REVIEW",
+        "base": "9e43752daabf19b7e78e08e0b15d16d1c6e2a680",
+        "scope": "Useful timestamped raw observation normalization with exact units/source hash, no invented metrics or provider calls",
+        "turn_id": "01a11eb0-22b3-75c2-b925-25a798d51404",
+        "wait_cursor": "d3153436-2742-432e-8501-9c06b95f29ae:14",
+        "pr": 104,
+        "head": "7146b821f932d85157a6357a2f44c6cf54d2f766"
+      },
+      {
+        "id": "PAPER-EXPERIMENT-RESULTS",
+        "worker": "10",
+        "thread_id": "01a118fd-56d5-70b8-ad31-dba13e982082",
+        "host_id": "durable",
+        "status": "PUBLISHED_PENDING_INDEPENDENT_REVIEW",
+        "base": "d36957a179816fb48224fdf262159a9885afb354",
+        "scope": "Read-only bounded existing-ledger performance report, config/version/provenance/closed trades/PnL/costs/drawdown/open inventory; no invented profitability threshold",
+        "pr": 105,
+        "head": "0c8481bc0e7b607a354cb3adaf9c91a9a53615e5",
+        "turn_id": "01a11eb5-42fc-77fc-a5c3-c58b117785ed",
+        "wait_cursor": "e6039648-56af-4049-8a6e-06eaaa8aba52:35"
+      },
+      {
+        "id": "PR102-INDEPENDENT-REVIEW",
+        "worker": "01",
+        "thread_id": "01a118fc-39bc-722c-b442-8bf5a749e0bb",
+        "host_id": "durable",
+        "status": "CHANGES_REQUESTED",
+        "pr": 102,
+        "head": "ada4892b3df3138f3369aa9d64aaf60f778b0d7b",
+        "scope": "Exact-head independent review and combined Linux suite; no integration",
+        "turn_id": "01a11ebd-9b09-7263-91c8-c69bc6c3b471",
+        "wait_cursor": "5e651fc7-2996-4765-974d-5c852257a005:77",
+        "review_url": "https://github.com/pixelmanager-cloud/solana-paper-desk/pull/102#issuecomment-6073805785",
+        "finding": "Present corrupt history can downgrade to incomplete risk; portable tests need read capability gating"
+      },
+      {
+        "id": "PR103-INDEPENDENT-REVIEW",
+        "worker": "06",
+        "thread_id": "01a118fc-f867-7233-8eec-c20659e70095",
+        "host_id": "durable",
+        "status": "PASS",
+        "pr": 103,
+        "head": "7100483d800189b62efa14da33de3e21e7dd0f35",
+        "scope": "Exact-head independent review and combined Linux suite; no integration",
+        "turn_id": "01a11ebd-aa79-7370-b796-8f66f317a16b",
+        "wait_cursor": "8f3328cf-bef6-441d-83f8-2d1f46b3b0df:82",
+        "review_url": "https://github.com/pixelmanager-cloud/solana-paper-desk/pull/103#issuecomment-6073816532"
+      },
+      {
+        "id": "PR104-INDEPENDENT-REVIEW",
+        "worker": "03",
+        "thread_id": "01a118fc-9478-778a-b77a-8f8f6ec7e0ad",
+        "host_id": "durable",
+        "status": "IN_PROGRESS",
+        "pr": 104,
+        "head": "7146b821f932d85157a6357a2f44c6cf54d2f766",
+        "scope": "Exact-head independent review and combined Linux suite; no integration",
+        "turn_id": "01a11ebd-b9e3-751b-bd7b-60bee9d17906",
+        "wait_cursor": "0851f5ab-a903-4567-a6fe-4cbb4e6a7b96:23"
+      },
+      {
+        "id": "EXPERIMENTAL-OWNERSHIP-SCORING",
+        "worker": "02",
+        "thread_id": "01a118fc-666c-70b6-9fa8-2c7520f0a0bb",
+        "host_id": "durable",
+        "status": "IN_PROGRESS",
+        "scope": "model/strategy explicit unknown ownership handling and versioned experimental scoring; no live authorization",
+        "turn_id": "01a11ebe-5324-7576-a6bc-b4c8e85ea73b",
+        "wait_cursor": "a2dcfb97-463d-4188-9da3-48a81e644d23:71"
+      },
+      {
+        "id": "LIVE-STRATEGY-FEATURES",
+        "worker": "09",
+        "thread_id": "01a118fd-3f90-77d9-9549-c4497f5b10a6",
+        "host_id": "durable",
+        "status": "IN_PROGRESS",
+        "scope": "new bounded raw-trade feature producer; explicit missing inputs/coverage; no engine changes",
+        "turn_id": "01a11ebe-60c2-7569-9146-133915eac521",
+        "wait_cursor": "68a4d56e-d04a-40dc-ad15-e80a29c96b80:13"
+      },
+      {
+        "id": "PR105-INDEPENDENT-REVIEW",
+        "worker": "07",
+        "thread_id": "01a118fd-0f1c-749c-b85b-5e730937d0a8",
+        "host_id": "durable",
+        "status": "DISPATCHED",
+        "pr": 105,
+        "head": "0c8481bc0e7b607a354cb3adaf9c91a9a53615e5"
+      },
+      {
+        "id": "PAPER-RUNNER-DASHBOARD",
+        "worker": "10",
+        "thread_id": "01a118fd-56d5-70b8-ad31-dba13e982082",
+        "host_id": "durable",
+        "status": "DISPATCHED",
+        "scope": "paper_view/dashboard actual saved runner state; no invented live readiness"
+      },
+      {
+        "id": "PR102-HISTORY-INTEGRITY-REPAIR",
+        "worker": "08",
+        "thread_id": "01a118fd-2563-7126-90d7-bd07693de0b2",
+        "host_id": "durable",
+        "status": "DISPATCHED",
+        "base": "ada4892b3df3138f3369aa9d64aaf60f778b0d7b",
+        "scope": "Reject present malformed or unbound history before experimental waiver; portability tests preserve read guard"
+      },
+      {
+        "id": "ROUNDTRIP-ROUTE-WIRING",
+        "worker": "06",
+        "thread_id": "01a118fc-f867-7233-8eec-c20659e70095",
+        "host_id": "durable",
+        "status": "DISPATCHED",
+        "scope": "roundtrip existing supported route checker wiring; no eligibility or missing proof fabrication"
+      },
+      {
+        "id": "BOUNDED-PAPER-OBSERVATION-COLLECTOR",
+        "worker": "04",
+        "thread_id": "01a118fc-b862-7340-ab3a-e1115a3280a4",
+        "host_id": "durable",
+        "status": "DISPATCHED",
+        "scope": "new collector using existing admitted budget/provider boundaries; no cloud calls"
       }
     ]
   },
@@ -4669,15 +5183,15 @@
   ],
   "last_reconciliation": {
     "kind": "HOURLY_GITHUB_RECONCILIATION",
-    "at": "2026-10-09T02:54:27Z",
-    "status": "UNCHANGED_NO_NEW_UNASSIGNED_REVIEW_WORK",
+    "at": "2026-10-09T03:58:19Z",
+    "status": "INPUT_SCOPE_BLOCKER_EXPERIMENTAL_POLICY",
     "cloud_execution": {
       "provider": "cloud",
       "observations_current": true,
       "observed_phase": "running",
-      "spec_revision": "95"
+      "spec_revision": "98"
     },
-    "queue_blob_sha": "5bd003408494c60e22207a2568d079dcc653873c",
+    "queue_blob_sha": "71a3143fcdcad38f400d7b44f044ca627c932c3c",
     "external_claims": [
       {
         "id": "PR97-INDEPENDENT-REVIEW",
@@ -4691,31 +5205,250 @@
         "wait_cursor": "b9784eaf-f3e5-457f-a98d-a386c23b37ea:48",
         "turn_id": "01a11c6e-65ba-7787-b458-530144590287",
         "scope": "Review changed code and existing regression tests only; earlier flagged custom probes not repeated; stop if blocked"
+      },
+      {
+        "id": "PAPER-RUNNER-LIFECYCLE",
+        "worker": "09",
+        "thread_id": "01a118fd-3f90-77d9-9549-c4497f5b10a6",
+        "host_id": "durable",
+        "status": "ACCEPTED_INTEGRATED_NOT_DEPLOYED",
+        "base": "9e43752daabf19b7e78e08e0b15d16d1c6e2a680",
+        "scope": "Minimal supervised runner using existing ledger/engine/watchdog, executable synthetic lifecycle and restart; no live authorization or screening policy changes",
+        "turn_id": "01a11eae-36ed-72bd-8c5d-ab7f42d99073",
+        "wait_cursor": "68a4d56e-d04a-40dc-ad15-e80a29c96b80:11",
+        "pr": 103,
+        "head": "7100483d800189b62efa14da33de3e21e7dd0f35"
+      },
+      {
+        "id": "EXPERIMENTAL-PAPER-OWNERSHIP-POLICY",
+        "worker": "02",
+        "thread_id": "01a118fc-666c-70b6-9fa8-2c7520f0a0bb",
+        "host_id": "durable",
+        "status": "PUBLISHED_PENDING_INDEPENDENT_REVIEW",
+        "base": "9e43752daabf19b7e78e08e0b15d16d1c6e2a680",
+        "scope": "Explicit paper-only unresolved-history risk policy using persisted diagnostics; known hazards reject; no fake completeness, engine changes or PR97 dependency",
+        "turn_id": "01a11eae-d80e-7427-8466-5db09d9ffa01",
+        "wait_cursor": "a2dcfb97-463d-4188-9da3-48a81e644d23:68",
+        "pr": 102,
+        "head": "ada4892b3df3138f3369aa9d64aaf60f778b0d7b"
+      },
+      {
+        "id": "PAPER-LIVE-OBSERVATION-ADAPTER",
+        "worker": "04",
+        "thread_id": "01a118fc-b862-7340-ab3a-e1115a3280a4",
+        "host_id": "durable",
+        "status": "PUBLISHED_PENDING_INDEPENDENT_REVIEW",
+        "base": "9e43752daabf19b7e78e08e0b15d16d1c6e2a680",
+        "scope": "Useful timestamped raw observation normalization with exact units/source hash, no invented metrics or provider calls",
+        "turn_id": "01a11eb0-22b3-75c2-b925-25a798d51404",
+        "wait_cursor": "d3153436-2742-432e-8501-9c06b95f29ae:14",
+        "pr": 104,
+        "head": "7146b821f932d85157a6357a2f44c6cf54d2f766"
+      },
+      {
+        "id": "PAPER-EXPERIMENT-RESULTS",
+        "worker": "10",
+        "thread_id": "01a118fd-56d5-70b8-ad31-dba13e982082",
+        "host_id": "durable",
+        "status": "PUBLISHED_PENDING_INDEPENDENT_REVIEW",
+        "base": "d36957a179816fb48224fdf262159a9885afb354",
+        "scope": "Read-only bounded existing-ledger performance report, config/version/provenance/closed trades/PnL/costs/drawdown/open inventory; no invented profitability threshold",
+        "pr": 105,
+        "head": "0c8481bc0e7b607a354cb3adaf9c91a9a53615e5",
+        "turn_id": "01a11eb5-42fc-77fc-a5c3-c58b117785ed",
+        "wait_cursor": "e6039648-56af-4049-8a6e-06eaaa8aba52:35"
+      },
+      {
+        "id": "PR102-INDEPENDENT-REVIEW",
+        "worker": "01",
+        "thread_id": "01a118fc-39bc-722c-b442-8bf5a749e0bb",
+        "host_id": "durable",
+        "status": "CHANGES_REQUESTED",
+        "pr": 102,
+        "head": "ada4892b3df3138f3369aa9d64aaf60f778b0d7b",
+        "scope": "Exact-head independent review and combined Linux suite; no integration",
+        "turn_id": "01a11ebd-9b09-7263-91c8-c69bc6c3b471",
+        "wait_cursor": "5e651fc7-2996-4765-974d-5c852257a005:77",
+        "review_url": "https://github.com/pixelmanager-cloud/solana-paper-desk/pull/102#issuecomment-6073805785",
+        "finding": "Present corrupt history can downgrade to incomplete risk; portable tests need read capability gating"
+      },
+      {
+        "id": "PR103-INDEPENDENT-REVIEW",
+        "worker": "06",
+        "thread_id": "01a118fc-f867-7233-8eec-c20659e70095",
+        "host_id": "durable",
+        "status": "PASS",
+        "pr": 103,
+        "head": "7100483d800189b62efa14da33de3e21e7dd0f35",
+        "scope": "Exact-head independent review and combined Linux suite; no integration",
+        "turn_id": "01a11ebd-aa79-7370-b796-8f66f317a16b",
+        "wait_cursor": "8f3328cf-bef6-441d-83f8-2d1f46b3b0df:82",
+        "review_url": "https://github.com/pixelmanager-cloud/solana-paper-desk/pull/103#issuecomment-6073816532"
+      },
+      {
+        "id": "PR104-INDEPENDENT-REVIEW",
+        "worker": "03",
+        "thread_id": "01a118fc-9478-778a-b77a-8f8f6ec7e0ad",
+        "host_id": "durable",
+        "status": "IN_PROGRESS",
+        "pr": 104,
+        "head": "7146b821f932d85157a6357a2f44c6cf54d2f766",
+        "scope": "Exact-head independent review and combined Linux suite; no integration",
+        "turn_id": "01a11ebd-b9e3-751b-bd7b-60bee9d17906",
+        "wait_cursor": "0851f5ab-a903-4567-a6fe-4cbb4e6a7b96:23"
+      },
+      {
+        "id": "EXPERIMENTAL-OWNERSHIP-SCORING",
+        "worker": "02",
+        "thread_id": "01a118fc-666c-70b6-9fa8-2c7520f0a0bb",
+        "host_id": "durable",
+        "status": "IN_PROGRESS",
+        "scope": "model/strategy explicit unknown ownership handling and versioned experimental scoring; no live authorization",
+        "turn_id": "01a11ebe-5324-7576-a6bc-b4c8e85ea73b",
+        "wait_cursor": "a2dcfb97-463d-4188-9da3-48a81e644d23:71"
+      },
+      {
+        "id": "LIVE-STRATEGY-FEATURES",
+        "worker": "09",
+        "thread_id": "01a118fd-3f90-77d9-9549-c4497f5b10a6",
+        "host_id": "durable",
+        "status": "IN_PROGRESS",
+        "scope": "new bounded raw-trade feature producer; explicit missing inputs/coverage; no engine changes",
+        "turn_id": "01a11ebe-60c2-7569-9146-133915eac521",
+        "wait_cursor": "68a4d56e-d04a-40dc-ad15-e80a29c96b80:13"
+      },
+      {
+        "id": "PR105-INDEPENDENT-REVIEW",
+        "worker": "07",
+        "thread_id": "01a118fd-0f1c-749c-b85b-5e730937d0a8",
+        "host_id": "durable",
+        "status": "DISPATCHED",
+        "pr": 105,
+        "head": "0c8481bc0e7b607a354cb3adaf9c91a9a53615e5"
+      },
+      {
+        "id": "PAPER-RUNNER-DASHBOARD",
+        "worker": "10",
+        "thread_id": "01a118fd-56d5-70b8-ad31-dba13e982082",
+        "host_id": "durable",
+        "status": "DISPATCHED",
+        "scope": "paper_view/dashboard actual saved runner state; no invented live readiness"
+      },
+      {
+        "id": "PR102-HISTORY-INTEGRITY-REPAIR",
+        "worker": "08",
+        "thread_id": "01a118fd-2563-7126-90d7-bd07693de0b2",
+        "host_id": "durable",
+        "status": "DISPATCHED",
+        "base": "ada4892b3df3138f3369aa9d64aaf60f778b0d7b",
+        "scope": "Reject present malformed or unbound history before experimental waiver; portability tests preserve read guard"
+      },
+      {
+        "id": "ROUNDTRIP-ROUTE-WIRING",
+        "worker": "06",
+        "thread_id": "01a118fc-f867-7233-8eec-c20659e70095",
+        "host_id": "durable",
+        "status": "DISPATCHED",
+        "scope": "roundtrip existing supported route checker wiring; no eligibility or missing proof fabrication"
+      },
+      {
+        "id": "BOUNDED-PAPER-OBSERVATION-COLLECTOR",
+        "worker": "04",
+        "thread_id": "01a118fc-b862-7340-ab3a-e1115a3280a4",
+        "host_id": "durable",
+        "status": "DISPATCHED",
+        "scope": "new collector using existing admitted budget/provider boundaries; no cloud calls"
       }
     ],
     "observed_prs": [
       {
-        "pr": 97,
-        "head_sha": "c11bfad6f1a2debe323238ef746967310ba02349",
-        "base_sha": "1a9f69595bf4c8c8814654a093fbba1bde93d5ad",
-        "branch": "codex/cloud-presealed-slot-02",
-        "author_worker": "02",
-        "author_thread_id": "01a118fc-666c-70b6-9fa8-2c7520f0a0bb",
-        "comment_ids": [
-          5459418438,
-          6063827066,
-          4221224769,
-          4221224781,
-          6063884883,
-          6063965120
+        "pr": 106,
+        "head_sha": "7a45e55ca2cfa9c3c5a7802724987493c89e0dd4",
+        "base_sha": "87e026dca6c68b85abe8f4ccf2dff0307704b36c",
+        "branch": "codex/cloud-paper-scoring-02",
+        "existing_comment_ids": [
+          6073877063,
+          6073910771,
+          5465540840
         ],
-        "status": "UNCHANGED_RESERVED_WORKER05_PLATFORM_BLOCK_REPORTED_NO_RETRY"
+        "status": "EXISTING_WORKER_SCOPE_OR_REVIEW_RECONCILE_BEFORE_DUPLICATION",
+        "tests_this_run": "NOT_RUN",
+        "limitations": "No full independent review or CI certification in this reconciliation."
+      },
+      {
+        "pr": 107,
+        "head_sha": "adcaa9c17de601dd74dfc6685aa465c46aae961c",
+        "base_sha": "7146b821f932d85157a6357a2f44c6cf54d2f766",
+        "branch": "codex/cloud-live-observation-controls-01",
+        "existing_comment_ids": [
+          6073898243
+        ],
+        "status": "EXISTING_WORKER_SCOPE_OR_REVIEW_RECONCILE_BEFORE_DUPLICATION",
+        "tests_this_run": "NOT_RUN",
+        "limitations": "No full independent review or CI certification in this reconciliation."
+      },
+      {
+        "pr": 108,
+        "head_sha": "966581f608dbccc1ebccbb0a63ab3a757db5eece",
+        "base_sha": "87e026dca6c68b85abe8f4ccf2dff0307704b36c",
+        "branch": "codex/paper-engine-policy-wiring",
+        "existing_comment_ids": [],
+        "status": "REVIEW_SCOPE_BLOCKED_NO_RELAXED_GATES",
+        "tests_this_run": "NOT_RUN",
+        "limitations": "No full independent review or CI certification in this reconciliation."
+      },
+      {
+        "pr": 109,
+        "head_sha": "1acc2b51fba371b6da2be6759afe79efc7081e4b",
+        "base_sha": "ada4892b3df3138f3369aa9d64aaf60f778b0d7b",
+        "branch": "codex/cloud-08-experimental-history-repair",
+        "existing_comment_ids": [
+          5465525783,
+          6073948533
+        ],
+        "status": "EXISTING_WORKER_SCOPE_OR_REVIEW_RECONCILE_BEFORE_DUPLICATION",
+        "tests_this_run": "NOT_RUN",
+        "limitations": "No full independent review or CI certification in this reconciliation."
+      },
+      {
+        "pr": 110,
+        "head_sha": "e2ab73def0909f511d2973a48cccf421fab2a512",
+        "base_sha": "87e026dca6c68b85abe8f4ccf2dff0307704b36c",
+        "branch": "codex/roundtrip-route-connector-06",
+        "existing_comment_ids": [],
+        "status": "EXISTING_WORKER_SCOPE_OR_REVIEW_RECONCILE_BEFORE_DUPLICATION",
+        "tests_this_run": "NOT_RUN",
+        "limitations": "No full independent review or CI certification in this reconciliation."
+      },
+      {
+        "pr": 111,
+        "head_sha": "0d746d73462b8c2c4d90ec9fdf13a1a3e51124c9",
+        "base_sha": "87e026dca6c68b85abe8f4ccf2dff0307704b36c",
+        "branch": "codex/cloud-wave1-10-loop-visibility",
+        "existing_comment_ids": [
+          6073946802
+        ],
+        "status": "EXISTING_WORKER_SCOPE_OR_REVIEW_RECONCILE_BEFORE_DUPLICATION",
+        "tests_this_run": "NOT_RUN",
+        "limitations": "No full independent review or CI certification in this reconciliation."
+      },
+      {
+        "pr": 112,
+        "head_sha": "466ff9f8b8d980b4047532d4dd50497587eea77a",
+        "base_sha": "7146b821f932d85157a6357a2f44c6cf54d2f766",
+        "branch": "codex/cloud-wave8-04-observation-collector",
+        "existing_comment_ids": [],
+        "status": "EXISTING_WORKER_SCOPE_OR_REVIEW_RECONCILE_BEFORE_DUPLICATION",
+        "tests_this_run": "NOT_RUN",
+        "limitations": "No full independent review or CI certification in this reconciliation."
       }
     ],
-    "observed_codex_branch_count": 91,
+    "observed_codex_branch_count": 105,
     "branch_pagination_complete": true,
-    "tests": "NOT_RUN_NO_NEW_UNASSIGNED_SCOPE",
-    "review_comments_posted": 0,
+    "tests": "NOT_RUN_SCOPE_RECONCILIATION_REQUIRED",
+    "review_comments_posted": 1,
+    "comment_id": 6073971965,
+    "comment_pr": 108,
     "infrastructure_failures": 0,
     "provider_calls": 0,
     "readiness": "BLOCKED_NO_SUPPORTED_BUDGET_FEASIBLE_PUBLIC_LEGACY_SEED; acquisition path in development",
