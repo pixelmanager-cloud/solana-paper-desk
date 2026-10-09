@@ -114,6 +114,41 @@ class PreservationTests(unittest.TestCase):
         with self.assertRaisesRegex(ValueError, 'row byte bound'):
             self.verify()
 
+    def test_hidden_original_rowid_change_rejects(self):
+        self.mutate('evidence.sqlite', 'UPDATE paper_observation_passes SET rowid=99')
+        with self.assertRaisesRegex(ValueError, 'Original rows changed'):
+            self.verify()
+
+    def test_without_rowid_preserved_primary_key_and_change(self):
+        for root in (self.old, self.live):
+            with closing(sqlite3.connect(root / 'raw.sqlite')) as c:
+                c.execute('CREATE TABLE keyed(k TEXT PRIMARY KEY,v BLOB) WITHOUT ROWID')
+                c.execute("INSERT INTO keyed VALUES('key',X'0001')")
+                c.commit()
+        self.verify()
+        self.mutate('raw.sqlite', "UPDATE keyed SET k='changed'")
+        with self.assertRaisesRegex(ValueError, 'Original rows changed'):
+            self.verify()
+
+    def test_shadowed_rowid_uses_unshadowed_alias(self):
+        for root in (self.old, self.live):
+            with closing(sqlite3.connect(root / 'raw.sqlite')) as c:
+                c.execute('CREATE TABLE shadow(rowid TEXT,_rowid_ TEXT)')
+                c.execute("INSERT INTO shadow VALUES('ordinary','ordinary')")
+                c.commit()
+        self.verify()
+        self.mutate('raw.sqlite', 'UPDATE shadow SET oid=99')
+        with self.assertRaisesRegex(ValueError, 'Original rows changed'):
+            self.verify()
+
+    def test_all_rowid_aliases_shadowed_refuses(self):
+        for root in (self.old, self.live):
+            with closing(sqlite3.connect(root / 'raw.sqlite')) as c:
+                c.execute('CREATE TABLE shadow(ROWID TEXT,_rowid_ TEXT,oid TEXT)')
+                c.commit()
+        with self.assertRaisesRegex(ValueError, 'aliases shadowed'):
+            self.verify()
+
 
 if __name__ == '__main__':
     unittest.main()

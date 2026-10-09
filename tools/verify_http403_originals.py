@@ -68,6 +68,19 @@ def compare_rows(old, new, table):
     fields = ','.join(quote(c) for c in cols)
     types = ','.join('typeof(' + quote(c) + ')' for c in cols)
     order = ','.join(quote(c) + ' COLLATE BINARY' for c in cols) + ',' + types
+    layout = [r for r in old.execute('PRAGMA table_list') if r[0] == 'main' and r[1] == table]
+    if len(layout) != 1:
+        raise ValueError('Original table layout unavailable')
+    if not layout[0][4]:  # WITHOUT ROWID tables use their preserved primary key.
+        shadowed = {c.casefold() for c in cols}
+        aliases = [c for c in ('rowid', '_rowid_', 'oid') if c not in shadowed]
+        if not aliases:
+            # Never mistake an ordinary shadow column for the hidden identity.
+            raise ValueError('All original rowid aliases shadowed')
+        identity = quote(aliases[0])
+        fields = identity + ',' + fields
+        types = 'typeof(' + identity + '),' + types
+        order = identity + ',' + order
     sql = 'SELECT ' + fields + ',' + types + ' FROM ' + quote(table) + ' ORDER BY ' + order
     left, right = old.execute(sql), new.execute(sql)
     while True:
