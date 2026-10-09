@@ -3759,6 +3759,19 @@
             "research worker busy"
           ],
           "entry": false
+        },
+        {
+          "seq": 222,
+          "mint": "cvq1R4UbmgKmiKCGYcNWy2k9Ph6rVJPL6k5QqjTpump",
+          "pool": "94x7BWWg6ckTM51YpDbchiwZ8HQD7xZtUMkcNJdowDy7",
+          "scan_id": "d796b12f49594e8097cc6cbb46299edb",
+          "requests_used": 6,
+          "token_policy": "PASS_TOKEN_POLICY",
+          "intake": "MIGRATION_ACCOUNT_BINDING_MISMATCH",
+          "history_id": "6e61b3af46a01818551bcdecf3836c96ef471aaedc471a0c119aeef5b61a8b7c",
+          "event_quote_mint": "11111111111111111111111111111111",
+          "instruction_quote_mint": "So11111111111111111111111111111111111111112",
+          "entry": false
         }
       ],
       "transport_repair": {
@@ -3876,7 +3889,20 @@
           567.416,
           531.642
         ],
-        "integration_commit": "625c2e0039f55bc2afc98f59e416cf09c0896ea0"
+        "integration_commit": "625c2e0039f55bc2afc98f59e416cf09c0896ea0",
+        "cloud_partial_final": {
+          "tests": 521,
+          "passed": 520,
+          "errors": 1,
+          "skips": 0,
+          "seconds": 842.056,
+          "status": "PARTIAL_FAILED_ORDERLY_STOP_NOT_FULL_PASS",
+          "error": "test_cloud_dashboard_evidence loopback HTTP getresponse TimeoutError, no data assertion mismatch",
+          "unchanged_isolated": "PASS1test1.435s",
+          "review_url": "https://github.com/pixelmanager-cloud/solana-paper-desk/pull/164#issuecomment-6083902371",
+          "remaining_not_run": 2024,
+          "source_manifest": "4787017c591e0ae90273bffda346cdbd67df68d231aa9b0ef0f348910249f43d"
+        }
       },
       "artifact_attachment_limit": "PR161/162/163 attach attempts rejected: thread attachment identity count exceeds100; GitHub PR identities persisted inqueue.",
       "repair_vps_validation": {
@@ -3896,7 +3922,7 @@
         "source": "31b249e1dfbb16c12ec89235a7137afab4de989fd05ded52a0231ebdfb9667ae",
         "archive_sha256": "9a65d84e810f4db36d1aa4be62c735720492e7bd03201a45eb32d88a89e619b0",
         "path": "/opt/solana-desk-releases/b414dbd",
-        "status": "STAGED_NOT_DEPLOYED_FINAL_CI_RUNNING",
+        "status": "DEPLOYED",
         "ci_runs": [
           37950823871,
           37950815849
@@ -3917,6 +3943,43 @@
           "log": "/var/tmp/paper-review-31b249e/full-cycle-probe.log",
           "log_sha256": "7bd986585cb1a9ac9cab14397c6aba8ff7a28b9e7d7f4663d61bf0703ea30dba",
           "provenance": "SYNTHETIC_TEST_ONLY_NORMAL_CLOCK_ALL_NATIVE_GATES"
+        },
+        "ci_status": "BOTH_SUCCESS",
+        "ci_tests": 2545,
+        "ci_seconds": [
+          617.664,
+          391.407
+        ],
+        "runtime_receipt_hash": "104329395b99a60b1da22f8085c8fd2832510570b3c4e875937dc0aa6ba6df46",
+        "original_tables_verified_unchanged": 47,
+        "pre_backup": "/var/backups/solana-desk/pre-transport-b414dbd",
+        "post_backup": "/var/backups/solana-desk/post-transport-b414dbd/daily-20261009T153104Z",
+        "production_positions": 0,
+        "production_outcomes": 0,
+        "production_cash": "5",
+        "first_live_entry": false
+      },
+      "migration_sentinel_diagnosis": {
+        "status": "READ_ONLY_ASSIGNED",
+        "owner": "08",
+        "thread_id": "01a118fd-2563-7126-90d7-bd07693de0b2",
+        "reviewer": "02",
+        "reviewer_thread_id": "01a118fc-666c-70b6-9fa8-2c7520f0a0bb",
+        "base": "b414dbd175042e20eb17a50fd65e396d495820fd",
+        "scope": "Verify official event semantics for default quote-mint versus WSOL; no waiver without proof",
+        "runtime_preflight_owner": "07",
+        "runtime_preflight_thread_id": "01a118fd-0f1c-749c-b85b-5e730937d0a8",
+        "runtime_constraint": "Current immutable one-hop receipt already used; no reset/overwrite/new experiment",
+        "turn_id": "01a12150-f176-7644-90fe-44547aeef208",
+        "review_turn_id": "01a12151-93fb-7385-adf8-0ddb85e8f909",
+        "runtime_preflight_turn_id": "01a12151-3461-765e-8206-e5120d9cf0d1",
+        "runtime_preflight_result": "Current API cannot safely perform second upgrade. Proposed bounded append-only continuation preserving original receipt and immutable history; no implementation authorized yet.",
+        "offline_discovery": {
+          "observations": 240,
+          "default_key_migration_events": 145,
+          "wsol_event_examples": 0,
+          "decode_rejected": 20,
+          "provider_calls": 0
         }
       }
     }
