@@ -4403,7 +4403,7 @@
             "thread_id": "01a118fd-0f1c-749c-b85b-5e730937d0a8",
             "reviewer": "09",
             "review_thread_id": "01a118fd-3f90-77d9-9549-c4497f5b10a6",
-            "status": "PR172_INDEPENDENT_REVIEW_AND_COMPOSITION_RUNNING",
+            "status": "PR172_HELD_BOUNDED_EVIDENCE_READ_FIX_ASSIGNED_07",
             "pass_id": "d8600ce75e014e22b84c3fd8d10bf2c0",
             "intent_hash": "6f6cfd1efe9aa257638bd750ccd3c4099a3943a5d403132fa9d9d2a7b868fb7e",
             "retained_outcome_hash": "4352afa8e732c4f03eaf1cb788047aea58379fe3ef24edd05f5535e5680eb4a8",
@@ -4430,7 +4430,7 @@
             "invocation_start_microseconds": 1791564502120007,
             "invocation_end_microseconds": 1791564509227403,
             "invocation_exit": 2,
-            "fixture_turn": "01a121be-c550-7790-adeb-aa3596f07dd1",
+            "fixture_turn": "01a121df-3af9-7110-886b-50045f73d1e5",
             "historical_proof_review_turn": "01a121c3-298c-701c-bb75-c245a6843f65",
             "historical_proof_review": "Supports explicit coordinator-reviewed legacy association only; recheckexactrecords/anchors/pending states",
             "historical_source_replay": "8c675296 actual retainedsnapshot96a8c9 rejection reproduced LP_TOKEN_PROGRAM_UNSUPPORTED,ACCRUED_POOL_FEES_REQUIRE_RESERVE_ADJUSTMENT,VIRTUAL_RESERVES_REQUIRE_SPECIAL_PRICING;0calls originalunchanged",
@@ -4448,7 +4448,31 @@
               37971466355,
               37971568991
             ],
-            "artifact_attachment": "FAILED thread attachment identity count exceeds 100"
+            "artifact_attachment": "FAILED thread attachment identity count exceeds 100",
+            "review_turn": "01a121df-2b97-7308-9819-747b791c023f",
+            "classification_exact_review_turn": "01a121df-c0af-7194-8b1a-8cc0a60cbf6c",
+            "operations_review_owner": "06",
+            "root_focused": {
+              "head": "99aba03843c238f08ad627c4df884e77d3e3c488",
+              "tests": 23,
+              "seconds": 4.269,
+              "result": "PASS"
+            },
+            "implementation_hash": "1944da4c47840df5d39d1d19528a3b8ba87444763311365ee43a42cb62a90fc1",
+            "independent_review": {
+              "head": "99aba03843c238f08ad627c4df884e77d3e3c488",
+              "result": "HOLD",
+              "finding": "Evidence _load fetches compressed payload before SQL type/byte preflight; reviewer materialized corrupt20MiB blob; bounded preflight and fetch required",
+              "focused_tests": 92,
+              "seconds": 57.634,
+              "independent_probes": 2
+            },
+            "root_offline_public_replay": {
+              "head": "99aba03843c238f08ad627c4df884e77d3e3c488",
+              "result": "RAW_PROOF_COMPATIBLE_NOT_LIVE_AUTHORIZATION",
+              "invocation_hash": "4ce301202bc5aa68df3c0c6c02fab9f455785d2d0521e794b27ab98b66c53307",
+              "calls": 0
+            }
           }
         }
       }
