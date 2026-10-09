@@ -154,6 +154,11 @@ def build_market_event(collected, *, context, load_evidence, raw_trades=(),
         if not 0<=fee<10000:raise ValueError('invalid fee assumption')
     except ValueError:blockers.add('EXPLICIT_PAPER_FEE_ASSUMPTION_REQUIRED')
     e={'schema_version':1,'kind':'market','ts':context.now,'mint':target.mint,'pool':target.pool,'taker':target.taker,
+       # Detached original account already replayed and bound to retained RPC
+       # envelope above; these bytes, not normalized PASS flags, feed entry policy.
+       'token_evidence':{'mint':target.mint,'observed_at':mint.source.observed_at,
+          'account':mint_raw['account'],'slot':mint.slot,'source_id':mint.source.source_id,
+          'source_hash':mint.source.raw_hash,'original_json':mint.source.original_json},
        'venue':'pumpswap','provenance':context.provenance,'graduated':True,
        'mint_revoked':True,'freeze_revoked':True,'lp_verified':True,'extensions_safe':True,
        'data_healthy':not blockers,'flow_confirmed':False,'danger':bool(context.known_hazards),
