@@ -1,0 +1,565 @@
+[
+  {
+    "blockers": [
+      "PACING_DEADLINE_EXCEEDED"
+    ],
+    "calls": [
+      {
+        "at": 100000.95,
+        "method": "getAccountInfo",
+        "used": 1
+      },
+      {
+        "at": 100002.95,
+        "method": "getAccountInfo",
+        "used": 2
+      },
+      {
+        "at": 100004.95,
+        "method": "getMultipleAccounts",
+        "used": 3
+      },
+      {
+        "at": 100005.0,
+        "method": "quote",
+        "used": 4
+      },
+      {
+        "at": 100006.95,
+        "method": "getTransactionsForAddress",
+        "used": 5
+      },
+      {
+        "at": 100007.0,
+        "method": "price",
+        "used": 6
+      },
+      {
+        "at": 100008.95,
+        "method": "getSlot",
+        "used": 7
+      }
+    ],
+    "entry_elapsed": 10.0,
+    "fraction": 0.9,
+    "kind": "cold",
+    "outcomes": [],
+    "pacing": [
+      [
+        "helius",
+        100010.90000000047,
+        100010.85000000057
+      ],
+      [
+        "jupiter",
+        100008.95000000036,
+        100007.00000000035
+      ]
+    ],
+    "refs_observed_at": [],
+    "result_usd_methods": [],
+    "result_usd_observed_at": [],
+    "status": "BLOCKED",
+    "total_used": 8,
+    "usd_elapsed": 0.0,
+    "usd_used": 0
+  },
+  {
+    "blockers": [],
+    "calls": [
+      {
+        "at": 100000.05,
+        "method": "price",
+        "used": 1
+      },
+      {
+        "at": 100000.1,
+        "method": "getSlot",
+        "used": 2
+      },
+      {
+        "at": 100002.1,
+        "method": "getBlockTime",
+        "used": 3
+      },
+      {
+        "at": 100004.1,
+        "method": "getAccountInfo",
+        "used": 4
+      },
+      {
+        "at": 100006.1,
+        "method": "getAccountInfo",
+        "used": 5
+      },
+      {
+        "at": 100008.1,
+        "method": "getMultipleAccounts",
+        "used": 6
+      },
+      {
+        "at": 100008.15,
+        "method": "quote",
+        "used": 7
+      },
+      {
+        "at": 100010.1,
+        "method": "getTransactionsForAddress",
+        "used": 8
+      }
+    ],
+    "entry_elapsed": 8.0,
+    "fraction": 0.0,
+    "kind": "naive",
+    "outcomes": [],
+    "pacing": [
+      [
+        "helius",
+        100012.0500000006,
+        100010.10000000059
+      ],
+      [
+        "jupiter",
+        100010.10000000049,
+        100008.15000000047
+      ]
+    ],
+    "refs_observed_at": [
+      100000,
+      100000,
+      100002
+    ],
+    "result_usd_methods": [
+      "jupiter_price_v3",
+      "getSlot",
+      "getBlockTime"
+    ],
+    "result_usd_observed_at": [
+      100000,
+      100000,
+      100002
+    ],
+    "status": "COMPLETE",
+    "total_used": 8,
+    "usd_elapsed": 2.1,
+    "usd_used": 3
+  },
+  {
+    "blockers": [
+      "MARKET_PRODUCER_BLOCKED"
+    ],
+    "calls": [
+      {
+        "at": 100000.95,
+        "method": "price",
+        "used": 1
+      },
+      {
+        "at": 100001.0,
+        "method": "getSlot",
+        "used": 2
+      },
+      {
+        "at": 100003.0,
+        "method": "getBlockTime",
+        "used": 3
+      },
+      {
+        "at": 100005.0,
+        "method": "getAccountInfo",
+        "used": 4
+      },
+      {
+        "at": 100007.0,
+        "method": "getAccountInfo",
+        "used": 5
+      },
+      {
+        "at": 100009.0,
+        "method": "getMultipleAccounts",
+        "used": 6
+      },
+      {
+        "at": 100009.05,
+        "method": "quote",
+        "used": 7
+      },
+      {
+        "at": 100011.0,
+        "method": "getTransactionsForAddress",
+        "used": 8
+      }
+    ],
+    "entry_elapsed": 8.0,
+    "fraction": 0.9,
+    "kind": "naive",
+    "outcomes": [],
+    "pacing": [
+      [
+        "helius",
+        100012.9500000006,
+        100011.00000000058
+      ],
+      [
+        "jupiter",
+        100011.00000000048,
+        100009.05000000047
+      ]
+    ],
+    "refs_observed_at": [
+      100000,
+      100001,
+      100003
+    ],
+    "result_usd_methods": [
+      "jupiter_price_v3",
+      "getSlot",
+      "getBlockTime"
+    ],
+    "result_usd_observed_at": [
+      100000,
+      100001,
+      100003
+    ],
+    "status": "BLOCKED",
+    "total_used": 8,
+    "usd_elapsed": 2.1,
+    "usd_used": 3
+  },
+  {
+    "blockers": [],
+    "calls": [
+      {
+        "at": 100000.95,
+        "method": "getTransactionsForAddress",
+        "used": 1
+      },
+      {
+        "at": 100003.0,
+        "method": "getAccountInfo",
+        "used": 2
+      },
+      {
+        "at": 100005.0,
+        "method": "getAccountInfo",
+        "used": 3
+      },
+      {
+        "at": 100007.0,
+        "method": "getMultipleAccounts",
+        "used": 4
+      },
+      {
+        "at": 100007.05,
+        "method": "quote",
+        "used": 5
+      },
+      {
+        "at": 100009.05,
+        "method": "price",
+        "used": 6
+      },
+      {
+        "at": 100009.1,
+        "method": "getSlot",
+        "used": 7
+      },
+      {
+        "at": 100011.1,
+        "method": "getBlockTime",
+        "used": 8
+      },
+      {
+        "at": 100011.15,
+        "method": "quote",
+        "used": 9
+      }
+    ],
+    "entry_elapsed": 8.2,
+    "fraction": 0.9,
+    "kind": "prehistory",
+    "outcomes": [
+      "buy"
+    ],
+    "pacing": [
+      [
+        "helius",
+        100013.05000000048,
+        100011.10000000047
+      ],
+      [
+        "jupiter",
+        100013.10000000049,
+        100011.15000000047
+      ]
+    ],
+    "refs_observed_at": [],
+    "result_usd_methods": [
+      "jupiter_price_v3",
+      "getSlot",
+      "getBlockTime"
+    ],
+    "result_usd_observed_at": [
+      100009,
+      100009,
+      100011
+    ],
+    "status": "COMPLETE",
+    "total_used": 9,
+    "usd_elapsed": 2.05,
+    "usd_used": 1
+  },
+  {
+    "blockers": [
+      "PACING_DEADLINE_EXCEEDED"
+    ],
+    "calls": [
+      {
+        "at": 100000.95,
+        "method": "getTransactionsForAddress",
+        "used": 1
+      },
+      {
+        "at": 100003.0,
+        "method": "getAccountInfo",
+        "used": 2
+      },
+      {
+        "at": 100005.0,
+        "method": "getAccountInfo",
+        "used": 3
+      },
+      {
+        "at": 100007.0,
+        "method": "getMultipleAccounts",
+        "used": 4
+      },
+      {
+        "at": 100007.05,
+        "method": "quote",
+        "used": 5
+      },
+      {
+        "at": 100009.0,
+        "method": "getTransactionsForAddress",
+        "used": 6
+      },
+      {
+        "at": 100009.05,
+        "method": "price",
+        "used": 7
+      },
+      {
+        "at": 100011.0,
+        "method": "getSlot",
+        "used": 8
+      }
+    ],
+    "entry_elapsed": 10.0,
+    "fraction": 0.9,
+    "kind": "prehistory-cli",
+    "outcomes": [],
+    "pacing": [
+      [
+        "helius",
+        100012.95000000048,
+        100012.90000000058
+      ],
+      [
+        "jupiter",
+        100011.00000000036,
+        100009.05000000035
+      ]
+    ],
+    "refs_observed_at": [],
+    "result_usd_methods": [],
+    "result_usd_observed_at": [],
+    "status": "BLOCKED",
+    "total_used": 9,
+    "usd_elapsed": 2.05,
+    "usd_used": 1
+  },
+  {
+    "blockers": [],
+    "calls": [
+      {
+        "at": 100000.95,
+        "method": "getSlot",
+        "used": 1
+      },
+      {
+        "at": 100002.95,
+        "method": "getSlot",
+        "used": 2
+      },
+      {
+        "at": 100004.95,
+        "method": "getSlot",
+        "used": 3
+      },
+      {
+        "at": 100006.95,
+        "method": "getSlot",
+        "used": 4
+      },
+      {
+        "at": 100008.95,
+        "method": "getTransactionsForAddress",
+        "used": 5
+      },
+      {
+        "at": 100011.0,
+        "method": "getAccountInfo",
+        "used": 6
+      },
+      {
+        "at": 100013.0,
+        "method": "getAccountInfo",
+        "used": 7
+      },
+      {
+        "at": 100015.0,
+        "method": "getMultipleAccounts",
+        "used": 8
+      },
+      {
+        "at": 100015.05,
+        "method": "quote",
+        "used": 9
+      },
+      {
+        "at": 100017.05,
+        "method": "price",
+        "used": 10
+      },
+      {
+        "at": 100017.1,
+        "method": "getSlot",
+        "used": 11
+      },
+      {
+        "at": 100019.1,
+        "method": "getBlockTime",
+        "used": 12
+      },
+      {
+        "at": 100019.15,
+        "method": "quote",
+        "used": 13
+      }
+    ],
+    "entry_elapsed": 8.2,
+    "fraction": 0.9,
+    "kind": "prehistory-spent",
+    "outcomes": [
+      "buy"
+    ],
+    "pacing": [
+      [
+        "helius",
+        100021.05000000095,
+        100019.10000000094
+      ],
+      [
+        "jupiter",
+        100021.10000000095,
+        100019.15000000094
+      ]
+    ],
+    "refs_observed_at": [],
+    "result_usd_methods": [
+      "jupiter_price_v3",
+      "getSlot",
+      "getBlockTime"
+    ],
+    "result_usd_observed_at": [
+      100017,
+      100017,
+      100019
+    ],
+    "status": "COMPLETE",
+    "total_used": 13,
+    "usd_elapsed": 10.05,
+    "usd_used": 5
+  },
+  {
+    "blockers": [],
+    "calls": [
+      {
+        "at": 100000.95,
+        "method": "getTransactionsForAddress",
+        "used": 1
+      },
+      {
+        "at": 100001.0,
+        "method": "price",
+        "used": 2
+      },
+      {
+        "at": 100002.95,
+        "method": "getSlot",
+        "used": 3
+      },
+      {
+        "at": 100004.95,
+        "method": "getBlockTime",
+        "used": 4
+      },
+      {
+        "at": 100006.95,
+        "method": "getAccountInfo",
+        "used": 5
+      },
+      {
+        "at": 100008.95,
+        "method": "getAccountInfo",
+        "used": 6
+      },
+      {
+        "at": 100010.95,
+        "method": "getMultipleAccounts",
+        "used": 7
+      },
+      {
+        "at": 100011.0,
+        "method": "quote",
+        "used": 8
+      }
+    ],
+    "entry_elapsed": 6.05,
+    "fraction": 0.9,
+    "kind": "history-usd",
+    "outcomes": [],
+    "pacing": [
+      [
+        "helius",
+        100012.90000000059,
+        100010.95000000058
+      ],
+      [
+        "jupiter",
+        100012.9500000006,
+        100011.00000000058
+      ]
+    ],
+    "refs_observed_at": [
+      100001,
+      100002,
+      100004
+    ],
+    "result_usd_methods": [
+      "jupiter_price_v3",
+      "getSlot",
+      "getBlockTime"
+    ],
+    "result_usd_observed_at": [
+      100001,
+      100002,
+      100004
+    ],
+    "status": "COMPLETE",
+    "total_used": 8,
+    "usd_elapsed": 4.05,
+    "usd_used": 4
+  }
+]
