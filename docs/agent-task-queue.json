@@ -1673,6 +1673,20 @@
       "status": "INDEPENDENT_REVIEW_06",
       "author": "01",
       "live_acceptance": false
+    },
+    "ci_infrastructure_blocker": {
+      "status": "BLOCKED_GITHUB_BILLING",
+      "run_id": 37882624392,
+      "check_run_id": 113665504091,
+      "head": "90d8c59d1e98c3d09074a6f2fa4a029dbd420862",
+      "evidence": "Job not started: recent account payments failed or spending limit needs increased; runner_id=0,steps=[]",
+      "action": "User notified; no billing changes, bypass or repeated reruns. Independent reviews and local tests continue; new repairs cannot meet CI acceptance gate."
+    },
+    "pending_pr118": {
+      "head": "76225f565c12d0d8039343f6a196015da7fbe4b0",
+      "status": "INDEPENDENT_REVIEW_08_AFTER_MAPPING",
+      "author_linux_tests": 2001,
+      "live_acceptance": false
     }
   },
   "native_reconciliation_review": {
