@@ -1,6 +1,6 @@
 {
   "schema_version": 1,
-  "revision": 75,
+  "revision": 76,
   "repository": "pixelmanager-cloud/solana-paper-desk",
   "source_main_sha": "e298e15cd758932e81d2241130716632702f5bd0",
   "observed_date": "2026-10-08",
@@ -4528,6 +4528,46 @@
       "provider_calls": 0,
       "readiness": "BLOCKED_NO_SUPPORTED_BUDGET_FEASIBLE_PUBLIC_LEGACY_SEED; acquisition path in development",
       "schedule": "NOT_REPROBED_NO_DURABLE_BINDING_CLAIM"
+    },
+    {
+      "kind": "HOURLY_GITHUB_RECONCILIATION",
+      "at": "2026-10-09T17:00:40Z",
+      "status": "PR169_RESERVED_WORKER02_NO_DUPLICATION",
+      "cloud_execution": {
+        "provider": "cloud",
+        "observations_current": true,
+        "observed_phase": "running",
+        "spec_revision": "151"
+      },
+      "queue_blob_sha": "e78cfdc1b8462f3e6c3c9c36ac969ad2b7a1a131",
+      "observed_prs": [
+        {
+          "pr": 169,
+          "head_sha": "afc16bfdc6f5fb48fe42d4c3cdfdae6f2eec7654",
+          "base_sha": "5746912cd88b9527e2b196a2edefc66b72c257a0",
+          "branch": "codex/cloud-pool-feature-audit-08",
+          "author_worker": "08",
+          "author_thread_id": "01a118fd-2563-7126-90d7-bd07693de0b2",
+          "reviewer_worker": "02",
+          "reviewer_thread_id": "01a118fc-666c-70b6-9fa8-2c7520f0a0bb",
+          "ownership_evidence": "Exact PR body explicitly independent02 review pending; branch08 and author handoff",
+          "comment_ids": [
+            6085472250
+          ],
+          "status": "RESERVED_WORKER02_COMPONENT_REVIEW_PENDING",
+          "tests_this_run": "NOT_RUN",
+          "ci": "AUTHOR_REPORT_IN_PROGRESS_NOT_VERIFIED",
+          "limitations": "No tests, review or CI success certified by this run; no policy compatibility acceptance."
+        }
+      ],
+      "observed_codex_branch_count": 168,
+      "branch_pagination_complete": true,
+      "tests": "NOT_RUN_RESERVED_INDEPENDENT_REVIEW",
+      "review_comments_posted": 0,
+      "infrastructure_failures": 0,
+      "provider_calls": 0,
+      "readiness": "BLOCKED_NO_SUPPORTED_BUDGET_FEASIBLE_PUBLIC_LEGACY_SEED; acquisition path in development",
+      "schedule": "NOT_REPROBED_NO_DURABLE_BINDING_CLAIM"
     }
   ],
   "artifact_pr": {
@@ -8123,78 +8163,38 @@
   ],
   "last_reconciliation": {
     "kind": "HOURLY_GITHUB_RECONCILIATION",
-    "at": "2026-10-09T16:01:51Z",
-    "status": "EXISTING_REVIEW_SCOPES_AND_PROVISIONAL_INVESTIGATION",
+    "at": "2026-10-09T17:00:40Z",
+    "status": "PR169_RESERVED_WORKER02_NO_DUPLICATION",
     "cloud_execution": {
       "provider": "cloud",
       "observations_current": true,
       "observed_phase": "running",
-      "spec_revision": "136"
+      "spec_revision": "151"
     },
-    "queue_blob_sha": "fc3bcf9c86978e3e235e1988f63c91836781596e",
+    "queue_blob_sha": "e78cfdc1b8462f3e6c3c9c36ac969ad2b7a1a131",
     "observed_prs": [
       {
-        "pr": 162,
-        "head_sha": "b644bee22d1112e0c5b2b90e2548db9c60e752e1",
-        "base_sha": "e4badabe0ce850ceec59e4ae25aa1e7e0c266efb",
-        "branch": "codex/cloud-http-framing-audit-08",
+        "pr": 169,
+        "head_sha": "afc16bfdc6f5fb48fe42d4c3cdfdae6f2eec7654",
+        "base_sha": "5746912cd88b9527e2b196a2edefc66b72c257a0",
+        "branch": "codex/cloud-pool-feature-audit-08",
+        "author_worker": "08",
+        "author_thread_id": "01a118fd-2563-7126-90d7-bd07693de0b2",
+        "reviewer_worker": "02",
+        "reviewer_thread_id": "01a118fc-666c-70b6-9fa8-2c7520f0a0bb",
+        "ownership_evidence": "Exact PR body explicitly independent02 review pending; branch08 and author handoff",
         "comment_ids": [
-          6083383700,
-          6083404071,
-          6083464729,
-          6083498672,
-          6083557545,
-          6083594247,
-          6083688758
+          6085472250
         ],
-        "status": "EXTERNAL_INDEPENDENT_COMPONENT_REVIEW_PRESENT",
+        "status": "RESERVED_WORKER02_COMPONENT_REVIEW_PENDING",
         "tests_this_run": "NOT_RUN",
-        "limitations": "No dependent completion or author test certification; PR167 explicitly investigation-only, provisional166 dependency not accepted."
-      },
-      {
-        "pr": 165,
-        "head_sha": "f40ea164b6ed6e1883bcbb094fc3cb24c2f7a07f",
-        "base_sha": "b414dbd175042e20eb17a50fd65e396d495820fd",
-        "branch": "codex/cloud-migration-sentinel-audit-08",
-        "comment_ids": [
-          6084336311,
-          6084393868,
-          6084400756
-        ],
-        "status": "EXTERNAL_INDEPENDENT_COMPONENT_REVIEW_PRESENT",
-        "tests_this_run": "NOT_RUN",
-        "limitations": "No dependent completion or author test certification; PR167 explicitly investigation-only, provisional166 dependency not accepted."
-      },
-      {
-        "pr": 166,
-        "head_sha": "4c981382e3e5dac8706361975dcad1813bc8dc50",
-        "base_sha": "b414dbd175042e20eb17a50fd65e396d495820fd",
-        "branch": "codex/cloud-wave1-07-runtime-continuation",
-        "comment_ids": [
-          5472323451,
-          6084383552,
-          5472356903,
-          5472403909,
-          6084486855
-        ],
-        "status": "EXTERNAL_WORKER09_REPAIRED_HEAD_REMAINING_BOUND_FINDING",
-        "tests_this_run": "NOT_RUN",
-        "limitations": "No dependent completion or author test certification; PR167 explicitly investigation-only, provisional166 dependency not accepted."
-      },
-      {
-        "pr": 167,
-        "head_sha": "f894e024a4ec5ce9b9158b3cea4d828ba90823a9",
-        "base_sha": "b414dbd175042e20eb17a50fd65e396d495820fd",
-        "branch": "codex/cloud-wave28-04-continuation-fixture",
-        "comment_ids": [],
-        "status": "AUTHOR_WORKER04_INVESTIGATION_ONLY_UNACCEPTED_RUNTIME_DEPENDENCY",
-        "tests_this_run": "NOT_RUN",
-        "limitations": "No dependent completion or author test certification; PR167 explicitly investigation-only, provisional166 dependency not accepted."
+        "ci": "AUTHOR_REPORT_IN_PROGRESS_NOT_VERIFIED",
+        "limitations": "No tests, review or CI success certified by this run; no policy compatibility acceptance."
       }
     ],
-    "observed_codex_branch_count": 166,
+    "observed_codex_branch_count": 168,
     "branch_pagination_complete": true,
-    "tests": "NOT_RUN_NO_READY_UNASSIGNED_REVIEW",
+    "tests": "NOT_RUN_RESERVED_INDEPENDENT_REVIEW",
     "review_comments_posted": 0,
     "infrastructure_failures": 0,
     "provider_calls": 0,
