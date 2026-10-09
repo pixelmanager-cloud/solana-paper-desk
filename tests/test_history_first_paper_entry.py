@@ -1,5 +1,7 @@
 """SYNTHETIC_TEST_ONLY; normal clocks, fixture HTTP, no secrets/network."""
 import copy
+import contextlib
+import io
 from dataclasses import replace
 import inspect
 import json
@@ -86,6 +88,29 @@ class HistoryFirstTests(unittest.TestCase):
             with self.assertRaises(ValueError):self.invoke(live=True,systemd_credentials=True)
         with self.f.f.progress.store.connect() as c:
             self.assertEqual(c.execute('SELECT count(*) FROM paper_observation_passes WHERE outcome_hash IS NULL').fetchone()[0],1)
+
+    def test_live_known_hazard_no_credentials_history_charge_or_pending(self):
+        self.row.update(provenance='PUBLIC_MAINNET_CAPTURE_NOT_TRADING_EVIDENCE',known_hazards=['KNOWN_TOKEN_HAZARD']);self.save()
+        before=self.f.f.progress.admission(self.f.target.scan_id)
+        with patch.object(tool.cli,'_credentials',side_effect=AssertionError('secret')),patch.object(tool.cycle,'_history',side_effect=AssertionError('history')):
+            with self.assertRaises(ValueError):self.invoke(live=True,systemd_credentials=True)
+        self.assertEqual(before,self.f.f.progress.admission(self.f.target.scan_id))
+        with self.f.f.progress.store.connect() as c:
+            self.assertIsNone(c.execute("SELECT 1 FROM sqlite_master WHERE name='paper_observation_passes'").fetchone())
+    def test_actual_main_admission_mismatch_is_redacted_before_io(self):
+        self.row.update(provenance='PUBLIC_MAINNET_CAPTURE_NOT_TRADING_EVIDENCE',mint=self.row['taker']);self.save()
+        before=self.f.f.progress.admission(self.f.target.scan_id)
+        args=['--config',str(self.config),'--research-db',str(self.f.f.jobs.path),
+              '--evidence-db',str(self.f.f.progress.store.path),'--ledger-db',str(self.f.path),
+              '--targets',str(self.targets),'--execute','--systemd-credentials']
+        out=io.StringIO()
+        with contextlib.redirect_stdout(out),patch.object(tool.cli,'_credentials',side_effect=AssertionError('secret')),patch.object(tool.cycle,'_history',side_effect=AssertionError('history')):
+            self.assertEqual(tool.main(args),2)
+        result=json.loads(out.getvalue());self.assertEqual(result['status'],'BLOCKED')
+        self.assertEqual(result['blockers'],['HISTORY_FIRST_PREFLIGHT_OR_ACQUISITION_UNAVAILABLE'])
+        self.assertEqual(before,self.f.f.progress.admission(self.f.target.scan_id))
+        with self.f.f.progress.store.connect() as c:
+            self.assertIsNone(c.execute("SELECT 1 FROM sqlite_master WHERE name='paper_observation_passes'").fetchone())
 
     def test_normal_clock_mock_http_history_then_usd_late_buy(self):
         f=self.f;f.f.at=int(time.time());f.http_calls=[];f.sell_output=10_000_000
