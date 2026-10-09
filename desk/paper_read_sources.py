@@ -1,0 +1,216 @@
+"""Charged one-attempt collector reads; caller holds research then invocation lock.
+
+Use BoundedSource(s.rpc_source_id, s.quote_source_id, s.rpc, s.quote) with
+s=PaperReadSources(progress, scan_id). Credentials come only from runtime env.
+No admission creation, retries, source authentication or executable fill proof.
+Original bounded wire outcomes are saved in the existing evidence store before
+return/raise; the collector independently saves its original parsed responses.
+"""
+import base64
+import math
+import os
+import time
+from http.client import IncompleteRead
+from urllib.error import HTTPError
+from urllib.parse import urlencode
+from urllib.request import Request, build_opener
+
+from . import coordinator_rpc as strict
+from . import original_byte_read_transport as syntax
+from . import original_byte_slot_transport as wire
+from .history_progress import HistoryProgress
+from .model import canonical, digest
+from .programs import address
+from .providers import SOL
+
+MAX_REQUEST_BYTES = 8192
+MAX_RESPONSE_BYTES = 2 * 1024 * 1024
+RPC_ID = 'paper-read-v1'
+
+
+class PaperReadError(ValueError):
+    def __init__(self, code, evidence_hash=None):
+        super().__init__(code)
+        self.code = code
+        self.evidence_hash = evidence_hash
+
+
+class PaperReadSources:
+    rpc_source_id = 'helius-mainnet-paper-confirmed-v1'
+    quote_source_id = 'jupiter-swap-v2-build-paper-v1'
+    price_source_id = 'jupiter-price-v3-sol-paper-v1'
+
+    def __init__(self, progress, scan_id):
+        if not isinstance(progress, HistoryProgress) or type(scan_id) is not str or not 1 <= len(scan_id) <= 256:
+            raise PaperReadError('ADMISSION_REQUIRED')
+        self.progress = progress
+        self.scan_id = scan_id
+
+    def rpc(self, method, params, *, timeout_seconds):
+        try:
+            if method not in ('getAccountInfo', 'getMultipleAccounts') or type(params) is not list or len(params) != 2:
+                raise ValueError()
+            keys, options = params
+            if method == 'getAccountInfo':
+                address(keys)
+                if options != {'encoding': 'base64', 'commitment': 'confirmed'}: raise ValueError()
+            else:
+                if type(keys) is not list or not 1 <= len(keys) <= 100: raise ValueError()
+                for key in keys: address(key)
+                if len(set(keys)) != len(keys): raise ValueError()
+                if (type(options) is not dict or set(options) != {'encoding', 'commitment', 'minContextSlot'}
+                        or options['encoding'] != 'base64' or options['commitment'] != 'confirmed'
+                        or type(options['minContextSlot']) is not int or not 0 <= options['minContextSlot'] < 2**63):
+                    raise ValueError()
+            request = {'jsonrpc': '2.0', 'id': RPC_ID, 'method': method, 'params': params}
+            body = canonical(request).encode('utf-8')
+            if len(body) > MAX_REQUEST_BYTES: raise ValueError()
+        except Exception:
+            raise PaperReadError('REQUEST_INVALID') from None
+        return self._attempt(method, wire._parse(body)['params'], body, timeout_seconds)
+
+    def quote(self, input_mint, output_mint, amount, taker, *, timeout_seconds):
+        try:
+            for key in (input_mint, output_mint, taker): address(key)
+            if type(amount) is not int or not 0 < amount < 2**64 or input_mint == output_mint: raise ValueError()
+            query = {'inputMint': input_mint, 'outputMint': output_mint, 'amount': str(amount),
+                     'taker': taker, 'slippageBps': '100', 'transactionVersion': '0'}
+            body = urlencode(query).encode('ascii')
+            if len(body) > MAX_REQUEST_BYTES: raise ValueError()
+        except Exception:
+            raise PaperReadError('REQUEST_INVALID') from None
+        return self._attempt('jupiter_probe', query, body, timeout_seconds)
+
+    def sol_price(self, *, timeout_seconds):
+        """Original SOL-only Price V3 response; usdPrice/blockId require parsing."""
+        query = {'ids': SOL}
+        return self._attempt('jupiter_price_v3', query, urlencode(query).encode('ascii'), timeout_seconds)
+
+    def _attempt(self, method, params, request_bytes, timeout_seconds):
+        if type(timeout_seconds) not in (int, float) or not math.isfinite(timeout_seconds) or not 0 < timeout_seconds <= 15:
+            raise PaperReadError('DEADLINE_INVALID')
+        try:
+            started = time.monotonic()
+            if type(started) not in (int, float) or not math.isfinite(started): raise ValueError()
+        except Exception:
+            raise PaperReadError('DEADLINE_INVALID') from None
+        deadline = started + timeout_seconds
+        try:
+            admission = self.progress.admission(self.scan_id)
+            if admission is None or admission['state'] not in ('ADMITTED', 'SEALED'): raise ValueError()
+            if method == 'jupiter_probe' and (params['inputMint'], params['outputMint']) not in (
+                    (SOL, admission['descriptor']['mint']), (admission['descriptor']['mint'], SOL)):
+                raise ValueError()
+            if not self.progress.reserve(self.scan_id): raise PaperReadError('BUDGET_EXHAUSTED')
+            used = self.progress.admission(self.scan_id)['requests_used']
+        except PaperReadError:
+            raise
+        except Exception:
+            raise PaperReadError('ADMISSION_REQUIRED') from None
+        raw = None
+        completed = None
+        code = 'CREDENTIAL_UNAVAILABLE'
+        result = None
+        def remaining():
+            now = time.monotonic()
+            if not math.isfinite(now) or now < started or now >= deadline: raise PaperReadError('DEADLINE_EXCEEDED')
+            return deadline - now
+        try:
+            name = 'JUPITER_API_KEY' if method in ('jupiter_probe', 'jupiter_price_v3') else 'HELIUS_API_KEY'
+            key = os.environ.get(name)
+            if type(key) is not str or not 1 <= len(key) <= 512 or any(not 33 <= ord(c) <= 126 for c in key):
+                raise PaperReadError(code)
+            code = 'TRANSPORT_ERROR'
+            if method in ('jupiter_probe', 'jupiter_price_v3'):
+                path = '/swap/v2/build' if method == 'jupiter_probe' else '/price/v3'
+                request = Request('https://api.jup.ag' + path + '?' + request_bytes.decode('ascii'),
+                                  headers={'Accept': 'application/json', 'x-api-key': key}, method='GET')
+            else:
+                request = Request(strict._ENDPOINT + '?' + urlencode({'api-key': key}), data=request_bytes,
+                                  headers={'Content-Type': 'application/json', 'Accept': 'application/json'}, method='POST')
+            opener = build_opener(strict._NoRedirect())
+            with opener.open(request, timeout=remaining()) as response:
+                code = 'HTTP_REJECTED'
+                if type(response.status) is not int or response.status != 200: raise PaperReadError(code)
+                code = 'RESPONSE_HEADERS_INVALID'
+                if wire._header(response.headers, 'Transfer-Encoding') is not None: raise PaperReadError(code)
+                if wire._header(response.headers, 'Content-Encoding', 'identity').lower() != 'identity': raise PaperReadError(code)
+                length = wire._header(response.headers, 'Content-Length')
+                if length is not None:
+                    if not 1 <= len(length) <= 20 or not length.isascii() or not length.isdecimal(): raise PaperReadError(code)
+                    length = int(length)
+                    if length > MAX_RESPONSE_BYTES: raise PaperReadError('RESPONSE_OVERSIZED')
+                remaining()
+                code = 'TRANSPORT_ERROR'
+                try:
+                    observed = response.read(MAX_RESPONSE_BYTES + 1)
+                except IncompleteRead as error:
+                    if type(error.partial) is bytes and len(error.partial) <= MAX_RESPONSE_BYTES:
+                        raw = error.partial
+                        raise PaperReadError('RESPONSE_TRUNCATED') from None
+                    raise PaperReadError('RESPONSE_OVERSIZED') from None
+                if type(observed) is not bytes: raise PaperReadError('RESPONSE_INVALID')
+                if len(observed) > MAX_RESPONSE_BYTES: raise PaperReadError('RESPONSE_OVERSIZED')
+                raw = observed
+                if length is not None and len(raw) != length: raise PaperReadError('RESPONSE_TRUNCATED')
+            code = 'CLOCK_INVALID'
+            at = time.time()
+            if type(at) not in (int, float) or not math.isfinite(at) or not 0 <= at < 2**63: raise PaperReadError(code)
+            completed = int(at)
+            remaining()
+            code = 'RESPONSE_INVALID'
+            payload = wire._parse(raw)
+            syntax._bounded_json(payload)
+            if method in ('jupiter_probe', 'jupiter_price_v3'):
+                if type(payload) is not dict or (method == 'jupiter_probe' and any(field not in payload for field in ('inAmount', 'outAmount', 'routePlan'))):
+                    raise PaperReadError(code)
+                result = payload
+            else:
+                if (type(payload) is not dict or payload.get('jsonrpc') != '2.0' or type(payload.get('id')) is not str
+                        or payload['id'] != RPC_ID or set(payload) not in ({'jsonrpc','id','result'}, {'jsonrpc','id','error'})):
+                    raise PaperReadError(code)
+                if 'error' in payload:
+                    error = payload['error']
+                    if (type(error) is not dict or not {'code', 'message'} <= set(error) <= {'code','message','data'}
+                            or type(error['code']) is not int or not -2**63 <= error['code'] < 2**63
+                            or type(error['message']) is not str): raise PaperReadError(code)
+                    raise PaperReadError('RPC_ERROR')
+                syntax._result({'method': method, 'params': params}, payload['result'])
+                result = payload['result']
+            remaining()
+            code = None
+        except PaperReadError as error:
+            code = error.code
+        except Exception as error:
+            if isinstance(error, HTTPError):
+                code = 'HTTP_REJECTED'
+                try: error.close()
+                except Exception: pass
+            elif isinstance(error, strict.CoordinatorRPCError): code = 'HTTP_REJECTED'
+        if raw is not None and completed is None:
+            # Retain acquisition time for bounded partial/invalid observations
+            # when the clock is available; never erase the original failure.
+            try:
+                at = time.time()
+                if type(at) in (int, float) and math.isfinite(at) and 0 <= at < 2**63:
+                    completed = int(at)
+            except Exception:
+                pass
+        record = {'kind': 'paper_read_attempt_v1', 'scan_id': self.scan_id, 'requests_used': used,
+                  'source_id': self.price_source_id if method == 'jupiter_price_v3' else self.quote_source_id if method == 'jupiter_probe' else self.rpc_source_id,
+                  'method': method, 'params': params, 'request_bytes_base64': base64.b64encode(request_bytes).decode(),
+                  'response_bytes_base64': None if raw is None else base64.b64encode(raw).decode(),
+                  'observed_at': completed, 'failure_code': code}
+        try:
+            evidence_hash = self.progress.store.save(record)
+            if evidence_hash != digest(record): raise ValueError()
+        except Exception:
+            raise PaperReadError('OUTCOME_PERSISTENCE_FAILED') from None
+        if code is not None: raise PaperReadError(code, evidence_hash) from None
+        if method == 'jupiter_price_v3':
+            return {'kind': 'sol_usd_price_probe', 'observed_at': completed, 'request': params,
+                    'response': result, 'notice': 'Provider valuation estimate, not executable price or independently verified block.'}
+        if method == 'jupiter_probe':
+            return {'kind': 'unsigned_route_probe', 'observed_at': completed, 'request': params,
+                    'response': result, 'notice': 'No signing or submission. Quote is not a guaranteed fill.'}
+        return result
