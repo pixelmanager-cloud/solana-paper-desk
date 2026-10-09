@@ -3361,7 +3361,7 @@
       }
     },
     "token2022_paper_support": {
-      "status": "INTEGRATED_NOT_DEPLOYED",
+      "status": "DEPLOYED_TOKEN2022_LIVE_TRANSPORT_COMPATIBILITY_BLOCKER",
       "authorization": "2026-10-09 user: I think we need to modify the token2022 limitations as most tokens seem to be token2022 and we cannot open positions. Explicit approval to replace blanket exclusion with narrow versioned paper-only support; known hazards and unreviewed extensions still reject.",
       "base": "89f4317",
       "implementation_owner": "08",
@@ -3563,7 +3563,15 @@
           352.768,
           501.559
         ],
-        "cloud_run_caveat": "Frozen7b4f328 full cloudrun one protected10000-row reader error, original traceback buffered; isolated same test PASS7.211s, cause not yet verified.04diagnosing; two exact159fullCI runs pass."
+        "cloud_run_caveat": "Frozen7b4f328 full cloudrun one protected10000-row reader error, original traceback buffered; isolated same test PASS7.211s, cause not yet verified.04diagnosing; two exact159fullCI runs pass.",
+        "cloud_final": {
+          "tests": 2518,
+          "passed": 2514,
+          "errors": 4,
+          "seconds": 2159.1,
+          "skips": 0,
+          "cause": "Original tracebacks:10sreader deadline, two15s subprocess timeouts,1sread deadline. All4unchangedisolatedPASS; fullcloudrun remainsFAILED; independent exactCI andVPSpass retained separately."
+        }
       },
       "coordinator_handoff_operator_focused": {
         "heads": [
@@ -3615,7 +3623,19 @@
           "reviewer": "06",
           "base": "e4badabe0ce850ceec59e4ae25aa1e7e0c266efb",
           "scope": "external tools wrapper; explicit loaders/pacer/credentials, pre-spend checkpoint/source/config/pending-state refusal, dryrun default, existingAPI historyfirst; no desk changes",
-          "turn_id": "01a1210d-2cbc-71b7-87e2-ee225da13d75"
+          "turn_id": "01a1210d-2cbc-71b7-87e2-ee225da13d75",
+          "pr": 161,
+          "head": "62e458a1e40a9e0a16af34d9d9900f285227279e",
+          "status": "INDEPENDENT_PASS_ONE_CI_PASS_OTHER_RUNNING",
+          "scoped_tests": 6,
+          "scoped_seconds": 11.03,
+          "ci_runs": [
+            37944586830,
+            37944647325
+          ],
+          "review_turn_id": "01a12118-744e-7352-a28d-e2d7912cbeb0",
+          "targeted_tests": 8,
+          "independent_probes": 16
         },
         "review_url": "https://github.com/pixelmanager-cloud/solana-paper-desk/pull/160#issuecomment-6082835016"
       },
@@ -3655,9 +3675,11 @@
           37942681494,
           37942689594
         ],
-        "status": "PUSH_CI_PASS_DUPLICATE_PR_TIMEOUT_RETRY",
+        "status": "DEPLOYED",
         "push_ci_tests": 2518,
-        "push_ci_seconds": 493.297
+        "push_ci_seconds": 493.297,
+        "integration_ci_status": "BOTH_SUCCESS",
+        "retry_seconds": 509.228
       },
       "latest_discovery_readonly": {
         "observations": 125,
@@ -3665,6 +3687,71 @@
         "provider_calls": 0,
         "latest_migration_mint": "D5Ej25m9n6zKY5tt67yjKYumSGVFJCRARE5pTuc2pump",
         "entry_authorized": false
+      },
+      "production_activation": {
+        "release": "e4badabe0ce850ceec59e4ae25aa1e7e0c266efb",
+        "source_hash": "0fe08c215d591fb972b59749329abcea5c30fbbf5483ea313695ffd175aa433e",
+        "binding_hash": "fb44fb5f974bf649f029f50fd96a340fe668c0848fb4a67316f60b3d68db3aac",
+        "original_tables_verified": 40,
+        "only_original_change": "monitoring budget version2->3",
+        "pre_backup": "/var/backups/solana-desk/pre-token2022-e4badab",
+        "post_backup": "/var/backups/solana-desk/post-token2022-e4badab/daily-20261009T143544Z",
+        "post_backup_databases": 7,
+        "checkpoint_cash": "5",
+        "positions": 0,
+        "outcomes": 0,
+        "monitoring_remaining": 3600,
+        "monitoring_used": 0,
+        "private_listener": "127.0.0.1:8765",
+        "setup_note": "New ledger inherited0644; selected-ledger backup correctly rejected. Tightened0600, restarted selected services and backuppassed. Parentprivate; nooriginalledgeralteration.",
+        "first_entry_notified": false
+      },
+      "live_candidates": [
+        {
+          "seq": 146,
+          "mint": "ELon2AbN3GZkhERj1DiZe74uJnjZ8ncVu45qjb1jmUSk",
+          "scan_id": "beab6e0c9bef4ad29825604c8321a297",
+          "requests_used": 4,
+          "token_policy": "PASS_TOKEN_POLICY",
+          "intake": "OBSERVED_POOL_BINDING_INVALID",
+          "entry": false
+        },
+        {
+          "seq": 147,
+          "mint": "GBCK4AtTw3rC7ipHxTHucHtMuDHsn5hQ9JM9v5wYpump",
+          "scan_id": "a907ea03b4d2459081533ef63f5e0d3a",
+          "requests_used": 6,
+          "token_policy": "PASS_TOKEN_POLICY",
+          "intake": "CHARGED_OR_AMBIGUOUS_HISTORY_ATTEMPT",
+          "failure_code": "RESPONSE_HEADERS_INVALID",
+          "failure_evidence": "003ad75b7be3291082d9ffcbba9faa48c647912c0d553fb985ac44a6deddcf6e",
+          "diagnostic_evidence": "f1ea2be36d528a535cd37d7c89480d31cb715a0734679d99691575042825111f",
+          "headers": {
+            "Transfer-Encoding": "chunked",
+            "Content-Encoding": null,
+            "Content-Length": null,
+            "Content-Type": "application/json"
+          },
+          "diagnostic_provider_calls": 1,
+          "diagnostic_setup_failures_no_provider_calls": [
+            "rpc_with_evidence rejects historymethod",
+            "research worker busy"
+          ],
+          "entry": false
+        }
+      ],
+      "transport_repair": {
+        "status": "ASSIGNED_CONFIRMED_LIVE_HTTP_CHUNKED",
+        "owner": "08",
+        "reviewer": "02",
+        "base": "e4badabe0ce850ceec59e4ae25aa1e7e0c266efb",
+        "scope": "Only unambiguous singlechunked transfer coding with bounded originalentitybytes; rejectduplicates/CLconflicts/compression; noothergatechanges"
+      },
+      "active_runtime_repair": {
+        "status": "ASSIGNED",
+        "owner": "07",
+        "reviewer": "09",
+        "scope": "Existing one-hop runtime receipt for currenttoken2022ledger; preserveconfig/context/binding/grants/counters; no newexperiment/reset"
       }
     }
   },
