@@ -103,13 +103,15 @@ def verify_pool(pool, mint, rpc,*,capture=None,token_profile_version=0):
     if token_profile_version==1:
         if values['value'][0]['owner']!=values['value'][6]['owner']:reasons.append('BASE_MINT_VAULT_PROGRAM_MISMATCH')
         if values['value'][1]['owner']!=TOKEN_PROGRAM:reasons.append('QUOTE_VAULT_PROGRAM_UNSUPPORTED')
-        if values['value'][2].get('owner')!=TOKEN_PROGRAM:reasons.append('LP_TOKEN_PROGRAM_UNSUPPORTED')
+        if values['value'][2].get('owner') not in (TOKEN_PROGRAM,TOKEN_2022):reasons.append('LP_TOKEN_PROGRAM_UNSUPPORTED')
     lp=values['value'][2];lp_supply=None
     if lp and lp.get('owner') in (TOKEN_PROGRAM,TOKEN_2022):
         raw=account_bytes(lp)
-        valid_layout=lp.get('executable') is False and (len(raw)==82 if lp['owner']==TOKEN_PROGRAM else len(raw)>=82)
+        valid_layout=lp.get('executable') is False and (len(raw)==82 if lp['owner']==TOKEN_PROGRAM or token_profile_version==1 else len(raw)>=82)
         if valid_layout and raw[45]==1:lp_supply=int.from_bytes(raw[36:44],'little')
         else:reasons.append('INVALID_LP_MINT_LAYOUT')
+        if token_profile_version==1 and lp['owner']==TOKEN_2022 and len(raw)>=82 and raw[44]!=9:
+            reasons.append('LP_DECIMALS_UNSUPPORTED')
     canonical_creator=str(Pubkey.find_program_address([b'pool-authority',bytes(Pubkey.from_string(mint))],Pubkey.from_string(PUMP))[0])
     canonical=fields['index']==0 and fields['creator']==canonical_creator and fields['quote_mint']==SOL
     if not canonical:reasons.append('NONCANONICAL_MIGRATION_POOL')
@@ -121,7 +123,17 @@ def verify_pool(pool, mint, rpc,*,capture=None,token_profile_version=0):
             if int.from_bytes(raw[46:50],'little')!=0:reasons.append('LP_FREEZE_AUTHORITY')
             if lp['owner']==TOKEN_2022 and len(raw)>82:reasons.append('LP_EXTENSIONS_REQUIRE_VALIDATION')
 
-    if fields['protocol_fees'] or fields['creator_fees']:reasons.append('ACCRUED_POOL_FEES_REQUIRE_RESERVE_ADJUSTMENT')
+    gross_quote=int(vaults[1]['amount_raw'])
+    quote_fees=fields['protocol_fees']+fields['creator_fees']
+    spendable_quote=gross_quote-quote_fees
+    effective_quote=gross_quote+fields['virtual_quote_reserves']
+    boost=fields['virtual_quote_reserves']+quote_fees
+    nonboosted_profile=token_profile_version==1 and boost==0
+    if token_profile_version==1:
+        if spendable_quote<=0:reasons.append('POOL_QUOTE_FEE_BALANCE_INVALID')
+        if not 0<effective_quote<2**64:reasons.append('POOL_EFFECTIVE_QUOTE_RESERVES_INVALID')
+        if boost!=0:reasons.append('BOOST_POOL_UNSUPPORTED')
+    if quote_fees and not nonboosted_profile:reasons.append('ACCRUED_POOL_FEES_REQUIRE_RESERVE_ADJUSTMENT')
     if fields['unknown_trailing_bytes']:reasons.append('POOL_LAYOUT_HAS_UNKNOWN_EXTENSION')
     if fields['quote_mint']!=SOL:reasons.append('NON_SOL_QUOTE_POOL')
     if fields['is_mayhem_mode']:reasons.append('MAYHEM_POOL')
@@ -129,7 +141,7 @@ def verify_pool(pool, mint, rpc,*,capture=None,token_profile_version=0):
     if fields['is_holder_reward']:reasons.append('HOLDER_REWARD_POOL_REQUIRES_FEE_POLICY')
     if fields['creator_fee_bps']:reasons.append('POOL_CREATOR_FEE_OVERRIDE_REQUIRES_POLICY')
     if fields['can_edit_creator_fee']:reasons.append('MUTABLE_CREATOR_FEE')
-    if fields['virtual_quote_reserves']!=0:reasons.append('VIRTUAL_RESERVES_REQUIRE_SPECIAL_PRICING')
+    if fields['virtual_quote_reserves']!=0 and not nonboosted_profile:reasons.append('VIRTUAL_RESERVES_REQUIRE_SPECIAL_PRICING')
     if lp_supply is None:reasons.append('LP_SUPPLY_UNKNOWN')
     elif lp_supply>0:reasons.append('OUTSTANDING_WITHDRAWABLE_LP_SUPPLY')
     slot=values.get('context',{}).get('slot')
@@ -137,7 +149,13 @@ def verify_pool(pool, mint, rpc,*,capture=None,token_profile_version=0):
         reasons.append('POOL_SNAPSHOT_SLOT_DRIFT')
     return {'pool':pool,'identity_verified':True,'identity_evidence_verified':evidence_hash is not None,'snapshot_atomic':True,'evidence_hash':evidence_hash,'canonical_migration_pool':canonical,'slot':values['context']['slot'],'vaults':vaults,
             'accrued_protocol_fees_raw':str(fields['protocol_fees']),'accrued_creator_fees_raw':str(fields['creator_fees']),
-            'base_reserve_raw':vaults[0]['amount_raw'],'quote_reserve_raw':vaults[1]['amount_raw'],
+            'base_reserve_raw':vaults[0]['amount_raw'],
+            # Profile1 admits only proven nonboosted pools: these are equal,
+            # so pricing/sizing use net once while original gross stays visible.
+            'quote_reserve_raw':str(effective_quote) if nonboosted_profile else vaults[1]['amount_raw'],
+            'gross_quote_reserve_raw':str(gross_quote),'spendable_quote_reserve_raw':str(spendable_quote),
+            'effective_quote_reserve_raw':str(effective_quote),
+            'virtual_quote_reserves_raw':str(fields['virtual_quote_reserves']),'boost_reserves_raw':str(boost),
             'dynamic_fee_config':{'address':dynamic_key,'slot':slot,**dynamic_config},
             'base_mint_policy':{'address':mint,'slot':slot,**base_mint_policy},
             'global_config':{'address':global_key,'slot':slot,**global_config},'is_cashback_coin':fields['is_cashback_coin'],'is_holder_reward':fields['is_holder_reward'],'creator_fee_bps':fields['creator_fee_bps'],'is_mayhem_mode':fields['is_mayhem_mode'],'coin_creator':fields['coin_creator'],'lp_mint':fields['lp_mint'],'outstanding_lp_supply_raw':str(lp_supply) if lp_supply is not None else None,
