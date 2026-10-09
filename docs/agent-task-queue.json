@@ -2853,7 +2853,7 @@
       "next_if_recurs": "Verbose test names and periodic faulthandler dumps, preserving suite and10min timeout; no source repair established"
     },
     "continuous_discovery_preflight": {
-      "status": "FORWARD_REPAIR_EXACT_HEAD_REREVIEW",
+      "status": "CHANGES_REQUIRED_REAL_OVERSIZE_RECONNECT",
       "worker": "08",
       "thread_id": "01a118fd-2563-7126-90d7-bd07693de0b2",
       "turn_id": "01a1205a-ac94-70d6-bb60-70c87ba13d8e",
@@ -2889,9 +2889,12 @@
         "worker": "02",
         "thread_id": "01a118fc-666c-70b6-9fa8-2c7520f0a0bb",
         "turn_id": "01a1206d-97ef-731c-a06d-620ad48a4412",
-        "cursor": "a2dcfb97-463d-4188-9da3-48a81e644d23:107",
-        "status": "EXACT_HEAD_REVIEW_RUNNING",
-        "requirements_relayed_to_author": true
+        "cursor": "a2dcfb97-463d-4188-9da3-48a81e644d23:109",
+        "status": "CHANGES_REQUIRED",
+        "requirements_relayed_to_author": true,
+        "linux_tests": 2379,
+        "linux_skips": 0,
+        "linux_seconds": 299.185
       },
       "deployment": "NOT_DEPLOYED; retain sampler until exact-head review, full Linux tests and CI; keep paper runtime pinned",
       "allowance_change": "Author08 and reviewer02 notified; not deployed; preserve prior charged usage and originals",
@@ -2901,7 +2904,7 @@
         "extra_provider_calls": 0
       },
       "pr": 151,
-      "head": "23d65918b164420cc1c02f40f24758bba73345ca",
+      "head": "5b96cbf0d0bbd86ea219911d3ac07fc5bb939e7f",
       "capacity_benchmark": {
         "worker": "06",
         "status": "PRELIMINARY_REPORTED",
@@ -2920,7 +2923,8 @@
           "storage_hours_at_full_cap_approx": 26,
           "scope": "Old c72d3c1 synthetic host only; not VPS guarantee"
         }
-      }
+      },
+      "finding": "Independent02 on23d6591 reproduced real WS oversized frame reconnect instead of stop; charging conservative; author08repairrequested"
     },
     "paper_policy_tuning": {
       "status": "PASS_INTEGRATED_OFFLINE_FOUNDATION",
@@ -3011,6 +3015,15 @@
         "cursor": "3dd79f38-868a-433f-9b14-13e7ed0a6e90:63",
         "status": "IMPLEMENTING",
         "scope": "Explicit exact predecessor-successor compatibility; preserve originals; no job or monitoring policy edits"
+      },
+      "ownership_clarification": "01budgetpoliciesonly;07exclusive runtimecompatibility/readers. Duplicateintentcorrected immediately; overlapinterface requested.",
+      "provider_pacing": {
+        "worker": "06",
+        "thread_id": "01a118fc-f867-7233-8eec-c20659e70095",
+        "status": "IMPLEMENTATION_DISPATCHED",
+        "scope": "Durable shared Helius/Jupiter pacing/backoff, heldpositionpriority, preserve callerbudget charges, no hidden retries",
+        "turn_id": "01a1207f-badc-7720-b415-aa1bc5476197",
+        "cursor": "8f3328cf-bef6-441d-83f8-2d1f46b3b0df:123"
       }
     },
     "discovery_policy_combined_review": {
