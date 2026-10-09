@@ -66,6 +66,7 @@ class PaperMarketAdapterTests(unittest.TestCase):
         out=self.build();self.assertEqual(out['blockers'],[])
         e=out['event'];self.assertIsNotNone(e)
         validate_event(e,mode=PAPER_EXPERIMENTAL,policy_version=3)
+        self.assertEqual(e['taker'],self.target.taker)
         self.assertIsNone(e['holder_at'])
         self.assertEqual(e['paper_signal_profile']['holder_freshness'],'UNKNOWN_OMITTED')
         for field in (*EXPERIMENTAL_HISTORY_FIELDS,'flow','wash_score','manip_flow'):
@@ -177,6 +178,120 @@ class PaperMarketAdapterTests(unittest.TestCase):
         self.assertEqual(result['event']['price_at'],self.now)
         self.assertEqual(result['event']['paper_source_evidence']['pool_at'],self.now)
         self.assertEqual(result['event']['paper_source_evidence']['quote_at'],now)
+
+    def test_original_window_survives_later_quote_and_decision_without_relabel(self):
+        baseline=self.build()['event']
+        original_pages=copy.deepcopy(self.pages);original_rows=copy.deepcopy(self.rows)
+        original=self.fixture.sources[self.target.scan_id]
+        def quote(*args,**kwargs):
+            self.fixture.at+=1
+            return original.quote(*args,**kwargs)
+        self.fixture.sources[self.target.scan_id]=replace(original,quote=quote)
+        self.observation=self.fixture.collect(candidates=(self.target,)).observations[0]
+        now=self.now+1
+        out=self.build(context=replace(self.context,now=now,history_as_of=self.now),
+                       usd_bounds=replace(self.bounds,now=now))
+        self.assertEqual(out['blockers'],[])
+        e=out['event'];self.assertEqual(e['ts'],now)
+        p=e['paper_signal_profile'];prior=baseline['paper_signal_profile']
+        for key in ('measurements','window','feature_manifest_hash','source_hashes','history_hashes'):
+            self.assertEqual(p[key],prior[key])
+        self.assertEqual(p['window']['end_inclusive'],self.now)
+        self.assertEqual(p['window_identity'],{'captured_as_of':self.now,'decision_at':now,
+            'gap_seconds':1,'scope':'CAPTURED_WINDOW_NOT_CONTINUOUS_COVERAGE'})
+        self.assertEqual(e['paper_source_evidence']['quote_at'],now)
+        self.assertEqual(e['paper_source_evidence']['pool_at'],self.now)
+        self.assertEqual(e['price_at'],self.now-1)
+        self.assertEqual(e['flow_at'],baseline['flow_at'])
+        self.assertEqual(e['graduated_at'],baseline['graduated_at'])
+        self.assertEqual(self.pages,original_pages);self.assertEqual(self.rows,original_rows)
+        scored=experimental_scores(e,mode=PAPER_EXPERIMENTAL,policy_version=3)
+        self.assertEqual(scored['signal_profile'],p)
+        self.assertEqual(self.fixture.progress.admission(self.target.scan_id)['requests_used'],8)
+        from desk import engine,quote_execution as qe
+        cfg=json.loads((Path(__file__).resolve().parents[1]/'config/paper.json').read_text())
+        cfg.update(experimental_policy_version=3,paper_signal_policy_version=3,paper_quote_execution_version=1)
+        state=engine.initial_state(cfg);quotes=(self.observation.quote,)
+        planned=qe.plan(state,e,cfg,quotes=quotes)
+        _,outcomes=qe.bind_transition(e,quotes)(copy.deepcopy(state),e,cfg)
+        self.assertEqual(outcomes,planned['outcomes'])
+
+    def test_old_window_does_not_bypass_actual_component_or_strategy_freshness(self):
+        # Keep current account/quote/USD evidence but retain the older actual
+        # query/trade timestamps; nothing is shifted to decision time.
+        self.context=replace(self.context,history_as_of=self.now-29)
+        rows=[self.trade('buy',10,200)]
+        rows[0]['blockTime']=self.now-30
+        ix=rows[0]['transaction']['message']['instructions'][0]
+        raw=bytearray(unbase58(ix['data']));raw[16:24]=(self.now-30).to_bytes(8,'little',signed=True)
+        ix['data']=base58(raw)
+        pages=history_pages(rows,self.now-29)
+        for page in pages:page['request']['params'][0]=self.target.pool
+        result=self.build(raw_trades=rows,history_pages=pages)
+        self.assertEqual(result['blockers'],[])
+        e=result['event'];self.assertEqual(e['momentum_at'],self.now-30)
+        cfg=json.loads((Path(__file__).resolve().parents[1]/'config/paper.json').read_text())
+        self.assertIn('STALE_MOMENTUM',experimental_gates(e,cfg,mode=PAPER_EXPERIMENTAL,policy_version=3))
+        stale=copy.deepcopy(rows);stale[0]['blockTime']=self.now-31
+        ix=stale[0]['transaction']['message']['instructions'][0]
+        raw=bytearray(unbase58(ix['data']));raw[16:24]=(self.now-31).to_bytes(8,'little',signed=True);ix['data']=base58(raw)
+        pages=history_pages(stale,self.now-29)
+        for page in pages:page['request']['params'][0]=self.target.pool
+        bad=self.build(raw_trades=stale,history_pages=pages)
+        self.assertIsNone(bad['event'])
+        self.assertTrue(any(x.startswith('STALE_WINDOW_MEASUREMENT:') for x in bad['blockers']))
+        for history_end in (self.now+1,self.now-31,True):
+            out=self.build(context=replace(self.context,history_as_of=history_end))
+            self.assertIsNone(out['event'])
+            self.assertIn('CAPTURED_HISTORY_WINDOW_STALE_OR_FUTURE',out['blockers'])
+
+    def test_captured_window_identity_and_measurement_end_cannot_be_forged(self):
+        e=self.build(context=replace(self.context,now=self.now+1,history_as_of=self.now),
+                     usd_bounds=replace(self.bounds,now=self.now+1))['event']
+        for attack in ('scope','gap','start','end','future-measurement','missing-identity'):
+            bad=copy.deepcopy(e);p=bad['paper_signal_profile']
+            if attack=='scope':p['window_identity']['scope']='CURRENT_CONTINUOUS_CERTIFICATION'
+            if attack=='gap':p['window_identity']['gap_seconds']=0
+            if attack=='start':p['window']['start_inclusive']+=1
+            if attack=='end':p['window']['end_inclusive']+=1
+            if attack=='future-measurement':p['measurements']['same_wallet_churn_proxy_v1']['observed_at']=e['ts']
+            if attack=='missing-identity':p.pop('window_identity')
+            with self.subTest(attack=attack),self.assertRaises(ValueError):
+                validate_event(bad,mode=PAPER_EXPERIMENTAL,policy_version=3)
+        # Previously recorded same-time profile remains valid, no migration.
+        old=self.build()['event'];old['paper_signal_profile'].pop('window_identity')
+        validate_event(old,mode=PAPER_EXPERIMENTAL,policy_version=3)
+
+    def test_actual_quote_execution_plans_and_binds_trusted_builder_taker(self):
+        from desk import engine, quote_execution as qe
+        # Actual accepted55 + exact PR127 execution, with our producer/profile.
+        # No fake event fixture/decoder/engine override. Existing gates may reject
+        # this deliberately adverse fixture; quote replay must work regardless.
+        e=self.build()['event']
+        cfg=json.loads((Path(__file__).resolve().parents[1]/'config/paper.json').read_text())
+        cfg.update(experimental_policy_version=3,paper_signal_policy_version=3,
+                   paper_quote_execution_version=1)
+        state=engine.initial_state(cfg);before=copy.deepcopy(state)
+        quotes=(self.observation.quote,)
+        plan=qe.plan(state,e,cfg,quotes=quotes)
+        self.assertEqual(plan['event_hash'],digest(e))
+        self.assertEqual(state,before)
+        transitioned,outcomes=qe.bind_transition(e,quotes)(copy.deepcopy(state),e,cfg)
+        self.assertEqual(outcomes,plan['outcomes'])
+        self.assertEqual(transitioned['positions'],{})
+        self.assertTrue(any(x['type']=='reject' for x in outcomes))
+        self.assertEqual(e['taker'],self.target.taker)
+        for taker in (None,'missing',SOL_MINT):
+            forged=copy.deepcopy(e);forged['taker']=taker
+            with self.subTest(taker=taker),self.assertRaises(ValueError):
+                qe.plan(state,forged,cfg,quotes=quotes)
+            with self.assertRaises(ValueError):
+                qe.bind_transition(e,quotes)(copy.deepcopy(state),forged,cfg)
+        wrong_target=replace(self.target,taker=SOL_MINT)
+        old=self.observation;self.observation=replace(old,target=wrong_target)
+        try:
+            self.assertIsNone(self.build(context=replace(self.context,target=wrong_target))['event'])
+        finally:self.observation=old
 
     def test_read_failure_is_static_and_adapter_never_reserves_or_writes(self):
         def failed_read(key):raise RuntimeError('DO_NOT_LEAK fixture secret')
