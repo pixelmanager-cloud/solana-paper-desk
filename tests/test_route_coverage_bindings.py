@@ -70,13 +70,13 @@ class ExactRouteCoverageTests(unittest.TestCase):
             result=self.coverage(rows,checks);self.assertFalse(result['coverage_passed'])
             self.assertGreaterEqual(len(result['uncovered']),1)
     def test_setup_receipts_do_not_cover_extra_system_or_token_operations(self):
-        fixture=test_setup_policy.SetupTests();fixture.setUp();fixture.rows[2]['instruction']='1.1'
+        fixture=test_setup_policy.SetupTests();fixture.setUp()
         checks=self.checks();checks['setup']=fixture.check();rows=fixture.rows[1:]
         self.assertTrue(self.coverage(rows,checks)['coverage_passed'])
         for row in rows:
-            extra={**row,'instruction':'1.2'}
+            extra={**row,'instruction':'1.4'}
             result=self.coverage(rows+[extra],checks)
-            self.assertEqual(result['uncovered'],[{'instruction':'1.2','program':row['program']}])
+            self.assertEqual(result['uncovered'],[{'instruction':'1.4','program':row['program']}])
     def test_outer_envelope_and_router_require_exact_rows_and_unique_swap_identity(self):
         fixture=test_router.RouterTests();fixture.setUp();outer=fixture.p['outer']
         checks=self.checks();checks['router']=fixture.check()
