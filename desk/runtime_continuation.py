@@ -51,10 +51,11 @@ def _guards():
     return result
 
 
-def _first(c):
+def _first(c,*,_extensions=False):
     """Validate SQL contract and bounds BEFORE loading any first-receipt bytes."""
     names={r[0] for r in c.execute("SELECT name FROM sqlite_master WHERE type='table' AND name LIKE 'paper_runtime_%'")}
-    if names not in ({runtime.TABLE},{runtime.TABLE,TABLE}):
+    allowed=({runtime.TABLE,TABLE,'paper_runtime_extensions'},) if _extensions else ({runtime.TABLE},{runtime.TABLE,TABLE})
+    if names not in allowed:
         raise ValueError('Partial runtime transition schema')
     if c.execute("SELECT sql FROM sqlite_master WHERE type='table' AND name=?",(runtime.TABLE,)).fetchone()!=(runtime._schema(),):
         raise ValueError('Malformed first runtime table')
@@ -76,7 +77,7 @@ def _first(c):
     return receipt,row[1]
 
 
-def require_continuation(c,*,implementation=None):
+def require_continuation(c,*,implementation=None,_extensions=False):
     current=runtime.implementation_hash() if implementation is None else implementation
     if not runtime._hash(current):raise ValueError('Invalid continuation runtime identity')
     if c.execute("SELECT sql FROM sqlite_master WHERE type='table' AND name=?",(TABLE,)).fetchone()!=(_schema(),):
@@ -91,14 +92,14 @@ def require_continuation(c,*,implementation=None):
     if shape is None or shape[0]!=1 or shape[1:3]!=('text','text') or not 0<shape[3]<=runtime.MAX_BYTES or shape[4]!=64:
         raise ValueError('Continuation receipt type or byte bound')
     row=c.execute(f'SELECT payload,payload_hash FROM {TABLE} WHERE id=1').fetchone()
-    receipt=runtime._parse(row[0]);first,first_hash=_first(c)
+    receipt=runtime._parse(row[0]);first,first_hash=_first(c,_extensions=_extensions)
     if (type(receipt) is not dict or set(receipt)!=FIELDS or type(receipt['version']) is not int
             or receipt['version']!=1 or not runtime._hash(row[1]) or digest(receipt)!=row[1]
             or receipt['first_receipt_hash']!=first_hash or receipt['predecessor']!=first.get('successor')
             or receipt['successor']!=current or receipt['successor']==first.get('predecessor')
             or receipt['config_hash']!=first.get('config_hash')):
         raise ValueError('Continuation receipt binding invalid')
-    runtime._require_first(c,implementation=receipt['predecessor'],continuation=True)
+    runtime._require_first(c,implementation=receipt['predecessor'],continuation=True,_extensions=_extensions)
     if (receipt['context']!=first['context'] or receipt['context']!=_approved(first_hash,receipt['predecessor'],current,receipt['config_hash'])):
         raise ValueError('Continuation context binding invalid')
     metadata=dict(c.execute('SELECT key,value FROM metadata'))
