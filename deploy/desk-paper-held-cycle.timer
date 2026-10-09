@@ -1,0 +1,10 @@
+[Unit]
+Description=Inactive template for sparse bounded held-position paper passes
+[Timer]
+OnActiveSec=5min
+OnUnitInactiveSec=5min
+AccuracySec=1s
+Persistent=false
+Unit=desk-paper-held-cycle.service
+# No Install section. Never enabled or started by this change.
+# Five-minute cadence cannot keep ten-second marks continuously fresh.
