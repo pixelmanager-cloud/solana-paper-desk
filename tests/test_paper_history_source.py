@@ -135,3 +135,41 @@ class HistorySourceTests(unittest.TestCase):
             after=self.progress.advance(self.key,PaperHistorySource(self.progress,'scan',self.key,timeout_seconds=3))
         self.assertEqual(after['query'],before['query']);self.assertEqual(after['requests_used'],2)
         self.assertEqual(after['attempts'],2);self.assertEqual(after['status'],'DONE')
+
+    def test_constructor_lookup_consumes_original_deadline(self):
+        clock = [0.0]
+        original = PaperHistorySource._bound_snapshot
+        def delayed(source):
+            result = original(source)
+            clock[0] = 4.0
+            return result
+        with patch('desk.paper_history_source.time.monotonic', side_effect=lambda: clock[0]), \
+             patch.object(PaperHistorySource, '_bound_snapshot', delayed), \
+             patch.object(transport.os.environ, 'get') as credential, \
+             patch.object(transport, 'build_opener') as opener:
+            source = PaperHistorySource(self.progress, 'scan', self.key, timeout_seconds=3)
+            state = self.progress.advance(self.key, source)
+        self.assertEqual(source.started, 0.0)
+        self.assertEqual(source.deadline, 3.0)
+        self.assertEqual(state['status'], 'RETRYABLE_ERROR')
+        self.assertEqual(state['requests_used'], 1)
+        credential.assert_not_called()
+        opener.assert_not_called()
+
+    def test_transport_construction_cannot_replenish_deadline(self):
+        clock = [0.0]
+        original = transport.PaperReadSources
+        def delayed(*args, **kwargs):
+            result = original(*args, **kwargs)
+            clock[0] = 4.0
+            return result
+        with patch('desk.paper_history_source.time.monotonic', side_effect=lambda: clock[0]), \
+             patch('desk.paper_history_source.PaperReadSources', side_effect=delayed), \
+             patch.object(transport.os.environ, 'get') as credential, \
+             patch.object(transport, 'build_opener') as opener:
+            source = PaperHistorySource(self.progress, 'scan', self.key, timeout_seconds=3)
+            state = self.progress.advance(self.key, source)
+        self.assertEqual(state['status'], 'RETRYABLE_ERROR')
+        self.assertEqual(state['requests_used'], 1)
+        credential.assert_not_called()
+        opener.assert_not_called()

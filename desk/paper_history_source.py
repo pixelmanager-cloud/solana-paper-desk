@@ -15,6 +15,12 @@ from . import original_byte_slot_transport as wire
 
 class PaperHistorySource:
     def __init__(self, progress, scan_id, history_id, *, timeout_seconds):
+        if type(timeout_seconds) not in (int, float) or not math.isfinite(timeout_seconds) or not 0 < timeout_seconds <= 15:
+            raise PaperReadError('DEADLINE_INVALID')
+        self.started = time.monotonic()
+        if type(self.started) not in (int, float) or not math.isfinite(self.started):
+            raise PaperReadError('DEADLINE_INVALID')
+        self.deadline = self.started + timeout_seconds
         if not isinstance(progress, HistoryProgress):
             raise PaperReadError('HISTORY_BINDING_INVALID')
         self.progress, self.scan_id, self.history_id = progress, scan_id, history_id
@@ -24,10 +30,6 @@ class PaperHistorySource:
                 or query['token_accounts_filter'] != 'none' or query['end'] - query['start'] != 301
                 or self.before['status'] == 'DONE'):
             raise PaperReadError('HISTORY_BINDING_INVALID')
-        if type(timeout_seconds) not in (int, float) or not math.isfinite(timeout_seconds) or not 0 < timeout_seconds <= 15:
-            raise PaperReadError('DEADLINE_INVALID')
-        self.started = time.monotonic()
-        self.deadline = self.started + timeout_seconds
         self.called = False
         self.evidence_hash = None
 
@@ -99,6 +101,9 @@ class PaperHistorySource:
                 return True  # advance already durably charged this exact invocation.
         adapter.progress = ReservedProgress()
         try:
+            now = time.monotonic()
+            if not math.isfinite(now) or now < self.started or now >= self.deadline:
+                raise PaperReadError('DEADLINE_EXCEEDED')
             result, self.evidence_hash = adapter._attempt(method, wire._parse(body)['params'], body, self.deadline - now)
             return result
         except PaperReadError as error:
