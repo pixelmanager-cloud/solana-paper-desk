@@ -3762,7 +3762,7 @@
         }
       ],
       "transport_repair": {
-        "status": "CHANGES_REQUIRED_BETWEEN_CHUNK_DEADLINE_BYTE_RETENTION",
+        "status": "INDEPENDENT_PASS_FINAL_CI_RUNNING",
         "owner": "08",
         "reviewer": "02",
         "base": "e4badabe0ce850ceec59e4ae25aa1e7e0c266efb",
@@ -3771,16 +3771,21 @@
         "turn_id": "01a12120-7ba4-76ae-9c1b-94ee573c13f7",
         "cursor": "02d8669f-59ba-43bb-8691-b196829f4867:67",
         "pr": 162,
-        "head": "a6384e79c2976aa466ebda72574327fcf197bf66",
-        "review_turn_id": "01a1212d-3bd1-778a-8d0b-92965ca552e4",
-        "review_url": "https://github.com/pixelmanager-cloud/solana-paper-desk/pull/162#issuecomment-6083404071",
+        "head": "b644bee22d1112e0c5b2b90e2548db9c60e752e1",
+        "review_turn_id": "01a12132-5f56-717c-8cdd-cf876e3c92a1",
+        "review_url": "https://github.com/pixelmanager-cloud/solana-paper-desk/pull/162#issuecomment-6083594247",
         "finding": "Real HTTPResponse accepts missing terminal trailer line, unterminated trailer, invalid chunk CRLF; three independent malformed-wire probes accepted.33 focused tests pass but miss cases.",
         "repair_turn_id": "01a1212a-27f9-70a6-ac7e-c8f92ff1c2a1",
         "second_review_url": "https://github.com/pixelmanager-cloud/solana-paper-desk/pull/162#issuecomment-6083498672",
-        "second_finding": "Original3framingattacksreject; deadlineafterdatachunk loses accumulatedentitybytes.37focusedpass;08repairassigned; candidate3f17sourcepinprovisionalnotapproved."
+        "second_finding": "Original3framingattacksreject; deadlineafterdatachunk loses accumulatedentitybytes.37focusedpass;08repairassigned; candidate3f17sourcepinprovisionalnotapproved.",
+        "review_tests": 39,
+        "ci_runs": [
+          37948895745,
+          37948889250
+        ]
       },
       "active_runtime_repair": {
-        "status": "INDEPENDENT_PASS_CI_PENDING",
+        "status": "INDEPENDENT_PASS_BOTH_FINAL_CI_PASS",
         "owner": "07",
         "reviewer": "09",
         "scope": "Existing one-hop runtime receipt for currenttoken2022ledger; preserveconfig/context/binding/grants/counters; no newexperiment/reset",
@@ -3799,16 +3804,49 @@
         "ci_runs": [
           37948355714,
           37948347787
+        ],
+        "final_pin_review": {
+          "reviewer": "09",
+          "turn_id": "01a12132-f0ca-750a-bd6e-edd99b34085f",
+          "source": "31b249e1dfbb16c12ec89235a7137afab4de989fd05ded52a0231ebdfb9667ae",
+          "status": "PASS_CONDITIONAL_UNCHANGED_FINAL_SOURCE",
+          "scope": "Preserve150545->8098edge; add0fe08c->31b249sameconfig/ledger/research/evidence; handoffunchanged;02requirednowPASS"
+        },
+        "ci_tests": [
+          2533,
+          2525
+        ],
+        "ci_seconds": [
+          521.303,
+          551.754
         ]
       },
       "repair_combined_fixture": {
         "owner": "04",
         "thread_id": "01a118fc-b862-7340-ab3a-e1115a3280a4",
-        "status": "PREPARING_TEST_ONLY_COMPOSITION_FINAL_HEADS_PENDING",
+        "status": "SCOPED_ENTRY_HELD_READ_RESTART_PASS_FULL_RUNNING",
         "scope": "Guarded historyfirst actual chunked transport plus reviewed sameexperiment runtime receipt; defer fullsuite until final component heads",
-        "turn_id": "01a12129-aaff-75f1-b903-95b219463fc7"
+        "turn_id": "01a12129-aaff-75f1-b903-95b219463fc7",
+        "pr": 164,
+        "head": "a6d0b0449aab76fa409566895f863211acf01cee",
+        "root_diff_review": "174-line synthetic composition reviewed; actualwrapper/HTTPResponse/pacing/runtime/charge validators; singleheldreadcoverage only, broader4readcycledeadline issue retained",
+        "full_cycle_caveat": "Draft4readheldcycle2deadlinefails1pass;06independenttimingdiagnosisassigned, noTTLweakening",
+        "performance_reviewer_thread": "01a118fc-f867-7233-8eec-c20659e70095",
+        "ci_runs": [
+          37949389174,
+          37949367282
+        ]
       },
-      "artifact_attachment_limit": "PR161/162/163 attach attempts rejected: thread attachment identity count exceeds100; GitHub PR identities persisted inqueue."
+      "artifact_attachment_limit": "PR161/162/163 attach attempts rejected: thread attachment identity count exceeds100; GitHub PR identities persisted inqueue.",
+      "repair_vps_validation": {
+        "status": "RUNNING_INACTIVE_SOURCE_ONLY",
+        "source": "31b249e1dfbb16c12ec89235a7137afab4de989fd05ded52a0231ebdfb9667ae",
+        "archive_sha256": "e8d8c2f940d6d611068009d1b34fa04fc1fb5f2609cda405f0b85e9117461027",
+        "path": "/opt/solana-desk-releases/review-31b249e",
+        "log": "/var/tmp/paper-review-31b249e/full.log",
+        "session_id": 82946,
+        "scope": "Approved161+162+163 composition; final04test and externalruntimepin notyetincluded; no productionmutation/providercalls"
+      }
     }
   },
   "native_reconciliation_review": {
