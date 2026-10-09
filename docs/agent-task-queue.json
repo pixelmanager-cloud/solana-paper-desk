@@ -5261,12 +5261,13 @@
               "route_http_status": 200,
               "price_http_status": 403,
               "provider_method": "jupiter_price_v3",
-              "retry_authorized": false
+              "retry_authorized": false,
+              "global_gate": "OBSERVATION_RECOVERY_REQUIRED"
             },
             "cli_path_repair": {
               "owner": "07",
               "thread_id": "01a118fd-0f1c-749c-b85b-5e730937d0a8",
-              "status": "INDEPENDENT03_REVIEW_CI_RUNNING",
+              "status": "INDEPENDENT_PASS_CI_PENDING",
               "scope": "Canonical successor CLI Path normalization and real regression; independent03 required",
               "turn_id": "01a12263-3a23-7471-b96c-ce7e3a036d16",
               "pr": 179,
@@ -5275,7 +5276,10 @@
                 37988758766,
                 37988718327
               ],
-              "attachment": "App limit100; failed179attach recorded, no retry"
+              "attachment": "App limit100; failed179attach recorded, no retry",
+              "review_turn": "01a12267-dbbd-745d-afe6-16f6d7f4eca9",
+              "review_tests": 12,
+              "review_seconds": 37.991
             },
             "holder_reward_diagnosis": {
               "owner": "08",
@@ -5288,6 +5292,28 @@
               "turn_id": "01a12265-cda1-773d-b165-7a838d590404",
               "status": "PASS_SCHEDULING_GUIDANCE",
               "finding": "Dashboard background scanner holds research worker lock; SELECT lock owner unproven. Pause competingworkers only with zeroheldpositions, resume promptly."
+            },
+            "jupiter_price_access": {
+              "status": "USER_CHECK_REQUESTED",
+              "swap_http_status": 200,
+              "price_http_status": 403,
+              "body_retained": false,
+              "cause": "Permission or firewall possible; unconfirmed",
+              "portal_session": "No browser tabs available; native Mac locked. No account changes performed.",
+              "docs": "https://developers.jup.ag/docs/portal/api-keys",
+              "production_services": "RUNNING_ZERO_POSITIONS",
+              "further_provider_calls": "HELD_PENDING_ACCESS_RESOLUTION"
+            },
+            "http403_retirement": {
+              "owner": "07",
+              "reviewer": "09",
+              "status": "IMPLEMENTATION_AUTHORIZED_AFTER_CONDITIONAL_DESIGN_REVIEW",
+              "scope": "Definitive retained Price403 read-only failed pass append-only retirement; originalNULL/charges/context preserved; rejectedcandidate neverretried; ambiguousI/O blocked",
+              "worker_thread": "01a118fd-0f1c-749c-b85b-5e730937d0a8",
+              "review_thread": "01a118fd-3f90-77d9-9549-c4497f5b10a6",
+              "design_review_turn": "01a1226c-88e4-7056-af4c-b5b10326cc10",
+              "constraints": "Exact retained HTTP403 only, body unavailable explicit, complete8\u219213 inventory, failedattempt omittedfromresult separatelypinned, unchangedledger/pacerclosure, no retry/reset, ambiguousI/O blocked",
+              "public_records": "work/candidate703-failure-proof.json"
             }
           }
         }
