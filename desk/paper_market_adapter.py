@@ -34,6 +34,7 @@ class MarketContext:
     holder_at: int | None     # null is explicitly omitted freshness, never now
     known_hazards: tuple[str, ...]  # coordinator's existing diagnostics
     pool_fee_bps: str | None  # explicit model assumption, not an observed fee proof
+    history_as_of: int | None = None  # original query end, independent of decision now
 
 
 def build_market_event(collected, *, context, load_evidence, raw_trades=(),
@@ -116,17 +117,25 @@ def build_market_event(collected, *, context, load_evidence, raw_trades=(),
         out['blockers']=sorted(blockers|{'COLLECTOR_SOURCE_BINDING_OR_CONTENT_INVALID'});return out
     if type(raw_trades) not in (tuple,list) or len(raw_trades)>256:
         out['blockers']=sorted(blockers|{'BOUNDED_RAW_TRADE_SEQUENCE_REQUIRED'});return out
-    features=calculate(raw_trades,pool=target.pool,as_of=context.now,
+    history_as_of=context.now if context.history_as_of is None else context.history_as_of
+    if type(history_as_of) is not int or not 0<=context.now-history_as_of<=30:
+        out['blockers']=sorted(blockers|{'CAPTURED_HISTORY_WINDOW_STALE_OR_FUTURE'});return out
+    features=calculate(raw_trades,pool=target.pool,as_of=history_as_of,
                        provenance=context.provenance,history_pages=history_pages)
     names=set(OBSERVABLE_FORMULAS)|{'net_buy_ratio','unique_buyers_5m','volume_vs_liq','drawdown_from_high'}
     measurements={name:features['fields'][name] for name in sorted(names)}
     for name,row in measurements.items():
         if row['status']!='MEASURED_WINDOW':blockers.add('MISSING_WINDOW_MEASUREMENT:'+name)
+        elif type(row['observed_at']) is not int or not 0<=context.now-row['observed_at']<=30:
+            blockers.add('STALE_WINDOW_MEASUREMENT:'+name)
     profile={'name':OBSERVABLE_SIGNAL_PROFILE,'version':1,'formulas':dict(OBSERVABLE_FORMULAS),
              'limitations':list(OBSERVABLE_LIMITATIONS),'measurements':measurements,
              'window':features['window'],'feature_manifest_hash':features['manifest_hash'],
              'source_hashes':features['source_hashes'],'history_hashes':features['history_hashes'],
-             'holder_freshness':out['holder_freshness']}
+             'holder_freshness':out['holder_freshness'],
+             'window_identity':{'captured_as_of':history_as_of,'decision_at':context.now,
+                 'gap_seconds':context.now-history_as_of,
+                 'scope':'CAPTURED_WINDOW_NOT_CONTINUOUS_COVERAGE'}}
     usd=None
     if usd_response is None or usd_bounds is None:blockers.add('SOL_USD_SOURCE_OR_EXACT_BLOCK_TIME_MISSING')
     else:
@@ -144,7 +153,7 @@ def build_market_event(collected, *, context, load_evidence, raw_trades=(),
         fee=decimal(context.pool_fee_bps)
         if not 0<=fee<10000:raise ValueError('invalid fee assumption')
     except ValueError:blockers.add('EXPLICIT_PAPER_FEE_ASSUMPTION_REQUIRED')
-    e={'schema_version':1,'kind':'market','ts':context.now,'mint':target.mint,'pool':target.pool,
+    e={'schema_version':1,'kind':'market','ts':context.now,'mint':target.mint,'pool':target.pool,'taker':target.taker,
        'venue':'pumpswap','provenance':context.provenance,'graduated':True,
        'mint_revoked':True,'freeze_revoked':True,'lp_verified':True,'extensions_safe':True,
        'data_healthy':not blockers,'flow_confirmed':False,'danger':bool(context.known_hazards),

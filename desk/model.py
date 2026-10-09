@@ -104,6 +104,8 @@ def load_config(path):
 
 def observable_signal_profile(event):
     """Validate an explicit v3 experimental signal contract, not source trust."""
+    from .programs import address
+    address(event.get('taker'))  # v3 execution identity; old profiles unchanged
     p=event.get('paper_signal_profile')
     if (type(p) is not dict or p.get('name')!=OBSERVABLE_SIGNAL_PROFILE
             or type(p.get('version')) is not int or p['version']!=1
@@ -118,8 +120,13 @@ def observable_signal_profile(event):
     ts=event.get('ts')
     if (type(ts) is not int or type(w) is not dict or w.get('coverage_complete') is not True
             or type(w.get('start_inclusive')) is not int or type(w.get('end_inclusive')) is not int
-            or w.get('start_inclusive')!=max(0,ts-300) or w.get('end_inclusive')!=ts):
-        raise ValueError('Complete current five-minute observable window required')
+            or w.get('start_inclusive')!=max(0,w['end_inclusive']-300)
+            or not 0<=ts-w['end_inclusive']<=30):
+        raise ValueError('Fresh captured five-minute observable window required')
+    identity={'captured_as_of':w['end_inclusive'],'decision_at':ts,
+              'gap_seconds':ts-w['end_inclusive'],'scope':'CAPTURED_WINDOW_NOT_CONTINUOUS_COVERAGE'}
+    if ('window_identity' in p or w['end_inclusive']!=ts) and p.get('window_identity')!=identity:
+        raise ValueError('Original captured window/decision identity required')
     for key in ('feature_manifest_hash',):
         value=p.get(key)
         if type(value) is not str or len(value)!=64 or any(c not in '0123456789abcdef' for c in value):
@@ -135,7 +142,7 @@ def observable_signal_profile(event):
         if type(row) is not dict or row.get('status')!='MEASURED_WINDOW' or row.get('blockers')!=[]:
             raise ValueError('Missing observable window measurement')
         at=row.get('observed_at')
-        if type(at) is not int or not max(w['start_inclusive'],ts-30)<=at<=ts:
+        if type(at) is not int or not max(w['start_inclusive'],ts-30)<=at<=w['end_inclusive']:
             raise ValueError('Stale observable component')
         value=decimal(row.get('value'))
         upper=100 if name=='directional_flow_proxy_v1' else ONE
