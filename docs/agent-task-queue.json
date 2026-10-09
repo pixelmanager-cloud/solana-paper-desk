@@ -189,11 +189,11 @@
   ],
   "integration": {
     "branch": "integration/cloud-wave1",
-    "tested_commit": "2e3cd119effa490528adf84dfc69236d9d223430",
-    "combined_tests": 1563,
-    "result": "PASS_FIXTURE_ONLY",
-    "live_verification": "BLOCKED_NO_SUPPORTED_BUDGET_FEASIBLE_PUBLIC_LEGACY_SEED; acquisition path in development",
-    "blocker": "No accepted provider-backed ownership candidate; historical-control semantics, complete route/effect policy, current measured features and trusted entry/refresh driver remain unfinished",
+    "tested_commit": "5746912cd88b9527e2b196a2edefc66b72c257a0",
+    "combined_tests": 2564,
+    "result": "PASS_FIXTURE_ONLY_DEPLOYED_LIVE_POOL_REJECTED",
+    "live_verification": "One live candidate attempted,4requests,total10/18,noquote/noBUY",
+    "blocker": "Profile1 rejects ubiquitous Token2022LP; nonboosted accrued-fee accounting compatibility in repair. Candidate222boosted/thin remainsrejected.",
     "followups": {
       "worker01": "PR79 independent PASS; available",
       "worker05": "PR79 integrated; available",
@@ -259,7 +259,7 @@
       "tests": 878,
       "status": "SUPERSEDED_BY_PUBLISHED_TESTED_COMMIT"
     },
-    "published_ci": "Deployed d758bc529a7da1f74509117288740911f2ad6845: both CI runs successful",
+    "published_ci": "5746912 bothsuccess37959875034/37959868778",
     "active_claims": [
       {
         "id": "PR97-INDEPENDENT-REVIEW",
@@ -716,7 +716,7 @@
       "result": "Linux combined975 PASS zero skips; reviewed",
       "integrated": true
     },
-    "test_platform_note": "Independent Linux1289 zero skips;Mac1197 passed+92 skips",
+    "test_platform_note": "FullLinux2564bothCI;VPS2563plus23finaltestdelta",
     "pending_reference_combination": {
       "commit": "8aa5938aeef5e96f22a54f80ff698d043f3a154d",
       "pr": 39,
@@ -992,8 +992,8 @@
         "base": "7e1d3e4"
       }
     },
-    "reviewed_combined_tree": "613d5e3393e8a930cb15df979cf0c211fa89c037",
-    "test_identity_note": "Exact d758bc5 + PR75 tree independently tested; accepted integration differs only in coordinator documentation.",
+    "reviewed_combined_tree": "8c675296c36cd6b088a25aae0c7fcf8d65bdc26673bfdffa49012368acb06427",
+    "test_identity_note": "Deployedexact5746912,rootverifiedsource; localcoordinator docs subsequentlyupdated",
     "pending_pool_projection": {
       "pr": 81,
       "head": "7385abd0104b7e2b5f955f865e4a5b9569a5d24f",
@@ -3361,14 +3361,14 @@
       }
     },
     "token2022_paper_support": {
-      "status": "DEPLOYED_TOKEN2022_LIVE_TRANSPORT_COMPATIBILITY_BLOCKER",
+      "status": "DEPLOYED_MINT_AND_MIGRATION_SUPPORT_POOL_LP_COMPATIBILITY_REPAIR",
       "authorization": "2026-10-09 user: I think we need to modify the token2022 limitations as most tokens seem to be token2022 and we cannot open positions. Explicit approval to replace blanket exclusion with narrow versioned paper-only support; known hazards and unreviewed extensions still reject.",
       "base": "89f4317",
       "implementation_owner": "08",
       "independent_reviewer": "02",
       "runtime_compatibility_preflight_owner": "07",
       "scope": "Verified original mint/account bytes; metadataPointer/TokenMetadata/ImmutableOwner subset only after official-layout validation; all acquisition, pool/vault, entry, quote accounting and restart paths must agree. No blanket waiver, provider caps/signing/public exposure changes.",
-      "runtime_dependency": "Existing ledger already records150545\u21928098 transition; preserve originals and immutable receipts during any future reviewed successor upgrade.07preflight read-only, no overlapping implementation.",
+      "runtime_dependency": "Deployedfirst104329...df46+continuation66a7...b357 preserved;07implements max4additionalexact-reviewed append-onlyedges for necessaryfixes",
       "active_assignments": [
         {
           "worker": "08",
@@ -4261,16 +4261,37 @@
             "status": "IMPLEMENTATION_ASSIGNED",
             "assessment_turn": "01a12193-b5ac-7547-b4c0-91dfc6b8abf4",
             "reviewer": "09",
-            "review_thread_id": "01a118fd-3f90-77d9-9549-c4497f5b10a6"
+            "review_thread_id": "01a118fd-3f90-77d9-9549-c4497f5b10a6",
+            "implementation_turn": "01a12195-5f8a-77e3-ab7e-55422fbcd7dc",
+            "design_review_turn": "01a12195-71bf-703e-83a3-31949d555782"
           },
           "diagnosis_turn": "01a12192-8d9e-7451-ab97-660e61856a26",
           "independent_review_turn": "01a12194-1955-714c-b4b7-a1b94d8461ee",
           "scope": "Profile1 exact82byte canonical initialized LP Token2022/noextensions/poolauthority/nofreeze/supply0; proven nonboost signedvirtual+protocolfees+creatorfees==0; netphysical=vault-fees=effectivepricing; subtractonce; preserveoriginals; rejectnonzeroboost and allotherhazards",
           "candidate222_net_quote_lamports": 256923009,
           "candidate222_virtual_quote_lamports": 17583918620,
-          "candidate222_remains_rejected": true
+          "candidate222_remains_rejected": true,
+          "implementation_turn": "01a12196-4734-71f7-9932-cdb31564031a",
+          "combined_fixture_owner": "04",
+          "combined_fixture_thread_id": "01a118fc-b862-7340-ab3a-e1115a3280a4",
+          "combined_fixture_turn": "01a12197-5f4d-71e7-a589-a4646d8b3f7e",
+          "combined_fixture_status": "PREPARED_WAITING_EXACT07_AND08_HEADS",
+          "independent_review_claim_turn": "01a12196-ab5a-7033-af25-4d355f67f2c8",
+          "candidate_selection_hint_file": "work/retained-migration-hints.json",
+          "candidate_selection_authority": "HISTORICAL_HINTS_ONLY_NO_PROVIDER_CALLS_NO_ENTRY_PERMISSION"
         }
       }
+    },
+    "historical_summary_before_5746912": {
+      "tested_commit": "2e3cd119effa490528adf84dfc69236d9d223430",
+      "combined_tests": 1563,
+      "result": "PASS_FIXTURE_ONLY",
+      "live_verification": "BLOCKED_NO_SUPPORTED_BUDGET_FEASIBLE_PUBLIC_LEGACY_SEED; acquisition path in development",
+      "blocker": "No accepted provider-backed ownership candidate; historical-control semantics, complete route/effect policy, current measured features and trusted entry/refresh driver remain unfinished",
+      "published_ci": "Deployed d758bc529a7da1f74509117288740911f2ad6845: both CI runs successful",
+      "test_platform_note": "Independent Linux1289 zero skips;Mac1197 passed+92 skips",
+      "reviewed_combined_tree": "613d5e3393e8a930cb15df979cf0c211fa89c037",
+      "test_identity_note": "Exact d758bc5 + PR75 tree independently tested; accepted integration differs only in coordinator documentation."
     }
   },
   "native_reconciliation_review": {
