@@ -5313,7 +5313,7 @@
             "http403_retirement": {
               "owner": "07",
               "reviewer": "09",
-              "status": "IMPLEMENTING_FIXTURE_SETUP_CORRECTIONS_NO_PASS_CLAIM",
+              "status": "INDEPENDENT_PASS_CI_RUNNING_NOT_DEPLOYED",
               "scope": "Definitive retained Price403 read-only failed pass append-only retirement; originalNULL/charges/context preserved; rejectedcandidate neverretried; ambiguousI/O blocked",
               "worker_thread": "01a118fd-0f1c-749c-b85b-5e730937d0a8",
               "review_thread": "01a118fd-3f90-77d9-9549-c4497f5b10a6",
@@ -5325,7 +5325,67 @@
               "actual_five_attempts": "work/candidate703-five-attempts.json",
               "actual_attempt_hashes_verified": true,
               "review_cursor": "68a4d56e-d04a-40dc-ad15-e80a29c96b80:97",
-              "worker_cursor": "3dd79f38-868a-433f-9b14-13e7ed0a6e90:116"
+              "worker_cursor": "3dd79f38-868a-433f-9b14-13e7ed0a6e90:116",
+              "pr": 180,
+              "head": "df444803bda0d9830444c0168dde59e84132e1b9",
+              "source": "6851324628116c8d44168ea96d54acba98635f1997d27ce407ddd8c02a3c29b4",
+              "ci_runs": [
+                37990440268,
+                37990383006
+              ],
+              "attachment_error": "App attachment limit100; not retried",
+              "review_turn": "01a12275-9b02-7101-9d17-36d4e57b73b4",
+              "review_result": "SCOPED_PASS",
+              "review_tests": 35,
+              "review_seconds": 17.843,
+              "independent_probes": 3,
+              "probe_seconds": 1.184,
+              "activation_order_review": {
+                "owner": "06",
+                "thread": "01a118fc-f867-7233-8eec-c20659e70095",
+                "turn": "01a12278-8931-7101-bd21-07c7c7f18504",
+                "result": "First runtime_compatibility transition required on new ledger; no inherited continuation receipts; exact runtime edge and HTTP association still require review"
+              },
+              "vps_suite": {
+                "head": "df444803bda0d9830444c0168dde59e84132e1b9",
+                "unit": "desk-fixture-df44480",
+                "invocation": "2d88b8bebe2442a5a52d52b842a9b178",
+                "status": "RUNNING",
+                "network": "PrivateNetwork",
+                "production_data": "InaccessiblePaths=/var/lib/solana-desk"
+              },
+              "runtime_edge_review": {
+                "reviewer": "03",
+                "thread": "01a118fc-9478-778a-b77a-8f8f6ec7e0ad",
+                "status": "CONDITIONAL_PASS",
+                "predecessor": "00b7c30229f1a3d0e2f117e7a2b0d3d0ea8862bf8936449f400d8e0711f8f3b2",
+                "successor": "6851324628116c8d44168ea96d54acba98635f1997d27ce407ddd8c02a3c29b4",
+                "config_hash": "c8156792b153b4f0193cbfb7b6d7ac6507e223eca41ac64e6028af05c36397c9",
+                "turn": "01a12279-7083-756c-9e47-86c3ec11a3e8",
+                "policy": {
+                  "predecessor": "00b7c30229f1a3d0e2f117e7a2b0d3d0ea8862bf8936449f400d8e0711f8f3b2",
+                  "successor": "6851324628116c8d44168ea96d54acba98635f1997d27ce407ddd8c02a3c29b4",
+                  "config_hash": "c8156792b153b4f0193cbfb7b6d7ac6507e223eca41ac64e6028af05c36397c9",
+                  "context": {
+                    "research_db": "/var/lib/solana-desk/research.sqlite",
+                    "evidence_db": "/var/lib/solana-desk/evidence.sqlite",
+                    "ledger_db": "/var/lib/solana-desk/token2022-boost-00b7c302.sqlite"
+                  }
+                }
+              },
+              "retained_replay": {
+                "result": "PASS_READ_ONLY_NOT_ACTIVATION",
+                "pin_hash": "162f4e0953b18953399d3baaf90b0740d483393bc113849439ae95dceeaf15fe",
+                "path": "work/http403-retained-replay.json",
+                "independent_pin_review": "CONDITIONAL_PASS",
+                "review_turn": "01a1227a-6c2a-70b2-83db-fa5fc832a010"
+              },
+              "preservation_helper": {
+                "owner": "06",
+                "turn": "01a12279-b42c-77cd-8115-e9f2233b773e",
+                "status": "IMPLEMENTING",
+                "scope": "Ten database original schema+rows unchanged; only exact first runtime and HTTP403 append-only certificates"
+              }
             },
             "last_actionable_check": {
               "at": "2026-10-09T20:54:00Z",
