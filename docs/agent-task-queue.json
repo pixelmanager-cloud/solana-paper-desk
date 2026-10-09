@@ -4344,7 +4344,60 @@
             "attachment": "identity count exceeds100;notretried",
             "root_local_test": "PASS1/19.094s exact final head nativeclock cProfile; BUY4readSELLrestart reached; no deadline change",
             "independent_reviewer": "02",
-            "review_thread_id": "01a118fc-666c-70b6-9fa8-2c7520f0a0bb"
+            "review_thread_id": "01a118fc-666c-70b6-9fa8-2c7520f0a0bb",
+            "review": "CONDITIONAL_PASS_RETAINS_CLOUD_TIMING_FAILURE",
+            "review_turn": "01a121b2-7321-72b8-8e59-cfe40479e1d6",
+            "diagnosis": "Fixture replay before held deadline; repeated validation overhead observed; originalcloudcauseunproven; no implementation change",
+            "diagnosis_turn": "01a121b0-aa4b-77ae-b52c-2311e7cb3a63",
+            "ci_status": "BOTH_SUCCESS",
+            "ci_runs": [
+              37965624822,
+              37965693164
+            ],
+            "ci_tests": 2580,
+            "ci_seconds": [
+              623.062,
+              null
+            ]
+          },
+          "candidate343": {
+            "mint": "DxLEjcWVexfe83L28b5hR7r3rT139ph5fSXYrAczpump",
+            "scan_id": "2f7348329ee246219a1a2fb807788537",
+            "status": "BLOCKED_RETAINED_HISTORY_DECODE_GAP_NO_RETRY",
+            "requests_used": 6,
+            "token_policy": "PASS_TOKEN_POLICY",
+            "known_hazards": [],
+            "intake_invocation": "13a5187831fa46369e40b0bb4e76a6c9",
+            "history_id": "48312412ac427941861c4b700bd57edfbf970c15039f714ea36ea6ec0ece15c5",
+            "original_payload_hash": "2bbbe92902a260417ab93d489d3a4434da7a26d9e4052837d4664c5a8b0f4553",
+            "query_exhausted": true,
+            "query_coverage_verified": false,
+            "provider_calls_this_turn": 6
+          },
+          "candidate242": {
+            "mint": "W6mmGAheMDqqZ2uyvZwBtHghJ3sc7wZceUEB32fpump",
+            "scan_id": "ce675338c1374812b49247f5d2850a2d",
+            "requests_used": 6,
+            "token_policy": "PASS_TOKEN_POLICY",
+            "migration": "OBSERVED_MIGRATION",
+            "graduated_at": 1791560646,
+            "history_id": "870d00264734d3899a15877cf2b00f800a93c0ece6491f41bfb78369f971a51e",
+            "intake_invocation": "cf09941b724b4699aee8433a72d7f4e6",
+            "target": "/var/lib/solana-desk/paper-target-seq242-reviewed.json",
+            "dry_run": "BLOCKED Observation recovery required; zero additional calls",
+            "provider_calls_this_turn": 6
+          },
+          "terminal_rejection_recovery": {
+            "owner": "07",
+            "thread_id": "01a118fd-0f1c-749c-b85b-5e730937d0a8",
+            "reviewer": "09",
+            "review_thread_id": "01a118fd-3f90-77d9-9549-c4497f5b10a6",
+            "status": "MINIMAL_DESIGN_REQUESTED_NO_MUTATION",
+            "pass_id": "d8600ce75e014e22b84c3fd8d10bf2c0",
+            "intent_hash": "6f6cfd1efe9aa257638bd750ccd3c4099a3943a5d403132fa9d9d2a7b868fb7e",
+            "retained_outcome_hash": "4352afa8e732c4f03eaf1cb788047aea58379fe3ef24edd05f5535e5680eb4a8",
+            "blocker": "Known SOURCE_CONTENT_REJECTED afterchargedRPC leaves global NULL observationpass; allfuturepassesblocked",
+            "constraints": "Preserveoriginalblockedrecord andcharges; noreset/retry; ambiguous/crashed/pendingremainblocked"
           }
         }
       }
