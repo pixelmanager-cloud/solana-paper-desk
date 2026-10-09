@@ -1,6 +1,6 @@
 {
   "schema_version": 1,
-  "revision": 76,
+  "revision": 77,
   "repository": "pixelmanager-cloud/solana-paper-desk",
   "source_main_sha": "e298e15cd758932e81d2241130716632702f5bd0",
   "observed_date": "2026-10-08",
@@ -4568,6 +4568,43 @@
       "provider_calls": 0,
       "readiness": "BLOCKED_NO_SUPPORTED_BUDGET_FEASIBLE_PUBLIC_LEGACY_SEED; acquisition path in development",
       "schedule": "NOT_REPROBED_NO_DURABLE_BINDING_CLAIM"
+    },
+    {
+      "kind": "HOURLY_GITHUB_RECONCILIATION",
+      "at": "2026-10-09T18:00:43Z",
+      "status": "NO_NEW_UNASSIGNED_REVIEW_WORK",
+      "cloud_execution": {
+        "provider": "cloud",
+        "observations_current": true,
+        "observed_phase": "running",
+        "spec_revision": "171"
+      },
+      "queue_blob_sha": "738d1ea51e06825f1d4d8b9cd26d7e9e13ebaf0b",
+      "observed_prs": [
+        {
+          "pr": 169,
+          "head_sha": "afc16bfdc6f5fb48fe42d4c3cdfdae6f2eec7654",
+          "base_sha": "5746912cd88b9527e2b196a2edefc66b72c257a0",
+          "merged": true,
+          "observed_merge_sha": "6510685b60b8725e15442da3dd7b715136b8fdc8",
+          "comment_ids": [
+            6085472250,
+            6085503561
+          ],
+          "status": "EXTERNAL_WORKER02_REVIEW_PUBLISHED_DESKTOP_MERGED",
+          "tests_this_run": "NOT_RUN",
+          "limitations": "Observed merge and external review only, no acceptance or live-readiness certification by this run."
+        }
+      ],
+      "observed_codex_branch_count": 170,
+      "branch_pagination_complete": true,
+      "tests": "NOT_RUN_NO_NEW_UNASSIGNED_SCOPE",
+      "review_comments_posted": 0,
+      "infrastructure_failures": 0,
+      "provider_calls": 0,
+      "readiness": "One live candidate attempted,4requests,total10/18,noquote/noBUY",
+      "readiness_verified": false,
+      "schedule": "NOT_REPROBED_NO_DURABLE_BINDING_CLAIM"
     }
   ],
   "artifact_pr": {
@@ -8163,42 +8200,39 @@
   ],
   "last_reconciliation": {
     "kind": "HOURLY_GITHUB_RECONCILIATION",
-    "at": "2026-10-09T17:00:40Z",
-    "status": "PR169_RESERVED_WORKER02_NO_DUPLICATION",
+    "at": "2026-10-09T18:00:43Z",
+    "status": "NO_NEW_UNASSIGNED_REVIEW_WORK",
     "cloud_execution": {
       "provider": "cloud",
       "observations_current": true,
       "observed_phase": "running",
-      "spec_revision": "151"
+      "spec_revision": "171"
     },
-    "queue_blob_sha": "e78cfdc1b8462f3e6c3c9c36ac969ad2b7a1a131",
+    "queue_blob_sha": "738d1ea51e06825f1d4d8b9cd26d7e9e13ebaf0b",
     "observed_prs": [
       {
         "pr": 169,
         "head_sha": "afc16bfdc6f5fb48fe42d4c3cdfdae6f2eec7654",
         "base_sha": "5746912cd88b9527e2b196a2edefc66b72c257a0",
-        "branch": "codex/cloud-pool-feature-audit-08",
-        "author_worker": "08",
-        "author_thread_id": "01a118fd-2563-7126-90d7-bd07693de0b2",
-        "reviewer_worker": "02",
-        "reviewer_thread_id": "01a118fc-666c-70b6-9fa8-2c7520f0a0bb",
-        "ownership_evidence": "Exact PR body explicitly independent02 review pending; branch08 and author handoff",
+        "merged": true,
+        "observed_merge_sha": "6510685b60b8725e15442da3dd7b715136b8fdc8",
         "comment_ids": [
-          6085472250
+          6085472250,
+          6085503561
         ],
-        "status": "RESERVED_WORKER02_COMPONENT_REVIEW_PENDING",
+        "status": "EXTERNAL_WORKER02_REVIEW_PUBLISHED_DESKTOP_MERGED",
         "tests_this_run": "NOT_RUN",
-        "ci": "AUTHOR_REPORT_IN_PROGRESS_NOT_VERIFIED",
-        "limitations": "No tests, review or CI success certified by this run; no policy compatibility acceptance."
+        "limitations": "Observed merge and external review only, no acceptance or live-readiness certification by this run."
       }
     ],
-    "observed_codex_branch_count": 168,
+    "observed_codex_branch_count": 170,
     "branch_pagination_complete": true,
-    "tests": "NOT_RUN_RESERVED_INDEPENDENT_REVIEW",
+    "tests": "NOT_RUN_NO_NEW_UNASSIGNED_SCOPE",
     "review_comments_posted": 0,
     "infrastructure_failures": 0,
     "provider_calls": 0,
-    "readiness": "BLOCKED_NO_SUPPORTED_BUDGET_FEASIBLE_PUBLIC_LEGACY_SEED; acquisition path in development",
+    "readiness": "One live candidate attempted,4requests,total10/18,noquote/noBUY",
+    "readiness_verified": false,
     "schedule": "NOT_REPROBED_NO_DURABLE_BINDING_CLAIM"
   },
   "supplemental_validations": [
