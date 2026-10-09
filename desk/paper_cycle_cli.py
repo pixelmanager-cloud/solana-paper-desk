@@ -118,6 +118,9 @@ def main(argv=None):
     once.add_argument('--systemd-credentials',action='store_true',help='Load only %d/provider-keys.json')
     once.add_argument('--dependency-blocker',action='append',default=[])
     once.add_argument('--control',choices=('PAUSE_ENTRY','EXIT_ONLY','LIQUIDATE','RESUME'))
+    once.add_argument('--monitoring',action='store_true',help='Explicit provisioned positions-only60/hour allowance')
+    provision=commands.add_parser('provision-monitoring',help='Coordinator-only explicit first provisioning; never on reads')
+    for name in ('research-db','evidence-db','ledger-db'):provision.add_argument('--'+name,required=True)
     args=parser.parse_args(argv)
     try:
         cfg=_config(args.config);cycle._config(cfg)
@@ -125,11 +128,20 @@ def main(argv=None):
             cycle.initialize(args.ledger_db,cfg)
             result={'kind':'paper_cycle_init_v1','status':'INITIALIZED','execution_status':'EXECUTION_UNVERIFIED',
                     'live_readiness':False,'automatic_entry_enabled':False}
+        elif args.command=='provision-monitoring':
+            from .paper_monitor_operator import provision
+            result=provision(args.research_db,args.evidence_db,args.ledger_db,cfg)
         else:
             positions,candidates,usd=load_targets(args.targets)
             blockers=tuple(args.dependency_blocker)
             if len(blockers)>16 or any(not 1<=len(x)<=128 for x in blockers):raise ValueError('Blocker bound')
-            # Pending integration/review refuses without credential reads.
+            if args.monitoring and (candidates or usd):raise ValueError('Monitoring is positions-only')
+            pacing=None
+            if args.monitoring and not blockers:
+                from .paper_monitor_operator import preflight
+                pacing=preflight(args.research_db,args.evidence_db,args.ledger_db,cfg)
+                blockers=tuple(pacing['blockers'])
+            # Pending integration/review/pacing refuses without credential reads.
             if args.systemd_credentials and not blockers:_credentials()
             controls=()
             if args.control:
@@ -137,10 +149,12 @@ def main(argv=None):
                            'ts':int(time.time()),'actor':'operator','command':args.control},)
             result=cycle.run_once(args.research_db,args.evidence_db,args.ledger_db,cfg,
                     position_targets=positions,candidates=candidates,dependency_blockers=blockers,
-                    controls=controls,usd_evidence_refs=usd)
+                    controls=controls,usd_evidence_refs=usd,monitoring=args.monitoring)
+            if pacing is not None:result['monitoring_preflight']=pacing
         # Print no raw events/source payloads, targets, credential values or error strings.
         summary={key:result[key] for key in ('kind','status','execution_status','live_readiness',
-                 'automatic_entry_enabled','attempted_requests','events','budget','evidence_hash') if key in result}
+                 'automatic_entry_enabled','attempted_requests','investigation_attempted_requests',
+                 'monitoring_attempted_requests','monitoring_budget','monitoring_preflight','events','budget','evidence_hash') if key in result}
         summary['blockers']=result.get('blockers',[])
         summary['outcomes']=[{k:row[k] for k in ('type','mint','side','reason','risk_flags','execution_status') if k in row}
                              for row in result.get('outcomes',[])]
@@ -152,7 +166,7 @@ def main(argv=None):
                     ('status','graduated_at','blockers','source_hashes','scope') if k in row['graduation']}
             summary['diagnostics'].append(diagnostic)
         print(json.dumps(summary,sort_keys=True,allow_nan=False))
-        return 0 if result['status'] in ('COMPLETE','INITIALIZED') else 2
+        return 0 if result['status'] in ('COMPLETE','INITIALIZED','PROVISIONED') else 2
     except (ValueError,OSError,sqlite3.Error,KeyError,TypeError,OverflowError,RecursionError):
         print(json.dumps({'kind':'paper_cycle_cli_v1','status':'UNAVAILABLE',
             'blockers':['OPERATOR_INPUT_CONFIG_CREDENTIAL_OR_CHECKPOINT_UNAVAILABLE'],
