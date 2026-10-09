@@ -498,8 +498,10 @@
         "worker": "01",
         "thread_id": "01a118fc-39bc-722c-b442-8bf5a749e0bb",
         "host_id": "durable",
-        "status": "DISPATCHED",
-        "scope": "Originalreviewer history corruption repair"
+        "status": "PASS",
+        "scope": "Originalreviewer history corruption repair",
+        "turn_id": "01a11eca-56b5-76c0-9e2c-7597f4e9c797",
+        "wait_cursor": "5e651fc7-2996-4765-974d-5c852257a005:80"
       },
       {
         "id": "EXPERIMENTAL-RUNNER-CONFIG",
@@ -1526,7 +1528,7 @@
           37880744144,
           37880740856
         ],
-        "status": "FIRST_SUCCESS_SECOND_LAST_SEEN_RUNNING"
+        "status": "BOTH_SUCCESS"
       }
     },
     "pending_pr108": {
@@ -1535,7 +1537,7 @@
         "pr": 106,
         "head": "7a45e55ca2cfa9c3c5a7802724987493c89e0dd4"
       },
-      "status": "INDEPENDENT_REVIEW",
+      "status": "REPAIRING_RESTART_RISK_METADATA_BINDING_FINDING",
       "local_tests": {
         "total": 1995,
         "passed": 1600,
@@ -1550,6 +1552,31 @@
       "current_gate": "Full transaction execution verification even for paper fills",
       "proposed_experimental_mode": "Fresh live quote simulations with explicit fee/slippage assumptions and execution-unverified label",
       "existing_authorization": "Ownership history risk only; do not silently waive execution proof while choice pending"
+    },
+    "pending_pr109": {
+      "status": "REVIEWED_READY_TO_INTEGRATE",
+      "head": "1acc2b51fba371b6da2be6759afe79efc7081e4b",
+      "includes_pr102": "ada4892b3df3138f3369aa9d64aaf60f778b0d7b",
+      "review_url": "https://github.com/pixelmanager-cloud/solana-paper-desk/pull/109#issuecomment-6073948533",
+      "independent_tree": "0d4d9813b010460992874b34fbf7152340c8c79c",
+      "linux_tests": {
+        "total": 1990,
+        "skipped": 0,
+        "seconds": 171.627
+      },
+      "local_tests": {
+        "total": 1990,
+        "skipped": 408,
+        "seconds": 35.693,
+        "tree": "75739c892cce3e351e1064a8a4a5fc006104df16"
+      },
+      "ci_runs": [
+        37881174475,
+        37881107177
+      ],
+      "ci": "SUCCESS",
+      "manifest_sha256": "121978b3850e7fba403fcfe4d295eb3f25c31d12b607a93ae0113f3c58849c0b",
+      "live_acceptance": false
     }
   },
   "native_reconciliation_review": {
