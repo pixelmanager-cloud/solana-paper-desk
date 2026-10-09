@@ -56,6 +56,8 @@ The paper-loop and bounded live-data foundation is integrated at `27bc668599a335
 
 The user approved an explicit new quote-based paper experiment: fresh live quotes, recorded fees and adverse slippage, and EXECUTION_UNVERIFIED labels. Unknown ownership history remains visibly flagged; known hazards still reject. Remaining implementation is the quote execution engine, measured-feature event adapter, and bounded one-cycle orchestration, followed by combined verification and coordinator-only live validation. PR125 observation CLI and PR126 window transport are under independent review. The desktop recovery schedule is active under the updated paper-loop scope.
 
+At 12:12 UTC, continuous discovery PR151 head `7bc51403ad122760acdc013857c49438d30d8af0` was integrated at `bcac115cb0a61763eabe4992ddd4b2f2eeb91ee3` and published in `a5bed0e68d8cfd72edcdf3033148e32b5a075068`. Independent review and all 2,397 combined Linux tests passed with zero skips; both exact PR-head CI checks passed after the user explicitly authorized making the existing repository public, including its history. The integrated source differs from reviewed combined tree `dd09bb1e8d98f3c9552f7232e3f8fa49a41b6029` only in coordinator queue/readiness documents. VPS fixture tests and integration CI are running; the continuous listener is not activated. Existing paper services and allowances remain pinned. PR153 downstream upgrade has independent findings requiring repairs; PR152 runtime compatibility and PR154 pacing remain under review. Latest read-only discovery inspection still shows sequence782, with no new candidate or live paper entry.
+
 ## Earlier deployed milestones (historical counts)
 
 

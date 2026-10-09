@@ -2990,7 +2990,11 @@
       },
       "integration_commit": "bcac115cb0a61763eabe4992ddd4b2f2eeb91ee3",
       "ci": "Both exact-head CI runs SUCCESS after approved public visibility",
-      "source_match": "Integration differs from reviewed combined tree dd09bb1 only in coordinator queue/readiness docs"
+      "source_match": "Integration differs from reviewed combined tree dd09bb1 only in coordinator queue/readiness docs",
+      "integration_ci_runs": [
+        37928518870,
+        37928512994
+      ]
     },
     "paper_policy_tuning": {
       "status": "PASS_INTEGRATED_OFFLINE_FOUNDATION",
@@ -3057,8 +3061,8 @@
       },
       "worker": "01",
       "thread_id": "01a118fc-39bc-722c-b442-8bf5a749e0bb",
-      "turn_id": "01a1206f-f358-7693-8ac3-4d59f106990f",
-      "cursor": "5e651fc7-2996-4765-974d-5c852257a005:108",
+      "turn_id": "01a12091-66cd-756b-a085-a71affa98bad",
+      "cursor": "5e651fc7-2996-4765-974d-5c852257a005:112",
       "reviewer": {
         "worker": "03",
         "thread_id": "01a118fc-9478-778a-b77a-8f8f6ec7e0ad",
@@ -3082,7 +3086,7 @@
         "status": "FORWARD_FIXES_PENDING_REREVIEW",
         "scope": "Explicit exact predecessor-successor compatibility; preserve originals; no job or monitoring policy edits",
         "pr": 152,
-        "head": "965a2b1f62f92980805eb6b2bbc9f6750b381e10",
+        "head": "d0cfc34f167a39e814c400425640b5a91ec1ea85",
         "interface": "runtime_compatibility.require_runtime(connection, implementation=code_hash)",
         "reviewer": {
           "worker": "02",
@@ -3093,13 +3097,15 @@
         "findings": [
           "Post-transition malformed suffix grammar inconsistent acrossreaders",
           "Same-name no-op triggers allow receipt mutation"
-        ]
+        ],
+        "implementation_head": "965a2b1f62f92980805eb6b2bbc9f6750b381e10",
+        "final_delta": "12 report lines only, root verified"
       },
       "ownership_clarification": "01budgetpoliciesonly;07exclusive runtimecompatibility/readers. Duplicateintentcorrected immediately; overlapinterface requested.",
       "provider_pacing": {
         "worker": "06",
         "thread_id": "01a118fc-f867-7233-8eec-c20659e70095",
-        "status": "EXACT_HEAD_REVIEW_DISPATCHED",
+        "status": "CHANGES_REQUIRED_REPAIR_REQUESTED",
         "scope": "Durable shared Helius/Jupiter pacing/backoff, heldpositionpriority, preserve callerbudget charges, no hidden retries",
         "turn_id": "01a1207f-badc-7720-b415-aa1bc5476197",
         "cursor": "8f3328cf-bef6-441d-83f8-2d1f46b3b0df:123",
@@ -3110,7 +3116,12 @@
           "thread_id": "01a118fd-3f90-77d9-9549-c4497f5b10a6",
           "turn_id": "01a1208d-1582-7744-a67c-4d03acd6f229",
           "cursor": "68a4d56e-d04a-40dc-ad15-e80a29c96b80:45"
-        }
+        },
+        "finding": "Lost429 embargo under SQLite contention reproduced through Pacer and PaperReadSources",
+        "review_url": "https://github.com/pixelmanager-cloud/solana-paper-desk/pull/154#issuecomment-6080637194",
+        "linux_tests": 2387,
+        "linux_skips": 0,
+        "linux_seconds": 257.566
       },
       "pr": 153,
       "head": "a70c69ffc1fad6c51e482076e99b9ee34e98c952",
