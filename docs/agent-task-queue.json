@@ -2865,7 +2865,7 @@
       "next_if_recurs": "Verbose test names and periodic faulthandler dumps, preserving suite and10min timeout; no source repair established"
     },
     "continuous_discovery_preflight": {
-      "status": "INDEPENDENT_PASS_CI_RETRY_RUNNING",
+      "status": "INTEGRATED_INDEPENDENT_LINUX_AND_EXACT_HEAD_CI_PASS",
       "worker": "08",
       "thread_id": "01a118fd-2563-7126-90d7-bd07693de0b2",
       "turn_id": "01a1205a-ac94-70d6-bb60-70c87ba13d8e",
@@ -2912,7 +2912,7 @@
         "seconds": 329.356,
         "tree": "dd09bb1e8d98f3c9552f7232e3f8fa49a41b6029"
       },
-      "deployment": "NOT_DEPLOYED; retain sampler until exact-head review, full Linux tests and CI; keep paper runtime pinned",
+      "deployment": "STAGED_NOT_ACTIVE; VPS tests and integration CI pending",
       "allowance_change": "Author08 and reviewer02 notified; not deployed; preserve prior charged usage and originals",
       "latest_periodic_sample": {
         "checked_utc": "2026-10-09T11:54Z",
@@ -2987,7 +2987,10 @@
         "archive_sha256": "1c009979663d1f48a023c508ec3a3c95fecd3c7d4e0ba6101e7c449099277b43",
         "test_log": "/var/tmp/discovery-dd09bb1-tests.log",
         "provider_calls": 0
-      }
+      },
+      "integration_commit": "bcac115cb0a61763eabe4992ddd4b2f2eeb91ee3",
+      "ci": "Both exact-head CI runs SUCCESS after approved public visibility",
+      "source_match": "Integration differs from reviewed combined tree dd09bb1 only in coordinator queue/readiness docs"
     },
     "paper_policy_tuning": {
       "status": "PASS_INTEGRATED_OFFLINE_FOUNDATION",
