@@ -12,6 +12,8 @@ Real live checks admitted three legacy-program candidates under unchanged invest
 
 Backup `daily-20261009T100239Z` includes the new paper ledger. A copied empty backup restored and passed checkpoint validation; dashboard restart and empty monitoring replay preserved all 60 monitoring requests. The original eight scan records are unchanged. Empty-ledger restart/restore is not proof of a live trade lifecycle or profitability. Secrets remain in their original root-private directory; experiment configuration is separately root-owned and service-readable.
 
+The corrected migration discovery filter completed its first unchanged-budget scheduled sample at 10:21:35 UTC with CONNECTED_NO_EVENTS (zero records). Operator-path review also identified a concrete intake gap: oldest-first birth history can miss a known migration within the shared 18-request budget. A narrow finalized-slot acquisition repair is assigned to worker01, with independent review by worker02; it is not deployed and grants no entry authority.
+
 ## Paper-loop priority update — 2026-10-09
 
 The user changed the immediate target to an executable live-data paper experiment and forward iteration. In explicit experimental paper mode, unresolved ownership **history** may be retained as an acknowledged risk. Known hazards, corrupt or contradictory supplied evidence, and missing execution/price/freshness data are not waived. The older strict ownership milestone below remains the strict-mode policy, not a reason to stop independent paper-loop implementation. No unknown ownership percentage may be replaced by a fabricated safe value.
@@ -22,7 +24,9 @@ A local scratch combination of PR103 runner and PR105 reporting demonstrated syn
 
 Live loop gaps are now assigned concretely: explicit unknown-compatible experimental scoring; measured rolling trade features; trusted live observation/event wiring; supported route and exact-cost evidence; actual runner state in the dashboard. Fresh production inspection still reports dashboard active, paper NOT_CONFIGURED, runner NOT_CONNECTED and automatic entry false. No live paper fill or readiness has been claimed.
 
-## Latest integration — 2026-10-09
+## Integration record — 2026-10-09
+
+Entries below retain the state observed at each integration. The current deployment and remaining live acceptance work are stated at the top; earlier “not deployed” and pending-review statements are historical.
 
 Runtime components through PR147 passed independent scoped reviews and exact-head CI. Frozen combined tree `673b602ca9398fd9081b3e800cc9609c42b69a93` passed 2,335 Linux tests (zero skips) and desktop tests (408 platform skips). Adding only PR148's inactive positions-only service wrapper produces `afe2845a6067ea63bf1e16528a3dcd0f80783127`; its independent review and all 2,339 combined Linux tests passed with zero skips. Every exact component head has successful CI and was rechecked before integration. VPS service-account validation subsequently passed and the empty experiment is deployed as described above.
 
@@ -57,7 +61,9 @@ The user approved an explicit new quote-based paper experiment: fresh live quote
 - Bounded holder enumeration reconciles exact raw supply, duplicate pages and indexed slot freshness. One live legacy mint reconciled all 17 accounts to 100%.
 - Pool verification checks official program/PDA/vault/LP identities. A live canonical pool had burned LP supply and a verified documented layout, but remains unapproved because Token-2022 vault extensions and virtual reserves need further handling. Same-bank supply/global/dynamic fee snapshots and standard aggregate sell-fee checks are implemented; exact split/full CPI policy remains incomplete.
 
-## Required before calling the paper tool ready
+## Original strict-mode readiness checklist (historical)
+
+This checklist predates the approved experimental paper policy. It does not reinstate complete ownership-history screening as a prerequisite for that experiment. Its current acceptance requirement is the genuine live entry/monitor/exit/accounting/restart cycle and forward observation stated above.
 
 1. Build trustworthy point-in-time holder/launch/funding evidence, with pagination watermarks, explicit service/pool labels and current-holder multi-hop exposure. Partial histories must fail closed. No caller-supplied completeness flag may bypass the live builder.
 2. Verify canonical pool identity, vaults, reserves and liquidity control from chain state; avoid counting vaults as private whales. Address recent program schema extensions with pinned provenance and fixtures.

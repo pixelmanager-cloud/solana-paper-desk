@@ -2677,7 +2677,7 @@
       }
     },
     "discovery_migration_diagnostic": {
-      "status": "REVIEW08_PASS_FILTER_REPLACED_AWAITING_SCHEDULED_SAMPLE",
+      "status": "FILTER_SCHEDULED_SAMPLE_CONNECTED_NO_EVENTS",
       "thread_id": "01a118fd-2563-7126-90d7-bd07693de0b2",
       "turn_id": "01a12021-caf7-76c3-9edb-15c8f26cf55b",
       "cursor": "02d8669f-59ba-43bb-8691-b196829f4867:45",
@@ -2703,7 +2703,42 @@
       "manual_extra_sample": false,
       "source": "afe2845",
       "limit_changes": false,
-      "limitation": "Observed Global1088 bytes differs from pinned1087 layout; validated prefix only discovery hint. Raw confirmed captures do not replace finalized admission history. Authority rotation/unrelated references/Token2022/missing samples possible."
+      "limitation": "Observed Global1088 bytes differs from pinned1087 layout; validated prefix only discovery hint. Raw confirmed captures do not replace finalized admission history. Authority rotation/unrelated references/Token2022/missing samples possible.",
+      "first_scheduled_sample": {
+        "started_at": "2026-10-09T10:21:15Z",
+        "completed_at": "2026-10-09T10:21:35Z",
+        "exit_status": 0,
+        "status": "CONNECTED_NO_EVENTS",
+        "new_records": 0,
+        "received_bytes": 0,
+        "last_raw_seq": 778,
+        "limits_changed": false,
+        "manual_extra_sample": false
+      }
+    },
+    "live_migration_operator_preflight": {
+      "status": "COMPLETE_CONCRETE_INTAKE_GAP",
+      "worker": "01",
+      "thread_id": "01a118fc-39bc-722c-b442-8bf5a749e0bb",
+      "turn_id": "01a1202b-a1c9-712e-98a0-8ee7fa9ead1d",
+      "cursor": "5e651fc7-2996-4765-974d-5c852257a005:103",
+      "source_commit": "b84e20dd3a464be0c5a06f4252b4118a402190e0",
+      "scope": "Existing command path from supported migration hint to finalized retained evidence/admission/target export; identify concrete bounded acquisition gap, no code or providers",
+      "followup_turn_id": "01a1202f-53b7-7032-9774-d3fa75b436f7",
+      "finding": "Oldest-first birth history may omit known migration within18request budget. Signature diagnostic is not compatible with finalized history manifest exporter. Need bounded observed-slot acquisition under immutable cutoff; no live candidate yet.",
+      "fixture_tests": 40
+    },
+    "migration_slot_intake_repair": {
+      "status": "IMPLEMENTATION_DISPATCHED",
+      "worker": "01",
+      "reviewer": "02",
+      "thread_id": "01a118fc-39bc-722c-b442-8bf5a749e0bb",
+      "turn_id": "01a12030-87b1-73a6-a6f0-5dcdb3e055ad",
+      "base": "b84e20dd3a464be0c5a06f4252b4118a402190e0",
+      "scope": "Explicit bounded finalized observed-slot history, existing immutable BIRTH cutoff and shared18 reservations, retained manifests/witness matching; no hint-based eligibility or budget resets",
+      "pr": null,
+      "head": null,
+      "deployment": "NOT_AUTHORIZED_PENDING_REVIEW_CI_COMBINED_TESTS_AND_EXPERIMENT_IDENTITY"
     }
   },
   "native_reconciliation_review": {
