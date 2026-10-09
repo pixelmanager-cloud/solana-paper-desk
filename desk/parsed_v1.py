@@ -47,6 +47,9 @@ def _instruction(ix, keys, *, outer):
     parsed='parsed' in ix
     fields={'parsed','program','programId','stackHeight'} if parsed else {'accounts','data','programId','stackHeight'}
     _require(set(ix)==fields and address(ix['programId']) in keys)
+    # Canonical v1 sanitize rejects index zero as an OUTER program. CPI
+    # observations are not the message instruction array and are not inferred.
+    if outer:_require(ix['programId']!=keys[0])
     height=ix['stackHeight']
     _require(type(height) is int and (height==1 if outer else 2<=height<=64))
     if not parsed:

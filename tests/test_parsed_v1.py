@@ -109,6 +109,21 @@ class ParsedV1Tests(unittest.TestCase):
         row=copy.deepcopy(self.row);row['transaction']['message']['instructions'][1]['accounts']=[self.message['accountKeys'][0]['pubkey']]*255;validate(row)
         row['transaction']['message']['instructions'][1]['accounts'].append(self.message['accountKeys'][0]['pubkey'])
         with self.assertRaises(ValueError):validate(row)
+    def test_fee_payer_cannot_be_outer_program_and_history_keeps_gap(self):
+        row=copy.deepcopy(self.row)
+        row['transaction']['message']['instructions'][1]['programId']=self.message['accountKeys'][0]['pubkey']
+        with self.assertRaises(ValueError):decode(row)
+        saved=[]
+        def capture(value):saved.append(copy.deepcopy(value));return digest(value)
+        observed,coverage=collect_history(self.message['accountKeys'][7]['pubkey'],1791570800,1791570900,
+                    lambda *_:{'data':[row],'paginationToken':None},capture=capture)
+        self.assertEqual(observed,[]);self.assertIn('HISTORY_DECODE_GAP',coverage['reasons'])
+        self.assertFalse(coverage['query_coverage_verified']);self.assertEqual(saved[0]['data'][0],row)
+        # Outer-only rule: syntax checking CPI observations does not invent
+        # caller/program authority or apply message sanitizer to runtime trace.
+        row=copy.deepcopy(self.row);row['meta']['innerInstructions'][0]['instructions'][0]['programId']=self.message['accountKeys'][0]['pubkey']
+        validate(row)
+
     def test_outer64_limit_and_inner_parent_identity(self):
         row=copy.deepcopy(self.row);row['transaction']['message']['instructions']=[copy.deepcopy(self.message['instructions'][0]) for _ in range(64)];validate(row)
         row['transaction']['message']['instructions'].append(copy.deepcopy(self.message['instructions'][0]))
