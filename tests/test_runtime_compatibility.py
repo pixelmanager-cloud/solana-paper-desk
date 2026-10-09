@@ -43,16 +43,75 @@ paper_cycle.initialize(sys.argv[1],json.loads(Path('config.json').read_text()))
 '''
         result=subprocess.run([sys.executable,'-c',script,str(self.ledger),OLD],cwd=self.oldroot,capture_output=True,text=True,timeout=20)
         self.assertEqual(result.returncode,0,result.stderr)
-        for path in (self.research,self.evidence):
-            with sqlite3.connect(path) as c:c.execute('CREATE TABLE unchanged_budget(used INTEGER,ceiling INTEGER)');c.execute('INSERT INTO unchanged_budget VALUES(18,18)')
+        from tests.test_paper_observation_collector import PaperObservationCollectorTests
+        self.context=PaperObservationCollectorTests();self.context.setUp();self.addCleanup(self.context.doCleanups)
+        target=self.context.target()
+        from desk.ownership_acquisition import _Setup
+        _Setup(self.context.progress.store,self.context.jobs.descriptor(target.scan_id),
+               self.context.progress.admission(target.scan_id))
+        self.research=self.context.jobs.path;self.evidence=self.context.progress.store.path
         self.current=rc.implementation_hash();self.policy=self.root/'policy.json'
-        self.edge={'predecessor':OLD,'successor':self.current,'config_hash':digest(self.cfg)}
+        self.edge={'predecessor':OLD,'successor':self.current,'config_hash':digest(self.cfg),'context':{'research_db':str(self.research.resolve()),
+            'evidence_db':str(self.evidence.resolve()),'ledger_db':str(self.ledger.resolve())}}
         self.policy.write_text(canonical({'version':1,'transitions':[self.edge]}))
         self.patch=patch.object(rc,'POLICY',self.policy);self.patch.start();self.addCleanup(self.patch.stop)
 
     def migrate(self,**kw):
         return rc.transition(self.research,self.evidence,self.ledger,self.cfg,
                             **({'predecessor':OLD,'successor':self.current}|kw))
+
+    def test_unrelated_context_cannot_bypass_genuine_held_locks(self):
+        import fcntl
+        before=dump(self.ledger)
+        fake_research=self.root/'text-research';fake_evidence=self.root/'text-evidence'
+        for p in (fake_research,fake_evidence):p.write_text('not a database')
+        with open(str(self.research)+'.jobs-worker.lock','a') as r, open(str(self.evidence)+'.ownership-invocation.lock','a') as e:
+            fcntl.flock(r,fcntl.LOCK_EX|fcntl.LOCK_NB);fcntl.flock(e,fcntl.LOCK_EX|fcntl.LOCK_NB)
+            with self.assertRaises(ValueError):self.migrate()
+            with self.assertRaisesRegex(ValueError,'context'):
+                rc.transition(fake_research,fake_evidence,self.ledger,self.cfg,predecessor=OLD,successor=self.current)
+        self.assertEqual(dump(self.ledger),before)
+        self.assertEqual(fake_research.read_text(),'not a database')
+
+    def test_different_valid_context_and_missing_empty_ledger_pin_refused(self):
+        from tests.test_paper_observation_collector import PaperObservationCollectorTests
+        other=PaperObservationCollectorTests();other.setUp();self.addCleanup(other.doCleanups);other.target()
+        before=dump(self.ledger)
+        with self.assertRaisesRegex(ValueError,'context'):
+            rc.transition(other.jobs.path,other.progress.store.path,self.ledger,self.cfg,predecessor=OLD,successor=self.current)
+        edge=copy.deepcopy(self.edge);edge.pop('context')
+        self.policy.write_text(canonical({'version':1,'transitions':[edge]}))
+        with self.assertRaises(ValueError):self.migrate()
+        self.assertEqual(dump(self.ledger),before)
+
+    def test_explicit_pin_does_not_replace_existing_schema_validation(self):
+        before=dump(self.ledger)
+        fake=self.root/'fake';fake.write_text('not a database')
+        edge=copy.deepcopy(self.edge);edge['context']['research_db']=str(fake)
+        self.policy.write_text(canonical({'version':1,'transitions':[edge]}))
+        with self.assertRaises(sqlite3.Error):
+            rc.transition(fake,self.evidence,self.ledger,self.cfg,predecessor=OLD,successor=self.current)
+        self.assertEqual(dump(self.ledger),before)
+        self.assertEqual(fake.read_text(),'not a database')
+
+    def test_shared_dispatch_validator_rejects_missing_and_conflicting_binding(self):
+        before=dump(self.ledger)
+        with sqlite3.connect(self.evidence) as c:
+            c.execute('DROP TRIGGER acquisition_setup_update')
+            c.execute("UPDATE ownership_acquisition_setup SET job_descriptor_hash=?",('0'*64,))
+        evidence_before=dump(self.evidence)
+        with self.assertRaises(ValueError):self.migrate()
+        self.assertEqual(dump(self.ledger),before)
+        self.assertEqual(dump(self.evidence),evidence_before)
+
+    def test_copied_ledger_receipt_does_not_authorize_other_path(self):
+        import shutil
+        self.migrate();other=self.root/'copied-ledger.sqlite';shutil.copyfile(self.ledger,other)
+        before=dump(other)
+        with sqlite3.connect(other) as c:
+            with self.assertRaisesRegex(ValueError,'path binding'):rc.require_runtime(c)
+            with self.assertRaises(RecoveryRequired):read_checkpoint(c)
+        self.assertEqual(dump(other),before)
 
     def test_real_pinned_source_explicit_transition_preserves_records_and_readers(self):
         original=dump(self.ledger);budgets=[dump(p) for p in (self.research,self.evidence)]

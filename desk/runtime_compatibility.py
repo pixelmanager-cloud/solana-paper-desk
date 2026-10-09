@@ -50,14 +50,48 @@ def _approved(predecessor,successor,config_hash):
         raise ValueError('Invalid runtime allowlist')
     entries=policy['transitions'];seen=set()
     for entry in entries:
-        if (type(entry) is not dict or set(entry)!={'predecessor','successor','config_hash'}
-                or not all(_hash(v) for v in entry.values()) or entry['predecessor']==entry['successor']):
+        if (type(entry) is not dict or set(entry)!={'predecessor','successor','config_hash','context'}
+                or not all(_hash(entry[k]) for k in ('predecessor','successor','config_hash'))
+                or not _context_shape(entry['context']) or entry['predecessor']==entry['successor']):
             raise ValueError('Invalid runtime edge')
         key=canonical(entry)
         if key in seen:raise ValueError('Duplicate runtime edge')
         seen.add(key)
-    if {'predecessor':predecessor,'successor':successor,'config_hash':config_hash} not in entries:
-        raise ValueError('Runtime transition is not reviewed')
+    matches=[e for e in entries if (e['predecessor'],e['successor'],e['config_hash'])==(predecessor,successor,config_hash)]
+    if len(matches)!=1:raise ValueError('Runtime transition is not reviewed or ambiguous')
+    return matches[0]['context']
+
+
+def _context_shape(context):
+    return (type(context) is dict and set(context)=={'research_db','evidence_db','ledger_db'}
+            and all(type(v) is str and 0<len(v.encode())<=4096 and Path(v).is_absolute()
+                    and str(Path(v).resolve())==v for v in context.values())
+            and len(set(context.values()))==3)
+
+
+def require_transition_context(research_db,evidence_db,ledger_db,*,reviewed_context):
+    """Read-only existing context check. Pin must come from reviewed policy.
+
+    Invoke while holding research -> evidence -> ledger canonical locks. Schema
+    validity alone does not identify a context; exact coordinator path pins do.
+    This helper never provisions a context or establishes provider authenticity.
+    """
+    from .job_persistence import canonical_job_path
+    from .history_progress import canonical_ownership_path
+    research=canonical_job_path(research_db);evidence=canonical_ownership_path(evidence_db)
+    ledger=canonical_job_path(ledger_db)
+    actual={'research_db':str(research),'evidence_db':str(evidence),'ledger_db':str(ledger)}
+    if not _context_shape(reviewed_context) or actual!=reviewed_context:
+        raise ValueError('Explicit reviewed runtime context required')
+    if not all(p.is_file() for p in (research,evidence,ledger)):
+        raise ValueError('Existing runtime context required')
+    # No constructors that create tables, admissions, allowances or migration marks.
+    try:
+        from .monitoring_budget import _research_binding
+    except ImportError as exc:
+        raise ValueError('Reviewed research binding validator unavailable') from exc
+    _research_binding(research,evidence)
+    return actual
 
 
 def _schema():
@@ -121,12 +155,16 @@ def require_runtime(c,*,implementation=None):
     row=c.execute(f'SELECT id,payload,payload_hash,length(CAST(payload AS BLOB)) FROM {TABLE}').fetchone()
     if row[0]!=1 or not 0<row[3]<=MAX_BYTES:raise ValueError('Runtime receipt bound')
     receipt=_parse(row[1])
-    fields={'version','predecessor','successor','config_hash','original_checkpoint','original_metadata','events_count','events_hash','outcomes_count','outcomes_hash'}
+    fields={'version','predecessor','successor','config_hash','original_checkpoint','original_metadata','events_count','events_hash','outcomes_count','outcomes_hash','context'}
     if (type(receipt) is not dict or set(receipt)!=fields or type(receipt['version']) is not int
             or receipt['version']!=1 or digest(receipt)!=row[2]
             or receipt['predecessor']!=original or receipt['successor']!=current or receipt['config_hash']!=cfg_hash):
         raise ValueError('Runtime receipt binding invalid')
-    _approved(original,current,cfg_hash)
+    if receipt['context']!=_approved(original,current,cfg_hash):
+        raise ValueError('Runtime receipt context binding invalid')
+    main=[r[2] for r in c.execute('PRAGMA database_list') if r[1]=='main']
+    if len(main)!=1 or not main[0] or str(Path(main[0]).resolve())!=receipt['context']['ledger_db']:
+        raise ValueError('Runtime receipt ledger path binding invalid')
     baseline=receipt['original_metadata']
     if (type(baseline) is not dict or any(baseline.get(k)!=metadata.get(k) for k in metadata)
             or type(receipt['original_checkpoint']) is not dict):raise ValueError('Runtime original snapshot invalid')
@@ -171,13 +209,16 @@ def transition(research_db,evidence_db,ledger_db,cfg,*,predecessor,successor):
     if len({research,evidence,ledger})!=3 or not all(p.is_file() for p in (research,evidence,ledger)):
         raise ValueError('Three stable distinct existing databases required')
     if successor!=implementation_hash():raise ValueError('Successor source mismatch')
-    _approved(predecessor,successor,digest(cfg))
+    context=_approved(predecessor,successor,digest(cfg))
+    actual={'research_db':str(research),'evidence_db':str(evidence),'ledger_db':str(ledger)}
+    if context!=actual:raise ValueError('Explicit reviewed runtime context required')
     with _worker_lock(research) as worker:
         if worker is None:raise ValueError('Research worker busy')
         with _lock(str(evidence)+'.ownership-invocation.lock') as locked:
             if not locked:raise ValueError('Evidence invocation busy')
             with _lock(str(ledger)+'.paper-cycle.lock') as locked:
                 if not locked:raise ValueError('Ledger cycle busy')
+                require_transition_context(research,evidence,ledger,reviewed_context=context)
                 with closing(sqlite3.connect(ledger.as_uri()+'?mode=rw',uri=True,isolation_level=None)) as c:
                     c.execute('BEGIN IMMEDIATE')
                     try:
@@ -192,7 +233,7 @@ def transition(research_db,evidence_db,ledger_db,cfg,*,predecessor,successor):
                         if names:
                             require_runtime(c);c.commit();return {'status':'ALREADY_RECORDED','implementation_hash':predecessor,'effective_runtime_hash':successor}
                         receipt={'version':1,'predecessor':predecessor,'successor':successor,'config_hash':digest(cfg),
-                                 'original_checkpoint':state,'original_metadata':metadata}
+                                 'original_checkpoint':state,'original_metadata':metadata,'context':context}
                         for table in ('events','outcomes'):
                             count=c.execute(f'SELECT COUNT(*) FROM {table}').fetchone()[0]
                             receipt[table+'_count']=count;receipt[table+'_hash']=_prefix(c,table,count)

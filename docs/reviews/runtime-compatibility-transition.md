@@ -105,3 +105,42 @@ Unresolved: independently accepted worker01 resolver/allowance-policy compositio
 exact combined successor allowlist pin with unchanged production config digest,
 coordinator explicit transition and local saved-record verification. No production
 transition, live fill, source authentication or paper readiness is claimed.
+
+## Research/evidence context repair after reopened HOLD
+
+The earlier d0cfc34 source accepted unrelated existing text paths while genuine
+research/evidence locks were held. File existence did not prove quiescence of the
+actual context. This forward repair requires each reviewed policy edge to include
+`context`, exactly `{research_db, evidence_db, ledger_db}`, with three distinct
+absolute canonical path strings. A three-hash edge without context is insufficient,
+including for an empty ledger. The repository allowlist remains empty: production
+paths and final successor must be explicitly reviewed by the coordinator.
+
+After acquiring those exact canonical locks, before ledger mutation,
+`require_transition_context(..., reviewed_context=policy_context)` invokes the
+shared `monitoring_budget._research_binding` from PR153 exact
+`af2077308f17d3f2a7a0cbc6ed630ea0a5f1d764`. This dependency is carried unchanged;
+Agent07 did not edit job_persistence or monitoring_budget. The shared validator
+reads existing schemas/migration marker, bounded original dispatch/admission/setup
+bindings and sealed source consistency. Missing admissions or setup are unavailable,
+not grounds for provisioning or substituting a schema-only proof. A different valid
+context cannot substitute for the explicitly pinned pair. The path pin is reviewed
+local coordinator input, not provider or cryptographic authentication.
+
+The receipt retains that exact policy context; runtime readers validate it and the
+actual main ledger path. A copied receipt at another path is not an authorized
+transition. Original metadata, config, events, checkpoints, outcomes and allowances
+remain untouched. The public helper's context argument MUST come from reviewed
+policy, never be synthesized from user-selected paths as its own proof.
+
+New regressions cover genuine held locks plus unrelated text paths, a different
+valid research/evidence pair, absent empty-ledger pins, explicitly pinned malformed
+database, corrupted original setup binding, and a copied ledger receipt. The earlier
+2,370-test full run applies to the earlier implementation; this narrow forward
+repair is frozen for focused independent re-review before another full run.
+
+Repair validation: Python 3.12.14 Linux,
+`python -m unittest tests.test_runtime_compatibility tests.test_allowance_upgrade tests.test_paper_cycle tests.test_paper_view -q`:
+83 tests, 36.614 seconds, OK, zero skips. Runtime/allowance-only final subset:
+36 tests, 11.003 seconds, OK, zero skips. Dependency's four authored files are
+byte-identical to PR153 af207730. No new full-suite claim is made for this repair.
