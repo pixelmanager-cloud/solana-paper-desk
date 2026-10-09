@@ -2853,7 +2853,7 @@
       "next_if_recurs": "Verbose test names and periodic faulthandler dumps, preserving suite and10min timeout; no source repair established"
     },
     "continuous_discovery_preflight": {
-      "status": "PR151_IN_INDEPENDENT_REVIEW",
+      "status": "FORWARD_REPAIR_EXACT_HEAD_REREVIEW",
       "worker": "08",
       "thread_id": "01a118fd-2563-7126-90d7-bd07693de0b2",
       "turn_id": "01a1205a-ac94-70d6-bb60-70c87ba13d8e",
@@ -2896,26 +2896,34 @@
       "deployment": "NOT_DEPLOYED; retain sampler until exact-head review, full Linux tests and CI; keep paper runtime pinned",
       "allowance_change": "Author08 and reviewer02 notified; not deployed; preserve prior charged usage and originals",
       "latest_periodic_sample": {
-        "completed_utc": "2026-10-09T11:21:41Z",
-        "service_result": "success",
-        "exit_status": 0,
+        "checked_utc": "2026-10-09T11:39Z",
         "new_records_after_seq782": 0,
         "extra_provider_calls": 0
       },
       "pr": 151,
-      "head": "c72d3c1ac1f16a724c0688ac59f0540d78d34247",
+      "head": "23d65918b164420cc1c02f40f24758bba73345ca",
       "capacity_benchmark": {
         "worker": "06",
-        "status": "DISPATCHED",
+        "status": "PRELIMINARY_REPORTED",
         "head": "c72d3c1ac1f16a724c0688ac59f0540d78d34247",
         "scope": "Offline synthetic bounded100MB performance/storage scaling, no provider/VPS",
         "thread_id": "01a118fc-f867-7233-8eec-c20659e70095",
         "turn_id": "01a12071-c811-7665-b8f9-3db33287fcd6",
-        "cursor": "8f3328cf-bef6-441d-83f8-2d1f46b3b0df:120"
+        "cursor": "8f3328cf-bef6-441d-83f8-2d1f46b3b0df:121",
+        "result": {
+          "fixture_records": 1400,
+          "payload_bytes_approx": 28000,
+          "reserve_median_ms": 0.986,
+          "complete_median_ms": 1.133,
+          "rss_mib": 33,
+          "storage_multiplier": 2.06,
+          "storage_hours_at_full_cap_approx": 26,
+          "scope": "Old c72d3c1 synthetic host only; not VPS guarantee"
+        }
       }
     },
     "paper_policy_tuning": {
-      "status": "PR150_CHANGES_REQUESTED",
+      "status": "REPAIRED_EXACT_HEAD_REREVIEW",
       "authorization": "User explicitly authorized tool to tweak entry eligibility to seek a profitable setting; paper only.",
       "worker": "03",
       "thread_id": "01a118fc-9478-778a-b77a-8f8f6ec7e0ad",
@@ -2935,7 +2943,7 @@
       "deployment": "Not implemented or enabled; independent review and full Linux/exact-head CI required; active ledger identity remains pinned",
       "live_data": "Zero observed live paper fills at latest inspection; cannot select profitable policy yet",
       "pr": 150,
-      "head": "033957f9f9550e45bc8ee2ba7270a69ad95c36e7",
+      "head": "5778b01ab299e07925893eb137022cecf8746ef8",
       "reviewer": {
         "worker": "06",
         "thread_id": "01a118fc-f867-7233-8eec-c20659e70095",
@@ -2991,6 +2999,32 @@
         "daily_admissions": 100,
         "queue": 10,
         "monitoring_requests_rolling_hour": 600
+      },
+      "runtime_compatibility": {
+        "worker": "07",
+        "thread_id": "01a118fd-0f1c-749c-b85b-5e730937d0a8",
+        "turn_id": "01a12076-8710-75c8-b56b-fac802a40aca",
+        "cursor": "3dd79f38-868a-433f-9b14-13e7ed0a6e90:63",
+        "status": "IMPLEMENTING",
+        "scope": "Explicit exact predecessor-successor compatibility; preserve originals; no job or monitoring policy edits"
+      }
+    },
+    "discovery_policy_combined_review": {
+      "prs": {
+        "150": "5778b01ab299e07925893eb137022cecf8746ef8",
+        "151": "23d65918b164420cc1c02f40f24758bba73345ca"
+      },
+      "tree": "a5fb0f76f93c24cefc47d56890ae9d9814ed7e63",
+      "worker": "04",
+      "thread_id": "01a118fc-b862-7340-ab3a-e1115a3280a4",
+      "turn_id": "01a12077-5270-7698-9cc4-75040843cb10",
+      "cursor": "d3153436-2742-432e-8501-9c06b95f29ae:46",
+      "status": "DESKTOP_PASS_LINUX_REVIEW_PENDING",
+      "note": "Initial scratch cherry-pick omitted intermediate150fix and conflicted; stopped invalid test run, rebuilt exactheadfiles before rerun. No integration.",
+      "desktop": {
+        "tests": 2393,
+        "skips": 408,
+        "seconds": 65.795
       }
     }
   },
