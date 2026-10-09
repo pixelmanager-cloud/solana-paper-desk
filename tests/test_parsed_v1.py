@@ -138,6 +138,16 @@ class ParsedV1Tests(unittest.TestCase):
         self.reject(lambda r:r['meta'].update(logMessages=[[]]*1025))
         row=copy.deepcopy(self.row);row['meta']['logMessages']=row
         with self.assertRaises(ValueError):validate(row)
+    def test_visible_wire_lower_bound_exact_4096_boundary(self):
+        row=copy.deepcopy(self.row)
+        ix=copy.deepcopy(self.message['instructions'][1]);ix['accounts']=[self.message['accountKeys'][0]['pubkey']]
+        row['transaction']['message']['instructions']=[ix];row['meta']['innerInstructions']=[]
+        # 42 fixed bytes +26*32 keys +2*64 signatures +4 instruction header
+        # +16 explicit config bytes +1 account index +3073 data =4096.
+        ix['data']='1'*3073;validate(row)
+        ix['data']+='1'
+        with self.assertRaises(ValueError):validate(row)
+
     def test_visible_wire_and_total_instruction_resource_bounds(self):
         self.reject(lambda r:r['transaction']['message']['instructions'][1].update(data=base58(bytes(4096))))
         self.reject(lambda r:r['transaction']['message']['instructions'][1].update(data='1'*5601))

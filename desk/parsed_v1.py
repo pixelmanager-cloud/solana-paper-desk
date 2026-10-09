@@ -119,7 +119,7 @@ def validate(container):
     outer=message['instructions'];_require(type(outer) is list and len(outer)<=64)
     # A lower bound from visible fields can reject impossible wire sizes, but
     # parsed instruction payloads are unavailable: no exact wire-size claim.
-    visible_wire=43+32*len(keys)+64*required+4*len(outer)
+    visible_wire=42+32*len(keys)+64*required+4*len(outer)
     visible_wire+=sum((8 if k=='priorityFee' else 4) for k,v in config.items() if v is not None)
     for ix in outer:
         _instruction(ix,keys,outer=True)
