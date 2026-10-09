@@ -1,5 +1,6 @@
 """Synthetic persisted-engine experiments; no transport or acceptance mocks."""
 import io
+import hashlib
 import json
 import sqlite3
 import tempfile
@@ -215,10 +216,12 @@ class OfflinePolicyExperimentTests(unittest.TestCase):
                 path = self.root / ('shape-' + str(index) + '.sqlite')
                 with closing(Ledger(path)) as ledger:
                     ledger.apply(event(paper_signal_profile=profile), config(), transition, initial_state)
+                    ledger.apply(event(T + 10, danger=True, paper_signal_profile=profile), config(), transition, initial_state)
                 # Existing report validator accepts this unrelated V1 metadata;
                 # the offline window reader must reject explicitly, not crash.
                 experiment_report(path, now=T + 200)
                 before = self.dump(path)
+                original_sha256 = hashlib.sha256(path.read_bytes()).hexdigest()
                 with sqlite3.connect(path) as c:
                     hashes = list(c.execute('SELECT event_id,payload_hash FROM events'))
                 out = io.StringIO()
@@ -233,5 +236,6 @@ class OfflinePolicyExperimentTests(unittest.TestCase):
                 self.assertFalse(result['promotion_authorized'])
                 self.assertNotIn(str(path), out.getvalue())
                 self.assertEqual(before, self.dump(path))
+                self.assertEqual(original_sha256, hashlib.sha256(path.read_bytes()).hexdigest())
                 with sqlite3.connect(path) as c:
                     self.assertEqual(hashes, list(c.execute('SELECT event_id,payload_hash FROM events')))
