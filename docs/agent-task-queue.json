@@ -2946,6 +2946,28 @@
           "status": "PASS_LINUX_REQUIRED"
         }
       }
+    },
+    "downstream_allowance_upgrade": {
+      "status": "IMPLEMENTATION_AND_INDEPENDENT_PREFLIGHT_DISPATCHED",
+      "authorization": "User: Pump of those downstream limits as well. Coordinator selected 100 admissions/day, queue10, monitoring600/hour.",
+      "limits": {
+        "daily_admissions": 100,
+        "queue": 10,
+        "monitoring_requests_rolling_hour": 600,
+        "investigation_lifetime_requests_unchanged": 18
+      },
+      "worker": "01",
+      "thread_id": "01a118fc-39bc-722c-b442-8bf5a749e0bb",
+      "turn_id": "01a1206f-f358-7693-8ac3-4d59f106990f",
+      "cursor": "5e651fc7-2996-4765-974d-5c852257a005:108",
+      "reviewer": {
+        "worker": "04",
+        "thread_id": "01a118fc-b862-7340-ab3a-e1115a3280a4",
+        "turn_id": "01a12070-02dd-71e9-a228-7859f14d3cc5",
+        "cursor": "d3153436-2742-432e-8501-9c06b95f29ae:43"
+      },
+      "constraints": "Explicit durable upgrade only; no counter reset, reprovision, forged source identity, historical evidence or checkpoint rewrite. Existing defaults do not silently escalate. Runtime compatibility required.",
+      "deployment": "Not active; original10/3/60 remain until independent review/fullLinux/CI and safe coordinator upgrade"
     }
   },
   "native_reconciliation_review": {
