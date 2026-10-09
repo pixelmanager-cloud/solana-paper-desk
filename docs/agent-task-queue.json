@@ -335,18 +335,22 @@
         "worker": "09",
         "thread_id": "01a118fd-3f90-77d9-9549-c4497f5b10a6",
         "host_id": "durable",
-        "status": "DISPATCHED",
+        "status": "IN_PROGRESS",
         "base": "9e43752daabf19b7e78e08e0b15d16d1c6e2a680",
-        "scope": "Minimal supervised runner using existing ledger/engine/watchdog, executable synthetic lifecycle and restart; no live authorization or screening policy changes"
+        "scope": "Minimal supervised runner using existing ledger/engine/watchdog, executable synthetic lifecycle and restart; no live authorization or screening policy changes",
+        "turn_id": "01a11eae-36ed-72bd-8c5d-ab7f42d99073",
+        "wait_cursor": "68a4d56e-d04a-40dc-ad15-e80a29c96b80:10"
       },
       {
         "id": "EXPERIMENTAL-PAPER-OWNERSHIP-POLICY",
         "worker": "02",
         "thread_id": "01a118fc-666c-70b6-9fa8-2c7520f0a0bb",
         "host_id": "durable",
-        "status": "DISPATCHED",
+        "status": "IN_PROGRESS",
         "base": "9e43752daabf19b7e78e08e0b15d16d1c6e2a680",
-        "scope": "Explicit paper-only unresolved-history risk policy using persisted diagnostics; known hazards reject; no fake completeness, engine changes or PR97 dependency"
+        "scope": "Explicit paper-only unresolved-history risk policy using persisted diagnostics; known hazards reject; no fake completeness, engine changes or PR97 dependency",
+        "turn_id": "01a11eae-d80e-7427-8466-5db09d9ffa01",
+        "wait_cursor": "a2dcfb97-463d-4188-9da3-48a81e644d23:68"
       }
     ],
     "saved_launch_probe": {
@@ -1236,7 +1240,8 @@
       "scope": "User explicitly permits unresolved ownership HISTORY for paper-only entries with visible risk flag; known hazards remain rejected. Freeze screening expansion; preserve unknown evidence and non-ownership required freshness/price/quantity/cost gates.",
       "target": "entry -> monitoring -> full exit -> accounting -> restart",
       "readiness": false,
-      "policy_answer": "Allow with an explicit risk flag; still reject known hazards"
+      "policy_answer": "Allow with an explicit risk flag; still reject known hazards",
+      "scheduled_heartbeat": "PAUSED_BY_USER_WHILE_CHANGING_DIRECTION; dispatched worker tasks continue; do not automatically resume old schedule"
     }
   },
   "native_reconciliation_review": {
