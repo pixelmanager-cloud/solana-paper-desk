@@ -118,7 +118,7 @@ class QuoteV3SeamTests(unittest.TestCase):
         e=self.market()
         for changes in ({'paper_signal_policy_version':True},{'paper_signal_policy_version':'3'},
                         {'paper_signal_policy_version':1},{'experimental_policy_version':1},
-                        {'experimental_policy_version':3},{'paper_quote_execution_version':None}):
+                        {'experimental_policy_version':True},{'paper_quote_execution_version':None}):
             with self.subTest(changes=changes),self.assertRaises(ValueError):
                 qe.plan(engine.initial_state(self.cfg|changes),e,self.cfg|changes)
 
@@ -159,10 +159,22 @@ class QuoteV3SeamTests(unittest.TestCase):
         bad=copy.deepcopy(e);bad['paper_signal_profile']['window']['coverage_complete']=False
         with self.assertRaises(ValueError):qe.plan(engine.initial_state(self.cfg),bad,self.cfg)
 
-    def test_exact_builder_missing_wallet_is_not_replaced_from_quote_request(self):
+    def test_repaired_builder_wallet_binding_replays_actual_quote_without_fallback(self):
         f=adapter_fixture.PaperMarketAdapterTests();f.setUp();self.addCleanup(f.doCleanups)
         built=f.build()['event'];self.assertIsNotNone(built)
-        self.assertNotIn('taker',built)
-        with self.assertRaisesRegex(ValueError,'QUOTE_EVENT_WALLET_REQUIRED'):
-            qe.plan(engine.initial_state(self.cfg),built,self.cfg,(f.observation.quote,))
-        self.assertNotIn('taker',built)
+        self.assertEqual(built['taker'],f.target.taker)
+        state=engine.initial_state(self.cfg);before=copy.deepcopy(state)
+        planned=qe.plan(state,built,self.cfg,(f.observation.quote,))
+        self.assertEqual(state,before)
+        _,outcomes=qe.bind_transition(built,(f.observation.quote,))(copy.deepcopy(state),built,self.cfg)
+        self.assertEqual(planned['outcomes'],outcomes)
+        # Trusted wallet binding is repaired, but producer still omits the raw
+        # account evidence required by the unchanged entry token policy.
+        self.assertIn('TOKEN_EVIDENCE_MISSING_OR_MISMATCHED',outcomes[-1]['reasons'])
+        self.assertFalse(planned['quote_demands'])
+        for value in (None,'invalid','So11111111111111111111111111111111111111112'):
+            bad=copy.deepcopy(built);bad['taker']=value
+            with self.subTest(taker=value),self.assertRaises(ValueError):
+                qe.plan(state,bad,self.cfg,(f.observation.quote,))
+        compatible={**self.cfg,'experimental_policy_version':3}
+        self.assertEqual(qe.plan(state,built,compatible,(f.observation.quote,))['outcomes'],outcomes)

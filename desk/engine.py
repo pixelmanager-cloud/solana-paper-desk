@@ -302,7 +302,7 @@ def transition(state, e, cfg, *, _quote_book=None):
     signal_version=cfg.get('paper_signal_policy_version')
     if signal_version is not None:
         if (type(signal_version) is not int or signal_version!=3 or cfg.get('mode')!='paper'
-                or version is not None or not quote_mode):
+                or (version is not None and (type(version) is not int or version!=3)) or not quote_mode):
             raise ValueError('Unsupported observable paper signal configuration')
         version=signal_version
     elif version is not None and (type(version) is not int or version not in (1, 2) or cfg.get("mode") != "paper"):
