@@ -109,8 +109,9 @@ def _state(path, cfg):
             raise CycleBlocked('SAVED_CONFIG_MISMATCH')
         implementation = digest({str(p.relative_to(Path(__file__).parent)): p.read_text()
             for p in sorted(Path(__file__).parent.rglob('*')) if p.is_file() and p.suffix in ('.py','.json')})
-        if c.execute("SELECT value FROM metadata WHERE key='implementation_hash'").fetchone() != (implementation,):
-            raise CycleBlocked('SAVED_IMPLEMENTATION_MISMATCH')
+        from .runtime_compatibility import require_runtime
+        try: require_runtime(c, implementation=implementation)
+        except ValueError: raise CycleBlocked('SAVED_IMPLEMENTATION_MISMATCH') from None
         return state
 
 

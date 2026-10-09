@@ -1,5 +1,6 @@
 """Read-only consumer checks; never repair, initialize or replace ledger records."""
 import json
+import sqlite3
 from decimal import localcontext
 from .model import decimal, digest
 
@@ -85,7 +86,8 @@ def read_checkpoint(connection):
     sequence = connection.execute(
         "SELECT 1 FROM sqlite_sequence WHERE name IN ('events','outcomes') AND seq>0 LIMIT 1").fetchone()
     if not row:
-        if events or outcomes or metadata or sequence:
+        runtime_record = connection.execute("SELECT 1 FROM sqlite_master WHERE type='table' AND name LIKE 'paper_runtime_%' LIMIT 1").fetchone()
+        if events or outcomes or metadata or sequence or runtime_record:
             raise RecoveryRequired('CHECKPOINT_MISSING')
         return None
     if not events or connection.execute(
@@ -100,6 +102,11 @@ def read_checkpoint(connection):
             raise ValueError('Invalid saved config')
     except (ValueError, TypeError):
         raise RecoveryRequired('EXPERIMENT_IDENTITY_INVALID') from None
+    try:
+        from .runtime_compatibility import require_runtime
+        require_runtime(connection)
+    except (ValueError, TypeError, KeyError, sqlite3.Error, OSError, RecursionError):
+        raise RecoveryRequired('RUNTIME_IDENTITY_INVALID') from None
     return validate_checkpoint(connection, row[0])
 
 
