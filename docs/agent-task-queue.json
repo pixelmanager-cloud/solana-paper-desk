@@ -3406,7 +3406,7 @@
       "handoff_implementation": {
         "worker": "07",
         "thread_id": "01a118fd-0f1c-749c-b85b-5e730937d0a8",
-        "status": "INDEPENDENT_REVIEW_RUNNING",
+        "status": "PASS_CI_SUCCESS",
         "scope": "appendonly sharedmonitoringbudget context handoff to separatelynamedexplicitexperiment; preserveoldledger and allchargedusage; oldcontextrefusesfuturespending",
         "turn_id": "01a120d4-4af6-7312-b596-f76f72a26835",
         "cursor": "3dd79f38-868a-433f-9b14-13e7ed0a6e90:74",
@@ -3507,14 +3507,15 @@
         "head": "d02d9068f29321ae78771d10f13a4dacc5cf33ef",
         "reviewer": "02",
         "review_turn_id": "01a120f2-2088-73c5-9d15-9bc4e20bf007",
-        "status": "REPAIR_REVIEW_RUNNING",
+        "status": "PASS",
         "ci_runs": [
           37937387209,
           37937313642
         ],
         "ci_status": "SUCCESS",
         "finding": "Separate mint owner and atomic pool mint owner contradiction can produce buy or held STOP sell; raw-source binding repair required",
-        "review_url": "https://github.com/pixelmanager-cloud/solana-paper-desk/pull/156#issuecomment-6082173103"
+        "review_url": "https://github.com/pixelmanager-cloud/solana-paper-desk/pull/156#issuecomment-6082479481",
+        "review_tests": 176
       },
       "coordinator_combined_focused": {
         "heads": [
@@ -3580,6 +3581,17 @@
         "seconds": 4.78,
         "result": "PASS",
         "head": "d02d9068f29321ae78771d10f13a4dacc5cf33ef"
+      },
+      "vps_candidate_validation": {
+        "status": "FULL_FIXTURE_SUITE_RUNNING_NOT_DEPLOYED",
+        "source_head": "7b4f32820061ff325ba6b00e5a4e51582f9e1f5e",
+        "extra_file": "independently reviewed config/monitoring-handoff.json",
+        "source_hash": "0fe08c215d591fb972b59749329abcea5c30fbbf5483ea313695ffd175aa433e",
+        "path": "/opt/solana-desk-releases/review-0fe08c2-clean",
+        "archive_sha256": "5c139138ca39a6d564feb222b893c07c19e5f4206a716268051e0b30cac00a16",
+        "log": "/var/tmp/paper-review-0fe08c2/full.log",
+        "session_id": 87697,
+        "initial_packaging": "Mac tar added AppleDouble metadata; source identity check rejected before tests. Repacked using Python tarfile; clean archive hash and implementation match."
       }
     }
   },
