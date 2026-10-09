@@ -3487,7 +3487,8 @@
         "old_runtime_receipt_hash": "927f443a16c0c52285987d7afd88ba0d544e847727c9aed4b01a020e6eea7adc",
         "candidate_implementation_hash": "0fe08c215d591fb972b59749329abcea5c30fbbf5483ea313695ffd175aa433e",
         "policy_review_worker": "09",
-        "policy_review_status": "ASSIGNED_EXACT_EDGE"
+        "policy_review_status": "PASS",
+        "policy_review_turn_id": "01a120f2-f917-700a-b842-244841167295"
       },
       "operator_path_review": {
         "worker": "03",
@@ -3505,7 +3506,7 @@
         "number": 156,
         "head": "d02d9068f29321ae78771d10f13a4dacc5cf33ef",
         "reviewer": "02",
-        "review_turn_id": "01a120e2-1c96-7125-aacb-3882479902fd",
+        "review_turn_id": "01a120f2-2088-73c5-9d15-9bc4e20bf007",
         "status": "REPAIR_REVIEW_RUNNING",
         "ci_runs": [
           37937387209,
@@ -3538,10 +3539,15 @@
       "combined_fixture_verification": {
         "worker": "04",
         "thread_id": "01a118fc-b862-7340-ab3a-e1115a3280a4",
-        "status": "FINAL_REPAIRED_COMPOSITION_AND_FULL_SUITE_ASSIGNED",
+        "status": "FULL_LINUX_RUNNING",
         "scope": "Actual Token2022 separate experiment + context handoff + held monitoring/exit/restart with preserved original ledger/charges; fullcombinedsuite onlyafterfinalheads",
         "turn_id": "01a120eb-1173-7153-a4b3-64b92e3a5aad",
-        "cursor": "d3153436-2742-432e-8501-9c06b95f29ae:57"
+        "cursor": "d3153436-2742-432e-8501-9c06b95f29ae:60",
+        "head": "7b4f32820061ff325ba6b00e5a4e51582f9e1f5e",
+        "tree": "a19b18c5970bacbe13f3456c4702b0ac989416a4",
+        "focused_status": "PASS",
+        "focused_seconds": 92.99,
+        "root_test_diff_review": "101-line real handoff/token entry/partial/full exit/restart regression reviewed; no source/budget/checkpoint bypass found"
       },
       "coordinator_handoff_operator_focused": {
         "heads": [
