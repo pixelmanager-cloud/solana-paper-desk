@@ -383,7 +383,7 @@ def transition(state, e, cfg, *, _quote_book=None):
     # Live adapters are unfinished. JSON assertions cannot authorize real-data fills.
     if e["provenance"] != "SYNTHETIC_TEST_ONLY" and not quote_mode:
         reasons.append("LIVE_FEATURE_ADAPTER_NOT_READY")
-    reasons.extend(entry_token_policy(e))
+    reasons.extend(entry_token_policy(e,cfg))
     if signal_version==3 and 'bundle_evidence' not in e:
         # Explicit approved V3 omission only. Never manufacture complete bundle
         # history or safe percentages; any supplied evidence still runs audit.

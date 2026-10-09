@@ -45,7 +45,7 @@ def _quote_fill(outcome, event, cfg):
         quote_source, mint_source = sources
         token = qe.ingest_mint(lambda: qe.ProviderObservation(mint_source.source_id,
             mint_source.observed_at, qe._original(mint_source)), mint=outcome['mint'],
-            now=event['ts'], max_age_seconds=cfg['price_ttl_seconds'])
+            now=event['ts'], max_age_seconds=cfg['price_ttl_seconds'],token_profile_version=qe.selected(cfg))
         quote = qe.ingest_quote(lambda: qe.ProviderObservation(quote_source.source_id,
             quote_source.observed_at, qe._original(quote_source)), mint=token,
             direction=outcome['side'], amount_raw=record['input_raw'], taker=event['taker'],

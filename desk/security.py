@@ -28,14 +28,21 @@ def account_bytes(account):
         raise ValueError("invalid account encoding") from None
 
 
-def mint_policy(account):
+def mint_policy(account, *, mint=None, token_profile_version=0):
+    from .token2022_paper import check_version
+    check_version(token_profile_version)
     if not isinstance(account, dict):
         return {"decision": "SKIP", "reasons": ["MINT_ACCOUNT_MISSING"]}
     owner = account.get("owner")
-    if owner != TOKEN_PROGRAM:
+    if owner == TOKEN_2022 and token_profile_version==1:
+        from .token2022_paper import mint_base
+        try:data=mint_base(account_bytes(account),mint)
+        except (ValueError,TypeError):
+            return {"decision":"SKIP","reasons":["TOKEN2022_PROFILE_REJECTED"],"owner":owner}
+    elif owner != TOKEN_PROGRAM:
         reason = "TOKEN_2022_NOT_ALLOWED" if owner == TOKEN_2022 else "UNKNOWN_TOKEN_PROGRAM"
         return {"decision": "SKIP", "reasons": [reason], "owner": owner}
-    data = account_bytes(account)
+    if owner == TOKEN_PROGRAM:data = account_bytes(account)
     reasons = []
     if len(data) != 82 or account.get("executable") is not False:
         return {"decision": "SKIP", "reasons": ["INVALID_MINT_LAYOUT"]}
@@ -75,11 +82,20 @@ def holding_authority_reasons(data, wallet):
     return reasons
 
 
-def holding_policy(account, mint, wallet):
+def holding_policy(account, mint, wallet, *, token_profile_version=0):
+    from .token2022_paper import check_version
+    check_version(token_profile_version)
     reasons = []
-    if not isinstance(account, dict) or account.get("owner") != TOKEN_PROGRAM:
-        return {"decision": "SKIP", "reasons": ["UNSUPPORTED_HOLDING_ACCOUNT"]}
-    data = account_bytes(account)
+    if not isinstance(account, dict):
+        return {"decision":"SKIP","reasons":["UNSUPPORTED_HOLDING_ACCOUNT"]}
+    owner=account.get("owner")
+    if owner==TOKEN_2022 and token_profile_version==1:
+        from .token2022_paper import account_base
+        try:data=account_base(account_bytes(account))
+        except (ValueError,TypeError):
+            return {"decision":"SKIP","reasons":["TOKEN2022_ACCOUNT_PROFILE_REJECTED"]}
+    elif owner==TOKEN_PROGRAM:data=account_bytes(account)
+    else:return {"decision":"SKIP","reasons":["UNSUPPORTED_HOLDING_ACCOUNT"]}
     if len(data) != 165 or account.get("executable") is not False:
         return {"decision": "SKIP", "reasons": ["INVALID_HOLDING_LAYOUT"]}
     if base58(data[:32]) != mint or base58(data[32:64]) != wallet:
@@ -93,14 +109,16 @@ def holding_policy(account, mint, wallet):
             "amount_raw": str(int.from_bytes(data[64:72], "little"))}
 
 
-def entry_token_policy(e):
+def entry_token_policy(e, cfg=None):
     evidence = e.get("token_evidence")
     if not isinstance(evidence, dict) or evidence.get("mint") != e["mint"]:
         return ["TOKEN_EVIDENCE_MISSING_OR_MISMATCHED"]
     at = evidence.get("observed_at")
     if type(at) is not int or not 0 <= e["ts"] - at <= 10:
         return ["TOKEN_EVIDENCE_STALE"]
-    return mint_policy(evidence.get("account"))["reasons"]
+    from .token2022_paper import selected
+    return mint_policy(evidence.get("account"),mint=e["mint"],
+                       token_profile_version=selected(cfg or {}))["reasons"]
 
 
 def sellability_gate(e, quantity):

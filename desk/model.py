@@ -87,6 +87,8 @@ def load_config(path):
     cfg = json.loads(Path(path).read_text())
     if cfg.get("mode") != "paper":
         raise ValueError("This build supports paper mode only")
+    from .token2022_paper import selected
+    selected(cfg)
     numeric = [k for k in cfg if k not in ("version", "mode")]
     for key in numeric:
         if decimal(cfg[key]) <= 0:

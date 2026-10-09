@@ -96,7 +96,7 @@ def collect_observations(*, jobs: JobPersistence, progress: HistoryProgress,
                          candidates: tuple[ObservationTarget, ...] = (),
                          request_ceiling: int = 18, deadline_seconds: float = 10,
                          max_age_seconds: int = 10, wall_clock=time.time,
-                         monotonic=time.monotonic) -> CollectionResult:
+                         monotonic=time.monotonic, token_profile_version=0) -> CollectionResult:
     """Open-position sell observations precede all candidate buy reads.
 
     sources is a trusted coordinator map keyed by existing scan ID. Candidate JSON
@@ -215,17 +215,17 @@ def collect_observations(*, jobs: JobPersistence, progress: HistoryProgress,
                             'slot': raw.get('context', {}).get('slot'), 'account': raw.get('value'),
                             'original_rpc_observation': envelope}
             token = ingest_mint(lambda: ProviderObservation(source.rpc_source_id, at, mint_payload),
-                                mint=target.mint, now=timestamp(), max_age_seconds=max_age_seconds)
+                                mint=target.mint, now=timestamp(), max_age_seconds=max_age_seconds,token_profile_version=token_profile_version)
             pool_capture = []
             def capture_pool(payload):
                 key = progress.store.save(payload)
                 if key != digest(payload): raise _Blocked('POOL_CAPTURE_PERSISTENCE_FAILED', True)
                 refs.append(key); pool_capture.append(payload)
                 return key
-            verify_pool(target.pool, target.mint, rpc, capture=capture_pool)
+            verify_pool(target.pool, target.mint, rpc, capture=capture_pool,token_profile_version=token_profile_version)
             pool_at = pool_acquisitions[-1]
             pool = ingest_pool(lambda: ProviderObservation(source.rpc_source_id, pool_at, pool_capture[0]),
-                               mint=target.mint, pool=target.pool, now=timestamp(), max_age_seconds=max_age_seconds)
+                               mint=target.mint, pool=target.pool, now=timestamp(), max_age_seconds=max_age_seconds,token_profile_version=token_profile_version)
             if token.decimals != pool.decimals or pool.slot < token.slot:
                 raise _Blocked('MINT_POOL_BANK_MISMATCH', True)
             input_mint, output_mint = (SOL, target.mint) if direction == 'buy' else (target.mint, SOL)

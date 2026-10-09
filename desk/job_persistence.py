@@ -104,12 +104,16 @@ class JobPersistence:
         c.execute('PRAGMA foreign_keys=ON')
         return c
 
-    def _descriptor(self, uid, mint, created, kind, evidence_db=None):
+    def _descriptor(self, uid, mint, created, kind, evidence_db=None, paper_token_profile_version=0):
+        from .token2022_paper import check_version
+        check_version(paper_token_profile_version)
+        if paper_token_profile_version and kind!=BIRTH_ACQUISITION_V1:raise ValueError("Paper token profile requires acquisition job")
         value = {'schema_version': DESCRIPTOR_VERSION, 'kind': kind, 'scan_id': uid,
                  'mint': mint, 'admitted_at': created, 'research_db': str(self.path),
                  'source_version': kind, 'request_ceiling': 18}
         if evidence_db is not None:
             value['evidence_db'] = str(canonical_job_path(evidence_db))
+        if paper_token_profile_version:value["paper_token_profile_version"]=paper_token_profile_version
         return value
 
     @staticmethod
@@ -144,14 +148,14 @@ class JobPersistence:
                 c.rollback()
                 raise
 
-    def admit(self, mint, *, kind=SCREEN, evidence_db=None):
+    def admit(self, mint, *, kind=SCREEN, evidence_db=None, paper_token_profile_version=0):
         address(mint)
         if kind not in (SCREEN, BIRTH_ACQUISITION_V1):
             raise ValueError('Unsupported job kind')
         if (kind == BIRTH_ACQUISITION_V1) != (evidence_db is not None):
             raise ValueError('Acquisition admission requires an evidence database')
         uid, created = uuid.uuid4().hex, int(time.time())
-        descriptor = self._descriptor(uid, mint, created, kind, evidence_db)
+        descriptor = self._descriptor(uid, mint, created, kind, evidence_db,paper_token_profile_version)
         with self.connect() as c:
             c.execute('BEGIN IMMEDIATE')
             pending="status IN ('QUEUED','RUNNING') OR (status='INTERRUPTED' AND EXISTS(SELECT 1 FROM scan_jobs j WHERE j.scan_id=scans.id AND j.kind='BIRTH_ACQUISITION_V1'))"
@@ -194,7 +198,7 @@ class JobPersistence:
                 or value.get('research_db') != str(self.path) or value.get('request_ceiling') != 18):
             raise ValueError('Unknown or inconsistent job descriptor')
         expected = self._descriptor(scan_id, row['mint'], row['created'], row['kind'],
-                                    value.get('evidence_db'))
+                                    value.get('evidence_db'),value.get('paper_token_profile_version',0))
         if value != expected or (row['kind'] == BIRTH_ACQUISITION_V1) != ('evidence_db' in value):
             raise ValueError('Unknown or inconsistent job descriptor')
         return value
