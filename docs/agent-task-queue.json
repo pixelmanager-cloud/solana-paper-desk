@@ -1893,15 +1893,15 @@
       "live_acceptance": false
     },
     "current_worker_followups": {
-      "01": "Report exact raw-unit partial dust repair; experiment_report.py only",
-      "02": "Independent131deadline and126combined review",
+      "01": "Separate report successor: visible EXECUTION_UNVERIFIED assumptions/risk/source labels;133 frozen",
+      "02": "Independent135 migration witness review",
       "03": "Final combined129+131 acquisition Linux review",
-      "04": "Independent130 adapter clock/taker review",
+      "04": "Complete130 review then134 raw mint handoff exact-head review",
       "05": "Platformblocked97/110; not retried",
-      "06": "132 frozen; implement narrow builder original token_evidence handoff, no model/strategy",
-      "07": "127 HOLD; await06/10 exact repairs",
+      "06": "134 published; fix stale combined132 test expectation append-only",
+      "07": "Review1326d8f+133bd388f;10 checkpoint pending final combined Linux",
       "08": "Resume one-cycle orchestration on130/131 contracts, no budget expansion",
-      "09": "Migration witness extractor only;06 owns adapterhandoff",
+      "09": "135 frozen awaiting02 review; available for next concrete orchestration followup",
       "10": "Checkpoint/view quote and v3 journal verification before read/duplicate"
     },
     "paper_live_foundation_candidate": {
@@ -2036,7 +2036,14 @@
       "status": "SCOPED_PASS_FINAL_ACQUISITION_COMBINED_REVIEW",
       "live_acceptance": false,
       "linux_tests": 2158,
-      "independent_tree": "4b9176df5ad492a398a37542bd4d727fb2ad7a15"
+      "independent_tree": "4b9176df5ad492a398a37542bd4d727fb2ad7a15",
+      "mac_final_combined": {
+        "tests": 2169,
+        "skips": 408,
+        "seconds": 42.106,
+        "result": "PASS",
+        "scope": "Accepted foundation +126/131+125/129; no provider calls"
+      }
     },
     "pending_pr130": {
       "head": "7441e94042e0d05d1760472483752a65f3820100",
@@ -2082,19 +2089,41 @@
       ],
       "tests": 64,
       "status": "FOCUSED_PASS_KNOWN_PENDING127_CHECKPOINT_FINDINGS",
-      "live_acceptance": false
+      "live_acceptance": false,
+      "quote_report_latest": {
+        "tests": 12,
+        "result": "PASS",
+        "scope": "1326d8f+133bd388f with130;134 not yet applied"
+      }
     },
     "pending_pr132": {
       "head": "6d8f4a9b7039feae450f839783e151e2068b8242",
       "repairs": 127,
       "status": "INDEPENDENT_REVIEW07",
-      "config_contract": "paper_signal_policy_version=3; paper_quote_execution_version=1; no experimental_policy_version",
-      "author_linux_tests": 2173
+      "config_contract": "Canonical paper_signal_policy_version=3 + paper_quote_execution_version=1; omission of experimental_policy_version preferred, matching3 alias accepted by6d8f4a9",
+      "author_linux_tests": 2173,
+      "ci": "Both exact6d8f4a9 checks SUCCESS"
     },
     "pending_pr133": {
       "head": "bd388f6bc2149214c6e24956f4220ea87ac34c9c",
       "status": "INDEPENDENT_REVIEW07",
       "scope": "Raw-unit-aware quote partial report accounting"
+    },
+    "pending_pr134": {
+      "head": "8395a36ffdd01ffc38d3f9abe3f2574b4718a2ab",
+      "status": "REVIEW04_WITH_APPEND_ONLY_TEST_REPAIR_PENDING",
+      "scope": "Original validated mint account handoff to actual entry token policy",
+      "author": "06",
+      "reviewer": "04",
+      "finding": "Combined132 test expectation must now acknowledge repaired token gate; author notified"
+    },
+    "pending_pr135": {
+      "head": "30b4b3fea134afb667863f6bd870df31d6b02506",
+      "status": "INDEPENDENT_REVIEW02",
+      "author": "09",
+      "reviewer": "02",
+      "scope": "Retained raw migration witness extractor; runtime trusted source binding still required",
+      "linux_author_tests": 2143
     }
   },
   "native_reconciliation_review": {
