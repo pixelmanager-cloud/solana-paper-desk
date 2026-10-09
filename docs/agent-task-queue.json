@@ -292,7 +292,7 @@
         "worker": "02",
         "thread_id": "01a118fc-666c-70b6-9fa8-2c7520f0a0bb",
         "host_id": "durable",
-        "status": "PUBLISHED_PENDING_INDEPENDENT_REVIEW",
+        "status": "ACCEPTED_INTEGRATED_NOT_DEPLOYED",
         "base": "9e43752daabf19b7e78e08e0b15d16d1c6e2a680",
         "scope": "Explicit paper-only unresolved-history risk policy using persisted diagnostics; known hazards reject; no fake completeness, engine changes or PR97 dependency",
         "turn_id": "01a11eae-d80e-7427-8466-5db09d9ffa01",
@@ -419,7 +419,7 @@
         "worker": "08",
         "thread_id": "01a118fd-2563-7126-90d7-bd07693de0b2",
         "host_id": "durable",
-        "status": "PUBLISHED_PENDING_REVIEW",
+        "status": "ACCEPTED_INTEGRATED_NOT_DEPLOYED",
         "base": "ada4892b3df3138f3369aa9d64aaf60f778b0d7b",
         "scope": "Reject present malformed or unbound history before experimental waiver; portability tests preserve read guard",
         "pr": 109,
@@ -1554,7 +1554,7 @@
       "existing_authorization": "Ownership history risk only; do not silently waive execution proof while choice pending"
     },
     "pending_pr109": {
-      "status": "REVIEWED_READY_TO_INTEGRATE",
+      "status": "ACCEPTED_INTEGRATED_NOT_DEPLOYED",
       "head": "1acc2b51fba371b6da2be6759afe79efc7081e4b",
       "includes_pr102": "ada4892b3df3138f3369aa9d64aaf60f778b0d7b",
       "review_url": "https://github.com/pixelmanager-cloud/solana-paper-desk/pull/109#issuecomment-6073948533",
@@ -1576,7 +1576,9 @@
       ],
       "ci": "SUCCESS",
       "manifest_sha256": "121978b3850e7fba403fcfe4d295eb3f25c31d12b607a93ae0113f3c58849c0b",
-      "live_acceptance": false
+      "live_acceptance": false,
+      "merge_sha": "010fe66ac7718ffe7fb88798a33faf1825cc05d9",
+      "source_identity": "Exact tested source; only coordinator queue differs"
     }
   },
   "native_reconciliation_review": {
