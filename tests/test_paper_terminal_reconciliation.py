@@ -405,3 +405,52 @@ class TerminalReconciliationTests(unittest.TestCase):
         for payload in variants:
             with self.store.connect() as c:c.execute('UPDATE pages SET payload=? WHERE hash=?',(sqlite3.Binary(payload),key))
             with self.assertRaises(ValueError):r._load(self.store,key)
+
+    def monitoring_fixture(self):
+        from tests import test_monitoring_budget as budget_fixtures
+        fixture=budget_fixtures.MonitoringBudgetTests();fixture.setUp();self.addCleanup(fixture.doCleanups)
+        source=transport.PaperReadSources(fixture.progress,fixture.scan,monitoring_budget=fixture.budget)
+        body=canonical({'jsonrpc':'2.0','id':transport.RPC_ID,'result':100}).encode()
+        class Opener:
+            def open(self,request,*,timeout):return Response(body)
+        return fixture,source,Opener()
+
+    def test_reused_monitoring_source_exceeds18_retains_all_outcomes_and_preserves_existing_cap(self):
+        fixture,source,opener=self.monitoring_fixture();original=fixture.progress.admission(fixture.scan);refs=[]
+        with patch.object(transport.os.environ,'get',return_value='SYNTHETIC_TEST_ONLY'),patch.object(transport,'build_opener',return_value=opener):
+            for count in range(1,61):
+                _,key=source.rpc_with_evidence('getSlot',[{'commitment':'finalized'}],timeout_seconds=3)
+                refs.append(key)
+                record=fixture.store.load(key)
+                self.assertEqual(record['monitoring_reservation']['total_used'],count)
+                self.assertIsNone(record['failure_code'])
+                with fixture.store.connect() as c:
+                    self.assertEqual(c.execute('SELECT evidence_hash FROM paper_monitoring_outcomes WHERE reservation_id=?',(count,)).fetchone(),(key,))
+        self.assertEqual(list(source.attempt_evidence_refs),refs[-18:]);self.assertEqual(len(source.attempt_evidence_refs),18)
+        self.assertEqual(fixture.progress.admission(fixture.scan),original)
+        with fixture.store.connect() as c:
+            self.assertEqual(c.execute('SELECT total,cap,blocked FROM paper_monitoring_budget').fetchone(),(60,60,None))
+            self.assertEqual(c.execute('SELECT COUNT(*) FROM paper_monitoring_outcomes').fetchone()[0],60)
+            self.assertIsNone(c.execute('SELECT 1 FROM paper_monitoring_reservations r LEFT JOIN paper_monitoring_outcomes o ON o.reservation_id=r.id WHERE o.reservation_id IS NULL').fetchone())
+        with patch.object(transport.os.environ,'get',side_effect=AssertionError('no credentials')),patch.object(transport,'build_opener',side_effect=AssertionError('no transport')):
+            with self.assertRaises(transport.PaperReadError) as caught:source.rpc('getSlot',[{'commitment':'finalized'}],timeout_seconds=3)
+        self.assertEqual(caught.exception.code,'MONITORING_REQUEST_BUDGET_EXHAUSTED')
+        self.assertEqual(list(source.attempt_evidence_refs),refs[-18:])
+
+    def test_reused_monitoring_source_failure_after18_still_retains_mandatory_outcome(self):
+        fixture,source,opener=self.monitoring_fixture()
+        with patch.object(transport.os.environ,'get',return_value='SYNTHETIC_TEST_ONLY'),patch.object(transport,'build_opener',return_value=opener):
+            for _ in range(18):source.rpc('getSlot',[{'commitment':'finalized'}],timeout_seconds=3)
+            class BadOpener:
+                def open(self,request,*,timeout):return Response(b'not JSON')
+            with patch.object(transport,'build_opener',return_value=BadOpener()):
+                with self.assertRaises(transport.PaperReadError) as caught:source.rpc('getSlot',[{'commitment':'finalized'}],timeout_seconds=3)
+        self.assertNotEqual(caught.exception.code,'OUTCOME_PERSISTENCE_FAILED')
+        key=caught.exception.evidence_hash
+        self.assertEqual(source.attempt_evidence_refs[-1],key);self.assertEqual(len(source.attempt_evidence_refs),18)
+        with fixture.store.connect() as c:
+            self.assertEqual(c.execute('SELECT evidence_hash FROM paper_monitoring_outcomes WHERE reservation_id=19').fetchone(),(key,))
+            self.assertEqual(c.execute('SELECT COUNT(*) FROM paper_monitoring_reservations').fetchone()[0],19)
+            self.assertEqual(c.execute('SELECT COUNT(*) FROM paper_monitoring_outcomes').fetchone()[0],19)
+        self.assertIsNotNone(fixture.store.load(key)['failure_code'])
+        self.assertEqual(fixture.progress.admission(fixture.scan)['requests_used'],0)
