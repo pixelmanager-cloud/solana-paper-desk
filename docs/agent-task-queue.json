@@ -1,5 +1,5 @@
 {
-  "status": "PAPER_LOOP_IMPLEMENTATION_ACTIVE",
+  "status": "PAPER_RUNTIME_DEPLOYED_AWAITING_ELIGIBLE_LIVE_ENTRY",
   "repository": "https://github.com/pixelmanager-cloud/solana-paper-desk",
   "cloud_environment": {
     "name": "solana-paper-desk",
@@ -1894,14 +1894,14 @@
     },
     "current_worker_followups": {
       "01": "147targetexport published review04",
-      "02": "Independent142 approvedmonitoringbudget review",
+      "02": "Config/runtime91focusedPASS; idle",
       "03": "142current activeentry binding repair forlegitimate reentry",
-      "04": "147independentreview;143a006repairPASS",
+      "04": "Deployment binding reviewPASS; idle",
       "05": "Platformblocked97/110; not retried",
-      "06": "Exactcombined c5534d2 Linux regression, no source edits",
-      "07": "146scopedPASS;145c615PASS",
+      "06": "Final2339LinuxPASS; idle",
+      "07": "PR148scopedPASS; idle",
       "08": "Wire139+142 concrete published APIs in separate138 successor",
-      "09": "146published reviewPASS; inactive monitorunits withactual147API",
+      "09": "PR146/148accepted/deployed; idle",
       "10": "143 repaira006published,04rereview"
     },
     "paper_live_foundation_candidate": {
@@ -2012,7 +2012,7 @@
       "live_acceptance": false
     },
     "runtime_monitoring_budget": {
-      "status": "APPROVED_IMPLEMENTATION03",
+      "status": "DEPLOYED_PROVISIONED_FIXED60_ROLLING_HOUR",
       "proposal": "Separate 60 read-only provider requests per hour shared across open paper positions; preserve 18 investigation cap and daily10/queue3",
       "reason": "Audited minimal fresh acquisition plus entry, separate mark, exit costs19-20 requests; current fixed18 cannot support sustained positions",
       "approved": true,
@@ -2022,13 +2022,36 @@
       "thread_id": "01a118fc-9478-778a-b77a-8f8f6ec7e0ad"
     },
     "latest_runtime_check": {
-      "dashboard": "active",
-      "paper": "NOT_CONFIGURED",
-      "runner": "NOT_CONNECTED",
+      "source_commit": "b84e20dd3a464be0c5a06f4252b4118a402190e0",
+      "source_tree": "afe2845a6067ea63bf1e16528a3dcd0f80783127",
+      "path": "/opt/solana-desk-releases/afe2845",
+      "config": "/etc/solana-paper/paper-quote-reviewed.json",
+      "ledger": "/var/lib/solana-desk/active-paper.sqlite",
+      "cash_sol": "5",
       "positions": 0,
-      "provider_calls": 0,
-      "source": "Direct loopback API via existing SSH; read-only research schema has8scans/8jobs",
-      "automatic_entry_enabled": false
+      "paper_fills": 0,
+      "entry_mode": "MANUAL_COORDINATOR_ONLY",
+      "held_monitor_timer": "ENABLED_ACTIVE_5MIN",
+      "stale_watchdog": "ACTIVE_5SEC",
+      "dashboard_http": 200,
+      "listener": "127.0.0.1:8765",
+      "dashboard_status": "LEDGER_PRESENT",
+      "runner_status": "NOT_CONNECTED_DISPLAY_DOES_NOT_RECOGNIZE_PAPER_CYCLE_MARKER",
+      "automatic_entry_enabled": false,
+      "monitoring_budget": {
+        "cap": 60,
+        "window_seconds": 3600,
+        "total_used": 0,
+        "window_used": 0,
+        "remaining": 60,
+        "provisioned_once": true
+      },
+      "backup": "daily-20261009T100239Z",
+      "restart": "Dashboard restart and empty held service replay succeeded without provider requests or budget reset",
+      "restore": "Copied empty active-paper backup verified checkpoint cash5/positions0; not a live trade replay",
+      "original_eight_scans_unchanged": true,
+      "live_readiness": false,
+      "remaining": "Eligible supported live candidate and genuine paper entry/monitor/exit/accounting forward cycle; automatic candidate intake not enabled"
     },
     "integration_ci_latest": {
       "head": "d05d963a4cc8cda7d1943c7c3b1edcf7fb18aa6d",
@@ -2358,7 +2381,7 @@
     },
     "active_runtime_turns": {
       "02": "01a12012-b4bd-72b6-a69b-4c41abd75bc9",
-      "04": "01a12008-3a4c-74d2-9d7c-32bc52abbbc4",
+      "04": "01a12014-b2af-75eb-8241-5eaeb4f037da",
       "06": "01a12011-b873-768c-a065-f388d92ab081",
       "08": "01a11fef-9910-71a2-b4d7-051be54618d0",
       "09": "01a11ffe-8ec2-751c-aac4-22f2c575176b",
@@ -2540,9 +2563,110 @@
     "runtime_vps_stage": {
       "tree": "afe2845a6067ea63bf1e16528a3dcd0f80783127",
       "archive_sha256": "fe76030c52f92d6b19bf140b5417af8a7ea9102a260465d505ae7b82f958c2c1",
-      "tests": "RUNNING_SERVICE_UID",
+      "tests": {
+        "tests": 2339,
+        "skips": 0,
+        "seconds": 471.432,
+        "result": "PASS_SERVICE_UID"
+      },
       "path": "/opt/solana-desk-releases/afe2845",
-      "services_changed": false
+      "services_changed": true,
+      "status": "DEPLOYED_EMPTY_PAPER_EXPERIMENT"
+    },
+    "paper_runtime_integration": {
+      "commit": "b84e20dd3a464be0c5a06f4252b4118a402190e0",
+      "reviewed_tree": "afe2845a6067ea63bf1e16528a3dcd0f80783127",
+      "source_identity": "Only coordinator queue/readiness differ from reviewed tree",
+      "linux_tests": 2339,
+      "linux_skips": 0,
+      "implementation_hash": "15054558d09320369b427a2900028472bf46a870d30e23159b235351df3a72a8",
+      "config_digest": "1a095e98a3b7a168ffb16573e799179d5a89bf1afc39757020e76a1a6fbb1eb7",
+      "config_review": "02PASS91 tests,28.208s,zero skips; new experiment only",
+      "deployment_binding_review": "04PASS same config/source/watchdog; separate root:service0750 config directory; timer enable drop-in required",
+      "live_ready": false,
+      "ci": "BOTH_EXACT_INTEGRATION_HEAD_RUNS_SUCCESS",
+      "ci_runs": [
+        37914446732,
+        37914441444
+      ]
+    },
+    "live_candidate_checks": [
+      {
+        "scan_id": "4e542d600f0847cd916d3d04d762a2c3",
+        "mint": "NRRFHVS9AXqXQgo9sAh6xVHFt98wELLuo4BT7gRpump",
+        "release": "d05d963",
+        "status": "SEED_HISTORY_PARTIAL",
+        "provider_calls": 4,
+        "requests_used": 5,
+        "token_policy": "PASS_TOKEN_POLICY",
+        "mint_authority": null,
+        "freeze_authority": null,
+        "history_pages": 2,
+        "migration_witnesses_in_saved_pages": 0,
+        "entry_accepted": false,
+        "live_paper_fills": 0,
+        "limits_preserved": true,
+        "pool_read": {
+          "exists": false,
+          "context_slot": 454832049,
+          "evidence_hash": "a52f3599bec498058fbfc0e243bf4e97e2f313bf8d3d5d41f282a0d3f53211bb",
+          "charged_requests": 1
+        },
+        "current_blocker": "Canonical migrated pool absent; do not spend further requests on this candidate now"
+      },
+      {
+        "scan_id": "6a518a37f9c14ac194b2d5cc826e0b13",
+        "mint": "JB2kicDzWjkLGzGAemvozTbvQex73MQBMLi8s3LSpump",
+        "status": "SEED_HISTORY_PARTIAL",
+        "token_policy": "PASS_TOKEN_POLICY",
+        "requests_used": 5,
+        "pool_exists": false,
+        "pool_read_evidence": "5e27b83c8dba7b543b6902f911013c9e3a9f0c480e3ed83792ba21a9de1ee68e",
+        "entry_accepted": false
+      },
+      {
+        "scan_id": "d4891ce05482457d8b1e319bd56ce6ec",
+        "mint": "J95NK9gFv5nYUSJWVid3QC2PKAwwiwFFPSVy2C8Zpump",
+        "status": "LAUNCH_OR_INVENTORY_UNVERIFIED",
+        "token_policy": "PASS_TOKEN_POLICY",
+        "requests_used": 4,
+        "migration_witnesses": 0,
+        "entry_accepted": false
+      }
+    ],
+    "latest_backup_before_runtime": "daily-20261009T095803Z",
+    "current_live_entry_blocker": "Three admitted legacy candidates have no retained migration witness; first two canonical migrated pools independently observed absent. Stop further requests on those candidates now. No live paper fill.",
+    "paper_runtime_deployment": {
+      "source_commit": "b84e20dd3a464be0c5a06f4252b4118a402190e0",
+      "source_tree": "afe2845a6067ea63bf1e16528a3dcd0f80783127",
+      "path": "/opt/solana-desk-releases/afe2845",
+      "config": "/etc/solana-paper/paper-quote-reviewed.json",
+      "ledger": "/var/lib/solana-desk/active-paper.sqlite",
+      "cash_sol": "5",
+      "positions": 0,
+      "paper_fills": 0,
+      "entry_mode": "MANUAL_COORDINATOR_ONLY",
+      "held_monitor_timer": "ENABLED_ACTIVE_5MIN",
+      "stale_watchdog": "ACTIVE_5SEC",
+      "dashboard_http": 200,
+      "listener": "127.0.0.1:8765",
+      "dashboard_status": "LEDGER_PRESENT",
+      "runner_status": "NOT_CONNECTED_DISPLAY_DOES_NOT_RECOGNIZE_PAPER_CYCLE_MARKER",
+      "automatic_entry_enabled": false,
+      "monitoring_budget": {
+        "cap": 60,
+        "window_seconds": 3600,
+        "total_used": 0,
+        "window_used": 0,
+        "remaining": 60,
+        "provisioned_once": true
+      },
+      "backup": "daily-20261009T100239Z",
+      "restart": "Dashboard restart and empty held service replay succeeded without provider requests or budget reset",
+      "restore": "Copied empty active-paper backup verified checkpoint cash5/positions0; not a live trade replay",
+      "original_eight_scans_unchanged": true,
+      "live_readiness": false,
+      "remaining": "Eligible supported live candidate and genuine paper entry/monitor/exit/accounting forward cycle; automatic candidate intake not enabled"
     }
   },
   "native_reconciliation_review": {
