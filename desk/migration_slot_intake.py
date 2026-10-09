@@ -118,7 +118,9 @@ def _hints(scan_id,mint,pool,signature,slot,provenance):
 
 
 def intake(research_db,evidence_db,*,scan_id,mint,pool,signature,slot,provenance,
-           now=None,credentials_loader=None):
+           now=None,credentials_loader=None,paper_token_profile_version=0):
+    from .token2022_paper import check_version
+    check_version(paper_token_profile_version)
     _hints(scan_id,mint,pool,signature,slot,provenance)
     now=int(time.time()) if now is None else now
     if type(now) is not int or not 0<=now<2**63:raise IntakeBlocked('CLOCK_INVALID')
@@ -145,9 +147,11 @@ def intake(research_db,evidence_db,*,scan_id,mint,pool,signature,slot,provenance
             try:_admission(jobs,progress,ObservationTarget(scan_id,mint,pool,mint,1))
             except _Blocked:raise IntakeBlocked('PERSISTED_BIRTH_ADMISSION_REQUIRED') from None
             descriptor=jobs.descriptor(scan_id);source=jobs.source(scan_id)
+            if descriptor.get('paper_token_profile_version',0) not in (0,paper_token_profile_version):
+                raise IntakeBlocked('TOKEN_PROFILE_DESCRIPTOR_MISMATCH')
             setup=_Setup.__new__(_Setup);setup.store=store;setup.descriptor=descriptor;setup.identity=scan_id
             state=setup.read()
-            if _policy(state)['decision']!='PASS_TOKEN_POLICY':raise IntakeBlocked('UNSUPPORTED_TOKEN')
+            if _policy(state,mint=mint,token_profile_version=paper_token_profile_version)['decision']!='PASS_TOKEN_POLICY':raise IntakeBlocked('UNSUPPORTED_TOKEN')
             cutoff=state.get('cutoff')
             if type(cutoff) is not int or not 0<=cutoff<2**63 or slot>cutoff:
                 raise IntakeBlocked('SLOT_BEYOND_IMMUTABLE_FINALIZED_CUTOFF')
@@ -222,6 +226,7 @@ def main(argv=None):
     for name in ('research-db','evidence-db','scan-id','mint','pool','signature','slot','provenance'):
         p.add_argument('--'+name,required=True,type=int if name=='slot' else str)
     p.add_argument('--systemd-credentials',action='store_true')
+    p.add_argument('--paper-token-profile-version',type=int,choices=(1,),default=0)
     a=p.parse_args(argv)
     try:
         loader=None
@@ -229,7 +234,7 @@ def main(argv=None):
             from .paper_cycle_cli import _credentials
             loader=_credentials
         result=intake(a.research_db,a.evidence_db,scan_id=a.scan_id,mint=a.mint,pool=a.pool,
-                      signature=a.signature,slot=a.slot,provenance=a.provenance,credentials_loader=loader)
+                      signature=a.signature,slot=a.slot,provenance=a.provenance,credentials_loader=loader,paper_token_profile_version=a.paper_token_profile_version)
         code=0 if result['status']=='RETAINED_MIGRATION_WITNESS' else 2
     except (ValueError,TypeError,KeyError,IndexError,AttributeError,OSError,sqlite3.Error,OverflowError,RecursionError) as error:
         result={'status':'BLOCKED','blockers':[str(error) if isinstance(error,IntakeBlocked) else 'PERSISTED_INPUT_UNAVAILABLE'],

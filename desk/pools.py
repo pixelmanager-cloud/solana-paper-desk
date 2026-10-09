@@ -40,7 +40,9 @@ def parse_pool(account):
     return fields
 
 
-def verify_pool(pool, mint, rpc,*,capture=None):
+def verify_pool(pool, mint, rpc,*,capture=None,token_profile_version=0):
+    from .token2022_paper import check_version
+    check_version(token_profile_version)
     from solders.pubkey import Pubkey
     address(pool);address(mint)
     response=rpc('getAccountInfo',[pool,{'encoding':'base64','commitment':'confirmed'}])
@@ -68,7 +70,7 @@ def verify_pool(pool, mint, rpc,*,capture=None):
     if parse_pool(same_bank_pool)!=fields or account_bytes(same_bank_pool)!=account_bytes(response['value']):
         raise ValueError('Pool state changed between discovery and atomic snapshot')
     global_config=parse_config(values['value'][4])
-    dynamic_config=parse_fee_config(values['value'][5]);base_mint_policy=mint_policy(values['value'][6])
+    dynamic_config=parse_fee_config(values['value'][5]);base_mint_policy=mint_policy(values['value'][6],mint=mint,token_profile_version=token_profile_version)
     vaults=[];reasons=list(global_config['reasons'])+list(dynamic_config['reasons'])+list(base_mint_policy['reasons']);evidence_hash=None
     if global_config['sell_disabled']:reasons.append('POOL_SELL_DISABLED_BY_CONFIG')
     if capture is not None:
@@ -82,7 +84,12 @@ def verify_pool(pool, mint, rpc,*,capture=None):
         if value.get('executable') is not False:raise ValueError('Executable pool vault')
         data=account_bytes(value)
         if value['owner']==TOKEN_PROGRAM and len(data)!=165:raise ValueError('Invalid legacy vault layout')
-        if value['owner']==TOKEN_2022 and len(data)>165:reasons.append('VAULT_EXTENSIONS_REQUIRE_VALIDATION')
+        if value['owner']==TOKEN_2022:
+            if token_profile_version==1:
+                from .security import holding_policy
+                checked=holding_policy(value,fields[mint_key],pool,token_profile_version=token_profile_version)
+                reasons.extend(checked['reasons'])
+            elif len(data)>165:reasons.append('VAULT_EXTENSIONS_REQUIRE_VALIDATION')
         if len(data)<165 or base58(data[:32])!=fields[mint_key] or base58(data[32:64])!=pool:
             raise ValueError('Pool vault identity mismatch')
         expected_ata=str(Pubkey.find_program_address([bytes(expected),bytes(Pubkey.from_string(value['owner'])),
@@ -93,6 +100,10 @@ def verify_pool(pool, mint, rpc,*,capture=None):
         if close not in (0,1) or (close and base58(data[133:165])!=pool):raise ValueError('External vault close authority')
         vaults.append({'address':fields[key],'wallet':pool,'mint':fields[mint_key],
                        'amount_raw':str(int.from_bytes(data[64:72],'little')),'classification':'VERIFIED_POOL_VAULT'})
+    if token_profile_version==1:
+        if values['value'][0]['owner']!=values['value'][6]['owner']:reasons.append('BASE_MINT_VAULT_PROGRAM_MISMATCH')
+        if values['value'][1]['owner']!=TOKEN_PROGRAM:reasons.append('QUOTE_VAULT_PROGRAM_UNSUPPORTED')
+        if values['value'][2].get('owner')!=TOKEN_PROGRAM:reasons.append('LP_TOKEN_PROGRAM_UNSUPPORTED')
     lp=values['value'][2];lp_supply=None
     if lp and lp.get('owner') in (TOKEN_PROGRAM,TOKEN_2022):
         raw=account_bytes(lp)

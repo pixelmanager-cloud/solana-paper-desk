@@ -35,6 +35,7 @@ class MarketContext:
     known_hazards: tuple[str, ...]  # coordinator's existing diagnostics
     pool_fee_bps: str | None  # explicit model assumption, not an observed fee proof
     history_as_of: int | None = None  # original query end, independent of decision now
+    token_profile_version: int = 0
 
 
 def build_market_event(collected, *, context, load_evidence, raw_trades=(),
@@ -204,13 +205,16 @@ def _replay_collected(collected, context, load_evidence):
                and r.get('result')==quote_raw and r.get('acquired_at')==collected.quote.source.observed_at for r in records.values()):
         raise ValueError('quote envelope binding')
     def reader(source,payload):return lambda:ProviderObservation(source.source_id,source.observed_at,payload)
-    mint=ingest_mint(reader(collected.mint.source,mint_raw),mint=target.mint,now=context.now)
-    pool=ingest_pool(reader(collected.pool.source,pool_raw),mint=target.mint,pool=target.pool,now=context.now)
+    atomic_account=pool_raw['result']['value'][pool_raw['params'][0].index(target.mint)]
+    if mint_raw['account']['owner']!=atomic_account['owner']:
+        raise ValueError('Separate mint and atomic pool mint program owners disagree')
+    mint=ingest_mint(reader(collected.mint.source,mint_raw),mint=target.mint,now=context.now,token_profile_version=context.token_profile_version)
+    pool=ingest_pool(reader(collected.pool.source,pool_raw),mint=target.mint,pool=target.pool,now=context.now,token_profile_version=context.token_profile_version)
     quote=ingest_quote(reader(collected.quote.source,quote_raw),mint=mint,direction=collected.direction,
                        amount_raw=target.amount_raw,taker=target.taker,expected_pool=target.pool,now=context.now)
     if (mint!=collected.mint or pool!=collected.pool or quote!=collected.quote
             or pool.decimals!=mint.decimals or pool.slot<mint.slot):raise ValueError('typed normalized mutation')
-    atomic_mint=mint_policy(pool_raw['result']['value'][pool_raw['params'][0].index(target.mint)])
+    atomic_mint=mint_policy(pool_raw['result']['value'][pool_raw['params'][0].index(target.mint)],mint=target.mint,token_profile_version=context.token_profile_version)
     atomic_supply=int(atomic_mint['supply_raw'])
     if atomic_mint['decision']!='PASS_TOKEN_POLICY' or atomic_mint['decimals']!=mint.decimals or atomic_supply<=0:
         raise ValueError('atomic supply binding')

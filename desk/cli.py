@@ -69,6 +69,7 @@ def main():
     ownership.add_argument("--evidence-db",required=True)
     ownership.add_argument("--scan-id",required=True)
     acquisition=commands.add_parser('ownership-acquire',help='Explicit birth-inclusive research seed; never entry approval')
+    acquisition.add_argument('--paper-token-profile-version',type=int,choices=(1,),default=0)
     acquisition.add_argument('--db',required=True)
     acquisition.add_argument('--evidence-db',required=True)
     target=acquisition.add_mutually_exclusive_group(required=True)
@@ -164,7 +165,7 @@ def main():
         if args.command == 'ownership-acquire':
             from .ownership_acquisition import acquire
             from .providers import helius_rpc
-            write_json(acquire(args.db,args.evidence_db,helius_rpc,mint=args.mint,scan_id=args.scan_id),args.output)
+            write_json(acquire(args.db,args.evidence_db,helius_rpc,mint=args.mint,scan_id=args.scan_id,paper_token_profile_version=args.paper_token_profile_version),args.output)
             return
         if args.command == "ownership-advance":
             from .ownership_worker import advance

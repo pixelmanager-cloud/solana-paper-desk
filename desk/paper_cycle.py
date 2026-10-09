@@ -33,6 +33,7 @@ from .paper_market_adapter import MarketContext, build_market_event, OBSERVABLE_
 from .live_observation import ProviderObservation, ingest_quote, ingest_mint, ingest_pool, ObservationError
 from .monitoring_budget import MonitoringBudget, MonitoringBlocked
 from .pools import verify_pool
+from .token2022_paper import selected
 from .providers import SOL
 from .original_byte_slot_transport import _parse
 from urllib.parse import urlencode
@@ -213,7 +214,7 @@ class _HeldBudget:
         return result
 
 
-def _collect_held(target, source, budget, store):
+def _collect_held(target, source, budget, store, token_profile_version=0):
     """Exit-only typed ingestion; investigation collector remains unchanged.
 
     Preserve the same original envelope grammar used by the exit producer. Each
@@ -242,7 +243,7 @@ def _collect_held(target, source, budget, store):
     token = ingest_mint(lambda:ProviderObservation(source.rpc_source_id,at,
         {'mint':target.mint,'observed_at':at,'slot':raw.get('context',{}).get('slot'),
          'account':raw.get('value'),'original_rpc_observation':envelope}),
-        mint=target.mint,now=budget.now(),max_age_seconds=10)
+        mint=target.mint,now=budget.now(),max_age_seconds=10,token_profile_version=token_profile_version)
     acquisitions = []; captures = []
     def rpc(method, params):
         result, at, _ = request(method,params,
@@ -254,10 +255,13 @@ def _collect_held(target, source, budget, store):
         if key != digest(payload): raise CycleBlocked('POOL_CAPTURE_PERSISTENCE_FAILED')
         refs.append(key); captures.append(payload)
         return key
-    verify_pool(target.pool,target.mint,rpc,capture=capture)
+    verify_pool(target.pool,target.mint,rpc,capture=capture,token_profile_version=token_profile_version)
+    atomic_mint=captures[0]['result']['value'][captures[0]['params'][0].index(target.mint)]
+    if raw['value']['owner']!=atomic_mint['owner']:
+        raise CycleBlocked('MINT_POOL_TOKEN_PROGRAM_MISMATCH')
     pool_at = acquisitions[-1]
     pool = ingest_pool(lambda:ProviderObservation(source.rpc_source_id,pool_at,captures[0]),
-        mint=target.mint,pool=target.pool,now=budget.now(),max_age_seconds=10)
+        mint=target.mint,pool=target.pool,now=budget.now(),max_age_seconds=10,token_profile_version=token_profile_version)
     if token.decimals != pool.decimals or pool.slot < token.slot:
         raise CycleBlocked('MINT_POOL_BANK_MISMATCH')
     args = [target.mint,SOL,target.amount_raw,target.taker]
@@ -501,7 +505,7 @@ def run_once(research_db, evidence_db, ledger_db, cfg, *, position_targets=(), c
                         action_budget = _HeldBudget(budget,allowance) if is_position and allowance is not None else budget
                         if is_position and allowance is not None:
                             source = source_factory(progress,target.scan_id,monitoring_budget=allowance)
-                            collected = _collect_held(target,source,action_budget,store)
+                            collected = _collect_held(target,source,action_budget,store,selected(cfg))
                         else:
                             if budget.attempted >= 18:
                                 raise CycleBlocked('CYCLE_REQUEST_BUDGET_EXHAUSTED')
@@ -510,7 +514,7 @@ def run_once(research_db, evidence_db, ledger_db, cfg, *, position_targets=(), c
                                 sources={target.scan_id:BoundedSource(source.rpc_source_id,source.quote_source_id,source.rpc,source.quote)},
                                 open_positions=(target,) if is_position else (), candidates=() if is_position else (target,),
                                 request_ceiling=18-budget.attempted,deadline_seconds=budget.remaining(),max_age_seconds=10,
-                                wall_clock=wall_clock,monotonic=monotonic)
+                                wall_clock=wall_clock,monotonic=monotonic,token_profile_version=selected(cfg))
                             budget.attempted += collector.attempted_requests
                             if collector.stopped_reason or not collector.observations or collector.observations[0].failure:
                                 raise CycleBlocked(collector.stopped_reason or (collector.observations[0].failure if collector.observations else 'OBSERVATIONS_INCOMPLETE'))
@@ -531,12 +535,12 @@ def run_once(research_db, evidence_db, ledger_db, cfg, *, position_targets=(), c
                             now = budget.now()
                             if is_position:
                                 context = ExitContext(now,target,source.rpc_source_id,source.quote_source_id,
-                                                      item.provenance,item.known_hazards)
+                                                      item.provenance,item.known_hazards,selected(cfg))
                                 diagnostic = build_exit_event(collected,context=context,
                                     position=state['positions'][target.mint],cfg=cfg,load_evidence=store.load)
                             else:
                                 context = MarketContext(now,target,source.rpc_source_id,source.quote_source_id,
-                                    item.provenance,graduation['graduated_at'],item.holder_at,item.known_hazards,item.pool_fee_bps,as_of)
+                                    item.provenance,graduation['graduated_at'],item.holder_at,item.known_hazards,item.pool_fee_bps,as_of,selected(cfg))
                                 response,at,low,high,times,_refs = usd
                                 diagnostic = build_market_event(collected,context=context,load_evidence=store.load,
                                     raw_trades=raw,history_pages=pages,usd_response=response,
