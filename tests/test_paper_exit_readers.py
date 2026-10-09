@@ -9,6 +9,7 @@ from desk import engine, quote_execution as qe
 from desk.ledger import Ledger
 from desk.model import canonical, digest
 from desk.paper_checkpoint import read_checkpoint, RecoveryRequired
+from desk.experiment_report import experiment_report
 from desk.paper_view import paper_status, _event_json
 from desk.paper_exit_adapter import ExitContext, build_exit_event
 from desk.paper_observation_collector import BoundedSource
@@ -53,6 +54,9 @@ class ExitReaderTests(unittest.TestCase):
         self.assert_read_restart_duplicate(e,(self.s.collected.quote,))
 
     def test_actual_collector_partial_then_full_exit_keeps_basis_and_original_buy(self):
+        self.partial_then_full_lifecycle()
+
+    def partial_then_full_lifecycle(self):
         s=self.s; f=self.f; collector=s.a.fixture
         source=collector.sources[s.target.scan_id]
         action_raw=f.raw*3//10
@@ -73,7 +77,12 @@ class ExitReaderTests(unittest.TestCase):
         self.assertIsNotNone(e)
         entry=copy.deepcopy(f.state()['positions'][f.mint]['quote_execution'])
         out=s.apply(e,(full.quote,action.quote))
-        self.assertEqual(next(o for o in out if o.get('side')=='sell')['reason'],'TAKE_PROFIT')
+        fill=next(o for o in out if o.get('side')=='sell')
+        self.assertEqual(fill['reason'],'TAKE_PROFIT')
+        self.assertEqual(fill['valuation_quote_execution']['quote_hash'],full.quote.source.raw_hash)
+        self.assertNotEqual(fill['quote_execution']['quote_hash'],fill['valuation_quote_execution']['quote_hash'])
+        self.assertEqual(fill['valuation_quote_execution']['original_quote_json'],full.quote.source.original_json)
+        self.assertFalse(fill['valuation_quote_execution']['actual_fill_verified'])
         p=read_checkpoint(f.ledger.db)['positions'][f.mint]
         self.assertEqual(p['quote_execution'],entry)
         self.assertEqual(qe.raw_quantity(p['qty'],p['quote_execution']['mint_decimals']),f.raw-action_raw)
@@ -90,6 +99,7 @@ class ExitReaderTests(unittest.TestCase):
         s.apply(closed,(final.quote,))
         self.assertEqual(read_checkpoint(f.ledger.db)['positions'],{})
         self.assert_read_restart_duplicate(closed,(final.quote,))
+        return e
 
     def test_v3_original_buy_risk_survives_exit_and_journal_risk_tampering_rejects(self):
         f=self.f
@@ -115,6 +125,43 @@ class ExitReaderTests(unittest.TestCase):
         with self.assertRaises(ValueError):self.s.apply(exit_event)
         self.assertEqual(list(fresh.db.iterdump()),before)
 
+    def test_partial_primary_source_rehash_after_final_close_blocks_all_consumers(self):
+        partial=self.partial_then_full_lifecycle()
+        self.assertEqual(experiment_report(self.f.path,now=T+2)['closed_trade_count'],1)
+        original=list(self.f.ledger.db.iterdump())
+        for field,value in (('quote_hash','0'*64),('quote_source_id','rebound'),('quote_at',T),
+                            ('mint_hash','0'*64),('rpc_source_id','rebound')):
+            bad=copy.deepcopy(partial);bad['source_evidence'][field]=value
+            if field=='quote_at':bad['price_at']=value
+            self.check_corrupt_event(partial,bad,original,all_consumers=True)
+        row=self.f.ledger.db.execute('SELECT seq,payload FROM outcomes WHERE event_id=?',(partial['event_id'],)).fetchone()
+        original_outcome=json.loads(row[1])
+        attacks=(lambda o:o.pop('valuation_quote_execution'),
+                 lambda o:o.update(valuation_quote_execution=copy.deepcopy(o['quote_execution'])),
+                 lambda o:o['valuation_quote_execution'].update(quote_hash='0'*64),
+                 lambda o:o['valuation_quote_execution'].update(source_authenticated=True),
+                 lambda o:o['valuation_quote_execution'].update(quote_observed_at=T-11),
+                 lambda o:o['valuation_quote_execution'].update(input_raw=self.f.raw+1))
+        for change in attacks:
+            bad=copy.deepcopy(original_outcome);change(bad)
+            self.f.ledger.db.execute('UPDATE outcomes SET payload=? WHERE seq=?',(canonical(bad),row[0]))
+            self.assert_all_consumers_reject()
+            self.f.ledger.db.execute('UPDATE outcomes SET payload=? WHERE seq=?',(row[1],row[0]))
+            self.assertEqual(list(self.f.ledger.db.iterdump()),original)
+
+    def assert_all_consumers_reject(self):
+        with self.assertRaises(RecoveryRequired):read_checkpoint(self.f.ledger.db)
+        self.assertEqual(paper_status(self.f.path,now=T+2)['status'],'RECOVERY_REQUIRED')
+        with self.assertRaises(RecoveryRequired):experiment_report(self.f.path,now=T+2)
+        reopened=Ledger(self.f.path,must_exist=True)
+        try:
+            with self.assertRaises(RecoveryRequired):read_checkpoint(reopened.db)
+            row=reopened.db.execute('SELECT payload FROM events ORDER BY seq DESC LIMIT 1').fetchone()
+            e=json.loads(row[0]);before=list(reopened.db.iterdump())
+            with self.assertRaises(ValueError):reopened.apply(e,self.f.cfg,qe.bind_transition(e,()),engine.initial_state)
+            self.assertEqual(list(reopened.db.iterdump()),before)
+        finally:reopened.close()
+
     def test_rehashed_exit_source_identity_and_inventory_attacks_fail_closed(self):
         e=self.s.build(context=replace(self.s.ctx,known_hazards=('KNOWN_ADVERSE_EVIDENCE',)))['event']
         self.s.apply(e)
@@ -128,7 +175,7 @@ class ExitReaderTests(unittest.TestCase):
             bad=copy.deepcopy(e);bad['source_evidence'][field]=value
             self.check_corrupt_event(e,bad,original)
 
-    def check_corrupt_event(self,event,bad,original):
+    def check_corrupt_event(self,event,bad,original,all_consumers=False):
         bad['event_id']='paper-exit:'+digest({k:v for k,v in bad.items() if k!='event_id'})
         # Keep SQL identity and original hash coherent: rejection must come from
         # schema/source/inventory replay, rather than only a stale checksum.
@@ -137,6 +184,7 @@ class ExitReaderTests(unittest.TestCase):
                    (bad['event_id'],canonical(bad),digest(bad),event['event_id']))
         db.execute('UPDATE outcomes SET event_id=? WHERE event_id=?',(bad['event_id'],event['event_id']))
         with self.assertRaises(RecoveryRequired):read_checkpoint(db)
+        if all_consumers:self.assert_all_consumers_reject()
         db.execute('UPDATE events SET event_id=?,payload=?,payload_hash=? WHERE event_id=?',
                    (event['event_id'],canonical(event),digest(event),bad['event_id']))
         db.execute('UPDATE outcomes SET event_id=? WHERE event_id=?',(event['event_id'],bad['event_id']))

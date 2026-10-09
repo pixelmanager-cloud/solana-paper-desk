@@ -322,6 +322,7 @@ def _validate_quote_journal(connection, state, cfg, quote):
                 from .model import validate_event
                 validate_event(event)  # exact strict exit grammar, never entry profile
                 quote._book(event, (observation,), cfg)
+                quote.validate_exit_valuation(event, outcome, cfg)
                 trade = inventory.get(mint)
                 if (trade is None or event['current_quantity_raw'] != trade['raw']
                         or event['mint_decimals'] != trade['decimals']

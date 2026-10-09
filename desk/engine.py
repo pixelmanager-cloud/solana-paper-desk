@@ -178,6 +178,9 @@ def _quote_sell(state,e,cfg,fraction,reason,output,book):
             raw=min(current,int((D(initial)*fraction).to_integral_value(rounding=ROUND_DOWN)))
             if raw<=0:raise qe.QuoteExecutionError('QUOTE_QUANTITY_ZERO')
             quote=book.find('sell',raw)
+            # The action record cannot witness the pre-action full-size mark.
+            valuation_record=(book.record(book.find('sell',current),cfg)
+                if e.get('kind')=='quote_exit' and raw<current else None)
             proceeds=qe.units(qe.output_raw(quote,cfg),9)-dec(cfg['fixed_fee_sol'])
             if proceeds<=ZERO:raise qe.QuoteExecutionError('QUOTE_NO_NET_PROCEEDS')
             qty=qe.units(raw,book.decimals)
@@ -200,6 +203,7 @@ def _quote_sell(state,e,cfg,fraction,reason,output,book):
         'realized_pnl_sol':str(pnl),'simulation':'quote_minimum_with_adverse_slippage',
         'provenance':e['provenance'],
         'execution_status':qe.STATUS,'quote_execution':book.record(quote,cfg),
+        **({'valuation_quote_execution':valuation_record} if valuation_record is not None else {}),
         **({'entry_policy':deepcopy(p['entry_policy'])} if 'entry_policy' in p else {})})
     if current==raw:
         state['loss_streak']=state['loss_streak']+1 if dec(p['trade_pnl'])<0 else 0
