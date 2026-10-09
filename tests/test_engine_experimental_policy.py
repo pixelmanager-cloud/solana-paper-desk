@@ -3,6 +3,7 @@ import copy
 import json
 from pathlib import Path
 import tempfile
+import sqlite3
 import unittest
 
 from desk.engine import initial_state, transition
@@ -101,3 +102,25 @@ class ExperimentalEngineTests(unittest.TestCase):
         bad=copy.deepcopy(e);bad['flow']=None
         with self.assertRaises(ValueError):transition(initial_state(cfg),bad,cfg)
         with self.assertRaises(ValueError):transition(initial_state(self.cfg),e,self.cfg)
+
+    def test_restart_rejects_removed_or_promoted_policy_without_writes(self):
+        from desk.paper_checkpoint import read_checkpoint
+        for variant in ('missing','promoted','identity','scores'):
+            with self.subTest(variant=variant):
+                path=Path(self.tmp.name)/f'{variant}.sqlite'
+                ledger=Ledger(path)
+                ledger.apply(experimental(),self.cfg,transition,initial_state)
+                state=json.loads(ledger.db.execute('SELECT payload FROM state').fetchone()[0])
+                p=state['positions']['SYNTHETIC_A']
+                if variant=='missing':del p['entry_policy']
+                elif variant=='promoted':
+                    p['entry_policy']['source_authenticated']=True
+                    p['entry_policy']['entry_authorized']=True
+                elif variant=='identity':p['entry_event_id']='missing-event'
+                else:p['entry_scores']['safety']='100'
+                ledger.db.execute('UPDATE state SET payload=?',(json.dumps(state),))
+                before=list(ledger.db.iterdump())
+                with self.assertRaises(ValueError):ledger.apply(experimental(ts=T+1,danger=True),self.cfg,transition,initial_state)
+                with self.assertRaises(ValueError):read_checkpoint(ledger.db)
+                self.assertEqual(list(ledger.db.iterdump()),before)
+                ledger.close()

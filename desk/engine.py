@@ -326,6 +326,7 @@ def transition(state, e, cfg):
         "peak_ratio": "1", "touched_15": False,
         "mark_value": str(max(ZERO, expected_sell - fee)), "mark_at": e["price_at"],
         "pool": e["pool"], "entry_scores": evidence, "provenance":e["provenance"], "taker":e.get("taker"), **deepcopy(policy_record),
+        **({"entry_event_id": e["event_id"]} if experimental else {}),
     }
     state["last_entry_minute"] = e["ts"] // 60
     output.append({"type": "fill", "side": "buy", "mint": mint, "reason": "ENTRY",
