@@ -99,6 +99,11 @@ class BoostCycleTests(unittest.TestCase):
    with self.assertRaisesRegex(RecoveryRequired,'CHECKPOINT_INVALID'):cycle._state(f.path,f.cfg)
   with sqlite3.connect(f.path) as c:c.execute('UPDATE outcomes SET payload=? WHERE rowid=?',(payload,identity))
   self.assertIsNotNone(experiment_report(f.path,now=f.f.at))
+ def test_nonterminating_entry_cost_survives_actual_lifecycle_and_restart(self):
+  # Odd lamports produce a nonterminating cost fraction; retain exact entry precision.
+  self.f.target=replace(self.f.target,amount_raw=10_000_001)
+  self.f.item=replace(self.f.item,target=self.f.target)
+  self.test_actual_entry_mark_exit_restart_accounting_and_original_boundaries()
  def test_actual_acquisition_and_monitoring_share_original_charges(self):
   from desk.ownership_acquisition import acquire
   f=self.f;request=f.f.progress.store.load(f.item.graduation_refs[0]);rows=f.f.progress.store.load(request['response_hash'])['data']
