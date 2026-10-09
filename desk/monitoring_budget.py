@@ -82,6 +82,11 @@ class MonitoringBudget:
                 c.execute('CREATE TABLE paper_monitoring_reservations(id INTEGER PRIMARY KEY,at REAL NOT NULL,scan_id TEXT NOT NULL,mint TEXT NOT NULL,checkpoint_hash TEXT NOT NULL,method TEXT NOT NULL,params_hash TEXT NOT NULL)')
                 c.execute('CREATE TABLE paper_monitoring_outcomes(reservation_id INTEGER PRIMARY KEY REFERENCES paper_monitoring_reservations(id),evidence_hash TEXT NOT NULL)')
                 for table in ('paper_monitoring_reservations', 'paper_monitoring_outcomes'):
+                    primary = 'id' if table == 'paper_monitoring_reservations' else 'reservation_id'
+                    # REPLACE's implicit DELETE does not run DELETE triggers on
+                    # fresh SQLite connections. Check NEW PK (also every rowid
+                    # alias) before the conflict resolution can delete originals.
+                    c.execute(f"CREATE TRIGGER {table}_insert BEFORE INSERT ON {table} WHEN EXISTS(SELECT 1 FROM {table} WHERE {primary}=NEW.{primary}) BEGIN SELECT RAISE(ABORT,'Original monitoring identity already exists'); END")
                     for action in ('UPDATE', 'DELETE'):
                         c.execute(f"CREATE TRIGGER {table}_{action.lower()} BEFORE {action} ON {table} BEGIN SELECT RAISE(ABORT,'Original monitoring record is immutable'); END")
                 c.execute('INSERT INTO paper_monitoring_budget VALUES(1,?,?,?,?,?,?,0,0,NULL)',
@@ -102,6 +107,26 @@ class MonitoringBudget:
                 or (count and (earliest < 0 or latest > row[6]))
                 or c.execute('SELECT 1 FROM paper_monitoring_outcomes o LEFT JOIN paper_monitoring_reservations r ON r.id=o.reservation_id WHERE r.id IS NULL LIMIT 1').fetchone()):
             raise MonitoringBlocked('MONITORING_ACCOUNTING_INVALID')
+        # Check restored/corrupt completed rows against original hash-addressed
+        # transport receipts, not merely count/min/max. Pending rows never permit
+        # subsequent I/O, so they cannot silently become replacement allowances.
+        for identity, at, scan, mint, checkpoint, method, params_hash, evidence_hash in c.execute(
+                'SELECT r.id,r.at,r.scan_id,r.mint,r.checkpoint_hash,r.method,r.params_hash,o.evidence_hash FROM paper_monitoring_reservations r JOIN paper_monitoring_outcomes o ON o.reservation_id=r.id'):
+            try:
+                original = self.store.load(evidence_hash)
+                receipt = original.get('monitoring_reservation', {})
+            except (ValueError, TypeError, AttributeError):
+                raise MonitoringBlocked('MONITORING_ACCOUNTING_INVALID') from None
+            if (type(receipt) is not dict or type(receipt.get('id')) is not int
+                    or type(receipt.get('total_used')) is not int
+                    or receipt.get('kind') != 'open_paper_monitoring_reservation_v1'
+                    or receipt.get('cap') != CAP or receipt.get('window_seconds') != WINDOW_SECONDS
+                    or receipt.get('id') != identity or receipt.get('total_used') != identity
+                    or receipt.get('reserved_at') != at or receipt.get('checkpoint_hash') != checkpoint
+                    or receipt.get('mint') != mint
+                    or original.get('scan_id') != scan or original.get('method') != method
+                    or digest(original.get('params')) != params_hash):
+                raise MonitoringBlocked('MONITORING_ACCOUNTING_INVALID')
         return row
 
     def _held(self, progress, scan_id):
@@ -211,6 +236,8 @@ class MonitoringBudget:
                     c.rollback()
                     raise
             return {'kind':'open_paper_monitoring_reservation_v1', 'id':identity,
+                    'reserved_at':now,
+                    'mint':admission['descriptor']['mint'],
                     'total_used':identity, 'window_used':used+1, 'cap':CAP,
                     'window_seconds':WINDOW_SECONDS, 'checkpoint_hash':checkpoint_hash,
                     'investigation_requests_used':admission['requests_used']}
@@ -255,7 +282,8 @@ class MonitoringBudget:
                 old = c.execute('SELECT evidence_hash FROM paper_monitoring_outcomes WHERE reservation_id=?', (reservation['id'],)).fetchone()
                 if old and old[0] != evidence_hash:
                     raise MonitoringBlocked('MONITORING_OUTCOME_BINDING_INVALID')
-                c.execute('INSERT OR IGNORE INTO paper_monitoring_outcomes VALUES(?,?)', (reservation['id'], evidence_hash))
+                if old is None:
+                    c.execute('INSERT INTO paper_monitoring_outcomes VALUES(?,?)', (reservation['id'], evidence_hash))
                 if record.get('failure_code') is not None:
                     c.execute("UPDATE paper_monitoring_budget SET blocked='SOURCE_FAILURE' WHERE id=1")
                 c.commit()

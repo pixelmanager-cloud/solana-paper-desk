@@ -22,7 +22,7 @@ after = budget.snapshot()
 `reserve_read(progress,scan_id,method,params)` is transport-internal: commits one
 reservation before credentials/network I/O. Each saved `paper_read_attempt_v1`
 keeps its original bytes/source/method/time and adds `monitoring_reservation`
-with durable `id`, `total_used`, `window_used`, fixed cap/window, checkpoint hash
+with durable `id`, `total_used`, `window_used`, reserved time/mint, fixed cap/window, checkpoint hash
 and unchanged investigation usage. Exact-charge comparison uses `id/total_used`,
 NOT rolling `window_used+1`: expiration can decrease the rolling count. No
 HistoryProgress counter or admission is synthesized, copied, increased or reset.
@@ -35,6 +35,9 @@ retained original pool snapshot's vault/LP/pool/config/fee/mint roster. Caller
 locks prevent a competing ledger writer from closing/changing positions between
 validation and I/O; this cooperative single-host contract is not OS authentication.
 
+Duplicate identity insertion (including REPLACE and rowid aliases) is rejected
+before SQLite conflict resolution can delete originals. Completed reservation
+identities/timestamps are checked against original hash-addressed transport receipts.
 The counter is atomic and retains every reservation/outcome; expiry deletes
 nothing. An unfinished attempt prevents another monitoring reservation. Persisted
 source failures and backward wall clock permanently require reviewed recovery;
