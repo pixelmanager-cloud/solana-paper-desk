@@ -11,7 +11,7 @@ from contextlib import closing
 from decimal import localcontext
 from pathlib import Path
 
-from .model import decimal, digest
+from .model import decimal, digest, canonical, PAPER_EXPERIMENTAL
 from .paper_checkpoint import read_checkpoint, RecoveryRequired
 
 MAX_ROWS = 10000
@@ -65,6 +65,19 @@ def _quote_fill(outcome, event, cfg):
         return raw, token.decimals
     except (ValueError, TypeError, KeyError, OverflowError):
         raise RecoveryRequired('QUOTE_FILL_BINDING_INVALID') from None
+
+
+def _entry_risk_flags(event, outcome, cfg):
+    version = cfg.get('paper_signal_policy_version', cfg.get('experimental_policy_version'))
+    if version is None:
+        return []
+    from .strategy import experimental_scores
+    with localcontext() as policy_context:
+        policy_context.prec = 28  # Original saved policy representation, independent of accounting precision.
+        expected = experimental_scores(event, mode=PAPER_EXPERIMENTAL, policy_version=version)
+    if canonical(outcome.get('entry_policy')) != canonical(expected):
+        raise RecoveryRequired('REPORT_ENTRY_RISK_BINDING_INVALID')
+    return list(expected['risk_flags'])
 
 
 def experiment_report(path, *, now=None):
@@ -139,8 +152,9 @@ def experiment_report(path, *, now=None):
             ctx.prec = 400 if quote_mode else 512  # Bounded decimal strings + <=10000 additions; no reporting truncation.
             positions = {}; basis = {}; entry_basis = {}; trade_pnl = {}; closed_pnl = decimal('0'); fees = decimal('0'); realized = decimal('0'); cash = _number(cfg['initial_equity_sol'])
             raw_positions = {}; denominations = {}
+            quote_fills = []; retained_risks = set(); entry_risks = {}
             closed = partial = buys = sells = rejects = blocked = 0
-            for event_id, payload in c.execute('SELECT event_id,payload FROM outcomes ORDER BY seq'):
+            for outcome_seq, event_id, payload in c.execute('SELECT seq,event_id,payload FROM outcomes ORDER BY seq'):
                 outcome = json.loads(payload)
                 if not isinstance(outcome, dict) or event_id not in events:
                     raise RecoveryRequired('OUTCOME_INTEGRITY_INVALID')
@@ -154,6 +168,21 @@ def experiment_report(path, *, now=None):
                         raise RecoveryRequired('FILL_IDENTITY_INVALID')
                     if quote_mode:
                         raw, denomination = _quote_fill(outcome, event, cfg)
+                        if outcome['side'] == 'buy':
+                            entry_risks[mint] = _entry_risk_flags(event, outcome, cfg)
+                        record = outcome['quote_execution']
+                        risks = sorted(set(record['risk_flags']) | set(entry_risks.get(mint, [])))
+                        retained_risks.update(risks)
+                        quote_fills.append({'outcome_seq': outcome_seq, 'event_id': event_id,
+                            'event_hash': digest(event), 'mint': mint, 'side': outcome['side'],
+                            'execution_status': 'EXECUTION_UNVERIFIED',
+                            'source_authenticated': False, 'transaction_verified': False,
+                            'actual_fill_verified': False,
+                            'assumptions': record['assumptions'], 'risk_flags': risks,
+                            'quote_source_id': record['quote_source_id'], 'quote_hash': record['quote_hash'],
+                            'quote_observed_at': record['quote_observed_at'],
+                            'mint_source_id': record['mint_source_id'], 'mint_hash': record['mint_hash'],
+                            'mint_observed_at': record['mint_observed_at']})
                     fees += fee
                     if outcome['side'] == 'buy':
                         amount = _number(outcome['amount_sol'])
@@ -217,6 +246,12 @@ def experiment_report(path, *, now=None):
             if not 0 <= drawdown <= 1:
                 raise RecoveryRequired('DRAWDOWN_INVALID')
             return {'kind': 'read_only_experiment_performance_v1', 'status': 'REPORTED',
+                **({'execution': {'status': 'EXECUTION_UNVERIFIED', 'model_version': 1,
+                    'source_authenticated': False, 'transaction_verified': False,
+                    'actual_fill_verified': False, 'risk_flags': sorted(retained_risks),
+                    'fills': quote_fills,
+                    'source_reference_scope': 'Original quote/mint hashes and source/time declarations in journal outcomes; content binding only, not authenticated HTTP or chain evidence.',
+                    'notice': 'Quote-mode paper fills are simulated estimates. Recorded fee/slippage assumptions do not establish actual execution or paid costs.'}} if quote_mode else {}),
                 'config_hash': identity['config_hash'], 'implementation_hash': identity['implementation_hash'],
                 'evaluated_at': now, 'data_provenance_counts': provenance,
                 'data_provenance_scope': 'Market events and raw payload declarations; non-synthetic claims are not authenticated live data.',
