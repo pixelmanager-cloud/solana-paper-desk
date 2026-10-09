@@ -239,5 +239,20 @@ class SelectedPaperLedgerTests(unittest.TestCase):
         self.assertTrue(backup._retained_manifest(old,self.data));self.assertEqual({p.name for p in old.iterdir()},before)
         self.select();self.archive();self.assertFalse(old.exists())
 
+    def test_deeply_nested_malformed_manifest_preserved_while_retention_continues(self):
+        self.select();dest,_=self.archive();old=self.age(dest)
+        malformed=self.root/'daily-20000102T000000Z';malformed.mkdir()
+        raw='['*12000+'0'+']'*12000
+        self.assertEqual(len(raw.encode()),24001)
+        (malformed/'manifest.json').write_text(raw)
+        dest,m=self.archive()
+        self.assertFalse(old.exists());self.assertTrue(malformed.exists())
+        self.assertEqual((malformed/'manifest.json').read_text(),raw)
+        self.assertEqual(len(m['databases']),6)
+        for item in m['databases']:self.assertTrue(verify(dest/item['file'],item['sha256']))
+        old=self.age(dest,3);self.archive()
+        self.assertFalse(old.exists());self.assertTrue(malformed.exists())
+        self.assertEqual((malformed/'manifest.json').read_text(),raw)
+
 
 if __name__=='__main__':unittest.main()

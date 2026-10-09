@@ -156,7 +156,7 @@ def run(data,root,keep=7):
             try:
                 if not _retained_manifest(p,data):continue
                 complete.append(p)
-            except (OSError,ValueError,KeyError,TypeError,sqlite3.Error):continue
+            except (OSError,ValueError,KeyError,TypeError,RecursionError,sqlite3.Error):continue
         removed=[]
         for p in complete[:-keep]:shutil.rmtree(p);removed.append(p.name)
         return {'backup':str(destination),'databases':len(reports),'removed':removed}
