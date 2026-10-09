@@ -1,5 +1,5 @@
 {
-  "status": "PROFILE2_DEPLOYED_JUPITER_PRICE_ACCESS_BLOCKED_NO_BUY",
+  "status": "HTTP403_RECOVERY_DEPLOYED_JUPITER_ACCOUNT_ACCESS_BLOCKED_NO_BUY",
   "repository": "https://github.com/pixelmanager-cloud/solana-paper-desk",
   "cloud_environment": {
     "name": "solana-paper-desk",
@@ -5249,7 +5249,7 @@
             },
             "candidate703": {
               "owner": "desktop",
-              "status": "BLOCKED_JUPITER_PRICE_HTTP403_NO_BUY",
+              "status": "HTTP403_RETIRED_NO_BUY",
               "mint": "GesEHJvkMwsaNKKVPowAhDD7P8XooDKtpswTQQ3Fpump",
               "unit": "desk-acquire-seq703",
               "scan_id": "d98bb0c070c24c35ac782d9d0d88fb8b",
@@ -5262,7 +5262,8 @@
               "price_http_status": 403,
               "provider_method": "jupiter_price_v3",
               "retry_authorized": false,
-              "global_gate": "OBSERVATION_RECOVERY_REQUIRED"
+              "global_gate": null,
+              "retirement_receipt": "162f4e0953b18953399d3baaf90b0740d483393bc113849439ae95dceeaf15fe"
             },
             "cli_path_repair": {
               "owner": "07",
@@ -5307,13 +5308,13 @@
               "cause": "Permission or firewall possible; unconfirmed",
               "portal_session": "No browser tabs available; native Mac locked. No account changes performed.",
               "docs": "https://developers.jup.ag/docs/portal/api-keys",
-              "production_services": "RUNNING_ZERO_POSITIONS",
+              "production_services": "RECOVERY_RELEASE_RUNNING_ZERO_POSITIONS",
               "further_provider_calls": "HELD_PENDING_ACCESS_RESOLUTION"
             },
             "http403_retirement": {
               "owner": "07",
               "reviewer": "09",
-              "status": "INTEGRATED_STAGED_FINAL_TESTS_RUNNING",
+              "status": "DEPLOYED_VERIFIED_ACCOUNT_ACCESS_REMAINS_BLOCKED",
               "scope": "Definitive retained Price403 read-only failed pass append-only retirement; originalNULL/charges/context preserved; rejectedcandidate neverretried; ambiguousI/O blocked",
               "worker_thread": "01a118fd-0f1c-749c-b85b-5e730937d0a8",
               "review_thread": "01a118fd-3f90-77d9-9549-c4497f5b10a6",
@@ -5359,7 +5360,13 @@
                 "error": "All414 OSError read-only release/work directory; no application assertion failures observed",
                 "retry_unit": "desk-fixture-df44480-retry",
                 "retry_invocation": "e3cfcfc5de0e43a5b67b7aff27fc23fa",
-                "repair": "Writable service-owned release/work plus TMPDIR; production data remains inaccessible and network private"
+                "repair": "Writable service-owned release/work plus TMPDIR; production data remains inaccessible and network private",
+                "retry_result": {
+                  "status": "PASS",
+                  "tests": 2670,
+                  "seconds": 1153.834,
+                  "skips": 0
+                }
               },
               "runtime_edge_review": {
                 "reviewer": "03",
@@ -5390,7 +5397,7 @@
               "preservation_helper": {
                 "owner": "06",
                 "turn": "01a12279-b42c-77cd-8115-e9f2233b773e",
-                "status": "REVIEW_AND_BOTH_CI_PASS_INTEGRATING",
+                "status": "INTEGRATED_INDEPENDENT_AND_CI_PASS",
                 "scope": "Ten database original schema+rows unchanged; only exact first runtime and HTTP403 append-only certificates",
                 "pr": 181,
                 "head": "707f2f1cf16227a1123c2ea9ebcb3d2961d6d73b",
@@ -5423,7 +5430,15 @@
                 "ci_seconds": [
                   686.206,
                   841.452
-                ]
+                ],
+                "integration_head": "1b4c87f",
+                "vps_tests": {
+                  "tests": 15,
+                  "seconds": 2.806,
+                  "unit": "desk-helper-707f2f1",
+                  "invocation": "fff1e30d7b7946c3b0336d184b475ca0",
+                  "result": "PASS"
+                }
               },
               "final_validator_review": {
                 "reviewer": "09",
@@ -5462,15 +5477,49 @@
                 "turn": "01a1228d-f5ea-73ba-b2ba-fb87642727b0",
                 "result": "PASS_ZERO_POSITIONS_AND_RESEARCH_LOCK_FENCED_SHUTDOWN",
                 "helper": "work/quiesce-http403-reviewed.py"
+              },
+              "integration_ci_status": "BOTH_PASS",
+              "integration_ci_seconds": [
+                732.839,
+                891.368
+              ],
+              "production": {
+                "head": "96ebcf1647fb4653f7c70f3e26af1aa8ab15f599",
+                "source": "6851324628116c8d44168ea96d54acba98635f1997d27ce407ddd8c02a3c29b4",
+                "runtime_receipt": "501efe6ca171b09903d868d59345aea2621e4449c8bc055215734f573cadf14d",
+                "retirement_receipt": "162f4e0953b18953399d3baaf90b0740d483393bc113849439ae95dceeaf15fe",
+                "original_tables_verified": 70,
+                "databases": 10,
+                "pre_backup": "/var/backups/solana-desk/pre-http403-96ebcf1",
+                "post_backup": "/var/backups/solana-desk/post-http403-96ebcf1",
+                "backup_phase_note": "Both use existing-ledger post schema (10 databases); directory names distinguish before/after retirement",
+                "original_pass_outcome": null,
+                "charged_requests": 13,
+                "global_gate": null,
+                "retired_scans_verified": 4,
+                "monitoring_used": 0,
+                "monitoring_cap": 3600,
+                "cash": "5",
+                "positions": 0,
+                "outcomes": 0,
+                "dashboard": "127.0.0.1:8765",
+                "services": {
+                  "desk-dashboard.service": "active",
+                  "desk-continuous-discovery.service": "active",
+                  "desk-paper-held-cycle.timer": "active",
+                  "desk-paper-monitor.timer": "active",
+                  "desk-decisions.timer": "active",
+                  "desk-backup.timer": "active"
+                },
+                "first_live_buy": false
               }
             },
             "last_actionable_check": {
-              "at": "2026-10-09T20:54:00Z",
-              "pr179_head": "a3595f896098290a0db27db279594f6838246a9f",
-              "ci": "Both in progress",
-              "recovery_worker": "active",
-              "provider_calls": "held for user Price permission/firewall check and exact failed-pass recovery",
-              "live_buy": false
+              "at": "2026-10-09T21:41:00Z",
+              "live_buy": false,
+              "provider_calls": "Held for existing Jupiter Price key permission/firewall resolution; no candidate retry",
+              "recovery": "Deployed, original70tables preserved, all gates verified",
+              "unclaimed_dependency_ready_work": "None without resolving provider access; screening expansion remains frozen"
             }
           }
         }
