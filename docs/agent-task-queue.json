@@ -3409,7 +3409,7 @@
         "status": "ASSIGNED",
         "scope": "appendonly sharedmonitoringbudget context handoff to separatelynamedexplicitexperiment; preserveoldledger and allchargedusage; oldcontextrefusesfuturespending",
         "turn_id": "01a120d4-4af6-7312-b596-f76f72a26835",
-        "cursor": "3dd79f38-868a-433f-9b14-13e7ed0a6e90:71"
+        "cursor": "3dd79f38-868a-433f-9b14-13e7ed0a6e90:73"
       },
       "operator_path_implementation": {
         "worker": "10",
@@ -3417,7 +3417,7 @@
         "status": "ASSIGNED",
         "scope": "explicitselectedpaperledger fordashboard + backupselectedandoriginalledger; legacydefaultunchanged",
         "turn_id": "01a120d4-e3be-7730-a8fe-a9d9323f1184",
-        "cursor": "e6039648-56af-4049-8a6e-06eaaa8aba52:59"
+        "cursor": "e6039648-56af-4049-8a6e-06eaaa8aba52:60"
       },
       "bounded_live_shape_probe": {
         "scan_id": "f5470ca34d0d45d1af2db086fd18eca6",
@@ -3442,7 +3442,43 @@
         ],
         "mint_authority_option": 0,
         "freeze_authority_option": 0,
-        "note": "Diagnosticinventoryonly; noeligibilitygrant. Originalpublicaccountbytes sent08offlinefixture; no credentials."
+        "note": "Diagnosticinventoryonly; noeligibilitygrant. Originalpublicaccountbytes sent08offlinefixture; no credentials.",
+        "metadata_pointer_authority_zero": true,
+        "metadata_update_authority_zero": true,
+        "both_metadata_mint_bindings_match": true,
+        "pacing_outcome": "Heliusgrantcompleted,pendingnull,backoff0; Jupiterunused; monitoringtotal0"
+      },
+      "profile_contract": {
+        "paper_token_profile_version": 1,
+        "mode": "paper",
+        "paper_signal_policy_version": 3,
+        "paper_quote_execution_version": 1,
+        "omission": "LEGACY_STRICT",
+        "activation": "SEPARATE_EXPLICIT_EXPERIMENT_WITH_PRESERVED_SHARED_BUDGET"
+      },
+      "handoff_review": {
+        "worker": "09",
+        "thread_id": "01a118fd-3f90-77d9-9549-c4497f5b10a6",
+        "status": "PREPARED_WAITING_EXACT_HEAD",
+        "required_probe": "Old73edf43binarycannotreserveafterhandoff; failedattemptdoesnotmutatebudget; immutableoriginalgrant/receiptandusagepreserved",
+        "turn_id": "01a120da-144a-7402-931f-76d93466bc30",
+        "cursor": "68a4d56e-d04a-40dc-ad15-e80a29c96b80:54"
+      },
+      "candidate_configuration": {
+        "status": "LOCAL_PREPARED_NOT_DEPLOYED",
+        "original_hash": "1a095e98a3b7a168ffb16573e799179d5a89bf1afc39757020e76a1a6fbb1eb7",
+        "candidate_hash": "30406d9cb727b3e518687dbb4c20820483bf51384f0edfb14a94f8221e2b595e",
+        "only_change": {
+          "paper_token_profile_version": 1
+        },
+        "new_ledger": "/var/lib/solana-desk/token2022-paper.sqlite",
+        "new_config": "/etc/solana-paper/paper-token2022-reviewed.json",
+        "original_ledger_preserved": "/var/lib/solana-desk/active-paper.sqlite"
+      },
+      "operator_path_review": {
+        "worker": "03",
+        "thread_id": "01a118fc-9478-778a-b77a-8f8f6ec7e0ad",
+        "status": "PREPARING"
       }
     }
   },
