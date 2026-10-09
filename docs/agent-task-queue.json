@@ -375,7 +375,7 @@
         "worker": "02",
         "thread_id": "01a118fc-666c-70b6-9fa8-2c7520f0a0bb",
         "host_id": "durable",
-        "status": "PROFILE2_PUBLISHED_FINAL_REVIEW_PENDING",
+        "status": "PASS_COMPONENT_REVIEW",
         "scope": "model/strategy explicit unknown ownership handling and versioned experimental scoring; no live authorization",
         "turn_id": "01a11ebe-5324-7576-a6bc-b4c8e85ea73b",
         "wait_cursor": "a2dcfb97-463d-4188-9da3-48a81e644d23:72",
@@ -457,7 +457,7 @@
         "worker": "01",
         "thread_id": "01a118fc-39bc-722c-b442-8bf5a749e0bb",
         "host_id": "durable",
-        "status": "DISPATCHED",
+        "status": "PASS_COMPONENT_REVIEW",
         "base": "7146b821f932d85157a6357a2f44c6cf54d2f766",
         "scope": "Raw vault discriminator/delegation validation and malformedmint containment; live_observation/tests only",
         "pr": 107,
@@ -468,15 +468,17 @@
         "worker": "10",
         "thread_id": "01a118fd-56d5-70b8-ad31-dba13e982082",
         "host_id": "durable",
-        "status": "DISPATCHED",
-        "scope": "Cost basis reconstruction and corruption regressions; before further dashboard work"
+        "status": "PUBLISHED_UNDER_REVIEW",
+        "scope": "Cost basis reconstruction and corruption regressions; before further dashboard work",
+        "pr": 113,
+        "head": "f89029a2669b4a2c4b891c4855a20c821a78cad5"
       },
       {
         "id": "PR106-INDEPENDENT-REVIEW",
         "worker": "03",
         "thread_id": "01a118fc-9478-778a-b77a-8f8f6ec7e0ad",
         "host_id": "durable",
-        "status": "DISPATCHED",
+        "status": "PASS_COMPONENT_COMBINED_PENDING",
         "scope": "Independent unknown scoring contract review"
       },
       {
@@ -484,7 +486,7 @@
         "worker": "03",
         "thread_id": "01a118fc-9478-778a-b77a-8f8f6ec7e0ad",
         "host_id": "durable",
-        "status": "DISPATCHED",
+        "status": "PASS_COMPONENT_COMBINED_PENDING",
         "scope": "Queued after106; replay vault findings against repair"
       },
       {
@@ -492,8 +494,9 @@
         "worker": "07",
         "thread_id": "01a118fd-0f1c-749c-b85b-5e730937d0a8",
         "host_id": "durable",
-        "status": "DISPATCHED",
-        "scope": "Coordinator engine wiring and config/accounting isolation review"
+        "status": "REREVIEW_QUEUED_AFTER_113",
+        "scope": "Coordinator engine wiring and config/accounting isolation review",
+        "head": "90d8c59d1e98c3d09074a6f2fa4a029dbd420862"
       },
       {
         "id": "PR109-INDEPENDENT-REREVIEW",
@@ -510,8 +513,10 @@
         "worker": "08",
         "thread_id": "01a118fd-2563-7126-90d7-bd07693de0b2",
         "host_id": "durable",
-        "status": "DISPATCHED",
-        "scope": "RunnerCLI explicit experimentalcfg afterPR108; syntheticonly"
+        "status": "PUBLISHED_UNDER_REVIEW",
+        "scope": "RunnerCLI explicit experimentalcfg afterPR108; syntheticonly",
+        "pr": 116,
+        "head": "d9e4ed6b811b47376ac6ad604847edfcf94aa052"
       },
       {
         "id": "PR110-INDEPENDENT-REVIEW",
@@ -546,7 +551,7 @@
         "worker": "02",
         "thread_id": "01a118fc-666c-70b6-9fa8-2c7520f0a0bb",
         "host_id": "durable",
-        "status": "DISPATCHED_AFTER_106_VALIDATION",
+        "status": "CHANGES_REQUESTED",
         "pr": 112,
         "head": "466ff9f8b8d980b4047532d4dd50497587eea77a",
         "scope": "Collector shared persistedbudget/admission/no-retry review including107prerequisite"
@@ -556,23 +561,27 @@
         "worker": "01",
         "thread_id": "01a118fc-39bc-722c-b442-8bf5a749e0bb",
         "host_id": "durable",
-        "status": "DISPATCHED",
-        "scope": "Actual budgeted deadline bounded fixed-provider wrappers, no cloud calls"
+        "status": "PUBLISHED_UNDER_REVIEW",
+        "scope": "Actual budgeted deadline bounded fixed-provider wrappers, no cloud calls",
+        "pr": 117,
+        "head": "cfb25987e9c5a2b8cddb769da9047ed7262081f5"
       },
       {
         "id": "SOL-USD-OBSERVATION",
         "worker": "09",
         "thread_id": "01a118fd-3f90-77d9-9549-c4497f5b10a6",
         "host_id": "durable",
-        "status": "DISPATCHED",
-        "scope": "Jupiter SOL USD response parser and freshness/provenance; no peg assumption"
+        "status": "PUBLISHED_UNDER_REVIEW",
+        "scope": "Jupiter SOL USD response parser and freshness/provenance; no peg assumption",
+        "pr": 118,
+        "head": "76225f565c12d0d8039343f6a196015da7fbe4b0"
       },
       {
         "id": "PR114-INDEPENDENT-REVIEW",
         "worker": "04",
         "thread_id": "01a118fc-b862-7340-ab3a-e1115a3280a4",
         "host_id": "durable",
-        "status": "DISPATCHED",
+        "status": "CHANGES_REQUESTED_FINAL_TESTS_RUNNING",
         "scope": "Raw observed feature/proxy coverage and semantics review"
       },
       {
@@ -580,8 +589,73 @@
         "worker": "06",
         "thread_id": "01a118fc-f867-7233-8eec-c20659e70095",
         "host_id": "durable",
+        "status": "PUBLISHED_UNDER_REVIEW",
+        "scope": "Fix bounded history validation and actual pinned custom config status",
+        "pr": 115,
+        "head": "418aa4e7a77b6e9ba43bd82fd9bb7374f62afa6b"
+      },
+      {
+        "id": "PR113-INDEPENDENT-REVIEW",
+        "worker": "07",
+        "thread_id": "01a118fd-0f1c-749c-b85b-5e730937d0a8",
+        "host_id": "durable",
         "status": "DISPATCHED",
-        "scope": "Fix bounded history validation and actual pinned custom config status"
+        "pr": 113,
+        "head": "f89029a2669b4a2c4b891c4855a20c821a78cad5"
+      },
+      {
+        "id": "PR115-INDEPENDENT-REVIEW",
+        "worker": "10",
+        "thread_id": "01a118fd-56d5-70b8-ad31-dba13e982082",
+        "host_id": "durable",
+        "status": "DISPATCHED",
+        "pr": 115,
+        "head": "418aa4e7a77b6e9ba43bd82fd9bb7374f62afa6b"
+      },
+      {
+        "id": "PR116-INDEPENDENT-REVIEW",
+        "worker": "02",
+        "thread_id": "01a118fc-666c-70b6-9fa8-2c7520f0a0bb",
+        "host_id": "durable",
+        "status": "DISPATCHED",
+        "pr": 116,
+        "head": "d9e4ed6b811b47376ac6ad604847edfcf94aa052"
+      },
+      {
+        "id": "PR117-INDEPENDENT-REVIEW",
+        "worker": "06",
+        "thread_id": "01a118fc-f867-7233-8eec-c20659e70095",
+        "host_id": "durable",
+        "status": "DISPATCHED",
+        "pr": 117,
+        "head": "cfb25987e9c5a2b8cddb769da9047ed7262081f5"
+      },
+      {
+        "id": "PR118-INDEPENDENT-REVIEW",
+        "worker": "08",
+        "thread_id": "01a118fd-2563-7126-90d7-bd07693de0b2",
+        "host_id": "durable",
+        "status": "DISPATCHED",
+        "pr": 118,
+        "head": "76225f565c12d0d8039343f6a196015da7fbe4b0"
+      },
+      {
+        "id": "PR112-COLLECTOR-REPAIR",
+        "worker": "04",
+        "thread_id": "01a118fc-b862-7340-ab3a-e1115a3280a4",
+        "host_id": "durable",
+        "status": "DISPATCHED",
+        "pr": 112,
+        "head": "466ff9f8b8d980b4047532d4dd50497587eea77a"
+      },
+      {
+        "id": "PR114-FEATURE-REPAIR",
+        "worker": "09",
+        "thread_id": "01a118fd-3f90-77d9-9549-c4497f5b10a6",
+        "host_id": "durable",
+        "status": "DISPATCHED",
+        "pr": 114,
+        "head": "eae754dd0104829ddd5ccc2bfd9a953fa65c8a3d"
       }
     ],
     "saved_launch_probe": {
