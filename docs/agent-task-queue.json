@@ -1898,10 +1898,10 @@
       "03": "Final combined129+131 acquisition Linux review",
       "04": "Independent130 adapter clock/taker review",
       "05": "Platformblocked97/110; not retried",
-      "06": "127 explicit v3 and mint decimal binding repair",
+      "06": "132 frozen; implement narrow builder original token_evidence handoff, no model/strategy",
       "07": "127 HOLD; await06/10 exact repairs",
       "08": "Resume one-cycle orchestration on130/131 contracts, no budget expansion",
-      "09": "Bounded retained-raw migration time extractor",
+      "09": "Migration witness extractor only;06 owns adapterhandoff",
       "10": "Checkpoint/view quote and v3 journal verification before read/duplicate"
     },
     "paper_live_foundation_candidate": {
@@ -2085,10 +2085,11 @@
       "live_acceptance": false
     },
     "pending_pr132": {
-      "head": "748acb4be91489c6993f0db383bb67c286aeba1d",
+      "head": "6d8f4a9b7039feae450f839783e151e2068b8242",
       "repairs": 127,
-      "status": "REVIEW07_TEST_SEAM_REPAIR06",
-      "config_contract": "paper_signal_policy_version=3; paper_quote_execution_version=1; no experimental_policy_version"
+      "status": "INDEPENDENT_REVIEW07",
+      "config_contract": "paper_signal_policy_version=3; paper_quote_execution_version=1; no experimental_policy_version",
+      "author_linux_tests": 2173
     },
     "pending_pr133": {
       "head": "bd388f6bc2149214c6e24956f4220ea87ac34c9c",
