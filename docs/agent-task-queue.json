@@ -3817,7 +3817,8 @@
           "turn_id": "01a12132-f0ca-750a-bd6e-edd99b34085f",
           "source": "31b249e1dfbb16c12ec89235a7137afab4de989fd05ded52a0231ebdfb9667ae",
           "status": "PASS_CONDITIONAL_UNCHANGED_FINAL_SOURCE",
-          "scope": "Preserve150545->8098edge; add0fe08c->31b249sameconfig/ledger/research/evidence; handoffunchanged;02requirednowPASS"
+          "scope": "Preserve150545->8098edge; add0fe08c->31b249sameconfig/ledger/research/evidence; handoffunchanged;02requirednowPASS",
+          "coordinator_validation": "Exact source31b249verified; policy parses onLinuxVPS. Maclocalpolicyparse rejects Linux/varpins due /private/var alias; no bypass or pinchange."
         },
         "ci_tests": [
           2533,
@@ -3867,7 +3868,14 @@
           ],
           "review_url": "https://github.com/pixelmanager-cloud/solana-paper-desk/pull/164#issuecomment-6083736736",
           "caveat": "Nestedtimingnotadditive; fixturetimestampaginghypothesisnotyetproven; no liveproviders/readinessclaim"
-        }
+        },
+        "ci_status": "BOTH_SUCCESS",
+        "ci_tests": 2545,
+        "ci_seconds": [
+          567.416,
+          531.642
+        ],
+        "integration_commit": "625c2e0039f55bc2afc98f59e416cf09c0896ea0"
       },
       "artifact_attachment_limit": "PR161/162/163 attach attempts rejected: thread attachment identity count exceeds100; GitHub PR identities persisted inqueue.",
       "repair_vps_validation": {
