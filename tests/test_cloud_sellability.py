@@ -5,6 +5,7 @@ not endorse effects_passed or caller-supplied sellability flags as authorization
 """
 import base64
 import copy
+import hashlib
 import json
 import unittest
 from pathlib import Path
@@ -68,10 +69,14 @@ class CloudRoundtripAudit(unittest.TestCase):
     def run_diagnostic(self):
         quotes = iter(self.quotes)
         legs = [{**leg, 'raw': b'audit-transport-stub'} for leg in self.legs]
+        # Bind only these explicit synthetic wire stand-ins, not the original
+        # capture's unavailable bytes. Instruction-policy gaps remain asserted.
+        sequence = {**self.sequence, 'transaction_hashes':
+                    [hashlib.sha256(leg['raw']).hexdigest() for leg in legs]}
         with patch('desk.roundtrip.time.time', return_value=T), \
                 patch('desk.roundtrip.time.monotonic', return_value=0), \
                 patch('desk.roundtrip.compile_unsigned', side_effect=legs), \
-                patch('desk.roundtrip.simulate_sequence', return_value=self.sequence):
+                patch('desk.roundtrip.simulate_sequence', return_value=sequence):
             return simulate_roundtrip(
                 self.result['mint'], self.result['wallet'],
                 int(self.result['spend_lamports']), rpc=self.rpc,

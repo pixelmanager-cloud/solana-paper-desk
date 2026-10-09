@@ -1,4 +1,4 @@
-import copy,json,time,unittest
+import copy,hashlib,json,time,unittest
 from pathlib import Path
 from unittest.mock import patch
 from solders.hash import Hash
@@ -17,7 +17,10 @@ class RoundtripTests(unittest.TestCase):
     def quote(self,*args):return {'observed_at':int(time.time()),'response':self.quotes.pop(0)}
     def run_roundtrip(self):
         legs=[{**leg,'raw':b'fixture-parser-test'} for leg in self.p['legs']]
-        with patch('desk.roundtrip.compile_unsigned',side_effect=legs),patch('desk.roundtrip.simulate_sequence',return_value=self.sequence):
+        # Explicit synthetic compiled-byte stand-ins must carry their own hashes;
+        # the unchanged public fixture does not retain its original wire bytes.
+        sequence={**self.sequence,'transaction_hashes':[hashlib.sha256(leg['raw']).hexdigest() for leg in legs]}
+        with patch('desk.roundtrip.compile_unsigned',side_effect=legs),patch('desk.roundtrip.simulate_sequence',return_value=sequence):
             return simulate_roundtrip(self.r['mint'],self.r['wallet'],int(self.r['spend_lamports']),rpc=self.rpc,quote=self.quote)
     def test_captured_two_leg_effects_and_residual(self):
         r=self.run_roundtrip();self.assertTrue(r['effects_passed']);self.assertEqual(r['residual_token_raw'],'25489');self.assertEqual(r['net_native_wealth_delta_lamports'],'-143010')

@@ -34,7 +34,14 @@ def simulate_roundtrip(mint,wallet,spend,rpc=helius_rpc,quote=jupiter_sequence_p
     watch=list(dict.fromkeys(k for leg in legs for k in leg['keys']))
     sequence=simulate_sequence([leg['raw'] for leg in legs],watch,rpc)
     rows=sequence['result']['value'].get('transactionResults',[]);effects=[];controls=[];reasons=list(sequence['reasons'])
-    if len(rows)==2:
+    # Effects belong to these exact ordered original transactions and snapshots.
+    # A detached/rebound sequence cannot supply accounting for compiled legs.
+    hashes=sequence.get('transaction_hashes')
+    transactions_bound=(type(hashes) is list and hashes==[hashlib.sha256(leg['raw']).hexdigest() for leg in legs])
+    watch_bound=(type(sequence.get('watch')) is list and sequence['watch']==watch)
+    if not transactions_bound:reasons.append('ROUNDTRIP_TRANSACTION_IDENTITY_MISMATCH')
+    if not watch_bound:reasons.append('ROUNDTRIP_WATCHLIST_IDENTITY_MISMATCH')
+    if len(rows)==2 and transactions_bound and watch_bound:
         for i,(leg,row) in enumerate(zip(legs,rows)):
             # Balance metadata uses each transaction's resolved-key order; requested
             # account snapshots use the shared watchlist order. Map explicitly.
@@ -44,7 +51,7 @@ def simulate_roundtrip(mint,wallet,spend,rpc=helius_rpc,quote=jupiter_sequence_p
             effect=check_effects(normalized,leg['keys'],wallet,mint,spend if i==0 else quantity,quantity if i==0 else minimum,direction='buy' if i==0 else 'sell')
             control=check_account_controls(normalized,leg['keys'],wallet,effect.get('owned_token_account_indices',[]),mint=mint)
             effects.append(effect);controls.append(control);reasons.extend(effect['reasons']);reasons.extend(control['reasons'])
-    else:reasons.append('ROUNDTRIP_LEGS_MISSING')
+    elif len(rows)!=2:reasons.append('ROUNDTRIP_LEGS_MISSING')
     now=int(time.time());slot=sequence.get('slot')
     if (time.monotonic()-started>10 or any(type(x.get('observed_at')) is not int or not 0<=now-x['observed_at']<=10 for x in (buy,sell))
             or type(slot) is not int or not 0<=slot-before['context']['slot']<=32):reasons.append('ROUNDTRIP_EVIDENCE_STALE')
@@ -59,7 +66,7 @@ def simulate_roundtrip(mint,wallet,spend,rpc=helius_rpc,quote=jupiter_sequence_p
     if len(rows) == 2:
         post = rows[1].get('postExecutionAccounts')
         hashes = sequence.get('transaction_hashes')
-        if (isinstance(post, list) and len(post) == len(watch)
+        if (transactions_bound and watch_bound and isinstance(post, list) and len(post) == len(watch)
                 and isinstance(hashes, list) and len(hashes) == 2
                 and hashes[1] == hashlib.sha256(legs[1]['raw']).hexdigest()):
             normalized = {**rows[1], 'accounts': [post[watch.index(k)] for k in legs[1]['keys']]}
