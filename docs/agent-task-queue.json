@@ -4916,7 +4916,7 @@
               {
                 "owner": "04",
                 "thread_id": "01a118fc-b862-7340-ab3a-e1115a3280a4",
-                "status": "LOCAL_NATIVE_PASS_SERIAL_VPS_PENDING",
+                "status": "HELD_NATIVE_AND_CI_DEADLINE_FAILURE",
                 "scope": "tests/test_profile2_runtime_composition.py only; oldcerts+nonzerousage+distinctprofile2BUYSELLrestart",
                 "turn_id": "01a1221f-bddf-76c8-bc20-87906859cb76",
                 "latest_known_turn": "01a1221d-0bcd-745c-81b3-ad2dfed403aa",
@@ -4938,7 +4938,28 @@
                   "seconds": 43.782,
                   "tests": 1
                 },
-                "attachment_error": "thread attachment identity count exceeds100"
+                "attachment_error": "thread attachment identity count exceeds100",
+                "ci_success": [
+                  37982082411
+                ],
+                "ci_results": [
+                  {
+                    "id": 37982082411,
+                    "result": "PASS",
+                    "tests": 2654,
+                    "seconds": 785.492
+                  },
+                  {
+                    "id": 37982155812,
+                    "result": "FAIL",
+                    "tests": 2654,
+                    "seconds": 834.267,
+                    "failures": 1,
+                    "blocker": "CYCLE_DEADLINE_UNAVAILABLE",
+                    "partial_seconds": 13.231,
+                    "monitor_reads": 5
+                  }
+                ]
               }
             ],
             "new_pr_attachment_errors": {
@@ -5010,11 +5031,29 @@
               "owner": "07",
               "reviewer": "03",
               "base": "72cd2eec30f0e6f80cef3bb431cf4d065b028aba",
-              "status": "ASSIGNED",
+              "status": "IMPLEMENTATION_ACTIVE_DESIGN_REVIEWED",
               "scope": "Profile and optimize repeated validation without weakening deadline,TTL,pacing,accounting or evidence",
               "production_changed": false,
               "turn": "01a12238-25c0-7795-934e-e1d983a5317d",
-              "review_turn": "01a12238-3685-7189-b7c5-30752e5fabbc"
+              "review_turn": "01a12238-3685-7189-b7c5-30752e5fabbc",
+              "files": [
+                "desk/monitoring_handoff.py",
+                "desk/monitoring_budget.py",
+                "desk/paper_checkpoint.py"
+              ],
+              "design_review_turn": "01a1223b-c0fe-752f-ac1b-06abb879e5e8",
+              "approach": "Transaction-local verified checkpoint; fresh sourcehash passed through nested samecall only; retain full accounting before and after INSERT; remove duplicate middle pass",
+              "author_interim_native_report": {
+                "source_head": "UNPUBLISHED_PENDING",
+                "status": "REPORTED_PASS_REQUIRES_EXACT_HEAD_REVIEW_AND_VPS",
+                "seconds": 46.447,
+                "buy_seconds": 8.996,
+                "partial_seconds": 9.075,
+                "full_exit_seconds": 7.708,
+                "restart_requests": 0,
+                "source_hash_calls_before": 431,
+                "source_hash_calls_after_intermediate_profile": 193
+              }
             },
             "vps_profile": {
               "unit": "desk-profile2-profile-72cd2ee",
