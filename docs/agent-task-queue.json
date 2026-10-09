@@ -1,5 +1,5 @@
 {
-  "status": "PAPER_RUNTIME_BLOCKED_TERMINAL_REJECTION_RECONCILIATION",
+  "status": "LIVE_PAPER_COMPATIBILITY_FIXES_IN_PROGRESS_NO_BUY",
   "repository": "https://github.com/pixelmanager-cloud/solana-paper-desk",
   "cloud_environment": {
     "name": "solana-paper-desk",
@@ -4403,17 +4403,17 @@
             "thread_id": "01a118fd-0f1c-749c-b85b-5e730937d0a8",
             "reviewer": "09",
             "review_thread_id": "01a118fd-3f90-77d9-9549-c4497f5b10a6",
-            "status": "MERGED_FINAL_RELEASE_STAGED_CI_PENDING",
+            "status": "DEPLOYED_BOTH_REJECTIONS_RECONCILED_NO_BUY",
             "pass_id": "d8600ce75e014e22b84c3fd8d10bf2c0",
             "intent_hash": "6f6cfd1efe9aa257638bd750ccd3c4099a3943a5d403132fa9d9d2a7b868fb7e",
             "retained_outcome_hash": "4352afa8e732c4f03eaf1cb788047aea58379fe3ef24edd05f5535e5680eb4a8",
-            "blocker": "Known SOURCE_CONTENT_REJECTED afterchargedRPC leaves global NULL observationpass; allfuturepassesblocked",
+            "blocker": "Global unresolved-pass blocker resolved; current candidates encounter boosted pool pricing and version1 history compatibility gaps",
             "constraints": "Preserveoriginalblockedrecord andcharges; noreset/retry; ambiguous/crashed/pendingremainblocked",
             "implementation_turn": "01a121c0-4be5-72fe-8c5e-7f5c7efc3369",
             "design_review_turn": "01a121bb-ad1b-7756-97ff-d041e03d33a5",
             "fixture_owner": "04",
             "fixture_thread_id": "01a118fc-b862-7340-ab3a-e1115a3280a4",
-            "fixture_status": "04_CONTINUING_SELL_RESTART_ON_LOADER_FIXED_HEAD",
+            "fixture_status": "MERGED_INDEPENDENT_PASS_FULL_CI_AND_VPS_PASS",
             "design_review": "PreserveNULLpass; explicitreviewedlegacyassociation; no genericexception autoresolution; retirefailedscan; preservecharges",
             "proof_file": "work/terminal-rejection-public-proof.json",
             "attempt_hashes": [
@@ -4520,7 +4520,7 @@
               "turn": "01a121e7-d39e-70ba-b45e-392f2f8bcf0a",
               "result": "ONE_COMPOSITION_PASS40.142s",
               "reviewer": "02",
-              "status": "INDEPENDENT_REVIEW_REQUESTED",
+              "status": "MERGED",
               "artifact_attachment": "FAILED thread attachment identity count exceeds 100",
               "ci_runs": [
                 37973584129,
@@ -4625,7 +4625,7 @@
             "combined_ci_result": "BOTH_PASS",
             "integrated_runtime_policy": "config/runtime-extensions.json",
             "integrated_terminal_policy": "config/paper-terminal-reconciliation.json",
-            "production_reconciliation_applied": false,
+            "production_reconciliation_applied": true,
             "release": "5cbd0da982c71914241265110d9152d5387ef204",
             "release_ci_runs": [
               37975009064,
@@ -4644,8 +4644,95 @@
               "acquisition_invocation": "7a00f5289e3c47d4b63f129ebfc63d36",
               "intake_invocation": "518f2d7209e24ecbb847edd28752827d",
               "entry_attempted": false,
+              "retry_authorized": false,
+              "decode_failure": {
+                "row_index": 6,
+                "transaction_version": 1,
+                "exception": "ValueError: Unsupported transaction version",
+                "payload_hash": "620b1de88e24e56648352bea0907219935ab54739072261a83a8fcab1ce0c1f3",
+                "seven_other_rows_decode": true
+              }
+            },
+            "release_ci_result": {
+              "result": "BOTH_PASS",
+              "tests": 2609,
+              "runs": {
+                "37975003976": 639.177,
+                "37975009064": 702.107
+              }
+            },
+            "terminal_receipt": "3e9ab263b09fad2fe43ecdc5fae97de69ab99a6e6d92bcaf28850cc6aa172ae0",
+            "locked_plan_exact_reviewed_pin": true,
+            "original_tables_verified": 50,
+            "original_pass_null": true,
+            "original_rows_and_charges_unchanged": true,
+            "pre_backup": "/var/backups/solana-desk/pre-extension-5cbd0da",
+            "post_backup": "/var/backups/solana-desk/post-terminal-5cbd0da",
+            "post_databases": 8,
+            "private_listener": "127.0.0.1:8765",
+            "services_restarted": true,
+            "checkpoint_cash": "5",
+            "monitoring_used": 0,
+            "monitoring_remaining": 3600,
+            "entry242_preflight": {
+              "status": "DRY_RUN",
+              "calls": 0,
+              "blockers": []
+            },
+            "entry242_unit": "desk-entry-seq242-5cbd0da.service",
+            "entry242": {
+              "scan_id": "ce675338c1374812b49247f5d2850a2d",
+              "mint": "W6mmGAheMDqqZ2uyvZwBtHghJ3sc7wZceUEB32fpump",
+              "status": "REJECTED_RETIRED",
+              "invocation_id": "aabe1cb554074631814ccbd58d5e64b6",
+              "pass_id": "d84bdb26f1c242b582d27fc2fd9c2850",
+              "requests_used": 10,
+              "additional_requests": 4,
+              "hazards": [
+                "BOOST_POOL_UNSUPPORTED",
+                "VIRTUAL_RESERVES_REQUIRE_SPECIAL_PRICING"
+              ],
+              "terminal_receipt": "5ee4f0819319231ceea4dd4a4c09a8990a7b17e26936a460550f087279cbe129",
+              "capture_hash": "da20be9e1a2d8e5a6754ffc086718158c8de4fbd17458e7f735101582db2e437",
+              "buy": false,
               "retry_authorized": false
-            }
+            },
+            "post_entry_verification": {
+              "source": "3f819c9e0907ce6d8e63a585fb5917dbf10bee9620755e92cc844e510cd7a077",
+              "cash": "5",
+              "positions": 0,
+              "outcomes": 0,
+              "monitoring_used": 0,
+              "monitoring_remaining": 3600,
+              "other_candidates_gate": null,
+              "retired242_gate": "REJECTED_SCAN_RETIRED",
+              "provider_calls": 0
+            },
+            "compatibility_claims": [
+              {
+                "owner": "08",
+                "thread_id": "01a118fd-2563-7126-90d7-bd07693de0b2",
+                "turn_id": "01a1220b-6e68-7719-8c7b-9d9b4f927198",
+                "status": "IMPLEMENTATION_ASSIGNED",
+                "scope": "Complete explicit paper-only boosted pool pricing/spendable reserve/physical payout compatibility; preserve old profiles, gates and retired scans",
+                "base": "5cbd0da982c71914241265110d9152d5387ef204",
+                "diagnosis_turn": "01a12207-517d-73b9-9b10-b67dbd81ccc7"
+              },
+              {
+                "owner": "02",
+                "thread_id": "01a118fc-666c-70b6-9fa8-2c7520f0a0bb",
+                "turn_id": "01a1220b-ad95-7452-b9a1-23cf54dfb717",
+                "status": "INDEPENDENT_DESIGN_REVIEW",
+                "scope": "Boost compatibility contract read-only review"
+              },
+              {
+                "owner": "01",
+                "thread_id": "01a118fc-39bc-722c-b442-8bf5a749e0bb",
+                "turn_id": "01a1220b-5e50-71a5-a80a-10e55e8222ef",
+                "status": "READ_ONLY_DIAGNOSIS",
+                "scope": "Canonical version1 successful jsonParsed history semantics, authentic retained row; no whitelist-only fix"
+              }
+            ]
           }
         }
       }

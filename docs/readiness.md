@@ -2,9 +2,19 @@
 
 Last production inspection: 9 October 2026. The current requested end state is a usable live-data paper-trading cycle under the explicit experimental policy below; further screening expansion is frozen. Do not equate a usable research dashboard with that end state. Real-money execution is disabled.
 
-PR172 final `e2cf656fb25ed91a4053ae6c9db6dab6c64ed728` has independent sensitive PASS and both full Linux CI runs passing 2,608 tests (471.978s and 617.832s). PR173 final `75c3679ccc11914dc5ff9f8f07fb95cc46712111` adds the independently reviewed actual-wrapper rejection/reconciliation → distinct BUY → four-read SELL → restart regression. Its tree `0e12b0f97c39675c4e0b07cf225b611649616190` exactly matches inactive VPS candidate `ab02ab1`. Both combined CI runs passed 2,609 tests; first run took503.388s. PR172/173 and independently reviewed source/association policies are integrated locally; VPS combined full suite passed2,609 tests in998.336s with zero skips; final release5cbd0da CI remains pending. Final implementation is `3f819c9e0907ce6d8e63a585fb5917dbf10bee9620755e92cc844e510cd7a077`.
+## Current verified status
 
-The original oversize-loader and monitoring request-19 defects were fixed, independently reviewed and retained in the audit history. Reviewed runtime and legacy-association proposals are conditional on exact locked production equality; no production mutation yet. Complete read-only evidence inventory checks all96 pages and preserves candidate222 history requests5–7 and failed cycle8–10, the NULL pass and all10 charges. Production remains5746912, cash5, zero positions/outcomes. No live-data paper BUY or notification yet.
+Release `5cbd0da982c71914241265110d9152d5387ef204` is deployed with implementation `3f819c9e0907ce6d8e63a585fb5917dbf10bee9620755e92cc844e510cd7a077`. PR172/173 passed independent reviews; both exact release CI runs passed 2,609 tests (639.177s and 702.107s), and the combined VPS suite passed 2,609 tests in998.336s with zero skips. Deployment verified preservation of50 original tables and eight-database backups. Dashboard remains loopback-only.
+
+Candidate222's reviewed append-only terminal receipt was applied without altering its original NULL pass or charges. Candidate242 then passed zero-call preflight and made one live attempt: four additional requests,10/18 total, stopped for unsupported boosted pricing, no Jupiter call or BUY. Its intrinsic terminal receipt `5ee4f0819319231ceea4dd4a4c09a8990a7b17e26936a460550f087279cbe129` automatically retired the scan while retaining original evidence. A fresh locked check confirms other candidates are not blocked. Both rejected scans remain retired.
+
+Fresh runtime inspection confirms5 simulated SOL, zero positions, zero outcomes and monitoring0/3600 used. No live-data paper BUY exists and the first-entry notification has not fired. Token-2022 support for the reviewed profiles is deployed; it is not a blanket Token-2022 rejection.
+
+The concrete remaining compatibility work is assigned to existing workers:08 implements a complete versioned boosted-pool path separating effective pricing from spendable reserves and proving physical payout capacity;02 independently reviews the contract.01 diagnoses the retained candidate508 version1 transaction: seven rows decode, one successful version1 row raises Unsupported transaction version. No coverage waiver or candidate retry is authorized. Boost by itself is documented pricing behavior, but current unsupported pools remain excluded until complete reviewed support exists. Existing safety and budget limits remain unchanged.
+
+## Superseded implementation notes
+
+The following describes earlier intermediate states; the verified status above supersedes pending/deployment statements below.
 
 ## Current status — 2026-10-09 16:42 UTC
 
