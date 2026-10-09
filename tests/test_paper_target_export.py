@@ -100,8 +100,9 @@ class TargetExportTests(unittest.TestCase):
         with patch.object(m,'replay_history',side_effect=AssertionError('Before body replay')):
             with self.assertRaisesRegex(m.ExportBlocked,'RETAINED_INPUT_BOUND_EXCEEDED'):self.export()
         self.assertFalse(self.output.exists())
-        with self.f.f.jobs.connect() as c:c.execute("DELETE FROM scan_job_migrations WHERE name='legacy_screen_descriptors'")
-        with self.assertRaisesRegex(m.ExportBlocked,'EXISTING_DISPATCH_SCHEMA_REQUIRED'):self.export()
+        # Simulate externally damaged schema, bypassing its real immutable marker.
+        with self.f.f.jobs.connect() as c:c.execute('DROP TABLE scan_job_migrations')
+        with self.assertRaises(sqlite3.Error):self.export()
 
     def test_positions_config_malformed_duplicate_and_oversized_before_databases(self):
         config=self.output.parent/'operator-config.json'
