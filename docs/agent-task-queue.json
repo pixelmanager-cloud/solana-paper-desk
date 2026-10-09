@@ -3992,7 +3992,7 @@
         "runtime_review_preflight_turn_id": "01a12154-5fe6-73fe-996c-2dd864fed6a4",
         "combined_fixture_owner": "04",
         "combined_fixture_thread_id": "01a118fc-b862-7340-ab3a-e1115a3280a4",
-        "combined_fixture_status": "HELD_CYCLE_DEADLINE_FAILURE_TIMING_DIAGNOSIS_ASSIGNED",
+        "combined_fixture_status": "VPS_FULL_PASS_FINAL_TEST_ONLY_REPAIR_CI_PENDING",
         "root_original_replay": "OBSERVED, meta.err null, complete event2.49; only migration binding/witness blockers reproduced; no provider calls",
         "pr": 165,
         "head": "f40ea164b6ed6e1883bcbb094fc3cb24c2f7a07f",
@@ -4020,7 +4020,7 @@
           "number": 166,
           "head": "76f1b0786bcd714014038ba0f1960adc39ebbfdf",
           "reviewer": "09",
-          "status": "INDEPENDENT_PASS_FINAL_CI_RUNNING",
+          "status": "INDEPENDENT_PASS_BOTH_CI_SUCCESS",
           "ci_runs": [
             37956170687,
             37956179843
@@ -4033,7 +4033,8 @@
           "independent_probes": 2,
           "repair_head": "4c981382e3e5dac8706361975dcad1813bc8dc50",
           "second_finding": "Same scalar preflight needed for continuation receipt itself; repair assigned",
-          "independent_probe_seconds": 4.125
+          "independent_probe_seconds": 4.125,
+          "ci_status": "BOTH_SUCCESS"
         },
         "root_combined_focused": {
           "tests": 31,
@@ -4093,13 +4094,30 @@
           "archive_sha256": "65c4cd1f4a48a006ab00d71acef9b01041f6a27e2651a598ec75b611b0cd088c",
           "vps_path": "/opt/solana-desk-releases/review-sentinel-8c67529",
           "vps_log": "/var/tmp/paper-review-sentinel-8c67529/full.log",
-          "vps_status": "FULL_LINUX_RUNNING",
+          "vps_status": "PASS",
           "ci_runs": [
             37956360968,
             37956354827
           ],
           "vps_session_id": 81205,
-          "policy_review_turn": "01a12167-8206-72b9-974b-1468698f2afd"
+          "policy_review_turn": "01a12167-8206-72b9-974b-1468698f2afd",
+          "ci_failure": {
+            "run": 37956360968,
+            "tests": 2563,
+            "seconds": 424.298,
+            "failures": 1,
+            "test": "test_provider_pacing.ConnectorTests.test_actual_collector_429_shared_backoff_no_retry_and_exact_charges",
+            "expected": "PACING_DEADLINE_EXCEEDED",
+            "actual": "DEADLINE_EXCEEDED",
+            "repair_owner": "01",
+            "repair_thread_id": "01a118fc-39bc-722c-b442-8bf5a749e0bb",
+            "repair_turn_id": "01a1216f-c7ee-76cb-ba2d-0cc230d07c23",
+            "reviewer": "06",
+            "scope": "Deterministic fixture only; preserve runtime/deadline/charges/noIO"
+          },
+          "vps_tests": 2563,
+          "vps_seconds": 805.262,
+          "vps_skips": 0
         },
         "timing_review": {
           "worker": "06",
@@ -4111,6 +4129,41 @@
           "hash_scans": 98,
           "hash_seconds": 1.213,
           "implementation_change": "NONE_WARRANTED"
+        },
+        "operator_review": {
+          "worker": "06",
+          "turn_id": "01a1216c-71fa-71c7-be54-a5c41288c999",
+          "status": "FINDINGS_ADDRESSED",
+          "legacy_writers": "Confirmeddisabled/inactive;explicitstopadded",
+          "post_backup": "8quiescedDBs includingpacing beforestart",
+          "units": "97overrideafterverified96last;effectiveWorkingDirectoryassertbeforestart",
+          "scripts": "work/activate-reviewed-continuation.sh;work/start-reviewed-continuation.sh;work/verify-continuation-originals.py"
+        },
+        "fixture_deadline_repair": {
+          "pr": 168,
+          "head": "b6e50432e2a031ba9469e63e88884e2eb8226a5c",
+          "owner": "01",
+          "thread_id": "01a118fc-39bc-722c-b442-8bf5a749e0bb",
+          "turn_id": "01a1216f-c7ee-76cb-ba2d-0cc230d07c23",
+          "reviewer": "06",
+          "review_thread_id": "01a118fc-f867-7233-8eec-c20659e70095",
+          "review_turn_id": "01a12173-0c83-74c2-b05b-343af12053dc",
+          "review": "PASS",
+          "review_tests": 51,
+          "review_seconds": 1.852,
+          "root_diff_review": "PASS deterministic test-only clock; both exact deadline codes, two reservations, no credentials/provider IO, unchanged embargo; production hash unchanged",
+          "ci_runs": [
+            37957766066,
+            37957711076
+          ],
+          "ci_status": "RUNNING",
+          "attachment": "identity count exceeds100; not retried",
+          "source": "8c675296c36cd6b088a25aae0c7fcf8d65bdc26673bfdffa49012368acb06427",
+          "root_focused": {
+            "tests": 23,
+            "seconds": 0.891,
+            "result": "PASS"
+          }
         }
       }
     }
