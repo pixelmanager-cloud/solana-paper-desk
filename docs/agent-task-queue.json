@@ -3035,7 +3035,9 @@
         "worker": "08",
         "thread_id": "01a118fd-2563-7126-90d7-bd07693de0b2",
         "status": "DISPATCHED_READ_ONLY",
-        "scope": "Determine exact existing token-program exclusions and bounded change proposal only; no implementation/policy waiver/providers"
+        "scope": "Determine exact existing token-program exclusions and bounded change proposal only; no implementation/policy waiver/providers",
+        "turn_id": "01a1209f-e3ad-7247-b6ff-700d72ee43e5",
+        "cursor": "02d8669f-59ba-43bb-8691-b196829f4867:54"
       }
     },
     "paper_policy_tuning": {
@@ -3109,7 +3111,7 @@
         "worker": "03",
         "thread_id": "01a118fc-9478-778a-b77a-8f8f6ec7e0ad",
         "turn_id": "01a1209c-c9a0-70a1-836e-a07e814c26d4",
-        "cursor": "0851f5ab-a903-4567-a6fe-4cbb4e6a7b96:51"
+        "cursor": "0851f5ab-a903-4567-a6fe-4cbb4e6a7b96:52"
       },
       "constraints": "Explicit durable upgrade only; no counter reset, reprovision, forged source identity, historical evidence or checkpoint rewrite. Existing defaults do not silently escalate. Runtime compatibility required.",
       "deployment": "Not active; original10/3/60 remain until independent review/fullLinux/CI and safe coordinator upgrade",
