@@ -8,6 +8,38 @@ from pathlib import Path
 D = Decimal
 ZERO = D(0)
 ONE = D(1)
+PAPER_STRICT = 'PAPER_STRICT'
+PAPER_EXPERIMENTAL = 'PAPER_EXPERIMENTAL'
+EXPERIMENTAL_POLICY_VERSION = 1
+OWNERSHIP_METRICS = ('top10_pct', 'dev_pct', 'bundle_pct', 'cluster_pct')
+OWNERSHIP_HISTORY_RISK = 'UNRESOLVED_OWNERSHIP_HISTORY'
+
+
+def experimental_ownership_unknowns(event):
+    """Validate explicit experimental metadata, never assert source trust.
+
+    Null is allowed only for the four named ownership metrics. Missing keys,
+    numeric UNKNOWN defaults and unversioned/candidate-selected opt-in reject.
+    Coordinator must explicitly choose experimental validation/scoring APIs.
+    """
+    policy = event.get('paper_experimental')
+    if (type(policy) is not dict or set(policy) != {'mode','policy_version','risk_flag','ownership_unknowns'}
+            or policy['mode'] != PAPER_EXPERIMENTAL
+            or type(policy['policy_version']) is not int or policy['policy_version'] != EXPERIMENTAL_POLICY_VERSION
+            or policy['risk_flag'] != OWNERSHIP_HISTORY_RISK):
+        raise ValueError('Explicit versioned experimental paper risk metadata required')
+    unknowns = policy['ownership_unknowns']
+    if type(unknowns) is not dict or any(key not in OWNERSHIP_METRICS for key in unknowns):
+        raise ValueError('Only ownership metrics may be UNKNOWN')
+    missing = {key for key in OWNERSHIP_METRICS if key in event and event[key] is None}
+    if any(key not in event for key in OWNERSHIP_METRICS) or set(unknowns) != missing:
+        raise ValueError('Null ownership fields require exact UNKNOWN metadata')
+    for key, row in unknowns.items():
+        if (type(row) is not dict or set(row) != {'status','reasons'} or row['status'] != 'UNKNOWN'
+                or type(row['reasons']) is not list or not 1 <= len(row['reasons']) <= 32
+                or any(type(reason) is not str or not 1 <= len(reason) <= 128 for reason in row['reasons'])):
+            raise ValueError('Explicit bounded ownership UNKNOWN reasons required')
+    return unknowns
 
 
 def decimal(value):
@@ -52,7 +84,19 @@ def load_config(path):
     return cfg
 
 
-def validate_event(event):
+def validate_event(event, *, mode=PAPER_STRICT, policy_version=None):
+    # Never infer opt-in from event JSON; existing engine calls remain strict.
+    if mode not in (PAPER_STRICT, PAPER_EXPERIMENTAL):
+        raise ValueError('Unsupported event policy mode')
+    experimental = mode == PAPER_EXPERIMENTAL
+    if experimental and (type(policy_version) is not int or policy_version != EXPERIMENTAL_POLICY_VERSION):
+        raise ValueError('Explicit experimental policy version required')
+    if experimental and type(event.get('schema_version')) is not int:
+        raise ValueError('Experimental event schema version must be an integer')
+    if experimental and event.get('kind') != 'market':
+        raise ValueError('Experimental policy applies only to market events')
+    unknowns = experimental_ownership_unknowns(event) if experimental else {}
+
     if event.get("schema_version") != 1:
         raise ValueError("unsupported schema_version")
     if not isinstance(event.get("event_id"), str) or not event["event_id"]:
@@ -85,6 +129,8 @@ def validate_event(event):
         if decimal(event.get(key)) <= 0:
             raise ValueError(f"{key} must be positive")
     for key in ("top10_pct", "dev_pct", "bundle_pct", "cluster_pct", "flow"):
+        if key in unknowns:
+            continue
         if not ZERO <= decimal(event.get(key)) <= 100:
             raise ValueError(f"{key} must be 0..100")
     for key in ("fresh_wallet_ratio", "manip_safety", "manip_flow", "net_buy_ratio",
