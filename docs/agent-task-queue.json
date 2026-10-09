@@ -1893,16 +1893,16 @@
       "live_acceptance": false
     },
     "current_worker_followups": {
-      "01": "Repair126 cross-budget reservation binding",
-      "02": "Review frozen126 repair9174515; precise graduation capture gap audit",
-      "03": "Independent129 repair review at f21f036",
-      "04": "Independent128 adapter/profile review",
+      "01": "Report exact raw-unit partial dust repair; experiment_report.py only",
+      "02": "Independent131deadline and126combined review",
+      "03": "Independent129restart latch review",
+      "04": "Independent130 adapter clock/taker review",
       "05": "Platformblocked97/110; not retried",
-      "06": "Repair127 explicit v3 engine gates; coordinate trusted taker",
-      "07": "Independent127 quote accounting/restart review",
-      "08": "Repair125 ambiguity latch and pre-lock mutation; cycle wiring next",
-      "09": "Repair128 captured-window clock and taker binding",
-      "10": "Implement v3/quote checkpoint and reader compatibility"
+      "06": "127 explicit v3 and mint decimal binding repair",
+      "07": "127 HOLD; await06/10 exact repairs",
+      "08": "Resume one-cycle orchestration on130/131 contracts, no budget expansion",
+      "09": "Bounded retained-raw migration time extractor",
+      "10": "Checkpoint/view quote and v3 journal verification before read/duplicate"
     },
     "paper_live_foundation_candidate": {
       "base": "3fe3188",
@@ -1952,7 +1952,7 @@
     },
     "pending_pr126": {
       "head": "9174515b5a175076949490ea212124be0d0f2998",
-      "status": "REPAIRED_FROZEN_REVIEW02",
+      "status": "BUDGET_BINDING_FIXED_DEADLINE_REPAIR131_REVIEW",
       "reviewer_thread": "01a118fc-666c-70b6-9fa8-2c7520f0a0bb",
       "live_acceptance": false,
       "findings": [
@@ -2023,6 +2023,41 @@
       "repairs": 125,
       "reviewer": "03",
       "status": "INDEPENDENT_REVIEW_ACTIVE",
+      "live_acceptance": false
+    },
+    "pending_pr130": {
+      "head": "7441e94042e0d05d1760472483752a65f3820100",
+      "repairs": 128,
+      "reviewer": "04",
+      "status": "INDEPENDENT_REVIEW_ACTIVE",
+      "author_linux_tests": 2167
+    },
+    "pending_pr131": {
+      "head": "455149e42088bb9201d3ce3097efda01e6116d2e",
+      "repairs": 126,
+      "author": "desktop",
+      "reviewer": "02",
+      "status": "INDEPENDENT_COMBINED_REVIEW_ACTIVE",
+      "local_tests": {
+        "total": 2019,
+        "skipped": 408,
+        "seconds": 35.917
+      },
+      "local_focused": 29
+    },
+    "combined_pending_smoke": {
+      "base": "55bfb4c",
+      "components": [
+        125,
+        126,
+        127,
+        128,
+        129,
+        130,
+        131
+      ],
+      "tests": 64,
+      "status": "FOCUSED_PASS_KNOWN_PENDING127_CHECKPOINT_FINDINGS",
       "live_acceptance": false
     }
   },
