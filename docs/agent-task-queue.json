@@ -3097,7 +3097,7 @@
       "source_identity": "Only coordinator queue/readiness differ from independent exacthead"
     },
     "downstream_allowance_upgrade": {
-      "status": "DEPLOYMENT_HELD_PACING_RACE_CI_FAILURE",
+      "status": "REPAIR_INTEGRATED_AWAITING_FINAL_CI",
       "authorization": "User explicitly requested another increase beyond100/day and600/hour. Coordinator targets1000/day,queue25,monitor3600/hour; ceilings subject to provider pacing.",
       "limits": {
         "daily_admissions": 1000,
@@ -3274,7 +3274,7 @@
         "review_thread": "01a118fd-3f90-77d9-9549-c4497f5b10a6",
         "base": "358109813fa302569543de213d44e66889979de7",
         "failure": "test_multiprocess_slot_race_actual_spacing_and_restart_death line141: one child PacingError; other OK. Full2454tests309.411s onefailure. VPSsame frozen code2454passed. Diagnose rather than blind retry.",
-        "status": "INDEPENDENT_PASS_AWAIT_CI",
+        "status": "INTEGRATED",
         "author_turn": "01a120b8-339a-71d5-82b8-5d36eac2a179",
         "author_cursor": "8f3328cf-bef6-441d-83f8-2d1f46b3b0df:130",
         "review_turn": "01a120c0-8496-7622-aaed-56f9de7a7d07",
@@ -3291,7 +3291,9 @@
         "full_linux_tests": 2455,
         "full_linux_skips": 0,
         "full_linux_seconds": 202.292,
-        "source_manifest_unchanged": true
+        "source_manifest_unchanged": true,
+        "ci_success_run": 37933563506,
+        "integration_commit": "729b370defd3d734afa7d735d7c42a70b9fa6877"
       }
     },
     "discovery_policy_combined_review": {
