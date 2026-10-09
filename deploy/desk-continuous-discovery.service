@@ -1,0 +1,25 @@
+# INACTIVE TEMPLATE: no [Install], no timer, no automatic enablement.
+# Coordinator must stop the existing discovery timer/listener before use.
+[Unit]
+Description=Opt-in bounded migration discovery (no investigations or entries)
+After=network-online.target
+Wants=network-online.target
+[Service]
+Type=simple
+User=solana-desk
+Group=solana-desk
+# Separate tool release; never repoint existing paper services/ledger runtime.
+WorkingDirectory=/opt/solana-desk-discovery-tool
+LoadCredential=provider-keys.json:/etc/solana-desk/provider-keys.json
+ExecStart=/opt/solana-desk/.venv/bin/python -m discovery.continuous listen --db /var/lib/solana-desk/discovery/continuous.sqlite --seconds 86400
+Restart=no
+UMask=0077
+NoNewPrivileges=true
+PrivateTmp=true
+ProtectSystem=strict
+ProtectHome=true
+ReadWritePaths=/var/lib/solana-desk/discovery
+RestrictAddressFamilies=AF_INET AF_INET6 AF_UNIX
+MemoryMax=128M
+TasksMax=16
+TimeoutStopSec=35
