@@ -1900,7 +1900,7 @@
       "05": "Platformblocked97/110; not retried",
       "06": "Final2339LinuxPASS; idle",
       "07": "PR148scopedPASS; idle",
-      "08": "Wire139+142 concrete published APIs in separate138 successor",
+      "08": "Migration-focused samplerconfig review complete; exact observedauthority recommendation applied within unchangedcaps; idle",
       "09": "PR146/148accepted/deployed; idle",
       "10": "143 repaira006published,04rereview"
     },
@@ -2543,7 +2543,7 @@
       "release": "d05d963",
       "status": "SEED_HISTORY_PARTIAL",
       "provider_calls": 4,
-      "requests_used": 5,
+      "requests_used": 6,
       "token_policy": "PASS_TOKEN_POLICY",
       "mint_authority": null,
       "freeze_authority": null,
@@ -2597,7 +2597,7 @@
         "release": "d05d963",
         "status": "SEED_HISTORY_PARTIAL",
         "provider_calls": 4,
-        "requests_used": 5,
+        "requests_used": 6,
         "token_policy": "PASS_TOKEN_POLICY",
         "mint_authority": null,
         "freeze_authority": null,
@@ -2666,7 +2666,44 @@
       "restore": "Copied empty active-paper backup verified checkpoint cash5/positions0; not a live trade replay",
       "original_eight_scans_unchanged": true,
       "live_readiness": false,
-      "remaining": "Eligible supported live candidate and genuine paper entry/monitor/exit/accounting forward cycle; automatic candidate intake not enabled"
+      "remaining": "Eligible supported live candidate and genuine paper entry/monitor/exit/accounting forward cycle; automatic candidate intake not enabled",
+      "first_scheduled_monitor_run": {
+        "at": "2026-10-09T10:07:39Z",
+        "result": "COMPLETE",
+        "positions": 0,
+        "exit_status": 0,
+        "next_run": "2026-10-09T10:12:39Z",
+        "scope": "Real scheduled empty-position invocation; no live entry or exit evidence"
+      }
+    },
+    "discovery_migration_diagnostic": {
+      "status": "REVIEW08_PASS_FILTER_REPLACED_AWAITING_SCHEDULED_SAMPLE",
+      "thread_id": "01a118fd-2563-7126-90d7-bd07693de0b2",
+      "turn_id": "01a12021-caf7-76c3-9edb-15c8f26cf55b",
+      "cursor": "02d8669f-59ba-43bb-8691-b196829f4867:45",
+      "facts": "Existing sampler accountInclude mint authority; pinned migrate/migrate_v2 omit it. Latest five saved launches all Token2022. Seeking already-supported migration discovery route within unchanged sample budget. No changes or extra provider requests authorized by diagnostic.",
+      "limits": "20sec,5records,200000bytes,every15min unchanged",
+      "global_read": {
+        "account": "4wTV1YmiEkRvAtNtsSGPtUrqRYQMe5SKy2uB4Jjaxnjf",
+        "authority": "39azUYFWPz3VHgKCf3VChUwbpURdCHRxjWVowf5jUJjg",
+        "context_slot": 454835937,
+        "receipt": "3ecaf3cb86c65a2d86babd6fd885fc56424c6f3f7f42ae9341d451e03deaa8f1",
+        "scan_id": "4e542d600f0847cd916d3d04d762a2c3",
+        "requests_before": 5,
+        "requests_after": 6,
+        "raw_bytes": 1088,
+        "checks": "Owner Pump,nonexecutable,Global discriminator,boolean,length;withdraw prefix113:145",
+        "scope": "Discovery hint only, no entry authorization; no filter change yet"
+      },
+      "review_turn_id": "01a12026-df6b-7655-a4ab-7c5fecab4fa7",
+      "dropin": "/etc/systemd/system/desk-discovery.service.d/70-migration-sampling.conf",
+      "new_filter": "39azUYFWPz3VHgKCf3VChUwbpURdCHRxjWVowf5jUJjg",
+      "old_filter": "TSLvdd1pWpHVjahSpsvCXUbgwsL3JAcvokwaKt1eokM",
+      "extra_streams": 0,
+      "manual_extra_sample": false,
+      "source": "afe2845",
+      "limit_changes": false,
+      "limitation": "Observed Global1088 bytes differs from pinned1087 layout; validated prefix only discovery hint. Raw confirmed captures do not replace finalized admission history. Authority rotation/unrelated references/Token2022/missing samples possible."
     }
   },
   "native_reconciliation_review": {
