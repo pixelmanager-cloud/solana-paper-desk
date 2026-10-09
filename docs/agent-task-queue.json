@@ -3762,7 +3762,7 @@
         }
       ],
       "transport_repair": {
-        "status": "INDEPENDENT_PASS_FINAL_CI_RUNNING",
+        "status": "INDEPENDENT_PASS_BOTH_FINAL_HEAD_CI_PASS",
         "owner": "08",
         "reviewer": "02",
         "base": "e4badabe0ce850ceec59e4ae25aa1e7e0c266efb",
@@ -3782,7 +3782,14 @@
         "ci_runs": [
           37948895745,
           37948889250
-        ]
+        ],
+        "author_full_linux": {
+          "tests": 2528,
+          "seconds": 444.442,
+          "skips": 0,
+          "status": "PASS",
+          "head": "b644bee22d1112e0c5b2b90e2548db9c60e752e1"
+        }
       },
       "active_runtime_repair": {
         "status": "INDEPENDENT_PASS_BOTH_FINAL_CI_PASS",
@@ -3824,7 +3831,7 @@
       "repair_combined_fixture": {
         "owner": "04",
         "thread_id": "01a118fc-b862-7340-ab3a-e1115a3280a4",
-        "status": "SCOPED_ENTRY_HELD_READ_RESTART_PASS_FULL_RUNNING",
+        "status": "INCONSISTENT_NATIVE_CLOCK_POSITIVE_FIXTURE_FULL_AND_TIMING_DIAGNOSIS_RUNNING",
         "scope": "Guarded historyfirst actual chunked transport plus reviewed sameexperiment runtime receipt; defer fullsuite until final component heads",
         "turn_id": "01a12129-aaff-75f1-b903-95b219463fc7",
         "pr": 164,
@@ -3835,7 +3842,32 @@
         "ci_runs": [
           37949389174,
           37949367282
-        ]
+        ],
+        "final_focused_caveat": "Exacta6d0b04positiveCOMPLETE/noBUYassertionfailed; unchangedisolatedpositivePASS20.194s; failuredecisionnotcapturedoriginally.06diagnosingentryandheldcycle. Notclassifiedbenign.",
+        "timing_diagnosis": {
+          "worker": "06",
+          "turn_id": "01a12136-cda0-72fa-b95a-9ff03263f869",
+          "status": "INTERIM_THREE_ENTRY_AND_EXIT_PASSES_NO_DEADLINE_REPRO",
+          "held_seconds": [
+            6.44396,
+            6.42402,
+            6.44463
+          ],
+          "entry_wrapper_seconds": [
+            10.41255,
+            10.3998,
+            10.36488
+          ],
+          "monitoring_calls_each": 4,
+          "investigation_used_each": 9,
+          "source_hash_scans_per_cycle": 98,
+          "source_hash_seconds": [
+            1.1947,
+            1.1473
+          ],
+          "review_url": "https://github.com/pixelmanager-cloud/solana-paper-desk/pull/164#issuecomment-6083736736",
+          "caveat": "Nestedtimingnotadditive; fixturetimestampaginghypothesisnotyetproven; no liveproviders/readinessclaim"
+        }
       },
       "artifact_attachment_limit": "PR161/162/163 attach attempts rejected: thread attachment identity count exceeds100; GitHub PR identities persisted inqueue.",
       "repair_vps_validation": {
