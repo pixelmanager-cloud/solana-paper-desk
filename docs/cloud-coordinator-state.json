@@ -1,6 +1,6 @@
 {
   "schema_version": 1,
-  "revision": 71,
+  "revision": 72,
   "repository": "pixelmanager-cloud/solana-paper-desk",
   "source_main_sha": "e298e15cd758932e81d2241130716632702f5bd0",
   "observed_date": "2026-10-08",
@@ -4248,6 +4248,68 @@
       "readiness": "BLOCKED_NO_SUPPORTED_BUDGET_FEASIBLE_PUBLIC_LEGACY_SEED; acquisition path in development",
       "schedule": "NOT_REPROBED_NO_DURABLE_BINDING_CLAIM",
       "scope_limit": "Expanded allowances and continuous subscription intake reported externally; current reviewer no-subscriptions/18 ceiling authority remains unchanged. No provider or policy activation."
+    },
+    {
+      "kind": "HOURLY_GITHUB_RECONCILIATION",
+      "at": "2026-10-09T13:02:34Z",
+      "status": "NO_NEW_UNASSIGNED_REVIEW_WORK",
+      "cloud_execution": {
+        "provider": "cloud",
+        "observations_current": true,
+        "observed_phase": "running",
+        "spec_revision": "120"
+      },
+      "queue_blob_sha": "c6464376e3b07785f914c4b36bf25198f6538837",
+      "observed_prs": [
+        {
+          "pr": 153,
+          "head_sha": "af2077308f17d3f2a7a0cbc6ed630ea0a5f1d764",
+          "base_sha": "34820de0712d9fc7724cc794565ca86edd3e313c",
+          "branch": "codex/cloud-explicit-allowance-upgrade-01",
+          "comment_ids": [
+            6080331586,
+            6080361410,
+            6080377351,
+            6080389878,
+            6080424395,
+            6080485703,
+            6080506568,
+            6080528237,
+            5469844702,
+            4229955476,
+            4229955483,
+            6080721622,
+            6080783569,
+            6080812241,
+            6080850783,
+            5469995853
+          ],
+          "status": "EXTERNAL_INDEPENDENT_EXACT_HEAD_REVIEW_ALREADY_PUBLISHED",
+          "tests_this_run": "NOT_RUN",
+          "limitations": "External results not reproduced or accepted by this run."
+        },
+        {
+          "pr": 155,
+          "head_sha": "3c8e7678ac7c38ec752add71276f96cc34708935",
+          "base_sha": "358109813fa302569543de213d44e66889979de7",
+          "branch": "codex/pacing-race-repair-06",
+          "comment_ids": [
+            6081418920,
+            6081421280
+          ],
+          "status": "EXTERNAL_INDEPENDENT_EXACT_HEAD_REVIEW_ALREADY_PUBLISHED",
+          "tests_this_run": "NOT_RUN",
+          "limitations": "External results not reproduced or accepted by this run."
+        }
+      ],
+      "observed_codex_branch_count": 153,
+      "branch_pagination_complete": true,
+      "tests": "NOT_RUN_EXISTING_INDEPENDENT_REVIEW",
+      "review_comments_posted": 0,
+      "infrastructure_failures": 0,
+      "provider_calls": 0,
+      "readiness": "BLOCKED_NO_SUPPORTED_BUDGET_FEASIBLE_PUBLIC_LEGACY_SEED; acquisition path in development",
+      "schedule": "NOT_REPROBED_NO_DURABLE_BINDING_CLAIM"
     }
   ],
   "artifact_pr": {
@@ -6589,6 +6651,46 @@
       "status": "EXTERNAL_REVIEW_FINDINGS_AND_RESERVED_FORWARD_REPAIR",
       "tests_this_run": "NOT_RUN",
       "limitations": "Original-head findings cannot certify repaired heads; external tests/CI not reproduced."
+    },
+    {
+      "pr": 153,
+      "head_sha": "af2077308f17d3f2a7a0cbc6ed630ea0a5f1d764",
+      "base_sha": "34820de0712d9fc7724cc794565ca86edd3e313c",
+      "branch": "codex/cloud-explicit-allowance-upgrade-01",
+      "comment_ids": [
+        6080331586,
+        6080361410,
+        6080377351,
+        6080389878,
+        6080424395,
+        6080485703,
+        6080506568,
+        6080528237,
+        5469844702,
+        4229955476,
+        4229955483,
+        6080721622,
+        6080783569,
+        6080812241,
+        6080850783,
+        5469995853
+      ],
+      "status": "EXTERNAL_INDEPENDENT_EXACT_HEAD_REVIEW_ALREADY_PUBLISHED",
+      "tests_this_run": "NOT_RUN",
+      "limitations": "External results not reproduced or accepted by this run."
+    },
+    {
+      "pr": 155,
+      "head_sha": "3c8e7678ac7c38ec752add71276f96cc34708935",
+      "base_sha": "358109813fa302569543de213d44e66889979de7",
+      "branch": "codex/pacing-race-repair-06",
+      "comment_ids": [
+        6081418920,
+        6081421280
+      ],
+      "status": "EXTERNAL_INDEPENDENT_EXACT_HEAD_REVIEW_ALREADY_PUBLISHED",
+      "tests_this_run": "NOT_RUN",
+      "limitations": "External results not reproduced or accepted by this run."
     }
   ],
   "pending_reviews": [
@@ -7651,76 +7753,65 @@
   ],
   "last_reconciliation": {
     "kind": "HOURLY_GITHUB_RECONCILIATION",
-    "at": "2026-10-09T11:59:12Z",
-    "status": "EXISTING_INDEPENDENT_REVIEW_SCOPES_NO_DUPLICATION",
+    "at": "2026-10-09T13:02:34Z",
+    "status": "NO_NEW_UNASSIGNED_REVIEW_WORK",
     "cloud_execution": {
       "provider": "cloud",
       "observations_current": true,
       "observed_phase": "running",
-      "spec_revision": "117"
+      "spec_revision": "120"
     },
-    "queue_blob_sha": "83b7dc2c492b2167d2c48f53fe13b9de3c22fc1b",
+    "queue_blob_sha": "c6464376e3b07785f914c4b36bf25198f6538837",
     "observed_prs": [
       {
-        "pr": 151,
-        "head_sha": "7bc51403ad122760acdc013857c49438d30d8af0",
-        "base_sha": "aa24a7648b7d39972db17364b68788d913d96458",
-        "branch": "codex/cloud-continuous-discovery-08",
-        "comment_ids": [
-          6080033842,
-          6080078959,
-          6080110472,
-          6080144553,
-          6080148572,
-          6080215276,
-          6080233087,
-          6080299327,
-          6080373111,
-          6080383259
-        ],
-        "status": "EXTERNAL_REVIEW_FINDINGS_AND_RESERVED_FORWARD_REPAIR",
-        "tests_this_run": "NOT_RUN",
-        "limitations": "Original-head findings cannot certify repaired heads; external tests/CI not reproduced."
-      },
-      {
-        "pr": 152,
-        "head_sha": "000840c88a139280fd3608795e1444499c524cda",
-        "base_sha": "34820de0712d9fc7724cc794565ca86edd3e313c",
-        "branch": "codex/cloud-wave1-07-runtime-compatibility",
-        "comment_ids": [
-          6080318663,
-          5469701550
-        ],
-        "status": "EXTERNAL_REVIEW_FINDINGS_AND_RESERVED_FORWARD_REPAIR",
-        "tests_this_run": "NOT_RUN",
-        "limitations": "Original-head findings cannot certify repaired heads; external tests/CI not reproduced."
-      },
-      {
         "pr": 153,
-        "head_sha": "a70c69ffc1fad6c51e482076e99b9ee34e98c952",
+        "head_sha": "af2077308f17d3f2a7a0cbc6ed630ea0a5f1d764",
         "base_sha": "34820de0712d9fc7724cc794565ca86edd3e313c",
         "branch": "codex/cloud-explicit-allowance-upgrade-01",
         "comment_ids": [
           6080331586,
           6080361410,
           6080377351,
-          6080389878
+          6080389878,
+          6080424395,
+          6080485703,
+          6080506568,
+          6080528237,
+          5469844702,
+          4229955476,
+          4229955483,
+          6080721622,
+          6080783569,
+          6080812241,
+          6080850783,
+          5469995853
         ],
-        "status": "EXTERNAL_REVIEW_FINDINGS_AND_RESERVED_FORWARD_REPAIR",
+        "status": "EXTERNAL_INDEPENDENT_EXACT_HEAD_REVIEW_ALREADY_PUBLISHED",
         "tests_this_run": "NOT_RUN",
-        "limitations": "Original-head findings cannot certify repaired heads; external tests/CI not reproduced."
+        "limitations": "External results not reproduced or accepted by this run."
+      },
+      {
+        "pr": 155,
+        "head_sha": "3c8e7678ac7c38ec752add71276f96cc34708935",
+        "base_sha": "358109813fa302569543de213d44e66889979de7",
+        "branch": "codex/pacing-race-repair-06",
+        "comment_ids": [
+          6081418920,
+          6081421280
+        ],
+        "status": "EXTERNAL_INDEPENDENT_EXACT_HEAD_REVIEW_ALREADY_PUBLISHED",
+        "tests_this_run": "NOT_RUN",
+        "limitations": "External results not reproduced or accepted by this run."
       }
     ],
-    "observed_codex_branch_count": 151,
+    "observed_codex_branch_count": 153,
     "branch_pagination_complete": true,
-    "open_pr_count": 54,
-    "tests": "NOT_RUN_RESERVED_REVIEW_REPAIR_SCOPES",
+    "tests": "NOT_RUN_EXISTING_INDEPENDENT_REVIEW",
     "review_comments_posted": 0,
     "infrastructure_failures": 0,
     "provider_calls": 0,
     "readiness": "BLOCKED_NO_SUPPORTED_BUDGET_FEASIBLE_PUBLIC_LEGACY_SEED; acquisition path in development",
-    "schedule": "NOT_REPROBED_NO_DURABLE_BINDING_CLAIM",
-    "scope_limit": "Expanded allowances and continuous subscription intake reported externally; current reviewer no-subscriptions/18 ceiling authority remains unchanged. No provider or policy activation."
+    "schedule": "NOT_REPROBED_NO_DURABLE_BINDING_CLAIM"
   },
   "supplemental_validations": [
     {
