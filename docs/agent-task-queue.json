@@ -4403,7 +4403,7 @@
             "thread_id": "01a118fd-0f1c-749c-b85b-5e730937d0a8",
             "reviewer": "09",
             "review_thread_id": "01a118fd-3f90-77d9-9549-c4497f5b10a6",
-            "status": "SENSITIVE_PASS_FINAL_COMBINED_CI_AND_VPS_RUNNING",
+            "status": "INTEGRATED_REVIEWED_POLICIES_FINAL_RELEASE_CI_REQUIRED",
             "pass_id": "d8600ce75e014e22b84c3fd8d10bf2c0",
             "intent_hash": "6f6cfd1efe9aa257638bd750ccd3c4099a3943a5d403132fa9d9d2a7b868fb7e",
             "retained_outcome_hash": "4352afa8e732c4f03eaf1cb788047aea58379fe3ef24edd05f5535e5680eb4a8",
@@ -4616,7 +4616,12 @@
               "result": "PASS",
               "tests": 2609,
               "seconds": 503.388
-            }
+            },
+            "component_pr_state": "MERGED_LOCALLY_RECHECKED_HEADS",
+            "combined_ci_result": "BOTH_PASS",
+            "integrated_runtime_policy": "config/runtime-extensions.json",
+            "integrated_terminal_policy": "config/paper-terminal-reconciliation.json",
+            "production_reconciliation_applied": false
           }
         }
       }

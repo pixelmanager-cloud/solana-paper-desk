@@ -13,7 +13,7 @@
       "continuation_receipt_hash": "66a7dbcddd61d053882bf2c9be51661ece3b4222d87c3a111bc57a8cce99b357",
       "parent_receipt_hash": "66a7dbcddd61d053882bf2c9be51661ece3b4222d87c3a111bc57a8cce99b357",
       "predecessor": "8c675296c36cd6b088a25aae0c7fcf8d65bdc26673bfdffa49012368acb06427",
-      "successor": "a611c45faf829ac7f1b63bb775e68c12f2503e6e63f4cb44a648d3c6b9d6d66b",
+      "successor": "3f819c9e0907ce6d8e63a585fb5917dbf10bee9620755e92cc844e510cd7a077",
       "config_hash": "30406d9cb727b3e518687dbb4c20820483bf51384f0edfb14a94f8221e2b595e",
       "context": {
         "evidence_db": "/var/lib/solana-desk/evidence.sqlite",

@@ -1,1 +1,40 @@
-{"version":1,"associations":[]}
+{
+  "version": 1,
+  "associations": [
+    {
+      "version": 1,
+      "association": "EXPLICIT_REVIEWED_LEGACY",
+      "pass_id": "d8600ce75e014e22b84c3fd8d10bf2c0",
+      "intent_hash": "6f6cfd1efe9aa257638bd750ccd3c4099a3943a5d403132fa9d9d2a7b868fb7e",
+      "outcome_hash": "4352afa8e732c4f03eaf1cb788047aea58379fe3ef24edd05f5535e5680eb4a8",
+      "attempt_refs": [
+        "5fc5caa16818e63891c9fdea7bb7826c1dd80d149803a69991338272685fa4fc",
+        "363b8cf31f410964b20a92cf931ab21a324e5da7832ec159d3d8526b3893cbaa",
+        "0a42e9a83430b2aae7df6ae92659ab328195192e50b7f3c92c8113d352f3ebe3"
+      ],
+      "invocation_hash": "4ce301202bc5aa68df3c0c6c02fab9f455785d2d0521e794b27ab98b66c53307",
+      "source_hash": "3f819c9e0907ce6d8e63a585fb5917dbf10bee9620755e92cc844e510cd7a077",
+      "context": {
+        "evidence_db": "/var/lib/solana-desk/evidence.sqlite",
+        "ledger_db": "/var/lib/solana-desk/token2022-paper.sqlite",
+        "research_db": "/var/lib/solana-desk/research.sqlite",
+        "pacing_db": "/var/lib/solana-desk/provider-pacing.sqlite"
+      },
+      "config_hash": "30406d9cb727b3e518687dbb4c20820483bf51384f0edfb14a94f8221e2b595e",
+      "scan_id": "d796b12f49594e8097cc6cbb46299edb",
+      "before": 7,
+      "after": 10,
+      "ledger_anchors": {
+        "metadata_hash": "cd8281e88a1a18468aeabc97662613d178a76d60911c75e967cdb9cb213db2c1",
+        "checkpoint_hash": "61eacdccf4ab480c20530384923f46d0f44e75f4b8199c4e39632fd3821e9362",
+        "events_hash": "d6a2c29038acabac20136482ea2d7848e4e4a334d6109f3133a9d807aaa2574b",
+        "outcomes_hash": "4f53cda18c2baa0c0354bb5f9a3ecbe5ed12ab4d8e11ba873c2f11161202b945"
+      },
+      "hazards": [
+        "ACCRUED_POOL_FEES_REQUIRE_RESERVE_ADJUSTMENT",
+        "BOOST_POOL_UNSUPPORTED",
+        "VIRTUAL_RESERVES_REQUIRE_SPECIAL_PRICING"
+      ]
+    }
+  ]
+}
