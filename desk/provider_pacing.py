@@ -60,13 +60,13 @@ def initialize(path, *, helius_seconds=2.0, jupiter_seconds=2.0, backoff_seconds
         CREATE TABLE policy(provider TEXT PRIMARY KEY,version INTEGER NOT NULL,
                             cadence REAL NOT NULL,backoff REAL NOT NULL);
         CREATE TABLE state(provider TEXT PRIMARY KEY,next_at REAL NOT NULL,
-                           blocked_until REAL NOT NULL,high_water REAL NOT NULL);
+                           blocked_until REAL NOT NULL,high_water REAL NOT NULL,pending TEXT);
         CREATE TABLE waiters(ticket TEXT PRIMARY KEY,provider TEXT NOT NULL,
                              priority TEXT NOT NULL,created REAL NOT NULL,expires REAL NOT NULL);
         ''')
         for provider, cadence in zip(PROVIDERS, (helius_seconds, jupiter_seconds)):
-            c.execute('INSERT INTO policy VALUES(?,1,?,?)', (provider, cadence, backoff_seconds))
-            c.execute('INSERT INTO state VALUES(?,0,0,0)', (provider,))
+            c.execute('INSERT INTO policy VALUES(?,2,?,?)', (provider, cadence, backoff_seconds))
+            c.execute('INSERT INTO state VALUES(?,0,0,0,NULL)', (provider,))
         c.commit()
 
 
@@ -96,10 +96,12 @@ class Pacer:
                 rows = c.execute('SELECT provider,version,cadence,backoff FROM policy').fetchall()
                 if len(rows) != 2 or {r[0] for r in rows} != set(PROVIDERS): raise ValueError()
                 for provider, version, cadence, backoff in rows:
-                    if version != 1 or not _number(cadence) or not .05 <= cadence <= 60 or not _number(backoff) or not 1 <= backoff <= 3600: raise ValueError()
-                rows = c.execute('SELECT provider,next_at,blocked_until,high_water FROM state').fetchall()
+                    if version != 2 or not _number(cadence) or not .05 <= cadence <= 60 or not _number(backoff) or not 1 <= backoff <= 3600: raise ValueError()
+                rows = c.execute('SELECT provider,next_at,blocked_until,high_water,pending FROM state').fetchall()
                 if len(rows) != 2 or {r[0] for r in rows} != set(PROVIDERS): raise ValueError()
-                if any(not _number(v) for r in rows for v in r[1:]): raise ValueError()
+                if any(not _number(v) for r in rows for v in r[1:4]): raise ValueError()
+                if any(r[4] is not None and (type(r[4]) is not str or len(r[4]) != 32
+                       or any(ch not in '0123456789abcdef' for ch in r[4])) for r in rows): raise ValueError()
                 waiters = c.execute('SELECT ticket,provider,priority,created,expires FROM waiters LIMIT 65').fetchall()
                 if len(waiters) > 2*MAX_WAITERS: raise ValueError()
                 for ticket, provider, priority, created, expires in waiters:
@@ -138,15 +140,16 @@ class Pacer:
                             raise PacingError('PACING_QUEUE_FULL')
                         c.execute('INSERT INTO waiters VALUES(?,?,?,?,?)',(ticket,provider,self.priority,now,now+duration))
                         registered = True
-                    row = c.execute('SELECT next_at,blocked_until FROM state WHERE provider=?',(provider,)).fetchone()
+                    row = c.execute('SELECT next_at,blocked_until,pending FROM state WHERE provider=?',(provider,)).fetchone()
+                    if row[2] is not None: raise PacingError('PACING_OUTCOME_PENDING')
                     first = c.execute("SELECT ticket FROM waiters WHERE provider=? ORDER BY CASE priority WHEN 'held' THEN 0 ELSE 1 END,created,ticket LIMIT 1",(provider,)).fetchone()
-                    due = max(row)
+                    due = max(row[:2])
                     c.execute('UPDATE state SET high_water=? WHERE provider=?',(now,provider))
                     if first and first[0] == ticket and now >= due:
                         cadence = c.execute('SELECT cadence FROM policy WHERE provider=?',(provider,)).fetchone()[0]
-                        c.execute('UPDATE state SET next_at=? WHERE provider=?',(math.nextafter(now+cadence, math.inf),provider))
+                        c.execute('UPDATE state SET next_at=?,pending=? WHERE provider=?',(math.nextafter(now+cadence, math.inf),ticket,provider))
                         c.execute('DELETE FROM waiters WHERE ticket=?',(ticket,));c.commit()
-                        return
+                        return ticket
                     c.commit()
                 self.sleep(min(.05, max(0,deadline-tick)))
         except sqlite3.Error:
@@ -157,7 +160,23 @@ class Pacer:
                     with closing(self._connect()) as c: c.execute('DELETE FROM waiters WHERE ticket=?',(ticket,))
                 except (sqlite3.Error, PacingError): pass  # Durable expiry still bounds abandoned waiters.
 
-    def throttle(self, provider, headers):
+    def finish(self, provider, ticket):
+        """Acknowledge an outcome with no unrecorded backoff; never clear another grant."""
+        try:
+            with closing(self._connect()) as c:
+                c.execute('BEGIN IMMEDIATE');now=self._now(c)
+                self._pending(c,provider,ticket)
+                c.execute('UPDATE state SET pending=NULL,high_water=? WHERE provider=?',(now,provider));c.commit()
+        except sqlite3.Error:
+            raise PacingError('PACING_DATABASE_BUSY') from None
+
+    def _pending(self,c,provider,ticket):
+        if provider not in PROVIDERS or type(ticket) is not str or len(ticket)!=32:
+            raise PacingError('PACING_REQUEST_INVALID')
+        row=c.execute('SELECT pending FROM state WHERE provider=?',(provider,)).fetchone()
+        if not row or row[0]!=ticket: raise PacingError('PACING_GRANT_MISMATCH')
+
+    def throttle(self, provider, headers, *, ticket):
         """Shared429 embargo; missing/ambiguous Retry-After uses fixed backoff.
 
         Retry-After is bounded input, never logged. A valid long delay is honored,
@@ -167,6 +186,7 @@ class Pacer:
         try:
             with closing(self._connect()) as c:
                 c.execute('BEGIN IMMEDIATE');now=self._now(c)
+                self._pending(c,provider,ticket)
                 fallback=c.execute('SELECT backoff FROM policy WHERE provider=?',(provider,)).fetchone()[0]
                 until=now+fallback
                 values=headers.get_all('Retry-After') if hasattr(headers,'get_all') else None
@@ -185,7 +205,7 @@ class Pacer:
                         if not _number(until):until=2**53-1
                     except (ValueError,TypeError,OverflowError): pass
                 elif values: until=2**53-1  # Ambiguous/oversize instructions cannot permit an early retry.
-                c.execute('UPDATE state SET blocked_until=MAX(blocked_until,?),high_water=? WHERE provider=?',(until,now,provider));c.commit()
+                c.execute('UPDATE state SET blocked_until=MAX(blocked_until,?),high_water=?,pending=NULL WHERE provider=?',(until,now,provider));c.commit()
         except sqlite3.Error:
             raise PacingError('PACING_DATABASE_BUSY') from None
 

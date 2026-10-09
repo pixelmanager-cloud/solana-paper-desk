@@ -33,8 +33,9 @@ class Clock:
 def race(path,barrier,out):
     try:
         pacer=p.Pacer(path);barrier.wait(5)
-        pacer.acquire('helius',timeout_seconds=2)
-        out.send(('OK',time.time()))
+        ticket=pacer.acquire('helius',timeout_seconds=2)
+        at=time.time();pacer.finish('helius',ticket)
+        out.send(('OK',at))
     except Exception as error:out.send(('FAIL',type(error).__name__))
     finally:out.close()
 
@@ -51,6 +52,10 @@ class PacingTests(unittest.TestCase):
         self.clock=Clock();self.pacer=self.make()
     def make(self,priority='investigation'):
         return p.Pacer(self.path,priority=priority,clock=self.clock.time,monotonic=self.clock.monotonic,sleep=self.clock.sleep)
+    def slot(self,provider,*,timeout_seconds,priority='investigation'):
+        pacer=self.make(priority);ticket=pacer.acquire(provider,timeout_seconds=timeout_seconds);pacer.finish(provider,ticket)
+    def embargo(self,pacer,provider,headers):
+        ticket=pacer.acquire(provider,timeout_seconds=1);pacer.throttle(provider,headers,ticket=ticket)
     def state(self,provider='helius'):
         with sqlite3.connect(self.path) as c:return c.execute('SELECT next_at,blocked_until,high_water FROM state WHERE provider=?',(provider,)).fetchone()
     def test_default_disabled_explicit_missing_and_no_implicit_init(self):
@@ -62,48 +67,52 @@ class PacingTests(unittest.TestCase):
         with patch.dict(os.environ,{p.ENV:str(self.path)},clear=True):self.assertIsInstance(p.configured(priority='held'),p.Pacer)
         with self.assertRaises(FileExistsError):p.initialize(self.path)
     def test_shared_cadence_restart_no_refund_provider_independence(self):
-        self.pacer.acquire('helius',timeout_seconds=1)
-        self.make().acquire('jupiter',timeout_seconds=1)
+        self.slot('helius',timeout_seconds=1)
+        self.slot('jupiter',timeout_seconds=1)
         self.assertEqual(self.clock.tick,0)
-        self.make().acquire('helius',timeout_seconds=1)
+        self.slot('helius',timeout_seconds=1)
         self.assertGreaterEqual(self.clock.tick,.1)
         self.assertAlmostEqual(self.state()[0],self.clock.wall+.1)
     def test_deadline_no_grant_and_monotonic_or_wall_rollback_refuse(self):
-        self.pacer.acquire('helius',timeout_seconds=1);before=self.state()[0]
-        with self.assertRaisesRegex(p.PacingError,'DEADLINE'):self.make().acquire('helius',timeout_seconds=.01)
+        self.slot('helius',timeout_seconds=1);before=self.state()[0]
+        with self.assertRaisesRegex(p.PacingError,'DEADLINE'):self.slot('helius',timeout_seconds=.01)
         self.assertEqual(self.state()[0],before)
         self.clock.wall=99
-        with self.assertRaisesRegex(p.PacingError,'CLOCK'):self.make().acquire('jupiter',timeout_seconds=1)
+        with self.assertRaisesRegex(p.PacingError,'CLOCK'):self.slot('jupiter',timeout_seconds=1)
         self.clock.wall=101;self.clock.tick=float('nan')
-        with self.assertRaisesRegex(p.PacingError,'CLOCK'):self.make().acquire('helius',timeout_seconds=1)
+        with self.assertRaisesRegex(p.PacingError,'CLOCK'):self.slot('helius',timeout_seconds=1)
     def test_held_preempts_waiting_investigation_not_granted_slot(self):
-        self.pacer.acquire('helius',timeout_seconds=1)
+        self.slot('helius',timeout_seconds=1)
         # Held request arrives after investigation began waiting. The already
         # granted first slot cannot be revoked; held gets the next due slot.
-        def held():self.make('held').acquire('helius',timeout_seconds=1)
+        def held():self.slot('helius',timeout_seconds=1,priority='held')
         self.clock.hook=held
-        self.make().acquire('helius',timeout_seconds=1)
+        self.slot('helius',timeout_seconds=1)
         self.assertGreaterEqual(self.clock.tick,.2)
     def test_shared_backoff_retry_after_seconds_date_and_failures(self):
         for value in ('4','Thu, 01 Jan 1970 00:02:00 GMT'):
             headers=Message();headers['Retry-After']=value
-            self.pacer.throttle('helius',headers)
+            self.embargo(self.pacer,'helius',headers)
+            self.clock.wall=104
         self.assertEqual(self.state()[1],120)
-        with self.assertRaisesRegex(p.PacingError,'DEADLINE'):self.make('held').acquire('helius',timeout_seconds=1)
-        self.make().acquire('jupiter',timeout_seconds=1)
-        self.clock.wall=120;self.make().acquire('helius',timeout_seconds=1)
+        with self.assertRaisesRegex(p.PacingError,'DEADLINE'):self.slot('helius',timeout_seconds=1,priority='held')
+        self.slot('jupiter',timeout_seconds=1)
+        self.clock.wall=120;self.slot('helius',timeout_seconds=1)
     def test_missing_malformed_duplicate_and_huge_retry_after(self):
-        for values in ([],['nonsense'],['1','2'],['9'*100]):
+        for i,values in enumerate(([],['nonsense'],['1','2'],['9'*100])):
+            path=Path(self.tmp.name)/('independent-'+str(i)+'.sqlite');p.initialize(path,backoff_seconds=1)
+            pacer=p.Pacer(path,clock=self.clock.time,monotonic=self.clock.monotonic,sleep=self.clock.sleep)
             headers=Message()
             for v in values:headers['Retry-After']=v
-            self.pacer.throttle('helius',headers)
-            self.assertGreaterEqual(self.state()[1],101)
-        self.assertEqual(self.state()[1],2**53-1)
+            self.embargo(pacer,'helius',headers)
+            with sqlite3.connect(path) as c:until=c.execute("SELECT blocked_until FROM state WHERE provider='helius'").fetchone()[0]
+            self.assertGreaterEqual(until,101)
+        self.assertEqual(until,2**53-1)
     def test_queue_bounded_expired_crash_waiters_reclaimed(self):
         with sqlite3.connect(self.path) as c:
             for i in range(p.MAX_WAITERS):c.execute('INSERT INTO waiters VALUES(?,?,?,?,?)',(str(i).zfill(32),'helius','held',100.,105.))
-        with self.assertRaisesRegex(p.PacingError,'QUEUE_FULL'):self.make().acquire('helius',timeout_seconds=1)
-        self.clock.wall=105;self.make().acquire('helius',timeout_seconds=1)
+        with self.assertRaisesRegex(p.PacingError,'QUEUE_FULL'):self.slot('helius',timeout_seconds=1)
+        self.clock.wall=105;self.slot('helius',timeout_seconds=1)
         with sqlite3.connect(self.path) as c:self.assertEqual(c.execute('SELECT COUNT(*) FROM waiters').fetchone()[0],0)
     def test_corrupt_schema_alias_rotation_permissions_and_wal_refuse(self):
         alias=Path(self.tmp.name)/'alias';alias.symlink_to(self.path)
@@ -119,7 +128,7 @@ class PacingTests(unittest.TestCase):
         with sqlite3.connect(self.path) as lock:
             lock.execute('BEGIN EXCLUSIVE')
             at=time.monotonic()
-            with self.assertRaises(p.PacingError):self.pacer.acquire('helius',timeout_seconds=1)
+            with self.assertRaises(p.PacingError):self.slot('helius',timeout_seconds=1)
             self.assertLess(time.monotonic()-at,.5)
     def test_multiprocess_slot_race_actual_spacing_and_restart_death(self):
         ctx=multiprocessing.get_context('spawn');barrier=ctx.Barrier(2);children=[];readers=[]
@@ -133,8 +142,8 @@ class PacingTests(unittest.TestCase):
             times=sorted(r[1] for r in results);self.assertGreaterEqual(times[1]-times[0],.095)
             child=ctx.Process(target=dies_after_grant,args=(str(self.path),));children.append(child);child.start();child.join(5);self.assertEqual(child.exitcode,19)
             with sqlite3.connect(self.path) as c:due=c.execute("SELECT next_at FROM state WHERE provider='helius'").fetchone()[0]
-            p.Pacer(self.path).acquire('helius',timeout_seconds=1)
-            self.assertGreaterEqual(time.time(),due)
+            with self.assertRaisesRegex(p.PacingError,'OUTCOME_PENDING'):p.Pacer(self.path).acquire('helius',timeout_seconds=1)
+            self.assertGreaterEqual(due,0)
         finally:
             for child in children:
                 if child.is_alive():child.kill();child.join(2)
@@ -144,6 +153,7 @@ class ConnectorTests(unittest.TestCase):
     setUp=PacingTests.setUp
     make=PacingTests.make
     state=PacingTests.state
+    embargo=PacingTests.embargo
     def factory(self,*,priority='investigation'):
         self.priorities.append(priority);return self.make(priority)
     def test_actual_collector_429_shared_backoff_no_retry_and_exact_charges(self):
@@ -175,7 +185,7 @@ class ConnectorTests(unittest.TestCase):
         original=f.progress.admission(f.scan);ledger=list(f.f.ledger.db.iterdump())
         with patch.object(p,'configured',side_effect=self.factory):
             f.read()
-            headers=Message();headers['Retry-After']='20';self.pacer.throttle('helius',headers)
+            headers=Message();headers['Retry-After']='20';self.embargo(self.pacer,'helius',headers)
             with patch.object(reads,'build_opener') as opened,patch.object(reads.os.environ,'get') as credentials:
                 with self.assertRaises(reads.PaperReadError) as blocked:f.read_unmocked()
             opened.assert_not_called();credentials.assert_not_called()
@@ -223,3 +233,74 @@ class ConnectorTests(unittest.TestCase):
             self.assertGreaterEqual(self.state()[1],self.clock.wall+7)
             self.assertEqual(f.progress.admission('scan')['requests_used'],1)
             self.clock.wall+=8
+    def test_received429_sqlite_contention_leaves_shared_guard_and_exact_charges(self):
+        f=read_fixtures.PaperReadTests();f.setUp();self.addCleanup(f.doCleanups);self.priorities=[]
+        headers=Message();headers['Retry-After']='120'
+        lock=sqlite3.connect(self.path);self.addCleanup(lock.close)
+        class Opener:
+            def open(inner,request,*,timeout):
+                lock.execute('BEGIN IMMEDIATE')
+                raise HTTPError('https://SYNTHETIC_INVALID',429,'fixture',headers,io.BytesIO())
+        with patch.object(p,'configured',side_effect=self.factory),patch.object(reads,'build_opener',return_value=Opener()) as opened,patch.object(reads.os.environ,'get',return_value=KEY):
+            with self.assertRaises(reads.PaperReadError) as failed:f.source.rpc('getAccountInfo',f.params,timeout_seconds=1)
+        self.assertEqual(opened.call_count,1)
+        record=f.outcome(failed.exception);self.assertEqual(record['http_status'],429)
+        self.assertEqual(record['failure_code'],'PACING_DATABASE_BUSY');self.assertEqual(record['requests_used'],1)
+        lock.rollback();self.clock.wall=100.15
+        with sqlite3.connect(self.path) as c:
+            until,pending=c.execute("SELECT blocked_until,pending FROM state WHERE provider='helius'").fetchone()
+        self.assertEqual(until,0);self.assertIsNotNone(pending)
+        # New process-equivalent constructor, even long after unknown embargo,
+        # cannot erase an unresolved outcome or issue another HTTP request.
+        for now in (100.15,230):
+            self.clock.wall=now
+            with patch.object(p,'configured',side_effect=self.factory),patch.object(reads,'build_opener') as reopened,patch.object(reads.os.environ,'get') as credentials:
+                with self.assertRaises(reads.PaperReadError) as blocked:f.source.rpc('getAccountInfo',f.params,timeout_seconds=1)
+            self.assertEqual(blocked.exception.code,'PACING_OUTCOME_PENDING')
+            reopened.assert_not_called();credentials.assert_not_called()
+        self.assertEqual(f.progress.admission('scan')['requests_used'],3)
+        # Other provider still operates; exact held/investigation guards are per provider.
+        other=self.make();ticket=other.acquire('jupiter',timeout_seconds=1);other.finish('jupiter',ticket)
+    def test_pacer_failed_throttle_and_failed_ack_restart_never_clear_unknown_outcome(self):
+        ticket=self.pacer.acquire('helius',timeout_seconds=1)
+        headers=Message();headers['Retry-After']='120'
+        with sqlite3.connect(self.path) as lock:
+            lock.execute('BEGIN IMMEDIATE')
+            with self.assertRaisesRegex(p.PacingError,'DATABASE_BUSY'):self.pacer.throttle('helius',headers,ticket=ticket)
+        self.clock.wall=100.15
+        with self.assertRaisesRegex(p.PacingError,'OUTCOME_PENDING'):self.make().acquire('helius',timeout_seconds=1)
+        with self.assertRaisesRegex(p.PacingError,'GRANT_MISMATCH'):self.make().finish('helius','0'*32)
+        # Matching grant can complete backoff atomically; a lost normal ACK must
+        # also retain pending rather than imply the response was non-throttled.
+        self.make().throttle('helius',headers,ticket=ticket)
+        self.assertGreaterEqual(self.state()[1],220.15)
+        self.clock.wall=230;next_ticket=self.make().acquire('helius',timeout_seconds=1)
+        with sqlite3.connect(self.path) as lock:
+            lock.execute('BEGIN IMMEDIATE')
+            with self.assertRaisesRegex(p.PacingError,'DATABASE_BUSY'):self.make().finish('helius',next_ticket)
+        with self.assertRaisesRegex(p.PacingError,'OUTCOME_PENDING'):self.make().acquire('helius',timeout_seconds=1)
+    def test_legacy_http429_contention_guard_no_unpaced_followup(self):
+        self.priorities=[];headers=Message();headers['Retry-After']='120'
+        lock=sqlite3.connect(self.path);self.addCleanup(lock.close)
+        class Opener:
+            def open(inner,request,*,timeout):
+                lock.execute('BEGIN IMMEDIATE')
+                raise HTTPError('https://SYNTHETIC_INVALID',429,'fixture',headers,io.BytesIO())
+        with patch.object(p,'configured',side_effect=self.factory),patch.object(providers,'build_opener',return_value=Opener()) as opened:
+            with self.assertRaisesRegex(p.PacingError,'DATABASE_BUSY'):providers.fetch_json('https://mainnet.helius-rpc.com/')
+        self.assertEqual(opened.call_count,1);lock.rollback();self.clock.wall=100.15
+        with patch.object(p,'configured',side_effect=self.factory),patch.object(providers,'build_opener') as reopened:
+            with self.assertRaisesRegex(p.PacingError,'OUTCOME_PENDING'):providers.fetch_json('https://mainnet.helius-rpc.com/')
+        reopened.assert_not_called()
+    def test_old_schema_refused_without_reset_or_migration(self):
+        with sqlite3.connect(self.path) as c:c.execute('UPDATE policy SET version=1')
+        before=self.path.read_bytes()
+        with self.assertRaisesRegex(p.PacingError,'DATABASE_INVALID'):self.make()
+        self.assertEqual(self.path.read_bytes(),before)
+    def test_legacy_interrupted_outcome_does_not_acknowledge_guard(self):
+        self.priorities=[]
+        with patch.object(p,'configured',side_effect=self.factory),patch.object(providers,'build_opener') as opened:
+            opened.return_value.open.side_effect=KeyboardInterrupt()
+            with self.assertRaises(KeyboardInterrupt):providers.fetch_json('https://mainnet.helius-rpc.com/')
+        self.clock.wall=200
+        with self.assertRaisesRegex(p.PacingError,'OUTCOME_PENDING'):self.make().acquire('helius',timeout_seconds=1)

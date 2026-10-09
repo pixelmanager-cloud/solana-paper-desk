@@ -32,7 +32,8 @@ def fetch_json(url, payload=None, headers=None):
     provider = {'mainnet.helius-rpc.com': 'helius', 'api.jup.ag': 'jupiter'}.get(urlsplit(url).hostname)
     pacer = provider_pacing.configured() if provider is not None else None
     deadline = time.monotonic() + 15
-    if pacer is not None: pacer.acquire(provider, timeout_seconds=15)
+    ticket = pacer.acquire(provider, timeout_seconds=15) if pacer is not None else None
+    release = True
     timeout = deadline-time.monotonic() if pacer is not None else 15
     if timeout <= 0: raise provider_pacing.PacingError('PACING_DEADLINE_EXCEEDED')
     try:
@@ -42,18 +43,28 @@ def fetch_json(url, payload=None, headers=None):
         else: opener = urlopen
         with opener(request, timeout=timeout) as response:
             if pacer is not None and provider_pacing.should_throttle(response.status, response.headers):
-                pacer.throttle(provider, response.headers)
+                release = False
+                pacer.throttle(provider, response.headers, ticket=ticket)
+                ticket = None
             if pacer is not None and response.status != 200:
                 raise ValueError('Provider HTTP rejected')
             return json.load(response)
     except HTTPError as exc:
         if pacer is not None and provider_pacing.should_throttle(exc.code, exc.headers):
-            try: pacer.throttle(provider, exc.headers)
+            release = False
+            try:
+                pacer.throttle(provider, exc.headers, ticket=ticket)
+                ticket = None
             finally: exc.close()
         # Provider responses/URLs can contain API keys. Never echo raw exceptions.
         raise ValueError(f"Provider HTTP {exc.code}; check credentials, plan or rate limit") from None
     except (URLError, TimeoutError, json.JSONDecodeError):
         raise ValueError("Provider connection or response error") from None
+    except BaseException:
+        release = False  # Interrupted/unclassified outcome cannot acknowledge its durable guard.
+        raise
+    finally:
+        if ticket is not None and release: pacer.finish(provider, ticket)
 
 
 def helius_rpc(method, params):

@@ -23,7 +23,15 @@ are implementation bounds, not a claim the provider permits any particular rate.
 Missing/invalid credentials still fail as before. No credential lives in this DB.
 
 One atomic durable slot per provider spaces permission grants, not physical TCP
-packet timestamps. A grant is not refunded on crash or failed transport. Helius
+packet timestamps. Schema version2 also seals a pending-outcome nonce BEFORE
+transport. A matching normal acknowledgment clears it; a throttle acknowledgment
+atomically stores backoff AND clears it. If contention, commit failure or process
+death prevents acknowledgment, that provider stays blocked with
+PACING_OUTCOME_PENDING even after ordinary cadence/unknown embargo would elapse.
+There is no automatic timeout clearing, migration, reset or recovery API. Diagnose
+under coordinator control; do not replace databases to bypass the unresolved
+outcome. Version1 refuses without changes; no deployment of either schema is
+authorized here. A grant is not refunded on crash or failed transport. Helius
 and Jupiter have separate clocks; Jupiter quotes and SOL-price reads share one
 provider.429 and error responses carrying Retry-After publish a shared embargo;
 delay-seconds and timezone-bearing HTTP dates are honored with at least the
