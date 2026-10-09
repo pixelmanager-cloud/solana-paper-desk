@@ -3482,8 +3482,8 @@
         "thread_id": "01a118fc-9478-778a-b77a-8f8f6ec7e0ad",
         "status": "EXACT_HEAD_REVIEW_RUNNING",
         "head": "8248566a4220dcae8beadd3d3108c8c4bea77dda",
-        "turn_id": "01a120dd-91f7-7554-a685-a268f5ab2452",
-        "cursor": "0851f5ab-a903-4567-a6fe-4cbb4e6a7b96:54"
+        "turn_id": "01a120e4-721a-70ff-8580-71c08b674801",
+        "cursor": "0851f5ab-a903-4567-a6fe-4cbb4e6a7b96:55"
       },
       "implementation_pr": {
         "number": 156,
@@ -3496,6 +3496,18 @@
           37937313642
         ],
         "ci_status": "SUCCESS"
+      },
+      "coordinator_combined_focused": {
+        "heads": [
+          "873786e712146d45b7249df23b7f31cb9f0c5b85",
+          "8248566a4220dcae8beadd3d3108c8c4bea77dda"
+        ],
+        "tests": 66,
+        "seconds": 3.755,
+        "result": "PASS",
+        "environment": "macOS Python3.12 with canonical TMPDIR; no production edits or provider calls",
+        "initial_attempt": "default macOS /var temp alias rejected by canonical path gate;6fail6error; same unchanged tests passed with explicit canonical TMPDIR",
+        "config_hash_verified": "30406d9cb727b3e518687dbb4c20820483bf51384f0edfb14a94f8221e2b595e"
       }
     }
   },
