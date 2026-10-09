@@ -10,6 +10,7 @@ from pathlib import Path
 import re
 import sqlite3
 import stat
+import tempfile
 import time
 import uuid
 
@@ -33,6 +34,20 @@ def _json(path, limit=65536):
     if len(raw)>limit:raise ValueError('Operator input exceeds bound')
     return json.loads(raw,object_pairs_hook=_object,
                       parse_constant=lambda value:(_ for _ in ()).throw(ValueError('Nonfinite JSON')))
+
+
+def _config(path):
+    """Bounded duplicate-free object, then existing semantic validation.
+
+    Validate the single captured input, not a second read of the operator path:
+    the private temporary snapshot avoids a mutable-file preflight/read gap.
+    """
+    value=_json(path)
+    if type(value) is not dict:raise ValueError('Operator config object required')
+    with tempfile.TemporaryDirectory(prefix='paper-config-') as directory:
+        snapshot=Path(directory)/'config.json'
+        snapshot.write_text(json.dumps(value,allow_nan=False),encoding='utf-8')
+        return load_config(snapshot)
 
 
 def _hashes(values, maximum):
@@ -105,7 +120,7 @@ def main(argv=None):
     once.add_argument('--control',choices=('PAUSE_ENTRY','EXIT_ONLY','LIQUIDATE','RESUME'))
     args=parser.parse_args(argv)
     try:
-        cfg=load_config(args.config);cycle._config(cfg)
+        cfg=_config(args.config);cycle._config(cfg)
         if args.command=='init':
             cycle.initialize(args.ledger_db,cfg)
             result={'kind':'paper_cycle_init_v1','status':'INITIALIZED','execution_status':'EXECUTION_UNVERIFIED',
