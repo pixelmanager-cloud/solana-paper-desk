@@ -3993,7 +3993,66 @@
         "combined_fixture_owner": "04",
         "combined_fixture_thread_id": "01a118fc-b862-7340-ab3a-e1115a3280a4",
         "combined_fixture_status": "PREPARING_DEPENDENT_TEST_NO_FULL_SUITE_UNTIL_FINAL_HEADS",
-        "root_original_replay": "OBSERVED, meta.err null, complete event2.49; only migration binding/witness blockers reproduced; no provider calls"
+        "root_original_replay": "OBSERVED, meta.err null, complete event2.49; only migration binding/witness blockers reproduced; no provider calls",
+        "pr": 165,
+        "head": "f40ea164b6ed6e1883bcbb094fc3cb24c2f7a07f",
+        "ci_runs": [
+          37954253375,
+          37954189672
+        ],
+        "root_diff_review": "Narrow10add2del graduation change; rawquote retained, allotherbindingspreserved",
+        "root_full_original_replay": "PASS OBSERVED_MIGRATION at1791559554, unchanged39b3c945...bc524hash, entry_authorizedfalse",
+        "root_focused": {
+          "tests": 13,
+          "seconds": 0.074,
+          "result": "PASS"
+        },
+        "combined_fixture_turn_id": "01a12156-ad0e-7077-adb4-3458dead06ee",
+        "artifact_attachment": "165 failed identity count exceeds100; not retried",
+        "review": {
+          "status": "PASS",
+          "head": "f40ea164b6ed6e1883bcbb094fc3cb24c2f7a07f",
+          "turn_id": "01a1215a-92d6-728d-82f2-0c318d66f8f0",
+          "focused_tests": 52,
+          "independent_probes": 6
+        },
+        "runtime_pr": {
+          "number": 166,
+          "head": "1ae4ebf65cdec47fd98b469f3fd7ab8f23bca9eb",
+          "reviewer": "09",
+          "status": "HOLD_BOUNDED_FIRST_RECEIPT_READ_REPAIR_ASSIGNED",
+          "ci_runs": [
+            37954555536,
+            37954516947
+          ],
+          "attachment": "identity count exceeds100; not retried",
+          "review_turn_id": "01a1215c-8999-73cc-93fb-b24844c874b4",
+          "finding": "First receipt payload materialized before SQL size/type and exact schema/guards;3147904bytes reached_parse before2MiBrejection",
+          "review_tests": 36,
+          "review_seconds": 36.036,
+          "independent_probes": 2
+        },
+        "root_combined_focused": {
+          "tests": 31,
+          "seconds": 15.383,
+          "result": "PASS",
+          "heads": [
+            "f40ea164b6ed6e1883bcbb094fc3cb24c2f7a07f",
+            "1ae4ebf65cdec47fd98b469f3fd7ab8f23bca9eb"
+          ],
+          "scope": "macOS Python3.12 canonicalTMPDIR; graduation/continuation/monitoringupgrade; notliveacceptance"
+        },
+        "ci_status": "BOTH_SUCCESS",
+        "ci_tests": 2549,
+        "ci_seconds": [
+          542.398,
+          541.42
+        ],
+        "author_full_linux": {
+          "tests": 2549,
+          "seconds": 455.715,
+          "skips": 0
+        }
       }
     }
   },
