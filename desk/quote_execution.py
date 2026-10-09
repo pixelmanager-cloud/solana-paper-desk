@@ -133,7 +133,7 @@ def _book(event, quotes, cfg):
         raise QuoteExecutionError('QUOTE_EXECUTION_CONFIG_REQUIRED')
     if type(quotes) is not tuple or len(quotes) > MAX_QUOTES:
         raise QuoteExecutionError('QUOTE_SET_INVALID')
-    if event.get('kind')=='market':
+    if event.get('kind') in ('market','quote_exit'):
         try:address(event.get('taker'))
         except ValueError:
             raise QuoteExecutionError('QUOTE_EVENT_WALLET_REQUIRED') from None
@@ -158,6 +158,16 @@ def _book(event, quotes, cfg):
             expected_pool=event['pool'], max_age_seconds=cfg['price_ttl_seconds'])
         if replayed != quote or (mint_hash is not None and mint_hash != token.source.raw_hash):
             raise QuoteExecutionError('QUOTE_REPLAY_MISMATCH')
+        if event.get('kind')=='quote_exit':
+            evidence=event['source_evidence']
+            if (quote.direction!='sell' or token.decimals!=event['mint_decimals']
+                    or token.source.raw_hash!=evidence['mint_hash']
+                    or token.source.source_id!=evidence['rpc_source_id']
+                    or quote.source.source_id!=evidence['quote_source_id']
+                    or (quote.input_raw==event['current_quantity_raw'] and
+                        (quote.source.raw_hash!=evidence['quote_hash'] or
+                         quote.source.observed_at!=evidence['quote_at']))):
+                raise QuoteExecutionError('EXIT_QUOTE_SOURCE_BINDING_MISMATCH')
         identity = (quote.direction, quote.input_raw)
         if identity in identities:
             raise QuoteExecutionError('DUPLICATE_QUOTE')
@@ -208,7 +218,7 @@ def bind_transition(event, quotes):
         if digest(delivered) != event_hash:
             raise QuoteExecutionError('QUOTE_EVENT_BINDING_MISMATCH')
         from .engine import transition
-        if delivered.get('kind') != 'market':
+        if delivered.get('kind') not in ('market','quote_exit'):
             if frozen_quotes:
                 raise QuoteExecutionError('NONMARKET_QUOTE_FORBIDDEN')
             config(cfg)
