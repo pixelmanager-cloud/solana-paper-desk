@@ -2858,15 +2858,15 @@
       "thread_id": "01a118fd-2563-7126-90d7-bd07693de0b2",
       "turn_id": "01a1205a-ac94-70d6-bb60-70c87ba13d8e",
       "cursor": "02d8669f-59ba-43bb-8691-b196829f4867:48",
-      "scope": "Concrete smallest continuous-listening design, durable bytes/storage/dedup/reconnect caps; preserve investigation18/daily10/queue3 and monitoring60; no implementation or provider calls",
-      "user_authorization": "Explicit user answer: Build bounded continuous discovery (recommended). Hourly 800000 bytes or 20 stored observations, 64 MiB storage ceiling, no automatic investigations; investigation and monitoring limits unchanged.",
+      "scope": "Implement separate continuously listening migration discovery with durable approved caps; no automatic investigations",
+      "user_authorization": "Explicit user selected: 100 MB + 5,000 observations/hour; 5 GiB storage. Supersedes original 800KB/20/64MiB approval. Investigation and monitoring limits unchanged.",
       "proposed_caps": {
-        "payload_bytes_rolling_hour": 800000,
-        "payload_bytes_rolling_day": 19200000,
-        "stored_observations_hour": 20,
-        "stored_observations_day": 480,
+        "payload_bytes_rolling_hour": 100000000,
+        "payload_bytes_rolling_day": 2400000000,
+        "stored_observations_hour": 5000,
+        "stored_observations_day": 120000,
         "message_bytes": 200000,
-        "storage_high_water_bytes": 67108864
+        "storage_high_water_bytes": 5368709120
       },
       "proposal": "One existing migration-filter listener, durable counters across restart, count duplicates/malformed traffic, stop at caps preserve originals, bounded reconnect, idle receive does not reconnect, no automatic investigation",
       "billing": "Continuous connection billing may differ; user approved described bounded scope; no purchase authorized",
@@ -2876,7 +2876,7 @@
         "raw_records": 782,
         "payload_bytes": 21724158
       },
-      "question": "ANSWERED: approved bounded continuous discovery",
+      "question": "ANSWERED: increased discovery allowance selected",
       "implementation": {
         "worker": "08",
         "thread_id": "01a118fd-2563-7126-90d7-bd07693de0b2",
@@ -2893,7 +2893,8 @@
         "status": "FAILURE_CONTRACT_COMPLETE_EXACT_HEAD_PENDING",
         "requirements_relayed_to_author": true
       },
-      "deployment": "NOT_DEPLOYED; retain sampler until exact-head review, full Linux tests and CI; keep paper runtime pinned"
+      "deployment": "NOT_DEPLOYED; retain sampler until exact-head review, full Linux tests and CI; keep paper runtime pinned",
+      "allowance_change": "Author08 and reviewer02 notified; not deployed; preserve prior charged usage and originals"
     }
   },
   "native_reconciliation_review": {
