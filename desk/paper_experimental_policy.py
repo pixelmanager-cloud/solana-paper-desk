@@ -62,6 +62,33 @@ def ownership_history_rule(*, mode, history_reasons, nonhistory_controls_passed,
             'blocks_history':unresolved and not accepted}
 
 
+
+def _validate_supplied_history(report, store):
+    """Absent history may be a risk; supplied history must remain replayable."""
+    if 'history_queries' not in report:return
+    from .replay_history import replay_history,reconstruct_launch_history
+    try:
+        queries=report['history_queries']
+        if type(queries) is not list or len(queries)>18:
+            raise ValueError('Invalid supplied history queries')
+        if any(type(q) is not dict or type(q.get('pages')) is not list for q in queries):
+            raise ValueError('Invalid supplied history coverage')
+        if sum(len(q['pages']) for q in queries)>18:
+            raise ValueError('History request ceiling exceeded')
+        if len({digest(q) for q in queries})!=len(queries):
+            raise ValueError('Duplicate supplied history query')
+        # Replay every supplied query, including account/funding queries that
+        # the main evaluator may otherwise collapse into unavailable reasons.
+        for query in queries:replay_history(query,store)
+        mint_queries=[q for q in queries if q.get('address')==report['mint']
+                      and q.get('token_accounts_filter')=='none']
+        if mint_queries:
+            if len(mint_queries)!=1:raise ValueError('Ambiguous mint discovery query')
+            reconstruct_launch_history(report,store)
+    except (ValueError,TypeError,KeyError,IndexError,AttributeError,zlib.error,UnicodeError,OverflowError,RecursionError) as exc:
+        raise ValueError('PERSISTED_HISTORY_INTEGRITY_INVALID') from exc
+
+
 def paper_candidate(research_db,evidence_db,scan_id,*,source_hash,now,
                     mode=PAPER_STRICT,revision_hash=None):
     """Read exact persisted scan/raw diagnostics, never accept caller events.
@@ -107,6 +134,15 @@ def paper_candidate(research_db,evidence_db,scan_id,*,source_hash,now,
             view=ReplayView(_BoundedStore(evidence_db))
             decision=assess(scan,now,view,progress={'evidence_hash':current} if current else None)
             gates=decision['entry_evidence']['gates'];result['components']=gates
+            report=json.loads(scan['result'])
+            all_reasons={r for gate in gates.values() for r in gate['reasons']}
+            result['known_hazards']=sorted(KNOWN_HAZARDS & all_reasons)
+            _validate_supplied_history(report,view)
+            if current is not None:
+                revision=view.load(current)
+                if type(revision) is not dict or 'history_queries' not in revision:
+                    raise ValueError('PERSISTED_HISTORY_INTEGRITY_INVALID')
+                _validate_supplied_history({**report,'history_queries':revision['history_queries']},view)
             hashes=set(view.requested)
             for gate in gates.values():hashes.update(gate['evidence_hashes'])
             if len(hashes)>128 or any(not _hash(h) for h in hashes):raise ValueError('EVIDENCE_MANIFEST_INVALID')
@@ -142,7 +178,8 @@ def paper_candidate(research_db,evidence_db,scan_id,*,source_hash,now,
     except (ValueError,TypeError,KeyError,sqlite3.Error,OverflowError,RecursionError,zlib.error,UnicodeError,OSError) as error:
         code=str(error)
         result['blockers'].append(code if code in ('SOURCE_MISSING_MALFORMED_OR_OVERSIZED','SOURCE_HASH_MISMATCH',
-            'SOURCE_REVISION_MALFORMED','SOURCE_REVISION_MISMATCH','EVIDENCE_MANIFEST_INVALID') else 'PERSISTED_DIAGNOSTICS_UNAVAILABLE')
+            'SOURCE_REVISION_MALFORMED','SOURCE_REVISION_MISMATCH','EVIDENCE_MANIFEST_INVALID',
+            'PERSISTED_HISTORY_INTEGRITY_INVALID') else 'PERSISTED_DIAGNOSTICS_UNAVAILABLE')
         result['risk_flags']=[]
         result['ownership_history']=ownership_history_rule(mode=mode,history_reasons=['PERSISTED_OWNERSHIP_HISTORY_UNAVAILABLE'],
                     nonhistory_controls_passed=False,known_hazards=result['known_hazards'])

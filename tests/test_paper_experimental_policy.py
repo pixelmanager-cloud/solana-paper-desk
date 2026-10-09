@@ -8,6 +8,8 @@ import tempfile
 import unittest
 from unittest.mock import patch
 
+from desk.control_obligations import read_platform_available
+from desk.history import collect_history
 from desk.evidence import EvidenceStore
 from desk.model import canonical,digest
 from desk.paper_experimental_policy import paper_candidate,ownership_history_rule,PAPER_EXPERIMENTAL,PAPER_STRICT
@@ -56,6 +58,7 @@ class PaperExperimentalPolicyTests(unittest.TestCase):
             return paper_candidate(self.db,self.evidence,'scan',source_hash=kwargs.pop('source_hash',self.source),
                                    now=kwargs.pop('now',110),**kwargs)
 
+    @unittest.skipUnless(read_platform_available(), 'Persisted read guard requires Linux LP64')
     def test_actual_controls_pass_history_risk_allowed_only_explicit_mode(self):
         strict=self.read();experimental=self.read(mode=PAPER_EXPERIMENTAL)
         self.assertFalse(strict['ownership_history']['risk_accepted'])
@@ -76,6 +79,7 @@ class PaperExperimentalPolicyTests(unittest.TestCase):
             self.assertIn('EXACT_ENTRY_QUANTITY_AND_COST_UNAVAILABLE',result['blockers'])
             self.assertNotIn('event',result)
 
+    @unittest.skipUnless(read_platform_available(), 'Persisted read guard requires Linux LP64')
     def test_raw_known_token_hazards_always_block_risk_waiver(self):
         for reason,offset in [('ACTIVE_MINT_AUTHORITY',0),('ACTIVE_FREEZE_AUTHORITY',46)]:
             raw=bytearray(base64.b64decode(self.mintaccount['data'][0]));raw[offset:offset+4]=(1).to_bytes(4,'little')
@@ -87,6 +91,7 @@ class PaperExperimentalPolicyTests(unittest.TestCase):
                 self.assertIn(reason,result['blockers']);self.assertFalse(result['ownership_history']['risk_accepted'])
                 self.assertEqual(result['decision'],'REJECT')
 
+    @unittest.skipUnless(read_platform_available(), 'Persisted read guard requires Linux LP64')
     def test_token2022_exclusion_and_unknown_controls_never_waived(self):
         raw=copy.deepcopy(self.mintaccount);raw['owner']=TOKEN_2022
         self.report['mint_evidence_hash']=self.store.save({'method':'getAccountInfo','params':[self.mint,{'encoding':'base64','commitment':'confirmed'}],'result':{'value':raw}})
@@ -96,6 +101,7 @@ class PaperExperimentalPolicyTests(unittest.TestCase):
         self.assertIn('TOKEN_RAW_EVIDENCE_UNAVAILABLE',result['blockers'])
         self.assertFalse(result['ownership_history']['risk_accepted']);self.assertEqual(result['known_hazards'],[])
 
+    @unittest.skipUnless(read_platform_available(), 'Persisted read guard requires Linux LP64')
     def test_known_withdrawable_liquidity_rejects(self):
         self.poolcase.lp_supply=100
         replay=verify_pool(str(self.poolcase.pool),self.mint,self.poolcase.rpc,capture=self.store.save)
@@ -104,6 +110,7 @@ class PaperExperimentalPolicyTests(unittest.TestCase):
         self.assertIn('OUTSTANDING_WITHDRAWABLE_LP_SUPPLY',result['known_hazards'])
         self.assertFalse(result['ownership_history']['risk_accepted'])
 
+    @unittest.skipUnless(read_platform_available(), 'Persisted read guard requires Linux LP64')
     def test_source_revision_stale_future_and_missing_records_block(self):
         self.assertIn('SOURCE_HASH_MISMATCH',self.read(mode=PAPER_EXPERIMENTAL,source_hash='f'*64)['blockers'])
         self.assertIn('SOURCE_REVISION_MISMATCH',self.read(mode=PAPER_EXPERIMENTAL,revision_hash='f'*64)['blockers'])
@@ -113,6 +120,7 @@ class PaperExperimentalPolicyTests(unittest.TestCase):
         with sqlite3.connect(self.db) as c:c.execute('DELETE FROM scans')
         self.assertIn('SOURCE_MISSING_MALFORMED_OR_OVERSIZED',self.read()['blockers'])
 
+    @unittest.skipUnless(read_platform_available(), 'Persisted read guard requires Linux LP64')
     def test_arbitrary_unknowns_and_findings_are_not_reclassified_as_history(self):
         self.report['unknowns']=['EXACT_ROUTE_COST_UNVERIFIED'];self.report['findings']=['KNOWN_DANGER'];self.save()
         result=self.read(mode=PAPER_EXPERIMENTAL)
@@ -120,6 +128,7 @@ class PaperExperimentalPolicyTests(unittest.TestCase):
         self.assertFalse(result['ownership_history']['risk_accepted'])
         self.assertNotIn('EXACT_ROUTE_COST_UNVERIFIED',result['ownership_history']['unknown_reasons'])
 
+    @unittest.skipUnless(read_platform_available(), 'Persisted read guard requires Linux LP64')
     def test_forged_summary_market_flags_never_create_candidate(self):
         self.report.update(eligible_for_trading=True,source_authenticated=True,ownership_complete=True,
                            reserve_sol=999,price_at=110,bundle_pct=0,route_available=True)
@@ -128,6 +137,7 @@ class PaperExperimentalPolicyTests(unittest.TestCase):
         self.assertEqual(result['fields']['bundle_pct']['status'],'UNKNOWN')
         self.assertIn('PERSISTED_CURRENT_MARKET_EVENT_UNAVAILABLE',result['blockers'])
 
+    @unittest.skipUnless(read_platform_available(), 'Persisted read guard requires Linux LP64')
     def test_read_only_and_old_strict_assess_unchanged(self):
         from desk.decision_runner import assess
         def dump(path):
@@ -138,11 +148,96 @@ class PaperExperimentalPolicyTests(unittest.TestCase):
         self.assertEqual(old['decision'],'REJECT');self.assertFalse(old['eligible_for_trading'])
         self.assertEqual(before,[dump(self.db),dump(self.evidence)])
 
+
+    @unittest.skipUnless(read_platform_available(), 'Persisted read guard requires Linux LP64')
+    def test_supplied_malformed_history_is_not_missing_history_risk(self):
+        for queries in (None, {'bad':'type'}, [None], [{'address':self.mint,'token_accounts_filter':'none','pages':[]} ]):
+            with self.subTest(queries=queries):
+                self.report['history_queries']=queries;self.save()
+                before=self.dumps()
+                result=self.read(mode=PAPER_EXPERIMENTAL)
+                self.assert_integrity_rejection(result)
+                self.assertEqual(self.dumps(),before)
+
+    def dumps(self):
+        result=[]
+        for path in (self.db,self.evidence):
+            with sqlite3.connect(path) as c:result.append(list(c.iterdump()))
+        return result
+
+    def assert_integrity_rejection(self,result):
+        self.assertIn('PERSISTED_HISTORY_INTEGRITY_INVALID',result['blockers'])
+        self.assertFalse(result['ownership_history']['risk_accepted'])
+        self.assertEqual(result['risk_flags'],[])
+        self.assertEqual(result['decision'],'REJECT')
+        self.assertFalse(result['eligible_for_trading'])
+
+    @unittest.skipUnless(read_platform_available(), 'Persisted read guard requires Linux LP64')
+    def test_original_bound_history_never_becomes_waivable_by_corrupting_reference(self):
+        _,coverage=collect_history(self.mint,1,2,lambda method,params:{'data':[]},
+                                  max_pages=1,capture=self.store.save,token_accounts='none')
+        self.report['history_queries']=[coverage];self.save()
+        original=self.read(mode=PAPER_EXPERIMENTAL)
+        self.assertFalse(original['ownership_history']['risk_accepted'])
+        self.assertNotIn('PERSISTED_HISTORY_INTEGRITY_INVALID',original['blockers'])
+        bad=copy.deepcopy(coverage);bad['evidence_hash']='f'*64
+        self.report['history_queries']=[bad];self.save()
+        before=self.dumps();self.assert_integrity_rejection(self.read(mode=PAPER_EXPERIMENTAL))
+        self.assertEqual(self.dumps(),before)
+        self.report['history_queries']=[coverage];self.save()
+        with sqlite3.connect(self.evidence) as c:
+            c.execute('DELETE FROM pages WHERE hash=?',(coverage['pages'][0]['request_evidence_hash'],))
+        before=self.dumps();self.assert_integrity_rejection(self.read(mode=PAPER_EXPERIMENTAL))
+        self.assertEqual(self.dumps(),before)
+
+    @unittest.skipUnless(read_platform_available(), 'Persisted read guard requires Linux LP64')
+    def test_absent_and_empty_history_remain_explicit_incomplete_risk(self):
+        for queries in (None,[]):
+            if queries is None:self.report.pop('history_queries',None)
+            else:self.report['history_queries']=queries
+            self.save();result=self.read(mode=PAPER_EXPERIMENTAL)
+            self.assertTrue(result['ownership_history']['risk_accepted'])
+            self.assertEqual(result['risk_flags'],['UNRESOLVED_OWNERSHIP_HISTORY'])
+            self.assertEqual(result['decision'],'REJECT')
+
+
+    @unittest.skipUnless(read_platform_available(), 'Persisted read guard requires Linux LP64')
+    def test_rehashed_wrong_request_binding_and_missing_payload_are_not_waivable(self):
+        _,coverage=collect_history(self.mint,1,2,lambda method,params:{'data':[]},
+                                  max_pages=1,capture=self.store.save,token_accounts='none')
+        wrong=self.store.load(coverage['pages'][0]['request_evidence_hash'])
+        wrong['params'][0]=str(self.poolcase.creator)
+        bad=copy.deepcopy(coverage)
+        bad['pages'][0]['request_evidence_hash']=self.store.save(wrong)
+        bad.pop('evidence_hash');bad['evidence_hash']=digest(bad)
+        self.report['history_queries']=[bad];self.save()
+        before=self.dumps();self.assert_integrity_rejection(self.read(mode=PAPER_EXPERIMENTAL))
+        self.assertEqual(self.dumps(),before)
+        self.report['history_queries']=[coverage];self.save()
+        with sqlite3.connect(self.evidence) as c:
+            c.execute('DELETE FROM pages WHERE hash=?',(coverage['pages'][0]['payload_hash'],))
+        before=self.dumps();self.assert_integrity_rejection(self.read(mode=PAPER_EXPERIMENTAL))
+        self.assertEqual(self.dumps(),before)
+
+    @unittest.skipUnless(read_platform_available(), 'Persisted read guard requires Linux LP64')
+    def test_known_hazard_remains_visible_alongside_corrupt_history(self):
+        raw=bytearray(base64.b64decode(self.mintaccount['data'][0]))
+        raw[:4]=(1).to_bytes(4,'little')
+        self.report['mint_evidence_hash']=self.store.save({'method':'getAccountInfo',
+            'params':[self.mint,{'encoding':'base64','commitment':'confirmed'}],
+            'result':{'value':self.poolcase.account(raw,TOKEN_PROGRAM)}})
+        self.report['history_queries']=None;self.save()
+        result=self.read(mode=PAPER_EXPERIMENTAL)
+        self.assert_integrity_rejection(result)
+        self.assertIn('ACTIVE_MINT_AUTHORITY',result['known_hazards'])
+
+
+class PaperExperimentalRuleTests(unittest.TestCase):
     def test_explicit_mode_bounds_and_rule_is_not_entry_admission(self):
         for mode in ('paper','LIVE',None):
-            with self.assertRaises(ValueError):self.read(mode=mode)
+            with self.assertRaises(ValueError):paper_candidate('unused','unused','scan',source_hash='a'*64,now=110,mode=mode)
         for now in (True,-1,2**63):
-            with self.assertRaises(ValueError):self.read(now=now)
+            with self.assertRaises(ValueError):paper_candidate('unused','unused','scan',source_hash='a'*64,now=now)
         rule=ownership_history_rule(mode=PAPER_EXPERIMENTAL,history_reasons=['TRANSFER_RAW_HISTORY_UNAVAILABLE'],nonhistory_controls_passed=True,known_hazards=[])
         self.assertTrue(rule['risk_accepted']);self.assertFalse(rule['ownership_verified'])
         self.assertNotIn('eligible_for_trading',rule)
@@ -152,3 +247,12 @@ class PaperExperimentalPolicyTests(unittest.TestCase):
             rule=ownership_history_rule(mode=PAPER_EXPERIMENTAL,history_reasons=[reason],nonhistory_controls_passed=True,known_hazards=[])
             self.assertFalse(rule['risk_accepted']);self.assertTrue(rule['blocks_history'])
             self.assertEqual(rule['unwaived_reasons'],[reason])
+
+    def test_unsupported_platform_refuses_before_sqlite_without_risk(self):
+        with patch('desk.control_obligations.read_platform_available',return_value=False), \
+                patch('sqlite3.connect',side_effect=AssertionError('Unsupported read touched SQLite')):
+            result=paper_candidate('unused','unused','scan',source_hash='a'*64,now=110,mode=PAPER_EXPERIMENTAL)
+        self.assertIn('PERSISTED_DIAGNOSTICS_UNAVAILABLE',result['blockers'])
+        self.assertEqual(result['risk_flags'],[])
+        self.assertFalse(result['ownership_history']['risk_accepted'])
+        self.assertEqual(result['decision'],'REJECT')
