@@ -4278,7 +4278,27 @@
           "combined_fixture_status": "PREPARED_WAITING_EXACT07_AND08_HEADS",
           "independent_review_claim_turn": "01a12196-ab5a-7033-af25-4d355f67f2c8",
           "candidate_selection_hint_file": "work/retained-migration-hints.json",
-          "candidate_selection_authority": "HISTORICAL_HINTS_ONLY_NO_PROVIDER_CALLS_NO_ENTRY_PERMISSION"
+          "candidate_selection_authority": "HISTORICAL_HINTS_ONLY_NO_PROVIDER_CALLS_NO_ENTRY_PERMISSION",
+          "pr": {
+            "number": 169,
+            "head": "afc16bfdc6f5fb48fe42d4c3cdfdae6f2eec7654",
+            "ci_runs": [
+              37963032854,
+              37962977395
+            ],
+            "status": "INDEPENDENT_PASS_BOTH_CI_PASS_LOCAL_INTEGRATION_NEXT",
+            "root_diff": "Reviewed4files; rawsourcepreserved; profile1netreserve semantics/subtractonce; candidate222stillBOOST_POOL_UNSUPPORTED",
+            "root_original_snapshot_replay": "REJECTED_BOOST_UNCHANGED_ORIGINAL_HASH",
+            "attachment": "identity count exceeds100;notretried",
+            "review": "PASS",
+            "review_turn": "01a1219c-269a-71f3-b327-8276c25d3d90",
+            "review_focused_tests": 62,
+            "independent_probes": 6,
+            "root_focused_tests": 61,
+            "root_focused_seconds": 5.718,
+            "ci_status": "BOTH_SUCCESS",
+            "ci_tests": 2571
+          }
         }
       }
     },
