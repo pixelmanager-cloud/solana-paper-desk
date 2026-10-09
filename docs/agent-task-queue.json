@@ -1839,7 +1839,7 @@
     },
     "pending_pr120": {
       "head": "da08fc44fe9b2b2c73545b40090a2b622d43b450",
-      "status": "PASS_REVIEW_LOCAL_AND_CI_DUPLICATE_CI_PENDING",
+      "status": "ACCEPTED_INTEGRATED_NOT_DEPLOYED",
       "repairs": 112,
       "tree": "de44f582bc35d494d6ced028fc2eea3127e8ce4b",
       "linux_tests": 2034,
@@ -1848,7 +1848,13 @@
         "skipped": 408,
         "seconds": 36.212
       },
-      "ci_success": 37883768990
+      "ci_success": 37883768990,
+      "merge": "44286389ba74818106b98a61233317721b712f26",
+      "ci_success_runs": [
+        37883768990,
+        37883571294
+      ],
+      "source_identity": "Exact independent combined tree except AGENTS and coordinator queue"
     },
     "pending_pr122": {
       "head": "e1e9dc914469dc7c9999021104abf34116794237",
