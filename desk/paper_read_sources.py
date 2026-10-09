@@ -115,6 +115,7 @@ class PaperReadSources:
             if type(monitoring_budget) is not MonitoringBudget:
                 raise PaperReadError('MONITORING_CONFIGURATION_INVALID')
         self.monitoring_budget = monitoring_budget
+        self.attempt_evidence_refs = []
 
     def rpc(self, method, params, *, timeout_seconds):
         return self.rpc_with_evidence(method, params, timeout_seconds=timeout_seconds)[0]
@@ -338,6 +339,8 @@ class PaperReadSources:
         try:
             evidence_hash = self.progress.store.save(record)
             if evidence_hash != digest(record): raise ValueError()
+            if len(self.attempt_evidence_refs) >= 18: raise ValueError()
+            self.attempt_evidence_refs.append(evidence_hash)
             if monitoring_reservation is not None:
                 self.monitoring_budget.retain_outcome(monitoring_reservation, evidence_hash)
         except Exception:

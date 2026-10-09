@@ -12,6 +12,7 @@ import base64
 import fcntl
 import json
 import math
+import os
 from pathlib import Path
 import sqlite3
 import time
@@ -33,6 +34,7 @@ from .paper_market_adapter import MarketContext, build_market_event, OBSERVABLE_
 from .live_observation import ProviderObservation, ingest_quote, ingest_mint, ingest_pool, ObservationError
 from .monitoring_budget import MonitoringBudget, MonitoringBlocked
 from .pools import verify_pool
+from . import paper_terminal_reconciliation as terminal
 from .token2022_paper import selected
 from .providers import SOL
 from .original_byte_slot_transport import _parse
@@ -463,8 +465,12 @@ def run_once(research_db, evidence_db, ledger_db, cfg, *, position_targets=(), c
                             return {**result,'blockers':['POSITION_ORIGINAL_ADMISSION_OR_SIZE_MISMATCH']}
                 with store.connect() as c:
                     c.execute('CREATE TABLE IF NOT EXISTS paper_observation_passes(id TEXT PRIMARY KEY,intent_hash TEXT NOT NULL,outcome_hash TEXT)')
-                    if c.execute('SELECT 1 FROM paper_observation_passes WHERE outcome_hash IS NULL LIMIT 1').fetchone():
-                        return {**result,'status':'RECOVERY_REQUIRED','blockers':['OBSERVATION_RECOVERY_REQUIRED']}
+                try:
+                    blocked = terminal.gate(store,research,tuple(x.target.scan_id for x in items),ledger_locked=str(path))
+                except (ValueError,OSError,sqlite3.Error,TypeError,KeyError):
+                    blocked = 'OBSERVATION_RECOVERY_REQUIRED'
+                if blocked:
+                    return {**result,'status':'RECOVERY_REQUIRED','blockers':[blocked]}
                 budget = _Budget(progress,wall_clock,monotonic)
                 for control in controls:
                     validate_event(control)
@@ -473,7 +479,18 @@ def run_once(research_db, evidence_db, ledger_db, cfg, *, position_targets=(), c
                 intent = {'kind':'paper_cycle_intent_v1','config_hash':digest(cfg),'ledger':str(path),
                           'targets':[asdict(x) for x in items],
                           'admissions':{x.target.scan_id:progress.admission(x.target.scan_id) for x in items}}
+                # Intrinsic certification is intentionally restricted to a new
+                # single-candidate pass against a verified INIT-only checkpoint.
+                if len(candidates)==1 and not position_targets and not controls:
+                    try:
+                        with closing(sqlite3.connect(path.as_uri()+'?mode=ro',uri=True)) as c:
+                            anchors,_=terminal._ledger(c,cfg,initial=True)
+                        context=terminal._context(research,evidence,path,os.environ.get('DESK_PROVIDER_PACING_DB'))
+                        intent.update(ledger_anchors=anchors,terminal_context=context,source_hash=terminal.runtime.implementation_hash())
+                    except (ValueError,OSError,sqlite3.Error):pass
                 identity = uuid.uuid4().hex; key = store.save(intent)
+                attempt_refs=[]; terminal_hazards=()
+                result.update(pass_id=identity,intent_hash=key,attempt_refs=attempt_refs)
                 with store.connect() as c:c.execute('INSERT INTO paper_observation_passes VALUES(?,?,NULL)',(identity,key))
                 ledger = Ledger(path,must_exist=True)
                 try:
@@ -516,6 +533,12 @@ def run_once(research_db, evidence_db, ledger_db, cfg, *, position_targets=(), c
                                 request_ceiling=18-budget.attempted,deadline_seconds=budget.remaining(),max_age_seconds=10,
                                 wall_clock=wall_clock,monotonic=monotonic,token_profile_version=selected(cfg))
                             budget.attempted += collector.attempted_requests
+                            # Only this bounded transport's original persisted
+                            # attempt hashes can certify future terminal closure.
+                            if type(source) is PaperReadSources:
+                                attempt_refs.extend(source.attempt_evidence_refs)
+                            terminal_hazards=collector.terminal_hazards
+                            if terminal_hazards:result['terminal_hazards']=list(terminal_hazards)
                             if collector.stopped_reason or not collector.observations or collector.observations[0].failure:
                                 raise CycleBlocked(collector.stopped_reason or (collector.observations[0].failure if collector.observations else 'OBSERVATIONS_INCOMPLETE'))
                             collected = collector.observations[0]
@@ -582,6 +605,14 @@ def run_once(research_db, evidence_db, ledger_db, cfg, *, position_targets=(), c
                     result['budget']={scan:{'used':progress.admission(scan)['requests_used'],
                         'ceiling':progress.admission(scan)['request_ceiling']} for scan in intent['admissions']}
                 outcome = store.save(result)
+                if terminal_hazards and 'terminal_context' in intent:
+                    try:
+                        receipt=terminal.certify_intrinsic(store,progress,cfg,pass_id=identity,intent_hash=key,
+                            outcome_hash=outcome,attempt_refs=attempt_refs,hazards=terminal_hazards)
+                        return {**result,'evidence_hash':outcome,'terminal_receipt_hash':receipt}
+                    except (ValueError,TypeError,KeyError,OSError,sqlite3.Error):
+                        # Missing/contradictory proof never clears the NULL latch.
+                        pass
                 if result['status']=='COMPLETE' or (budget.attempted==0 and budget.monitoring_attempted==0 and all(
                         progress.admission(scan)==admission for scan,admission in intent['admissions'].items())):
                     with store.connect() as c:c.execute('UPDATE paper_observation_passes SET outcome_hash=? WHERE id=?',(outcome,identity))

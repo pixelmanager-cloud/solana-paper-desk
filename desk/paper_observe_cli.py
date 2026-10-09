@@ -142,9 +142,14 @@ def observe(research_db, evidence_db, *, open_positions=(), candidates=(), sol_u
             # requires a separate source-bound reconciliation, not a healthy retry.
             with store.connect() as c:
                 c.execute('CREATE TABLE IF NOT EXISTS paper_observation_passes(id TEXT PRIMARY KEY,intent_hash TEXT NOT NULL,outcome_hash TEXT)')
-                if c.execute('SELECT 1 FROM paper_observation_passes WHERE outcome_hash IS NULL LIMIT 1').fetchone():
-                    output['stopped_reason'] = 'OBSERVATION_RECOVERY_REQUIRED'
-                    return output
+            from .paper_terminal_reconciliation import gate
+            try:
+                blocked=gate(store,research,tuple(t.scan_id for t in open_positions+candidates))
+            except (ValueError,TypeError,KeyError,OSError,sqlite3.Error):
+                blocked='OBSERVATION_RECOVERY_REQUIRED'
+            if blocked:
+                output['stopped_reason']=blocked
+                return output
             intent = {'kind': 'paper_observation_intent_v1', 'research_db': str(research),
                       'evidence_db': str(evidence), 'targets': [vars(t) for t in open_positions+candidates],
                       'sol_usd': sol_usd, 'admissions': {t.scan_id: progress.admission(t.scan_id)

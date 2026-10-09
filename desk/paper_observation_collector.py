@@ -20,7 +20,7 @@ from typing import Callable
 from .history_progress import HistoryProgress, canonical_ownership_path
 from .job_persistence import JobPersistence, BIRTH_ACQUISITION_V1
 from .live_observation import (ProviderObservation, MintObservation, PoolObservation,
-                               QuoteObservation, ingest_mint, ingest_pool, ingest_quote)
+                               QuoteObservation, ingest_mint, ingest_pool, ingest_quote, ObservationError, PolicyRejection)
 from .model import canonical, digest
 from .pools import verify_pool
 from .programs import address
@@ -61,6 +61,7 @@ class CollectionResult:
     attempted_requests: int
     stopped_reason: str | None
     missing_sources: tuple[str, ...] = ('SOL_USD_PRICE_SOURCE_MISSING',)
+    terminal_hazards: tuple[str, ...] = ()
 
 
 class _Blocked(Exception):
@@ -124,7 +125,7 @@ def collect_observations(*, jobs: JobPersistence, progress: HistoryProgress,
     if type(started) not in (int, float) or not math.isfinite(started):
         raise ValueError('Invalid monotonic clock')
     deadline = started + deadline_seconds
-    attempted = 0; stopped = None; results = []
+    attempted = 0; stopped = None; results = []; terminal_hazards = ()
 
     def remaining():
         nonlocal last_tick
@@ -247,10 +248,14 @@ def collect_observations(*, jobs: JobPersistence, progress: HistoryProgress,
                 # After collection starts, admission uncertainty is batch-wide;
                 # it cannot authorize a healthy replacement on another target.
                 stopped = error.code
+        except PolicyRejection as error:
+            failure = 'SOURCE_CONTENT_REJECTED'
+            stopped = failure
+            terminal_hazards = error.reasons
         except Exception:
             failure = 'SOURCE_CONTENT_REJECTED'
             # Invalid/ambiguous raw content must not trigger a healthy retry.
             stopped = failure
         results.append(TargetObservation(target, direction, token, pool, quote, failure, tuple(refs)))
         if stopped: break
-    return CollectionResult(tuple(results), attempted, stopped)
+    return CollectionResult(tuple(results), attempted, stopped, terminal_hazards=terminal_hazards)
