@@ -1894,11 +1894,11 @@
     },
     "current_worker_followups": {
       "01": "136 frozen under03 review",
-      "02": "Independent135 migration witness review",
+      "02": "Rereview135e10b0a8",
       "03": "136 scopedPASS; ready for08 cycle exactreview",
-      "04": "Complete130 review then134 raw mint handoff exact-head review",
+      "04": "Rereview134 bound repair on publication; previous134HOLD",
       "05": "Platformblocked97/110; not retried",
-      "06": "134 frozen; reproduce/fix held-position exit-only observation on sell-only window or entry hazards; coordinate08, review04",
+      "06": "Priority134 event-size repair then held-position exit contract",
       "07": "Independent137 checkpoint and finalquote/accounting Linux",
       "08": "Resume one-cycle orchestration on130/131 contracts, no budget expansion",
       "09": "Repair135 scoped contradictory migration event; then08 operator wrapper contract",
@@ -2152,20 +2152,21 @@
     },
     "pending_pr134": {
       "head": "a4a86254368e9060deb145174d77415f128a0146",
-      "status": "INDEPENDENT_REVIEW04_TEST_EXPECTATION_FIXED",
+      "status": "CHANGES_REQUESTED04_REPAIR06",
       "scope": "Original validated mint account handoff to actual entry token policy",
       "author": "06",
       "reviewer": "04",
-      "finding": "Combined132 test expectation must now acknowledge repaired token gate; author notified"
+      "finding": "Retained raw account metadata can enlarge event beyond262144byte journal reader limit; reject beforepublication preserving source"
     },
     "pending_pr135": {
-      "head": "30b4b3fea134afb667863f6bd870df31d6b02506",
-      "status": "CHANGES_REQUESTED02_REPAIR09",
+      "head": "e10b0a8269d8c1a9e26e09aaf67de9f2690cbf8b",
+      "status": "REPAIR_PUBLISHED_REREVIEW02",
       "author": "09",
       "reviewer": "02",
       "scope": "Retained raw migration witness extractor; runtime trusted source binding still required",
       "linux_author_tests": 2143,
-      "finding": "Wrong-mint event scoped to target migration instruction silently skipped; contradictory evidence must reject"
+      "finding": "Wrong-mint event scoped to target migration instruction silently skipped; contradictory evidence must reject",
+      "local_focused_tests": 9
     },
     "pending_pr136": {
       "head": "d6e4a18eb3efdd0c31ab89648b14f343165e11bc",
