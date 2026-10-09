@@ -1764,7 +1764,7 @@
       "live_acceptance": false
     },
     "ci_infrastructure_blocker": {
-      "status": "USER_FIXED_RUNNER_STARTED_REVALIDATING",
+      "status": "RECOVERED_EXACT_PR108_CI_SUCCESS",
       "run_id": 37882624392,
       "check_run_id": 113665504091,
       "head": "90d8c59d1e98c3d09074a6f2fa4a029dbd420862",
@@ -1811,8 +1811,16 @@
         "116": "d9e4ed6b811b47376ac6ad604847edfcf94aa052",
         "117": "cfb25987e9c5a2b8cddb769da9047ed7262081f5"
       },
-      "status": "COMBINED_TESTING_REVIEW_07",
-      "live_acceptance": false
+      "status": "COMBINED_DASHBOARD_SEAM_REPAIR_ASSIGNED_06",
+      "live_acceptance": false,
+      "tree": "8b034015d67b21209a76800c470a88878e233861",
+      "local_tests": {
+        "total": 2075,
+        "errors": 3,
+        "skipped": 408,
+        "seconds": 40.939
+      },
+      "finding": "paper_view strict event grammar rejects experimental unknown-history fields; repair preserves config-controlled mode"
     },
     "pending_pr119": {
       "head": "9ecc4c7170e2d35a33cd9dc01bf03023f56806da",
