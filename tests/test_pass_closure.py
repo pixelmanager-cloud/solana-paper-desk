@@ -153,7 +153,10 @@ class FailedEntryClosureTests(Base):
             'extra field': {**rec, 'surprise': 1},
         }
         for name, bad in forged.items():
+            # without the row binding, so that the semantic replay checks (not merely the digest) are what refuse it
             with self.subTest(name), self.assertRaises(ValueError):
+                closure._verify(self.store, self.progress, bad)
+            with self.subTest(name + ' (with row)'), self.assertRaises(ValueError):
                 closure._verify(self.store, self.progress, bad, row=row)
         # a record that is right but bound to the wrong table row
         with self.assertRaises(ValueError):
@@ -267,21 +270,39 @@ class MonitoringAbandonTests(Base):
         self.assertEqual(done['status'], 'COMPLETE', done)
         self.assertEqual(self.allowance.snapshot()['total_used'], total + done['monitoring_attempted_requests'])
 
-    def test_abandoned_outcome_cannot_be_forged_or_applied_to_completed_reads(self):
+    def test_forged_abandoned_outcomes_fail_the_accounting_replay_and_roll_back(self):
         self.reserve(1)
         pending = self.allowance.snapshot()['total_used']
-        self.assertEqual(self.allowance.abandon_pending(), [pending])
-        with closing(self.store.connect()) as c:
-            key = c.execute('SELECT evidence_hash FROM paper_monitoring_outcomes WHERE reservation_id=?', (pending,)).fetchone()[0]
-        record = self.store.load(key)
-        for field, value in (('params_hash', '0' * 64), ('request_completed', True), ('failure_code', 'HTTP_REJECTED')):
-            with self.subTest(field=field):
-                forged = self.store.save({**record, field: value})
-                with closing(sqlite3.connect(self.store.path)) as c:
-                    self.assertRaises(sqlite3.DatabaseError, c.execute, 'UPDATE paper_monitoring_outcomes SET evidence_hash=? WHERE reservation_id=?', (forged, pending))
-        # completed reads are never touched: nothing pending -> nothing written
+        real = EvidenceStore.save
+
+        def forging(change):
+            def save(store, payload):
+                if type(payload) is dict and payload.get('kind') == 'paper_monitoring_abandoned_v1':
+                    payload = change(copy.deepcopy(payload))
+                return real(store, payload)
+            return save
+
+        def top(field, value):
+            return lambda r: {**r, field: value}
+
+        def receipt(field, value):
+            return lambda r: {**r, 'monitoring_reservation': {**r['monitoring_reservation'], field: value}}
+        variants = {
+            'params hash': top('params_hash', '0' * 64), 'completed read': top('request_completed', True),
+            'provider failure code': top('failure_code', 'HTTP_REJECTED'), 'other scan': top('scan_id', 'x' * 32),
+            'other method': top('method', 'getSlot'), 'receipt id': receipt('id', pending + 1),
+            'receipt time': receipt('reserved_at', 1.0), 'receipt mint': receipt('mint', 'M' * 32),
+            'receipt checkpoint': receipt('checkpoint_hash', '0' * 64), 'receipt cap': receipt('cap', 1),
+        }
+        for name, change in variants.items():
+            with self.subTest(name), patch.object(EvidenceStore, 'save', forging(change)):
+                with self.assertRaises(monitoring.MonitoringBlocked):
+                    self.allowance.abandon_pending()
+                with closing(self.store.connect()) as c:                  # rolled back: still dangling, nothing written
+                    self.assertEqual(c.execute('SELECT count(*) FROM paper_monitoring_outcomes WHERE reservation_id=?', (pending,)).fetchone()[0], 0)
+        self.assertEqual(self.allowance.abandon_pending(), [pending])      # the genuine record is accepted
         before = self.allowance.snapshot()
-        self.assertEqual(self.allowance.abandon_pending(), [])
+        self.assertEqual(self.allowance.abandon_pending(), [])             # completed reads are never touched
         self.assertEqual(self.allowance.snapshot(), before)
 
     def test_more_than_the_bound_refuses_and_writes_nothing(self):
