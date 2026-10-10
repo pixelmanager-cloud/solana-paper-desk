@@ -15,6 +15,7 @@ import shutil
 import sqlite3
 import tempfile
 import unittest
+import unittest.mock
 from contextlib import closing
 from pathlib import Path
 
@@ -256,7 +257,10 @@ class StoreIntegrityTests(Fixture):
         first = self.ingest()
         before = [(r['mint'], r['as_of'], r['row_hash']) for r in ft.read_rows(self.store)]
         again = self.ingest(now=NOW + 1)
-        self.assertEqual((again['inserted'], again['duplicate'], again['conflict']), (0, first['inserted'], 0))
+        # T42: a re-run resumes from the persisted cursors and reads nothing new, so there is nothing to count as duplicate
+        # (it used to rescan and count every row as a duplicate). Forcing the rescan is covered by IncrementalIngestTests.
+        self.assertEqual((again['inserted'], again['duplicate'], again['conflict']), (0, 0, 0))
+        self.assertEqual(first['inserted'], 2)
         self.assertEqual(before, [(r['mint'], r['as_of'], r['row_hash']) for r in ft.read_rows(self.store)])
         self.assertEqual(sql(self.store, 'SELECT COUNT(*) FROM ingest_runs')[0][0], 4)    # two runs, each start + summary
 
@@ -454,6 +458,12 @@ class CliTests(Fixture):
         code, rep = self.run_cli('ingest', '--store', str(self.store), '--ledger', str(self.dir / 'absent.sqlite'), '--now', str(NOW))
         self.assertEqual((code, rep['code']), (2, 'STORE_MISSING'))
 
+    def test_cli_exit_code_is_zero_when_only_optional_stores_are_missing(self):
+        code, rep = self.run_cli('ingest', '--store', str(self.store), '--ledger', str(self.ledger),
+                                 '--decisions-db', str(self.dir / 'nope'), '--journal', str(self.dir / 'nope2'), '--now', str(NOW))
+        self.assertEqual((code, rep['inserted']), (0, 2))
+        self.assertEqual(set(rep['sources_unavailable']), {'decisions', 'journal'})
+
     def test_verify_exit_code_reports_a_bad_store(self):
         copy_ = self.dir / 'bad.sqlite'
         self.ingest()
@@ -464,6 +474,176 @@ class CliTests(Fixture):
             c.execute("UPDATE feature_rows SET row_hash='x'")
         code, rep = self.run_cli('verify', '--store', str(copy_))
         self.assertEqual((code, rep['ok']), (2, False))
+
+
+class IncrementalIngestTests(Fixture):
+    """T42 items 1-2: cursor-based, paged, bounded ingestion and optional stores."""
+
+    def add_market(self, mint, ts, **changes):
+        ledger = Ledger(self.ledger)
+        ledger.apply(helpers.event(ts=ts, mint=mint, **changes), self.cfg, transition, initial_state)
+        ledger.close()
+
+    def hashes(self, store=None):
+        store = store or self.store
+        return {(r['mint'], r['as_of']): r['row_hash'] for r in ft.read_rows(store)}
+
+    def fresh_store(self, name):
+        path = self.dir / name
+        ft.init(path)
+        return path
+
+    def test_a_rerun_resumes_from_the_cursor_and_reads_nothing(self):
+        first = self.ingest()
+        self.assertEqual(first['pages'], {'ledger.events': 1})
+        self.assertEqual(set(ft.read_cursors(self.store)), {'ledger.events', 'ledger.outcomes'})
+        again = self.ingest(now=NOW + 1)
+        self.assertEqual((again['inserted'], again['duplicate'], again['conflict'], again['pages']), (0, 0, 0, {}))
+
+    def test_incremental_equals_full_ingest(self):
+        self.ingest()
+        self.add_market('C', T + 120)
+        self.add_market('D', T + 180, market_cap_usd='1000')
+        step = self.ingest(now=NOW + 1)
+        self.assertEqual(step['inserted'], 2)
+        other = self.fresh_store('full.sqlite')
+        ft.ingest(other, ledger_db=self.ledger, now=NOW)
+        self.assertEqual(self.hashes(), self.hashes(other))
+        self.assertEqual(len(self.hashes()), 4)
+
+    def test_page_size_does_not_change_the_rows(self):
+        other = self.fresh_store('small-pages.sqlite')
+        report = ft.ingest(other, ledger_db=self.ledger, now=NOW, page_rows=1)
+        self.assertEqual(report['pages']['ledger.events'], 2)
+        self.ingest()
+        self.assertEqual(self.hashes(), self.hashes(other))
+
+    def test_a_page_bound_is_counted_and_the_next_run_finishes_the_job(self):
+        first = self.ingest(page_rows=1, max_pages=1)
+        self.assertEqual((first['inserted'], first['page_bound_hit']), (1, {'ledger.events': 1}))
+        self.assertEqual(first['skipped'], {'PAGE_BOUND_HIT:ledger.events': 1})
+        second = self.ingest(page_rows=1, max_pages=1, now=NOW + 1)
+        self.assertEqual(second['inserted'], 1)
+        full = self.fresh_store('full.sqlite')
+        ft.ingest(full, ledger_db=self.ledger, now=NOW)
+        self.assertEqual(self.hashes(), self.hashes(full))
+
+    def test_an_outcome_is_never_stored_without_its_reject_reasons_because_of_a_bound(self):
+        self.add_market('C', T + 120, market_cap_usd='1000')
+        self.add_market('D', T + 180, market_cap_usd='1000')
+        self.ingest(page_rows=1, max_pages=2)
+        self.ingest(page_rows=1, max_pages=2, now=NOW + 1)
+        rows = self.rows()
+        for mint in ('B', 'C', 'D'):
+            self.assertIn('reject_reasons', rows[(mint, float({'B': T + 60, 'C': T + 120, 'D': T + 180}[mint]))]['features'], mint)
+        self.assertIn('entered', rows[('A', float(T))]['features'])
+
+    def test_a_replaced_source_restarts_instead_of_skipping_rows(self):
+        self.ingest()
+        self.ledger.unlink()
+        ledger = Ledger(self.ledger)
+        for e in (helpers.event(ts=T + 500, mint='X'), helpers.event(ts=T + 560, mint='Y')):
+            ledger.apply(e, self.cfg, transition, initial_state)
+        ledger.close()
+        report = self.ingest(now=NOW + 1)
+        self.assertEqual(report['inserted'], 2)
+        self.assertEqual(report['skipped'].get('CURSOR_RESET_SOURCE_CHANGED'), 2)
+        self.assertEqual({m for m, _ in self.rows()}, {'A', 'B', 'X', 'Y'}, 'old rows are kept, never deleted')
+
+    def test_a_windowed_run_neither_reads_nor_moves_the_cursor(self):
+        self.ingest(until=T + 30)
+        self.assertEqual(ft.read_cursors(self.store), {})
+        report = self.ingest(now=NOW + 1)
+        self.assertEqual({m for m, _ in self.rows()}, {'A', 'B'})
+        self.assertEqual(report['duplicate'], 1)
+
+    def test_rows_and_cursor_commit_together_or_not_at_all(self):
+        original = ft.Writer._one
+        calls = []
+
+        def crash(writer, c, mint, as_of, features, provenance):
+            calls.append(mint)
+            if len(calls) == 2:
+                raise RuntimeError('crash inside the page')
+            return original(writer, c, mint, as_of, features, provenance)
+        with unittest.mock.patch.object(ft.Writer, '_one', crash), self.assertRaises(RuntimeError):
+            self.ingest()
+        self.assertEqual(sql(self.store, 'SELECT COUNT(*) FROM feature_rows')[0][0], 0)
+        self.assertEqual(ft.read_cursors(self.store), {})
+        self.assertEqual(self.ingest(now=NOW + 1)['inserted'], 2)
+
+    def test_cursor_records_are_append_only(self):
+        self.ingest()
+        for statement in ('UPDATE ingest_cursors SET position=0', 'DELETE FROM ingest_cursors'):
+            with self.subTest(statement=statement), self.assertRaises(sqlite3.DatabaseError):
+                sql(self.store, statement)
+
+    def test_a_store_made_before_cursors_existed_is_upgraded_in_place(self):
+        old = self.dir / 'old.sqlite'
+        with closing(sqlite3.connect(old)) as c:
+            c.executescript(ft.SCHEMA)
+            c.execute("INSERT INTO meta VALUES('store_version','1')")
+            c.commit()
+        self.assertEqual(ft.ingest(old, ledger_db=self.ledger, now=NOW)['inserted'], 2)
+        self.assertIn('ledger.events', ft.read_cursors(old))
+
+    def test_two_million_events_run_in_bounded_memory(self):
+        import tracemalloc
+        ledger = self.dir / 'big.sqlite'
+        with closing(sqlite3.connect(ledger)) as c:
+            c.executescript("""
+            CREATE TABLE events(seq INTEGER PRIMARY KEY AUTOINCREMENT,event_id TEXT UNIQUE NOT NULL,ts INTEGER NOT NULL,
+              payload TEXT NOT NULL,payload_hash TEXT NOT NULL);
+            CREATE TABLE outcomes(seq INTEGER PRIMARY KEY AUTOINCREMENT,event_id TEXT NOT NULL,payload TEXT NOT NULL);
+            WITH RECURSIVE n(i) AS (SELECT 1 UNION ALL SELECT i+1 FROM n WHERE i<2000000)
+              INSERT INTO events(event_id,ts,payload,payload_hash) SELECT 'e'||i,%d,'{"kind":"control"}','h' FROM n;
+            INSERT INTO outcomes(event_id,payload) SELECT event_id,'{"type":"noop"}' FROM events WHERE seq%%1000=0 ORDER BY seq;""" % T)
+            c.commit()
+        store = self.fresh_store('big-features.sqlite')
+        tracemalloc.start()
+        try:
+            report = ft.ingest(store, ledger_db=ledger, now=NOW)
+            peak = tracemalloc.get_traced_memory()[1]
+        finally:
+            tracemalloc.stop()
+        self.assertEqual(report['skipped'], {'NOT_A_MARKET_EVENT': 2_000_000})
+        self.assertEqual(report['pages'], {'ledger.events': 400})
+        self.assertLess(peak, 64 * 1024 * 1024, 'memory is bounded by the page, not by the number of events')
+        self.assertEqual(ft.read_cursors(store)['ledger.events'][1], 2_000_000)
+
+    def test_missing_optional_stores_are_skipped_with_a_reason(self):
+        absent = {k: self.dir / ('absent-' + k) for k in ('journal', 'research', 'decisions', 'discovery', 'cf')}
+        report = self.ingest(journal_db=absent['journal'], research_db=absent['research'], decisions_db=absent['decisions'],
+                             discovery_db=absent['discovery'], counterfactual_store=absent['cf'])
+        self.assertEqual(report['inserted'], 2)
+        self.assertEqual(report['sources_unavailable'], {k: 'STORE_MISSING' for k in ('journal', 'discovery', 'counterfactual', 'decisions')})
+        self.assertEqual(report['skipped']['SOURCE_ABSENT:decisions'], 1)
+
+    def test_a_missing_research_store_only_loses_the_scan_to_mint_fallback(self):
+        decisions = self.dir / 'decisions.sqlite'
+        sql(decisions, 'CREATE TABLE decisions(scan_id TEXT PRIMARY KEY,source_hash TEXT NOT NULL,source_payload TEXT NOT NULL,decision TEXT NOT NULL)')
+        sql(decisions, 'INSERT INTO decisions VALUES(?,?,?,?)', ('s1', 'h', json.dumps({'mint': 'A'}), json.dumps({'ts': T + 5, 'action': 'BUY'})))
+        sql(decisions, 'INSERT INTO decisions VALUES(?,?,?,?)', ('s2', 'h', json.dumps({}), json.dumps({'ts': T + 6, 'action': 'BUY'})))
+        report = self.ingest(decisions_db=decisions, research_db=self.dir / 'absent-research')
+        self.assertEqual(report['skipped'].get('SOURCE_ABSENT:research'), 1)
+        self.assertEqual(report['skipped'].get('DECISION_NOT_PLACEABLE'), 1)
+        self.assertEqual(self.row('A', T + 5)['features']['decision_label'], 'BUY')
+
+    def test_the_ledger_stays_required_and_unsafe_optional_stores_still_fail_closed(self):
+        with self.assertRaises(ft.fr.FunnelError):
+            ft.ingest(self.store, ledger_db=self.dir / 'absent.sqlite', now=NOW)
+        link = self.dir / 'journal-link.sqlite'
+        link.symlink_to(self.ledger)
+        with self.assertRaises(ft.fr.FunnelError):
+            self.ingest(journal_db=link)
+        corrupt = self.dir / 'corrupt.sqlite'
+        corrupt.write_bytes(b'not a database' * 100)
+        with self.assertRaises(sqlite3.DatabaseError):
+            self.ingest(counterfactual_store=corrupt)
+        # pages that completed before the failure stay (each is whole, with the cursor that covers it); nothing is half-stored
+        self.assertEqual(sql(self.store, 'SELECT COUNT(*) FROM feature_rows')[0][0], 2)
+        self.assertEqual(ft.read_cursors(self.store)['ledger.events'][1], 2)
+        self.assertEqual(self.ingest(now=NOW + 1)['inserted'], 0)
 
 
 class RealStoresTests(unittest.TestCase):
@@ -518,6 +698,8 @@ class UnitTemplateTests(unittest.TestCase):
         self.assertNotIn('LoadCredential', service, 'no provider keys: it reads retained evidence only')
         self.assertNotRegex(service, r'(?m)^\[Install\]')
         self.assertIn('-m tools.research.features ingest', one('ExecStart'))
+        self.assertIn('--counterfactual-store <FRESH_ROOT>/counterfactual/counterfactual.sqlite', one('ExecStart'),
+                      'optional stores are listed: a missing one is skipped with a reason, not a failed run')
         self.assertIn('ReadOnlyPaths=<FRESH_ROOT>', service)
         write = one('ReadWritePaths').split()
         self.assertEqual(write, ['<FRESH_ROOT>/features'], 'only its own store directory is writable')

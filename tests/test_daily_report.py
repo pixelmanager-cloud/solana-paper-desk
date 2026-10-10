@@ -72,6 +72,11 @@ def sections(**changes):
     return base
 
 
+def sh_horizons():
+    from tools.research import shadow_strategies as ss
+    return tuple(ss.HORIZONS)
+
+
 class TempDir(unittest.TestCase):
     def setUp(self):
         tmp = tempfile.TemporaryDirectory()
@@ -106,9 +111,29 @@ class MetricsAndAdviceTests(unittest.TestCase):
         self.assertIn('10.00% for bought', text)
         thin = ' '.join(dr.build(sections(counterfactual=ok(cf_report(rejected_n=29))), now=NOW)['next'])
         self.assertNotIn('Review the filter', thin)
+        self.assertNotIn('non-harmful', thin)                 # T42: n=29 is not evidence that a filter is harmless
+        self.assertIn('INSUFFICIENT_SAMPLE', thin)
         worse = ' '.join(dr.build(sections(counterfactual=ok(cf_report(rejected_mean='0.05'))), now=NOW)['next'])
         self.assertNotIn('Review the filter', worse)
         self.assertIn('non-harmful', worse)
+
+    def test_non_harmful_is_never_claimed_without_an_adequate_rejection_group(self):
+        """T42 item 3: 'filters look non-harmful' needs at least one REJECTED group with n >= 30 that does not beat the baseline."""
+        for label, report in (('every group below 30', cf_report(rejected_n=29, bought_n=29)),
+                              ('bought adequate, rejected thin', cf_report(rejected_n=29, bought_n=60)),
+                              ('rejected thin, no bought baseline', cf_report(rejected_n=5, bought_n=0)),
+                              ('empty groups', dict(cf_report(), groups={}))):
+            with self.subTest(label):
+                text = ' '.join(dr.build(sections(counterfactual=ok(report)), now=NOW)['next'])
+                self.assertNotIn('non-harmful', text)
+        text = ' '.join(dr.build(sections(counterfactual=ok(cf_report(rejected_n=29, bought_n=29))), now=NOW)['next'])
+        self.assertIn('INSUFFICIENT_SAMPLE: every counterfactual group has n<30', text)
+        self.assertIn('largest rejection group n=29', text)
+
+    def test_non_harmful_is_claimed_at_exactly_n_30_with_a_baseline_beating_group(self):
+        text = ' '.join(dr.build(sections(counterfactual=ok(cf_report(rejected_n=30, rejected_mean='0.05'))), now=NOW)['next'])
+        self.assertIn('non-harmful', text)
+        self.assertNotIn('INSUFFICIENT_SAMPLE: every counterfactual group', text)
 
     def test_health_alert_and_section_errors_are_visible_not_swallowed(self):
         s = sections(health=ok(health('CRITICAL')), forward={'status': 'ERROR', 'error': 'EvalError', 'detail': EVIL})
@@ -217,7 +242,7 @@ class HtmlTests(unittest.TestCase):
 class RealToolTests(TempDir):
     """The imported tools run for real on fixture stores; the numbers below are the fixtures' known answers."""
 
-    def counterfactual_store(self, rejected=31, bought=30):
+    def counterfactual_store(self, rejected=31, bought=30, horizons=(300, 3600)):
         store = self.dir / 'counterfactual.sqlite'
         cf.init(store, allowance_per_hour=300, now=T0 - 10)
         plan = [('REJECTED', rejected, 150), ('BOUGHT', bought, 110)]
@@ -231,7 +256,7 @@ class RealToolTests(TempDir):
         with closing(sqlite3.connect(store)) as c:
             for kind, hour_price, mint in minted:
                 if True:
-                    for horizon, price in ((300, 100), (3600, hour_price)):
+                    for horizon, price in tuple((h, 100) for h in horizons if h != 3600) + ((3600, hour_price),):
                         c.execute("INSERT INTO samples VALUES(?,?,?,?,?,?,?,?,'OK',NULL,NULL)", (mint, horizon, T0 + horizon, T0 + horizon, 1, '1', '1', str(price)))
                     payload = ({'v': 2, 'class': 'REJECTED', 'stage': 'ENGINE', 'codes': ['COST_BUDGET'], 'detail': None} if kind == 'REJECTED'
                                else {'v': 2, 'class': 'BOUGHT', 'stage': None, 'codes': [], 'detail': None})
@@ -258,16 +283,85 @@ class RealToolTests(TempDir):
         self.assertIn('Review the filter behind REJECTED:ENGINE:COST_BUDGET', ' '.join(summary['next']))
         self.assertIn('INSUFFICIENT_SAMPLE: %d closed paper trades < 30' % len(expected), ' '.join(summary['next']))
 
+    def features_store(self, mints=('SYNTH001',), at=T0 + 10, name='features.sqlite'):
+        from tools.research import features as ft
+        path = self.dir / name
+        ft.init(path)
+        records = {(m, float(at)): {'features': {'flow': '90', 'top10_pct': '10'},
+                                    'provenance': {k: {'source': 'ledger.events', 'ref': 'e#h', 'at': float(at), 'role': 'input'}
+                                                   for k in ('flow', 'top10_pct')}} for m in mints}
+        ft.append_rows(path, records, now=NOW)
+        return path
+
+    def shadow(self, **extra):
+        ledger = self.dir / 'ledger.sqlite'
+        fwd.build(ledger)
+        # complete price paths (every horizon), otherwise the shadow engine sets every candidate aside as truncated
+        store = self.counterfactual_store(horizons=sh_horizons())
+        opts = {'ledger': str(ledger), 'counterfactual_store': str(store), 'resamples': 50,
+                'grid': str(ROOT / 'config/experiments/shadow/exit-grid.json'), **extra}
+        found = dr.collect(opts, NOW)
+        self.assertEqual(found['shadow']['status'], 'OK', found['shadow'])
+        return found
+
+    def test_shadow_runs_with_the_real_features_of_the_store_and_says_which_were_real(self):
+        found = self.shadow(features_store=str(self.features_store()))
+        data = found['shadow']['data']
+        self.assertEqual(data['features_supplied'], ['SYNTH001'])
+        label = data['features_label']
+        self.assertEqual((label['source'], label['mode']), ('features_store', 'REAL_FEATURES_FOR_SOME_CANDIDATES'))
+        self.assertEqual((label['real_candidates'], label['candidates']), (1, 61))
+        self.assertEqual(label['neutral_candidates'], 60)
+        self.assertEqual(label['fields'], ['flow', 'top10_pct'])
+        page = dr.render_html(dr.build(found, now=NOW), found)
+        self.assertIn('real features for 1 of 61 candidates', page)
+        self.assertIn('neutral features for 60', page)
+
+    def test_without_a_features_store_everything_is_labelled_neutral(self):
+        label = self.shadow()['shadow']['data']['features_label']
+        self.assertEqual((label['source'], label['mode'], label['real_candidates'], label['neutral_candidates']),
+                         (None, 'NEUTRAL_FEATURES_ONLY', 0, 61))
+
+    def test_a_missing_features_store_is_neutral_not_an_error(self):
+        found = self.shadow(features_store=str(self.dir / 'absent.sqlite'))
+        self.assertEqual(found['shadow']['data']['features_label']['mode'], 'NEUTRAL_FEATURES_ONLY')
+
+    def test_an_explicit_features_file_wins_over_the_store_and_is_labelled_file(self):
+        explicit = self.dir / 'features.json'
+        explicit.write_text(json.dumps({'SYNTH002': {'as_of': T0 + 20, 'flow': '55'}}))
+        found = self.shadow(features_store=str(self.features_store()), features=str(explicit))
+        data = found['shadow']['data']
+        self.assertEqual(data['features_supplied'], ['SYNTH002'])
+        self.assertEqual((data['features_label']['source'], data['features_label']['real_candidates']), ('file', 1))
+
+    def test_a_features_store_row_after_the_price_path_is_refused_as_look_ahead_not_used(self):
+        found = self.shadow(features_store=str(self.features_store(at=T0 + 10 ** 6)))
+        self.assertEqual(found['shadow']['status'], 'OK')
+        self.assertEqual(found['shadow']['data']['features_label']['real_candidates'], 0)
+
+    def test_the_features_store_is_read_only_and_never_written(self):
+        path = self.features_store()
+        before = path.read_bytes()
+        self.shadow(features_store=str(path))
+        self.assertEqual(path.read_bytes(), before)
+
     def test_a_failing_tool_degrades_only_its_own_section(self):
         ledger = self.dir / 'ledger.sqlite'
         fwd.build(ledger)
         with mock.patch.object(forward_eval, 'evaluate', side_effect=forward_eval.EvalError('<b>boom</b>')):
             found = dr.collect({'ledger': str(ledger)}, NOW)
-        self.assertEqual((found['forward']['status'], found['forward']['error']), ('ERROR', 'EvalError'))
+        # T42: the class name only; the exception text can carry paths or secret-bearing provider messages and is dropped
+        self.assertEqual(found['forward'], {'status': 'ERROR', 'error': 'EvalError'})
         self.assertEqual(found['realism']['status'], 'OK')
         page = dr.render_html(dr.build(found, now=NOW), found)
-        self.assertIn('&lt;b&gt;boom&lt;/b&gt;', page)
-        self.assertNotIn('<b>boom</b>', page)
+        self.assertIn('EvalError', page)
+        self.assertNotIn('boom', page)
+
+    def test_an_error_section_never_carries_the_exception_text(self):
+        for text in ('SECRET api-key=abc /var/lib/x.sqlite', '<script>x</script>', 'x' * 500):
+            with self.subTest(text[:12]):
+                result = dr._safe(lambda: (_ for _ in ()).throw(RuntimeError(text)))
+                self.assertEqual(result, {'status': 'ERROR', 'error': 'RuntimeError'})
 
     def test_an_unreadable_path_is_an_error_section_not_a_crash(self):
         found = dr.collect({'ledger': str(self.dir / 'missing.sqlite'), 'counterfactual_store': str(self.dir / 'nope.sqlite')}, NOW)
@@ -463,6 +557,7 @@ class CliTests(TempDir):
         self.assertEqual(derived['ledger'], '/r/paper-ledger.sqlite')
         self.assertEqual(derived['journal'], '/r/entry-dispatch/dispatch.sqlite')
         self.assertEqual(derived['counterfactual_store'], '/r/counterfactual/counterfactual.sqlite')
+        self.assertEqual(derived['features_store'], '/r/features/features.sqlite')
         self.assertEqual(dr._derive({'root': '/r', 'ledger': '/x.sqlite'})['ledger'], '/x.sqlite')
 
 
@@ -483,10 +578,25 @@ class UnitTemplateTests(unittest.TestCase):
         self.assertNotIn('provider-keys', code)
         self.assertIn('RestrictAddressFamilies=AF_UNIX', code)
         self.assertNotIn('AF_INET', code)
-        self.assertEqual(re.search(r'ReadWritePaths=(.*)', code).group(1).split(), ['<STATE_DIR>'])
+        # T42: only the reports directory is writable (it used to be the whole state directory)
+        self.assertEqual(re.search(r'ReadWritePaths=(.*)', code).group(1).split(), ['<STATE_DIR>/reports'])
         self.assertIn('<FRESH_ROOT>', re.search(r'ReadOnlyPaths=(.*)', code).group(1))
         for limit in ('MemoryMax=', 'TasksMax=', 'CPUQuota=', 'Nice=', 'TimeoutStartSec='):
             self.assertIn(limit, code)
+
+    def test_service_is_hardened_like_the_other_research_units(self):
+        """T42 item 5: the same network/CPU/IO isolation as desk-features (T39/T40)."""
+        code = re.sub(r'(?m)^#.*$', '', (ROOT / 'deploy/fresh/desk-daily-report.service').read_text())
+        features = re.sub(r'(?m)^#.*$', '', (ROOT / 'deploy/fresh/desk-features.service').read_text())
+
+        def value(text, key):
+            found = re.findall(r'(?m)^%s=(.*)$' % key, text)
+            self.assertEqual(len(found), 1, key)
+            return found[0]
+        for key in ('PrivateNetwork', 'CPUWeight', 'IOWeight', 'IOSchedulingClass'):   # Nice differs on purpose (15 vs 10)
+            self.assertEqual(value(code, key), value(features, key), key)
+        self.assertEqual(value(code, 'PrivateNetwork'), 'true')
+        self.assertEqual((value(code, 'CPUWeight'), value(code, 'IOWeight')), ('20', '20'))
 
 
 if __name__ == '__main__':
