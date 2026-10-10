@@ -52,6 +52,8 @@ class MonitoringBudget:
                 or type(cfg.get('paper_quote_execution_version')) is not int
                 or cfg['paper_quote_execution_version'] != 1):
             raise MonitoringBlocked('MONITORING_CONFIGURATION_INVALID')
+        from .kraken_usd_observation import selected as usd_selected
+        self.usd_valuation_version=usd_selected(cfg)
         self.config_hash = digest(cfg)
         self.code_hash = _implementation()
         self.clock = clock
@@ -318,6 +320,9 @@ class MonitoringBudget:
         elif method == 'getBlockTime':
             if type(params) is not list or len(params) != 1 or type(params[0]) is not int or not 0 <= params[0] < 2**63:
                 raise MonitoringBlocked('MONITORING_POSITION_REQUEST_REQUIRED')
+        elif method == 'kraken_solusd_trades_v1':
+            from .kraken_usd_observation import selected as usd_selected,PARAMS
+            if not self.usd_valuation_version or params!=PARAMS:raise MonitoringBlocked('MONITORING_POSITION_REQUEST_REQUIRED')
         elif method == 'jupiter_price_v3':
             if params != {'ids':SOL}:
                 raise MonitoringBlocked('MONITORING_POSITION_REQUEST_REQUIRED')

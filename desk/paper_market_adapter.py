@@ -37,11 +37,12 @@ class MarketContext:
     pool_fee_bps: str | None  # explicit model assumption, not an observed fee proof
     history_as_of: int | None = None  # original query end, independent of decision now
     token_profile_version: int = 0
+    usd_valuation_version: int = 0
 
 
 def build_market_event(collected, *, context, load_evidence, raw_trades=(),
                        history_pages=None, usd_response=None, usd_bounds=None,
-                       strategy_profile=None):
+                       strategy_profile=None, usd_attempt=None):
     """Return event or diagnostic draft; quote objects stay with execution owner.
 
     Successful output is an experimental signal event, never engine admission.
@@ -97,8 +98,15 @@ def build_market_event(collected, *, context, load_evidence, raw_trades=(),
     if usd_response is None or usd_bounds is None:blockers.add('SOL_USD_SOURCE_OR_EXACT_BLOCK_TIME_MISSING')
     else:
         try:
-            if usd_bounds.now!=context.now:raise ValueError('clock mismatch')
-            usd=parse_sol_usd(usd_response,bounds=usd_bounds)
+            if context.usd_valuation_version==1:
+                from .kraken_usd_observation import parse_kraken_usd,timestamp,from_attempt
+                if int(timestamp(usd_bounds.now))!=context.now:raise ValueError('clock mismatch')
+                response,usd=from_attempt(usd_attempt,now=usd_bounds.now,scan=target.scan_id)
+                if response!=usd_response:raise ValueError('Kraken original response mismatch')
+            elif context.usd_valuation_version==0:
+                if usd_bounds.now!=context.now:raise ValueError('clock mismatch')
+                usd=parse_sol_usd(usd_response,bounds=usd_bounds)
+            else:raise ValueError('USD version invalid')
             if usd.status!='MEASURED':blockers.update('SOL_USD:'+r for r in usd.blockers)
         except (ValueError,AttributeError):blockers.add('SOL_USD_TRUSTED_INPUT_INVALID')
     for name,at in (('graduated_at',context.graduated_at),('holder_at',context.holder_at)):
@@ -148,7 +156,11 @@ def build_market_event(collected, *, context, load_evidence, raw_trades=(),
         with localcontext() as ctx:
             ctx.prec=100
             e['market_cap_usd']=str((decimal(atomic_supply)/(10**mint.decimals))*pool.spot_sol_per_token*usd.usd_price)
-        e['paper_source_evidence']['usd']={'request_sha256':usd.request_sha256,'payload_sha256':usd.payload_sha256,
+        if context.usd_valuation_version==1:
+            from .kraken_usd_observation import evidence as usd_evidence
+            e['paper_usd_valuation']=usd_evidence(usd_attempt,now=usd_bounds.now,scan=target.scan_id)
+            e['paper_source_evidence']['usd']={k:v for k,v in e['paper_usd_valuation'].items() if k!='attempt'}
+        else:e['paper_source_evidence']['usd']={'request_sha256':usd.request_sha256,'payload_sha256':usd.payload_sha256,
             'acquired_at':usd.acquired_at,'price_at':usd.price_at,'block_id':usd.block_id,
             'valuation_basis':'CURRENT_RESERVE_SPOT_TIMES_SUPPLY_NOT_EXECUTABLE_PRICE',
             'trusted_slot_bounds':{'now':usd.bounds.now,'observed_at':usd.bounds.observed_at,

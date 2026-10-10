@@ -92,6 +92,8 @@ def load_config(path):
         raise ValueError("This build supports paper mode only")
     from .token2022_paper import selected
     selected(cfg)
+    from .kraken_usd_observation import selected as usd_selected
+    usd_selected(cfg)
     numeric = [k for k in cfg if k not in ("version", "mode")]
     for key in numeric:
         if decimal(cfg[key]) <= 0:
@@ -198,6 +200,10 @@ def validate_event(event, *, mode=PAPER_STRICT, policy_version=None,token_profil
             'provenance','price_at','route_available','danger','known_hazards','current_quantity_raw',
             'mint_decimals','source_evidence','execution_status','entry_authorized'}
         if token_profile_version==2:required.add('paper_pool_evidence')
+        if 'paper_usd_valuation' in event:
+            from .kraken_usd_observation import validate_event as validate_usd
+            validate_usd(event,{'mode':'paper','paper_usd_valuation_version':1,'paper_signal_policy_version':3,'paper_quote_execution_version':1})
+            required.add('paper_usd_valuation')
         if (set(event)!=required or type(event['schema_version']) is not int
                 or type(event['exit_contract_version']) is not int or event['exit_contract_version']!=1
                 or event['execution_status']!='EXECUTION_UNVERIFIED' or event['entry_authorized'] is not False
@@ -216,6 +222,7 @@ def validate_event(event, *, mode=PAPER_STRICT, policy_version=None,token_profil
         source=event['source_evidence']
         keys={'collector_refs','mint_hash','pool_hash','quote_hash','rpc_source_id','quote_source_id',
               'mint_at','pool_at','quote_at','mint_slot','pool_slot'}
+        if 'paper_usd_valuation' in event:keys.add('scan_id')
         if type(source) is not dict or set(source)!=keys:raise ValueError('Invalid exit source evidence')
         refs=source['collector_refs']
         if type(refs) is not list or not 1<=len(refs)<=20:raise ValueError('Invalid exit references')

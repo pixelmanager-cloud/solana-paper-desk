@@ -36,6 +36,8 @@ class QuoteExecutionError(ValueError):
 
 def config(cfg):
     selected(cfg)
+    from .kraken_usd_observation import selected as usd_selected
+    usd_selected(cfg)
     version = cfg.get('paper_quote_execution_version')
     if version is None:
         return False
