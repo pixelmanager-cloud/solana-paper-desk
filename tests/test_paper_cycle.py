@@ -23,7 +23,7 @@ from desk.ledger import Ledger
 from tests.test_paper_read_sources import Response
 from tests import lock_sources
 from tests.test_live_strategy_features import transaction, POOL as TRADE_POOL
-from contextlib import ExitStack
+from contextlib import closing, ExitStack
 from desk.paper_observation_collector import ObservationTarget, TargetObservation
 from desk.paper_read_sources import PaperReadError
 from tests import test_paper_observation_collector as collector_fixtures
@@ -87,6 +87,7 @@ class PaperCycleTests(unittest.TestCase):
                     if method=='getSlot':result=110
                     elif method=='getBlockTime':result=outer.f.at-1
                     elif method=='getTransactionsForAddress':
+                        if getattr(outer,'history_failure',None) is not None:raise outer.history_failure      # T22H: fail only the history page, through the real transport
                         rows=[]
                         for i in range(40):
                             row=transaction('cycle-'+str(i),10+i,outer.f.at-1,quote=200,base=100,
@@ -95,6 +96,7 @@ class PaperCycleTests(unittest.TestCase):
                             ix['data']=base58(unbase58(ix['data']).replace(unbase58(TRADE_POOL),unbase58(outer.target.pool)))
                             rows.append(row)
                         result={'data':rows,'paginationToken':None}
+                        if getattr(outer,'history_result',None) is not None:result=outer.history_result      # T22H: a malformed / contradictory page
                     else:
                         result=copy.deepcopy(outer.f.protocol.rpc(method,params))
                         if method=='getAccountInfo' and params[0]==outer.target.mint:
@@ -578,21 +580,34 @@ class PaperCycleTests(unittest.TestCase):
         self.assertEqual(result['blockers'],['GRADUATION_TIMESTAMP_CONFLICT'])
         self.assertEqual(self.f.calls,[])
 
-    def test_history_failure_enclosed_by_durable_intent_is_closed_and_the_scan_retired(self):
+    def test_a_transient_history_failure_enclosed_by_durable_intent_is_closed_and_the_scan_retired(self):
         # T22: was ..._blocks_restart (OBSERVATION_RECOVERY_REQUIRED for every scan). A failed history source is an
         # ordinary charged failure: the pass is closed FAILED_CHARGED, charges stay, and only that scan is retired.
+        # T22H: only a failure that is KNOWN transient (a connection reset here) is closed this way. It used to be the
+        # bare OSError of this fixture; see the next test. The fixture raises it directly, so there is no attempt original
+        # and the exception path classifies it (TRANSPORT_ERROR) instead of the HISTORY_RECOVERY_REQUIRED state.
         class HistoryFailure:
             def __init__(self,progress,scan,key,*,timeout_seconds):pass
-            def __call__(self,method,params):raise OSError('SYNTHETIC interrupted history response')
-        result=self.run_cycle(history_source_factory=HistoryFailure)
-        self.assertEqual(result['attempted_requests'],5)
-        self.assertEqual(result['blockers'],['HISTORY_RECOVERY_REQUIRED'])
-        self.assertEqual(result['budget'][self.target.scan_id]['used'],5)
+            def __call__(self,method,params):raise ConnectionResetError('SYNTHETIC interrupted history response')
+        with self.assertRaises(ConnectionResetError):self.run_cycle(history_source_factory=HistoryFailure)
+        self.assertEqual(self.f.progress.admission(self.target.scan_id)['requests_used'],5)
         self.f.calls.clear()
         repeated=self.run_cycle()
         self.assertEqual(repeated['blockers'],['REJECTED_SCAN_RETIRED'])
         self.assertEqual(self.f.calls,[])
         self.assertEqual(self.f.progress.admission(self.target.scan_id)['requests_used'],5)
+
+    def test_a_bare_oserror_from_the_history_source_holds_the_pass_and_does_not_retire_the_scan(self):
+        # T22H item 1: the same fixture with a bare OSError (UNCLASSIFIED_ERROR) used to be laundered into the
+        # allow-listed HISTORY_RECOVERY_REQUIRED and closed. It now propagates and the pass is held.
+        class HistoryFailure:
+            def __init__(self,progress,scan,key,*,timeout_seconds):pass
+            def __call__(self,method,params):raise OSError('SYNTHETIC interrupted history response')
+        with self.assertRaises(OSError):self.run_cycle(history_source_factory=HistoryFailure)
+        self.assertEqual(self.f.progress.admission(self.target.scan_id)['requests_used'],5)
+        with closing(self.f.progress.store.connect()) as c:
+            self.assertEqual(c.execute('SELECT status FROM paper_pass_closures').fetchall(),[('INTEGRITY_HOLD',)])
+            self.assertEqual(c.execute('SELECT count(*) FROM paper_observation_passes WHERE outcome_hash IS NULL').fetchone()[0],1)
 
     def test_unrelated_source_defect_remains_visible_and_restart_is_latched(self):
         def bad(progress,scan):raise RuntimeError('fixture programmer defect')
