@@ -774,5 +774,162 @@ class CliTests(Base):
         self.assertFalse((self.data.parent / 'x.json').exists())
 
 
+class FreshLayoutTests(StoreBase):
+    """Fresh layout: ledger/evidence/journal in the experiment root, shared pacing and discovery outside it."""
+
+    def setUp(self):
+        super().setUp()
+        from discovery import continuous
+        self.round_trip()
+        self.label()
+        self.stores()
+        self.shared = self.data.parent / 'shared'
+        (self.shared / 'discovery').mkdir(parents=True)
+        self.pacing = self.shared / 'provider-pacing.sqlite'
+        os.replace(self.data / 'provider-pacing.sqlite', self.pacing)
+        self.discovery = self.shared / 'discovery' / 'continuous.sqlite'
+        continuous.initialize(self.discovery)
+        with contextlib.closing(sqlite3.connect(self.discovery)) as c:
+            c.execute("INSERT INTO reservations VALUES(1, 100.0, 'listen')")
+            c.execute("INSERT INTO completions VALUES(1, 101.0, 10, 1, 'RECEIVED', NULL)")
+            c.execute("INSERT INTO raw_events VALUES(1, 's1', 102.0, 5, '{}', 'h')")
+            c.commit()
+        self.external_ledger = self.shared / 'ledger.sqlite'
+        with contextlib.closing(sqlite3.connect(self.external_ledger)) as target:
+            self.ledger.db.backup(target)
+
+    def fresh(self, **kw):
+        kw.setdefault('pacing', str(self.pacing))
+        return vc.snapshot(self.data, 'paper.sqlite', self.config_path, **kw)
+
+    def test_default_name_in_a_fresh_root_silently_misses_the_pacing_store(self):
+        legacy = vc.snapshot(self.data, 'paper.sqlite', self.config_path)
+        self.assertEqual(legacy['pacing'], {'present': False})            # why the explicit option exists
+
+    def test_absolute_pacing_store_is_snapshotted(self):
+        s = self.fresh()
+        self.assertEqual(s['pacing']['present'], True)
+        self.assertEqual(dict(map(tuple, s['pacing']['providers']))['helius'], 9.5)
+        self.assertTrue(s['pacing_volatile']['present'])
+
+    def test_explicit_absolute_pacing_must_exist(self):
+        with self.assertRaisesRegex(vc.VerifyError, 'named explicitly but not present'):
+            self.fresh(pacing=str(self.shared / 'missing.sqlite'))
+
+    def test_bad_absolute_paths_fail_closed(self):
+        link = self.shared / 'link.sqlite'
+        link.symlink_to(self.pacing)
+        linked_dir = self.data.parent / 'shared-link'
+        linked_dir.symlink_to(self.shared)
+        for label, value in {'symlink': str(link), 'symlinked directory': str(linked_dir / 'provider-pacing.sqlite'),
+                             'directory': str(self.shared), 'dotdot': str(self.shared / '..' / 'shared' / 'provider-pacing.sqlite')}.items():
+            with self.subTest(label), self.assertRaises(vc.VerifyError):
+                self.fresh(pacing=value)
+
+    def test_relative_paths_with_directories_are_still_refused(self):
+        for value in ('shared/provider-pacing.sqlite', '../x.sqlite', '.', ''):
+            with self.subTest(value), self.assertRaises(vc.VerifyError):
+                self.fresh(pacing=value)
+            with self.subTest(ledger=value), self.assertRaises(vc.VerifyError):
+                vc.snapshot(self.data, value, self.config_path)
+
+    def test_absolute_ledger_path_inside_and_outside_the_root(self):
+        by_name = self.fresh()
+        by_path = vc.snapshot(self.data, str(self.ledger_path), self.config_path, pacing=str(self.pacing))
+        outside = vc.snapshot(self.data, str(self.external_ledger), self.config_path, pacing=str(self.pacing))
+        for other in (by_path, outside):
+            self.assertEqual(other['checkpoint_digest'], by_name['checkpoint_digest'])
+            self.assertEqual((other['status'], other['fill_count']), (by_name['status'], by_name['fill_count']))
+        self.assertEqual(outside['ledger'], str(self.external_ledger))
+        self.assertEqual(by_name['ledger'], 'paper.sqlite')
+
+    def test_symlinked_or_missing_absolute_ledger_fails_closed(self):
+        link = self.shared / 'ledger-link.sqlite'
+        link.symlink_to(self.external_ledger)
+        for value in (str(link), str(self.shared / 'nope.sqlite')):
+            with self.subTest(value), self.assertRaises((vc.VerifyError, OSError)):
+                vc.snapshot(self.data, value, self.config_path, pacing=str(self.pacing))
+
+    def test_discovery_store_is_recorded_for_information_only(self):
+        s = self.fresh(discovery=str(self.discovery))
+        self.assertEqual(s['discovery']['counts'], {'reservations': 1, 'completions': 1, 'raw_events': 1})
+        self.assertEqual((s['discovery']['latest_completion_at'], s['discovery']['latest_event_at']), (101.0, 102.0))
+        self.assertNotIn('discovery', self.fresh())                          # defaults stay backward compatible
+        with contextlib.closing(sqlite3.connect(self.discovery)) as c:       # the feed keeps growing: not strict
+            c.execute("INSERT INTO raw_events VALUES(2, 's2', 200.0, 6, '{}', 'h2')")
+            c.commit()
+        later = self.fresh(discovery=str(self.discovery))
+        self.assertEqual(vc.compare(s, later)['status'], 'PASS')
+        self.assertEqual(vc.compare(s, self.fresh())['status'], 'PASS')
+
+    def test_explicit_discovery_must_exist_and_be_canonical(self):
+        link = self.shared / 'discovery' / 'link.sqlite'
+        link.symlink_to(self.discovery)
+        for value in (str(self.shared / 'discovery' / 'nope.sqlite'), str(link), 'sub/continuous.sqlite'):
+            with self.subTest(value), self.assertRaises(vc.VerifyError):
+                self.fresh(discovery=value)
+
+    def test_external_stores_are_opened_mode_ro_and_never_modified(self):
+        before = tree_hashes(self.shared)
+        uris = _uris(lambda: vc.snapshot(self.data, str(self.external_ledger), self.config_path,
+                                         pacing=str(self.pacing), discovery=str(self.discovery)))
+        for path in (self.pacing, self.discovery):                 # rollback-journal stores: never immutable
+            matching = [u for u in uris if str(path) in u]
+            self.assertTrue(matching, path)
+            self.assertTrue(all(u.endswith('?mode=ro') for u in matching), (path, matching))
+        ledger_uris = [u for u in uris if str(self.external_ledger) in u]
+        self.assertEqual(len(ledger_uris), 1)                       # the copy is a quiesced WAL file: immutable is the existing rule
+        self.assertTrue(ledger_uris[0].endswith(('?mode=ro', '?immutable=1')))
+        self.assertEqual(tree_hashes(self.shared), before)
+        self.assertEqual(sorted(p.name for p in self.shared.rglob('*')),
+                         sorted(['provider-pacing.sqlite', 'discovery', 'continuous.sqlite', 'ledger.sqlite']))
+
+    def test_cold_restart_compare_across_external_layout(self):
+        a = self.fresh(discovery=str(self.discovery))
+        b = self.fresh(discovery=str(self.discovery))
+        self.assertEqual(vc.compare(a, b)['status'], 'PASS')
+        with contextlib.closing(sqlite3.connect(self.pacing)) as c:           # the shared pacing high water may rise
+            c.execute("UPDATE state SET high_water=20 WHERE provider='helius'")
+            c.commit()
+        self.assertEqual(vc.compare(a, self.fresh(discovery=str(self.discovery)))['status'], 'PASS')
+        with contextlib.closing(sqlite3.connect(self.pacing)) as c:           # ... and never fall
+            c.execute("UPDATE state SET high_water=1 WHERE provider='helius'")
+            c.commit()
+        self.assertEqual(vc.compare(a, self.fresh(discovery=str(self.discovery)))['status'], 'FAIL')
+
+    def test_compare_requires_the_same_ledger_spelling_in_both_snapshots(self):
+        """A plain name and an absolute path to the same file are different identities: use one style before and after."""
+        by_name = self.fresh()
+        by_path = vc.snapshot(self.data, str(self.ledger_path), self.config_path, pacing=str(self.pacing))
+        mixed = vc.compare(by_name, by_path)
+        self.assertEqual((mixed['status'], mixed['failures']), ('FAIL', ['ledger differs', 'ledger differs']))
+        again = vc.snapshot(self.data, str(self.ledger_path), self.config_path, pacing=str(self.pacing))
+        self.assertEqual(vc.compare(by_path, again)['status'], 'PASS')
+
+    def test_cli_options(self):
+        out = self.data.parent / 'snap.json'
+        argv = ['snapshot', '--data', str(self.data), '--ledger', str(self.external_ledger), '--config', str(self.config_path),
+                '--pacing-db', str(self.pacing), '--discovery-db', str(self.discovery), '--out', str(out)]
+        stdout, stderr = io.StringIO(), io.StringIO()
+        with contextlib.redirect_stdout(stdout), contextlib.redirect_stderr(stderr):
+            code = vc.main(argv)
+        self.assertEqual(code, 0, stderr.getvalue())
+        doc = json.loads(out.read_text())
+        self.assertEqual((doc['ledger'], doc['pacing']['present'], doc['discovery']['present']),
+                         (str(self.external_ledger), True, True))
+        legacy = self.data.parent / 'legacy.json'
+        with contextlib.redirect_stdout(io.StringIO()), contextlib.redirect_stderr(io.StringIO()):
+            code = vc.main(['snapshot', '--data', str(self.data), '--ledger', 'paper.sqlite', '--config', str(self.config_path),
+                            '--pacing', str(self.pacing), '--out', str(legacy)])
+        self.assertEqual(code, 0)                                            # the old flag spelling still works
+        err = io.StringIO()
+        with contextlib.redirect_stdout(io.StringIO()), contextlib.redirect_stderr(err):
+            code = vc.main(['snapshot', '--data', str(self.data), '--ledger', 'paper.sqlite', '--config', str(self.config_path),
+                            '--pacing-db', str(self.shared / 'nope.sqlite'), '--out', str(self.data.parent / 'bad.json')])
+        self.assertEqual(code, 2)
+        self.assertIn('named explicitly but not present', err.getvalue())
+        self.assertFalse((self.data.parent / 'bad.json').exists())
+
+
 if __name__ == '__main__':
     unittest.main()

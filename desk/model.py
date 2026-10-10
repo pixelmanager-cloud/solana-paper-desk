@@ -86,10 +86,25 @@ def clip(value, low=ZERO, high=D(100)):
     return max(low, min(high, value))
 
 
+# Versioned opt-in flags that code reads lazily (inside a cycle, an entry gate or a transition). A bad value must be
+# refused when the config is LOADED, not discovered mid-cycle. Each currently has exactly one valid version.
+LAZY_VERSION_FLAGS = ('paper_exit_only_recovery_version', 'paper_entry_latch_version', 'paper_regime_version',
+                      'paper_portfolio_risk_version', 'paper_watchlist_version', 'paper_concurrent_entries_version')
+
+
+def validate_version_flags(cfg):
+    for key in LAZY_VERSION_FLAGS:
+        if key in cfg and (type(cfg[key]) is not int or cfg[key] != 1):
+            raise ValueError(f"Unsupported {key}")
+    from .paper_concurrency import selected as concurrent_selected
+    concurrent_selected(cfg)   # also needs paper mode and 2..8 max_positions
+
+
 def load_config(path):
     cfg = json.loads(Path(path).read_text())
     if cfg.get("mode") != "paper":
         raise ValueError("This build supports paper mode only")
+    validate_version_flags(cfg)
     from .token2022_paper import selected
     selected(cfg)
     from .kraken_usd_observation import selected as usd_selected
