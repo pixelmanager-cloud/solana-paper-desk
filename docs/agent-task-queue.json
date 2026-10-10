@@ -6607,7 +6607,10 @@
       "PR186": {
         "head": "e0c79e849856a58248a23ad70f34d0c2592505f4",
         "review": "PASS independent07 turn01a12373-5dd4-7654-b661-25ba46c6ce97;43 combined seam tests10.304s",
-        "ci": "pending"
+        "ci": {
+          "38013922978": "PASS",
+          "38013918410": "running"
+        }
       },
       "PR187": {
         "head": "b453a745542cae6b394aec379362f0d6d6d1fe6b",
@@ -6621,8 +6624,11 @@
     },
     "activation_draft": {
       "source": "c7be1e9502da954a759dbe34ffd602762caf8bb2b84c70dd99a6fcf3736df8bf",
-      "status": "READ_ONLY_PRODUCTION_PROPOSAL_EXACT_MATCH_PENDING_REVIEW_CI",
-      "applied": false
+      "status": "EXACT_PINS_AND_WRAPPER_REVIEW_PASS03_FINAL_CI_PENDING",
+      "applied": false,
+      "retirement_pin_hash": "c250cb00c3cc57ac704a19df0ccbdd0837729cf02c2a335ee22acd8191ed9411",
+      "runtime_edge_hash": "20e64d02ad670a723515f379e51fbd35cdde043f87be391a5ef70a6de0c538f2",
+      "review_turn": "01a12360-802a-710d-9cca-3bcfe17bb241"
     },
     "production_readonly_retirement_plan": {
       "head": "b453a745542cae6b394aec379362f0d6d6d1fe6b",

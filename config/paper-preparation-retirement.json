@@ -1,1 +1,42 @@
-{"version":1,"retirements":[]}
+{
+  "version": 1,
+  "retirements": [
+    {
+      "after": 7,
+      "association": "EXPLICIT_REVIEWED_PREPARATION_OVERSIZE",
+      "attempt_refs": [
+        "7184ffe158433ce79cdd979fbeb326ee42f1a6a467b0ea63c67a79c5aab31941",
+        "54f1fdc0cc0ba63fc30b5ec8c0c19f9dded60ec829a69d1821051725b204c8d5",
+        "f54506e614f264c6c483b2d054848f9d31c4c3fb1d6974a490da3e88f4227bfc"
+      ],
+      "before": 6,
+      "config_hash": "3dc3108e1c23ebbad97b88338e37f4012d3dd6b259f5a911624d799da1c11dff",
+      "context": {
+        "evidence_db": "/var/lib/solana-desk/evidence.sqlite",
+        "ledger_db": "/var/lib/solana-desk/paper-kraken-77de75a2.sqlite",
+        "pacing_db": "/var/lib/solana-desk/provider-pacing.sqlite",
+        "research_db": "/var/lib/solana-desk/research.sqlite"
+      },
+      "failed_attempt_hash": "f54506e614f264c6c483b2d054848f9d31c4c3fb1d6974a490da3e88f4227bfc",
+      "failure": "RESPONSE_OVERSIZED",
+      "history_id": "0aa0865a8e3dee828d4ca02d701cafcc6f28b49c2410fb3d87ee018402457f49",
+      "history_inventory_hash": "81b879ef424c6540182398a229bee92ae93811821305d6d26b0c32eeba9d3754",
+      "intent_hash": "3ba01098f17e01e61174af87fb2cf49b67af52cc48de6108ff93310dea6616fd",
+      "ledger_anchors": {
+        "checkpoint_hash": "61eacdccf4ab480c20530384923f46d0f44e75f4b8199c4e39632fd3821e9362",
+        "events_hash": "d6a2c29038acabac20136482ea2d7848e4e4a334d6109f3133a9d807aaa2574b",
+        "metadata_hash": "220e263450c7f308ab26665f95d78a4b2673b2cb2ed097ace15943bf7aa8fde6",
+        "outcomes_hash": "4f53cda18c2baa0c0354bb5f9a3ecbe5ed12ab4d8e11ba873c2f11161202b945"
+      },
+      "ledger_backup_hash": "5e12e40a6aa69b3f387f0d48850c0f1bdc5213ad62aa84e5576d32f19fcc7511",
+      "ledger_original_hash": "f175287f695b2d682e73c55b81627ae09c857d1e3f0ddcbb9fe230a47f342bb3",
+      "ledger_prefix_hash": "9c2db3103899dc310d5f5fb59ccef407cfe2acff4520a6f1307281a13360283a",
+      "no_retry": true,
+      "pass_id": "02b82210a5694a629a99ae54d20466bb",
+      "producer_source_hash": "77de75a248fd087e62bcc2bac4a581c667905dfcb709e28ed8e80a58afcd4d54",
+      "scan_id": "86b0c16242934b768a0ddc0847d9b09d",
+      "source_hash": "c7be1e9502da954a759dbe34ffd602762caf8bb2b84c70dd99a6fcf3736df8bf",
+      "version": 1
+    }
+  ]
+}
