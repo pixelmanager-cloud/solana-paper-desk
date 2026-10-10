@@ -100,6 +100,31 @@ The coordinator review found that the cutover/rollback lifecycle is not yet safe
 
 ---
 
+## T13F — Fix coordinator review findings in T13 (unit wiring) — CRITICAL PATH
+STATUS: OPEN
+DEPENDS: none
+BASE: integration/r1 (T13 is already merged there)
+OWNS: tools/ops/fresh_start.py, tests/test_ops_fresh_start*.py
+AVOID: desk/**
+
+The store bootstrap is good and has been merged. The unit wiring it emits is incomplete:
+1. **Dashboard.** Emit `DESK_PAPER_SCHEDULER_IDENTITY`; without it `Jobs.once()` raises "Reviewed scheduler inode identity required" and the scanner thread dies. Also emit `DESK_PAPER_LEDGER_DB=<root>/paper-ledger.sqlite`, or name the ledger so `/api/paper` finds it. Add a test that runs `Jobs.once()` against the new root with the emitted env.
+2. **Full drop-ins.** Emit full systemd drop-in content per unit, not just env/argv:
+   - `ReadWritePaths=<root>`, because units have `ProtectSystem=strict` with only `/var/lib/solana-desk` writable;
+   - `ConditionPathExists=` overrides for the new ledger path (held and monitor currently keep `ConditionPathExists=/var/lib/solana-desk/active-paper.sqlite` and would be SILENTLY SKIPPED);
+   - reset the ExecStart (`ExecStart=` then the new line) with the full venv interpreter `/opt/solana-desk/.venv/bin/python`, and use proper systemd quoting and `%%` escaping.
+
+   Provide a `render-dropins --out DIR` subcommand that writes one `.conf` per unit, so T11F's cutover tool can install them unchanged. Coordinate with T11F (`origin/cloud/T11F`) and T21 (`deploy/fresh/`) if they exist; the T11F format requirement says to accept T13 output directly.
+3. **Service user.** `apply` refuses unless the effective user is the service user (`--service-user solana-desk`, default `solana-desk`), OR it runs as root with `--chown solana-desk` and chowns every created file, directory and lock, verifying ownership afterwards. Without this the scheduler lease owner check and SQLite writes fail.
+4. **`verify_flat` / `rotate`.**
+   - Take the ledger's paper-cycle lock (non-blocking; refuse if busy) for the whole check and bootstrap.
+   - Refuse if the dispatcher journal has an intent without a result, if any position has `exit_blocked` or a pending exit, or if there is an unresolved observation pass.
+   - Support roots not created by this tool by passing explicit paths.
+5. **Held cycle.** Do NOT silently drop `--dependency-blocker`. Emit the held unit with an explicit `--enable-held` flag that is required to omit it, and document it in the output.
+6. **Backup.** Emit backup unit args for the new root (`desk.backup --data <root>` or `tools.ops.backup`).
+
+---
+
 ## T22 — Extend T01: no store-wide latch from ANY charged failure (from T09 audit F1, F3) — CRITICAL PATH
 STATUS: OPEN
 DEPENDS: branch `cloud/T01` has a `DONE T01:` commit
