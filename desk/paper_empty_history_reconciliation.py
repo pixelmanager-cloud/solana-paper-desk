@@ -155,8 +155,14 @@ def proof(store,progress,v,cfg,*,current_budget=True,review_source=None):
             or digest(dr)!=details['dispatcher_result_hash'] or dr['intent_hash']!=digest(di) or dr['scan_id']!=scan
             or dr['result']!={**result,'evidence_hash':v['outcome_hash']}):raise ValueError('Original completed dispatcher result changed')
     with closing(sqlite3.connect(Path(ctx['ledger_db']).as_uri()+'?mode=ro',uri=True)) as c:
-        c.execute('BEGIN');anchors,_=terminal._ledger(c,cfg,initial=True,historical_source=review_source)
-        if anchors!=v['ledger_anchors']:raise ValueError('Empty-window ledger effects or anchors changed')
+        c.execute('BEGIN');anchors,_=terminal._ledger(c,cfg,initial=current_budget,historical_source=review_source)
+        from .engine import initial_state
+        # Installation proves the unchanged full checkpoint. Later replay keeps
+        # its immutable INIT prefix and independently validates current state;
+        # legitimate new paper events must not resurrect the retired pass.
+        historical={**anchors,'checkpoint_hash':digest(initial_state(cfg))}
+        if (anchors if current_budget else historical)!=v['ledger_anchors']:
+            raise ValueError('Empty-window ledger effects or anchors changed')
     with closing(store.connect()) as c:terminal._monitoring(c,store=store,review_source=review_source)
     terminal._pacing(ctx['pacing_db'])
 
@@ -184,6 +190,9 @@ def reconcile(research_db,evidence_db,ledger_db,cfg,*,pin):
     from .paper_cycle import _lock
     from .paper_observe_cli import _worker_lock
     with ExitStack() as locks:
+        from tools.paper_entry_dispatcher import _path
+        journal=_path(pin['empty_history']['dispatcher_context']['journal'],private=True)
+        if not locks.enter_context(_lock(str(journal)+'.dispatcher.lock')):raise ValueError('Journal busy')
         if locks.enter_context(_worker_lock(Path(ctx['research_db']))) is None:raise ValueError('Research busy')
         for path in (ctx['evidence_db']+'.ownership-invocation.lock',ctx['ledger_db']+'.paper-cycle.lock'):
             if not locks.enter_context(_lock(path)):raise ValueError('Empty-history context busy')

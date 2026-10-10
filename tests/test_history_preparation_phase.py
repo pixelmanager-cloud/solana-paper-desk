@@ -150,7 +150,14 @@ class PreparationTests(unittest.TestCase):
     def test_native_clock_preparation_can_exceed_fresh_ten_seconds(self):
         started=time.monotonic()
         for n in range(5):
-            state=self.advance({'data':self.rows(1,start=n),**({'paginationToken':'p'+str(n)} if n<4 else {})},native=True,latency=4.5 if n==0 else 0)
+            if n==4:
+                # This timing fixture's trades reference another pool. The new
+                # v4 producer must reject missing measurements at exhaustion.
+                with self.assertRaisesRegex(entry.PreparationRejected,'HISTORY_REQUIRED_MEASUREMENTS_UNAVAILABLE'):
+                    self.advance({'data':self.rows(1,start=n)},native=True)
+                state=self.progress.snapshot(self.budget.history_id)
+            else:
+                state=self.advance({'data':self.rows(1,start=n),'paginationToken':'p'+str(n)},native=True,latency=4.5 if n==0 else 0)
         elapsed=time.monotonic()-started
         self.assertGreater(elapsed,10);self.assertLess(elapsed,18)
         self.assertEqual(state['status'],'DONE');self.assertEqual(state['requests_used'],11)

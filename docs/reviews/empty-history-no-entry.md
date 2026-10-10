@@ -18,3 +18,19 @@ results are preserved; proposed retirement uses the existing terminal receipt
 inventory. Deployment compatibility successor authorization is not implemented.
 This checkpoint is for independent review, not integration or activation. Full
 suite and historical regression verification are pending. No provider calls.
+
+Forward checkpoint: historical acceptance now reproduces original v3 preparation,
+SEALED admission prepared at four calls, two prior intake charges, one exhausted
+empty page, five captured fresh reads, BLOCKED result and NULL fresh pass. Current
+reconciliation is idempotent, preserves that NULL and all twelve charges, and
+allows the global gate after a legitimate new clock event. Missing captures and
+extra charges refuse reconciliation. Installation requires unchanged INIT state;
+subsequent replay validates current checkpoint plus original immutable prefix.
+
+Frozen focused run: tests.test_empty_history_no_entry and
+ tests.test_history_preparation_phase, 20 PASS in 54.569 seconds. Native timing
+fixture retains its >10/<18 second checks and explicitly expects the new rejection
+for its unrelated-pool rows. New matrix binds actual trade bytes to the candidate
+pool and includes a one-buyer measured-window control that cannot claim missing
+measurements. Post-recovery BUY/held/exit and runtime successor validation remain
+pending. Successor draft is preserved locally outside runtime source, unpublished.
