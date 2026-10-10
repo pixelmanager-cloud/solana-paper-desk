@@ -471,21 +471,46 @@ class Abandonment(_Fixture):
         self.assertEqual(mb._deleted_lock_holders(old), {4242})          # ... but a live holder is on the old inode
         self.blocked_read()
 
-    def test_unreadable_process_table_or_same_user_permission_failure_fails_closed(self):
+    def denied_fd_dirs(self):
+        real_listdir = os.listdir
+        def deny(path):
+            if str(path).endswith('/fd'):
+                raise PermissionError('denied')
+            return real_listdir(path)
+        return patch.object(mb.os, 'listdir', deny)
+
+    def test_unreadable_process_table_fails_closed(self):
         self.kill_after_reservation()
         self.use_lock_sources(table='')
         self.restart(T + mb.ABANDON_AFTER_SECONDS + 1)
         with patch.object(mb, 'PROC_ROOT', '/nonexistent-proc-root'):
             self.assertIsNone(mb._deleted_lock_holders(self.lock_path()))
             self.blocked_read()
-        real_listdir = os.listdir
-        def deny(path):
-            if str(path).endswith('/fd'):
-                raise PermissionError('denied')
-            return real_listdir(path)
+        with patch.object(mb, 'LOCK_TABLE', '/nonexistent-lock-table'):
+            self.assertIsNone(mb._deleted_lock_holders(self.lock_path()))
+
+    def test_unreadable_process_that_holds_no_flock_cannot_be_the_owner(self):
+        """GitHub runners have same-user helpers such as `(sd-pam)` whose /proc/<pid>/fd is unreadable and which hold
+        no flock. Treating them as 'owner unknown' made abandonment impossible there (T38); only a flock holder counts."""
+        self.kill_after_reservation()
+        self.use_lock_sources(table=self.table_line(self.lock_path(), 4000), proc={4243: 'x'})   # 4000 holds a flock, 4243 does not
+        self.restart(T + mb.ABANDON_AFTER_SECONDS + 1)
+        with self.denied_fd_dirs():
+            self.assertEqual(mb._flock_pids(), {4000})
+            self.assertEqual(mb._deleted_lock_holders(self.lock_path()), set())
         self.use_lock_sources(table='', proc={4243: 'x'})
-        with patch.object(mb.os, 'listdir', deny):
-            self.assertIsNone(mb._deleted_lock_holders(self.lock_path()))   # same-uid process we cannot inspect
+        self.now = T + mb.ABANDON_AFTER_SECONDS + 1
+        with self.denied_fd_dirs():
+            self.read()                                                  # the orphan resolves despite the opaque process
+        self.assertEqual(self.store.load(self.rows()[1][0][1])['failure_code'], 'ABANDONED_CHARGED')
+
+    def test_unreadable_process_that_holds_a_flock_blocks_abandonment(self):
+        self.kill_after_reservation()
+        self.use_lock_sources(table=self.table_line(self.lock_path(), 4243), proc={4243: 'x'})
+        self.restart(T + mb.ABANDON_AFTER_SECONDS + 1)
+        with self.denied_fd_dirs():
+            self.assertIsNone(mb._deleted_lock_holders(self.lock_path()))
+            self.blocked_read()
 
     def test_handoff_context_orphan_is_critical_with_operator_guidance(self):
         self.kill_after_reservation()

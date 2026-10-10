@@ -108,19 +108,39 @@ def _lock_holders(path):
     return holders
 
 
+def _flock_pids():
+    """PIDs other than ours that hold any flock according to the kernel lock table; None when unreadable."""
+    try:
+        with open(LOCK_TABLE) as table:
+            lines = table.read().splitlines()
+    except OSError:
+        return None
+    pids = set()
+    for line in lines:
+        parts = line.split()
+        if '->' in parts or 'FLOCK' not in parts:
+            continue
+        try:
+            pids.add(int(parts[parts.index('FLOCK') + 3]))
+        except (IndexError, ValueError):
+            return None
+    return pids - {os.getpid()}
+
+
 def _deleted_lock_holders(path):
     """PIDs other than ours holding an open descriptor on a DELETED lock file at ``path``.
 
     That is the recreated-lock-file hazard: the live owner's flock sits on an unlinked inode the
-    path no longer names. None when the process table cannot be read (fail closed). Processes of
-    other users whose descriptors are unreadable are skipped only when they are not the lock
-    file's owner (a root-owned holder of a user's lock file is a documented residual risk).
+    path no longer names. None when the process table cannot be read (fail closed). A process whose
+    descriptors cannot be read (other users' processes, and same-user helpers such as `(sd-pam)` that
+    drop dumpability) is skipped unless the kernel lock table shows it holding a flock: only a flock
+    holder can be the owner we are looking for, and that table is readable for every pid. A
+    root-owned holder of a user's lock file that we cannot inspect is also covered by this rule.
     """
     target = str(path) + ' (deleted)'
-    try:
-        owner = os.stat(path).st_uid
-    except OSError:
-        owner = os.geteuid()
+    flock_pids = _flock_pids()
+    if flock_pids is None:
+        return None
     try:
         pids = [n for n in os.listdir(PROC_ROOT) if n.isdigit()][:MAX_PROC_SCAN]
     except OSError:
@@ -133,11 +153,8 @@ def _deleted_lock_holders(path):
         try:
             names = os.listdir(fd_dir)
         except PermissionError:
-            try:
-                if os.stat(f'{PROC_ROOT}/{pid}').st_uid == owner:
-                    return None                         # same user but unreadable: cannot prove
-            except OSError:
-                pass
+            if int(pid) in flock_pids:
+                return None                             # a flock holder we cannot inspect: cannot prove it is not ours
             continue
         except OSError:
             continue                                    # exited meanwhile
