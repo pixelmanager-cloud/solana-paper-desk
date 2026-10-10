@@ -518,17 +518,26 @@ class ReclaimClockTests(PacingReclaimTests):
         self.assertEqual(self.make(Clock(T0 - 50)).reclaim_orphans(), [])
         self.assertEqual(self.make(Clock(float('nan'))).reclaim_orphans(), [])
 
+    def test_only_a_clock_problem_is_swallowed_an_integrity_error_still_raises(self):
+        self.killed_orphan()
+        pacer = self.make(Clock(T0 + 100))
+        for code in ('PACING_DATABASE_INVALID', 'PACING_DATABASE_CHANGED', 'PACING_POLICY_INVALID'):
+            with self.subTest(code), patch.object(p.Pacer, '_now', side_effect=p.PacingError(code)):
+                with self.assertRaisesRegex(p.PacingError, code):
+                    pacer.reclaim_orphans()                        # fail closed: never hidden as "nothing to reclaim"
+
     def test_the_gate_refuses_on_the_pending_grant_not_on_the_clock(self):
         from desk import paper_terminal_reconciliation as terminal
         self.killed_orphan()
-        behind = Clock(T0 - 50)
-        with patch.object(terminal.provider_pacing, 'Pacer', lambda path: p.Pacer(path, clock=behind.time)):
+        behind, real = Clock(T0 - 50), p.Pacer
+        with patch.object(terminal.provider_pacing, 'Pacer', lambda path: real(path, clock=behind.time)):
             with self.assertRaisesRegex(ValueError, 'Provider outcome pending'):
                 terminal._pacing(self.path)                            # the pre-existing fail-closed refusal, not PacingError
 
     def test_the_gate_passes_a_clean_database_even_when_the_clock_disagrees(self):
         from desk import paper_terminal_reconciliation as terminal
-        with patch.object(terminal.provider_pacing, 'Pacer', lambda path: p.Pacer(path, clock=Clock(T0 - 50).time)):
+        real = p.Pacer
+        with patch.object(terminal.provider_pacing, 'Pacer', lambda path: real(path, clock=Clock(T0 - 50).time)):
             terminal._pacing(self.path)                                # nothing pending: acquire() will refuse the bad clock later
 
 
