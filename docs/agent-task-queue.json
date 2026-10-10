@@ -6606,13 +6606,13 @@
       },
       "PR186": {
         "head": "e0c79e849856a58248a23ad70f34d0c2592505f4",
-        "review": "test-only fixture delta pending07; runtime previouslyPASS",
+        "review": "PASS independent07 turn01a12373-5dd4-7654-b661-25ba46c6ce97;43 combined seam tests10.304s",
         "ci": "pending"
       },
       "PR187": {
         "head": "b453a745542cae6b394aec379362f0d6d6d1fe6b",
-        "review": "07 reviewing repaired scalarbounds and historicalfixture",
-        "owner": "06 fixing"
+        "review": "PASS independent07 turn01a12373-5dd4-7654-b661-25ba46c6ce97;71 tests32.684s and both original bounded-read probes",
+        "owner": "06 completed implementation; final CI pending"
       }
     },
     "activation_draft": {
@@ -6629,6 +6629,29 @@
       "compressed_bytes": 5112690,
       "combined_source": "c7be1e9502da954a759dbe34ffd602762caf8bb2b84c70dd99a6fcf3736df8bf"
     },
-    "assembly_requirement": "Use each component merge-base diff or three-way merge. PR185 diverged at2d507b83; must preserve950Krakenpacing andmonitoringsuccessorpolicies,helperanddocs. Scratchv1-v3superseded;v4correct."
+    "assembly_requirement": "Use each component merge-base diff or three-way merge. PR185 diverged at2d507b83; must preserve950Krakenpacing andmonitoringsuccessorpolicies,helperanddocs. Scratchv1-v3superseded;v4correct.",
+    "combined_validation": {
+      "worker": "09",
+      "turn": "01a12376-27ae-737c-baec-93092e5cf858",
+      "source": "c7be1e9502da954a759dbe34ffd602762caf8bb2b84c70dd99a6fcf3736df8bf",
+      "native_probe": "PASS208pages51375067rawbytes;dispatch21.488s;Helius2.001sJupiter2.024s",
+      "full_suite": "running"
+    },
+    "service_cutover_review": {
+      "worker": "07",
+      "status": "requested",
+      "script": "work/start-paper-ready-reviewed.py",
+      "source": "c7be1e9502da954a759dbe34ffd602762caf8bb2b84c70dd99a6fcf3736df8bf",
+      "same_ledger": true,
+      "turn": "01a1237b-3a25-71a8-953b-f0ad566b19eb"
+    },
+    "dispatcher_activation_review": {
+      "worker": "06",
+      "turn": "01a12361-2636-71b1-b688-39efa7a5a279",
+      "result": "SCOPED_OPERATIONAL_PASS conditional final reviewed source and journal context",
+      "head": "8aad8a827ce015f16a7ec8fd8a88ab2102e07084",
+      "initialized": false,
+      "activated": false
+    }
   }
 }
