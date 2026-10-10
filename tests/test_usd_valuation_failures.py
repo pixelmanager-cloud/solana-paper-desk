@@ -154,6 +154,26 @@ class AuthExceptionTests(Probe):
         self.assertEqual(self.end_state('held', jupiter=FAULTS['401'], kraken=ConnectionResetError), 'INTEGRITY_HOLD', self.last)
 
 
+class ProofDefenseTests(Probe):
+    """Defence in depth: the no-entry PROOF refuses a cited provider fault even when the result carries no fault diagnostic."""
+
+    def test_the_proof_refuses_a_fault_without_relying_on_the_diagnostic(self):
+        import sys
+        real = uv.faulted_scans
+
+        def only_the_proof(load, refs):
+            if sys._getframe(1).f_code.co_filename.endswith('paper_cycle.py'):
+                return []                                        # the cycle's own hook is switched off for this test
+            return real(load, refs)
+        with patch.object(uv, 'faulted_scans', only_the_proof):
+            state = self.end_state('entry', jupiter=FAULTS['tls'], kraken=ConnectionResetError)
+        self.assertNotEqual(state, 'NO_ENTRY', self.last)          # the proof refused to retire it as a normal rejection
+        self.assertEqual(state, 'FAILED_CHARGED', self.last)       # (without the diagnostic the closure alone cannot hold it)
+
+    def test_the_proof_still_accepts_a_transient_failure(self):
+        self.assertEqual(self.end_state('entry', jupiter=ConnectionResetError, kraken=ConnectionResetError), 'NO_ENTRY', self.last)
+
+
 class AttemptUnitTests(unittest.TestCase):
     def jupiter(self, **kw):
         return regime_fixtures.jupiter('100', 1000, **kw)
