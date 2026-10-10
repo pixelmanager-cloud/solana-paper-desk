@@ -1,0 +1,17 @@
+[Unit]
+Description=Daily paper desk summary notification
+[Service]
+Type=oneshot
+User=solana-desk
+Group=solana-desk
+WorkingDirectory=<RELEASE_DIR>
+ExecStart=/opt/solana-desk/.venv/bin/python -m tools.ops.notify daily --root <FRESH_ROOT> --report <STATE_DIR>/health.json --state <STATE_DIR>/notify-state.json
+UMask=0077
+NoNewPrivileges=true
+PrivateTmp=true
+ProtectSystem=strict
+ProtectHome=true
+ReadWritePaths=<STATE_DIR> <FRESH_ROOT>
+RestrictAddressFamilies=AF_INET AF_INET6 AF_UNIX
+TimeoutStartSec=60
+MemoryMax=128M

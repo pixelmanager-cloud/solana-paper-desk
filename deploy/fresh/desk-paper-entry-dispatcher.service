@@ -1,0 +1,29 @@
+# One bounded discovery-to-paper entry dispatch. Paper only: no signing, no broadcasting.
+# Started by desk-paper-entry-dispatcher.timer, which the coordinator enables only after verification.
+[Unit]
+Description=One bounded discovery-to-paper candidate dispatch (execute)
+After=network-online.target
+Wants=network-online.target
+ConditionPathExists=<FRESH_ROOT>/entry-dispatch/dispatch.sqlite
+ConditionPathExists=<FRESH_ROOT>/paper-scheduler.lock
+[Service]
+Type=oneshot
+User=solana-desk
+Group=solana-desk
+WorkingDirectory=<RELEASE_DIR>
+Environment=DESK_PROVIDER_PACING_DB=<PACING_DB>
+Environment=DESK_PAPER_SCHEDULER_IDENTITY=<SCHEDULER_IDENTITY>
+LoadCredential=provider-keys.json:/etc/solana-desk/provider-keys.json
+ExecStart=/opt/solana-desk/.venv/bin/python -m tools.paper_scheduler --research-db <FRESH_ROOT>/research.sqlite --mode entry -- --config <CONFIG> --research-db <FRESH_ROOT>/research.sqlite --evidence-db <FRESH_ROOT>/evidence.sqlite --ledger-db <FRESH_ROOT>/paper-ledger.sqlite --discovery-db <DISCOVERY_DB> --pacing-db <PACING_DB> --journal <FRESH_ROOT>/entry-dispatch/dispatch.sqlite --taker <TAKER> --amount-raw <AMOUNT_RAW> --pool-fee-bps 25 --execute --systemd-credentials
+UMask=0077
+NoNewPrivileges=true
+PrivateTmp=true
+ProtectSystem=strict
+ProtectHome=true
+ReadWritePaths=<FRESH_ROOT> <PACING_DIR>
+ReadOnlyPaths=<DISCOVERY_DIR>
+RestrictAddressFamilies=AF_INET AF_INET6 AF_UNIX
+# Code worst case ~282 s plus pacing waits (T09 F8); a kill after the dispatch intent is a permanent latch.
+TimeoutStartSec=600
+MemoryMax=384M
+TasksMax=32
