@@ -49,6 +49,7 @@ PROC_ROOT = '/proc'
 MAX_PROC_SCAN = 65536
 ABANDONED_CODE = 'ABANDONED_CHARGED'
 ABANDONED_KIND = 'paper_monitoring_abandoned_v1'
+MAX_ABANDONED = 64        # pass closure resolves at most this many orphans per call (bounded recovery)
 ABANDONED_FIELDS = frozenset({
     'kind', 'failure_code', 'scan_id', 'method', 'params_hash', 'reservation_id', 'reserved_at',
     'resolved_at', 'abandon_after_seconds', 'reason', 'charged', 'refunded', 'monitoring_reservation'})
@@ -106,6 +107,23 @@ def _lock_holders(path):
         if where.rsplit(':', 1)[-1] == str(inode):      # inode only: a device-id mismatch must not hide a holder
             holders.add(pid)
     return holders
+
+
+def locks_free(paths):
+    """Owner proof shared by monitoring abandonment and pass closure (T22G).
+
+    True only when, for every lock file, no process OTHER than this one holds a flock on the inode the path names
+    and none holds a flock on a DELETED lock inode (the delete-and-recreate hazard). A missing lock file, an
+    unreadable lock table or an unreadable process table is "owner unknown", never "owner gone".
+    """
+    for path in paths:
+        holders = _lock_holders(path)
+        if holders is None or not holders <= {os.getpid()}:
+            return False
+        unlinked = _deleted_lock_holders(path)
+        if unlinked is None or unlinked:
+            return False
+    return True
 
 
 def _deleted_lock_holders(path):
@@ -532,14 +550,41 @@ class MonitoringBudget:
         whose lease nobody holds belongs to a dead process. This process's own PID is fine: the
         reader that is about to reserve is the new owner. An unreadable lock table is not proof.
         """
-        for path in (str(self.path) + '.ownership-invocation.lock', str(self.ledger) + '.paper-cycle.lock'):
-            holders = _lock_holders(path)
-            if holders is None or not holders <= {os.getpid()}:
-                return False
-            unlinked = _deleted_lock_holders(path)
-            if unlinked is None or unlinked:
-                return False
-        return True
+        return locks_free((str(self.path) + '.ownership-invocation.lock', str(self.ledger) + '.paper-cycle.lock'))
+
+    def abandon_pending(self, *, cause='LEASE_GONE'):
+        """Resolve every orphan reservation with an ABANDONED_CHARGED outcome (T22 pass closure entry point).
+
+        Same rules as the read path (T25F): the owner must be provably gone (no other process holds the
+        evidence-invocation or paper-cycle lock, lock table readable), every orphan older than
+        ABANDON_AFTER_SECONDS, and not a handoff (version 3) allowance. Otherwise nothing is written and
+        MONITORING_OUTCOME_PENDING is raised (fail closed). Charged, never refunded. Returns the resolved ids.
+        """
+        if type(cause) is not str or not 1 <= len(cause) <= 128:
+            raise MonitoringBlocked('MONITORING_OUTCOME_BINDING_INVALID')
+        now = self.clock()
+        if type(now) not in (int, float) or not math.isfinite(now) or not 0 <= now < 2**63:
+            raise MonitoringBlocked('MONITORING_CLOCK_INVALID')
+        with self.store.connect() as c:
+            c.execute('BEGIN IMMEDIATE')
+            try:
+                row = self._accounting(c, checkpoint=True)
+                pending = self._pending(c)
+                if not pending:
+                    c.rollback()
+                    return []
+                if len(pending) > MAX_ABANDONED or not self._abandonable(row, pending, now):
+                    c.rollback()
+                    raise MonitoringBlocked('MONITORING_OUTCOME_PENDING')
+                # No re-verification here: self.store.load opens its own connection and cannot see the pages this
+                # uncommitted transaction just wrote. _resolve_abandoned checks the same predicates before writing,
+                # and the next _accounting pass verifies the committed records.
+                self._resolve_abandoned(c, row, pending, now, policy.monitoring_policy(c))
+                c.commit()
+                return [identity for identity, *_ in pending]
+            except BaseException:
+                c.rollback()
+                raise
 
     def _abandonable(self, row, pending, now):
         if row[0] == 3:      # handoff contexts bind every receipt to their context hash; stay fail-closed
@@ -573,6 +618,18 @@ class MonitoringBudget:
                     or not _outcome_bound(record, identity, at, scan, method, params_hash)):
                 raise MonitoringBlocked('MONITORING_ACCOUNTING_INVALID')
             key = self._save_page(c, record)
+            # Read back what was actually persisted, inside the same transaction (self.store.load opens another
+            # connection and cannot see uncommitted pages), and hold it to the same predicates.
+            stored = c.execute('SELECT payload FROM pages WHERE hash=?', (key,)).fetchone()
+            try:
+                retained = json.loads(zlib.decompress(stored[0]))
+            except (TypeError, ValueError, zlib.error):
+                raise MonitoringBlocked('MONITORING_ACCOUNTING_INVALID') from None
+            if (type(retained) is not dict or digest(retained) != key
+                    or not _receipt_valid(retained.get('monitoring_reservation'), receipt['kind'], receipt['cap'],
+                                          new_receipt and transition[1], identity, at, checkpoint, mint)
+                    or not _outcome_bound(retained, identity, at, scan, method, params_hash)):
+                raise MonitoringBlocked('MONITORING_ACCOUNTING_INVALID')
             c.execute('INSERT INTO paper_monitoring_outcomes VALUES(?,?)', (identity, key))
 
     def _save_page(self, c, payload):

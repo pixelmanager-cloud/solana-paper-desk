@@ -39,6 +39,11 @@ from tools import history_first_paper_entry as entry
 PROVENANCE = 'PUBLIC_MAINNET_CAPTURE_NOT_TRADING_EVIDENCE'
 MAX_DISPATCHES = 4096
 MAX_PAYLOAD = 65536
+FAIL_KIND = 'dispatcher_failed_charged_v1'
+FAIL_FIELDS = {'kind','version','status','cause','entry_authorized','execution_status','live_readiness'}
+# A dispatch holds .dispatcher.lock for its whole life, so an intent seen by a later holder of that lock is
+# abandoned; the deadline additionally keeps a still-plausible slow dispatch from being closed by clock skew.
+ABANDON_AFTER_SECONDS = 900
 MAX_JOURNAL = 32 * 1024 * 1024
 SCHEMAS = {
     'context': 'CREATE TABLE context(id INTEGER PRIMARY KEY CHECK(id=1),payload TEXT NOT NULL,hash TEXT NOT NULL)',
@@ -200,7 +205,7 @@ def _read_journal(c, version=1):
     return values
 
 
-def _validate(c, expected):
+def _validate(c, expected, unresolved=None):
     values = _read_journal(c, expected.get('journal_schema', 1))
     retired={}; bindings={}; historical_contexts={}
     if values['context'] != {1: expected}:
@@ -212,10 +217,10 @@ def _validate(c, expected):
             retired=lineage(expected,values['context'][1])
         else:
             bindings,retired,historical_contexts=edge
-    return _check_records(c,expected,values,bindings,retired,historical_contexts=historical_contexts)
+    return _check_records(c,expected,values,bindings,retired,historical_contexts=historical_contexts,unresolved=unresolved)
 
 
-def _check_records(c,expected,values,bindings,retired,*,historical_contexts=None,review_source=None):
+def _check_records(c,expected,values,bindings,retired,*,historical_contexts=None,review_source=None,unresolved=None):
     historical_contexts={} if historical_contexts is None else historical_contexts
     if review_source is not None and (not runtime._hash(review_source) or review_source!=expected['source_hash']):
         raise ValueError('Exact historical dispatcher review source required')
@@ -284,6 +289,21 @@ def _check_records(c,expected,values,bindings,retired,*,historical_contexts=None
                 if _rejection_evidence(record_context, value, result['scan_id']) != original_result:
                     raise ValueError('Rejection disposition conflict')
                 continue
+            if type(original_result) is dict and original_result.get('kind') == FAIL_KIND:
+                from desk.paper_pass_closure import is_integrity, is_transient, ABANDONED_CAUSE
+                if (set(original_result) != FAIL_FIELDS or original_result['version'] != 1
+                        or original_result['status'] not in ('FAILED_CHARGED','ABANDONED_CHARGED')
+                        or type(original_result['cause']) is not str or not 1 <= len(original_result['cause']) <= 128
+                        or is_integrity(original_result['cause']) or original_result['entry_authorized'] is not False
+                        or (original_result['status'] == 'FAILED_CHARGED' and not is_transient(original_result['cause']))
+                        or original_result['execution_status'] != 'EXECUTION_UNVERIFIED'
+                        or original_result['live_readiness'] is not False
+                        or (result['scan_id'] is not None and (type(result['scan_id']) is not str or not 1 <= len(result['scan_id']) <= 256))
+                        or (original_result['status'] == 'ABANDONED_CHARGED'
+                            and (original_result['cause'] != ABANDONED_CAUSE
+                                 or result['at']-value['at'] < ABANDON_AFTER_SECONDS))):
+                    raise ValueError('Dispatch failure disposition invalid')
+                continue
             if type(original_result) is not dict or not runtime._hash(original_result.get('evidence_hash')):
                 raise ValueError('Original cycle result required')
             store = EvidenceStore(expected['paths']['evidence_db']['path'],read_only=True)
@@ -297,6 +317,12 @@ def _check_records(c,expected,values,bindings,retired,*,historical_contexts=None
                     or original_intent['config_hash'] != expected['config_hash']
                     or original_intent['ledger'] != expected['paths']['ledger_db']['path']):
                 raise ValueError('Original cycle intent conflict')
+    missing = set(values['intents']) - (set(values['results'])|set(retired))
+    if unresolved is not None and not set(retired)&set(values['results']):
+        # Execute path only: the caller closes each stale intent through _recover_unresolved and then
+        # revalidates strictly. Every other binding above has already been verified.
+        unresolved.extend(sorted(missing))
+        return values
     if set(values['intents']) != set(values['results'])|set(retired) or set(retired)&set(values['results']):
         raise ValueError('Unresolved dispatch; no retry or automatic recovery')
     return values
@@ -349,9 +375,7 @@ def _preflight(ctx, scan=None):
         snapshot = monitor.MonitoringBudget(store, ledger, cfg).snapshot()
         if snapshot['status'] != 'AVAILABLE' or snapshot.get('blockers'):
             raise ValueError('Monitoring pending or blocked')
-        if concurrency.selected(cfg) and scan is None:
-            # Only BEFORE the irreversible dispatch intent: a refusal raised after charges (scan is set
-            # on every later call) would leave an unresolved intent. The engine stays authoritative.
+        if concurrency.selected(cfg):
             # Reserve held monitoring for every position (the new one included) and
             # refuse entries the engine's STALE_PORTFOLIO gate would reject anyway.
             refusal = concurrency.entry_blockers(state, cfg, monitoring_remaining=snapshot['remaining'],
@@ -512,6 +536,8 @@ class _HeldCadence:
         if not reasons:
             return None
         return {'reasons': reasons, 'ran': True, 'exit_code': code, 'mode': state['mode']}
+
+
 
 
 def _intake_guard(ctx, scan):
@@ -842,6 +868,122 @@ def _write(c, table, identity, value, hint=None, evaluation=None):
         c.rollback(); raise
 
 
+def _scan_for(research_db, mint):
+    with closing(sqlite3.connect(Path(research_db).as_uri()+'?mode=ro', uri=True)) as c:
+        row = c.execute('SELECT id FROM scans WHERE mint=? ORDER BY rowid LIMIT 1', (mint,)).fetchone()
+    return row[0] if row else None
+
+
+class DispatchFailure(ValueError):
+    """A typed, ordinary dispatch outcome after the intent was written (closable as FAILED_CHARGED)."""
+    def __init__(self, code, message):
+        super().__init__(message)
+        self.code = code
+
+
+def _close_dispatch(expected, journal, identity, intent, scan, cause, status):
+    """Terminal FAILED_CHARGED/ABANDONED_CHARGED result for an unresolved intent.
+
+    Written only when the evidence store is usable again: any unresolved pass is closed (or already was) and
+    the global gate is clear. The intent stays charged and its mint is never dispatched again. Raises, leaving
+    the intent unresolved, on any doubt (integrity causes, remaining latches).
+    """
+    from desk.paper_pass_closure import recover_abandoned, is_integrity, is_transient, ABANDONED_CAUSE
+    if is_integrity(cause) or (status == 'FAILED_CHARGED' and not is_transient(cause)):
+        raise ValueError('Cause is not on the transient allow-list; the intent stays unresolved')
+    if status == 'ABANDONED_CHARGED' and cause != ABANDONED_CAUSE:
+        raise ValueError('Abandoned dispatch must name the lease')
+    paths = {k: v['path'] for k, v in expected['paths'].items()}
+    cfg = cli._config(paths['config'])
+    with monitor._context(paths['research_db'], paths['evidence_db'], paths['ledger_db'], cfg) as (store, ledger, state):
+        progress = HistoryProgress.__new__(HistoryProgress); progress.store = store
+        if intent['hint']['mint'] in state['positions']:
+            raise ValueError('Candidate already has an open paper position; not a failed dispatch')
+        recover_abandoned(store, progress, ledger_db=ledger, cfg=cfg, clock=_now, research_db=paths['research_db'])
+        if terminal.gate(store, Path(paths['research_db']), (), ledger_locked=str(ledger)):
+            raise ValueError('Store still latched after dispatch failure')
+        snapshot = monitor.MonitoringBudget(store, ledger, cfg).snapshot()
+        if snapshot['status'] != 'AVAILABLE' or snapshot.get('blockers'):
+            raise ValueError('Monitoring pending or blocked after dispatch failure')
+    result = {'kind': FAIL_KIND, 'version': 1, 'status': status, 'cause': cause, 'entry_authorized': False,
+              'execution_status': 'EXECUTION_UNVERIFIED', 'live_readiness': False}
+    outcome = {'version': 1, 'intent_hash': digest(intent), 'at': _now(), 'scan_id': scan, 'result': result}
+    if len(canonical(outcome).encode()) > MAX_PAYLOAD:
+        raise ValueError('Dispatch failure outcome exceeds bound')
+    _write(journal, 'results', identity, outcome)
+
+
+HOLD_SUFFIX = '.dispatch-hold.'
+
+
+def _hold_path(expected, identity):
+    return str(_path(expected['journal'], private=True)) + HOLD_SUFFIX + identity
+
+
+def _hold_dispatch(expected, identity, cause):
+    """T22H item 2: durable (fsynced file + directory) record that this dispatcher STOPPED ON PURPOSE or on an integrity cause.
+
+    An intent has no hold row, so without this a later dispatcher could not tell a deliberate refusal from a dead process and
+    would abandon it after 900 s. Written before the failure propagates; a SIGKILL writes nothing (that IS an abandoned
+    dispatcher). Never raises: the original failure is propagating.
+    """
+    try:
+        path = _hold_path(expected, identity)
+        fd = os.open(path, os.O_WRONLY | os.O_CREAT | os.O_EXCL | os.O_NOFOLLOW, 0o600)
+        try:
+            os.write(fd, canonical({'dispatch_id': identity, 'cause': str(cause)[:128]}).encode())
+            os.fsync(fd)
+        finally:
+            os.close(fd)
+        dfd = os.open(os.path.dirname(path), os.O_RDONLY)
+        try:
+            os.fsync(dfd)
+        finally:
+            os.close(dfd)
+    except FileExistsError:
+        pass
+    except OSError:
+        return False
+    return True
+
+
+def _held(expected, identity):
+    return os.path.lexists(_hold_path(expected, identity))
+
+
+def _recover_unresolved(expected, journal, ids):
+    """Execute path: close stale unresolved intents of a dead dispatcher (this process holds its lock)."""
+    from desk.paper_pass_closure import ABANDONED_CAUSE
+    from desk.monitoring_budget import locks_free
+    paths = {k: v['path'] for k, v in expected['paths'].items()}
+    now = _now()
+    # The flock alone is not proof (a deleted and recreated lock file hides a live dispatcher on the unlinked inode),
+    # and wall-clock age alone is not either: use the kernel lock table plus the deleted-inode scan.
+    if not locks_free((str(_path(expected['journal'], private=True)) + '.dispatcher.lock',)):
+        return
+    for identity in ids[:8]:
+        intent = json.loads(journal.execute('SELECT payload FROM intents WHERE id=?', (identity,)).fetchone()[0])
+        if now - intent['at'] < ABANDON_AFTER_SECONDS:
+            continue                       # inside its deadline: the strict revalidation keeps refusing
+        # T22H item 2: abandon ONLY when (1) there is no hold, (2) the owner proof above says the owner is gone (done), and
+        # (3) no retained attempt original of this intent's scan shows a latching failure.
+        if _held(expected, identity):
+            continue                       # the dispatcher refused on purpose / stopped on an integrity cause: stays latched
+        scan = _scan_for(paths['research_db'], intent['hint']['mint'])
+        if scan is not None and _latching_attempts(paths, scan):
+            continue
+        _close_dispatch(expected, journal, identity, intent, _scan_for(paths['research_db'], intent['hint']['mint']),
+                        ABANDONED_CAUSE, 'ABANDONED_CHARGED')
+
+
+def _latching_attempts(paths, scan):
+    from desk.paper_pass_closure import latching_attempt_for_scan
+    try:
+        return latching_attempt_for_scan(EvidenceStore(paths['evidence_db'], read_only=True), scan)
+    except (ValueError, OSError, sqlite3.Error):
+        return True                        # unreadable evidence is not proof of a transient history
+
+
 def dispatch(expected, *, execute=False, systemd_credentials=False):
     # Include journal lineage validation and all subsequent gates; discard bytes
     # on every return/error. Mutable state and proof decisions are never cached.
@@ -853,7 +995,11 @@ def _dispatch(expected, *, execute=False, systemd_credentials=False):
     paths = {k: v['path'] for k,v in expected['paths'].items()}
     v2 = expected.get('journal_schema', 1) == 2
     with _journal(expected['journal']) as journal:
-        _validate(journal, expected)
+        unresolved = []
+        _validate(journal, expected, unresolved=unresolved if execute else None)
+        if unresolved:
+            _recover_unresolved(expected, journal, unresolved)
+            _validate(journal, expected)
         if v2 and execute:
             # Derived from the validated journal only; repairs a crash between a result and its row.
             _reconcile_watchlist(expected, journal, _now())
@@ -873,130 +1019,168 @@ def _dispatch(expected, *, execute=False, systemd_credentials=False):
             raise ValueError('Explicit managed credentials required')
         if journal.execute('SELECT COUNT(*) FROM intents').fetchone()[0] >= MAX_DISPATCHES:
             raise ValueError('Dispatcher journal capacity exhausted; no reset')
-        identity = uuid.uuid4().hex
-        intent = {'version':1,'context_hash':digest(expected),'at':now,'hint':hint,
-                  **({'evaluation':evaluation} if v2 else {})}
-        # A competing held/worker invocation is a zero-intent refusal. Complete
-        # the final lock reacquisition before publishing the irreversible latch.
-        _preflight(expected)
-        from desk.providers import helius_rpc
-        cfg = cli._config(paths['config'])
-        with monitor._context(paths['research_db'],paths['evidence_db'],paths['ledger_db'],cfg) as (store, ledger, state):
-            if concurrency.entry_blocked(state, cfg):
-                raise ValueError('Held-position priority or paused ledger')
-            cli._credentials()
-            jobs = JobPersistence.__new__(JobPersistence); jobs.path = Path(paths['research_db'])
-            with closing(jobs.connect()) as c:
-                admitted = c.execute('SELECT COUNT(*) FROM scans WHERE mint=?',(hint['mint'],)).fetchone()[0]
-                if admitted != (evaluation - 1 if v2 else 0):
-                    raise ValueError('Already admitted candidate')
-            if terminal.gate(store,jobs.path,(),ledger_locked=str(ledger)):
-                raise ValueError('Observation recovery required')
-            _write(journal,'intents',identity,intent,hint,evaluation)
-            # From this point any interruption stays unresolved; never retry or
-            # erase an intent merely because acquisition has not yet spent.
-            scan = jobs.admit(hint['mint'],kind=BIRTH_ACQUISITION_V1,evidence_db=store.path,
-                              paper_token_profile_version=cfg.get('paper_token_profile_version',0))
-        cadence = _HeldCadence(expected)
-        phase = None
-
-        def no_entry(phase_name, halt):
-            record = checkpoint_record(identity, intent, scan, phase_name, halt)
-            outcome = {'version':1,'intent_hash':digest(intent),'at':_now(),'scan_id':scan,'result':record}
-            if len(canonical(outcome).encode()) > MAX_PAYLOAD:raise ValueError('Checkpoint outcome exceeds bound')
-            _write(journal,'results',identity,outcome)
-            return {'status':'DISPATCHED','dispatch_id':identity,'scan_id':scan,'paper_status':'NO_ENTRY',
-                    'checkpoint_no_entry':{'phase':phase_name,'reasons':record['reasons'],'held_pass':record['held_pass']},
-                    'entry_authorized':False,'execution_status':'EXECUTION_UNVERIFIED','live_readiness':False}
-
-        def overrun():
-            return {'reasons':['PHASE_CAP_EXCEEDED'],'ran':False,'exit_code':None,'mode':cycle._state(Path(paths['ledger_db']),cfg)['mode']}
-
-        def guarded_rpc(method,params):
-            if phase is not None:phase.check()      # no request of an over-cap phase starts
-            with _held_guard(expected,scan):
-                return helius_rpc(method,params)
-        halt = cadence.checkpoint(concurrency.PHASE_CAPS['acquisition'])
-        if halt:return no_entry('acquisition',halt)
-        phase = cadence.phase('acquisition')
-        acquired = acquisition.acquire(paths['research_db'],paths['evidence_db'],guarded_rpc,
-                                      scan_id=scan,paper_token_profile_version=cfg.get('paper_token_profile_version',0))
-        scan = acquired.get('scan_id')
-        if scan and acquired.get('status') == 'UNSUPPORTED_TOKEN':
-            def publish_rejection(proof):
-                outcome = {'version':1,'intent_hash':digest(intent),'at':_now(),'scan_id':scan,'result':proof}
-                _write(journal,'results',identity,outcome)
-            _rejection(expected,intent,scan,publish_rejection)
-            return {'status':'TOKEN_REJECTED','dispatch_id':identity,'scan_id':scan,
-                    'entry_authorized':False,'execution_status':'EXECUTION_UNVERIFIED','live_readiness':False}
-        if phase.finish():return no_entry('acquisition',overrun())   # cut or late: terminal, charges retained
-        if not scan or acquired.get('status') not in ('SEED_HISTORY_PARTIAL','SEED_HISTORY_ACQUIRED','LAUNCH_OR_INVENTORY_UNVERIFIED'):
-            raise ValueError('Acquisition incomplete; dispatcher recovery required')
-        halt = cadence.checkpoint(concurrency.PHASE_CAPS['intake'])
-        if halt:return no_entry('intake',halt)
-        _preflight(expected,scan)
-        phase = cadence.phase('intake')
-
-        def intake_guard():
-            phase.check()
-            _intake_guard(expected,scan)
+        written = []; known_scan = []
         try:
-            retained = migration.intake(paths['research_db'],paths['evidence_db'],scan_id=scan,
-            mint=hint['mint'],pool=hint['pool'],signature=hint['signature'],slot=hint['slot'],
-            provenance=PROVENANCE,credentials_loader=intake_guard,paper_token_profile_version=cli._config(paths['config']).get('paper_token_profile_version',0))
-        except Exception:
-            if not phase.cut:raise
-            return no_entry('intake',overrun())
-        if phase.finish():return no_entry('intake',overrun())
-        if retained['status'] != 'RETAINED_MIGRATION_WITNESS':
-            from desk import paper_migration_no_entry
-            # Only a narrow replay-proved unsupported quote can publish. Every
-            # missing/uncaptured/unknown/generic mismatch still raises unresolved.
-            disposition=paper_migration_no_entry.publish(journal,expected,identity,scan)
-            outcome={'version':1,'intent_hash':digest(intent),'at':_now(),'scan_id':scan,'result':disposition}
-            if len(canonical(outcome).encode())>MAX_PAYLOAD:raise ValueError('Migration outcome exceeds bound')
+            identity = uuid.uuid4().hex
+            intent = {'version':1,'context_hash':digest(expected),'at':now,'hint':hint,
+                      **({'evaluation':evaluation} if v2 else {})}
+            # A competing held/worker invocation is a zero-intent refusal. Complete
+            # the final lock reacquisition before publishing the irreversible latch.
+            _preflight(expected)
+            from desk.providers import helius_rpc
+            cfg = cli._config(paths['config'])
+            with monitor._context(paths['research_db'],paths['evidence_db'],paths['ledger_db'],cfg) as (store, ledger, state):
+                if concurrency.entry_blocked(state, cfg):
+                    raise ValueError('Held-position priority or paused ledger')
+                cli._credentials()
+                jobs = JobPersistence.__new__(JobPersistence); jobs.path = Path(paths['research_db'])
+                with closing(jobs.connect()) as c:
+                    admitted = c.execute('SELECT COUNT(*) FROM scans WHERE mint=?',(hint['mint'],)).fetchone()[0]
+                    if admitted != (evaluation - 1 if v2 else 0):
+                        raise ValueError('Already admitted candidate')
+                if terminal.gate(store,jobs.path,(),ledger_locked=str(ledger)):
+                    raise ValueError('Observation recovery required')
+                _write(journal,'intents',identity,intent,hint,evaluation)
+                written.append(identity)
+                # From this point any interruption stays unresolved; never retry or
+                # erase an intent merely because acquisition has not yet spent.
+                scan = jobs.admit(hint['mint'],kind=BIRTH_ACQUISITION_V1,evidence_db=store.path,
+                                  paper_token_profile_version=cfg.get('paper_token_profile_version',0))
+                known_scan.append(scan)
+            cadence = _HeldCadence(expected)
+            phase = None
+
+            def no_entry(phase_name, halt):
+                record = checkpoint_record(identity, intent, scan, phase_name, halt)
+                outcome = {'version':1,'intent_hash':digest(intent),'at':_now(),'scan_id':scan,'result':record}
+                if len(canonical(outcome).encode()) > MAX_PAYLOAD:raise ValueError('Checkpoint outcome exceeds bound')
+                _write(journal,'results',identity,outcome)
+                return {'status':'DISPATCHED','dispatch_id':identity,'scan_id':scan,'paper_status':'NO_ENTRY',
+                        'checkpoint_no_entry':{'phase':phase_name,'reasons':record['reasons'],'held_pass':record['held_pass']},
+                        'entry_authorized':False,'execution_status':'EXECUTION_UNVERIFIED','live_readiness':False}
+
+            def overrun():
+                return {'reasons':['PHASE_CAP_EXCEEDED'],'ran':False,'exit_code':None,'mode':cycle._state(Path(paths['ledger_db']),cfg)['mode']}
+            rpc_state = {'error': None}
+            def guarded_rpc(method,params):
+                if phase is not None:phase.check()      # OUTSIDE the rpc_state capture: a cut is never a provider failure
+                with _held_guard(expected,scan):
+                    try:
+                        value = helius_rpc(method,params)
+                    except BaseException as failure:
+                        rpc_state['error'] = failure         # the acquisition swallows it into an ambiguous status
+                        raise
+                    rpc_state['error'] = None
+                    return value
+            halt = cadence.checkpoint(concurrency.PHASE_CAPS['acquisition'])
+            if halt:return no_entry('acquisition',halt)
+            phase = cadence.phase('acquisition')
+            acquired = acquisition.acquire(paths['research_db'],paths['evidence_db'],guarded_rpc,
+                                          scan_id=scan,paper_token_profile_version=cfg.get('paper_token_profile_version',0))
+            scan = acquired.get('scan_id')
+            if scan and acquired.get('status') == 'UNSUPPORTED_TOKEN':
+                def publish_rejection(proof):
+                    outcome = {'version':1,'intent_hash':digest(intent),'at':_now(),'scan_id':scan,'result':proof}
+                    _write(journal,'results',identity,outcome)
+                _rejection(expected,intent,scan,publish_rejection)
+                return {'status':'TOKEN_REJECTED','dispatch_id':identity,'scan_id':scan,
+                        'entry_authorized':False,'execution_status':'EXECUTION_UNVERIFIED','live_readiness':False}
+            if phase.finish():return no_entry('acquisition',overrun())   # AHEAD of every post-acquire raise: a cut is terminal
+            if not scan or acquired.get('status') not in ('SEED_HISTORY_PARTIAL','SEED_HISTORY_ACQUIRED','LAUNCH_OR_INVENTORY_UNVERIFIED'):
+                # Only the acquisition's own ordinary retry statuses are a typed, closable outcome; anything else
+                # (e.g. ACQUISITION_RETRY_OR_EVIDENCE_BLOCKED) may mean blocked evidence and stays unresolved.
+                if acquired.get('status') in ('PROVIDER_RETRY_REQUIRED', 'BUSY', 'ACQUISITION_REQUEST_LIMIT_REACHED'):
+                    raise DispatchFailure('ACQUISITION_INCOMPLETE', 'Acquisition incomplete; dispatcher recovery required')
+                if acquired.get('status') == 'ACQUISITION_RETRY_OR_EVIDENCE_BLOCKED' and rpc_state['error'] is not None:
+                    # The acquisition swallows every exception into this one ambiguous status. The last provider call
+                    # failing is the cause only if that failure is itself a classified transient one (timeout, reset,
+                    # HTTP 408/429/5xx, pacing contention); a later success clears it. Otherwise it stays unresolved.
+                    from desk.paper_pass_closure import classify
+                    cause, transient = classify(rpc_state['error'])
+                    if transient:
+                        raise DispatchFailure(cause, 'Acquisition provider call failed transiently; dispatcher recovery required')
+                raise ValueError('Acquisition incomplete; dispatcher recovery required')
+            halt = cadence.checkpoint(concurrency.PHASE_CAPS['intake'])
+            if halt:return no_entry('intake',halt)
+            _preflight(expected,scan)
+            phase = cadence.phase('intake')
+
+            def intake_guard():
+                phase.check()
+                _intake_guard(expected,scan)
+            try:
+                retained = migration.intake(paths['research_db'],paths['evidence_db'],scan_id=scan,
+                    mint=hint['mint'],pool=hint['pool'],signature=hint['signature'],slot=hint['slot'],
+                    provenance=PROVENANCE,credentials_loader=intake_guard,paper_token_profile_version=cli._config(paths['config']).get('paper_token_profile_version',0))
+            except Exception:
+                if not phase.cut:raise
+                return no_entry('intake',overrun())
+            if phase.finish():return no_entry('intake',overrun())
+            if retained['status'] != 'RETAINED_MIGRATION_WITNESS':
+                from desk import paper_migration_no_entry
+                # Only a narrow replay-proved unsupported quote can publish. Every
+                # missing/uncaptured/unknown/generic mismatch still raises unresolved.
+                disposition=paper_migration_no_entry.publish(journal,expected,identity,scan)
+                outcome={'version':1,'intent_hash':digest(intent),'at':_now(),'scan_id':scan,'result':disposition}
+                if len(canonical(outcome).encode())>MAX_PAYLOAD:raise ValueError('Migration outcome exceeds bound')
+                _write(journal,'results',identity,outcome)
+                return {'status':'DISPATCHED','dispatch_id':identity,'scan_id':scan,'paper_status':'NO_ENTRY',
+                        'entry_authorized':False,'execution_status':'EXECUTION_UNVERIFIED','live_readiness':False}
+            halt = cadence.checkpoint(concurrency.PREPARATION_SECONDS + concurrency.CYCLE_SECONDS)
+            if halt:return no_entry('preparation',halt)
+            _preflight(expected,scan)
+            window = expected['watchlist_maximum_age'] if v2 and evaluation > 1 else expected['maximum_age']
+            if not 300 <= _now()-hint['received_at'] <= window:
+                raise DispatchFailure('CANDIDATE_EXPIRED_DURING_PREPARATION', 'Candidate expired during preparation')
+            row = {'scan_id':scan,'mint':hint['mint'],'pool':hint['pool'],'taker':expected['taker'],
+                   'amount_raw':expected['amount_raw'],'provenance':PROVENANCE,
+                   'pool_fee_bps':expected['pool_fee_bps'],'known_hazards':[],
+                   'graduation_refs':retained['request_evidence_refs']}
+            rejection_published = False
+            def publish_no_entry(result):
+                nonlocal rejection_published
+                from desk import history_preparation_rejection
+                from desk.history_progress import HistoryProgress
+                store=EvidenceStore(paths['evidence_db'],read_only=True)
+                progress=HistoryProgress.__new__(HistoryProgress);progress.store=store
+                original=history_preparation_rejection.verify(store,progress,result)
+                if result['scan_id']!=scan or original['config_hash']!=expected['config_hash']:
+                    raise ValueError('Preparation result publication binding')
+                outcome={'version':1,'intent_hash':digest(intent),'at':_now(),'scan_id':scan,'result':result}
+                if len(canonical(outcome).encode())>MAX_PAYLOAD:raise ValueError('Dispatch outcome exceeds bound')
+                _write(journal,'results',identity,outcome)
+                rejection_published = True
+            with tempfile.TemporaryDirectory(prefix='dispatch-target-') as d:
+                target = Path(d)/'targets.json'
+                target.write_text(canonical({'position_targets':[],'candidates':[row],'usd_evidence_refs':[]}))
+                result = entry.execute(paths['config'],paths['research_db'],paths['evidence_db'],paths['ledger_db'],target,
+                                       live=True,systemd_credentials=True,no_entry_publish=publish_no_entry)
+            if rejection_published:
+                return {'status':'DISPATCHED','dispatch_id':identity,'scan_id':scan,'paper_status':'NO_ENTRY',
+                        'entry_authorized':False,'execution_status':'EXECUTION_UNVERIFIED','live_readiness':False}
+            outcome = {'version':1,'intent_hash':digest(intent),'at':_now(),'scan_id':scan,'result':result}
+            if len(canonical(outcome).encode()) > MAX_PAYLOAD:
+                raise ValueError('Dispatch outcome exceeds bound; original evidence retained')
             _write(journal,'results',identity,outcome)
-            return {'status':'DISPATCHED','dispatch_id':identity,'scan_id':scan,'paper_status':'NO_ENTRY',
-                    'entry_authorized':False,'execution_status':'EXECUTION_UNVERIFIED','live_readiness':False}
-        halt = cadence.checkpoint(concurrency.PREPARATION_SECONDS + concurrency.CYCLE_SECONDS)
-        if halt:return no_entry('preparation',halt)
-        _preflight(expected,scan)
-        window = expected['watchlist_maximum_age'] if v2 and evaluation > 1 else expected['maximum_age']
-        if not 300 <= _now()-hint['received_at'] <= window:
-            raise ValueError('Candidate expired during preparation')
-        row = {'scan_id':scan,'mint':hint['mint'],'pool':hint['pool'],'taker':expected['taker'],
-               'amount_raw':expected['amount_raw'],'provenance':PROVENANCE,
-               'pool_fee_bps':expected['pool_fee_bps'],'known_hazards':[],
-               'graduation_refs':retained['request_evidence_refs']}
-        rejection_published = False
-        def publish_no_entry(result):
-            nonlocal rejection_published
-            from desk import history_preparation_rejection
-            from desk.history_progress import HistoryProgress
-            store=EvidenceStore(paths['evidence_db'],read_only=True)
-            progress=HistoryProgress.__new__(HistoryProgress);progress.store=store
-            original=history_preparation_rejection.verify(store,progress,result)
-            if result['scan_id']!=scan or original['config_hash']!=expected['config_hash']:
-                raise ValueError('Preparation result publication binding')
-            outcome={'version':1,'intent_hash':digest(intent),'at':_now(),'scan_id':scan,'result':result}
-            if len(canonical(outcome).encode())>MAX_PAYLOAD:raise ValueError('Dispatch outcome exceeds bound')
-            _write(journal,'results',identity,outcome)
-            rejection_published = True
-        with tempfile.TemporaryDirectory(prefix='dispatch-target-') as d:
-            target = Path(d)/'targets.json'
-            target.write_text(canonical({'position_targets':[],'candidates':[row],'usd_evidence_refs':[]}))
-            result = entry.execute(paths['config'],paths['research_db'],paths['evidence_db'],paths['ledger_db'],target,
-                                   live=True,systemd_credentials=True,no_entry_publish=publish_no_entry)
-        if rejection_published:
-            return {'status':'DISPATCHED','dispatch_id':identity,'scan_id':scan,'paper_status':'NO_ENTRY',
-                    'entry_authorized':False,'execution_status':'EXECUTION_UNVERIFIED','live_readiness':False}
-        outcome = {'version':1,'intent_hash':digest(intent),'at':_now(),'scan_id':scan,'result':result}
-        if len(canonical(outcome).encode()) > MAX_PAYLOAD:
-            raise ValueError('Dispatch outcome exceeds bound; original evidence retained')
-        _write(journal,'results',identity,outcome)
-        return {'status':'DISPATCHED','dispatch_id':identity,'scan_id':scan,
-                'paper_status':result['status'],'entry_authorized':False,
-                'execution_status':'EXECUTION_UNVERIFIED','live_readiness':False}
+            return {'status':'DISPATCHED','dispatch_id':identity,'scan_id':scan,
+                    'paper_status':result['status'],'entry_authorized':False,
+                    'execution_status':'EXECUTION_UNVERIFIED','live_readiness':False}
+        except BaseException as error:
+            # After the intent is written every exit used to be permanent. Close it as FAILED_CHARGED when the
+            # store is provably usable again (never for integrity causes); the failure still propagates, and the
+            # same candidate is never dispatched again (its mint is unique in the journal).
+            if written:
+                try:
+                    from desk.paper_pass_closure import classify
+                    cause, transient = classify(error)
+                    if transient:                 # allow-list only: everything else stays unresolved (latched)
+                        _close_dispatch(expected, journal, identity, intent, known_scan[0] if known_scan else None,
+                                        cause, 'FAILED_CHARGED')
+                    else:                         # T22H item 2: a deliberate refusal / integrity stop is a durable hold
+                        _hold_dispatch(expected, identity, cause)
+                except Exception:
+                    pass
+            raise
 
 
 def main(argv=None):

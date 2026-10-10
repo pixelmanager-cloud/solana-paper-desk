@@ -60,8 +60,9 @@ class CycleTarget:
 
 
 class CycleBlocked(ValueError):
-    def __init__(self, code):
+    def __init__(self, code, evidence_hash=None):
         self.code = code
+        self.evidence_hash = evidence_hash      # retained attempt original of a failed provider read, when there is one
         super().__init__(code)
 
 
@@ -183,7 +184,7 @@ class _Budget:
         try:
             result = invoke(timeout)
         except PaperReadError as error:
-            raise CycleBlocked(error.code) from error
+            raise CycleBlocked(error.code, getattr(error, 'evidence_hash', None)) from error
         after = self.progress.admission(scan)
         expected = {**before, 'requests_used': before['requests_used']+1}
         if after != expected:
@@ -208,7 +209,7 @@ class _HeldBudget:
         try:
             result = invoke(timeout)
         except PaperReadError as error:
-            raise CycleBlocked(error.code) from error
+            raise CycleBlocked(error.code, getattr(error, 'evidence_hash', None)) from error
         after = self.monitoring.snapshot()
         if (after['total_used'] != before['total_used']+1
                 or self.parent.progress.admission(scan) != admission):
@@ -295,7 +296,10 @@ def _history(progress, item, budget, source_factory):
             return progress.advance(key, source)
         state = budget.call(target.scan_id, advance)
         if state.get('busy') or state.get('blocked') or state['status'] == 'RETRYABLE_ERROR':
-            raise CycleBlocked(state.get('blocked') or ('HISTORY_BUSY' if state.get('busy') else 'HISTORY_RECOVERY_REQUIRED'))
+            # T22H: HISTORY_RECOVERY_REQUIRED carries the failed page's retained attempt original; the closure accepts it
+            # only if that original proves a transient failure (timeout / reset / 429 / 5xx).
+            raise CycleBlocked(state.get('blocked') or ('HISTORY_BUSY' if state.get('busy') else 'HISTORY_RECOVERY_REQUIRED'),
+                               state.get('failure_evidence'))
         if state['coverage'] and len(state['coverage']['pages']) >= 8 and state['status'] != 'DONE':
             raise CycleBlocked('FEATURE_HISTORY_PAGE_LIMIT')
     from .streaming_history import RetainedHistoryPages
@@ -479,6 +483,57 @@ def fulfill_quotes(state, cfg, event_builder, collected, source, budget, pre_dec
     raise CycleBlocked('QUOTE_DEMAND_LIMIT')
 
 
+def _close_failed(store, progress, identity, error, attempt_refs, ledger_before):
+    """FAILED_CHARGED for a pass that raised, ONLY for an allow-listed transient cause (T22G).
+
+    Everything else (an integrity cause, a free-text ValueError, an unclassified exception, RecoveryRequired) is
+    held: the hold is written durably (retry, then a sentinel) so recovery can never abandon it later.
+    """
+    try:
+        from . import paper_pass_closure as closure
+        cause, transient = closure.classify(error, store)
+        if isinstance(error, RecoveryRequired) or not transient:
+            closure.hold_durably(store, pass_id=identity, cause=cause)
+            return
+        evidence = getattr(error, 'evidence_hash', None)      # the failed read's retained attempt original, if any
+        refs = tuple(attempt_refs) + ((evidence,) if type(evidence) is str and evidence not in attempt_refs else ())
+        try:
+            closure.close(store, progress, pass_id=identity, status='FAILED_CHARGED', cause=cause,
+                          attempt_refs=refs, ledger_before=ledger_before)
+        except closure.HoldRequired:
+            closure.hold_durably(store, pass_id=identity, cause=cause)
+    except Exception:
+        pass
+
+
+def _close_unfinished(store, progress, identity, result, outcome, attempt_refs, ledger_before):
+    """FAILED_CHARGED for a pass that ended BLOCKED with charges and no other terminal outcome.
+
+    Allow-list: every top-level blocker must be an allow-listed cause and every blocker nested in the diagnostics
+    must be ordinary producer vocabulary, otherwise the pass is held (so a MARKET_PRODUCER_BLOCKED with integrity
+    codes nested inside, whose no-entry publication was refused, is NOT closed here).
+    """
+    try:
+        from . import paper_pass_closure as closure
+        causes = list(result['blockers'])
+        with closing(store.connect()) as c:
+            row = c.execute('SELECT outcome_hash,intent_hash FROM paper_observation_passes WHERE id=?', (identity,)).fetchone()
+        if row is None or row[0] is not None:
+            return
+        hazards = closure.declared_hazards(terminal._load(store, row[1]))
+        if (result['status'] == 'RECOVERY_REQUIRED' or not causes or not closure.nested_blockers_clear(result, hazards)):
+            closure.hold_durably(store, pass_id=identity, cause=causes[0] if causes else result['status'], result_hash=outcome)
+            return
+        try:
+            closure.close(store, progress, pass_id=identity, status='FAILED_CHARGED', cause=causes[0],
+                          result_hash=outcome, attempt_refs=tuple(attempt_refs) + tuple(result.get('usd_evidence_refs', ())),
+                          ledger_before=ledger_before)
+        except closure.HoldRequired:
+            closure.hold_durably(store, pass_id=identity, cause=causes[0], result_hash=outcome)
+    except Exception:
+        pass
+
+
 def run_once(research_db, evidence_db, ledger_db, cfg, *, position_targets=(), candidates=(),
              dependency_blockers, controls=(), usd_evidence_refs=(), monitoring=False, source_factory=PaperReadSources,
              history_source_factory=PaperHistorySource, wall_clock=time.time, monotonic=time.monotonic,
@@ -529,7 +584,7 @@ def run_once(research_db, evidence_db, ledger_db, cfg, *, position_targets=(), c
                     jobs, store, progress = _existing_context(research,evidence,tuple(x.target for x in items))
                     state = _state(path,cfg)
                     allowance = MonitoringBudget(store,path,cfg,clock=wall_clock) if monitoring else None
-                    if allowance is not None: allowance.snapshot()  # Never provision on a read path.
+                    monitoring_total = allowance.snapshot()['total_used'] if allowance is not None else None  # Never provision on a read path.
                 except MonitoringBlocked as error:
                     return {**result,'blockers':[error.code]}
                 except RecoveryRequired as error:
@@ -558,6 +613,12 @@ def run_once(research_db, evidence_db, ledger_db, cfg, *, position_targets=(), c
                             return {**result,'blockers':['POSITION_ORIGINAL_ADMISSION_OR_SIZE_MISMATCH']}
                 with store.connect() as c:
                     c.execute('CREATE TABLE IF NOT EXISTS paper_observation_passes(id TEXT PRIMARY KEY,intent_hash TEXT NOT NULL,outcome_hash TEXT)')
+                try:
+                    # All three locks are held, so an unresolved pass belongs to a process that is gone.
+                    from .paper_pass_closure import recover_abandoned
+                    recover_abandoned(store,progress,ledger_db=path,cfg=cfg,clock=wall_clock,research_db=research)
+                except (ValueError,OSError,sqlite3.Error,TypeError,KeyError,RecoveryRequired,MonitoringBlocked):
+                    pass  # Unprovable recovery keeps the latch; the gate below decides.
                 try:
                     blocked = terminal.gate(store,research,tuple(x.target.scan_id for x in items),ledger_locked=str(path))
                 except (ValueError,OSError,sqlite3.Error,TypeError,KeyError):
@@ -588,7 +649,7 @@ def run_once(research_db, evidence_db, ledger_db, cfg, *, position_targets=(), c
                     validate_event(control)
                     if control['kind']!='control' or control['ts']!=budget.now():
                         raise ValueError('Current explicit operator controls required')
-                intent = {'kind':'paper_cycle_intent_v1','config_hash':digest(cfg),'ledger':str(path),
+                intent = {'kind':'paper_cycle_intent_v1','closure_v1':True,'config_hash':digest(cfg),'ledger':str(path),
                           'targets':[asdict(x) for x in items],
                           'admissions':{x.target.scan_id:progress.admission(x.target.scan_id) for x in items}}
                 # Intrinsic certification is intentionally restricted to a new
@@ -600,6 +661,10 @@ def run_once(research_db, evidence_db, ledger_db, cfg, *, position_targets=(), c
                         context=terminal._context(research,evidence,path,os.environ.get('DESK_PROVIDER_PACING_DB'))
                         intent.update(ledger_anchors=anchors,terminal_context=context,source_hash=terminal.runtime.implementation_hash())
                     except (ValueError,OSError,sqlite3.Error):pass
+                if position_targets:
+                    intent['positions'] = [x.target.scan_id for x in position_targets]
+                if monitoring_total is not None:
+                    intent['monitoring_total'] = monitoring_total
                 identity = uuid.uuid4().hex; key = store.save(intent)
                 attempt_refs=[]; terminal_hazards=(); realism_jobs=[]
                 result.update(pass_id=identity,intent_hash=key,attempt_refs=attempt_refs)
@@ -612,179 +677,197 @@ def run_once(research_db, evidence_db, ledger_db, cfg, *, position_targets=(), c
                         from .paper_cycle_no_entry import ledger_snapshot
                         ledger_before=ledger_snapshot(path)
                     except (ValueError,OSError,sqlite3.Error):pass
-                ledger = Ledger(path,must_exist=True)
                 try:
-                    ledger.apply(INIT,cfg,engine.transition,engine.initial_state)
-                    def deliver(event,quotes=()):
-                        if len(canonical(event).encode())>MAX_EVENT_BYTES:
-                            raise CycleBlocked('EVENT_READER_SIZE_LIMIT')
-                        # Recheck inside the same write transaction, including
-                        # checkpoint loss after the read-only preflight.
-                        bound = qe.bind_transition(event,quotes)
-                        def checked(saved,delivered,config):
-                            read_checkpoint(ledger.db)
-                            return bound(saved,delivered,config)
-                        result['outcomes'].extend(ledger.apply(event,cfg,checked,engine.initial_state))
-                        result['events'].append(event['event_id'])
-                    for control in controls:deliver(control)
-                    if monitoring and not items and state['positions'] and portfolio_marks.selected(cfg):
-                        # Start of a held pass: one batched refresh of every position's portfolio mark.
-                        _refresh_portfolio_marks(path,cfg,store,progress,source_factory,budget,deliver,wall_clock,result)
-                    usd = None
-                    for item in items:
-                        state = _state(path,cfg)
-                        target = item.target; is_position = item in position_targets
-                        if not is_position and (state['mode']!='RUNNING' or target.mint in state['positions']):
-                            result['diagnostics'].append({'scan_id':target.scan_id,'blockers':['ENTRY_CONTROL_OR_EXISTING_POSITION']})
-                            continue
-                        if not is_position:
-                            graduation = _graduation(store,item,budget.now())
-                            result['diagnostics'].append({'scan_id':target.scan_id,'graduation':graduation})
-                            if graduation['status']!='OBSERVED_MIGRATION':
-                                raise CycleBlocked('RETAINED_MIGRATION_WITNESS_REQUIRED')
-                        action_budget = _HeldBudget(budget,allowance) if is_position and allowance is not None else budget
-                        if is_position and allowance is not None:
-                            source = source_factory(progress,target.scan_id,monitoring_budget=allowance)
-                            collected = _collect_held(target,source,action_budget,store,selected(cfg))
-                        else:
-                            if budget.attempted >= 18:
-                                raise CycleBlocked('CYCLE_REQUEST_BUDGET_EXHAUSTED')
-                            source = source_factory(progress,target.scan_id)
-                            collector = collect_observations(jobs=jobs,progress=progress,
-                                sources={target.scan_id:BoundedSource(source.rpc_source_id,source.quote_source_id,source.rpc,source.quote)},
-                                open_positions=(target,) if is_position else (), candidates=() if is_position else (target,),
-                                request_ceiling=18-budget.attempted,deadline_seconds=budget.remaining(),max_age_seconds=10,
-                                wall_clock=wall_clock,monotonic=monotonic,token_profile_version=selected(cfg))
-                            budget.attempted += collector.attempted_requests
-                            # Only this bounded transport's original persisted
-                            # attempt hashes can certify future terminal closure.
-                            if type(source) is PaperReadSources:
-                                attempt_refs.extend(source.attempt_evidence_refs)
-                            terminal_hazards=collector.terminal_hazards
-                            if terminal_hazards:result['terminal_hazards']=list(terminal_hazards)
-                            if collector.stopped_reason or not collector.observations or collector.observations[0].failure:
-                                raise CycleBlocked(collector.stopped_reason or (collector.observations[0].failure if collector.observations else 'OBSERVATIONS_INCOMPLETE'))
-                            collected = collector.observations[0]
-                        if not is_position:
-                            as_of, raw, pages = _history(progress,item,budget,history_source_factory)
-                            if usd is None or valuation_version:
-                                try:
-                                    usd = _usd(progress,source,target.scan_id,budget,usd_evidence_refs,valuation_version=valuation_version)
-                                except CycleBlocked:
-                                    raise
-                                except (ValueError,TypeError,KeyError,AttributeError):
-                                    raise CycleBlocked('USD_ORIGINAL_BINDING_INVALID') from None
-                                result['usd_evidence_refs']=list(usd[-1])
-                        if is_position and valuation_version:
-                            held_budget=_HeldBudget(budget,allowance) if allowance else budget
-                            usd=_usd(progress,source,target.scan_id,held_budget,valuation_version=valuation_version)
-                            result['usd_evidence_refs']=list(usd[-1])
-                        diagnostic = None
-                        def event_builder():
-                            nonlocal diagnostic
-                            if valuation_version:
-                                from decimal import Decimal
-                                from .kraken_usd_observation import timestamp
-                                decision_at=format(Decimal(str(budget.wall_clock())),'f')
-                                now=int(timestamp(decision_at))
-                            else:now=budget.now()
-                            if is_position:
-                                context = ExitContext(now,target,source.rpc_source_id,source.quote_source_id,
-                                                      item.provenance,item.known_hazards,selected(cfg))
-                                diagnostic = build_exit_event(collected,context=context,
-                                    position=state['positions'][target.mint],cfg=cfg,load_evidence=store.load)
-                                if valuation_version and diagnostic['event'] is not None:
-                                    from .kraken_usd_observation import evidence as usd_evidence
-                                    from decimal import Decimal
-                                    event=diagnostic['event']
-                                    event['source_evidence']['scan_id']=target.scan_id
-                                    event['paper_usd_valuation']=usd_evidence(usd[-2],now=decision_at,scan=target.scan_id)
-                                    event['event_id']='paper-exit:'+digest({k:v for k,v in event.items() if k!='event_id'})
-                            else:
-                                context = MarketContext(now,target,source.rpc_source_id,source.quote_source_id,
-                                    item.provenance,graduation['graduated_at'],item.holder_at,item.known_hazards,item.pool_fee_bps,as_of,selected(cfg),valuation_version)
-                                if valuation_version:
-                                    response,at,low,high,times,usd_attempt,_refs=usd
-                                    from .kraken_usd_observation import TrustedTimeBounds
-                                    from decimal import Decimal
-                                    usd_bounds=TrustedTimeBounds(decision_at)
-                                else:
-                                    response,at,low,high,times,_refs = usd
-                                    usd_attempt=None;usd_bounds=TrustedSlotBounds(now,at,low,high,times)
-                                diagnostic = build_market_event(collected,context=context,load_evidence=store.load,
-                                    raw_trades=raw,history_pages=pages,usd_response=response,
-                                    usd_bounds=usd_bounds,usd_attempt=usd_attempt,strategy_profile=OBSERVABLE_FLOW_CHURN_CONCENTRATION_V1)
-                            if not is_position and diagnostic['event'] is not None and regime.enabled(cfg):
-                                from . import regime_producer
-                                event=diagnostic['event']
-                                found=regime_producer.evidence(research,evidence,event['ts'],regime.policy(cfg)['ttl_seconds'])
-                                if found is not None:
-                                    event['regime']=found
-                                    event['event_id']='paper-market:'+digest({k:v for k,v in event.items() if k!='event_id'})
-                            if diagnostic['event'] is None:
-                                result['diagnostics'].append({'scan_id':target.scan_id,'blockers':diagnostic['blockers']})
-                            return diagnostic['event']
-                        pre_decision=None
-                        if not is_position and state['positions'] and portfolio_marks.selected(cfg):
-                            def pre_decision():
-                                _refresh_portfolio_marks(path,cfg,store,progress,source_factory,budget,deliver,wall_clock,result)
-                                return _state(path,cfg)
-                        event, quotes, planned = fulfill_quotes(state,cfg,event_builder,collected,source,action_budget,pre_decision)
-                        result['diagnostics'].append({'scan_id':target.scan_id,'blockers':diagnostic['blockers'],
-                                                      'planned_outcomes':planned['outcomes']})
-                        before_outcomes=len(result['outcomes'])
-                        deliver(event,quotes)
-                        realism_jobs+=fill_realism.capture(cfg,result['outcomes'][before_outcomes:],event,collected,is_position)  # never raises
-                        _state(path,cfg)
-                        if is_position and any(x['type']=='blocked_exit' for x in planned['outcomes']):
-                            raise CycleBlocked('UNRESOLVED_POSITION_EXIT')
-                    result['status']='COMPLETE'
-                except ObservationError:
-                    result['blockers'].append('HELD_OBSERVATION_CONTENT_REJECTED')
-                except (CycleBlocked, MonitoringBlocked) as error:
-                    result['blockers'].append(error.code)
-                except RecoveryRequired as error:
-                    result['status']='RECOVERY_REQUIRED';result['blockers'].append(str(error))
-                except ValueError as error:
-                    # Only known Ledger integrity diagnostics are converted;
-                    # unrelated programming/validator defects remain visible.
-                    if str(error).startswith(('ledger checkpoint missing: recovery required;',
-                                              'ledger checkpoint invalid: recovery required;',
-                                              'ledger event journal incomplete: recovery required;')):
-                        result['status']='RECOVERY_REQUIRED';result['blockers'].append('LEDGER_INTEGRITY_FAILURE')
-                    else:raise
-                finally:
-                    ledger.close()
-                    result['attempted_requests']=budget.attempted+budget.monitoring_attempted
-                    result['investigation_attempted_requests']=budget.attempted
-                    result['monitoring_attempted_requests']=budget.monitoring_attempted
-                    if allowance is not None:
-                        try: result['monitoring_budget']=allowance.snapshot()
-                        except (MonitoringBlocked,RecoveryRequired,sqlite3.Error):
-                            result['monitoring_budget']={'status':'RECOVERY_REQUIRED','blockers':['MONITORING_SNAPSHOT_UNAVAILABLE']}
-                    result['budget']={scan:{'used':progress.admission(scan)['requests_used'],
-                        'ceiling':progress.admission(scan)['request_ceiling']} for scan in intent['admissions']}
-                outcome = store.save(result)
-                if realism_jobs:fill_realism.enqueue(path,realism_jobs,digest(cfg))  # opt-in; result page durable; before every early return; never raises
-                if terminal_hazards and 'terminal_context' in intent:
+                    ledger = Ledger(path,must_exist=True)
                     try:
-                        receipt=terminal.certify_intrinsic(store,progress,cfg,pass_id=identity,intent_hash=key,
-                            outcome_hash=outcome,attempt_refs=attempt_refs,hazards=terminal_hazards)
-                        return {**result,'evidence_hash':outcome,'terminal_receipt_hash':receipt}
-                    except (ValueError,TypeError,KeyError,OSError,sqlite3.Error):
-                        # Missing/contradictory proof never clears the NULL latch.
-                        pass
-                if (ledger_before is not None and result['status']=='BLOCKED' and budget.attempted>0
-                        and len(result['blockers'])==1):
-                    from . import paper_cycle_no_entry as no_entry
-                    if result['blockers'][0] in no_entry.NORMAL:
+                        ledger.apply(INIT,cfg,engine.transition,engine.initial_state)
+                        def deliver(event,quotes=()):
+                            if len(canonical(event).encode())>MAX_EVENT_BYTES:
+                                raise CycleBlocked('EVENT_READER_SIZE_LIMIT')
+                            # Recheck inside the same write transaction, including
+                            # checkpoint loss after the read-only preflight.
+                            bound = qe.bind_transition(event,quotes)
+                            def checked(saved,delivered,config):
+                                read_checkpoint(ledger.db)
+                                return bound(saved,delivered,config)
+                            result['outcomes'].extend(ledger.apply(event,cfg,checked,engine.initial_state))
+                            result['events'].append(event['event_id'])
+                        for control in controls:deliver(control)
+                        if monitoring and not items and state['positions'] and portfolio_marks.selected(cfg):
+                            # Start of a held pass: one batched refresh of every position's portfolio mark.
+                            _refresh_portfolio_marks(path,cfg,store,progress,source_factory,budget,deliver,wall_clock,result)
+                        usd = None
+                        for item in items:
+                            state = _state(path,cfg)
+                            target = item.target; is_position = item in position_targets
+                            if not is_position and (state['mode']!='RUNNING' or target.mint in state['positions']):
+                                result['diagnostics'].append({'scan_id':target.scan_id,'blockers':['ENTRY_CONTROL_OR_EXISTING_POSITION']})
+                                continue
+                            if not is_position:
+                                graduation = _graduation(store,item,budget.now())
+                                result['diagnostics'].append({'scan_id':target.scan_id,'graduation':graduation})
+                                if graduation['status']!='OBSERVED_MIGRATION':
+                                    raise CycleBlocked('RETAINED_MIGRATION_WITNESS_REQUIRED')
+                            action_budget = _HeldBudget(budget,allowance) if is_position and allowance is not None else budget
+                            if is_position and allowance is not None:
+                                source = source_factory(progress,target.scan_id,monitoring_budget=allowance)
+                                collected = _collect_held(target,source,action_budget,store,selected(cfg))
+                            else:
+                                if budget.attempted >= 18:
+                                    raise CycleBlocked('CYCLE_REQUEST_BUDGET_EXHAUSTED')
+                                source = source_factory(progress,target.scan_id)
+                                collector = collect_observations(jobs=jobs,progress=progress,
+                                    sources={target.scan_id:BoundedSource(source.rpc_source_id,source.quote_source_id,source.rpc,source.quote)},
+                                    open_positions=(target,) if is_position else (), candidates=() if is_position else (target,),
+                                    request_ceiling=18-budget.attempted,deadline_seconds=budget.remaining(),max_age_seconds=10,
+                                    wall_clock=wall_clock,monotonic=monotonic,token_profile_version=selected(cfg))
+                                budget.attempted += collector.attempted_requests
+                                # Only this bounded transport's original persisted
+                                # attempt hashes can certify future terminal closure.
+                                if type(source) is PaperReadSources:
+                                    attempt_refs.extend(source.attempt_evidence_refs)
+                                terminal_hazards=collector.terminal_hazards
+                                if terminal_hazards:result['terminal_hazards']=list(terminal_hazards)
+                                if collector.stopped_reason or not collector.observations or collector.observations[0].failure:
+                                    raise CycleBlocked(collector.stopped_reason or (collector.observations[0].failure if collector.observations else 'OBSERVATIONS_INCOMPLETE'))
+                                collected = collector.observations[0]
+                            if not is_position:
+                                as_of, raw, pages = _history(progress,item,budget,history_source_factory)
+                                if usd is None or valuation_version:
+                                    try:
+                                        usd = _usd(progress,source,target.scan_id,budget,usd_evidence_refs,valuation_version=valuation_version)
+                                    except CycleBlocked:
+                                        raise
+                                    except (ValueError,TypeError,KeyError,AttributeError):
+                                        raise CycleBlocked('USD_ORIGINAL_BINDING_INVALID') from None
+                                    result['usd_evidence_refs']=list(usd[-1])
+                            if is_position and valuation_version:
+                                held_budget=_HeldBudget(budget,allowance) if allowance else budget
+                                usd=_usd(progress,source,target.scan_id,held_budget,valuation_version=valuation_version)
+                                result['usd_evidence_refs']=list(usd[-1])
+                            diagnostic = None
+                            def event_builder():
+                                nonlocal diagnostic
+                                if valuation_version:
+                                    from decimal import Decimal
+                                    from .kraken_usd_observation import timestamp
+                                    decision_at=format(Decimal(str(budget.wall_clock())),'f')
+                                    now=int(timestamp(decision_at))
+                                else:now=budget.now()
+                                if is_position:
+                                    context = ExitContext(now,target,source.rpc_source_id,source.quote_source_id,
+                                                          item.provenance,item.known_hazards,selected(cfg))
+                                    diagnostic = build_exit_event(collected,context=context,
+                                        position=state['positions'][target.mint],cfg=cfg,load_evidence=store.load)
+                                    if valuation_version and diagnostic['event'] is not None:
+                                        from .kraken_usd_observation import evidence as usd_evidence
+                                        from decimal import Decimal
+                                        event=diagnostic['event']
+                                        event['source_evidence']['scan_id']=target.scan_id
+                                        event['paper_usd_valuation']=usd_evidence(usd[-2],now=decision_at,scan=target.scan_id)
+                                        event['event_id']='paper-exit:'+digest({k:v for k,v in event.items() if k!='event_id'})
+                                else:
+                                    context = MarketContext(now,target,source.rpc_source_id,source.quote_source_id,
+                                        item.provenance,graduation['graduated_at'],item.holder_at,item.known_hazards,item.pool_fee_bps,as_of,selected(cfg),valuation_version)
+                                    if valuation_version:
+                                        response,at,low,high,times,usd_attempt,_refs=usd
+                                        from .kraken_usd_observation import TrustedTimeBounds
+                                        from decimal import Decimal
+                                        usd_bounds=TrustedTimeBounds(decision_at)
+                                    else:
+                                        response,at,low,high,times,_refs = usd
+                                        usd_attempt=None;usd_bounds=TrustedSlotBounds(now,at,low,high,times)
+                                    diagnostic = build_market_event(collected,context=context,load_evidence=store.load,
+                                        raw_trades=raw,history_pages=pages,usd_response=response,
+                                        usd_bounds=usd_bounds,usd_attempt=usd_attempt,strategy_profile=OBSERVABLE_FLOW_CHURN_CONCENTRATION_V1)
+                                if not is_position and diagnostic['event'] is not None and regime.enabled(cfg):
+                                    from . import regime_producer
+                                    event=diagnostic['event']
+                                    found=regime_producer.evidence(research,evidence,event['ts'],regime.policy(cfg)['ttl_seconds'])
+                                    if found is not None:
+                                        event['regime']=found
+                                        event['event_id']='paper-market:'+digest({k:v for k,v in event.items() if k!='event_id'})
+                                if diagnostic['event'] is None:
+                                    result['diagnostics'].append({'scan_id':target.scan_id,'blockers':diagnostic['blockers']})
+                                return diagnostic['event']
+                            pre_decision=None
+                            if not is_position and state['positions'] and portfolio_marks.selected(cfg):
+                                def pre_decision():
+                                    _refresh_portfolio_marks(path,cfg,store,progress,source_factory,budget,deliver,wall_clock,result)
+                                    return _state(path,cfg)
+                            event, quotes, planned = fulfill_quotes(state,cfg,event_builder,collected,source,action_budget,pre_decision)
+                            result['diagnostics'].append({'scan_id':target.scan_id,'blockers':diagnostic['blockers'],
+                                                          'planned_outcomes':planned['outcomes']})
+                            before_outcomes=len(result['outcomes'])
+                            deliver(event,quotes)
+                            realism_jobs+=fill_realism.capture(cfg,result['outcomes'][before_outcomes:],event,collected,is_position)  # never raises
+                            _state(path,cfg)
+                            if is_position and any(x['type']=='blocked_exit' for x in planned['outcomes']):
+                                raise CycleBlocked('UNRESOLVED_POSITION_EXIT')
+                        result['status']='COMPLETE'
+                    except ObservationError:
+                        result['blockers'].append('HELD_OBSERVATION_CONTENT_REJECTED')
+                    except (CycleBlocked, MonitoringBlocked) as error:
+                        result['blockers'].append(error.code)
+                        if getattr(error,'evidence_hash',None) and error.evidence_hash not in attempt_refs:
+                            attempt_refs.append(error.evidence_hash)    # the failed read's original can classify the closure
+                    except RecoveryRequired as error:
+                        result['status']='RECOVERY_REQUIRED';result['blockers'].append(str(error))
+                    except ValueError as error:
+                        # Only known Ledger integrity diagnostics are converted;
+                        # unrelated programming/validator defects remain visible.
+                        if str(error).startswith(('ledger checkpoint missing: recovery required;',
+                                                  'ledger checkpoint invalid: recovery required;',
+                                                  'ledger event journal incomplete: recovery required;')):
+                            result['status']='RECOVERY_REQUIRED';result['blockers'].append('LEDGER_INTEGRITY_FAILURE')
+                        else:raise
+                    finally:
+                        ledger.close()
+                        result['attempted_requests']=budget.attempted+budget.monitoring_attempted
+                        result['investigation_attempted_requests']=budget.attempted
+                        result['monitoring_attempted_requests']=budget.monitoring_attempted
+                        if allowance is not None:
+                            try: result['monitoring_budget']=allowance.snapshot()
+                            except (MonitoringBlocked,RecoveryRequired,sqlite3.Error):
+                                result['monitoring_budget']={'status':'RECOVERY_REQUIRED','blockers':['MONITORING_SNAPSHOT_UNAVAILABLE']}
+                        result['budget']={scan:{'used':progress.admission(scan)['requests_used'],
+                            'ceiling':progress.admission(scan)['request_ceiling']} for scan in intent['admissions']}
+                    if result['status']!='COMPLETE' and (budget.attempted>0 or budget.monitoring_attempted>0):
+                        # T22H L4: when this pass can not be closed, the hold goes to disk BEFORE the result is saved, so a kill in
+                        # between cannot leave a NULL pass that a later recovery would abandon.
+                        from . import paper_pass_closure as closure
+                        if closure.result_requires_hold(store,result,key,attempt_refs):
+                            closure.write_sentinel(store,identity,(result['blockers'] or [result['status']])[0])
+                    outcome = store.save(result)
+                    if realism_jobs:fill_realism.enqueue(path,realism_jobs,digest(cfg))  # opt-in; result page durable; before every early return; never raises
+                    if terminal_hazards and 'terminal_context' in intent:
                         try:
-                            no_entry.publish(store,progress,pass_id=identity,intent_hash=key,result=result,ledger=ledger_before)
-                            return {**result,'evidence_hash':outcome}
+                            receipt=terminal.certify_intrinsic(store,progress,cfg,pass_id=identity,intent_hash=key,
+                                outcome_hash=outcome,attempt_refs=attempt_refs,hazards=terminal_hazards)
+                            return {**result,'evidence_hash':outcome,'terminal_receipt_hash':receipt}
                         except (ValueError,TypeError,KeyError,OSError,sqlite3.Error):
-                            # Unproved rejection keeps the NULL latch (fail closed).
+                            # Missing/contradictory proof never clears the NULL latch.
                             pass
-                if result['status']=='COMPLETE' or (budget.attempted==0 and budget.monitoring_attempted==0 and all(
-                        progress.admission(scan)==admission for scan,admission in intent['admissions'].items())):
-                    with store.connect() as c:c.execute('UPDATE paper_observation_passes SET outcome_hash=? WHERE id=?',(outcome,identity))
-                return {**result,'evidence_hash':outcome}
+                    if (ledger_before is not None and result['status']=='BLOCKED' and budget.attempted>0
+                            and len(result['blockers'])==1):
+                        from . import paper_cycle_no_entry as no_entry
+                        if result['blockers'][0] in no_entry.NORMAL:
+                            try:
+                                no_entry.publish(store,progress,pass_id=identity,intent_hash=key,result=result,ledger=ledger_before)
+                                return {**result,'evidence_hash':outcome}
+                            except (ValueError,TypeError,KeyError,OSError,sqlite3.Error) as refused:
+                                # Unproved rejection is not retired as a normal no-entry (fail closed). T22F R3: the
+                                # refusal is typed and visible (log + <store>.publish-refused.jsonl) instead of silent.
+                                no_entry.record_refusal(store,pass_id=identity,scan_id=next(iter(intent['admissions']),None),
+                                                        blocker=result['blockers'][0],error=refused,at=wall_clock())
+                    if result['status']=='COMPLETE' or (budget.attempted==0 and budget.monitoring_attempted==0 and all(
+                            progress.admission(scan)==admission for scan,admission in intent['admissions'].items())):
+                        with store.connect() as c:c.execute('UPDATE paper_observation_passes SET outcome_hash=? WHERE id=? AND outcome_hash IS NULL',(outcome,identity))
+                    if result['status']!='COMPLETE':
+                        _close_unfinished(store,progress,identity,result,outcome,attempt_refs,ledger_before)
+                    return {**result,'evidence_hash':outcome}
+                except BaseException as error:
+                    # The pass died with a charge outstanding: retire it as FAILED_CHARGED when that is provable
+                    # (never for integrity causes). The exception still propagates unchanged.
+                    _close_failed(store,progress,identity,error,attempt_refs,ledger_before)
+                    raise

@@ -528,6 +528,10 @@ def _gate(store,research,scan_ids,*,ledger_locked=None,review_source=None):
     cycle_rejection = cycle_no_entry_gate(store, research, scan_ids, ledger_locked=ledger_locked, review_source=review_source)
     if cycle_rejection is not None:
         return cycle_rejection
+    from .paper_pass_closure import gate as pass_closure_gate
+    closure_rejection = pass_closure_gate(store, research, scan_ids, ledger_locked=ledger_locked, review_source=review_source)
+    if closure_rejection is not None:
+        return closure_rejection
     from .paper_cycle import _lock
     from .evidence import EvidenceStore
     with closing(store.connect()) as c:
