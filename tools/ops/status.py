@@ -16,6 +16,9 @@ import subprocess
 import sys
 import time
 
+# Never write .pyc files: not into the repository/release this tool imports from, and (below) not
+# into --release-dir. Must happen before the first ``desk`` import.
+sys.dont_write_bytecode = True
 sys.path.insert(0, str(Path(__file__).resolve().parents[2]))
 from desk.model import canonical, digest  # noqa: E402
 
@@ -23,7 +26,7 @@ BOUND = 50
 DASHBOARD_PORT = '8765'
 LOOPBACK = ('127.0.0.1', '[::1]', '::1')
 EXECUTION_LABEL = 'EXECUTION_UNVERIFIED'
-RELEASE_PROBE = ("import sys,os;sys.path.insert(0,os.getcwd());"
+RELEASE_PROBE = ("import sys,os;sys.dont_write_bytecode=True;sys.path.insert(0,os.getcwd());"
                  "from desk.runtime_compatibility import implementation_hash;print(implementation_hash())")
 
 
@@ -48,14 +51,34 @@ def canonical_path(value, *, directory=False):
     return p
 
 
+def _is_wal_file(path):
+    """True only when the database header (byte 18, file-format write version) says WAL."""
+    fd = os.open(path, os.O_RDONLY | os.O_NOFOLLOW)
+    try:
+        head = os.read(fd, 100)
+    finally:
+        os.close(fd)
+    return len(head) >= 20 and head[:16] == b'SQLite format 3\x00' and head[18] == 2
+
+
+def open_mode(path):
+    """``immutable`` only for a WAL-mode file with no -wal (no writer, no unflushed pages); else ``ro``.
+
+    A WAL database opened mode=ro with no sidecars makes SQLite create -wal/-shm (possibly owned by
+    this user and unusable by the desk service user), so a quiescent WAL file is read immutable.
+    A rollback-journal database (for example provider-pacing.sqlite, written every ~2 s) must never
+    be opened immutable: the file can change under the read.
+    """
+    p = Path(path)
+    if _is_wal_file(p) and not Path(str(p) + '-wal').exists():
+        return 'immutable'
+    return 'ro'
+
+
 def connect_ro(path):
     p = canonical_path(path)
-    # A WAL database opened mode=ro with no -wal/-shm present makes SQLite create
-    # them, possibly owned by this user and unusable by the desk service user.
-    # With no sidecars there is no unflushed WAL to miss, so use immutable=1
-    # (no sidecars, no locks). With sidecars present, mode=ro reads the live WAL.
-    sidecars = any(Path(str(p) + suffix).exists() for suffix in ('-wal', '-shm', '-journal'))
-    c = sqlite3.connect(p.as_uri() + ('?mode=ro' if sidecars else '?immutable=1'), uri=True, timeout=2)
+    mode = open_mode(p)
+    c = sqlite3.connect(p.as_uri() + ('?immutable=1' if mode == 'immutable' else '?mode=ro'), uri=True, timeout=2)
     c.execute('PRAGMA query_only=1')
     return c
 
@@ -79,7 +102,7 @@ def release_section(release_dir, runner):
     if release_dir is None:
         return {'status': 'SKIPPED'}
     d = canonical_path(release_dir, directory=True)
-    out = runner([sys.executable, '-I', '-c', RELEASE_PROBE], str(d))
+    out = runner([sys.executable, '-I', '-B', '-c', RELEASE_PROBE], str(d))
     digest_ = out.strip()
     if len(digest_) != 64 or any(ch not in '0123456789abcdef' for ch in digest_):
         raise StatusError('RELEASE_DIGEST_INVALID')
@@ -88,7 +111,7 @@ def release_section(release_dir, runner):
 
 def default_runner(argv, cwd=None):
     return subprocess.run(argv, cwd=cwd, capture_output=True, text=True, timeout=120, check=True,
-                          env={'PATH': os.defpath}).stdout
+                          env={'PATH': os.defpath, 'PYTHONDONTWRITEBYTECODE': '1'}).stdout
 
 
 def _fill_label(payload):
@@ -173,53 +196,91 @@ def dispatcher_section(journal_path, last):
     return out
 
 
-def budgets_section(evidence_path, now):
+def budgets_section(evidence_path, now, ledger_path=None, config_digest=None):
     with closing(connect_ro(evidence_path)) as c:
-        out = {'status': 'OK', 'monitoring': None, 'ownership': {'budgets': [], 'admission_states': {}}}
+        out = {'status': 'OK', 'monitoring': None,
+               'ownership': {'budgets': [], 'admission_states': {}, 'total': 0, 'exhausted': 0, 'missing_values': 0}}
         if _has(c, 'paper_monitoring_budget'):
-            row = c.execute('SELECT version,cap,window_seconds,high_water,total,blocked FROM paper_monitoring_budget WHERE id=1').fetchone()
+            row = c.execute('SELECT version,cap,window_seconds,high_water,total,blocked,ledger,config_hash FROM paper_monitoring_budget WHERE id=1').fetchone()
             if row:
-                version, cap, window, high_water, total, blocked = row
+                version, cap, window, high_water, total, blocked, bound_ledger, bound_config = row
                 used = c.execute('SELECT COUNT(*) FROM paper_monitoring_reservations WHERE at>?', (now - window,)).fetchone()[0]
                 reservations = c.execute('SELECT COUNT(*) FROM paper_monitoring_reservations').fetchone()[0]
                 pending = c.execute('SELECT COUNT(*) FROM paper_monitoring_reservations r LEFT JOIN paper_monitoring_outcomes o ON o.reservation_id=r.id WHERE o.reservation_id IS NULL').fetchone()[0]
                 out['monitoring'] = {'version': version, 'cap': cap, 'window_seconds': window, 'high_water': high_water,
                                      'total': total, 'blocked': blocked, 'reservations': reservations,
                                      'used_in_window': used, 'remaining_in_window': max(cap - used, 0),
-                                     'pending_reservations': pending, 'exhausted': used >= cap}
+                                     'pending_reservations': pending, 'exhausted': used >= cap,
+                                     'binding': {'ledger': bound_ledger, 'config_hash': bound_config,
+                                                 'ledger_matches': None if ledger_path is None else bound_ledger == str(ledger_path),
+                                                 'config_hash_matches': None if config_digest is None else bound_config == config_digest}}
         if _has(c, 'ownership_budgets'):
-            out['ownership']['budgets'] = [{'id': i, 'used': u, 'ceiling': ceil} for i, u, ceil in c.execute('SELECT id,used,ceiling FROM ownership_budgets ORDER BY id LIMIT ?', (BOUND,))]
+            # Aggregates cover every row; the listing below is only a bounded sample.
+            total, exhausted, missing = c.execute(
+                'SELECT COUNT(*),COALESCE(SUM(used>=ceiling),0),COALESCE(SUM(used IS NULL OR ceiling IS NULL),0) FROM ownership_budgets').fetchone()
+            out['ownership'].update(total=total, exhausted=exhausted, missing_values=missing,
+                                    budgets=[{'id': i, 'used': u, 'ceiling': ceil} for i, u, ceil in c.execute('SELECT id,used,ceiling FROM ownership_budgets ORDER BY id LIMIT ?', (BOUND,))],
+                                    budgets_truncated=total > BOUND)
         if _has(c, 'ownership_admissions'):
             out['ownership']['admission_states'] = dict(c.execute('SELECT state,COUNT(*) FROM ownership_admissions GROUP BY state'))
     return out
 
 
-def pacing_section(pacing_path, now):
+def _pacing_read(pacing_path, now):
     with closing(connect_ro(pacing_path)) as c:
         states = [{'provider': p, 'next_at': n, 'blocked_until': b, 'high_water': h, 'pending': pend,
                    'blocked_now': b > now} for p, n, b, h, pend in c.execute('SELECT provider,next_at,blocked_until,high_water,pending FROM state ORDER BY provider')]
         waiters = c.execute('SELECT COUNT(*) FROM waiters').fetchone()[0]
-    return {'status': 'OK', 'providers': states, 'waiters': waiters}
+    return states, waiters
+
+
+def pacing_section(pacing_path, now, samples=1, interval=3.0, sleep=time.sleep):
+    """A non-null ``pending`` is transient while a request is in flight: it only counts as stuck when it
+    is unchanged across every one of ``samples`` reads taken ``interval`` seconds apart."""
+    states, waiters = _pacing_read(pacing_path, now)
+    stuck = {s['provider'] for s in states if s['pending']}
+    for i in range(1, samples):
+        sleep(interval)
+        later, waiters = _pacing_read(pacing_path, now + i * interval)
+        pending = {s['provider']: s['pending'] for s in later}
+        stuck = {p for p in stuck if pending.get(p) and pending[p] == next(x['pending'] for x in states if x['provider'] == p)}
+        states = [dict(l, blocked_now=l['blocked_until'] > now) for l in later]
+    return {'status': 'OK', 'providers': states, 'waiters': waiters, 'samples': samples,
+            'pending_providers': sorted(s['provider'] for s in states if s['pending']),
+            'pending_stuck': sorted(stuck) if samples >= 2 else []}
+
+
+def _raise(error):
+    raise error
 
 
 def inventory_section(data, check):
-    out = []
-    for root, dirs, files in os.walk(data, followlinks=False):
+    out, symlinked, hardlinked = [], [], []
+    for root, dirs, files in os.walk(data, followlinks=False, onerror=_raise):
+        for name in sorted(dirs):
+            if os.path.islink(Path(root) / name):
+                symlinked.append(str((Path(root) / name).relative_to(data)))
         for name in sorted(files):
             if not name.endswith('.sqlite'):
                 continue
             p = Path(root) / name
             info = os.lstat(p)
-            item = {'name': str(p.relative_to(data)), 'size': info.st_size, 'mtime': info.st_mtime,
+            rel = str(p.relative_to(data))
+            item = {'name': rel, 'size': info.st_size, 'mtime': info.st_mtime,
                     'symlink': os.path.islink(p), 'nlink': info.st_nlink}
-            if check:
+            if item['symlink']:
+                symlinked.append(rel)
+            elif info.st_nlink != 1:
+                hardlinked.append(rel)
+            if check and not item['symlink'] and info.st_nlink == 1:
                 try:
                     with closing(connect_ro(p)) as c:
                         item['quick_check'] = c.execute('PRAGMA quick_check').fetchone()[0]
                 except (StatusError, sqlite3.Error, OSError) as e:
                     item['quick_check'] = f'ERROR:{type(e).__name__}'
             out.append(item)
-    return {'status': 'OK', 'stores': sorted(out, key=lambda x: x['name'])}
+    return {'status': 'OK', 'stores': sorted(out, key=lambda x: x['name']),
+            'symlinked': sorted(symlinked), 'hardlinked': sorted(hardlinked)}
 
 
 def systemd_section(runner):
@@ -258,6 +319,8 @@ def blockers_for(report):
         state = ledger.get('state')
         if state is None:
             blockers.append('LEDGER_STATE_MISSING')
+        elif state['mode'] is None:
+            blockers.append('LEDGER_MODE_MISSING')
         elif state['mode'] != 'RUNNING':
             blockers.append(f"MODE_{state['mode']}")
         if ledger['config']['file_equals_stored_config'] is False:
@@ -270,17 +333,46 @@ def blockers_for(report):
         m = b['monitoring']
         if m and (m['exhausted'] or m['blocked'] or m['pending_reservations']):
             blockers.append('MONITORING_BUDGET_EXHAUSTED_OR_PENDING')
-        if any(x['used'] >= x['ceiling'] for x in b['ownership']['budgets']):
+        if m:
+            binding = m['binding']
+            if binding['ledger_matches'] is False or binding['config_hash_matches'] is False:
+                blockers.append('MONITORING_BINDING_MISMATCH')
+            elif binding['ledger_matches'] is None or binding['config_hash_matches'] is None:
+                blockers.append('MONITORING_BINDING_UNVERIFIED')
+        if b['ownership']['exhausted']:
             blockers.append('OWNERSHIP_BUDGET_EXHAUSTED')
+        if b['ownership']['missing_values']:
+            blockers.append('OWNERSHIP_CEILING_MISSING')
     p = report['provider_pacing']
-    if p.get('status') == 'OK' and (p['waiters'] or any(x['blocked_now'] or x['pending'] for x in p['providers'])):
-        blockers.append('PACING_BLOCKED_OR_PENDING')
+    if p.get('status') == 'OK':
+        if p['waiters'] or any(x['blocked_now'] for x in p['providers']):
+            blockers.append('PACING_BLOCKED_OR_PENDING')
+        if p['pending_stuck']:
+            blockers.append('PACING_PENDING_STUCK')
+    inventory = report['store_inventory']
+    if inventory.get('status') == 'OK':
+        if inventory['symlinked']:
+            blockers.append('STORE_SYMLINKED')
+        if inventory['hardlinked']:
+            blockers.append('STORE_HARDLINKED')
     if report['dashboard'].get('non_loopback'):
         blockers.append('DASHBOARD_NON_LOOPBACK')
     for name, section in report.items():
         if isinstance(section, dict) and section.get('status') == 'ERROR':
             blockers.append(f'UNREADABLE_{name.upper()}')
     return blockers
+
+
+def warnings_for(report):
+    warnings = []
+    p = report['provider_pacing']
+    if p.get('status') == 'OK' and p['pending_providers'] and not p['pending_stuck']:
+        warnings.append('PACING_PENDING' if p['samples'] < 2 else 'PACING_PENDING_CHANGED')
+    return warnings
+
+
+def config_digest(config_path):
+    return digest(json.loads(canonical_path(config_path).read_bytes()))
 
 
 def _safe(fn, *args):
@@ -291,7 +383,7 @@ def _safe(fn, *args):
 
 
 def build_report(data, ledger, config, *, release_dir=None, systemd=False, check=False, last=5,
-                 runner=default_runner, now=None):
+                 runner=default_runner, now=None, samples=1, sample_interval=3.0, sleep=time.sleep):
     now = time.time() if now is None else now
     try:
         data_dir = canonical_path(data, directory=True)
@@ -302,13 +394,19 @@ def build_report(data, ledger, config, *, release_dir=None, systemd=False, check
     report['ledger'] = _safe(ledger_section, ledger, config, release)
     report['observation_passes'] = _safe(passes_section, data_dir / 'evidence.sqlite')
     report['dispatcher_journal'] = _safe(dispatcher_section, data_dir / 'entry-dispatch' / 'dispatch.sqlite', last)
-    report['budgets'] = _safe(budgets_section, data_dir / 'evidence.sqlite', now)
-    report['provider_pacing'] = _safe(pacing_section, data_dir / 'provider-pacing.sqlite', now)
+    try:
+        cfg_digest = config_digest(config)
+    except (StatusError, OSError, ValueError):
+        cfg_digest = None    # binding then reads as unverified, which is a blocker
+    ledger_bound = Path(ledger) if Path(ledger).is_absolute() else None
+    report['budgets'] = _safe(budgets_section, data_dir / 'evidence.sqlite', now, ledger_bound, cfg_digest)
+    report['provider_pacing'] = _safe(pacing_section, data_dir / 'provider-pacing.sqlite', now, samples, sample_interval, sleep)
     report['store_inventory'] = _safe(inventory_section, data_dir, check)
     if systemd:
         report['systemd'] = _safe(systemd_section, runner)
     report['dashboard'] = _safe(dashboard_section, runner)
     report['blockers'] = blockers_for(report)
+    report['warnings'] = warnings_for(report)
     report['status'] = 'ERROR' if any(isinstance(v, dict) and v.get('status') == 'ERROR' for v in report.values()) else 'OK'
     return report
 
@@ -322,9 +420,13 @@ def main(argv=None, *, runner=default_runner, out=None):
     p.add_argument('--systemd', action='store_true')
     p.add_argument('--check', action='store_true', help='PRAGMA quick_check each store')
     p.add_argument('--last', type=int, default=5)
+    p.add_argument('--samples', type=int, choices=(1, 2, 3), default=1,
+                   help='read provider pacing this many times; with >=2, a pending slot unchanged across all reads is a blocker')
+    p.add_argument('--sample-interval', type=float, default=3.0)
     a = p.parse_args(argv)
     report = build_report(a.data, a.ledger, a.config, release_dir=a.release_dir, systemd=a.systemd,
-                          check=a.check, last=max(1, min(a.last, BOUND)), runner=runner)
+                          check=a.check, last=max(1, min(a.last, BOUND)), runner=runner,
+                          samples=a.samples, sample_interval=max(0.0, min(a.sample_interval, 60.0)))
     print(json.dumps(report, sort_keys=True, indent=2, default=str), file=out or sys.stdout)
     return 0 if report['status'] == 'OK' else 2
 
