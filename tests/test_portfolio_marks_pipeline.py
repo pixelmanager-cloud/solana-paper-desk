@@ -19,7 +19,7 @@ from types import SimpleNamespace
 from unittest.mock import patch
 from urllib.error import HTTPError
 
-from desk import paper_concurrency as pc, paper_cycle as cycle, portfolio_marks as pm
+from desk import engine, paper_concurrency as pc, paper_cycle as cycle, portfolio_marks as pm
 from desk import paper_read_sources as transport
 from desk.model import canonical
 from desk.providers import PUMPSWAP, SOL
@@ -29,6 +29,9 @@ from tests import test_paper_entry_dispatcher as base
 from tools import paper_entry_dispatcher as tool
 
 b64 = lambda raw: base64.b64encode(raw).decode()
+# Realistic per-request durations (seconds): Helius at T36's faster pacing, Jupiter's quote with its pacing slot, Kraken's
+# shared two-second pacing, the Jupiter price probe. The entry cycle's own 2 s sleep is added by the patched sleep.
+REQUEST_SECONDS = {'helius': 0.1, 'quote': 0.6, 'kraken': 2.0, 'price': 0.5}
 
 
 def marks_cycle(h, *, positions=(), candidates=None, usd_refs=(), monitoring=False):
@@ -44,6 +47,8 @@ def marks_cycle(h, *, positions=(), candidates=None, usd_refs=(), monitoring=Fal
     class Opener:
         def open(self, request, *, timeout):
             outer.http_calls.append(request)
+            outer.chain.advance(REQUEST_SECONDS['helius' if request.method == 'POST' else 'kraken' if 'kraken' in request.full_url
+                                                else 'price' if '/price/' in request.full_url else 'quote'])
             if request.method == 'POST':
                 call = json.loads(request.data)
                 method, params = call['method'], call['params']
@@ -103,8 +108,9 @@ def marks_cycle(h, *, positions=(), candidates=None, usd_refs=(), monitoring=Fal
     with ExitStack() as stack:
         stack.enter_context(patch.object(transport.os.environ, 'get', return_value='SYNTHETIC_TEST_ONLY'))
         stack.enter_context(patch.object(transport, 'build_opener', return_value=Opener()))
-        stack.enter_context(patch.object(cycle.time, 'time', return_value=h.f.at))
-        stack.enter_context(patch.object(cycle.time, 'monotonic', return_value=1))
+        # LIVE clocks: every request advances them by its realistic duration (nothing is frozen at zero elapsed time)
+        stack.enter_context(patch.object(cycle.time, 'time', side_effect=lambda: outer.chain.wall()))
+        stack.enter_context(patch.object(cycle.time, 'monotonic', side_effect=lambda: outer.f.tick))
         return h.run_cycle(position_targets=positions, candidates=(h.item,) if candidates is None else candidates,
                            source_factory=transport.PaperReadSources, usd_evidence_refs=usd_refs, monitoring=monitoring)
 
@@ -131,7 +137,28 @@ class MarksPipeline(pipe.ConcurrentPipeline):
         self.reserves = {}                 # mint -> (base_raw, quote_raw) served by the fake chain
         self.marks_calls = []              # every getMultipleAccounts marks request seen on the wire
         self.marks_failure = None
+        self.frac = 0.0
         self.real_run_once = cycle.run_once
+
+    def live_view(self, proto):
+        fixture = self.f
+
+        class View:
+            protocol = proto
+            at = property(lambda v: fixture.at, lambda v, x: setattr(fixture, 'at', x))
+            tick = property(lambda v: fixture.tick, lambda v, x: setattr(fixture, 'tick', x))
+        return View()
+
+    def wall(self):
+        return self.f.at + self.frac
+
+    def advance(self, seconds):
+        """Move the data clock (whole seconds, as the fixtures need) and the monotonic clock (exact) together."""
+        self.frac += seconds
+        whole = int(self.frac)
+        self.f.at += whole
+        self.frac -= whole
+        self.f.tick += seconds
 
     # -- the fake chain answer for one batched marks request ---------------------------------------------------------------
     def marks_answer(self, keys):
@@ -185,12 +212,12 @@ class MarksPipeline(pipe.ConcurrentPipeline):
 
         def entry_cycle(research, evidence, ledger, cfg, **kw):
             item = kw['candidates'][0]
-            view = SimpleNamespace(at=outer.f.at, tick=outer.f.tick, protocol=proto)
+            view = outer.live_view(proto)
             h = SimpleNamespace(f=view, target=item.target, item=item, path=outer.ledger, cfg=outer.cfg,
                                 http_calls=[], sell_output=100_000_000, buy_output_raw=10_000_000)
 
             def run(**args):
-                return original(research, evidence, ledger, cfg, wall_clock=lambda: outer.f.at,
+                return original(research, evidence, ledger, cfg, wall_clock=outer.wall,
                                 monotonic=lambda: outer.f.tick, dependency_blockers=(), **args)
             h.run_cycle = run
             h.chain = outer
@@ -201,7 +228,8 @@ class MarksPipeline(pipe.ConcurrentPipeline):
         with (patch.object(tool.cli, '_credentials'), patch('desk.providers.helius_rpc', side_effect=setup_rpc),
               patch.object(transport, 'build_opener', return_value=Opener()),
               patch.dict('os.environ', {'HELIUS_API_KEY': 'SYNTHETIC', 'JUPITER_API_KEY': 'SYNTHETIC'}),
-              patch.object(cycle, 'run_once', side_effect=entry_cycle), patch.object(tool.entry.time, 'sleep'),
+              patch.object(cycle, 'run_once', side_effect=entry_cycle),
+              patch.object(tool.entry.time, 'sleep', side_effect=self.advance),
               patch.object(tool.time, 'time', side_effect=lambda: self.f.at),
               patch.object(tool.monitor, 'MonitoringBudget',
                            side_effect=lambda store, ledger, cfg: budget(store, ledger, cfg, clock=lambda: max(self.f.at, pipe.REAL_TIME()))),
@@ -209,6 +237,8 @@ class MarksPipeline(pipe.ConcurrentPipeline):
             return self.invoke(execute=True, systemd_credentials=True)
 
     def held_leg(self, mint, *, sell_output=82_000_000):
+        if self.frac:
+            self.advance(1.0 - self.frac)      # the held-leg harness uses whole seconds: step past the live fraction
         with patch.object(cycle, 'run_once', self.real_run_once):
             return super().held_leg(mint, sell_output=sell_output)
 
@@ -239,8 +269,15 @@ class MarksPipeline(pipe.ConcurrentPipeline):
 
 
 class FourPositions(MarksPipeline):
-    def test_four_open_positions_all_marks_within_10s_with_one_request_per_refresh(self):
-        before = None
+    def decision_event(self, mint):
+        """The market event that decided the entry of `mint` (its ts is the ENTRY DECISION time)."""
+        with sqlite3.connect(self.ledger) as c:
+            rows = [json.loads(p) for (p,) in c.execute('SELECT payload FROM events ORDER BY rowid')]
+        return [e for e in rows if e.get('kind') == 'market' and e['mint'] == mint][-1]
+
+    def test_four_open_positions_all_marks_within_10s_at_the_entry_decision_with_one_request_per_refresh(self):
+        """Live simulated clocks: every request advances time by its realistic duration (Helius 0.1 s, Jupiter quote 0.6 s,
+        Kraken 2 s, the entry's own 2 s sleep), so the marks are only as fresh as the pipeline really leaves them."""
         self.first_entry()
         for n in range(2, 5):
             self.append_second_candidate(seed=20 + n)
@@ -249,23 +286,36 @@ class FourPositions(MarksPipeline):
             self.assertTrue(all(self.f.at - p['mark_at'] > self.cfg['price_ttl_seconds'] for p in positions.values()))
             reserved = self.monitoring_rows()
             calls = len(self.marks_calls)
+            started = self.wall()
             result = self.dispatch(intents=n, raw=self.second_raw)
             self.assertEqual((result['status'], result['paper_status']), ('DISPATCHED', 'COMPLETE'), result)
+            self.assertGreater(self.wall() - started, 3.0, 'real request durations and the entry sleep elapsed')
             # two refreshes per entry (before planning and again after the quote reads), each ONE request for all positions
             self.assertEqual(len(self.marks_calls) - calls, 2)
             self.assertEqual([len(keys) for _, keys in self.marks_calls[calls:]], [3 * (n - 1)] * 2)
+            first, second = (at for at, _ in self.marks_calls[calls:])
+            self.assertGreater(second, first, 'the second refresh is after the quote reads')
             rows = self.monitoring_rows()
             self.assertEqual((rows[0] - reserved[0], rows[1] - reserved[1]), (2, 2))
+            # FRESHNESS AT THE ENTRY DECISION: every previously open position's valuation mark, at the decision's ts
+            decision = self.decision_event(next(m for m in cycle._state(self.ledger, self.cfg)['positions'] if m not in positions))
+            marks = self.ledger_events('portfolio_marks')[-1]
+            self.assertEqual(sorted(marks['marks']), sorted(positions), 'all held positions refreshed by ONE request')
+            self.assertLessEqual(decision['ts'] - marks['observed_at'], 10)
+            self.assertGreater(decision['ts'], marks['observed_at'] - 1)
+            self.assertGreater(decision['ts'] - self.ledger_events('portfolio_marks')[-2]['observed_at'], 0,
+                               'the first refresh alone is older than the second at the decision')
+            state = cycle._state(self.ledger, self.cfg)['positions']
+            for mint in positions:
+                value, at = engine.valuation(state[mint])
+                self.assertLessEqual(decision['ts'] - at, self.cfg['price_ttl_seconds'], mint)
         state = cycle._state(self.ledger, self.cfg)
         self.assertEqual(len(state['positions']), 4)
-        marks = self.ledger_events('portfolio_marks')
-        self.assertEqual(len(marks), 6)
-        last = marks[-1]
-        self.assertEqual(len(last['marks']), 3)
-        self.assertLessEqual(last['ts'] - last['observed_at'], 10)
+        self.assertEqual(len(self.ledger_events('portfolio_marks')), 6)
         fills = [o for o in self.outcomes() if o.get('type') == 'fill' and o['side'] == 'buy']
         self.assertEqual(len(fills), 4)
         # the held positions' executable marks stayed untouched: only valuation moved
+        last = self.ledger_events('portfolio_marks')[-1]
         self.assertTrue(all(p['mark_at'] < last['observed_at'] for m, p in state['positions'].items() if m in last['marks']))
         self.assertEqual(self.null_passes(), [])
         self.assertFalse(self.gate())
@@ -425,7 +475,7 @@ class FailureAndFlagTests(MarksPipeline):
         self.idle()
         before = (self.monitoring_rows(), len(self.marks_calls))
         item, proto = next(iter(self.entered.values()))
-        view = SimpleNamespace(at=self.f.at, tick=self.f.tick, protocol=proto)
+        view = self.live_view(proto)
         h = SimpleNamespace(f=view, target=item.target, item=item, path=self.ledger, cfg=self.cfg, http_calls=[],
                             sell_output=82_000_000, buy_output_raw=10_000_000)
         h.chain = self
