@@ -218,6 +218,43 @@ $PY -m tools.ops.preflight_dryrun --data $NEW --ledger $LEDGER --config $CFG --r
 Stop on any result other than a clean gate, plan and pre-check. The shared pacing database is copied, never opened live, and
 is never copied into `$NEW`.
 
+## 6b. Pacing policy for the paid Helius / Jupiter plans (optional, reviewed, append-only)
+
+Helius Developer (documented 50 req/s RPC, 10 req/s DAS/Enhanced, 5 req/s `sendTransaction`) and Jupiter Developer (10 req/s over a
+60 s sliding window, shared by Swap/Price/Token) are paid for, but the shared pacing database still runs both providers at the
+old 2.0 s cadence (0.5 req/s). The reviewed targets in `config/provider-pacing-policy.json` leave headroom for the other
+consumers of the same keys (counterfactual sampler, fill-realism worker, the held cycle): **Helius 0.1 s = 10 req/s (20% of 50),
+Jupiter 0.25 s = 4 req/s (40% of 10), backoff 30 s unchanged, Kraken untouched at exactly 2.0 s.**
+
+Do it NOW, while every writer is still stopped from step 2 (the tool re-checks this and refuses otherwise):
+
+```
+cd $REL
+$PY -m tools.ops.pacing_policy plan --db $PACING
+$PY -m tools.ops.pacing_policy apply --db $PACING --policy $REL/config/provider-pacing-policy.json
+$PY -m tools.ops.pacing_policy apply --db $PACING --policy $REL/config/provider-pacing-policy.json --execute
+```
+
+The first two are dry runs (`plan`, and `apply` without `--execute`); read the `changes` list (helius 2.0 -> 0.1, jupiter 2.0 -> 0.25) and
+`ready_to_apply: true`. `--execute` appends one `pacing_policy_changes` row per provider (old and new cadence/backoff, reason, sha256 of the
+policy file, digest of the reviewed entry, time). It never edits the original `policy` rows (the Kraken migration receipt pins them), never
+touches the Kraken row, state or receipt, and re-running it is a no-op (`ALREADY_APPLIED`). It needs: every unit that opens the
+shared pacing database inactive or failed (entry dispatcher service/timer, held cycle service/timer/path, counterfactual, fill-realism
+worker, dashboard; add more with `--require-quiesced UNIT ...`), and a database with no pending grant and no live waiter.
+
+**Mixed versions.** Every process that opens the shared database must run code that knows the new table BEFORE `apply`. Code from an
+older release raises `PACING_DATABASE_INVALID` on the extra table, that is, it fails closed instead of silently running at the old
+cadence (and `tools/verify_*_originals.py` compare the schema strictly). Therefore apply it from the new release while the old
+units are stopped, and never start a unit of an older release afterwards.
+
+**Provider budgets are separate from the cadence.** Helius `getMultipleAccounts` counts as ONE RPC call (up to 100 accounts per call), so
+batched marks are cheap; DAS and Enhanced calls have their own 10 req/s cap and must not be paced as plain RPC. A 429 or a returned
+`Retry-After` still embargoes the provider for the larger of the 30 s backoff and the header, exactly as before. Jupiter can answer 429
+from its firewall below the quota; the embargo handles that the same way.
+
+To change the cadence later (a new reviewed entry appended to the policy file in a new release), repeat with the writers stopped:
+`systemctl stop` the timers and services listed above, run the same three commands, then start them again.
+
 ## 7. Render, install and cut over (entry timer OFF, monitor OFF)
 
 ### 7a. Render and install the units
