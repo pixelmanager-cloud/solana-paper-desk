@@ -29,6 +29,20 @@ jobs:
               except PermissionError: bad.append((pid, os.stat(f'/proc/{pid}').st_uid))
               except OSError: pass
           print('unreadable fd dirs (pid, proc_uid):', bad[:30], 'count', len(bad))
+          owner = os.stat(p).st_uid
+          culprits = []
+          for pid in [n for n in os.listdir('/proc') if n.isdigit()]:
+              try: os.listdir(f'/proc/{pid}/fd')
+              except PermissionError:
+                  u = os.stat(f'/proc/{pid}').st_uid
+                  if u == owner:
+                      try: comm = open(f'/proc/{pid}/comm').read().strip()
+                      except OSError: comm = '?'
+                      try: status = [l for l in open(f'/proc/{pid}/status') if l.startswith(('Uid','CapEff','NoNewPrivs','Seccomp'))]
+                      except OSError: status = '?'
+                      culprits.append((pid, u, comm, status))
+              except OSError: pass
+          print('same-uid unreadable processes:', culprits)
           print('_owner_gone pieces done')
           PY
       - name: monitoring classification only

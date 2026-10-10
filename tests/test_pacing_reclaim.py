@@ -241,11 +241,14 @@ class PacingReclaimTests(unittest.TestCase):
         released = []
         real_flock = p.fcntl.flock
         calls = []
+        # T38: a same-process leftover entry is now displaced at once (it is stale by construction: acquire() only grants
+        # while `pending` is NULL), so the wait is exercised the way production meets it: the previous owner is ANOTHER
+        # process, i.e. an open descriptor this process's registry does not know about.
+        foreign_fd = p._HELD.pop(first._hold_key('helius'))[1]
         def flock(fd, op):
             calls.append(op)
-            if len(calls) == 3 and not released: first._release('helius', t1); released.append(True)
+            if len(calls) == 3 and not released: os.close(foreign_fd); released.append(True)
             return real_flock(fd, op)
-        first.finish('helius', t1) if False else None
         with sqlite3.connect(self.path) as c:                            # the owner committed its outcome, release is next
             c.execute('UPDATE state SET pending=NULL WHERE provider="helius"')
         self.clock.wall = T0 + 10
@@ -589,13 +592,38 @@ class RegistryIsolationTests(unittest.TestCase):
         self.assertEqual(self.keys(path)[0][1:3], tuple(fresh.identity))
         fresh.finish('helius', ticket)
 
+    def test_reused_inode_does_not_resurrect_an_old_ticket(self):
+        """ext4 reuses inode numbers at once: same path, device AND inode, but the database no longer records the ticket."""
+        path = self.new_db('r.sqlite')
+        pacer = self.pacer(path)
+        ticket = pacer.acquire('helius', timeout_seconds=1)
+        key = next(iter(self.keys(path)))
+        with sqlite3.connect(path) as c:
+            c.execute("UPDATE state SET pending=NULL WHERE provider='helius'")       # as a recreated database would be
+        self.assertEqual(pacer._held, {})
+        self.assertNotIn(key, p._HELD)
+        # and a new grant is not blocked by the stale lock the old entry used to hold
+        self.clock.wall += 5                                              # past the cadence of the first grant
+        again = self.pacer(path).acquire('helius', timeout_seconds=1)
+        self.assertNotEqual(again, ticket)
+
+    def test_new_grant_displaces_a_leftover_entry_for_the_same_database_and_provider(self):
+        path = self.new_db('l.sqlite')
+        first = self.pacer(path)
+        stale = first.acquire('helius', timeout_seconds=1)
+        with sqlite3.connect(path) as c:
+            c.execute("UPDATE state SET pending=NULL,next_at=0 WHERE provider='helius'")     # database forgot the grant
+        ticket = self.pacer(path).acquire('helius', timeout_seconds=1)                       # must not hit PACING_HOLDER_LOCK_UNAVAILABLE
+        self.assertEqual(self.pacer(path)._held['helius'][0], ticket)
+        self.assertNotEqual(ticket, stale)
+
     def test_entry_with_a_foreign_inode_or_pid_is_purged_not_trusted(self):
         path = self.new_db('y.sqlite')
         pacer = self.pacer(path)
         fd = os.open(os.devnull, os.O_RDONLY)
-        p._HELD[(str(path), 1, 2, 'helius')] = ('t' * 32, fd, os.getpid())          # right path, wrong inode
+        p._HELD[(str(path), 1, 2, 'helius')] = ('t' * 32, fd, os.getpid(), True)          # right path, wrong inode
         fd2 = os.open(os.devnull, os.O_RDONLY)
-        p._HELD[(str(path),) + tuple(pacer.identity) + ('jupiter',)] = ('u' * 32, fd2, os.getpid() + 1)  # inherited
+        p._HELD[(str(path),) + tuple(pacer.identity) + ('jupiter',)] = ('u' * 32, fd2, os.getpid() + 1, True)  # inherited
         self.assertEqual(pacer._held, {})
         self.assertEqual(self.keys(path), [])
         for descriptor in (fd, fd2):

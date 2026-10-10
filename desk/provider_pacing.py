@@ -53,7 +53,7 @@ RECLAIM_GUARDS = {
                                          "BEGIN SELECT RAISE(ABORT,'Immutable pacing reclaim record'); END")
     for op in ('UPDATE', 'DELETE')}
 MAX_RECLAIMS = 10000
-# Holder locks of grants this PROCESS owns: (database path, st_dev, st_ino, provider) -> (ticket, fd, pid). Only process exit (any
+# Holder locks of grants this PROCESS owns: (database path, st_dev, st_ino, provider) -> (ticket, fd, pid, committed). Only process exit (any
 # death, including SIGKILL) or finish()/throttle() releases them. Never a Pacer object's lifetime: a caller may
 # deliberately keep a ticket pending (pacing_release=False) while its Pacer is garbage-collected, and that owner is
 # still alive. Any Pacer in the process may acknowledge a ticket another Pacer in the process took.
@@ -70,7 +70,7 @@ def _purge_stale_holds():
     """
     for key in list(_HELD):
         path, dev, ino, _provider = key
-        ticket, fd, pid = _HELD[key]
+        ticket, fd, pid, _committed = _HELD[key]
         try:
             info = os.stat(path)
             same = (info.st_dev, info.st_ino) == (dev, ino) and pid == os.getpid()
@@ -196,7 +196,23 @@ class Pacer:
         """provider -> (ticket, fd) for the grants this process holds on this database."""
         _purge_stale_holds()
         identity = (str(self.path),) + tuple(self.identity)
-        return {key[3]: held[:2] for key, held in _HELD.items() if key[:3] == identity}
+        mine = {key: held for key, held in _HELD.items() if key[:3] == identity}
+        if mine:
+            # A held ticket is only meaningful while this database still records it as pending. Inode numbers are
+            # reused after a delete, so a recreated database must not inherit a phantom owner from the old file.
+            try:
+                with closing(self._connect()) as c:
+                    pending = dict(c.execute('SELECT provider,pending FROM state'))
+            except (sqlite3.Error, PacingError):
+                return {key[3]: held[:2] for key, held in mine.items()}      # cannot verify: report, never purge
+            for key, held in list(mine.items()):
+                if held[3] and pending.get(key[3]) != held[0]:   # only committed grants can be contradicted by the file
+                    del mine[key]
+                    if _HELD.get(key) is held:
+                        del _HELD[key]
+                        try: os.close(held[1])
+                        except OSError: pass
+        return {key[3]: held[:2] for key, held in mine.items()}
 
     def _hold_key(self, provider):
         return (str(self.path),) + tuple(self.identity) + (provider,)
@@ -211,6 +227,14 @@ class Pacer:
         owner-gone proof available without extra state. If it cannot be taken nothing has been committed
         yet (the caller's transaction is rolled back), so no unprotected ticket can ever exist.
         """
+        _purge_stale_holds()
+        # acquire() grants only while `pending` is NULL, so an entry still registered for this very database and
+        # provider is a leftover (finish() was never called, or the file was deleted and its inode reused): it
+        # protects nothing and must not hold the lock the new grant needs.
+        previous = _HELD.pop(self._hold_key(provider), None)
+        if previous is not None:
+            try: os.close(previous[1])
+            except OSError: pass
         fd = None
         try:
             fd = os.open(self._lock_path(provider), os.O_RDWR | os.O_CREAT | os.O_NOFOLLOW | os.O_CLOEXEC, 0o600)
@@ -224,12 +248,13 @@ class Pacer:
         except OSError:
             if fd is not None: os.close(fd)
             raise PacingError('PACING_HOLDER_LOCK_UNAVAILABLE') from None
-        _purge_stale_holds()
-        previous = _HELD.pop(self._hold_key(provider), None)
-        if previous is not None:
-            try: os.close(previous[1])
-            except OSError: pass
-        _HELD[self._hold_key(provider)] = (ticket, fd, os.getpid())
+        _HELD[self._hold_key(provider)] = (ticket, fd, os.getpid(), False)   # becomes committed after the grant commits
+
+    def _confirm(self, provider, ticket):
+        key = self._hold_key(provider)
+        held = _HELD.get(key)
+        if held and held[0] == ticket:
+            _HELD[key] = held[:3] + (True,)
 
     def _release(self, provider, ticket=None):
         """Close this process's holder lock for (provider, ticket), whichever Pacer instance took it."""
@@ -367,6 +392,7 @@ class Pacer:
                         try: c.commit()
                         except BaseException:
                             self._release(provider, ticket); raise
+                        self._confirm(provider, ticket)
                         return ticket
                     c.commit()
                 self.sleep(min(.05, max(0,deadline-tick)))
