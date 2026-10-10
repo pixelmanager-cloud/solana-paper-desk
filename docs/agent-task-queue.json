@@ -6576,9 +6576,11 @@
     },
     "checkpoint_verified": {
       "cash": "5",
-      "positions": {},
-      "realized_pnl": "0",
+      "positions": 0,
       "last_ts": 0,
+      "outcomes": 0,
+      "validator": "read_checkpoint",
+      "source": "916dd80f82d13157fd961427450f754baf0b78b7988daee810de02816adc9432",
       "no_first_buy": true
     },
     "pr185_head": "8aad8a827ce015f16a7ec8fd8a88ab2102e07084",
@@ -6847,13 +6849,90 @@
         "positive_one_page_seconds": 10.688,
         "positive_two_page_seconds": 12.676,
         "stale_delay_result": "STALE_MOMENTUM zero positions; no production acceptance"
+      },
+      "DISPATCH-INTAKE-NO-ENTRY-1": {
+        "worker": "06",
+        "reviewer": "07",
+        "status": "07 runtime and09 finaltestdeltaPASS; fullcombinedCI pending",
+        "base": "03da7c947128cfa94111b8faf8e1714203399b39",
+        "author_turn": "01a123f9-11f2-77c8-818b-37ed461c6c1d",
+        "design_review_turn": "01a123f8-e30d-727d-afa5-3700707bee39",
+        "evidence_classes": "Canonical acquisition method/params/results and original intake transport bytes remain distinct; no raw-acquisition claim",
+        "design_review_status": "Scoped PASS; implementation and activation not approved",
+        "pr": 193,
+        "head": "4da52c1bb6874b4160e21a60d5271f5711282a5d",
+        "review_requested": true,
+        "coordinator_findings": [
+          "Lifetime32 normaldispositions too low for unattendedloop; authoraskedboundedalignment",
+          "Potential gate hotpath evidence-replay regression; revieweraskedmeasurement",
+          "Clone canonicalpath rehearsal must preserve/translate recordeddev-inode contexts and reproduceexactlivepin"
+        ],
+        "review_turn": "01a1241a-0a83-77df-828b-db25f0f2556a",
+        "review_tests": "Actual nextcandidate publication/restart/selection PASS4.144s; prior14tests carryforward",
+        "planning_design_reviewer": "09"
+      },
+      "LEGACY-MIGRATE-SOL-SENTINEL-1": {
+        "worker": "03",
+        "reviewer": "09",
+        "author_turn": "01a123f4-995f-7312-8e64-e13a10f51420",
+        "status": "Independent09PASS; exact retained replayPASS; both exactheadLinuxCI success",
+        "public_fixture_canonical_hash": "7bff3992151ae1341a536a81073cf4751676c7339c3f8928b23ce4e004ffae4e",
+        "pr": 191,
+        "head": "e16863bb1fc33a5f2580c5a91ddaa1eab3505afd",
+        "review_turn": "01a123f8-af05-750b-a26a-344eeb43d6be",
+        "review_tests": "33 focused PASS1.761s plus9 independent probes",
+        "coordinator_replay": {
+          "hash": "7bff3992151ae1341a536a81073cf4751676c7339c3f8928b23ce4e004ffae4e",
+          "status": "OBSERVED_MIGRATION",
+          "witnesses": 1,
+          "entry_authorized": false,
+          "source": "Immutable failed-intake1252 backup directly exported with Python preserving numeric types",
+          "excluded_copy": "JS-roundtripped copy changed float formatting and did not match canonical hash; not evidence"
+        },
+        "ci_runs": {
+          "38022436115": "success",
+          "38022451171": "success"
+        }
+      },
+      "DISPATCH-PREADMISSION-CONTENTION-1": {
+        "worker": "06",
+        "reviewer": "03",
+        "pr": 190,
+        "head": "8d2764a24866e9bf610c3ef9b69c7770e891f568",
+        "status": "Independent03PASS; both exactheadLinuxCI success",
+        "limitation": "Post-admission handoff race remains fail-closed; operational serialization still required",
+        "author_tests": "40 focused PASS25.753s",
+        "review_turn": "01a123f9-4298-748e-bae6-717cd7a0ab99",
+        "review_tests": "40 Linux PASS60.871s; three locks held during credential load; zero intent/admission on credential failure",
+        "ci_runs": {
+          "38022322538": "success",
+          "38022342485": "success"
+        }
+      },
+      "DISPATCH-SCHEDULER-SERIALIZATION-1": {
+        "worker": "03",
+        "status": "Runtime and final test delta independent09PASS; final CI pending",
+        "scope": "Prevent post-admission race while preserving held-position priority; no provider calls or shared dispatcher edits",
+        "reviewer": "09",
+        "design_turn": "01a123fc-9c6f-73e3-b587-a5a0c0ba3a20",
+        "design_review_turn": "01a123fd-b9ee-72cd-be70-13375d7aefb7",
+        "author_turn": "01a123fd-c7c9-74b0-b6c8-84ed2a20117f",
+        "pr": 192,
+        "head": "8b0c1a32bd59ce467ee7aa7e3d05a4a355a8bd70",
+        "review_turn": "01a12403-3c7c-724f-ae56-5e06f9359e81",
+        "review_finding": "desk.cli.main accepts no argv but wrapper passes args, TypeError before command in both modes;4 baseline lease tests missed these paths",
+        "repair_turn": "01a12401-0147-71af-a399-8f9e9c6cad13",
+        "review_tests": "11 focusedPASS3.035s plus2 malformedCLI argv/lease probes",
+        "activation_requirements": "Protected lock provision, inode identity env, effectiveoverrides forentry/held/expire/decisions/dashboard; preserveexistinginnerlocks",
+        "final_delta_review_turn": "01a12412-1751-7351-8e8c-8b04cb9e445a",
+        "final_delta_tests": "26PASS9.156s"
       }
     },
     "next_runtime_first_receipt_hash": "fb5476746fc700d5e4ab0456d17547e0b591d8a486918167249fd9038dd08f8b",
     "next_activation_review": {
       "worker": "09",
       "turn": "01a123a4-fcf7-711c-bbb8-e85efa01749d",
-      "status": "Independent scoped PASS after ordering, backup identity, first receipt and dispatcher-off repairs; not applied",
+      "status": "APPLIED and verified",
       "scripts": [
         "work/activate-dispatch-recovery-reviewed.py",
         "work/verify-dispatch-recovery-originals.py"
@@ -6955,12 +7034,191 @@
     },
     "prospective_retirement_pin": {
       "hash": "93a2ce4fe490119af1bb2bdf73bf29042f01cedbeae4eeec2a5aa1c95d88d8cd",
-      "status": "07 scopedPASS for policy inclusion; NOT APPLIED; strictfinalplanmatchrequired",
+      "status": "APPLIED exact strict plan match after continuation; preserved originals and accepted validators PASS",
       "source": "916dd80f82d13157fd961427450f754baf0b78b7988daee810de02816adc9432",
       "script": "work/propose-dispatch-retirement-readonly.py",
       "script_review_turn": "01a123b5-8363-7569-8fde-f37e2e118c55",
       "strict_after_continuation_plan_match_required": true,
       "review_turn": "01a123b6-a31a-7747-a40e-07bf16d2cd9b"
+    },
+    "next_release": {
+      "head": "03da7c947128cfa94111b8faf8e1714203399b39",
+      "source": "916dd80f82d13157fd961427450f754baf0b78b7988daee810de02816adc9432",
+      "archive_hash": "4924e93c1250cce8e488cf6985331a5b405931766e1af20b9374c2f6ab41498a",
+      "staged": true,
+      "active": true,
+      "ci_runs": [
+        38020505034,
+        38020502712
+      ],
+      "ci_status": "both SUCCESS",
+      "implementation_matches_tested_tree": "174f91129ced766cfdf6695cfaba1321f0fb5f4d",
+      "ci_tests": 2820,
+      "ci_seconds": 950.147,
+      "pre_backup": "/var/backups/solana-desk/pre-dispatch-recovery-03da7c9",
+      "post_backup": "/var/backups/solana-desk/post-dispatch-recovery-03da7c9",
+      "preservation": "PASS 12 databases, 85 original tables",
+      "validators": "PASS active runtime, monitoring, six retired scans, same journal original1intent0results",
+      "unit_backup": "/var/backups/solana-desk/paper-ready-unit-3d0h_xxq",
+      "dispatcher_timer": "OFF after persisted captured migration rejection lacked terminal disposition",
+      "bounded_dispatch": {
+        "started_at": "2026-10-10T03:45:57Z",
+        "invocation_id": "bedb58ba02b84ba5a7025a423095966f",
+        "status": "DISPATCHED BLOCKED known hazard MAYHEM_POOL; exit0",
+        "dry_run_seq": 1250,
+        "dry_run_mint": "G1TrKxkMQxUAcGw49cbAHVSxcg4hoC9BCnhZce9fpump",
+        "timer": "off",
+        "scan_id": "03e6629eca5b4184aa0a1c524d381cbc",
+        "dispatch_id": "ca44ab33446a4f0c8f54222c7053eb52",
+        "charged": 14,
+        "terminal_receipt_hash": "0104071d63375968e4151c7c6b36e8602fbdb7738415b51e44902b533d9965f7",
+        "no_buy": true
+      },
+      "next_seq": 1252,
+      "next_mint": "C9VQJ9qBbXf5FjArThNbm6qCUKQoYrgtwf53tUDQpump",
+      "next_invocation": "303942fcb65941bb93c07de3aeee6720"
+    },
+    "seq1252": {
+      "mint": "C9VQJ9qBbXf5FjArThNbm6qCUKQoYrgtwf53tUDQpump",
+      "pool": "4HBf9MiM9iCG56GyUM3RfwHPzrWCYiJzM7W2sGC8EV9S",
+      "scan_id": "289545cf78f143e391115a9debecc2ed",
+      "dispatch_id": "625e7bda14184c58b240ff00c1a33e7a",
+      "invocation": "efb66e1e23ad40a8ac08bbf792d474a5",
+      "charged": 6,
+      "intake_history": "20add09c20424358ad00b5de35e216ed3ea914261983371a189a84eaa60a66d6",
+      "intake_status": "DONE2pages",
+      "offline_replay": "UNKNOWN MIGRATION_ACCOUNT_BINDING_MISMATCH and MIGRATION_WITNESS_ABSENT; zero witnesses",
+      "original_result_absent": true,
+      "no_preparation_pass": true,
+      "no_retry": true,
+      "backup": "/var/backups/solana-desk/failed-intake-1252-03da7c9",
+      "status": "06 assigned terminal rejection and exact reviewed no-retry recovery; 07 design review",
+      "precise_mismatch": "Legacy migrate event native SOL sentinel; outer WSOL and all other bindings pass",
+      "preserved_prefix_snapshot": {
+        "counts": {
+          "intents": 3,
+          "results": 1
+        },
+        "hashes": {
+          "intents": "9eff5d61d7ad02198ff2fa9a0872d9e978ebb01e5908584e42a7864de4786f34",
+          "results": "4c181cd165ad10c156889dd1a036bc16d0cbdbfc0a675583d3fa3bc7e1e90bdb"
+        },
+        "schema_hash": "04a20702117b4d19d19f13987917a6fe91ab39527b1bd6c7d54883b355f1da1c",
+        "status": "Immutable backup exported for review; no mutation/retirement yet"
+      },
+      "stopped_witness": {
+        "hash": "216ad82a0605754b3391726361f9e68668909601ccdc1b326df51dfbd6557761",
+        "observed_at": 1791607165,
+        "reviewer": "09",
+        "review_turn": "01a12418-bf6d-7432-8f9d-8db21bb8e9f4",
+        "script_sha256": "969ad8e8f04f717c68166a2c5e9c758e9bb7672e9efbebd48ff25856da9f5df7",
+        "captured_under_quiescence": true,
+        "normal_services_restored": true,
+        "entry_timer": "OFF"
+      }
+    },
+    "next_extension_anchors": {
+      "sequence": 1,
+      "first_receipt_hash": "fb5476746fc700d5e4ab0456d17547e0b591d8a486918167249fd9038dd08f8b",
+      "continuation_receipt_hash": "2fd601702c8147e68da440198d57b3e89e38912f0eaf829a8316dc60c55d7179",
+      "parent_receipt_hash": "2fd601702c8147e68da440198d57b3e89e38912f0eaf829a8316dc60c55d7179",
+      "predecessor": "916dd80f82d13157fd961427450f754baf0b78b7988daee810de02816adc9432",
+      "config_hash": "3dc3108e1c23ebbad97b88338e37f4012d3dd6b259f5a911624d799da1c11dff",
+      "context": {
+        "evidence_db": "/var/lib/solana-desk/evidence.sqlite",
+        "ledger_db": "/var/lib/solana-desk/paper-kraken-77de75a2.sqlite",
+        "research_db": "/var/lib/solana-desk/research.sqlite"
+      },
+      "metadata_hash": "220e263450c7f308ab26665f95d78a4b2673b2cb2ed097ace15943bf7aa8fde6",
+      "checkpoint_hash": "61eacdccf4ab480c20530384923f46d0f44e75f4b8199c4e39632fd3821e9362",
+      "events_count": 1,
+      "events_hash": "d6a2c29038acabac20136482ea2d7848e4e4a334d6109f3133a9d807aaa2574b",
+      "outcomes_count": 0,
+      "outcomes_hash": "4f53cda18c2baa0c0354bb5f9a3ecbe5ed12ab4d8e11ba873c2f11161202b945",
+      "note": "READ_ONLY_VALIDATED_ANCHORS_NOT_APPROVAL; successor pending reviewed final source; recheck under canonical locks"
+    },
+    "latest_user_direction": {
+      "date": "2026-10-10",
+      "text": "Safety/recovery overkill for a paper trader; prioritize working loop and minimal repairs.",
+      "implementation_scope": "Record verified ordinary terminal rejection, skip candidate, continue. Freeze additional screening and generic recovery/supervisor frameworks.",
+      "retained_constraints": [
+        "Paper only; no signing/broadcast/real funds",
+        "Bounded approved API usage",
+        "Accurate accounting and original evidence",
+        "Known hazards reject; experimental unknown ownership flagged",
+        "Existing exact review/testing/deployment gates remain until explicitly changed"
+      ]
+    },
+    "post_fix_priority": {
+      "user_instruction": "After current fix, activate paper trading and tweak entry/exit from observed trading results.",
+      "sequence": [
+        "Finish scoped repairs and existing review/combined Linux/CI gates",
+        "Reviewed deployment and live-data paper entry/monitor/exit/accounting/restart",
+        "Record net fees/slippage-adjusted outcomes per versioned settings",
+        "Tune entry and exit from real recorded paper results; evaluate changes on subsequent held-out trades"
+      ],
+      "no_readiness_or_profit_claim": true,
+      "first_buy_notification": "Only persisted production non-synthetic simulated BUY plus checkpoint validation; deduplicate durable identity"
+    },
+    "latest_user_objective": "Achieve a profitable paper strategy after costs through observed entry/exit results; risk screening supports returns rather than requiring a perfectly safe token. No real-money activation authorized.",
+    "next_release_validation_plan": {
+      "full_combined_linux": "Run full suite on final combined exact head in Linux CI; use that evidence for full combined Linux requirement and exact-head CI requirement. No automatic duplicate full-suite VPS run.",
+      "vps_targeted": "Reviewed source/path/schema preservation and runtime transition, actual service invocation/scheduler checks, native-clock paper cycle regression where necessary, bounded live verification.",
+      "rationale": "Avoid duplicate full-suite delay while preserving independent sensitive review, full combined Linux coverage, exact-head successful CI and VPS-specific deployment evidence."
+    },
+    "intake_cutover_review": {
+      "script": "work/start-intake-recovery-reviewed.py",
+      "sha256": "bb370161ad9ee9cdb11856196846575bc475a558c1de5264a163dddad64c142f",
+      "reviewer": "09",
+      "turn": "01a12417-9741-7322-bd6c-4416188a3b46",
+      "status": "Scoped static PASS, remaining final release gates required; not executed"
+    },
+    "intake_composition": {
+      "heads": {
+        "190": "8d2764a24866e9bf610c3ef9b69c7770e891f568",
+        "191": "e16863bb1fc33a5f2580c5a91ddaa1eab3505afd",
+        "192": "8b0c1a32bd59ce467ee7aa7e3d05a4a355a8bd70",
+        "193": "4da52c1bb6874b4160e21a60d5271f5711282a5d"
+      },
+      "tree": "0d1d7707d2ac24e76f8e9d4ee3d63989cd2790a4",
+      "source": "fa84625e3ab4dabd41d566cedf01567c2d0829eaff1a59f0b769ed69b575bd3a",
+      "independent_review": "09 scoped runtimePASS; 2historicalfixturefailures pending",
+      "review_turn": "01a1241c-3bca-73de-a3a9-2ef24969b694",
+      "root_tests": "25 focused combined tests PASS16.208s; no live acceptance",
+      "status": "All sensitive/runtime/test-delta reviews PASS; final full Linux CI candidate",
+      "final_delta_review_turn": "01a1241f-5e11-750e-8678-8d5af2d74163",
+      "final_delta_tests": "31PASS29.726s"
+    },
+    "intake_prospective_pin": {
+      "hash": "ab4e801be7b17378758c875fd93bcb63cd13a6ac1c360cf3f7490f315197b6fd",
+      "source": "fa84625e3ab4dabd41d566cedf01567c2d0829eaff1a59f0b769ed69b575bd3a",
+      "status": "READ_ONLY actual canonical paths PASS; NOT APPLIED",
+      "reviewer": "07",
+      "review_turn": "01a1241d-7464-70e1-8962-80992f5a3bcb",
+      "strict_after_extension_equality_required": true
+    },
+    "intake_preservation_review": {
+      "reviewer": "03",
+      "turn": "01a1241b-4dfa-7269-9c9e-7e0e8ea26abd",
+      "script_sha256": "105b779eafc3f6cc02d742fbec8da931b01172fbc04197dde55644e847976acd",
+      "status": "ScopedPASS; preserves12DB original rows/rowids/types; only exact extension/recovery schemas and2markers append"
+    },
+    "intake_activation_review": {
+      "reviewer": "07",
+      "turn": "01a1241e-4d0d-75f5-8f92-8b3f8031ae53",
+      "sha256": "dde534e64b7b772c33f55f384e9256666efa21afdc59fb356a24cbfec84ee413",
+      "status": "Scoped static PASS; no execution"
+    },
+    "intake_active_context_review": {
+      "reviewer": "09",
+      "turn": "01a1241e-3e1f-7436-95ed-611b51d5f448",
+      "sha256": "3a82f1a41042c8c28276e6346146ee6db0922f60152fe20e50993b8cc7397cc6",
+      "status": "ScopedPASS; require exit0 AND both success records"
+    },
+    "intake_native_timing_claim": {
+      "worker": "06",
+      "status": "Assigned native-clock combined fixture verification; no runtime edits/providers",
+      "source": "fa84625e3ab4dabd41d566cedf01567c2d0829eaff1a59f0b769ed69b575bd3a"
     }
   }
 }
