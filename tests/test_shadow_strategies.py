@@ -602,6 +602,50 @@ class SelectionAndOutcomeTests(StoreFixture):
                          {'BOUGHT': 1, 'REJECTED:ENGINE:COST_BUDGET': 2, 'NOT_DISPATCHED': 1, 'UNKNOWN': 2})
         self.assertEqual(sum(v['trades'] for v in split.values()), result['leaderboard'][0]['holdout']['trades'])
 
+    def test_unverified_receipts_unresolved_latches_and_verified_rejections_keep_separate_groups(self):
+        base = {'v': 2, 'stage': 'OBSERVATIONS', 'codes': ['MAYHEM_POOL']}
+        self.add('verified', self.full(PATHS['flat']), outcome={**base, 'class': 'REJECTED', 'detail': None})
+        self.add('receipt', self.full(PATHS['flat']), outcome={**base, 'class': 'REJECTED', 'detail': 'TERMINAL_RECEIPT_UNVERIFIED'})
+        self.add('receipt2', self.full(PATHS['flat']), outcome={**base, 'class': 'REJECTED', 'detail': 'TERMINAL_RECEIPT_UNVERIFIED'})
+        self.add('latch', self.full(PATHS['flat']), outcome={'v': 2, 'class': 'UNRESOLVED', 'stage': 'OBSERVATIONS',
+                                                              'codes': ['SOURCE_REQUEST_FAILED'], 'detail': 'LATCH_NOT_A_NORMAL_REJECTION'})
+        groups = sh.load_outcomes(self.store)
+        self.assertEqual(groups, {'verified': 'REJECTED:OBSERVATIONS:MAYHEM_POOL',
+                                  'receipt': 'REJECTED:OBSERVATIONS:MAYHEM_POOL:UNVERIFIED',
+                                  'receipt2': 'REJECTED:OBSERVATIONS:MAYHEM_POOL:UNVERIFIED',
+                                  'latch': 'UNRESOLVED:SOURCE_REQUEST_FAILED'})
+        found = sh.load_candidates(self.store)
+        grid = {'name': 'g', 'base': BASE, 'assumptions': assumptions(max_intra_marks=0), 'variants': [{'name': 'live', 'overrides': {}}]}
+        split = sh.run(found, grid, holdout_from=0, outcomes=groups)['leaderboard'][0]['holdout']['by_outcome']
+        self.assertEqual({k: v['trades'] for k, v in split.items()},
+                         {'REJECTED:OBSERVATIONS:MAYHEM_POOL': 1, 'REJECTED:OBSERVATIONS:MAYHEM_POOL:UNVERIFIED': 2,
+                          'UNRESOLVED:SOURCE_REQUEST_FAILED': 1})          # three classes, never merged
+
+    def test_provisional_results_are_flagged_until_the_dispatch_window_closes(self):
+        migrated = T0 + 1
+        nd = {'v': 2, 'class': 'NOT_DISPATCHED', 'stage': None, 'codes': [], 'detail': None}
+        decision = {'v': 2, 'class': 'REJECTED', 'stage': 'DECISION', 'codes': ['BELOW_SCORE'], 'detail': None, 'source': 'DECISIONS'}
+        journal = {'v': 2, 'class': 'REJECTED', 'stage': 'ENGINE', 'codes': ['COST_BUDGET'], 'detail': None, 'source': 'JOURNAL'}
+        self.add('nd', self.full(PATHS['flat']), migrated=migrated, outcome=nd)
+        self.add('dec', self.full(PATHS['flat']), migrated=migrated, outcome=decision)
+        self.add('jr', self.full(PATHS['flat']), migrated=migrated, outcome=journal)
+        self.add('bought', self.full(PATHS['flat']), migrated=migrated, outcome={'v': 2, 'class': 'BOUGHT', 'stage': None, 'codes': [], 'detail': None})
+        with closing(sqlite3.connect(self.store)) as c:
+            grace = cf._policy(c)[1]
+        open_window = migrated + cf.WINDOW_MAX_SECONDS + grace          # exactly at the boundary: still open (the rule is strict >)
+        groups = sh.load_outcomes(self.store, now=open_window)
+        self.assertEqual(groups, {'nd': 'NOT_DISPATCHED:PROVISIONAL', 'dec': 'REJECTED:DECISION:BELOW_SCORE:PROVISIONAL',
+                                  'jr': 'REJECTED:ENGINE:COST_BUDGET', 'bought': 'BOUGHT'})    # typed journal results and BUYs are final
+        closed = sh.load_outcomes(self.store, now=open_window + 1)
+        self.assertEqual(closed, {'nd': 'NOT_DISPATCHED', 'dec': 'REJECTED:DECISION:BELOW_SCORE',
+                                  'jr': 'REJECTED:ENGINE:COST_BUDGET', 'bought': 'BOUGHT'})
+        # A provisional result is its own group in the split: it is never added to the final NOT_DISPATCHED trades.
+        found = sh.load_candidates(self.store)
+        grid = {'name': 'g', 'base': BASE, 'assumptions': assumptions(max_intra_marks=0), 'variants': [{'name': 'live', 'overrides': {}}]}
+        split = sh.run(found, grid, holdout_from=0, outcomes=groups)['leaderboard'][0]['holdout']['by_outcome']
+        self.assertIn('NOT_DISPATCHED:PROVISIONAL', split)
+        self.assertNotIn('NOT_DISPATCHED', split)
+
     def test_store_is_opened_by_the_t02f_rule_and_symlinks_are_refused(self):
         self.add('good', self.full(PATHS['flat']))
         wal = self.root / 'wal.sqlite'
@@ -767,12 +811,110 @@ class ParityTests(unittest.TestCase):
             self.assertEqual(sh.main(['--parity-ledger', str(self.path)]), 3)
         self.assertEqual(json.loads(out.getvalue())['matched'], 5)
 
+    # ---- non-circular parity (T27G): only RESERVES and TIMESTAMPS cross over; the shadow decides on its own events -----------
+    def by_mint(self, result):
+        return {m['mint']: m for m in result['mints']}
+
+    def test_samples_rebuilt_from_recorded_reserves_reproduce_the_recorded_entry_and_exit(self):
+        fed = []
+        real = engine.transition
+
+        def spy(state, event, cfg):
+            fed.append(event)
+            return real(state, event, cfg)
+        with patch.object(sh.engine, 'transition', side_effect=spy):
+            result = sh.parity_from_samples(self.path)
+        mints = self.by_mint(result)
+        a = mints['SYNTHETIC_A']
+        T = helpers.T
+        self.assertEqual(a['status'], 'MATCH')
+        self.assertEqual((a['recorded']['entry']['at'], a['recorded']['exit']['at'], a['recorded']['exit']['reason']), (T, T + 15, 'STOP'))
+        self.assertEqual((a['shadow']['entry_at'], a['shadow']['exit_at'], a['shadow']['exit_reason']), (T, T + 15, 'STOP'))
+        self.assertTrue(a['round_trip_pnl_equal'])      # ladder rungs and the stop reproduce the recorded PnL exactly
+        self.assertEqual(a['samples'], 4)
+        # Not circular: the shadow's engine never saw a recorded event, only its own synthetic ones with the neutral features.
+        recorded_ids = {e['event_id'] for _i, e in sh._ledger_view(self.path)[1]}
+        self.assertTrue(fed and all(e['event_id'].startswith('shadow:') for e in fed))
+        self.assertFalse({e['event_id'] for e in fed} & recorded_ids)
+        market = [e for e in fed if e['kind'] == 'market']
+        self.assertTrue(market and all(e['provenance'] == 'SYNTHETIC_TEST_ONLY' for e in market))
+        for key, neutral in sh.NEUTRAL_FEATURES.items():
+            self.assertTrue(all(e[key] == neutral for e in market), key)
+        # The candidate is the recorded reserves at the recorded instants, nothing else.
+        cfg, events, _ = sh._ledger_view(self.path)
+        market = [e for _i, e in events if e.get('kind') == 'market' and e['mint'] == 'SYNTHETIC_A']
+        cand = sh.rebuild_candidate('SYNTHETIC_A', market, sh._derive_assumptions(market[0]))
+        self.assertEqual([(s['horizon'] + int(cand['migrated_at']), s['quote_raw']) for s in cand['samples']],
+                         [(e['ts'], int(D(e['reserve_sol']) * 10 ** 9)) for e in market])
+        self.assertEqual(result['unexplained'], 0)
+
+    def test_an_operator_control_explains_a_recorded_rejection_the_shadow_cannot_reproduce(self):
+        other = self.by_mint(sh.parity_from_samples(self.path))['OTHER']
+        self.assertEqual(other['status'], 'GAP_PORTFOLIO_OR_CONTROL')
+        self.assertIn('ENTRY_PAUSED', other['portfolio_or_control_reasons'])
+        self.assertIsNone(other['recorded']['entry'])
+        self.assertTrue(other['shadow']['entered'])        # the shadow models no PAUSE_ENTRY: that IS the expected gap
+
+    def test_recorded_features_the_shadow_cannot_see_are_reported_as_the_expected_gap(self):
+        path = Path(self.tmp.name) / 'features.sqlite'
+        ledger = Ledger(path)
+        T = helpers.T
+        for e in (helpers.event(T, mint='F', dev_launches_7d=5), helpers.event(T + 5, mint='F', dev_launches_7d=5)):
+            ledger.apply(e, self.cfg, engine.transition, engine.initial_state)
+        ledger.close()
+        with closing(sqlite3.connect(path)) as c:
+            self.assertEqual(json.loads(c.execute("SELECT payload FROM outcomes ORDER BY seq").fetchone()[0])['reason'], 'REPEAT_DEPLOYER')
+        result = sh.parity_from_samples(path)
+        f = self.by_mint(result)['F']
+        self.assertEqual(f['status'], 'GAP_FEATURES')
+        self.assertEqual(f['differing_features'], {'dev_launches_7d': {'neutral': 1, 'recorded': [5]}})
+        self.assertTrue(f['shadow']['entered'] and f['recorded']['entry'] is None)
+        self.assertEqual(result['unexplained'], 0)
+        self.assertIn('neutral features', result['expected_gap'])
+        self.assertEqual(result['neutral_features'], sh.NEUTRAL_FEATURES)
+
+    def test_a_divergence_without_a_known_cause_is_unexplained_and_the_cli_exits_3(self):
+        out = io.StringIO()
+        with contextlib.redirect_stdout(out):
+            self.assertEqual(sh.main(['--parity-samples', str(self.path)]), 0)
+        self.assertEqual(json.loads(out.getvalue())['counts'], {'MATCH': 1, 'GAP_PORTFOLIO_OR_CONTROL': 1})
+        with closing(sqlite3.connect(self.path)) as c:       # a recorded exit that the reserves cannot explain
+            c.execute('UPDATE outcomes SET payload=REPLACE(payload,?,?) WHERE payload LIKE ?',
+                      ('"reason":"STOP"', '"reason":"FORGED"', '%"reason":"STOP"%'))
+            c.commit()
+        result = sh.parity_from_samples(self.path)
+        self.assertEqual(self.by_mint(result)['SYNTHETIC_A']['status'], 'UNEXPLAINED')
+        out = io.StringIO()
+        with contextlib.redirect_stdout(out):
+            self.assertEqual(sh.main(['--parity-samples', str(self.path)]), 3)
+        self.assertEqual(json.loads(out.getvalue())['unexplained'], 1)
+
+    def test_a_recorded_reserve_that_is_not_whole_raw_units_is_refused_not_rounded(self):
+        path = Path(self.tmp.name) / 'fractional.sqlite'
+        ledger = Ledger(path)
+        ledger.apply(helpers.event(helpers.T, reserve_sol='100.0000000001'), self.cfg, engine.transition, engine.initial_state)
+        ledger.close()
+        with self.assertRaisesRegex(sh.ShadowError, 'whole number of raw units'):
+            sh.parity_from_samples(path)
+        with contextlib.redirect_stdout(io.StringIO()):
+            self.assertEqual(sh.main(['--parity-samples', str(path)]), 2)
+
     def test_a_different_config_changes_the_replayed_decisions(self):
-        # The replay uses the ledger's SAVED config; a shadow variant is a different config and must not match.
-        cfg = sh.build_config(self.cfg, {'stop_fraction': '0.60', 'min_market_cap_usd': '99999999'})
-        state = engine.initial_state(cfg)
-        decisions = [engine.transition(state, helpers.event(helpers.T), cfg)[1]]
-        self.assertNotEqual([x.get('type') for x in decisions[0]], [o.get('type') for o in self.recorded()[:len(decisions[0])]])
+        """A shadow variant is a different config: the rebuilt path must then decide differently from the recording."""
+        base = self.by_mint(sh.parity_from_samples(self.path))['SYNTHETIC_A']
+        self.assertEqual(base['status'], 'MATCH')
+        held_short = self.by_mint(sh.parity_from_samples(self.path, {'max_hold_seconds': 6}))['SYNTHETIC_A']
+        T = helpers.T
+        self.assertEqual(held_short['status'], 'WHAT_IF')
+        self.assertEqual((held_short['shadow']['entry_at'], held_short['shadow']['exit_at'], held_short['shadow']['exit_reason']),
+                         (T, T + 10, 'MAX_HOLD'))                               # recorded: STOP at T+15
+        self.assertTrue(held_short['entry_matches'] and not held_short['exit_matches'])
+        self.assertFalse(held_short['round_trip_pnl_equal'])
+        self.assertNotEqual(D(held_short['shadow']['pnl_sol']), D(base['recorded']['exit']['round_trip_pnl_sol']))
+        no_entry = self.by_mint(sh.parity_from_samples(self.path, {'min_market_cap_usd': '99999999'}))['SYNTHETIC_A']
+        self.assertEqual((no_entry['status'], no_entry['shadow']), ('WHAT_IF', {'entered': False, 'reject': 'MARKET_CAP'}))
+        with self.assertRaises(sh.ShadowError):
+            sh.parity_from_samples(self.path, {'no_such_key': 1})
 
     def test_cli_exit_codes_and_quote_mode_ledgers_are_refused(self):
         out = io.StringIO()
@@ -784,7 +926,10 @@ class ParityTests(unittest.TestCase):
             c.execute("UPDATE metadata SET value=? WHERE key='config'", (json.dumps(quote_cfg),)); c.commit()
         with self.assertRaises(sh.ShadowError):
             sh.replay_ledger(self.path)
+        with self.assertRaises(sh.ShadowError):
+            sh.parity_from_samples(self.path)
         with contextlib.redirect_stdout(io.StringIO()):
+            self.assertEqual(sh.main(['--parity-samples', str(self.path)]), 2)
             self.assertEqual(sh.main(['--parity-ledger', str(self.path)]), 2)
             self.assertEqual(sh.main(['--parity-ledger', str(Path(self.tmp.name) / 'missing.sqlite')]), 2)
 
