@@ -184,7 +184,8 @@ class ChainTests(_Fixture):
             self.read()
         for statement, args in ((f'UPDATE {mb.CHAIN_TABLE} SET chain_hash=? WHERE seq=2', ('0' * 64,)),
                                 (f'DELETE FROM {mb.CHAIN_TABLE} WHERE seq=2', ()),
-                                (f'UPDATE {mb.CHAIN_TABLE} SET reservation_id=99 WHERE seq=2', ())):
+                                (f'UPDATE {mb.CHAIN_TABLE} SET reservation_id=99 WHERE seq=2', ()),
+                                (f'UPDATE {mb.CHAIN_TABLE} SET reservation_id=99 WHERE seq=5', ())):      # the LAST link too
             with self.subTest(statement=statement):
                 self.setUp()
                 for _ in range(5):

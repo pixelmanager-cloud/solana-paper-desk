@@ -68,7 +68,9 @@ class IndexUnitTests(unittest.TestCase):
         for name in vi.GUARDS:
             c.execute(f'DROP TRIGGER {name}')
         c.execute(f'UPDATE {vi.TABLE} SET id=7 WHERE id=2')
-        with self.assertRaisesRegex(ValueError, 'schema malformed|not contiguous'):
+        for sql in vi.GUARDS.values():                  # schema exactly as published again: only the ROW is wrong
+            c.execute(sql)
+        with self.assertRaisesRegex(ValueError, 'not contiguous'):
             vi.rows(c)
         c = memory()
         indexed(c, 'k', [item(1)])
@@ -368,6 +370,33 @@ class StoreGrowthTests(unittest.TestCase):
         for i in range(4200):
             self.h.store.save({'filler': i})
         self.assertIsNone(terminal.gate(self.h.store, self.h.context['research_db'], ('b' * 32,)))
+
+
+class HistoryOnlyBehaviourTests(unittest.TestCase):
+    def setUp(self):
+        self.h = prep_fixture.PreparationTests('test_global_gate_retirement_and_unrelated_scan')
+        self.h.setUp()
+        self.addCleanup(self.h.doCleanups)
+
+    def test_indexed_receipt_outside_the_sample_still_binds_the_research_database(self):
+        self.h.rejected()
+        with patch.object(vi, 'SAMPLE', 0):
+            self.assertIsNone(rejection.gate(self.h.store, self.h.context['research_db'], ('b' * 32,)))
+            with self.assertRaisesRegex(ValueError, 'research context'):
+                rejection.gate(self.h.store, '/somewhere/else.sqlite', ('b' * 32,))
+
+    def test_publishing_warns_when_the_store_is_crowded(self):
+        with patch.object(no_entry, 'PAGE_SOFT_LIMIT', 3):
+            self.h.rejected()
+        self.assertIn('evidence_pages', {r.get('table') for r in no_entry.read_refusals(self.h.store.path)})
+
+    def test_byte_warning_starts_at_eighty_percent_not_at_the_limit(self):
+        self.h.rejected()
+        size = no_entry.storage_headroom(self.h.store)['bytes']
+        with patch.object(self.h.store, 'max_bytes', int(size / 0.9)):
+            self.assertTrue(no_entry.storage_headroom(self.h.store)['bytes_warn'])
+        with patch.object(self.h.store, 'max_bytes', int(size / 0.7)):
+            self.assertFalse(no_entry.storage_headroom(self.h.store)['bytes_warn'])
 
 
 class AttemptWindowTests(unittest.TestCase):
