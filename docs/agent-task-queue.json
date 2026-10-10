@@ -6581,7 +6581,54 @@
       "last_ts": 0,
       "no_first_buy": true
     },
-    "pr185_head": "00d2583a5b9c31337c67e7727c7796d5fcf20a45",
-    "pr185_review_status": "09 reviewing; root requested unsupported non-SOL and malformed discovery skip repair preserving receipt validation"
+    "pr185_head": "8aad8a827ce015f16a7ec8fd8a88ab2102e07084",
+    "pr185_review_status": "PASS independent09 turn01a12365-bd60-7266-80cc-83b6dcd445d0 tree037f32cea85d2c7d7dcd7f9499e9447bdb681508;36PASS34.655s+3adversarialprobes",
+    "retained_selector_verification": {
+      "head": "8aad8a827ce015f16a7ec8fd8a88ab2102e07084",
+      "provider_calls": 0,
+      "selected_seq": 1067,
+      "scope": "Hint only; not entry acceptance"
+    },
+    "ledger_original_comparison": {
+      "all_7_tables_unchanged": true,
+      "backup": "post-kraken-77de75a2",
+      "events": 1,
+      "outcomes": 0
+    },
+    "repairs": {
+      "PR185": {
+        "head": "8aad8a827ce015f16a7ec8fd8a88ab2102e07084",
+        "review": "09 PASS",
+        "ci": {
+          "38012740335": "PASS2752/780.194s",
+          "38012737613": "PASS"
+        }
+      },
+      "PR186": {
+        "head": "e0c79e849856a58248a23ad70f34d0c2592505f4",
+        "review": "test-only fixture delta pending07; runtime previouslyPASS",
+        "ci": "pending"
+      },
+      "PR187": {
+        "head": "b453a745542cae6b394aec379362f0d6d6d1fe6b",
+        "review": "07 reviewing repaired scalarbounds and historicalfixture",
+        "owner": "06 fixing"
+      }
+    },
+    "activation_draft": {
+      "source": "c7be1e9502da954a759dbe34ffd602762caf8bb2b84c70dd99a6fcf3736df8bf",
+      "status": "READ_ONLY_PRODUCTION_PROPOSAL_EXACT_MATCH_PENDING_REVIEW_CI",
+      "applied": false
+    },
+    "production_readonly_retirement_plan": {
+      "head": "b453a745542cae6b394aec379362f0d6d6d1fe6b",
+      "passed_under_quiescence": true,
+      "receipt_applied": false,
+      "pages": 208,
+      "raw_bytes": 48946045,
+      "compressed_bytes": 5112690,
+      "combined_source": "c7be1e9502da954a759dbe34ffd602762caf8bb2b84c70dd99a6fcf3736df8bf"
+    },
+    "assembly_requirement": "Use each component merge-base diff or three-way merge. PR185 diverged at2d507b83; must preserve950Krakenpacing andmonitoringsuccessorpolicies,helperanddocs. Scratchv1-v3superseded;v4correct."
   }
 }
