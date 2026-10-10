@@ -12,7 +12,7 @@ from tools import history_first_paper_entry as entry
 class ProspectiveEmptyTests(unittest.TestCase):
     def setUp(self):
         from tests.test_history_preparation_phase import PreparationTests
-        self.p=PreparationTests();self.p.setUp();self.addCleanup(self.p.doCleanups)
+        self.p=PreparationTests();self.addCleanup(self.p.doCleanups);self.p.setUp()
 
     def test_verified_empty_window_publishes_no_entry_and_allows_next_scan(self):
         p=self.p
@@ -110,7 +110,7 @@ class RetainedEmptyTests(unittest.TestCase):
         from tests.test_paper_read_sources import Response
         from desk import paper_cycle as cycle,paper_read_sources as transport,provider_pacing as pacing
         from desk.model import canonical,digest
-        self.h=first.HistoryFirstTests();self.h.setUp();self.addCleanup(self.h.doCleanups)
+        self.h=first.HistoryFirstTests();self.addCleanup(self.h.doCleanups);self.h.setUp()
         h=self.h;f=h.f;f.f.at=int(time.time());f.http_calls=[];f.sell_output=100_000_000
         progress=f.f.progress
         from desk.ownership_acquisition import _Setup

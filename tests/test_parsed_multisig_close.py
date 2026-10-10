@@ -68,7 +68,7 @@ class ParsedMultisigCloseTests(unittest.TestCase):
         self.assertEqual(result['witnesses'],baseline['witnesses'])
         self.assertEqual(result['blockers'],[])
     def test_actual_retained_two_page_intake_replay_no_extra_calls(self):
-        f=intake_fixture.MigrationSlotTests();f.setUp();self.addCleanup(f.doCleanups)
+        f=intake_fixture.MigrationSlotTests();self.addCleanup(f.doCleanups);f.setUp()
         unrelated=close_record(self.info());unrelated['blockTime']=f.raw['blockTime']
         f.responses=[{'data':[f.raw,unrelated],'paginationToken':'next'},{'data':[]}]
         result=f.intake()

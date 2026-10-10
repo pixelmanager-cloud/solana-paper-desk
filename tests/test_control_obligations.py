@@ -293,7 +293,7 @@ class SealedControlObligationsTests(unittest.TestCase):
     def test_sealed_source_projects_only_when_exact_persisted_binding_replays(self):
         from tests import test_sealed_continuation_entry_evidence as sealed
         fixture = sealed.SealedContinuationEntryEvidenceTests()
-        fixture.setUp(); self.addCleanup(fixture.doCleanups)
+        self.addCleanup(fixture.doCleanups); fixture.setUp()
         def project():
             return inventory(fixture.scan, EvidenceStore(fixture.evidence, read_only=True),
                              revision_hash=fixture.head['evidence_hash'], now=110)

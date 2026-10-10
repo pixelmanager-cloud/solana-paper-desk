@@ -69,7 +69,7 @@ def same_context(self):
  import inspect,textwrap
  construction=textwrap.dedent(inspect.getsource(PoolTests.setUp)).replace('bytes([7])*32','bytes([51])*32')
  pool_namespace=dict(vars(__import__('tests.test_pools',fromlist=['PoolTests'])));exec(construction,pool_namespace)
- self.f=protocol_fixture.PaperCycleTests();self.f.setUp();self.addCleanup(self.f.doCleanups)
+ self.f=protocol_fixture.PaperCycleTests();self.addCleanup(self.f.doCleanups);self.f.setUp()
  fresh_protocol=PoolTests();pool_namespace['setUp'](fresh_protocol);self.f.f.protocol=fresh_protocol
  self.root=Path(self.f.f.tmp.name);self.targets=self.root/'targets.json'
  f=self.f;f.http_calls=[];f.sell_output=100_000_000;old_store=f.f.progress.store

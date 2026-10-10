@@ -113,7 +113,7 @@ class PoolCompatibilityTests(unittest.TestCase):
 
 class ActualCycleCompatibilityTests(unittest.TestCase):
     def test_actual_entry_monitor_exit_restart_with_token2022_lp_and_net_reserves(self):
-        f=vertical.VerticalProfileTests();f.setUp();self.addCleanup(f.doCleanups)
+        f=vertical.VerticalProfileTests();self.addCleanup(f.doCleanups);f.setUp()
         protocol=f.f.f.protocol
         raw=bytearray(protocol.raw+bytes(301-len(protocol.raw)))
         raw[245:261]=(-3000000).to_bytes(16,'little',signed=True)

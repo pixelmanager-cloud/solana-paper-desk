@@ -13,7 +13,7 @@ from tests import test_paper_cycle as fixtures
 
 class TargetExportTests(unittest.TestCase):
     def setUp(self):
-        self.f=fixtures.PaperCycleTests();self.f.setUp();self.addCleanup(self.f.doCleanups)
+        self.f=fixtures.PaperCycleTests();self.addCleanup(self.f.doCleanups);self.f.setUp()
         self.target=self.f.target
         self.output=self.f.path.parent/'new-targets.json'
         self.candidate={'scan_id':self.target.scan_id,'pool':self.target.pool,'taker':self.target.taker,

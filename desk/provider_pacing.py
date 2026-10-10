@@ -53,11 +53,33 @@ RECLAIM_GUARDS = {
                                          "BEGIN SELECT RAISE(ABORT,'Immutable pacing reclaim record'); END")
     for op in ('UPDATE', 'DELETE')}
 MAX_RECLAIMS = 10000
-# Holder locks of grants this PROCESS owns: (database path, provider) -> (ticket, fd). Only process exit (any
+# Holder locks of grants this PROCESS owns: (database path, st_dev, st_ino, provider) -> (ticket, fd, pid). Only process exit (any
 # death, including SIGKILL) or finish()/throttle() releases them. Never a Pacer object's lifetime: a caller may
 # deliberately keep a ticket pending (pacing_release=False) while its Pacer is garbage-collected, and that owner is
 # still alive. Any Pacer in the process may acknowledge a ticket another Pacer in the process took.
 _HELD = {}
+
+
+def _purge_stale_holds():
+    """Drop (and close) entries that can no longer belong to a live database in this process.
+
+    An entry is trusted only while its database path still names the SAME file (device and inode) and it was
+    taken by this process (a forked child must not treat an inherited descriptor as its own grant). A deleted or
+    recreated database, or inode reuse after a temp directory vanished, therefore never gives another database
+    a phantom live owner.
+    """
+    for key in list(_HELD):
+        path, dev, ino, _provider = key
+        ticket, fd, pid = _HELD[key]
+        try:
+            info = os.stat(path)
+            same = (info.st_dev, info.st_ino) == (dev, ino) and pid == os.getpid()
+        except OSError:
+            same = False
+        if not same:
+            del _HELD[key]
+            try: os.close(fd)
+            except OSError: pass
 
 
 class PacingError(ValueError):
@@ -172,8 +194,12 @@ class Pacer:
     @property
     def _held(self):
         """provider -> (ticket, fd) for the grants this process holds on this database."""
-        key = str(self.path)
-        return {provider: held for (path, provider), held in _HELD.items() if path == key}
+        _purge_stale_holds()
+        identity = (str(self.path),) + tuple(self.identity)
+        return {key[3]: held[:2] for key, held in _HELD.items() if key[:3] == identity}
+
+    def _hold_key(self, provider):
+        return (str(self.path),) + tuple(self.identity) + (provider,)
 
     def _lock_path(self, provider):
         return str(self.path) + '.holder-' + provider + '.lock'
@@ -198,15 +224,16 @@ class Pacer:
         except OSError:
             if fd is not None: os.close(fd)
             raise PacingError('PACING_HOLDER_LOCK_UNAVAILABLE') from None
-        previous = _HELD.pop((str(self.path), provider), None)
+        _purge_stale_holds()
+        previous = _HELD.pop(self._hold_key(provider), None)
         if previous is not None:
             try: os.close(previous[1])
             except OSError: pass
-        _HELD[(str(self.path), provider)] = (ticket, fd)
+        _HELD[self._hold_key(provider)] = (ticket, fd, os.getpid())
 
     def _release(self, provider, ticket=None):
         """Close this process's holder lock for (provider, ticket), whichever Pacer instance took it."""
-        key = (str(self.path), provider)
+        key = self._hold_key(provider)
         held = _HELD.get(key)
         if held and (ticket is None or held[0] == ticket):
             del _HELD[key]
@@ -227,7 +254,8 @@ class Pacer:
         try:
             with closing(self._connect()) as c:
                 c.execute('BEGIN')                                    # deferred: a plain read, no write lock
-                now = self._now(c)
+                now = self._now_or_none(c)
+                if now is None: return []                              # clock disagrees with the database: do nothing
                 if not c.execute("SELECT 1 FROM sqlite_master WHERE type='table' AND name=?", (RECLAIM_TABLE,)).fetchone():
                     return []
                 old = False
@@ -239,7 +267,9 @@ class Pacer:
                 if not old: return []
                 done = []
                 c.execute('BEGIN IMMEDIATE')                          # now (and only now) the write lock; re-proved inside
-                now = self._now(c)
+                now = self._now_or_none(c)
+                if now is None:
+                    c.rollback(); return []
                 for provider in self.providers:
                     row = c.execute('SELECT next_at,pending FROM state WHERE provider=?', (provider,)).fetchone()
                     if row and row[1] is not None and self._reclaim(c, provider, row[1], row[0], now):
@@ -277,6 +307,17 @@ class Pacer:
             return True
         finally:
             os.close(fd)
+
+    def _now_or_none(self, c):
+        """The usable clock reading, or None when it disagrees with the database (acquire() refuses it loudly).
+
+        The read-first reclaim path runs inside entry gates that refuse on a pending grant without ever calling
+        acquire(); a clock problem must not turn such a gate into a crash.
+        """
+        try:
+            return self._now(c)
+        except (PacingError, TypeError, ValueError):
+            return None
 
     def _now(self, c):
         now = self.clock()

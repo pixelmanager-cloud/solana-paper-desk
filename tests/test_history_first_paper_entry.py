@@ -23,7 +23,7 @@ from tests.test_paper_read_sources import Response
 
 class HistoryFirstTests(unittest.TestCase):
     def setUp(self):
-        self.v=vertical.VerticalProfileTests();self.v.setUp();self.addCleanup(self.v.doCleanups)
+        self.v=vertical.VerticalProfileTests();self.addCleanup(self.v.doCleanups);self.v.setUp()
         self.f=self.v.f;self.root=Path(self.f.f.tmp.name)
         self.config=self.root/'config.json';self.config.write_text(json.dumps(self.f.cfg))
         self.targets=self.root/'targets.json'

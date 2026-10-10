@@ -14,7 +14,7 @@ from tools import paper_entry_dispatcher as dispatcher
 
 class IntakeDeadlineTests(unittest.TestCase):
     def setUp(self):
-        self.f=intake_fixture.MigrationSlotTests();self.f.setUp();self.addCleanup(self.f.doCleanups)
+        self.f=intake_fixture.MigrationSlotTests();self.addCleanup(self.f.doCleanups);self.f.setUp()
     def test_delayed_local_guard_does_not_consume_provider_window(self):
         clock=[100.0];calls=[]
         def guard():calls.append('guard');clock[0]+=11.0
@@ -58,7 +58,7 @@ class IntakeDeadlineTests(unittest.TestCase):
 
 class DispatchDeadlineTests(unittest.TestCase):
     def setUp(self):
-        self.f=dispatch_fixture.MigrationNoEntryTests();self.f.setUp();self.addCleanup(self.f.doCleanups)
+        self.f=dispatch_fixture.MigrationNoEntryTests();self.addCleanup(self.f.doCleanups);self.f.setUp()
     def expired(self):
         original=intake._SlotSource.__call__
         def expire(source,*args):source.deadline=source.started;return original(source,*args)

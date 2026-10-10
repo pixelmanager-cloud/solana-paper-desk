@@ -25,7 +25,7 @@ ROOT=Path(__file__).resolve().parents[1]
 
 class RuntimeContinuationTests(unittest.TestCase):
     def setUp(self):
-        self.f=fixtures.MonitoringHandoffTests();self.f.setUp();self.addCleanup(self.f.doCleanups)
+        self.f=fixtures.MonitoringHandoffTests();self.addCleanup(self.f.doCleanups);self.f.setUp()
         self.root=self.f.root;self.source=runtime.implementation_hash()
         self.origroot=self.root/'origin';self.oldroot=self.root/'frozen31'
         for path,name in ((self.origroot,'origin'),(self.oldroot,'predecessor')):

@@ -13,7 +13,7 @@ from tests import test_control_obligations as fixtures
 class HistoricalControlInventoryTests(unittest.TestCase):
     def setUp(self):
         self.case = fixtures.ControlObligationsTests()
-        self.case.setUp(); self.addCleanup(self.case.doCleanups)
+        self.addCleanup(self.case.doCleanups); self.case.setUp()
         self.h = self.case.h
         self.account = self.h.f['accounts'][0]
         self.owner = self.h.f['owners'][self.account]
@@ -239,7 +239,7 @@ class HistoricalControlInventoryTests(unittest.TestCase):
         from desk.control_obligations import inventory
         from desk.evidence import EvidenceStore
         case = sealed.SealedContinuationEntryEvidenceTests()
-        case.setUp(); self.addCleanup(case.doCleanups)
+        self.addCleanup(case.doCleanups); case.setUp()
         def project():
             return inventory(case.scan,EvidenceStore(case.evidence,read_only=True),
                              revision_hash=case.head['evidence_hash'],now=110)

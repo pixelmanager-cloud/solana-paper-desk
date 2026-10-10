@@ -21,7 +21,7 @@ from tests.test_pool_capture_bridge import PoolCaptureBridge,CoordinatorTranspor
 @unittest.skipUnless(m.read_platform_available(),'Linux LP64 OFD guarded inventory')
 class CompletionInventoryTests(unittest.TestCase):
     def setUp(self):
-        self.f=jf.CommonBankJournalTests();self.f.setUp();self.addCleanup(self.f.doCleanups)
+        self.f=jf.CommonBankJournalTests();self.addCleanup(self.f.doCleanups);self.f.setUp()
         self.bind()
 
     def bind(self):

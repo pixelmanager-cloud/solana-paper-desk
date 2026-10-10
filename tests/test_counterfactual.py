@@ -445,7 +445,7 @@ class OutcomeClassificationTests(CounterfactualBase):
     def dispatcher(self):
         from tests import test_paper_entry_dispatcher as fixtures
         d = fixtures.DispatcherTests('test_dry_run_no_admission_credentials_or_io_and_context_activation')
-        d.setUp(); self.addCleanup(d.doCleanups)
+        self.addCleanup(d.doCleanups); d.setUp()
         return d
 
     def test_real_dispatcher_writers_buy_token_rejection_and_engine_rejection(self):

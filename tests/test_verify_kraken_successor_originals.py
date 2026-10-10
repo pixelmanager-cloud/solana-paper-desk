@@ -16,7 +16,7 @@ from tools import verify_kraken_successor_originals as helper
 
 class OriginalsTests(unittest.TestCase):
     def setUp(self):
-        f=fixtures.MonitoringSuccessorTests(); f.setUp(); self.addCleanup(f.doCleanups)
+        f=fixtures.MonitoringSuccessorTests(); self.addCleanup(f.doCleanups); f.setUp()
         f.activate()
         self.tmp=tempfile.TemporaryDirectory();self.addCleanup(self.tmp.cleanup)
         root=Path(self.tmp.name);self.old=root/'pre';self.live=root/'live'

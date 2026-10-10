@@ -10,7 +10,7 @@ from tests.test_paper_experimental_scoring import experimental
 
 class QuoteReportLabelTests(unittest.TestCase):
     def setUp(self):
-        self.case=fixtures.QuoteExecutionTests();self.case.setUp();self.addCleanup(self.case.doCleanups)
+        self.case=fixtures.QuoteExecutionTests();self.addCleanup(self.case.doCleanups);self.case.setUp()
     def roundtrip(self):
         c=self.case;c.cfg['experimental_policy_version']=1
         buy_event=experimental(mint=c.mint,pool=c.pool,taker=c.wallet)
