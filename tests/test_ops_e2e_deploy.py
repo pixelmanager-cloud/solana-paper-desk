@@ -125,7 +125,8 @@ class E2E(FreshStartBase):
                    '/root': self.rootdir}
         # one regex pass (longest prefix first) so a rewritten path is never rewritten again
         pattern = re.compile('|'.join(re.escape(k) for k in sorted(mapping, key=len, reverse=True)))
-        text = pattern.sub(lambda m: str(mapping[m.group(0)]), text)
+        # quote only paths with whitespace (e.g. a venv under "Clause Coding"); shlex joins 'a b'/x correctly
+        text = pattern.sub(lambda m: (lambda p: shlex.quote(p) if any(c.isspace() for c in p) else p)(str(mapping[m.group(0)])), text)
         return text
 
     def run_tool(self, module, argv):
