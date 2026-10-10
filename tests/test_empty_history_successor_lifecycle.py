@@ -211,7 +211,7 @@ try:
  # Reuse the existing synthetic HTTP wire construction and native-clock lifecycle.
  construction=textwrap.dedent(inspect.getsource(fixture.RetainedEmptyTests.setUp))
  construction=construction[construction.index('    code=textwrap.dedent'):construction.index('    original_intent=')]
- namespace={**vars(fixture),'inspect':inspect,'textwrap':textwrap,'protocol':protocol,'transport':transport,'time':time,'json':json,'Path':Path,'Response':__import__('tests.test_paper_read_sources',fromlist=['Response']).Response,'h':r.h,'f':r.h.f,'self':r}
+ namespace={**vars(fixture),'inspect':inspect,'textwrap':textwrap,'protocol':protocol,'transport':transport,'time':time,'json':json,'canonical':canonical,'digest':digest,'Path':Path,'Response':__import__('tests.test_paper_read_sources',fromlist=['Response']).Response,'h':r.h,'f':r.h.f,'self':r}
  exec(textwrap.dedent(construction),namespace)
  fixture_http=r.http
  class TraceHTTP:
@@ -224,10 +224,11 @@ try:
  method=textwrap.dedent(inspect.getsource(fixture.RetainedEmptyTests.test_post_recovery_real_buy_monitor_full_exit))
  start=method.index('    pin=recovery.plan(');end=method.index('    retired=',start)
  method=method[:start]+method[end:]
+ method=method.replace('f.sell_output=10_000_000','f.sell_output=100_000_000')
  method=method.replace('retired=f.target.scan_id','retired=fixture_args["scan"]').replace('f.target=f.f.target()','f.target=f.target')
- method=method.replace("self.assertEqual(result['status'],'COMPLETE',result)","self.assertEqual(result['status'],'COMPLETE',result);print('NATIVE_BUY',result['attempted_requests'],result['outcomes'],flush=True)")
+ method=method.replace("self.assertEqual(result['status'],'COMPLETE',result)","self.assertEqual(result['status'],'COMPLETE',result);print('NATIVE_BUY',result['attempted_requests'],[(v.get('side'),v.get('reason')) for v in result['outcomes']],flush=True)")
  method=method.replace("self.assertEqual(mark['status'],'COMPLETE',mark)","self.assertEqual(mark['status'],'COMPLETE',mark);print('NATIVE_HELD',mark['monitoring_attempted_requests'],flush=True)")
- method=method.replace("self.assertEqual(exited['status'],'COMPLETE',exited)","self.assertEqual(exited['status'],'COMPLETE',exited);print('NATIVE_EXIT',exited['monitoring_attempted_requests'],exited['outcomes'],flush=True)")
+ method=method.replace("self.assertEqual(exited['status'],'COMPLETE',exited)","self.assertEqual(exited['status'],'COMPLETE',exited);print('NATIVE_EXIT',exited['monitoring_attempted_requests'],[(v.get('side'),v.get('reason')) for v in exited['outcomes']],flush=True)")
  namespace={**vars(fixture),'fixture_args':a};exec(method,namespace)
  namespace['test_post_recovery_real_buy_monitor_full_exit'](r)
  with sqlite3.connect(a['ledger']) as c:assert runtime.require_runtime(c)==a['source']
