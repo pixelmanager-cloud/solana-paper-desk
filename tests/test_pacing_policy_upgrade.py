@@ -348,6 +348,27 @@ class ForgedChangeTests(Base):
                     c.commit()
                 p.Pacer(self.path)
 
+    def test_an_id_gap_is_detected_even_if_the_order_guard_was_dropped_and_recreated(self):
+        with closing(sqlite3.connect(self.path)) as c:
+            c.execute('DROP TRIGGER pacing_policy_changes_order')
+            c.execute('INSERT INTO pacing_policy_changes VALUES(7,?,?,?,?,?,?,?,?,?)',
+                      ('jupiter', 0.25, 0.25, 30.0, 30.0, self.reason, SHA, self.entry_digest, T0))
+            c.execute(p.POLICY_GUARDS['pacing_policy_changes_order'])         # schema looks untouched again
+            c.commit()
+        self.invalid()
+
+    def test_the_number_of_change_rows_is_bounded(self):
+        with patch.object(p, 'MAX_POLICY_CHANGES', 1):
+            self.invalid()                                                     # two rows exist
+
+    def test_text_in_a_numeric_column_is_rejected(self):
+        with closing(sqlite3.connect(self.path)) as c:
+            c.execute('DROP TRIGGER pacing_policy_changes_no_update')
+            c.execute("UPDATE pacing_policy_changes SET new_cadence='fast' WHERE id=2")
+            c.execute(p.POLICY_GUARDS['pacing_policy_changes_no_update'])
+            c.commit()
+        self.invalid()
+
     def test_kraken_can_never_be_given_a_change_row(self):
         with self.assertRaises(sqlite3.IntegrityError):
             self.forge(3, 'kraken', 2.0, 0.1, 30.0, 30.0, self.reason, SHA, self.entry_digest, T0)
@@ -489,6 +510,9 @@ class CliTests(Base):
 
     def test_unknown_unit_state_is_not_quiet(self):
         states = {**self.UNITS, 'desk-dashboard.service': OSError('no systemctl')}
+        code, plan = self.run_cli('plan', '--db', str(self.path), states=states)
+        self.assertTrue(plan['units']['desk-dashboard.service'].startswith('UNKNOWN:'))
+        self.assertEqual((plan['all_units_quiet'], plan['ready_to_apply']), (False, False))
         code, refused = self.run_cli('apply', '--db', str(self.path), '--execute', states=states)
         self.assertEqual(code, 2)
         self.assertEqual(self.rows("SELECT name FROM sqlite_master WHERE name='pacing_policy_changes'"), [])
@@ -514,6 +538,15 @@ class CliTests(Base):
             link = self.root / 'link.sqlite'
             link.symlink_to(self.path)
             self.assertEqual(self.run_cli('plan', '--db', str(link))[0], 2)
+
+    def test_db_path_validation_unit(self):
+        link = self.root / 'l.sqlite'
+        link.symlink_to(self.path)
+        (self.root / 'sub').mkdir()
+        for bad in ('x.sqlite', str(link), str(self.root / 'sub' / '..' / 'provider-pacing.sqlite')):
+            with self.subTest(bad), self.assertRaises(cli.PolicyToolError):
+                cli._db(bad)
+        self.assertEqual(cli._db(str(self.path)), self.path)
 
     def test_database_not_quiescent_blocks_execute(self):
         pacer = self.make()
