@@ -343,7 +343,7 @@ class CounterfactualTests(unittest.TestCase):
             d.close()
         return path, str(mint), str(pool), raw
 
-    def journal_with(self, mint, body, *, result=True, name='journal.sqlite'):
+    def journal_with(self, mint, body, *, result=True, name='journal.sqlite', scan_id=None):
         from tools import paper_entry_dispatcher as dispatcher
         journal = self.root / name
         with closing(sqlite3.connect(journal)) as c:
@@ -351,7 +351,8 @@ class CounterfactualTests(unittest.TestCase):
                 c.execute(sql)
             c.execute('INSERT INTO intents VALUES(?,?,?,?,?)', ('a' * 32, mint, 'sig', '{}', 'h'))
             if result:
-                c.execute('INSERT INTO results VALUES(?,?,?)', ('a' * 32, json.dumps({'result': body}), 'h'))
+                wrapper = {'result': body} if scan_id is None else {'scan_id': scan_id, 'result': body}
+                c.execute('INSERT INTO results VALUES(?,?,?)', ('a' * 32, json.dumps(wrapper), 'h'))
             c.commit()
         return journal
 
@@ -364,11 +365,14 @@ class CounterfactualTests(unittest.TestCase):
         self.assertEqual((result['candidates_added'], result['rows_skipped']), (1, 0))
         self.assertEqual(self.rows('SELECT mint,pool,signature FROM candidates'), [(mint, pool, raw['transaction']['signatures'][0])])
         self.assertEqual(cf.ingest(self.store, path, now=T0)['candidates_added'], 0)  # cursor + OR IGNORE: idempotent
-        journal = self.journal_with(mint, {'kind': 'paper_cycle_v1', 'status': 'BLOCKED', 'blockers': ['MAYHEM_POOL'], 'outcomes': []})
+        # T26G item 1 changed this fixture on purpose: the blocker used to be MAYHEM_POOL, which is not in T01's
+        # NORMAL set (a bare BLOCKED MAYHEM_POOL with no terminal receipt is a latch, now UNRESOLVED). The rejection
+        # example is MARKET_PRODUCER_BLOCKED, a NORMAL blocker; the assertion's strength is unchanged.
+        journal = self.journal_with(mint, {'kind': 'paper_cycle_v1', 'status': 'BLOCKED', 'blockers': ['MARKET_PRODUCER_BLOCKED'], 'outcomes': []})
         cf.refresh_outcomes(self.store, journal, now=T0 + 1)
         cf.refresh_outcomes(self.store, journal, now=T0 + 2)  # unchanged outcome: no duplicate row
         last = json.loads(self.rows('SELECT payload FROM outcomes ORDER BY id DESC LIMIT 1')[0][0])
-        self.assertEqual(last, {'v': 2, 'class': 'REJECTED', 'stage': 'OBSERVATIONS', 'codes': ['MAYHEM_POOL'], 'detail': None, 'source': 'JOURNAL'})
+        self.assertEqual(last, {'v': 2, 'class': 'REJECTED', 'stage': 'OBSERVATIONS', 'codes': ['MARKET_PRODUCER_BLOCKED'], 'detail': None, 'source': 'JOURNAL'})
         self.assertEqual(self.rows('SELECT COUNT(*) FROM outcomes')[0][0], 2)    # NOT_DISPATCHED/UNKNOWN first, then the rejection
         self.assertEqual(cf._outcome(self.root / 'nope.sqlite', mint)['detail'], 'JOURNAL_UNREADABLE')
 
@@ -403,6 +407,17 @@ class OutcomeClassificationTests(CounterfactualBase):
          ('REJECTED', 'ENGINE', ['COST_BUDGET', 'MAX_POSITIONS'])),
         ({'kind': 'paper_cycle_v1', 'status': 'BLOCKED', 'blockers': ['MARKET_PRODUCER_BLOCKED'], 'outcomes': []},
          ('REJECTED', 'OBSERVATIONS', ['MARKET_PRODUCER_BLOCKED'])),
+        # T26G item 1: only T01's NORMAL blockers (or a certified/terminal result) are rejections; any other
+        # BLOCKED result is a latch, shown as UNRESOLVED and never counted as a filter's rejection.
+        ({'kind': 'paper_cycle_v1', 'status': 'BLOCKED', 'blockers': ['USD_ORIGINAL_BINDING_INVALID'], 'outcomes': []},
+         ('UNRESOLVED', 'OBSERVATIONS', ['USD_ORIGINAL_BINDING_INVALID'])),                    # category (b)
+        ({'kind': 'paper_cycle_v1', 'status': 'BLOCKED', 'blockers': ['MARKET_PRODUCER_BLOCKED', 'USD_ORIGINAL_BINDING_INVALID'], 'outcomes': []},
+         ('UNRESOLVED', 'OBSERVATIONS', ['MARKET_PRODUCER_BLOCKED', 'USD_ORIGINAL_BINDING_INVALID'])),   # one latch poisons the set
+        ({'kind': 'paper_cycle_v1', 'status': 'BLOCKED', 'blockers': ['MAYHEM_POOL'], 'outcomes': []}, ('UNRESOLVED', 'OBSERVATIONS', ['MAYHEM_POOL'])),
+        ({'kind': 'paper_cycle_v1', 'status': 'BLOCKED', 'blockers': ['MAYHEM_POOL'], 'outcomes': [], 'terminal_receipt_hash': 'ab' * 32},
+         ('REJECTED', 'OBSERVATIONS', ['MAYHEM_POOL'])),                                        # certified terminal hazard rejection
+        ({'kind': 'paper_cycle_v1', 'status': 'BLOCKED', 'blockers': ['MAYHEM_POOL'], 'outcomes': [], 'terminal_receipt_hash': 'not-a-hash'},
+         ('UNRESOLVED', 'OBSERVATIONS', ['MAYHEM_POOL'])),
         ({'kind': 'paper_cycle_v1', 'status': 'COMPLETE', 'outcomes': [{'type': 'fill', 'side': 'buy', 'mint': 'm'}]}, ('BOUGHT', None, [])),
         ({'kind': 'paper_cycle_v1', 'status': 'RECOVERY_REQUIRED', 'blockers': ['X']}, ('UNKNOWN', None, [])),
         ({'kind': 'paper_cycle_v1', 'status': 'COMPLETE', 'outcomes': []}, ('UNKNOWN', None, [])),
@@ -418,7 +433,7 @@ class OutcomeClassificationTests(CounterfactualBase):
             with self.subTest(body=body):
                 got = cf.classify_result(body)
                 self.assertEqual((got['class'], got['stage'], got['codes']), (klass, stage, codes))
-                if klass == 'UNKNOWN':
+                if klass in ('UNKNOWN', 'UNRESOLVED'):
                     self.assertTrue(got['detail'])   # never an unexplained unknown
 
     def test_report_groups_one_per_code_and_not_a_rejection_when_unknown(self):
@@ -540,6 +555,179 @@ class OutcomeClassificationTests(CounterfactualBase):
         with patch.object(cf.OutcomeReader, 'classify', counting):             # window and grace over: NOT_DISPATCHED is final too
             summary = cf.refresh_outcomes(self.store, journal, now=T0 + cf.WINDOW_MAX_SECONDS + cf.DEFAULT_GRACE + 600)
         self.assertEqual((calls, summary['final']), ([], 4))
+
+
+class LatchDecisionAndBackoffTests(CounterfactualBase):
+    """T26G: latches are not filter rejections; decision results are provisional; null-pool backoff keeps the +5m window."""
+
+    LATCH = {'kind': 'paper_cycle_v1', 'status': 'BLOCKED', 'blockers': ['USD_ORIGINAL_BINDING_INVALID'], 'outcomes': []}
+
+    def evidence_with_no_entry(self, scan_id, *, name='evidence.sqlite'):
+        from desk import paper_cycle_no_entry as no_entry
+        path = self.root / name
+        with closing(sqlite3.connect(path)) as c:
+            c.execute(no_entry.SQL)
+            c.execute(f'INSERT INTO {no_entry.TABLE} VALUES(?,?,?,?)', ('p' * 32, scan_id, 'i' * 64, 'o' * 64))
+            c.commit()
+        return path
+
+    def test_item1_a_latch_is_unresolved_and_a_no_entry_row_or_normal_blocker_makes_it_a_rejection(self):
+        from desk.paper_cycle_no_entry import NORMAL
+        mint = pool_fixture(31).mint
+        journal = self.journal_with(mint, self.LATCH, scan_id='scan-31')
+        got = cf._outcome(journal, mint)
+        self.assertEqual((got['class'], got['stage'], got['codes'], got['source']),
+                         ('UNRESOLVED', 'OBSERVATIONS', ['USD_ORIGINAL_BINDING_INVALID'], 'JOURNAL'))
+        self.assertFalse(cf.groups_of(got)[0][0].startswith('REJECTED'))
+        self.assertEqual(cf.groups_of(got), (['UNRESOLVED:USD_ORIGINAL_BINDING_INVALID'], None))
+        # A paper_cycle_no_entry row for exactly this scan proves the pass was retired as a normal rejection.
+        proven = self.evidence_with_no_entry('scan-31')
+        self.assertEqual(cf._outcome(journal, mint, evidence_db=proven)['class'], 'REJECTED')
+        other = self.evidence_with_no_entry('another-scan', name='other.sqlite')
+        self.assertEqual(cf._outcome(journal, mint, evidence_db=other)['class'], 'UNRESOLVED')
+        # An unreadable or table-less evidence store can prove nothing: still UNRESOLVED (fail closed).
+        unreadable = cf._outcome(journal, mint, evidence_db=self.root / 'missing.sqlite')
+        self.assertEqual((unreadable['class'], unreadable['detail']), ('UNRESOLVED', 'LATCH_EVIDENCE_UNREADABLE'))
+        self.assertEqual(got['detail'], 'LATCH_NOT_A_NORMAL_REJECTION')
+        empty = self.root / 'empty.sqlite'
+        sqlite3.connect(empty).close()
+        self.assertEqual(cf._outcome(journal, mint, evidence_db=empty)['class'], 'UNRESOLVED')
+        # Every NORMAL blocker stays a rejection without any row (the imported set, not a copy).
+        for code in sorted(NORMAL):
+            body = {'kind': 'paper_cycle_v1', 'status': 'BLOCKED', 'blockers': [code], 'outcomes': []}
+            self.assertEqual(cf.classify_result(body)['class'], 'REJECTED', code)
+
+    def test_item1_report_shows_latches_separately_and_never_as_a_rejection_group(self):
+        fixtures = self.candidates(2)
+        self.put_outcome(fixtures[0].mint, {'v': 2, 'class': 'UNRESOLVED', 'stage': 'OBSERVATIONS',
+                                            'codes': ['USD_ORIGINAL_BINDING_INVALID'], 'detail': 'LATCH_NOT_A_NORMAL_REJECTION', 'source': 'JOURNAL'})
+        self.put_outcome(fixtures[1].mint, {'v': 2, 'class': 'REJECTED', 'stage': 'OBSERVATIONS',
+                                            'codes': ['MARKET_PRODUCER_BLOCKED'], 'detail': None, 'source': 'JOURNAL'})
+        groups = cf.report(self.store)['groups']
+        self.assertEqual(sorted(groups), ['REJECTED:OBSERVATIONS:MARKET_PRODUCER_BLOCKED', 'UNRESOLVED:USD_ORIGINAL_BINDING_INVALID'])
+
+    def test_item1_unresolved_is_never_final_so_a_later_no_entry_row_can_reclassify_it(self):
+        mint = pool_fixture(32).mint
+        self.candidates(1, offset=31)
+        journal = self.journal_with(mint, self.LATCH, scan_id='scan-32')
+        self.assertEqual(cf.refresh_outcomes(self.store, journal, now=T0 + cf.WINDOW_MAX_SECONDS + cf.DEFAULT_GRACE + 10_000)['final'], 0)
+        cf.refresh_outcomes(self.store, journal, now=T0 + 20_000)
+        last = lambda: json.loads(self.rows('SELECT payload FROM outcomes ORDER BY id DESC LIMIT 1')[0][0])['class']
+        self.assertEqual(last(), 'UNRESOLVED')
+        proven = self.evidence_with_no_entry('scan-32')
+        cf.refresh_outcomes(self.store, journal, evidence_db=proven, now=T0 + 20_001)
+        self.assertEqual(last(), 'REJECTED')
+
+    def test_item1_cli_ingest_accepts_the_evidence_store(self):
+        path, mint, pool, raw = CounterfactualTests.discovery_fixture(self)
+        journal = self.journal_with(mint, self.LATCH, scan_id='scan-cli')
+        proven = self.evidence_with_no_entry('scan-cli')
+        with patch.object(cf.time, 'time', return_value=T0), contextlib.redirect_stdout(io.StringIO()) as out:
+            self.assertEqual(cf.main(['ingest', '--store', str(self.store), '--discovery-db', str(path), '--journal', str(journal),
+                                      '--evidence-db', str(proven)]), 0)
+        self.assertEqual(json.loads(out.getvalue())['outcomes_appended'], 1)
+        self.assertEqual(json.loads(self.rows('SELECT payload FROM outcomes')[0][0])['class'], 'REJECTED')
+
+    # ---------------------------------------------------------------- item 2
+    def decisions(self, mint, decision='REJECT'):
+        from desk import decision_runner
+        path = self.root / 'decisions.sqlite'
+        with closing(sqlite3.connect(path)) as c:
+            decision_runner._initialize_journal(c)
+            c.execute('INSERT INTO decisions VALUES(?,?,?,?)', ('s1', 'h', '{}', json.dumps(
+                {'kind': 'paper_candidate_decision', 'scan_id': 's1', 'mint': mint, 'decision': decision, 'reasons': ['FLOW_WEAK']})))
+            c.commit()
+        return path
+
+    def ledger_with_buy(self, mint):
+        from desk.ledger import Ledger
+        ledger = self.root / 'ledger.sqlite'
+        Ledger(ledger).close()
+        with closing(sqlite3.connect(ledger)) as c:
+            c.execute("INSERT INTO events(event_id,ts,payload,payload_hash) VALUES('e',1,'{}','h')")
+            c.execute('INSERT INTO outcomes(event_id,payload) VALUES(?,?)', ('e', json.dumps({'type': 'fill', 'side': 'buy', 'mint': mint})))
+            c.commit()
+        return ledger
+
+    def test_item2_a_decision_reject_is_provisional_until_the_dispatch_window_closes_and_a_later_buy_overrides_it(self):
+        (fixture,) = self.candidates(1)
+        journal = self.journal_with(pool_fixture(99).mint, {'kind': 'history_preparation_no_entry_v1', 'reason': 'OTHER'})
+        decisions = self.decisions(fixture.mint)
+        last = lambda: json.loads(self.rows('SELECT payload FROM outcomes ORDER BY id DESC LIMIT 1')[0][0])
+        cf.refresh_outcomes(self.store, journal, decisions_db=decisions, now=T0 + 10)
+        self.assertEqual((last()['class'], last()['stage'], last()['source']), ('REJECTED', 'DECISION', 'DECISIONS'))
+        # Still provisional well after the first sample, so the next pass re-reads it...
+        calls = []
+        real = cf.OutcomeReader.classify
+        with patch.object(cf.OutcomeReader, 'classify', lambda self_, m: (calls.append(m), real(self_, m))[1]):
+            summary = cf.refresh_outcomes(self.store, journal, decisions_db=decisions, now=T0 + 3600)
+        self.assertEqual((calls, summary['final']), ([fixture.mint], 0))
+        # ...and a later ledger BUY (priority ledger > journal > decision) overrides the decision rejection.
+        ledger = self.ledger_with_buy(fixture.mint)
+        cf.refresh_outcomes(self.store, journal, ledger_db=ledger, decisions_db=decisions, now=T0 + 3700)
+        self.assertEqual((last()['class'], last()['source']), ('BOUGHT', 'LEDGER'))
+        self.assertEqual(self.rows('SELECT COUNT(*) FROM outcomes')[0][0], 2)        # append-only: the rejection row is kept
+
+    def test_item2_decision_result_becomes_final_only_after_window_and_grace(self):
+        (fixture,) = self.candidates(1)
+        journal = self.journal_with(pool_fixture(98).mint, {'kind': 'history_preparation_no_entry_v1', 'reason': 'OTHER'})
+        decisions = self.decisions(fixture.mint)
+        cf.refresh_outcomes(self.store, journal, decisions_db=decisions, now=T0 + 10)
+        edge = T0 + cf.WINDOW_MAX_SECONDS + cf.DEFAULT_GRACE
+        self.assertEqual(cf.refresh_outcomes(self.store, journal, decisions_db=decisions, now=edge)['final'], 0)
+        self.assertEqual(cf.refresh_outcomes(self.store, journal, decisions_db=decisions, now=edge + 1)['final'], 1)
+        # A typed journal rejection (not a decision) is final immediately, as before.
+        typed = self.candidates(1, offset=5)[0]
+        journal2 = self.journal_with(typed.mint, {'kind': 'history_preparation_no_entry_v1', 'reason': 'OTHER'}, name='j2.sqlite')
+        cf.refresh_outcomes(self.store, journal2, now=T0 + 10)
+        self.assertEqual(cf.refresh_outcomes(self.store, journal2, now=T0 + 11)['final'], 1)
+
+    # ---------------------------------------------------------------- item 3
+    def test_item3_null_pool_delay_never_overshoots_a_sample_window(self):
+        m, g = T0, cf.DEFAULT_GRACE
+        self.assertEqual(cf.null_pool_delay(1), 60)                       # legacy call shape unchanged
+        self.assertEqual(cf.null_pool_delay(9), 900)
+        self.assertEqual(cf.null_pool_delay(1, last=m + 10, migrated=m), 60)         # far from the window: base backoff
+        self.assertEqual(cf.null_pool_delay(3, last=m + 210, migrated=m), 90)        # 240 s base capped at the +5m window start
+        self.assertEqual(cf.null_pool_delay(4, last=m + 299.5, migrated=m), 1)       # never zero, never negative
+        for last in (m + 300, m + 330, m + 300 + g):                                  # inside the +5m window
+            self.assertEqual(cf.null_pool_delay(7, last=last, migrated=m), 30)
+        self.assertEqual(cf.null_pool_delay(7, last=m + 300 + g + 1, migrated=m), 900 - (300 + g + 1))   # capped at the +15m window start
+        self.assertEqual(cf.null_pool_delay(7, last=m + 900 + 50, migrated=m), 30)   # inside the +15m window
+        self.assertEqual(cf.null_pool_delay(7, last=m + cf.HORIZONS[-1] + g + 5, migrated=m), 900)   # after every window
+
+    def test_item3_a_pool_visible_late_in_the_first_window_is_still_resolved_and_sampled_at_plus_5m(self):
+        (fixture,) = self.candidates(1)
+        chain = FakeChain([fixture])
+        visible_from = T0 + 340                                           # becomes visible inside the +5m window (300..420 s)
+        state = {'now': None}
+
+        def call(method, params):
+            values = chain(method, params)
+            if state['now'] < visible_from and params[0] == [fixture.pool]:
+                return {**values, 'value': [None]}
+            return values
+        t = T0 + 10
+        while t <= T0 + 430:                                              # a 10 s timer
+            state['now'] = t
+            cf.sample(self.store, call, now=t)
+            t += 10
+        self.assertEqual(self.rows('SELECT status FROM vaults'), [('OK',)])
+        (row,) = self.rows('SELECT status,sampled_at FROM samples WHERE horizon=300')
+        self.assertEqual(row[0], 'OK')
+        self.assertLessEqual(row[1], T0 + 300 + cf.DEFAULT_GRACE)
+        attempts = self.rows('SELECT at FROM vault_attempts ORDER BY id')
+        self.assertTrue(all(b - a <= 120 for a, b in zip([x for (x,) in attempts], [x for (x,) in attempts][1:])), attempts)
+        in_window = [a for (a,) in attempts if T0 + 300 <= a <= T0 + 420]
+        self.assertLessEqual(len(in_window), 5)                           # 30 s cadence inside the window: bounded cost
+
+    def test_item3_the_old_schedule_would_have_missed_the_window(self):
+        """Documents the defect: pure doubling (60,120,240,480) tries at +10,+70,+190,+430, after the window."""
+        attempt, delays = T0 + 10, []
+        for n in range(1, 5):
+            delays.append(min(60 * 2 ** (n - 1), 900))
+            attempt += delays[-1]
+        self.assertGreater(attempt, T0 + 300 + cf.DEFAULT_GRACE)
 
 
 class BaselineAndSurvivorshipTests(CounterfactualBase):
