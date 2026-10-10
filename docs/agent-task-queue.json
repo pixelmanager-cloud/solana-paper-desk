@@ -6771,21 +6771,71 @@
       "journal_backup_hash": "cbafc98b023676e5289ee27b14130af6f626013e0b1567ecf5f510e10ef5c3c1",
       "readonly_replay_seconds": 1.0627187676727772,
       "readonly_replay_observations": 178,
-      "diagnosis": "10-second preparation budget incompatible with six requests at2secondpacing; preciseuncapturedreservationcauseunproven; noproviderretry"
+      "diagnosis": "10-second preparation budget incompatible with six requests at2secondpacing; preciseuncapturedreservationcauseunproven; noproviderretry",
+      "supervisor": {
+        "invocation_id": "173cc70c2ff647f88a3e5b8ca8af9ebf",
+        "exit_status": 2,
+        "exit_at": "2026-10-10T02:13:08Z",
+        "main_pid": 0,
+        "service": "failed",
+        "timer": "inactive"
+      },
+      "retained_feature_pair_bytes": [
+        824439,
+        1452401,
+        2204874,
+        3047910,
+        3900870
+      ],
+      "existing_history_2MiB_cap_exceeded_after_page": 3
     },
     "next_claims": {
       "HISTORY-REPLAY-PERF-1": {
         "worker": "03",
-        "status": "requested; correctedtohistoricalphaseboundedbudgetdesign"
+        "status": "implementing18secondhistoricalphase+typedknown-boundNO_ENTRY",
+        "design_review_worker": "07",
+        "design_review_turn": "01a1239f-ac2a-74ed-ac9b-eb5a9b4efc30",
+        "fresh_cycle_seconds": 10,
+        "history_freshness_seconds": 30,
+        "per_request_max_seconds": 15,
+        "reserve_fresh_requests": 7,
+        "momentum_ttl_seconds": 15,
+        "turn": "01a1239b-cde6-731c-82b2-1b40dbb05e0b"
       },
       "DISPATCH-PREPARATION-RETIREMENT-2": {
         "worker": "06",
-        "status": "requestedexactno-retryretirement"
+        "status": "independent07review_requested",
+        "design_review_worker": "07",
+        "design_review_turn": "01a1239c-a8c8-742a-b668-79edd4647c6a",
+        "no_reset_or_replacement": true,
+        "pr": 188,
+        "head": "ee43abf80db95544ee1bc20de640f2e3a048b393",
+        "turn": "01a12397-4d9f-759e-9746-d7c01df90cbd",
+        "review_turn": "01a123a3-5045-7102-8071-cd29a12e886d"
       },
       "CALL-ENVELOPE-1": {
         "worker": "09",
-        "status": "requestedfreshcycle/lifetimebudgetproof"
+        "status": "PASS wholephase fixtures only; keep2secondhandoff",
+        "turn": "01a12398-c3c2-722f-96da-617aca62dad9",
+        "fresh_calls_current_target": 7,
+        "native_fresh_seconds": 8.566,
+        "history_max_calls_with_base6": 5,
+        "wholephase_turn": "01a1239f-bc63-73d5-a16a-0085ff96fd87",
+        "positive_one_page_seconds": 10.688,
+        "positive_two_page_seconds": 12.676,
+        "stale_delay_result": "STALE_MOMENTUM zero positions; no production acceptance"
       }
+    },
+    "next_runtime_first_receipt_hash": "fb5476746fc700d5e4ab0456d17547e0b591d8a486918167249fd9038dd08f8b",
+    "next_activation_review": {
+      "worker": "09",
+      "turn": "01a123a4-fcf7-711c-bbb8-e85efa01749d",
+      "status": "reviewing_not_executed",
+      "scripts": [
+        "work/activate-dispatch-recovery-reviewed.py",
+        "work/verify-dispatch-recovery-originals.py"
+      ],
+      "backup_databases": 12
     }
   }
 }
