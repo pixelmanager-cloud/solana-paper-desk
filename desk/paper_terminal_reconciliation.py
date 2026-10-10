@@ -158,8 +158,8 @@ def _ledger(c,cfg,*,initial,historical_source=None):
 # One active gate only; cached bytes never survive invocation or become shared
 # mutable decoded objects. Every hit still checks the current SQL payload.
 _GATE_BYTES = ContextVar('terminal_gate_verified_bytes', default=None)
-MAX_GATE_CACHE_BYTES = 8 * 1024 * 1024
-MAX_GATE_CLASSIFICATION_BYTES = 8 * 1024 * 1024
+MAX_GATE_CACHE_BYTES = 32 * 1024 * 1024
+MAX_GATE_CLASSIFICATION_BYTES = 32 * 1024 * 1024
 MAX_GATE_CACHE_PAGES = 512
 
 
