@@ -360,6 +360,22 @@ class WorkerTests(unittest.TestCase):
         self.assertEqual((len(self.rows()), self.attempts(), len(self.calls)), (0, 0, 0))
         self.assertEqual(self.go()['measured'], 3)
 
+    def test_follow_mode_picks_up_jobs_that_arrive_while_running(self):
+        added = []
+        def sleep(seconds):
+            self.clock.sleeps.append(seconds); self.clock.now += seconds
+            if not added and self.clock.now >= T + 2:
+                added.append(self.add_job('late-arrival', decision_at=self.clock.now))
+        self.go(sleep=sleep, follow_seconds=20, wait_seconds=12)
+        self.assertEqual(len(added), 1)
+        self.assertEqual({r['fill_event_id'] for r in self.rows()}, {'late-arrival'})
+        self.assertEqual([r['status'] for r in self.rows()], ['MEASURED'] * 3)
+        self.assertLessEqual(self.clock.now, T + 20 + 1)                 # bounded: the service run ends by itself
+        # Without follow the same empty store returns immediately.
+        quiet = Clock(T)
+        self.assertEqual(worker.run(self.store, self.cfg, client=self.client, clock=quiet, sleep=quiet.sleep)['samples'], 0)
+        self.assertEqual(quiet.sleeps, [])
+
     def test_config_mismatch_and_off(self):
         self.add_job(cfg_hash='another-config-hash')
         self.go()

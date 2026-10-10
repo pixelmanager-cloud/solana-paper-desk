@@ -1,7 +1,7 @@
 """Fill-realism worker: measures quote drift of simulated paper fills OUTSIDE the trading pass.
 
     python -m tools.ops.fill_realism_worker --ledger L --config C [--allowance-per-hour 60]
-        [--wait-seconds 12] [--late-seconds 4] [--systemd-credentials]
+        [--wait-seconds 12] [--late-seconds 4] [--follow-seconds 3600] [--systemd-credentials]
 
 Reads the jobs the trading pass enqueued in ``<ledger>.fill-realism.sqlite`` (paper
 config ``paper_fill_realism_version: 1``) and re-quotes each fill's SAME route and
@@ -201,23 +201,34 @@ def _sample(c, job, cfg, client, clock, late_seconds):
 
 
 def run(store, cfg, *, client, clock=time.time, sleep=time.sleep, wait_seconds=12.0, late_seconds=LATE_SECONDS,
-        allowance_per_hour=DEFAULT_ALLOWANCE, max_samples=None):
-    """Process due samples; sleep (bounded) for samples due within ``wait_seconds``; then return."""
+        allowance_per_hour=DEFAULT_ALLOWANCE, max_samples=None, follow_seconds=None, poll_seconds=0.5):
+    """Process due samples; sleep (bounded) for samples due within ``wait_seconds``; then return.
+
+    ``follow_seconds`` keeps polling for new jobs for that long (a long-running service); without it the
+    worker returns as soon as nothing is pending within the wait window (a timer-driven one-shot).
+    """
     if fr.selected(cfg) != fr.VERSION:
         return {'status': 'OFF', 'samples': 0}
     summary = {'status': 'DONE', 'samples': 0, 'measured': 0, 'late': 0, 'stale': 0, 'failed': 0, 'charged': 0, 'interrupted': 0}
     with closing(fr.connect(store)) as c:
         fr.ensure_schema(c, allowance_per_hour=allowance_per_hour)
         _resolve_interrupted(c, summary)
-        deadline = clock() + wait_seconds
+        started_run = clock()
+        deadline = started_run + wait_seconds
+        stop_at = None if follow_seconds is None else started_run + follow_seconds
         while max_samples is None or summary['samples'] < max_samples:
             pending = _pending(c)
+            now = clock()
+            if stop_at is not None:
+                deadline = now + wait_seconds  # following: always willing to wait for the next due sample
             if not pending:
+                if stop_at is not None and now < stop_at:
+                    sleep(min(poll_seconds, stop_at - now))
+                    continue
                 break
             job = pending[0]
-            now = clock()
             if job['due_at'] > now:
-                if job['due_at'] > deadline:
+                if job['due_at'] > deadline or (stop_at is not None and now >= stop_at):
                     break  # the next sample is beyond this run; a timer starts the worker again
                 sleep(min(job['due_at'] - now, MAX_SLEEP))
                 continue
@@ -240,6 +251,8 @@ def main(argv=None):
     parser.add_argument('--config', required=True)
     parser.add_argument('--allowance-per-hour', type=int, default=DEFAULT_ALLOWANCE)
     parser.add_argument('--wait-seconds', type=float, default=12.0)
+    parser.add_argument('--follow-seconds', type=float, default=None,
+                        help='Keep polling for new jobs this long (service mode); omit for a timer-driven one-shot')
     parser.add_argument('--late-seconds', type=float, default=LATE_SECONDS)
     parser.add_argument('--systemd-credentials', action='store_true')
     args = parser.parse_args(argv)
@@ -256,7 +269,7 @@ def main(argv=None):
             _credentials()
         client = JupiterQuoteClient(provider_pacing.configured(priority='investigation'), os.environ.get('JUPITER_API_KEY'))
         result = run(store, cfg, client=client, wait_seconds=args.wait_seconds, late_seconds=args.late_seconds,
-                     allowance_per_hour=args.allowance_per_hour)
+                     allowance_per_hour=args.allowance_per_hour, follow_seconds=args.follow_seconds)
     except (QuoteClientError, ValueError, OSError, sqlite3.Error, KeyError, TypeError) as error:
         print(json.dumps({'status': 'BLOCKED', 'error': type(error).__name__, 'execution_status': fr.STATUS}))
         return 2
