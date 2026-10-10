@@ -45,7 +45,7 @@ def counting(owner, name):
     def wrapper(*args, **kwargs):
         calls[0] += 1
         return real(*args, **kwargs)
-    return calls, patch.object(owner, name, side_effect=wrapper)
+    return calls, patch.object(owner, name, new=wrapper)   # a plain function: binds self on a class, stays a function on a module
 
 
 def add_pages(store, count, offset=0):
