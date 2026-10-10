@@ -186,7 +186,9 @@ class HeldMonitoringTransientFault(unittest.TestCase):
         item, allowance = h.monitoring_fixture()
 
         def failure(*args, **kwargs):
-            raise OSError('SYNTHETIC_TEST_ONLY')
+            # T22F: a classified transient network error (-> TRANSPORT_ERROR). A bare OSError is UNCLASSIFIED_ERROR,
+            # which integration latches on purpose (see test_paper_cycle's unclassified sibling test).
+            raise ConnectionResetError('SYNTHETIC_TEST_ONLY')
         with patch.object(transport, 'build_opener', side_effect=failure), \
                 patch.object(transport.os.environ, 'get', return_value='SYNTHETIC_TEST_ONLY'), \
                 patch.object(transport.time, 'time', return_value=h.f.at):

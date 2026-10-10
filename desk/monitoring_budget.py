@@ -8,9 +8,11 @@ and corrupted accounting require recovery, never a new window/counter.
 from contextlib import closing
 import json
 import math
+import os
 from pathlib import Path
 import sqlite3
 import time
+import zlib
 
 from .evidence import EvidenceStore
 from .history_progress import canonical_ownership_path
@@ -24,12 +26,42 @@ from . import allowance_policy as policy
 CAP = 60
 WINDOW_SECONDS = 3600
 VERSION = 1
-# A failed read is reserved, charged and retained with its outcome whatever the provider did, so it is
-# not a store-wide latch: the next pass for the same position must be able to try again. Only a failure
-# that makes the retained original itself untrustworthy keeps the one-way latch.
-LATCHING_FAILURE_CODES = frozenset({'CLOCK_INVALID', 'OUTCOME_PERSISTENCE_FAILED'})
+# Provider-availability failures carry no evidence about the position, so they are
+# charged and retained but do not latch the shared allowance: network failures, JSON-RPC
+# errors, provider throttling/pacing contention and an abandoned reservation. Every other
+# failure (401/403 and other rejections, malformed/oversized/truncated responses, TLS and
+# unclassified exceptions, pacing integrity faults, persistence faults) still latches.
+TRANSIENT_FAILURE_CODES = frozenset({
+    'TRANSPORT_ERROR', 'DEADLINE_EXCEEDED', 'RPC_ERROR', 'KRAKEN_PROVIDER_ERROR',
+    'PACING_DEADLINE_EXCEEDED', 'PACING_DATABASE_BUSY', 'PACING_QUEUE_FULL', 'ABANDONED_CHARGED'})
+TRANSIENT_HTTP_STATUSES = frozenset({408, 429}) | frozenset(range(500, 600))
+
+# A reservation commits before the provider call. If its process then dies (SIGKILL, systemd
+# timeout) it has no outcome and blocks the allowance, and with it every held pass, forever.
+# After this many seconds, and only once no other live process holds the cycle locks, the next
+# read appends an ABANDONED_CHARGED outcome: the request stays charged and counted, never
+# refunded or reset. A provider call is bounded to 15 s, so 60 s is 4x the longest live call;
+# the lock lease is the primary owner evidence, the age is the safety margin. During those
+# seconds a held pass fails closed (MONITORING_OUTCOME_PENDING).
+ABANDON_AFTER_SECONDS = 60
+LOCK_TABLE = '/proc/locks'      # injectable: tests (and non-Linux hosts) substitute a fixture table
+PROC_ROOT = '/proc'
+MAX_PROC_SCAN = 65536
+ABANDONED_CODE = 'ABANDONED_CHARGED'
 ABANDONED_KIND = 'paper_monitoring_abandoned_v1'
-MAX_ABANDONED = 64
+MAX_ABANDONED = 64        # pass closure resolves at most this many orphans per call (bounded recovery)
+ABANDONED_FIELDS = frozenset({
+    'kind', 'failure_code', 'scan_id', 'method', 'params_hash', 'reservation_id', 'reserved_at',
+    'resolved_at', 'abandon_after_seconds', 'reason', 'charged', 'refunded', 'monitoring_reservation'})
+
+
+# Handoff contexts (allowance version 3) bind every receipt to their context hash, so an abandoned
+# outcome cannot be appended there safely. The orphan stays charged and the allowance stays blocked:
+# report it as a CRITICAL health state instead of an ordinary pending read.
+HANDOFF_PENDING_GUIDANCE = (
+    'A monitoring reservation in a handoff (version 3) allowance has no outcome and its owner is not '
+    'resumable. It is never refunded and cannot be abandoned automatically. Stop the desk-* units, '
+    'archive this store set read-only and start a fresh one (ledger flat) with a new config version.')
 
 
 class MonitoringBlocked(ValueError):
@@ -43,6 +75,81 @@ def _implementation():
     return digest({str(p.relative_to(root)): p.read_text()
                    for p in sorted(root.rglob('*'))
                    if p.is_file() and p.suffix in ('.py', '.json')})
+
+
+def _lock_holders(path):
+    """PIDs that hold a flock on ``path``; None when that cannot be established (fail closed).
+
+    flock locks vanish with the process, so a held lock is the live owner lease. The kernel
+    lock table is read, never the lock itself, so a probe cannot make a live owner see busy.
+    """
+    try:
+        inode = os.stat(path).st_ino
+    except OSError:
+        # A missing lock file is NOT proof of a dead owner (a live process can hold an unlinked
+        # inode, and a recreated file hides its holder): owner unknown, so nothing is abandoned.
+        return None
+    try:
+        with open(LOCK_TABLE) as table:
+            lines = table.read().splitlines()
+    except OSError:
+        return None
+    holders = set()
+    for line in lines:
+        parts = line.split()
+        if '->' in parts or 'FLOCK' not in parts:       # '->' marks a waiter, which holds nothing
+            continue
+        try:
+            at = parts.index('FLOCK')
+            pid, where = int(parts[at + 3]), parts[at + 4]
+        except (IndexError, ValueError):
+            return None
+        if where.rsplit(':', 1)[-1] == str(inode):      # inode only: a device-id mismatch must not hide a holder
+            holders.add(pid)
+    return holders
+
+
+def _deleted_lock_holders(path):
+    """PIDs other than ours holding an open descriptor on a DELETED lock file at ``path``.
+
+    That is the recreated-lock-file hazard: the live owner's flock sits on an unlinked inode the
+    path no longer names. None when the process table cannot be read (fail closed). Processes of
+    other users whose descriptors are unreadable are skipped only when they are not the lock
+    file's owner (a root-owned holder of a user's lock file is a documented residual risk).
+    """
+    target = str(path) + ' (deleted)'
+    try:
+        owner = os.stat(path).st_uid
+    except OSError:
+        owner = os.geteuid()
+    try:
+        pids = [n for n in os.listdir(PROC_ROOT) if n.isdigit()][:MAX_PROC_SCAN]
+    except OSError:
+        return None
+    holders = set()
+    for pid in pids:
+        if int(pid) == os.getpid():
+            continue
+        fd_dir = f'{PROC_ROOT}/{pid}/fd'
+        try:
+            names = os.listdir(fd_dir)
+        except PermissionError:
+            try:
+                if os.stat(f'{PROC_ROOT}/{pid}').st_uid == owner:
+                    return None                         # same user but unreadable: cannot prove
+            except OSError:
+                pass
+            continue
+        except OSError:
+            continue                                    # exited meanwhile
+        for name in names:
+            try:
+                if os.readlink(f'{fd_dir}/{name}') == target:
+                    holders.add(int(pid))
+                    break
+            except OSError:
+                continue
+    return holders
 
 
 class MonitoringBudget:
@@ -240,19 +347,8 @@ class MonitoringBudget:
             new_receipt=bool(upgraded and identity>grant['reservation_cutoff'])
             cap=policy.NEW_MONITORING if new_receipt else CAP
             kind='open_paper_monitoring_reservation_v2' if new_receipt else 'open_paper_monitoring_reservation_v1'
-            if (type(receipt) is not dict or type(receipt.get('id')) is not int
-                    or type(receipt.get('total_used')) is not int
-                    or receipt.get('kind') != kind
-                    or receipt.get('cap') != cap
-                    or (new_receipt and receipt.get('policy_hash')!=key) or receipt.get('window_seconds') != WINDOW_SECONDS
-                    or receipt.get('id') != identity or receipt.get('total_used') != identity
-                    or receipt.get('reserved_at') != at or receipt.get('checkpoint_hash') != checkpoint
-                    or receipt.get('mint') != mint
-                    or original.get('scan_id') != scan or original.get('method') != method
-                    or (original.get('params_hash') != params_hash or original.get('failure_code') != 'ABANDONED'
-                        or original.get('request_completed') is not None
-                        if original.get('kind') == ABANDONED_KIND
-                        else digest(original.get('params')) != params_hash)):
+            if (not _receipt_valid(receipt, kind, cap, new_receipt and key, identity, at, checkpoint, mint)
+                    or not _outcome_bound(original, identity, at, scan, method, params_hash)):
                 raise MonitoringBlocked('MONITORING_ACCOUNTING_INVALID')
         return row
 
@@ -363,8 +459,13 @@ class MonitoringBudget:
                         c.execute("UPDATE paper_monitoring_budget SET blocked='CLOCK_ROLLBACK' WHERE id=1")
                         c.commit()
                         raise MonitoringBlocked('MONITORING_CLOCK_ROLLBACK')
-                    if c.execute('SELECT 1 FROM paper_monitoring_reservations r LEFT JOIN paper_monitoring_outcomes o ON o.reservation_id=r.id WHERE o.reservation_id IS NULL LIMIT 1').fetchone():
-                        raise MonitoringBlocked('MONITORING_OUTCOME_PENDING')
+                    pending = self._pending(c)
+                    if pending:
+                        # Append-only: an orphan older than the deadline whose owner is gone is closed as
+                        # ABANDONED_CHARGED (still charged, never refunded). Anything else keeps failing closed.
+                        if not self._abandonable(row, pending, now):
+                            raise MonitoringBlocked('MONITORING_OUTCOME_PENDING')
+                        self._resolve_abandoned(c, row, pending, now, transition)
                     c.execute('UPDATE paper_monitoring_budget SET high_water=? WHERE id=1', (now,))
                     used = c.execute('SELECT count(*) FROM paper_monitoring_reservations WHERE at>?', (now-WINDOW_SECONDS,)).fetchone()[0]
                     cap=row[4]
@@ -399,6 +500,122 @@ class MonitoringBudget:
         except Exception:
             raise MonitoringBlocked('MONITORING_EVIDENCE_INVALID') from None
 
+    # -- orphaned reservations ------------------------------------------------
+    def _pending(self, c):
+        return c.execute('SELECT r.id,r.at,r.scan_id,r.mint,r.checkpoint_hash,r.method,r.params_hash '
+                         'FROM paper_monitoring_reservations r LEFT JOIN paper_monitoring_outcomes o '
+                         'ON o.reservation_id=r.id WHERE o.reservation_id IS NULL ORDER BY r.id').fetchall()
+
+    def _owner_gone(self):
+        """True only when no OTHER process holds the evidence-invocation or paper-cycle lock.
+
+        Every monitoring read runs under both locks (run_once), so a reservation without an outcome
+        whose lease nobody holds belongs to a dead process. This process's own PID is fine: the
+        reader that is about to reserve is the new owner. An unreadable lock table is not proof.
+        """
+        for path in (str(self.path) + '.ownership-invocation.lock', str(self.ledger) + '.paper-cycle.lock'):
+            holders = _lock_holders(path)
+            if holders is None or not holders <= {os.getpid()}:
+                return False
+            unlinked = _deleted_lock_holders(path)
+            if unlinked is None or unlinked:
+                return False
+        return True
+
+    def abandon_pending(self, *, cause='LEASE_GONE'):
+        """Resolve every orphan reservation with an ABANDONED_CHARGED outcome (T22 pass closure entry point).
+
+        Same rules as the read path (T25F): the owner must be provably gone (no other process holds the
+        evidence-invocation or paper-cycle lock, lock table readable), every orphan older than
+        ABANDON_AFTER_SECONDS, and not a handoff (version 3) allowance. Otherwise nothing is written and
+        MONITORING_OUTCOME_PENDING is raised (fail closed). Charged, never refunded. Returns the resolved ids.
+        """
+        if type(cause) is not str or not 1 <= len(cause) <= 128:
+            raise MonitoringBlocked('MONITORING_OUTCOME_BINDING_INVALID')
+        now = self.clock()
+        if type(now) not in (int, float) or not math.isfinite(now) or not 0 <= now < 2**63:
+            raise MonitoringBlocked('MONITORING_CLOCK_INVALID')
+        with self.store.connect() as c:
+            c.execute('BEGIN IMMEDIATE')
+            try:
+                row = self._accounting(c, checkpoint=True)
+                pending = self._pending(c)
+                if not pending:
+                    c.rollback()
+                    return []
+                if len(pending) > MAX_ABANDONED or not self._abandonable(row, pending, now):
+                    c.rollback()
+                    raise MonitoringBlocked('MONITORING_OUTCOME_PENDING')
+                # No re-verification here: self.store.load opens its own connection and cannot see the pages this
+                # uncommitted transaction just wrote. _resolve_abandoned checks the same predicates before writing,
+                # and the next _accounting pass verifies the committed records.
+                self._resolve_abandoned(c, row, pending, now, policy.monitoring_policy(c))
+                c.commit()
+                return [identity for identity, *_ in pending]
+            except BaseException:
+                c.rollback()
+                raise
+
+    def _abandonable(self, row, pending, now):
+        if row[0] == 3:      # handoff contexts bind every receipt to their context hash; stay fail-closed
+            return False
+        # A provider call is bounded to 15 s and runs under the cycle locks, so a reservation older than
+        # the deadline cannot be in flight in any live process.
+        return all(now - at > ABANDON_AFTER_SECONDS for _, at, *_ in pending) and self._owner_gone()
+
+    def _resolve_abandoned(self, c, row, pending, now, transition):
+        """Append one ABANDONED_CHARGED outcome per orphan inside the caller's write transaction."""
+        for identity, at, scan, mint, checkpoint, method, params_hash in pending:
+            new_receipt = bool(transition and identity > transition[0]['reservation_cutoff'])
+            receipt = {'kind': 'open_paper_monitoring_reservation_v2' if new_receipt
+                       else 'open_paper_monitoring_reservation_v1',
+                       'id': identity, 'reserved_at': at, 'mint': mint, 'total_used': identity,
+                       'window_used': c.execute('SELECT count(*) FROM paper_monitoring_reservations '
+                                                'WHERE id<=? AND at>?', (identity, at - WINDOW_SECONDS)).fetchone()[0],
+                       'cap': policy.NEW_MONITORING if new_receipt else CAP, 'window_seconds': WINDOW_SECONDS,
+                       'checkpoint_hash': checkpoint, 'investigation_requests_used': None}
+            if new_receipt:
+                receipt['policy_hash'] = transition[1]
+            record = {'kind': ABANDONED_KIND, 'failure_code': ABANDONED_CODE, 'scan_id': scan, 'method': method,
+                      'params_hash': params_hash, 'reservation_id': identity, 'reserved_at': at,
+                      'resolved_at': now, 'abandon_after_seconds': ABANDON_AFTER_SECONDS,
+                      'reason': 'RESERVATION_WITHOUT_OUTCOME_OWNER_GONE', 'charged': True, 'refunded': False,
+                      'monitoring_reservation': receipt}
+            # Same predicates _accounting applies to every retained outcome, checked before anything is
+            # written: a record that would later fail verification must never be committed.
+            if (not _receipt_valid(receipt, receipt['kind'], receipt['cap'], new_receipt and transition[1],
+                                   identity, at, checkpoint, mint)
+                    or not _outcome_bound(record, identity, at, scan, method, params_hash)):
+                raise MonitoringBlocked('MONITORING_ACCOUNTING_INVALID')
+            key = self._save_page(c, record)
+            # Read back what was actually persisted, inside the same transaction (self.store.load opens another
+            # connection and cannot see uncommitted pages), and hold it to the same predicates.
+            stored = c.execute('SELECT payload FROM pages WHERE hash=?', (key,)).fetchone()
+            try:
+                retained = json.loads(zlib.decompress(stored[0]))
+            except (TypeError, ValueError, zlib.error):
+                raise MonitoringBlocked('MONITORING_ACCOUNTING_INVALID') from None
+            if (type(retained) is not dict or digest(retained) != key
+                    or not _receipt_valid(retained.get('monitoring_reservation'), receipt['kind'], receipt['cap'],
+                                          new_receipt and transition[1], identity, at, checkpoint, mint)
+                    or not _outcome_bound(retained, identity, at, scan, method, params_hash)):
+                raise MonitoringBlocked('MONITORING_ACCOUNTING_INVALID')
+            c.execute('INSERT INTO paper_monitoring_outcomes VALUES(?,?)', (identity, key))
+
+    def _save_page(self, c, payload):
+        """EvidenceStore.save semantics inside the caller's transaction (its own connection would deadlock)."""
+        raw = canonical(payload).encode()
+        if len(raw) > 16 * 1024 * 1024:
+            raise MonitoringBlocked('MONITORING_EVIDENCE_INVALID')
+        key = digest(payload)
+        if not c.execute('SELECT 1 FROM pages WHERE hash=?', (key,)).fetchone():
+            compressed = zlib.compress(raw)
+            used = c.execute('SELECT COALESCE(SUM(length(payload)),0) FROM pages').fetchone()[0]
+            if used + len(compressed) > self.store.max_bytes:
+                raise MonitoringBlocked('MONITORING_EVIDENCE_INVALID')
+            c.execute('INSERT INTO pages VALUES(?,?,?)', (key, compressed, len(raw)))
+        return key
+
     def snapshot(self):
         """Read-only diagnostics and monotonic sequence; never refresh/reset state."""
         now = self.clock()
@@ -417,7 +634,10 @@ class MonitoringBudget:
             tail=active_handoff(c,handoff) if handoff else None
             if tail:clock_floor=max(clock_floor,tail[0]['at'])
             used = c.execute('SELECT count(*) FROM paper_monitoring_reservations WHERE at>?', (now-WINDOW_SECONDS,)).fetchone()[0]
-            pending = bool(c.execute('SELECT 1 FROM paper_monitoring_reservations r LEFT JOIN paper_monitoring_outcomes o ON o.reservation_id=r.id WHERE o.reservation_id IS NULL LIMIT 1').fetchone())
+            orphans = self._pending(c)
+            # Read-only: report whether the next read would resolve the orphan, never resolve it here.
+            pending = bool(orphans) and not self._abandonable(row, orphans, now)
+        stuck_handoff = bool(pending) and row[0] == 3
         blockers = []
         if now < clock_floor: blockers.append('MONITORING_CLOCK_ROLLBACK')
         if row[8] is not None: blockers.append('MONITORING_RECOVERY_REQUIRED')
@@ -427,68 +647,8 @@ class MonitoringBudget:
                 'status':'STALE_UNVERIFIED_BLOCKED' if blockers else 'AVAILABLE',
                 'blockers':blockers, 'total_used':row[7], 'window_used':used,
                 'remaining':max(0,row[4]-used), 'cap':row[4], 'window_seconds':WINDOW_SECONDS,
-                'high_water':row[6], 'entries_enabled':False, 'actual_fill_verified':False}
-
-    def abandon_pending(self, *, cause='LEASE_GONE'):
-        """Append an explicit ABANDONED outcome for every reservation whose reader is gone.
-
-        The caller holds research -> evidence -> ledger locks, so no reader can be mid-request: a reservation
-        without an outcome was committed by a process that died before recording one. Nothing is deleted, reset
-        or refunded (the reservation stays charged and counted); the unknown request is recorded as never
-        completed. Returns the resolved reservation ids.
-        """
-        if type(cause) is not str or not 1 <= len(cause) <= 128:
-            raise MonitoringBlocked('MONITORING_OUTCOME_BINDING_INVALID')
-        planned = []
-        with self.store.connect() as c:          # read phase: EvidenceStore.save opens its own writer
-            c.execute('BEGIN')
-            row = self._accounting(c, checkpoint=True)
-            pending = c.execute('SELECT r.id,r.at,r.scan_id,r.mint,r.checkpoint_hash,r.method,r.params_hash '
-                                'FROM paper_monitoring_reservations r LEFT JOIN paper_monitoring_outcomes o '
-                                'ON o.reservation_id=r.id WHERE o.reservation_id IS NULL ORDER BY r.id LIMIT ?',
-                                (MAX_ABANDONED + 1,)).fetchall()
-            if len(pending) > MAX_ABANDONED:
-                raise MonitoringBlocked('MONITORING_ACCOUNTING_INVALID')
-            transition = policy.monitoring_policy(c)
-            from .monitoring_handoff import read as read_handoff
-            handoff = read_handoff(c)
-            from .monitoring_successor import rows as successor_rows
-            history = successor_rows(c, handoff) if handoff else []
-        for identity, at, scan, mint, checkpoint, method, params_hash in pending:
-            receipt = {'kind': 'open_paper_monitoring_reservation_v2' if row[0] in (2, 3) else 'open_paper_monitoring_reservation_v1',
-                       'id': identity, 'reserved_at': at, 'mint': mint, 'total_used': identity,
-                       'window_used': None, 'cap': row[4], 'window_seconds': WINDOW_SECONDS,
-                       'checkpoint_hash': checkpoint, 'investigation_requests_used': None}
-            if row[0] in (2, 3):
-                receipt['policy_hash'] = transition[1]
-            if handoff:
-                receipt['context_hash'] = handoff[1]
-                successor = next((k for v, k in reversed(history) if identity > v['reservation_cutoff']), None)
-                if successor is not None:
-                    receipt['successor_context_hash'] = successor
-            record = {'kind': ABANDONED_KIND, 'failure_code': 'ABANDONED', 'cause': cause, 'scan_id': scan,
-                      'method': method, 'params_hash': params_hash, 'request_completed': None,
-                      'monitoring_reservation': receipt}
-            planned.append((identity, self.store.save(record)))
-        if not planned:
-            return []
-        with self.store.connect() as c:
-            c.execute('BEGIN IMMEDIATE')
-            try:
-                self._accounting(c, checkpoint=True)
-                still = [r[0] for r in c.execute(
-                    'SELECT r.id FROM paper_monitoring_reservations r LEFT JOIN paper_monitoring_outcomes o '
-                    'ON o.reservation_id=r.id WHERE o.reservation_id IS NULL ORDER BY r.id')]
-                if still != [identity for identity, _ in planned]:
-                    raise MonitoringBlocked('MONITORING_ACCOUNTING_INVALID')
-                for identity, key in planned:
-                    c.execute('INSERT INTO paper_monitoring_outcomes VALUES(?,?)', (identity, key))
-                self._accounting(c, checkpoint=True)
-                c.commit()
-            except BaseException:
-                c.rollback()
-                raise
-        return [identity for identity, _ in planned]
+                'high_water':row[6], 'entries_enabled':False, 'actual_fill_verified':False,
+                **({'health': 'CRITICAL', 'operator_guidance': HANDOFF_PENDING_GUIDANCE} if stuck_handoff else {})}
 
     def retain_outcome(self, reservation, evidence_hash):
         record = self.store.load(evidence_hash)
@@ -516,8 +676,47 @@ class MonitoringBudget:
                 c.rollback()
                 raise
 
+def _receipt_valid(receipt, kind, cap, policy_hash, identity, at, checkpoint, mint):
+    """The reservation receipt embedded in an outcome matches its reservation row exactly.
+
+    ``policy_hash`` is the required policy hash for an upgraded-allowance receipt, else falsy.
+    """
+    return (type(receipt) is dict and type(receipt.get('id')) is int
+            and type(receipt.get('total_used')) is int
+            and receipt.get('kind') == kind
+            and receipt.get('cap') == cap
+            and (not policy_hash or receipt.get('policy_hash') == policy_hash)
+            and receipt.get('window_seconds') == WINDOW_SECONDS
+            and receipt.get('id') == identity and receipt.get('total_used') == identity
+            and receipt.get('reserved_at') == at and receipt.get('checkpoint_hash') == checkpoint
+            and receipt.get('mint') == mint)
+
+
+def _outcome_bound(original, identity, at, scan, method, params_hash):
+    """The retained outcome belongs to exactly this reservation row."""
+    if original.get('kind') != ABANDONED_KIND:
+        return (original.get('scan_id') == scan and original.get('method') == method
+                and digest(original.get('params')) == params_hash)
+    resolved = original.get('resolved_at')
+    return (set(original) == ABANDONED_FIELDS and original['failure_code'] == ABANDONED_CODE
+            and original['scan_id'] == scan and original['method'] == method
+            and original['params_hash'] == params_hash and original['reservation_id'] == identity
+            and original['reserved_at'] == at and original['charged'] is True and original['refunded'] is False
+            and original['abandon_after_seconds'] == ABANDON_AFTER_SECONDS
+            and type(resolved) in (int, float) and math.isfinite(resolved)
+            and resolved - at > ABANDON_AFTER_SECONDS)       # a forged early resolution is not valid
+
+
 def _latching_failure(record):
-    return record.get('failure_code') in LATCHING_FAILURE_CODES
+    code = record.get('failure_code')
+    if code is None:
+        return False
+    if code in TRANSIENT_FAILURE_CODES:
+        return False
+    if code == 'HTTP_REJECTED':
+        status = record.get('http_status')
+        return not (status is None or (type(status) is int and status in TRANSIENT_HTTP_STATUSES))
+    return True
 
 
 def _research_binding(research, evidence):

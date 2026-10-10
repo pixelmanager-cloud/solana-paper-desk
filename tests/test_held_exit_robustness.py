@@ -56,7 +56,9 @@ def http_error(status):
 
 
 def quote_outage(request):
-    return URLError('synthetic quote outage') if is_quote(request) else None
+    # urllib wraps a socket-level OSError in URLError; a bare-string reason is a configuration
+    # error (e.g. 'unknown url type') and now latches (T25), so the outage must be a real one.
+    return URLError(ConnectionRefusedError('synthetic quote outage')) if is_quote(request) else None
 
 
 class HeldExitTests(unittest.TestCase):

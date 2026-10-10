@@ -1,0 +1,13 @@
+# [Install] exists so the coordinator CAN enable it, but nothing enables it automatically:
+# `systemctl enable --now desk-paper-entry-dispatcher.timer` is a deliberate step after verification
+# (docs/ops/RUNBOOK.md step 9). OnUnitInactiveSec prevents overlap and catch-up bursts.
+[Unit]
+Description=Schedule the bounded entry dispatcher (enabled by the coordinator only)
+[Timer]
+OnActiveSec=60
+OnUnitInactiveSec=60
+AccuracySec=5
+Persistent=false
+Unit=desk-paper-entry-dispatcher.service
+[Install]
+WantedBy=timers.target

@@ -24,6 +24,7 @@ from desk import paper_terminal_reconciliation as terminal
 from desk import runtime_compatibility as runtime
 from desk import ownership_acquisition as acquisition, migration_slot_intake as migration
 from desk import provider_pacing as pacing
+from desk import paper_concurrency as concurrency
 from desk.job_persistence import BIRTH_ACQUISITION_V1, JobPersistence
 from desk.history_progress import HistoryProgress
 from desk.model import canonical, digest
@@ -335,7 +336,7 @@ def _preflight(ctx, scan=None):
         raise ValueError('Reviewed context changed')
     cfg = cli._config(paths['config'])
     with monitor._context(paths['research_db'], paths['evidence_db'], paths['ledger_db'], cfg) as (store, ledger, state):
-        if state['positions'] or state['mode'] != 'RUNNING':
+        if concurrency.entry_blocked(state, cfg):
             raise ValueError('Held-position priority or paused ledger')
         blocked = terminal.gate(store, Path(paths['research_db']), (() if scan is None else (scan,)), ledger_locked=str(ledger))
         if blocked:
@@ -343,6 +344,13 @@ def _preflight(ctx, scan=None):
         snapshot = monitor.MonitoringBudget(store, ledger, cfg).snapshot()
         if snapshot['status'] != 'AVAILABLE' or snapshot.get('blockers'):
             raise ValueError('Monitoring pending or blocked')
+        if concurrency.selected(cfg):
+            # Reserve held monitoring for every position (the new one included) and
+            # refuse entries the engine's STALE_PORTFOLIO gate would reject anyway.
+            refusal = concurrency.entry_blockers(state, cfg, monitoring_remaining=snapshot['remaining'],
+                                                 now=concurrency.clock())
+            if refusal:
+                raise ValueError('Concurrent entry refused: ' + ','.join(refusal))
         pacer = pacing.configured(priority='investigation')
         if pacer is None or str(pacer.path) != paths['pacing_db']:
             raise ValueError('Pacer context mismatch')
@@ -372,7 +380,7 @@ def _held_guard(ctx, scan=None):
         if digest(cfg)!=ctx['config_hash'] or runtime.implementation_hash()!=ctx['source_hash']:
             raise ValueError('Source/config changed before I/O')
         state = cycle._state(ledger,cfg)
-        if state['positions'] or state['mode']!='RUNNING':
+        if concurrency.entry_blocked(state, cfg):
             raise ValueError('Held-position priority before I/O')
         store = EvidenceStore(ctx['paths']['evidence_db']['path'],read_only=True)
         blocked = terminal.gate(store,Path(ctx['paths']['research_db']['path']),
@@ -411,7 +419,7 @@ def _rejection(ctx, intent, scan, publish=None):
     paths = {k:v['path'] for k,v in ctx['paths'].items()}
     cfg = cli._config(paths['config'])
     with monitor._context(paths['research_db'],paths['evidence_db'],paths['ledger_db'],cfg) as (store,ledger,state):
-        if state['positions'] or state['mode'] != 'RUNNING':
+        if concurrency.entry_blocked(state, cfg):
             raise ValueError('Held-position priority or paused ledger')
         if (digest(cfg) != ctx['config_hash'] or runtime.implementation_hash() != ctx['source_hash']
                 or terminal.gate(store,Path(paths['research_db']),(scan,),ledger_locked=str(ledger))):
@@ -706,7 +714,7 @@ def _dispatch(expected, *, execute=False, systemd_credentials=False):
             from desk.providers import helius_rpc
             cfg = cli._config(paths['config'])
             with monitor._context(paths['research_db'],paths['evidence_db'],paths['ledger_db'],cfg) as (store, ledger, state):
-                if state['positions'] or state['mode'] != 'RUNNING':
+                if concurrency.entry_blocked(state, cfg):
                     raise ValueError('Held-position priority or paused ledger')
                 cli._credentials()
                 jobs = JobPersistence.__new__(JobPersistence); jobs.path = Path(paths['research_db'])

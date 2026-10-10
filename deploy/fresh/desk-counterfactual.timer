@@ -1,0 +1,13 @@
+[Unit]
+Description=Inactive template: run counterfactual ingest+sample every minute
+[Timer]
+OnActiveSec=2min
+OnUnitInactiveSec=60s
+AccuracySec=1s
+Persistent=false
+Unit=desk-counterfactual.service
+# [Install] only declares the target; nothing enables it. The coordinator enables it on the fresh store set only.
+# OnUnitInactiveSec re-arms 60 s after the service FINISHES: runs cannot overlap and a failed run is simply retried.
+
+[Install]
+WantedBy=timers.target

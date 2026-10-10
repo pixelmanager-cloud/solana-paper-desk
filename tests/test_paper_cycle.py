@@ -14,7 +14,7 @@ import sqlite3
 import unittest
 from unittest.mock import patch
 
-from desk import engine, paper_cycle as cycle, quote_execution as qe, paper_read_sources as transport
+from desk import engine, monitoring_budget, paper_cycle as cycle, quote_execution as qe, paper_read_sources as transport
 from desk.job_persistence import BIRTH_ACQUISITION_V1
 from desk.live_observation import ProviderObservation, ingest_mint
 from desk.model import digest, canonical
@@ -313,18 +313,38 @@ class PaperCycleTests(unittest.TestCase):
     def test_monitoring_charged_source_failure_is_charged_closed_and_does_not_latch_restart(self):
         # T22: was ..._latched_before_restart_or_candidates. The failed held read stays charged and retained, but the
         # next held pass for the same position proceeds (the position must stay exitable).
+        # T22F: the injected error is a classified transient network failure (ConnectionResetError ->
+        # TRANSPORT_ERROR). The earlier bare OSError classifies as UNCLASSIFIED_ERROR, which integration (T25) latches
+        # on purpose; that case is pinned by the sibling test below instead of being waived here.
         item,allowance=self.monitoring_fixture()
-        def failure(*args,**kwargs):raise OSError('SYNTHETIC_TEST_ONLY')
+        def failure(*args,**kwargs):raise ConnectionResetError('SYNTHETIC_TEST_ONLY')
         before=self.f.progress.admission(self.target.scan_id)
         with patch.object(transport,'build_opener',side_effect=failure),patch.object(transport.os.environ,'get',return_value='SYNTHETIC_TEST_ONLY'),patch.object(transport.time,'time',return_value=self.f.at):
             result=self.run_cycle(position_targets=(item,),candidates=(),monitoring=True,source_factory=transport.PaperReadSources)
         self.assertEqual(result['status'],'BLOCKED');self.assertEqual(result['monitoring_attempted_requests'],1)
         self.assertEqual(allowance.snapshot()['total_used'],1)
         self.assertEqual(self.f.progress.admission(self.target.scan_id),before)
+        # T25F: an orphan reservation is abandoned only once it is older than ABANDON_AFTER_SECONDS and its owner is
+        # provably gone, so the restart happens after that age (the old test restarted at the same instant).
+        self.f.at+=monitoring_budget.ABANDON_AFTER_SECONDS+30
         restart=self.actual_cycle(positions=(item,),candidates=(),monitoring=True)
         self.assertEqual(restart['status'],'COMPLETE',restart)
         self.assertGreater(restart['attempted_requests'],0)
         self.assertEqual(allowance.snapshot()['total_used'],1+restart['monitoring_attempted_requests'])
+
+    def test_monitoring_unclassified_source_failure_still_latches_restart(self):
+        # T22F: an exception that cannot be classified as a transient network failure keeps the allowance latched
+        # (fail closed); only the classified transient codes may proceed to a restart.
+        item,allowance=self.monitoring_fixture()
+        def failure(*args,**kwargs):raise OSError('SYNTHETIC_TEST_ONLY')
+        with patch.object(transport,'build_opener',side_effect=failure),patch.object(transport.os.environ,'get',return_value='SYNTHETIC_TEST_ONLY'),patch.object(transport.time,'time',return_value=self.f.at):
+            result=self.run_cycle(position_targets=(item,),candidates=(),monitoring=True,source_factory=transport.PaperReadSources)
+        self.assertEqual(result['status'],'BLOCKED');self.assertEqual(allowance.snapshot()['total_used'],1)
+        self.f.at+=monitoring_budget.ABANDON_AFTER_SECONDS+30
+        restart=self.actual_cycle(positions=(item,),candidates=(),monitoring=True)
+        self.assertEqual(restart['status'],'RECOVERY_REQUIRED',restart)
+        self.assertEqual(restart['attempted_requests'],0)
+        self.assertEqual(allowance.snapshot()['total_used'],1)
 
     def test_monitoring_positions_first_candidate_still_uses_exhausted18(self):
         item,allowance=self.monitoring_fixture()
@@ -369,6 +389,9 @@ class PaperCycleTests(unittest.TestCase):
         self.assertEqual(dump(self.path),before)
         self.assertEqual(allowance.snapshot()['total_used'],1)
         self.assertIn('MONITORING_OUTCOME_PENDING',allowance.snapshot()['blockers'])
+        # T25F: abandonment needs an orphan older than ABANDON_AFTER_SECONDS with every lock free (the cycle ran, so the
+        # lock files exist); the restart therefore happens after that age.
+        self.f.at+=monitoring_budget.ABANDON_AFTER_SECONDS+30
         restart=self.actual_cycle(positions=(item,),candidates=(),monitoring=True)
         # T22: all three locks are free again, so the dead pass is closed ABANDONED_CHARGED and its dangling
         # reservation gets an explicit ABANDONED outcome (still charged, never refunded); the position is monitored.

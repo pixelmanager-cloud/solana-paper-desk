@@ -70,10 +70,14 @@ def initialize(path, *, helius_seconds=2.0, jupiter_seconds=2.0, backoff_seconds
         c.commit()
 
 
+# Lowest class: research/measurement processes (fill realism, counterfactual) queue behind trading quotes.
+PRIORITIES = ('held', 'investigation', 'research')
+
+
 class Pacer:
     def __init__(self, path, *, priority='investigation', clock=time.time,
                  monotonic=time.monotonic, sleep=time.sleep):
-        if priority not in ('held', 'investigation'):
+        if priority not in PRIORITIES:
             raise PacingError('PACING_PRIORITY_INVALID')
         self.path, self.identity = _path(path)
         self.priority, self.clock, self.monotonic, self.sleep = priority, clock, monotonic, sleep
@@ -110,7 +114,7 @@ class Pacer:
                 if len(waiters) > len(self.providers)*MAX_WAITERS: raise ValueError()
                 for ticket, provider, priority, created, expires in waiters:
                     if (type(ticket) is not str or len(ticket) != 32 or provider not in self.providers
-                            or priority not in ('held','investigation') or not _number(created)
+                            or priority not in PRIORITIES or not _number(created)
                             or not _number(expires) or not 0 < expires-created <= MAX_WAIT): raise ValueError()
         except (sqlite3.Error, ValueError, TypeError):
             raise PacingError('PACING_DATABASE_INVALID') from None
@@ -150,7 +154,7 @@ class Pacer:
                         registered = True
                     row = c.execute('SELECT next_at,blocked_until,pending FROM state WHERE provider=?',(provider,)).fetchone()
                     if row[2] is not None: raise PacingError('PACING_OUTCOME_PENDING')
-                    first = c.execute("SELECT ticket FROM waiters WHERE provider=? ORDER BY CASE priority WHEN 'held' THEN 0 ELSE 1 END,created,ticket LIMIT 1",(provider,)).fetchone()
+                    first = c.execute("SELECT ticket FROM waiters WHERE provider=? ORDER BY CASE priority WHEN 'held' THEN 0 WHEN 'investigation' THEN 1 ELSE 2 END,created,ticket LIMIT 1",(provider,)).fetchone()
                     due = max(row[:2])
                     c.execute('UPDATE state SET high_water=? WHERE provider=?',(now,provider))
                     if first and first[0] == ticket and now >= due:

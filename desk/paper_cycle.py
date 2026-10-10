@@ -18,7 +18,7 @@ import sqlite3
 import time
 import uuid
 
-from . import engine, quote_execution as qe
+from . import engine, quote_execution as qe, paper_concurrency as concurrency, fill_realism
 from .graduation_witness import extract_graduation
 from .ledger import Ledger
 from .model import canonical, digest, validate_event
@@ -502,10 +502,15 @@ def run_once(research_db, evidence_db, ledger_db, cfg, *, position_targets=(), c
                 except (_Blocked, sqlite3.Error):
                     return {**result,'blockers':['PERSISTED_ADMISSION_OR_SCHEMA_REQUIRED']}
                 supplied = {x.target.mint:x for x in position_targets}
-                if len(supplied)!=len(position_targets) or set(supplied)!=set(state['positions']):
+                # Explicit concurrent-entries experiments may monitor a subset of the
+                # open positions per pass (held legs); otherwise all must be supplied.
+                if len(supplied)!=len(position_targets) or (
+                        not set(supplied)<=set(state['positions']) if concurrency.selected(cfg)
+                        else set(supplied)!=set(state['positions'])):
                     return {**result,'blockers':['ALL_OPEN_POSITION_TARGETS_REQUIRED']}
                 with closing(sqlite3.connect(path.as_uri()+'?mode=ro',uri=True)) as c:
                     for mint,p in state['positions'].items():
+                        if mint not in supplied:continue
                         target = supplied[mint].target
                         row = c.execute('SELECT payload,payload_hash FROM events WHERE event_id=?',(p.get('entry_event_id'),)).fetchone()
                         original = json.loads(row[0]) if row else None
@@ -569,7 +574,7 @@ def run_once(research_db, evidence_db, ledger_db, cfg, *, position_targets=(), c
                 if monitoring_total is not None:
                     intent['monitoring_total'] = monitoring_total
                 identity = uuid.uuid4().hex; key = store.save(intent)
-                attempt_refs=[]; terminal_hazards=()
+                attempt_refs=[]; terminal_hazards=(); realism_jobs=[]
                 result.update(pass_id=identity,intent_hash=key,attempt_refs=attempt_refs)
                 with store.connect() as c:c.execute('INSERT INTO paper_observation_passes VALUES(?,?,NULL)',(identity,key))
                 # Category (a) rejections may retire this pass; only a lone,
@@ -686,7 +691,9 @@ def run_once(research_db, evidence_db, ledger_db, cfg, *, position_targets=(), c
                             event, quotes, planned = fulfill_quotes(state,cfg,event_builder,collected,source,action_budget)
                             result['diagnostics'].append({'scan_id':target.scan_id,'blockers':diagnostic['blockers'],
                                                           'planned_outcomes':planned['outcomes']})
+                            before_outcomes=len(result['outcomes'])
                             deliver(event,quotes)
+                            realism_jobs+=fill_realism.capture(cfg,result['outcomes'][before_outcomes:],event,collected,is_position)  # never raises
                             _state(path,cfg)
                             if is_position and any(x['type']=='blocked_exit' for x in planned['outcomes']):
                                 raise CycleBlocked('UNRESOLVED_POSITION_EXIT')
@@ -717,6 +724,7 @@ def run_once(research_db, evidence_db, ledger_db, cfg, *, position_targets=(), c
                         result['budget']={scan:{'used':progress.admission(scan)['requests_used'],
                             'ceiling':progress.admission(scan)['request_ceiling']} for scan in intent['admissions']}
                     outcome = store.save(result)
+                    if realism_jobs:fill_realism.enqueue(path,realism_jobs,digest(cfg))  # opt-in; result page durable; before every early return; never raises
                     if terminal_hazards and 'terminal_context' in intent:
                         try:
                             receipt=terminal.certify_intrinsic(store,progress,cfg,pass_id=identity,intent_hash=key,

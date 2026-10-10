@@ -288,12 +288,35 @@ class MonitoringAbandonTests(Base):
         for i in range(n):
             self.allowance.reserve_read(self.progress, self.scan, 'getBlockTime', [i + 1])
 
+    def age(self):
+        # T25F: an orphan is abandoned only when older than ABANDON_AFTER_SECONDS and the owner is provably gone,
+        # which needs both lock files to exist (this process, the only possible holder, is allowed).
+        for lock in (str(self.store.path) + '.ownership-invocation.lock', str(self.h.path) + '.paper-cycle.lock'):
+            open(lock, 'a').close()
+        self.h.f.at += monitoring.ABANDON_AFTER_SECONDS + 30
+
+    def test_young_or_owned_orphan_is_not_abandoned(self):
+        # T22F: the T25F preconditions hold for the pass-closure entry point too (nothing is written when unmet).
+        self.reserve(1)
+        self.age()
+        young = self.h.f.at - (monitoring.ABANDON_AFTER_SECONDS + 30) + 10
+        self.h.f.at = young
+        with self.assertRaisesRegex(monitoring.MonitoringBlocked, 'OUTCOME_PENDING'):
+            self.allowance.abandon_pending()
+        self.h.f.at += monitoring.ABANDON_AFTER_SECONDS + 30
+        os.unlink(str(self.h.path) + '.paper-cycle.lock')                # a missing lock file proves nothing
+        with self.assertRaisesRegex(monitoring.MonitoringBlocked, 'OUTCOME_PENDING'):
+            self.allowance.abandon_pending()
+        with closing(self.store.connect()) as c:
+            self.assertEqual(c.execute('SELECT count(*) FROM paper_monitoring_outcomes').fetchone()[0], 0)
+
     def test_dangling_reservation_gets_an_explicit_abandoned_outcome_and_stays_charged(self):
         self.reserve(1)
         self.assertIn('MONITORING_OUTCOME_PENDING', self.allowance.snapshot()['blockers'])
         with self.assertRaisesRegex(monitoring.MonitoringBlocked, 'OUTCOME_PENDING'):
             self.reserve(1)                                             # no new read until the dead one is resolved
         total = self.allowance.snapshot()['total_used']
+        self.age()
         self.assertEqual(self.allowance.abandon_pending(), [total])
         snap = self.allowance.snapshot()
         self.assertEqual((snap['blockers'], snap['total_used'], snap['window_used']), ([], total, total))
@@ -310,13 +333,15 @@ class MonitoringAbandonTests(Base):
     def test_forged_abandoned_outcomes_fail_the_accounting_replay_and_roll_back(self):
         self.reserve(1)
         pending = self.allowance.snapshot()['total_used']
-        real = EvidenceStore.save
+        real = monitoring.MonitoringBudget._save_page
+        self.age()
 
         def forging(change):
-            def save(store, payload):
+            # T22F: abandonment now writes inside its own transaction (_save_page), not through EvidenceStore.save.
+            def save(budget, c, payload):
                 if type(payload) is dict and payload.get('kind') == 'paper_monitoring_abandoned_v1':
                     payload = change(copy.deepcopy(payload))
-                return real(store, payload)
+                return real(budget, c, payload)
             return save
 
         def top(field, value):
@@ -332,7 +357,7 @@ class MonitoringAbandonTests(Base):
             'receipt checkpoint': receipt('checkpoint_hash', '0' * 64), 'receipt cap': receipt('cap', 1),
         }
         for name, change in variants.items():
-            with self.subTest(name), patch.object(EvidenceStore, 'save', forging(change)):
+            with self.subTest(name), patch.object(monitoring.MonitoringBudget, '_save_page', forging(change)):
                 with self.assertRaises(monitoring.MonitoringBlocked):
                     self.allowance.abandon_pending()
                 with closing(self.store.connect()) as c:                  # rolled back: still dangling, nothing written
@@ -462,6 +487,9 @@ class KilledProcessTests(Base):
         self.assertIn('MONITORING_OUTCOME_PENDING', allowance.snapshot()['blockers'])
         self.assertEqual(len(self.null_passes()), 1)
         used = allowance.snapshot()['total_used']
+        # T25F: the orphan reservation is abandoned only once it is older than ABANDON_AFTER_SECONDS and no process
+        # holds the cycle locks (the dead child's flocks are gone), so recovery runs after that age.
+        self.h.f.at += monitoring.ABANDON_AFTER_SECONDS + 30
         rec = self.assert_recovered_once()
         self.assertEqual((rec['role'], rec['monitoring']), ('HELD', {'first': used, 'last': used}))
         self.assertEqual(self.progress.admission(self.scan), before)
