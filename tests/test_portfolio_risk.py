@@ -5,6 +5,7 @@ network or store outside a temp directory. With the flag absent the engine must 
 """
 import ast
 import copy
+import json
 import tempfile
 import time
 import unittest
@@ -17,6 +18,7 @@ from desk.engine import initial_state, portfolio_blockers, portfolio_open_risk, 
 from desk.ledger import Ledger
 from desk.model import digest
 from tests.helpers import T, config, control, event
+from tests.test_paper_experimental_scoring import experimental
 
 KEY = 'paper_portfolio_risk_version'
 ALL = ('portfolio_max_open_risk_fraction', 'portfolio_loss_streak_cooldown_after',
@@ -27,7 +29,7 @@ BASE_DIGEST = '765bd69994735e4d53c875509153dd4afae696821986596ae7b61b20c505f494'
 
 def cfg_on(**changes):
     values = {KEY: 1, 'portfolio_max_open_risk_fraction': '0.5', 'portfolio_loss_streak_cooldown_after': 100,
-              'portfolio_cooldown_minutes': 1, 'portfolio_max_entries_per_10m': 100}
+              'portfolio_cooldown_minutes': 1, 'portfolio_max_entries_per_10m': 10}
     values.update(changes)
     return {**config(), **values}
 
@@ -131,7 +133,8 @@ class ConfigValidationTests(unittest.TestCase):
                cfg_on(portfolio_loss_streak_cooldown_after=2.5), cfg_on(portfolio_loss_streak_cooldown_after=True),
                cfg_on(portfolio_loss_streak_cooldown_after=101), cfg_on(portfolio_cooldown_minutes=0),
                cfg_on(portfolio_cooldown_minutes=1441), cfg_on(portfolio_cooldown_minutes='30'),
-               cfg_on(portfolio_max_entries_per_10m=0), cfg_on(portfolio_max_entries_per_10m=101),
+               cfg_on(portfolio_max_entries_per_10m=0), cfg_on(portfolio_max_entries_per_10m=11),
+               cfg_on(portfolio_max_entries_per_10m=101),
                {**cfg_on(), 'mode': 'live'}]
         for cfg in bad:
             with self.subTest(cfg={k: cfg.get(k) for k in (KEY,) + ALL + ('mode',)}), self.assertRaises(ValueError):
@@ -435,6 +438,230 @@ class RestartAndReplayTests(unittest.TestCase):
             ledger.close()
         self.assertEqual(stored['portfolio_entries'], direct.state['portfolio_entries'])
         self.assertEqual(sorted(stored['positions']), sorted(direct.state['positions']))
+
+
+class EntryLimitValidationTests(unittest.TestCase):
+    """T31F item 4: ENTRY_THROTTLE already allows one entry per minute, so a limit above 10 per 10 minutes could never bind."""
+
+    def test_limit_above_ten_is_refused_and_ten_is_accepted(self):
+        self.assertEqual(engine._portfolio_risk(cfg_on(portfolio_max_entries_per_10m=10))['entries'], 10)
+        for value in (11, 12, 100):
+            with self.subTest(value), self.assertRaises(ValueError):
+                engine._portfolio_risk(cfg_on(portfolio_max_entries_per_10m=value))
+            with self.subTest(value, event='control'), self.assertRaises(ValueError):
+                transition(initial_state(config()), control(T, 'PAUSE_ENTRY'), cfg_on(portfolio_max_entries_per_10m=value))
+
+
+class RejectRecordTests(unittest.TestCase):
+    """T31F item 2: the portfolio and minimum-size rejects carry the same audit fields as every other entry reject."""
+    AUDIT = {'type', 'reason', 'reasons', 'mint', 'scores', 'bundle_audit'}
+
+    def capped(self, **extra):
+        cfg = cfg_on(portfolio_max_open_risk_fraction='0.0031', **extra)
+        run = Run(cfg)
+        run.go(experimental())
+        run.go(experimental(ts=T + 59))                                    # fresh mark for the held position
+        return run.go(experimental(mint='SYNTHETIC_B', ts=T + 60))[0]
+
+    def test_risk_cap_reject_carries_reasons_scores_audit_and_policy(self):
+        reject = self.capped(experimental_policy_version=1)
+        self.assertEqual((reject['type'], reject['reason'], reject['reasons']), ('reject', 'PORTFOLIO_RISK_CAP', ['PORTFOLIO_RISK_CAP']))
+        self.assertGreaterEqual(set(reject), self.AUDIT | {'size_sol', 'open_risk', 'limit', 'entry_policy'})
+        self.assertIn('entry', reject['scores'])
+        self.assertEqual(reject['entry_policy']['risk_flags'], ['UNRESOLVED_OWNERSHIP_HISTORY'])
+
+    def test_risk_cap_reject_has_the_shape_of_an_ordinary_gate_reject(self):
+        cfg = cfg_on(portfolio_max_open_risk_fraction='0.0031', experimental_policy_version=1)
+        run = Run(cfg)
+        run.go(experimental())
+        gate = run.go(experimental(mint='SYNTHETIC_C', ts=T + 30))[0]      # same minute as the entry: ENTRY_THROTTLE
+        self.assertEqual(gate['reason'], 'ENTRY_THROTTLE')
+        self.assertLessEqual(set(gate), set(self.capped(experimental_policy_version=1)))
+
+    def below_minimum(self, cfg):
+        run = Run(cfg)
+        run.state['loss_streak'] = 4                                       # the engine halves the size after 4 losers
+        return run.go(experimental(ts=T + 60))[0]
+
+    def test_below_minimum_reject_carries_the_audit_fields_when_the_flag_is_on(self):
+        reject = self.below_minimum(cfg_on(experimental_policy_version=1, min_order_sol='0.05'))
+        self.assertEqual((reject['reason'], reject['reasons']), ('BELOW_MINIMUM', ['BELOW_MINIMUM']))
+        self.assertGreaterEqual(set(reject), self.AUDIT | {'size_sol', 'limits', 'entry_policy'})
+        self.assertIn('entry', reject['scores'])
+
+    def test_below_minimum_reject_is_byte_identical_without_the_flag(self):
+        """Historical journals are replayed by the checkpoint reader: the default-off record must not gain fields."""
+        reject = self.below_minimum({**config(), 'experimental_policy_version': 1, 'min_order_sol': '0.05'})
+        self.assertEqual(set(reject), {'type', 'reason', 'mint', 'size_sol', 'limits'})
+
+
+class LiquidationAndStreakTests(unittest.TestCase):
+    """T31F item 3. Decision: a liquidation close counts toward the loss streak, exactly like every other full close.
+
+    The portfolio cooldown follows the engine's own loss_streak (which already halves size at 4 and pauses at 6 and has
+    always counted liquidation closes), so a forced exit at a loss cools the portfolio down and a forced exit at a profit
+    resets the streak. Counting them is also the fail-closed choice: it can only delay entries."""
+
+    def cfg(self):
+        return cfg_on(portfolio_loss_streak_cooldown_after=1, portfolio_cooldown_minutes=30)
+
+    def liquidate(self, run, mint, price):
+        run.go(control(T + 100, 'LIQUIDATE'))
+        return run.go(event(T + 110, mint=mint, **price))
+
+    def test_liquidation_at_a_loss_counts_and_starts_the_cooldown(self):
+        run = Run(self.cfg())
+        run.enter('A', T)
+        sold = next(o for o in self.liquidate(run, 'A', {}) if o.get('side') == 'sell')
+        self.assertEqual(sold['reason'], 'LIQUIDATE')
+        self.assertLess(D(sold['realized_pnl_sol']), 0)
+        self.assertEqual(run.state['loss_streak'], 1)
+        self.assertEqual(run.state['portfolio_cooldown_until'], T + 110 + 1800)
+        self.assertEqual(run.state['mode'], 'STOPPED')
+        run.go(control(T + 120, 'RESUME'))
+        for at in (T + 200, T + 110 + 1800 - 1):
+            self.assertEqual(run.enter('C', at)['reason'], 'PORTFOLIO_LOSS_COOLDOWN', at)
+        self.assertEqual(run.enter('C', T + 110 + 1800)['type'], 'fill')
+
+    def test_liquidation_at_a_profit_resets_the_streak_and_sets_no_cooldown(self):
+        run = Run(self.cfg())
+        run.enter('A', T)
+        sold = next(o for o in self.liquidate(run, 'A', {'reserve_sol': '160'}) if o.get('side') == 'sell')
+        self.assertEqual(sold['reason'], 'LIQUIDATE')
+        self.assertGreater(D(sold['realized_pnl_sol']), 0)
+        self.assertEqual(run.state['loss_streak'], 0)
+        self.assertNotIn('portfolio_cooldown_until', run.state)
+
+    def test_one_liquidation_of_several_losing_positions_renews_from_the_same_exit_time(self):
+        run = Run(cfg_on(portfolio_loss_streak_cooldown_after=2, portfolio_cooldown_minutes=30))
+        run.enter('A', T)
+        run.enter('B', T + 60)
+        run.go(control(T + 100, 'LIQUIDATE'))
+        run.go(event(T + 110, mint='A'))
+        self.assertNotIn('portfolio_cooldown_until', run.state)            # streak 1 < 2
+        run.go(event(T + 110, mint='B'))
+        self.assertEqual(run.state['loss_streak'], 2)
+        self.assertEqual(run.state['portfolio_cooldown_until'], T + 110 + 1800)
+
+
+class CheckpointValidationTests(unittest.TestCase):
+    """T31F item 1: portfolio_entries / portfolio_cooldown_until are validated on every checkpoint read.
+
+    The engine writes both keys lazily (spacing record after the first entry, cooldown after the first qualifying streak),
+    so absence is legitimate only until the state itself proves the key must exist: an entry has been made
+    (last_entry_minute >= 0) or loss_streak has reached the cooldown threshold. Present keys must be well formed and
+    consistent with the rest of the checkpoint. Any violation is the standard recovery-required error."""
+    RECOVERY = r'ledger checkpoint invalid: recovery required'
+
+    def cfg(self):
+        return cfg_on(portfolio_loss_streak_cooldown_after=2, portfolio_cooldown_minutes=30, portfolio_max_entries_per_10m=2)
+
+    def build(self, cfg=None):
+        tmp = tempfile.TemporaryDirectory()
+        self.addCleanup(tmp.cleanup)
+        self.path = Path(tmp.name) / 'l.sqlite'
+        ledger = Ledger(self.path)
+        for e in (event(T, mint='A'), event(T + 59, mint='A'), event(T + 60, mint='B'),
+                  event(T + 130, mint='A', reserve_sol='40'), event(T + 135, mint='B', danger=True)):
+            ledger.apply(e, cfg or self.cfg(), transition, initial_state)
+        ledger.close()
+
+    def state(self):
+        ledger = Ledger(self.path)
+        try:
+            return json.loads(ledger.db.execute('SELECT payload FROM state').fetchone()[0])
+        finally:
+            ledger.close()
+
+    def write(self, state):
+        ledger = Ledger(self.path)
+        ledger.db.execute('UPDATE state SET payload=?', (json.dumps(state),))
+        ledger.close()
+
+    def assertRecovery(self, cfg=None):
+        ledger = Ledger(self.path)
+        self.addCleanup(ledger.close)
+        with self.assertRaisesRegex(ValueError, self.RECOVERY):
+            ledger.apply(event(T + 4000, mint='C'), cfg or self.cfg(), transition, initial_state)
+        with self.assertRaisesRegex(ValueError, self.RECOVERY):
+            ledger.report()
+
+    def test_the_untampered_fixture_is_accepted(self):
+        self.build()
+        state = self.state()
+        self.assertEqual(state['portfolio_entries'], [T, T + 60])
+        self.assertEqual(state['portfolio_cooldown_until'], T + 135 + 1800)
+        ledger = Ledger(self.path)
+        self.addCleanup(ledger.close)
+        self.assertEqual(ledger.apply(event(T + 135 + 1800, mint='C'), self.cfg(), transition, initial_state)[0]['type'], 'fill')
+        self.assertEqual(ledger.report()['state']['loss_streak'], 2)
+
+    def test_malformed_spacing_record_is_recovery_required(self):
+        bad = {'none': None, 'string': 'x', 'dict': {}, 'bool item': [True], 'string item': ['1'], 'float item': [1.5],
+               'negative': [-1], 'after the last event': [T + 10**6], 'unsorted': [T + 60, T], 'duplicate': [T + 60, T + 60],
+               'longer than K': [T, T + 60, T + 120], 'last entry is not the ledger last entry': [T, T + 3600],
+               'empty after an entry': []}
+        for label, value in bad.items():
+            with self.subTest(label):
+                self.build()
+                state = self.state()
+                state['portfolio_entries'] = value
+                self.write(state)
+                self.assertRecovery()
+
+    def test_malformed_cooldown_is_recovery_required(self):
+        bad = {'none': None, 'string': '5', 'bool': True, 'negative': -1, 'float': 1.5, 'zero': 0, 'list': [1],
+               'far beyond any configured cooldown': T + 135 + 10**7}
+        for label, value in bad.items():
+            with self.subTest(label):
+                self.build()
+                state = self.state()
+                state['portfolio_cooldown_until'] = value
+                self.write(state)
+                self.assertRecovery()
+
+    def test_a_missing_key_is_recovery_required_when_the_state_proves_it_must_exist(self):
+        self.build()
+        state = self.state()
+        del state['portfolio_entries']                                     # entries were made: last_entry_minute >= 0
+        self.write(state)
+        self.assertRecovery()
+        self.build()
+        state = self.state()
+        del state['portfolio_cooldown_until']                              # loss_streak (2) is at the cooldown threshold
+        self.write(state)
+        self.assertRecovery()
+
+    def test_a_missing_key_is_fine_before_anything_requires_it(self):
+        self.build()
+        ledger = Ledger(self.path)
+        self.addCleanup(ledger.close)
+        fresh = Ledger(Path(self.path.parent) / 'fresh.sqlite')
+        self.addCleanup(fresh.close)
+        fresh.apply(control(T, 'PAUSE_ENTRY'), self.cfg(), transition, initial_state)
+        self.assertNotIn('portfolio_entries', json.loads(fresh.db.execute('SELECT payload FROM state').fetchone()[0]))
+        self.assertEqual(fresh.report()['state']['mode'], 'ENTRY_PAUSED')
+
+    def test_portfolio_state_without_the_flag_is_recovery_required(self):
+        for key, value in (('portfolio_entries', [T]), ('portfolio_cooldown_until', T + 1)):
+            with self.subTest(key):
+                self.build(cfg=config())
+                state = self.state()
+                state[key] = value
+                self.write(state)
+                self.assertRecovery(cfg=config())
+
+    def test_validation_errors_are_never_a_bare_typeerror(self):
+        self.build()
+        state = self.state()
+        state['portfolio_entries'] = 'x'
+        self.write(state)
+        ledger = Ledger(self.path)
+        self.addCleanup(ledger.close)
+        with self.assertRaises(ValueError) as caught:
+            ledger.apply(event(T + 4000, mint='C'), self.cfg(), transition, initial_state)
+        self.assertNotIsInstance(caught.exception, TypeError)
+        self.assertEqual(self.state()['portfolio_entries'], 'x')           # nothing was reset or rewritten
 
 
 if __name__ == '__main__':
