@@ -1635,6 +1635,12 @@ AVOID: desk/provider_pacing.py
 
    Test each.
 4. **Phase caps.** Enforce the caps, not just detect them: bound each in-flight request's timeout by the remaining phase budget, and treat a pacing backoff longer than the remaining budget as a cut before waiting.
+6. **T35F review fold-ins.**
+   - (a) The `RESERVE_PASSES` math (`paper_concurrency.py` ~:22-26) must count held passes started by the held-watcher `.path` trigger and by dispatcher checkpoints, not only the held timer. Bound the trigger rate (it is shared with T28F's per-reason budgets), and derive the reserve from that bound. A store on the legacy 60/hour allowance must give a clear refusal reason; do not hide it by patching `RESERVE_PASSES` in tests.
+   - (b) Either wire `entry_seconds(cfg)` (~:114) into the production estimate or remove it.
+   - (c) Remove the stale TTL docstring (~:56).
+   - (d) A transient null account (`portfolio_marks.py` ~:270) must not be treated as closed. Require N consecutive confirmations or a closed-account proof first.
+   - (e) Example and docs recommend `paper_portfolio_mark_source_version: 2` only, never 1.
 5. **Docs.** Remove the stale TTL and 30s statements from docs/MULTI_POSITION.md (~:146-148, :158, :170, :172, :237). The rollover rule is T35F's unified rule; document exactly one.
 
 ---
