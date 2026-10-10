@@ -18,10 +18,10 @@ from pathlib import Path
 from unittest.mock import patch
 
 from desk import paper_concurrency as pc
-from desk.engine import initial_state, transition
+from desk.engine import equity, initial_state, transition
 from desk.ledger import Ledger
 from desk.model import canonical
-from tests.helpers import T, config, event
+from tests.helpers import T, config, control, event
 
 KEY = pc.KEY
 TTL = pc.TTL_KEY
@@ -97,7 +97,11 @@ class ConfigAndGateTests(unittest.TestCase):
         cfg = cfg_on()
         s = state({'A': position(mark_at=1000)})
         ttl = cfg[TTL]
-        self.assertEqual(pc.ENTRY_SECONDS, 30.0)   # 18 s preparation + 12 s bounded cycle: the engine decides last
+        # T16G item 4: acquisition (12 s) and intake (10 s) also precede the decision, so 30.0 became 52.0
+        # (loosened on purpose: the old figure left them out and under-refused doomed entries).
+        self.assertEqual(pc.ENTRY_SECONDS, 52.0)
+        self.assertEqual(pc.ENTRY_SECONDS, sum(seconds for _, seconds in pc.ENTRY_PHASES))
+        self.assertEqual([name for name, _ in pc.ENTRY_PHASES], ['acquisition', 'intake', 'preparation', 'cycle'])
         # Mark age at decision = (now - mark) + entry seconds; refused once it exceeds the portfolio TTL.
         edge = 1000 + int(ttl - pc.ENTRY_SECONDS)
         self.assertEqual(pc.entry_blockers(s, cfg, now=edge), [])
@@ -349,6 +353,71 @@ class RolloverTests(unittest.TestCase):
         entry = apply(self.ev(T + 57, 'D'))
         self.assertEqual((entry[-1]['type'], entry[-1]['reason']), ('reject', 'STALE_PORTFOLIO'))
         self.assertEqual(state()['day'], before['day'])        # the daily counters stay stale while 3 positions are held
+
+
+class RolloverAfterMarkTests(RolloverTests):
+    """T16G item 3: `paper_rollover_after_mark_version: 1` lets the held pass's final leg roll the day over."""
+    ROLL = {'paper_rollover_after_mark_version': 1}
+
+    def test_default_cfg_is_unchanged(self):
+        apply, state = self.book()
+        before = state()
+        self.legs_after_midnight(apply)
+        self.assertEqual(state()['day'], before['day'])           # key absent: byte-identical old behaviour
+
+    def roll_case(self, mode=None, cap=None):
+        changes = dict(self.ROLL)
+        if cap:
+            changes['max_positions'] = cap
+        apply, state = self.book(**changes)
+        before = state()
+        if mode:
+            apply(control(T + 1, mode))
+        out, days = [], []
+        for i, mint in enumerate('ABC'):
+            out += apply(self.ev(T + 10 + 8 * i, mint))        # the held pass: 3 real legs, oldest mark first
+            days.append(state()['day'])
+        after = state()
+        self.assertEqual(days[:2], [before['day']] * 2)         # not before every other mark is fresh
+        self.assertNotEqual(days[2], before['day'])             # the FINAL leg rolls the day over
+        self.assertEqual(after['day_gross_losses'], '0')
+        self.assertEqual(after['day_start_equity'], str(equity(after)))
+        self.assertTrue(any(o.get('reason') == 'DAY_ROLLOVER_AFTER_FRESH_MARKS' for o in out))
+        self.assertEqual(len(after['positions']), 3)
+        return after
+
+    def test_book_full_no_candidate(self):
+        self.roll_case(cap=3)
+
+    def test_exit_only_mode(self):
+        self.assertEqual(self.roll_case(mode='EXIT_ONLY')['mode'], 'EXIT_ONLY')
+
+    def test_running_book_with_room(self):
+        self.roll_case()
+
+    def test_a_stale_other_mark_still_defers(self):
+        apply, state = self.book(**self.ROLL)
+        before = state()
+        for i, mint in enumerate('AB'):                           # C never refreshed (a failed leg)
+            apply(self.ev(T + 10 + 8 * i, mint))
+        out = apply(self.ev(T + 26, 'A'))
+        self.assertEqual(state()['day'], before['day'])
+        self.assertFalse(any(o.get('reason') == 'DAY_ROLLOVER_AFTER_FRESH_MARKS' for o in out))
+
+    def test_rule_requires_the_experiment_and_a_valid_value(self):
+        for bad in ({'paper_rollover_after_mark_version': 2}, {'paper_rollover_after_mark_version': True},
+                    {'paper_rollover_after_mark_version': '1'}):
+            with self.assertRaises(ValueError, msg=repr(bad)):
+                pc.selected(cfg_on(**bad))
+        with self.assertRaises(ValueError):
+            pc.selected({**config(), 'paper_rollover_after_mark_version': 1})
+        self.assertEqual(pc.selected(cfg_on(**self.ROLL)), 1)
+
+
+# the inherited RolloverTests would run twice; only this class's own tests belong here
+for _name in dir(RolloverTests):
+    if _name.startswith('test_') and _name not in vars(RolloverAfterMarkTests):
+        setattr(RolloverAfterMarkTests, _name, None)
 
 
 class SchedulerTickTests(unittest.TestCase):

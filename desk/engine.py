@@ -44,6 +44,26 @@ def portfolio_ttl(cfg):
     return ttl
 
 
+ROLLOVER_KEY = "paper_rollover_after_mark_version"
+
+
+def rollover_after_mark(cfg):
+    """Versioned rule (concurrent-entries experiments only): a held-position event may roll the UTC day over AFTER its
+    own mark is refreshed. Without it each leg's own mark is one cadence old when the top-of-event test runs, so
+    a book of 2+ positions never rolls over on held passes alone. Absent key: unchanged behaviour."""
+    if ROLLOVER_KEY not in cfg:
+        return False
+    version, flag = cfg[ROLLOVER_KEY], cfg.get("paper_concurrent_entries_version")
+    if type(version) is not int or version != 1 or type(flag) is not int or flag != 1 or PORTFOLIO_TTL_KEY not in cfg:
+        raise ValueError("Invalid rollover-after-mark configuration")
+    return True
+
+
+def _marks_current(state, cfg, ts):
+    return all(not p.get("exit_blocked") and p.get("mark_status") == "MODEL_ESTIMATE"
+               and 0 <= ts - p["mark_at"] <= portfolio_ttl(cfg) for p in state["positions"].values())
+
+
 def exposure(state):
     return sum((dec(p["cost_left"]) for p in state["positions"].values()), ZERO)
 
@@ -374,9 +394,7 @@ def transition(state, e, cfg, *, _quote_book=None):
         return state,output
     day = datetime.fromtimestamp(e["ts"], timezone.utc).date().isoformat()
     if state["day"] != day:
-        marks_current=all(not p.get("exit_blocked") and p.get("mark_status")=="MODEL_ESTIMATE"
-            and 0<=e["ts"]-p["mark_at"]<=portfolio_ttl(cfg) for p in state["positions"].values())
-        if marks_current:
+        if _marks_current(state, cfg, e["ts"]):
             state["day"] = day
             state["day_start_equity"] = str(equity(state))
             state["day_gross_losses"] = "0"
@@ -392,6 +410,12 @@ def transition(state, e, cfg, *, _quote_book=None):
     was_open = mint in state["positions"]
     if was_open:
         manage_position(state, e, cfg, output,_quote_book)
+        if state["day"] != day and rollover_after_mark(cfg) and _marks_current(state, cfg, e["ts"]):
+            # This event just refreshed its own mark (or exited); every other mark is within the portfolio TTL.
+            state["day"] = day
+            state["day_start_equity"] = str(equity(state))
+            state["day_gross_losses"] = "0"
+            output.append({"type": "control", "reason": "DAY_ROLLOVER_AFTER_FRESH_MARKS"})
     risk(state, cfg, output)
     if state["mode"] == "LIQUIDATING" and not state["positions"]:
         state["mode"] = "STOPPED"

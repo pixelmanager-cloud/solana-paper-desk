@@ -5,6 +5,8 @@ The dispatcher journal is a separate experiment-bound operator record. Existing
 acquisition/intake/history/cycle functions retain all provider and evidence gates.
 """
 import argparse
+import contextlib
+import io
 from contextlib import closing, contextmanager
 import hashlib
 import json
@@ -367,6 +369,47 @@ def _held_guard(ctx, scan=None):
         yield
 
 
+def _held_pass(ctx):
+    """One in-process held pass (every open position, oldest mark first) between entry phases.
+
+    Only between phases: acquisition, intake and the cycle each hold the research/evidence/ledger locks, so a
+    pass cannot run inside one. Never raises: the entry intent is already latched, and a degraded pass is
+    handled fail-closed by the engine's STALE_PORTFOLIO gate instead of orphaning the intent.
+    """
+    from desk.paper_monitor_service import main as held
+    paths = {k: v['path'] for k, v in ctx['paths'].items()}
+    argv = ['--config', paths['config'], '--research-db', paths['research_db'], '--evidence-db', paths['evidence_db'],
+            '--ledger-db', paths['ledger_db'], '--pool-fee-bps', str(ctx['pool_fee_bps']), '--systemd-credentials']
+    try:
+        with contextlib.redirect_stdout(io.StringIO()):
+            return held(argv)
+    except Exception:
+        return 2
+
+
+class _HeldCadence:
+    """Keeps the gap between held legs inside HELD_MAX_GAP_SECONDS while an entry runs (concurrent experiment only)."""
+    def __init__(self, ctx, clock=None):
+        self.ctx = ctx
+        self.clock = clock or _now
+        self.last = self.clock()          # the scheduler tick ran the held legs immediately before dispatch
+        self.passes = []
+
+    def checkpoint(self, next_phase_seconds):
+        ctx = self.ctx
+        cfg = cli._config(ctx['paths']['config']['path'])
+        if not concurrency.selected(cfg):
+            return False
+        positions = cycle._state(Path(ctx['paths']['ledger_db']['path']), cfg)['positions']
+        now = self.clock()
+        if not concurrency.checkpoint_due(now - self.last, next_phase_seconds, positions):
+            return False
+        code = _held_pass(ctx)
+        self.last = self.clock()
+        self.passes.append((now, code))
+        return True
+
+
 def _intake_guard(ctx, scan):
     with _held_guard(ctx, scan):
         pass
@@ -653,6 +696,8 @@ def _dispatch(expected, *, execute=False, systemd_credentials=False):
         def guarded_rpc(method,params):
             with _held_guard(expected,scan):
                 return helius_rpc(method,params)
+        cadence = _HeldCadence(expected)
+        cadence.checkpoint(concurrency.ACQUISITION_SECONDS)
         acquired = acquisition.acquire(paths['research_db'],paths['evidence_db'],guarded_rpc,
                                       scan_id=scan,paper_token_profile_version=cfg.get('paper_token_profile_version',0))
         scan = acquired.get('scan_id')
@@ -665,6 +710,7 @@ def _dispatch(expected, *, execute=False, systemd_credentials=False):
                     'entry_authorized':False,'execution_status':'EXECUTION_UNVERIFIED','live_readiness':False}
         if not scan or acquired.get('status') not in ('SEED_HISTORY_PARTIAL','SEED_HISTORY_ACQUIRED','LAUNCH_OR_INVENTORY_UNVERIFIED'):
             raise ValueError('Acquisition incomplete; dispatcher recovery required')
+        cadence.checkpoint(concurrency.INTAKE_SECONDS)
         _preflight(expected,scan)
         retained = migration.intake(paths['research_db'],paths['evidence_db'],scan_id=scan,
             mint=hint['mint'],pool=hint['pool'],signature=hint['signature'],slot=hint['slot'],
@@ -679,6 +725,7 @@ def _dispatch(expected, *, execute=False, systemd_credentials=False):
             _write(journal,'results',identity,outcome)
             return {'status':'DISPATCHED','dispatch_id':identity,'scan_id':scan,'paper_status':'NO_ENTRY',
                     'entry_authorized':False,'execution_status':'EXECUTION_UNVERIFIED','live_readiness':False}
+        cadence.checkpoint(concurrency.PREPARATION_SECONDS + concurrency.CYCLE_SECONDS)
         _preflight(expected,scan)
         if not 300 <= _now()-hint['received_at'] <= 7200:
             raise ValueError('Candidate expired during preparation')

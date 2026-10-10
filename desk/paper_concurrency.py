@@ -26,8 +26,17 @@ RESERVE_PASSES = 12
 # followed by the bounded 10 s cycle plus its 2 s sleep, all BEFORE the engine decides.
 PREPARATION_SECONDS = 18
 CYCLE_SECONDS = 12.0
-ENTRY_SECONDS = PREPARATION_SECONDS + CYCLE_SECONDS
+# Birth acquisition (paced setup RPCs) and migration-slot intake (7.451 s local delay in the 2026-10-10 native-clock
+# regression, docs/readiness.md) run BEFORE preparation and the cycle, so they age every held mark as well.
+# Conservative planning figures, not measurements of a live tick.
+ACQUISITION_SECONDS = 12.0
+INTAKE_SECONDS = 10.0
+ENTRY_PHASES = (('acquisition', ACQUISITION_SECONDS), ('intake', INTAKE_SECONDS),
+                ('preparation', float(PREPARATION_SECONDS)), ('cycle', CYCLE_SECONDS))
+ENTRY_SECONDS = sum(seconds for _, seconds in ENTRY_PHASES)
 LEG_SECONDS = 7.8
+# Longest wall time a held position may go without a monitoring leg while an entry runs: the held cadence.
+HELD_MAX_GAP_SECONDS = 120.0
 
 
 def selected(cfg):
@@ -37,6 +46,8 @@ def selected(cfg):
     no concurrent entry could ever fill under real provider pacing, so the flag alone is refused.
     """
     if KEY not in cfg:
+        if engine.ROLLOVER_KEY in cfg:
+            raise ValueError('Rollover rule requires the concurrent entries experiment')
         if TTL_KEY in cfg:
             raise ValueError('Portfolio mark TTL requires the concurrent entries experiment')
         return 0
@@ -49,6 +60,7 @@ def selected(cfg):
     if TTL_KEY not in cfg:
         raise ValueError('Concurrent entries require paper_portfolio_mark_ttl_seconds')
     engine.portfolio_ttl(cfg)  # type and range validation
+    engine.rollover_after_mark(cfg)
     return VERSION
 
 
@@ -139,6 +151,14 @@ def plan_legs(positions, wall_seconds=None, leg_seconds=LEG_SECONDS):
         return order, []
     count = max(1, int(Decimal(str(wall_seconds)) // Decimal(str(leg_seconds))))
     return order[:count], order[count:]
+
+
+def checkpoint_due(elapsed_since_held, next_phase_seconds, positions, *, max_gap=HELD_MAX_GAP_SECONDS):
+    """True when running the next uninterruptible entry phase would stretch the gap since the last held
+    legs past `max_gap` (the legs themselves take `held_wall_seconds(positions)`). Pure; flat books never need it."""
+    if not positions:
+        return False
+    return elapsed_since_held + next_phase_seconds + held_wall_seconds(len(positions)) > max_gap
 
 
 def clock():
