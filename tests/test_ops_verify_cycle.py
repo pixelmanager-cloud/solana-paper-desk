@@ -3,8 +3,10 @@
 Ledgers are produced by the real engine through Ledger.apply (config/paper.json,
 synthetic events from tests.helpers). The engine's constant-product fills carry no
 execution label, so the fixture adds the EXECUTION_UNVERIFIED label to the stored
-fill payloads exactly as quote-mode fills carry it. Budget stores use the DDL of
-desk/monitoring_budget.py, desk/history_progress.py and desk/provider_pacing.py.
+fill payloads exactly as quote-mode fills carry it. Budget stores are built with the
+real APIs: EvidenceStore + MonitoringBudget.provision() (paper_monitoring_* live in
+evidence.sqlite), HistoryProgress (ownership_budgets), provider_pacing.initialize
+(rollback-journal store) and the dispatcher's own journal DDL.
 No provider, network or production store is involved.
 """
 import contextlib
@@ -18,21 +20,18 @@ import tempfile
 import unittest
 from pathlib import Path
 
+from unittest import mock
+
+from desk import provider_pacing
 from desk.engine import initial_state, transition
+from desk.evidence import EvidenceStore
+from desk.history_progress import HistoryProgress
 from desk.ledger import Ledger
+from desk.monitoring_budget import MonitoringBudget
 from desk.paper_cycle_cli import _config
 from tests.helpers import ROOT, T, config, event
 from tools.ops import verify_cycle as vc
-
-MONITOR_DDL = (
-    'CREATE TABLE paper_monitoring_budget(id INTEGER PRIMARY KEY CHECK(id=1),version INTEGER NOT NULL,'
-    'ledger TEXT NOT NULL,config_hash TEXT NOT NULL,code_hash TEXT NOT NULL,cap INTEGER NOT NULL,'
-    'window_seconds INTEGER NOT NULL,high_water REAL NOT NULL,total INTEGER NOT NULL,blocked TEXT)',
-    'CREATE TABLE paper_monitoring_reservations(id INTEGER PRIMARY KEY,at REAL NOT NULL,scan_id TEXT NOT NULL,'
-    'mint TEXT NOT NULL,checkpoint_hash TEXT NOT NULL,method TEXT NOT NULL,params_hash TEXT NOT NULL)',
-    'CREATE TABLE paper_monitoring_outcomes(reservation_id INTEGER PRIMARY KEY '
-    'REFERENCES paper_monitoring_reservations(id),evidence_hash TEXT NOT NULL)')
-
+from tools.paper_entry_dispatcher import SCHEMAS as JOURNAL_SCHEMAS
 
 def tree_hashes(root):
     return {str(p.relative_to(root)): hashlib.sha256(p.read_bytes()).hexdigest()
@@ -248,34 +247,51 @@ class AdversarialLedgerTests(Base):
             vc.snapshot(self.data, '../paper.sqlite', self.config_path)
 
 
-class StoresAndReadOnlyTests(Base):
+class StoreBase(Base):
     def stores(self, *, reservations=2, outcomes=1, used=2, duplicate=False, journal=True):
-        with sqlite3.connect(self.data / 'research.sqlite') as c:
-            for ddl in MONITOR_DDL:
-                c.execute(ddl)
-            c.execute("INSERT INTO paper_monitoring_budget VALUES(1,1,'l','c','k',3600,3600,100.5,?,NULL)", (used,))
-            for i in range(1, reservations + 1):
-                c.execute('INSERT INTO paper_monitoring_reservations VALUES(?,?,?,?,?,?,?)',
-                          (i, 100.0 + i, 'scan', 'M', 'ck', 'getAccountInfo', 'same' if duplicate else f'p{i}'))
-            for i in range(1, outcomes + 1):
-                c.execute('INSERT INTO paper_monitoring_outcomes VALUES(?,?)', (i, f'e{i}'))
-        with sqlite3.connect(self.data / 'evidence.sqlite') as c:
-            c.execute('CREATE TABLE ownership_budgets(id TEXT PRIMARY KEY,source_hash TEXT NOT NULL,'
-                      'used INTEGER NOT NULL,ceiling INTEGER NOT NULL)')
+        """Real schemas: monitoring + ownership in evidence.sqlite, DELETE-journal pacing/journal."""
+        store = EvidenceStore(self.data / 'evidence.sqlite')
+        # provision() creates the REAL DDL and immutability triggers. Its checkpoint-identity
+        # binding needs a quote-mode ledger, which this constant-product fixture is not, so
+        # only that binding is stubbed; the schema under test is the production one.
+        with mock.patch.object(MonitoringBudget, '_checkpoint', return_value=(None, None)):
+            MonitoringBudget(store, self.ledger_path,
+                             {'mode': 'paper', 'paper_quote_execution_version': 1}).provision()
+        HistoryProgress(store)  # creates the real ownership_budgets DDL
+        with contextlib.closing(store.connect()) as c:
+            c.execute('BEGIN')  # the store connection autocommits; one fsync, not one per row
+            c.executemany('INSERT INTO paper_monitoring_reservations VALUES(?,?,?,?,?,?,?)',
+                          [(i, 100.0 + i, 'scan', 'M', 'ck', 'getAccountInfo', 'same' if duplicate else f'p{i}')
+                           for i in range(1, reservations + 1)])
+            c.executemany('INSERT INTO paper_monitoring_outcomes VALUES(?,?)',
+                          [(i, f'e{i}') for i in range(1, outcomes + 1)])
+            c.execute('UPDATE paper_monitoring_budget SET total=?,high_water=100.5', (used,))
             c.execute("INSERT INTO ownership_budgets VALUES('b1','h1',4,18)")
-        with sqlite3.connect(self.data / 'provider-pacing.sqlite') as c:
-            c.executescript('CREATE TABLE state(provider TEXT PRIMARY KEY,next_at REAL NOT NULL,'
-                            'blocked_until REAL NOT NULL,high_water REAL NOT NULL,pending TEXT);'
-                            'CREATE TABLE waiters(ticket TEXT PRIMARY KEY);'
-                            "INSERT INTO state VALUES('kraken',10,0,9.5,NULL);")
+            c.execute('COMMIT')
+        provider_pacing.initialize(self.data / 'provider-pacing.sqlite')
+        with contextlib.closing(sqlite3.connect(self.data / 'provider-pacing.sqlite')) as c:
+            c.execute("UPDATE state SET next_at=10,high_water=9.5 WHERE provider='helius'")
+            c.commit()
         if journal:
             (self.data / 'entry-dispatch').mkdir()
-            with sqlite3.connect(self.data / 'entry-dispatch' / 'j.sqlite') as c:
-                c.executescript('CREATE TABLE context(id INTEGER PRIMARY KEY,payload TEXT,hash TEXT);'
-                                'CREATE TABLE intents(id TEXT PRIMARY KEY,payload TEXT,hash TEXT);'
-                                'CREATE TABLE results(id TEXT PRIMARY KEY,payload TEXT,hash TEXT);'
-                                "INSERT INTO context VALUES(1,'{}','h');INSERT INTO intents VALUES('i1','{}','hi');")
+            with contextlib.closing(sqlite3.connect(self.data / 'entry-dispatch' / 'j.sqlite')) as c:
+                for ddl in JOURNAL_SCHEMAS.values():
+                    c.execute(ddl)
+                c.execute("INSERT INTO context VALUES(1,'{}','h')")
+                c.execute("INSERT INTO intents VALUES('i1','MINT','SIG','{}','hi')")
+                c.commit()
 
+    def evidence(self, sql, *args, unguard=False):
+        """Direct tamper/progress write; unguard drops the immutability triggers first."""
+        with contextlib.closing(sqlite3.connect(self.data / 'evidence.sqlite')) as c:
+            if unguard:
+                for (name,) in c.execute("SELECT name FROM sqlite_master WHERE type='trigger' "
+                                         "AND name LIKE 'paper_monitoring_%'").fetchall():
+                    c.execute(f'DROP TRIGGER {name}')
+            c.execute(sql, args)
+            c.commit()
+
+class StoresAndReadOnlyTests(StoreBase):
     def test_budget_pacing_ownership_and_journal_sections(self):
         self.apply(event(T))
         self.stores()
@@ -284,9 +300,10 @@ class StoresAndReadOnlyTests(Base):
         self.assertEqual((m['used_total'], m['cap'], m['reserved_pending'], m['high_water']), (2, 3600, 1, 100.5))
         self.assertEqual(m['reservations']['count'], 2)
         self.assertEqual(s['ownership']['used_total'], 4)
-        self.assertEqual(s['pacing']['providers'][0][3], 9.5)
+        self.assertEqual(dict((p[0], p[1]) for p in s['pacing']['providers'])['helius'], 9.5)
         self.assertEqual(s['dispatcher']['journals']['j.sqlite']['intents']['count'], 1)
         self.assertEqual(s['dispatcher']['journals']['j.sqlite']['results']['count'], 0)
+        self.assertEqual(vc.snapshot(self.data, 'paper.sqlite', self.config_path)['monitoring']['used_total'], 2)
 
     def test_absent_optional_stores_are_reported_not_invented(self):
         self.apply(event(T))
@@ -323,7 +340,7 @@ class StoresAndReadOnlyTests(Base):
         self.assertEqual(self.ledger.db.execute('SELECT count(*) FROM events').fetchone()[0], 1)
 
 
-class CompareTests(StoresAndReadOnlyTests):
+class CompareTests(StoreBase):
     def test_cold_restart_with_reopened_database_passes(self):
         self.round_trip()
         self.stores()
@@ -350,9 +367,8 @@ class CompareTests(StoresAndReadOnlyTests):
         self.stores(reservations=2, outcomes=1, used=2)
         a = self.fresh_snap()
         self.apply(event(T + 5, reserve_sol='160'), event(T + 10, danger=True, reserve_sol='160'))
-        with sqlite3.connect(self.data / 'research.sqlite') as c:
-            c.execute("INSERT INTO paper_monitoring_reservations VALUES(3,103,'scan','M','ck','getAccountInfo','p3')")
-            c.execute('UPDATE paper_monitoring_budget SET total=3,high_water=103.5')
+        self.evidence("INSERT INTO paper_monitoring_reservations VALUES(3,103,'scan','M','ck','getAccountInfo','p3')")
+        self.evidence('UPDATE paper_monitoring_budget SET total=3,high_water=103.5')
         b = self.fresh_snap()
         result = vc.compare(a, b, allow_progress=True)
         self.assertEqual(result['status'], 'PASS', result)
@@ -375,21 +391,19 @@ class CompareTests(StoresAndReadOnlyTests):
         self.apply(event(T))
         self.stores()
         a = self.fresh_snap()
-        with sqlite3.connect(self.data / 'research.sqlite') as c:
-            c.execute("UPDATE paper_monitoring_reservations SET params_hash='rewritten' WHERE id=1")
+        self.evidence("UPDATE paper_monitoring_reservations SET params_hash='rewritten' WHERE id=1", unguard=True)
         b = self.fresh_snap()
         self.assertTrue(any('monitoring reservations' in f
                             for f in vc.compare(a, b, allow_progress=True)['failures']))
-        with sqlite3.connect(self.data / 'research.sqlite') as c:
-            c.execute("UPDATE paper_monitoring_reservations SET params_hash='p1' WHERE id=1")
-            c.execute('UPDATE paper_monitoring_budget SET total=1')
+        self.evidence("UPDATE paper_monitoring_reservations SET params_hash='p1' WHERE id=1", unguard=True)
+        self.evidence('UPDATE paper_monitoring_budget SET total=1')
         self.assertIn('monitoring budget regressed', vc.compare(a, self.fresh_snap(), allow_progress=True)['failures'])
-        with sqlite3.connect(self.data / 'evidence.sqlite') as c:
-            c.execute('UPDATE ownership_budgets SET used=1')
+        self.evidence('UPDATE ownership_budgets SET used=1')
         self.assertIn('ownership budget regressed or rewritten',
                       vc.compare(a, self.fresh_snap(), allow_progress=True)['failures'])
-        with sqlite3.connect(self.data / 'provider-pacing.sqlite') as c:
+        with contextlib.closing(sqlite3.connect(self.data / 'provider-pacing.sqlite')) as c:
             c.execute('UPDATE state SET high_water=1')
+            c.commit()
         self.assertIn('pacing high-water regressed',
                       vc.compare(a, self.fresh_snap(), allow_progress=True)['failures'])
 
@@ -397,9 +411,8 @@ class CompareTests(StoresAndReadOnlyTests):
         self.apply(event(T))
         self.stores()
         a = self.fresh_snap()
-        with sqlite3.connect(self.data / 'research.sqlite') as c:
-            c.execute("INSERT INTO paper_monitoring_reservations VALUES(3,103,'scan','M','ck','getAccountInfo','p1')")
-            c.execute('UPDATE paper_monitoring_budget SET total=3')
+        self.evidence("INSERT INTO paper_monitoring_reservations VALUES(3,103,'scan','M','ck','getAccountInfo','p1')")
+        self.evidence('UPDATE paper_monitoring_budget SET total=3')
         result = vc.compare(a, self.fresh_snap(), allow_progress=True)
         self.assertIn('duplicate monitoring charge appeared', result['failures'])
 
@@ -422,9 +435,286 @@ class CompareTests(StoresAndReadOnlyTests):
         self.apply(event(T))
         self.stores()
         a = self.fresh_snap()
-        with sqlite3.connect(self.data / 'entry-dispatch' / 'j.sqlite') as c:
+        with contextlib.closing(sqlite3.connect(self.data / 'entry-dispatch' / 'j.sqlite')) as c:
             c.execute("UPDATE intents SET hash='changed'")
+            c.commit()
         self.assertTrue(any('dispatcher' in f for f in vc.compare(a, self.fresh_snap(), allow_progress=True)['failures']))
+
+
+def _uris(fn):
+    """URIs the tool passes to sqlite3.connect while running fn."""
+    real, seen = sqlite3.connect, []
+
+    def spy(target, *args, **kwargs):
+        seen.append(str(target))
+        return real(target, *args, **kwargs)
+    with mock.patch.object(vc.sqlite3, 'connect', side_effect=spy):
+        fn()
+    return seen
+
+
+class OpenModeTests(StoreBase):
+    """immutable=1 is only valid for a quiesced WAL database (header bytes 18/19 == 2)."""
+
+    def snapshot_uris(self):
+        return _uris(lambda: vc.snapshot(self.data, 'paper.sqlite', self.config_path))
+
+    def test_rollback_journal_stores_are_opened_mode_ro_never_immutable(self):
+        self.apply(event(T))
+        self.stores()
+        self.label()
+        for name in ('provider-pacing.sqlite', 'j.sqlite', 'evidence.sqlite'):
+            header = (next(self.data.rglob(name))).read_bytes()[:100]
+            self.assertEqual((header[18], header[19]), (1, 1), name)  # fixture really is rollback-journal
+        uris = self.snapshot_uris()
+        for name in ('provider-pacing.sqlite', 'j.sqlite', 'evidence.sqlite'):
+            used = [u for u in uris if name in u]
+            self.assertTrue(used, name)
+            for u in used:
+                self.assertIn('mode=ro', u)
+                self.assertNotIn('immutable', u)
+
+    def test_quiesced_wal_ledger_is_still_opened_immutable_without_sidecars(self):
+        self.apply(event(T))
+        self.label()
+        self.ledger.db.execute('PRAGMA wal_checkpoint(TRUNCATE)')
+        self.ledger.close()
+        names = {p.name for p in self.data.iterdir()}
+        (used,) = [u for u in self.snapshot_uris() if 'paper.sqlite' in u]
+        self.assertIn('immutable=1', used)
+        self.assertEqual(names, {p.name for p in self.data.iterdir()})
+
+    def test_wal_ledger_with_live_sidecars_is_opened_mode_ro(self):
+        self.apply(event(T))
+        self.label()
+        self.assertTrue((self.data / 'paper.sqlite-wal').stat().st_size > 0)
+        (used,) = [u for u in self.snapshot_uris() if 'paper.sqlite' in u]
+        self.assertIn('mode=ro', used)
+        self.assertNotIn('immutable', used)
+
+    def test_rollback_header_with_stray_empty_wal_name_is_not_immutable(self):
+        """A rollback DB must not become immutable just because no sidecar exists."""
+        self.apply(event(T))
+        self.stores()
+        (used,) = [u for u in _uris(lambda: vc._connect(self.data / 'provider-pacing.sqlite', 'p').close())]
+        self.assertNotIn('immutable', used)
+
+
+class LargePrefixTests(StoreBase):
+    """--allow-progress must prove the exact old prefix even beyond the 20k rolling bound."""
+    OLD = 20_501  # odd: with stride 2 the old final row is not a shared stride mark
+
+    def setUp(self):
+        super().setUp()
+        self.apply(event(T))
+        self.stores(reservations=self.OLD, outcomes=0, used=self.OLD)
+        self.a = self.fresh_snap()
+
+    def append(self, n=10):
+        for i in range(self.OLD + 1, self.OLD + n + 1):
+            self.evidence('INSERT INTO paper_monitoring_reservations VALUES(?,?,?,?,?,?,?)',
+                          i, 100.0 + i, 'scan', 'M', 'ck', 'getAccountInfo', f'p{i}')
+        self.evidence('UPDATE paper_monitoring_budget SET total=?,high_water=?', self.OLD + n, 100.0 + self.OLD + n)
+
+    def later(self, **kw):
+        return copy.deepcopy(vc.snapshot(self.data, 'paper.sqlite', self.config_path, **kw))
+
+    def test_fixture_exceeds_the_rolling_bound(self):
+        self.assertGreater(self.a['monitoring']['reservations']['stride'], 1)
+
+    def test_rewriting_the_last_old_row_is_detected(self):
+        self.append()
+        self.evidence("UPDATE paper_monitoring_reservations SET params_hash='rewritten' WHERE id=?",
+                      self.OLD, unguard=True)
+        result = vc.compare(self.a, self.later(anchor=self.a), allow_progress=True)
+        self.assertEqual(result['status'], 'FAIL', result)
+        self.assertTrue(any('monitoring reservations' in f and 'changed' in f for f in result['failures']), result)
+
+    def test_clean_append_passes_with_anchor(self):
+        self.append()
+        result = vc.compare(self.a, self.later(anchor=self.a), allow_progress=True)
+        self.assertEqual(result['status'], 'PASS', result)
+
+    def test_unanchored_later_snapshot_fails_closed_instead_of_weakly_passing(self):
+        self.append()
+        self.evidence("UPDATE paper_monitoring_reservations SET params_hash='rewritten' WHERE id=?",
+                      self.OLD, unguard=True)
+        result = vc.compare(self.a, self.later(), allow_progress=True)
+        self.assertEqual(result['status'], 'FAIL', result)
+        self.assertTrue(any('exact' in f for f in result['failures']), result)
+
+    def test_anchor_must_be_a_snapshot(self):
+        with self.assertRaisesRegex(vc.VerifyError, 'anchor'):
+            vc.snapshot(self.data, 'paper.sqlite', self.config_path, anchor={'kind': 'other'})
+
+
+class ConcurrentPositionTests(Base):
+    """Known answers from the real engine: buy A, buy B, sell B, sell A (and a TP ladder)."""
+    A_COST, A_PROCEEDS = vc.Decimal('0.083383333'), vc.Decimal('0.08027137885694432096051171510')
+    B_COST, B_PROCEEDS = vc.Decimal('0.083331467'), vc.Decimal('0.08022146884979907839936384698')
+
+    def interleave(self):
+        self.apply(event(T, mint='A'), event(T + 100, mint='A'), event(T + 100, mint='B'),
+                   event(T + 110, mint='B', danger=True), event(T + 110, mint='A'),
+                   event(T + 120, mint='A', danger=True))
+
+    def ladder(self):
+        self.apply(event(T, mint='A'), event(T + 5, mint='A', reserve_sol='140'),
+                   event(T + 10, mint='A', reserve_sol='200'), event(T + 15, mint='A', reserve_sol='300'),
+                   event(T + 20, mint='A', reserve_sol='400'), event(T + 25, mint='A', danger=True, reserve_sol='400'))
+
+    def near(self, a, b):
+        self.assertLess(abs(vc.Decimal(a) - vc.Decimal(b)), vc.Decimal('1e-20'), (a, b))
+
+    def test_buy_a_buy_b_sell_b_sell_a(self):
+        self.interleave()
+        s = self.snap()
+        self.assertEqual(s['status'], 'VALIDATED_LIVE_DATA_PAPER_ROUND_TRIP')
+        self.assertEqual([t['mint'] for t in s['round_trips']], ['B', 'A'])  # order of closing
+        trips = {t['mint']: t for t in s['round_trips']}
+        for mint, cost, proceeds in (('A', self.A_COST, self.A_PROCEEDS), ('B', self.B_COST, self.B_PROCEEDS)):
+            self.near(trips[mint]['initial_cost_sol'], cost)
+            self.near(trips[mint]['proceeds_sol'], proceeds)
+            self.near(trips[mint]['realized_pnl_sol'], proceeds - cost)
+            self.assertEqual(len(trips[mint]['sells']), 1)
+        a, b = trips['A'], trips['B']
+        self.assertLess(a['entry_ts'], b['entry_ts'])               # genuinely concurrent holding
+        self.assertLess(b['entry_ts'], b['sells'][0]['ts'])
+        self.assertLess(b['sells'][0]['ts'], a['sells'][0]['ts'])
+        self.assertNotEqual(a['entry_fill_hash'], b['entry_fill_hash'])
+        self.near(s['realized_pnl_sol'], '-0.00622195229325660064012443792')
+        self.near(s['cash_sol'], '4.993778047706743399359875562')
+        self.near(s['cash_sol'], vc.Decimal(s['initial_equity_sol']) + vc.Decimal(s['realized_pnl_sol']))
+
+    def test_open_leg_stays_open_and_cash_identity_holds_midway(self):
+        self.apply(event(T, mint='A'), event(T + 100, mint='A'), event(T + 100, mint='B'),
+                   event(T + 110, mint='B', danger=True))
+        s = self.snap()
+        self.assertEqual(s['status'], 'OPEN_POSITION')
+        self.assertEqual([p['mint'] for p in s['open_positions']], ['A'])
+        self.assertEqual([p['mint'] for p in s['round_trips']], ['B'])
+        self.near(s['cash_sol'], vc.Decimal('5') - self.A_COST + (self.B_PROCEEDS - self.B_COST))
+
+    def test_second_entry_into_an_open_mint_rejected(self):
+        self.interleave()
+        self.label()
+        db = self.ledger.db
+        (event_row,) = db.execute("SELECT event_id,ts,payload FROM events WHERE event_id=?", (f'A:{T}',)).fetchall()
+        db.execute('INSERT INTO events(event_id,ts,payload,payload_hash) VALUES(?,?,?,?)',
+                   ('A:dup', T + 50, event_row[2], 'x'))
+        buy = db.execute("SELECT payload FROM outcomes WHERE json_extract(payload,'$.side')='buy' "
+                         "AND event_id=?", (f'A:{T}',)).fetchone()[0]
+        db.execute('INSERT INTO outcomes(event_id,payload) VALUES(?,?)', ('A:dup', buy))
+        with self.assertRaisesRegex(vc.VerifyError, 'second entry|positions differ'):
+            vc.snapshot(self.data, 'paper.sqlite', self.config_path)
+
+    def test_take_profit_ladder_partial_sells_known_answers(self):
+        self.ladder()
+        s = self.snap()
+        self.assertEqual(s['status'], 'VALIDATED_LIVE_DATA_PAPER_ROUND_TRIP')
+        (trip,) = s['round_trips']
+        pnls = ['0.02315507537451075384445949449', '0.04726511301176613076668924175',
+                '0.04757196054095702631185581278', '0.04757196054095702631185581281']
+        qtys = ['245.4386484637804162503206175', '245.4386484637804162503206175',
+                '163.6257656425202775002137450', '163.6257656425202775002137451']
+        self.assertEqual([x['quantity'] for x in trip['sells']], qtys)
+        for sell, pnl in zip(trip['sells'], pnls):
+            self.near(sell['realized_pnl_sol'], pnl)
+        self.near(trip['realized_pnl_sol'], sum(vc.Decimal(x) for x in pnls))
+        self.near(s['cash_sol'], vc.Decimal(s['initial_equity_sol']) + vc.Decimal(trip['realized_pnl_sol']))
+
+    def shift_pnl(self, delta):
+        """Move PnL between two sells: every aggregate (cash, realized, total basis) is unchanged."""
+        rows = self.ledger.db.execute("SELECT seq,payload FROM outcomes WHERE "
+                                      "json_extract(payload,'$.reason')='TAKE_PROFIT' ORDER BY seq").fetchall()
+        for (seq, payload), sign in zip(rows[:2], (1, -1)):
+            v = json.loads(payload)
+            v['realized_pnl_sol'] = str(vc.Decimal(v['realized_pnl_sol']) + sign * vc.Decimal(delta))
+            self.ledger.db.execute('UPDATE outcomes SET payload=? WHERE seq=?', (json.dumps(v), seq))
+
+    def test_pnl_shifted_between_sells_breaks_per_sell_cost_basis(self):
+        self.ladder()
+        self.label()
+        self.shift_pnl('0.001')
+        with self.assertRaisesRegex(vc.VerifyError, 'proportional cost basis'):
+            vc.snapshot(self.data, 'paper.sqlite', self.config_path)
+
+    def test_untampered_ladder_passes_the_per_sell_check(self):
+        self.ladder()
+        self.assertEqual(self.snap()['status'], 'VALIDATED_LIVE_DATA_PAPER_ROUND_TRIP')
+
+
+class PacingVolatilityTests(StoreBase):
+    def pacing(self, sql, *args):
+        with contextlib.closing(sqlite3.connect(self.data / 'provider-pacing.sqlite')) as c:
+            c.execute(sql, args)
+            c.commit()
+
+    def setUp(self):
+        super().setUp()
+        self.apply(event(T))
+        self.stores()
+        self.a = self.fresh_snap()
+
+    def test_volatile_fields_are_reported_not_compared(self):
+        self.pacing("UPDATE state SET next_at=999,blocked_until=50,pending='ticket' WHERE provider='helius'")
+        self.pacing("INSERT INTO waiters VALUES('w1','helius','held',1,2)")
+        b = self.fresh_snap()
+        result = vc.compare(self.a, b)
+        self.assertEqual(result['status'], 'PASS', result)
+        self.assertIn('pacing_volatile', result['volatile'])
+        self.assertEqual(vc.compare(self.a, b, allow_progress=True)['status'], 'PASS')
+
+    def test_volatile_values_are_kept_out_of_the_strict_section(self):
+        keys = {k for row in self.a['pacing']['providers'] for k in ([row] if False else [])}
+        self.assertEqual(keys, set())
+        for row in self.a['pacing']['providers']:
+            self.assertEqual(len(row), 2)  # [provider, high_water] only
+        self.assertIn('pacing_volatile', self.a)
+
+    def test_high_water_may_rise_but_never_fall(self):
+        self.pacing("UPDATE state SET high_water=20 WHERE provider='helius'")
+        self.assertEqual(vc.compare(self.a, self.fresh_snap())['status'], 'PASS')
+        up = self.fresh_snap()
+        self.pacing("UPDATE state SET high_water=1 WHERE provider='helius'")
+        down = self.fresh_snap()
+        for allow in (False, True):
+            result = vc.compare(up, down, allow_progress=allow)
+            self.assertEqual(result['status'], 'FAIL', result)
+            self.assertIn('pacing high-water regressed', result['failures'])
+
+    def test_removed_provider_row_fails(self):
+        b = self.fresh_snap()
+        b['pacing']['providers'] = b['pacing']['providers'][:-1]
+        self.assertIn('pacing high-water regressed', vc.compare(self.a, b)['failures'])
+
+
+class DuplicateFillKeyTests(unittest.TestCase):
+    def conn(self):
+        c = sqlite3.connect(':memory:')
+        c.executescript('CREATE TABLE outcomes(seq INTEGER PRIMARY KEY,event_id TEXT,payload TEXT);'
+                        'CREATE TABLE events(event_id TEXT PRIMARY KEY,ts INTEGER,payload TEXT);')
+        return c
+
+    def put(self, c, seq, event_id, side, mint, with_event=True):
+        if with_event:
+            c.execute('INSERT INTO events VALUES(?,?,?)', (event_id, T, json.dumps({'mint': mint})))
+        c.execute('INSERT INTO outcomes VALUES(?,?,?)', (seq, event_id, json.dumps(
+            {'type': 'fill', 'execution_status': vc.LABEL, 'side': side, 'mint': mint})))
+
+    def test_distinct_fills_whose_concatenated_identity_collides_are_not_duplicates(self):
+        c = self.conn()
+        # 'E'+'buy'+'sellM' == 'Ebuy'+'sell'+'M': a concatenated key calls these the same fill.
+        self.put(c, 1, 'E', 'buy', 'sellM')
+        self.put(c, 2, 'Ebuy', 'sell', 'M')
+        self.assertEqual(len(vc._fills(c, {'last_ts': T})), 2)
+
+    def test_true_duplicate_identity_still_rejected(self):
+        c = self.conn()
+        self.put(c, 1, 'E', 'buy', 'M')
+        self.put(c, 2, 'E', 'buy', 'M', with_event=False)
+        with self.assertRaisesRegex(vc.VerifyError, 'duplicate fill identity'):
+            vc._fills(c, {'last_ts': T})
 
 
 class CliTests(Base):
