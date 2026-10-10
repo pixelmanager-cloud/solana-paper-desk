@@ -12,6 +12,7 @@ from urllib.error import HTTPError
 from desk import paper_http403_retirement as r, paper_terminal_reconciliation as terminal
 from desk import provider_pacing, paper_cycle as cycle
 from desk.model import canonical,digest
+from desk.paper_history_source import PAPER_HISTORY_PAGE_SIZE
 from tests import test_paper_cycle as fixtures
 from tests.test_paper_read_sources import Response
 
@@ -40,7 +41,7 @@ class HTTP403RetirementTests(unittest.TestCase):
         self.f.progress.prepare_source(self.h.target.scan_id,admission['descriptor_hash'],source)
         self.f.progress.seal_source(self.h.target.scan_id,admission['descriptor_hash'],digest(source))
         with self.f.jobs.connect() as c:c.execute("UPDATE scans SET status='COMPLETE',result=? WHERE id=?",(source['result'],self.h.target.scan_id))
-        key=self.f.progress.create(self.h.target.scan_id,self.h.target.pool,self.f.at-300,self.f.at+1)
+        key=self.f.progress.create(self.h.target.scan_id,self.h.target.pool,self.f.at-300,self.f.at+1,page_size=PAPER_HISTORY_PAGE_SIZE)
         self.assertEqual(self.f.progress.advance(key,lambda *_:{'data':[],'paginationToken':None})['status'],'DONE')
         def response(raw):
             if 'usdPrice' in json.loads(raw).get(fixtures.SOL,{}):
