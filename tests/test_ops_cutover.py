@@ -520,6 +520,7 @@ class CutoverTests(Base):
         self.assertEqual(foreign.read_text(), '[Service]\nWorkingDirectory=/opt/solana-desk-releases/old\n')
         code, out = self.cut('--replace-existing')
         self.assertEqual(code, 0, out)
+        self.systemd.state.clear()   # units are stopped deliberately before rollback (T11F item 3)
         self.assertIn(cutover.MARKER, foreign.read_text())
         backups = list(foreign.parent.glob(cutover.DROPIN + '.pre-cutover-*'))
         self.assertEqual(len(backups), 1)
@@ -533,7 +534,9 @@ class CutoverTests(Base):
         foreign.parent.mkdir()
         foreign.write_text('[Service]\nWorkingDirectory=/old\n')
         self.assertEqual(self.cut('--replace-existing')[0], 0)
+        self.systemd.state.clear()   # a re-cut needs the units stopped first (T11F item 2)
         self.assertEqual(self.cut()[0], 0)
+        self.systemd.state.clear()
         self.assertEqual(len(list(foreign.parent.glob(cutover.DROPIN + '.pre-cutover-*'))), 1)
         self.assertEqual(self.run_cli('rollback', '--units', SVC[0], '--unit-dir', str(self.units), apply=True)[0], 0)
         self.assertEqual(foreign.read_text(), '[Service]\nWorkingDirectory=/old\n')
@@ -542,6 +545,7 @@ class CutoverTests(Base):
 class RollbackTests(Base):
     def test_removes_only_marked_dropins_and_reloads(self):
         self.assertEqual(self.cut()[0], 0)
+        self.systemd.state.clear()   # units stopped deliberately; rollback refuses active units (T11F item 3)
         other = self.units / 'desk-backup.service.d' / cutover.DROPIN
         other.parent.mkdir()
         other.write_text('[Service]\nWorkingDirectory=/opt/handwritten\n')
@@ -561,6 +565,7 @@ class RollbackTests(Base):
 
     def test_rollback_dry_run_removes_nothing(self):
         self.assertEqual(self.cut()[0], 0)
+        self.systemd.state.clear()
         self.systemd.calls.clear()
         code, out = self.run_cli('rollback', '--units', *SVC, '--unit-dir', str(self.units))
         self.assertEqual((code, out['status']), (0, 'DRY_RUN'))
@@ -638,9 +643,9 @@ def sd_decode(line):
 class StageHardeningTests(Base):
     def test_hash_and_extract_come_from_the_same_open_file(self):
         good = self.root / 'good.tgz'
-        sha = make_tar(good, [('desk/__init__.py', b'GOOD'), ('desk/runtime_compatibility.py', STUB.encode())])
+        sha = make_tar(good, [('desk/__init__.py', b'# GOOD\n'), ('desk/runtime_compatibility.py', STUB.encode())])
         evil = self.root / 'evil.tgz'
-        make_tar(evil, [('desk/__init__.py', b'EVIL'), ('desk/runtime_compatibility.py', STUB.encode())])
+        make_tar(evil, [('desk/__init__.py', b'# EVIL\n'), ('desk/runtime_compatibility.py', STUB.encode())])
         real_open = tarfile.open
 
         def swap_then_open(*args, **kwargs):
@@ -653,7 +658,7 @@ class StageHardeningTests(Base):
         finally:
             tarfile.open = real_open
         self.assertEqual(code, 0, out)
-        self.assertEqual((self.roots / 'abc1234' / 'desk' / '__init__.py').read_bytes(), b'GOOD')
+        self.assertEqual((self.roots / 'abc1234' / 'desk' / '__init__.py').read_bytes(), b'# GOOD\n')
 
     def test_colliding_archive_members_are_a_cutover_error_without_residue(self):
         path = self.root / 'c.tgz'
@@ -739,6 +744,13 @@ class StartLifecycleTests(Base):
         self.assertRegex(out['error'], 'MainPID|ExecMainStart|not newer')
         self.assertEqual([c[2] for c in self.systemd.calls if c[1] == 'stop'], [SVC[0]])
 
+    def test_old_pid_with_fresh_looking_timestamp_is_still_detected(self):
+        # Timestamp check alone is not enough: the PID must also have changed across the start call.
+        runner = self._concurrent_old_process(SVC[0], 555, int(time.monotonic() * 1e6) + 10 ** 9)
+        code, out = self._cut_with(runner, SVC[0])
+        self.assertEqual(code, 2, out)
+        self.assertIn('MainPID unchanged', out['error'])
+
     def test_oneshot_that_never_ran_is_not_healthy(self):
         self.systemd.types[SVC[0]] = 'oneshot'
         self.systemd.noop_start.add(SVC[0])
@@ -816,6 +828,7 @@ class KeepOffTests(Base):
         for state in ('enabled', 'enabled-runtime', 'alias'):
             with self.subTest(state=state):
                 self.systemd.calls.clear()
+                self.systemd.state.clear()
                 self.systemd.enabled[ENTRY_TIMER] = state
                 code, out = self._cut_entry()
                 self.assertEqual(code, 0, out)
