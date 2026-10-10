@@ -127,7 +127,11 @@ class DispatcherTests(unittest.TestCase):
         self.assertEqual(self.f.progress.admission(result['scan_id'])['request_ceiling'],18)
 
     def test_interrupted_intent_blocks_restart_without_credentials_retry_or_new_scan(self):
-        with patch.object(tool.cli,'_credentials',side_effect=ValueError('crashed')):
+        original_write=tool._write
+        def interrupted(*args,**kw):
+            original_write(*args,**kw)
+            raise ValueError('crashed after durable intent')
+        with patch.object(tool.cli,'_credentials'),patch.object(tool,'_write',side_effect=interrupted):
             with self.assertRaises(ValueError):self.invoke(execute=True,systemd_credentials=True)
         self.assertEqual(self.count('intents'),1);self.assertEqual(self.count('results'),0)
         with patch.object(tool.cli,'_credentials',side_effect=AssertionError('retry')):
@@ -443,7 +447,7 @@ class DispatcherTests(unittest.TestCase):
         with patch.object(tool.cli,'_credentials',side_effect=competitor),patch('desk.providers.helius_rpc',side_effect=AssertionError('provider')):
             with self.assertRaises(ValueError):self.invoke(execute=True,systemd_credentials=True)
         with self.f.jobs.connect() as c:self.assertEqual(c.execute('SELECT COUNT(*) FROM scans').fetchone()[0],1)
-        self.assertEqual(self.count('intents'),1);self.assertEqual(self.count('results'),0)
+        self.assertEqual(self.count('intents'),0);self.assertEqual(self.count('results'),0)
 
 
     def test_exact_operator_size_cost_rejection_is_preserved_and_not_retried(self):
