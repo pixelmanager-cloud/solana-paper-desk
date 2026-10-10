@@ -646,5 +646,360 @@ class PreflightDryrunTests(unittest.TestCase):
         self.assertIsNone(report['gate']['gate_result'], report)
 
 
+# ---------------------------------------------------------------------------------------------------------------
+# T34: fresh layout. The experiment root holds the trading stores; the SHARED pacing and discovery databases (and
+# optionally the ledger) live outside it and are passed as absolute paths. The dispatcher journal context pins
+# absolute store paths, so the fixture activates it against the real external locations.
+
+def fresh_dispatcher_class(external_ledger=False):
+    """Built in a function so unittest discovery does not collect the inherited DispatcherTests methods."""
+    F = dispatcher_fixtures
+
+    class FreshDispatcher(F.DispatcherTests):
+        def setUp(self):
+            self.f = F.fixture.PaperObservationCollectorTests()
+            self.f.setUp()
+            self.addCleanup(self.f.doCleanups)
+            self.f.at = int(F.time.time())
+            self.root = Path(self.f.tmp.name).resolve()
+            self.shared = Path(tempfile.mkdtemp()).resolve()
+            self.addCleanup(shutil.rmtree, self.shared, True)
+            (self.shared / 'discovery').mkdir()
+            self.cfg = F.config() | {'paper_signal_policy_version': 3, 'paper_quote_execution_version': 1,
+                                     'paper_usd_valuation_version': 1}
+            self.config = self.root / 'config.json'
+            self.config.write_text(F.canonical(self.cfg))
+            self.ledger = (self.shared if external_ledger else self.root) / 'ledger.sqlite'
+            F.cycle.initialize(self.ledger, self.cfg)
+            F.MonitoringBudget(self.f.progress.store, self.ledger, self.cfg).provision()
+            self.pacer = self.shared / 'provider-pacing.sqlite'
+            F.pace.initialize(self.pacer)
+            policy = self.root / 'migration.json'
+            p = patch.object(F.upgrade, 'POLICY', policy)
+            p.start()
+            self.addCleanup(p.stop)
+            policy.write_text(F.canonical({'version': 1, 'pins': []}))
+            proposal = F.upgrade.review_plan(self.pacer)
+            policy.write_text(F.canonical({'version': 1, 'pins': [proposal]}))
+            F.upgrade.migrate(self.pacer)
+            self.clock = [float(self.f.at)]
+
+            def configured(**kw):
+                return F.pace.Pacer(self.pacer, clock=lambda: self.clock[0], monotonic=lambda: self.clock[0],
+                                    sleep=lambda n: self.clock.__setitem__(0, self.clock[0] + n), **kw)
+            p = patch.object(F.pace, 'configured', side_effect=configured)
+            p.start()
+            self.addCleanup(p.stop)
+            p = patch.dict(os.environ, {F.pace.ENV: str(self.pacer)})
+            p.start()
+            self.addCleanup(p.stop)
+            self.discovery = self.shared / 'discovery' / 'continuous.sqlite'
+            with patch.object(F.discovery.time, 'time', return_value=self.f.at - 600):
+                F.discovery.initialize(self.discovery)
+            self.raw, self.mint, self.pool = F.migration_fixture()
+            self.raw['transaction']['signatures'] = [F.base58(bytes([9]) * 64)]
+            self.raw['blockTime'] = self.f.at - 600
+            ix = self.raw['meta']['innerInstructions'][0]['instructions'][0]
+            data = bytearray(F.unbase58(ix['data']))
+            data[136:144] = self.raw['blockTime'].to_bytes(8, 'little', signed=True)
+            ix['data'] = F.base58(data)
+            self.wire = F.canonical({'method': 'transactionNotification', 'params': {'result': {
+                'signature': self.raw['transaction']['signatures'][0], 'slot': self.raw['slot'],
+                'blockTime': self.raw['blockTime'],
+                'transaction': {'transaction': self.raw['transaction'], 'meta': self.raw['meta']}}}})
+            d = F.discovery.Store(self.discovery, clock=lambda: self.f.at - 600)
+            try:
+                d.complete(d.reserve('RECEIVE'), payload=self.wire.encode())
+            finally:
+                d.close()
+            self.journal = self.root / 'dispatch.sqlite'
+            self.args = dict(config=str(self.config), research_db=str(self.f.jobs.path),
+                             evidence_db=str(self.f.progress.store.path), ledger_db=str(self.ledger),
+                             discovery_db=str(self.discovery), pacing_db=str(self.pacer), journal=str(self.journal),
+                             taker=self.f.taker, amount_raw=100_000_000, pool_fee_bps='25')
+            self.ctx = F.tool.plan(**self.args)
+            F.tool.initialize(self.ctx, approved_context_hash=F.digest(self.ctx))
+            self.calls = []
+    return FreshDispatcher
+
+
+FRESH_NO_NAMESPACE_TESTS = {'test_without_namespace_external_copies_are_mirrored_and_live_stores_untouched',
+                            'test_mount_points_collapse_nested_directories',
+                            'test_external_path_validation_refuses_aliases_and_non_regular_files',
+                            'test_external_directory_containing_the_data_root_is_refused'}
+
+
+class FreshLayoutBase(unittest.TestCase):
+    """Fixture and helpers only (no tests of its own)."""
+    EXTERNAL_LEDGER = False
+
+    def setUp(self):
+        if not NAMESPACE and self._testMethodName not in FRESH_NO_NAMESPACE_TESTS:
+            self.skipTest('REQUIRES a private mount namespace (euid 0 or unprivileged user namespaces; '
+                          'unshare --mount) - unavailable on this host')
+        self.d = fresh_dispatcher_class(self.EXTERNAL_LEDGER)('test_dry_run_no_admission_credentials_or_io_and_context_activation')
+        self.d.setUp()
+        self.addCleanup(self.d.doCleanups)
+        self.data, self.shared = self.d.root, self.d.shared
+        lock = self.data / 'paper-scheduler.lock'
+        lock.touch(mode=0o600)
+        os.chmod(lock, 0o600)
+        for p in (self.d.pacer, self.d.discovery, self.d.ledger):
+            os.chmod(p, 0o600)
+        self.scratch = Path(tempfile.mkdtemp()).resolve()
+        self.addCleanup(shutil.rmtree, self.scratch, True)
+        self.work = self.scratch / 'work'
+        self.release = self.scratch / 'release'
+        for name in ('desk', 'tools', 'discovery', 'config'):
+            shutil.copytree(REPO / name, self.release / name, ignore=shutil.ignore_patterns('__pycache__'))
+        shutil.copyfile(self.data / 'migration.json', self.release / 'config' / 'kraken-pacing-migration.json')
+
+    def rel(self, path):
+        return str(Path(path).resolve().relative_to(self.data))
+
+    def argv(self, **override):
+        values = {'ledger': str(self.d.ledger) if self.EXTERNAL_LEDGER else self.rel(self.d.ledger),
+                  'research_db': self.rel(self.d.f.jobs.path), 'evidence_db': self.rel(self.d.f.progress.store.path),
+                  'pacing_db': str(self.d.pacer), 'discovery_db': str(self.d.discovery), 'journal': self.rel(self.d.journal)}
+        values.update(override)
+        a = ['--data', str(self.data), '--config', str(self.d.config), '--release-dir', str(self.release),
+             '--workdir', str(self.work)]
+        for key, value in values.items():
+            a += ['--' + key.replace('_', '-'), str(value)]
+        return a
+
+    def run_tool(self, argv=None):
+        out = io.StringIO()
+        with contextlib.redirect_stdout(out):
+            code = tool.main(argv or self.argv())
+        return code, json.loads(out.getvalue())
+
+    def fake_stat(self, uid_for):
+        real = os.lstat
+
+        def stat(path, *a, **k):
+            info = real(path, *a, **k)
+            return types.SimpleNamespace(st_mode=info.st_mode, st_nlink=info.st_nlink, st_uid=uid_for(str(path), info.st_uid),
+                                         st_size=info.st_size, st_mtime_ns=info.st_mtime_ns)
+        return patch.object(tool, '_stat', side_effect=stat)
+
+
+class FreshLayoutTests(FreshLayoutBase):
+    # --- a healthy fresh layout
+    def test_clean_fresh_layout_passes_and_no_live_store_is_touched(self):
+        before_data, before_shared = tree(self.data), tree(self.shared)
+        code, report = self.run_tool()
+        self.assertEqual((code, report['status'], report['blockers']), (0, 'PASS', []), report)
+        self.assertEqual(tree(self.data), before_data)
+        self.assertEqual(tree(self.shared), before_shared, 'shared stores: bytes, mtimes and names unchanged')
+        self.assertTrue(report['live_sources_unchanged'])
+        self.assertEqual(report['live_sidecars_created'], [])
+        self.assertEqual(report['isolation'], 'MOUNT_NAMESPACE')
+        self.assertEqual(report['scheduler']['status'], 'PLAN')
+        self.assertEqual(report['preflight']['journal_context'], 'MATCH_EXCLUDING_IDENTITIES')
+        self.assertFalse(report['preflight']['context_mismatch'])
+        expected = {'pacing_db': str(self.d.pacer), 'discovery_db': str(self.d.discovery)}
+        if self.EXTERNAL_LEDGER:
+            expected['ledger'] = str(self.d.ledger)
+        self.assertEqual(report['external_stores'], dict(sorted(expected.items())))
+        copies = {c['path']: c for c in report['copy']['files']}
+        for path in expected.values():
+            entry = copies[path]
+            self.assertTrue(entry['external'])
+            self.assertRegex(entry['sha256'], '^[0-9a-f]{64}$')
+            self.assertGreater(entry['bytes'], 0)
+        self.assertEqual(copies[str(self.d.pacer)]['read_mode'], 'READ_ONLY')      # rollback-journal store: never immutable
+        self.assertFalse(self.work.exists())
+
+    def test_the_child_sees_the_copies_at_the_real_paths_not_the_live_files(self):
+        """Prove isolation: tamper with the live shared pacing store DURING the run and the child's view is unaffected."""
+        original = tool._copy_external
+
+        def copy_then_destroy(work, external):
+            result = original(work, external)
+            for live in (self.d.pacer, self.d.discovery):             # the live files become unreadable garbage after the copy
+                live.write_bytes(b'not a database' * 20)
+            return result
+        with patch.object(tool, '_copy_external', side_effect=copy_then_destroy):
+            code, report = self.run_tool()
+        # If the child read the live files these stages would fail; they pass because it only sees the copies.
+        self.assertTrue(report['preflight']['ok'] and report['scheduler']['ok'] and report['gate']['ok'], report)
+        self.assertEqual(report['scheduler']['status'], 'PLAN')
+        self.assertEqual(report['blockers'], ['LIVE_SOURCE_CHANGED_DURING_RUN'])  # ... and the live movement is reported
+        self.assertEqual((code, report['status']), (2, 'BLOCKED'))
+
+    def test_keep_retains_mirrored_private_copies(self):
+        argv = self.argv() + ['--keep']
+        code, report = self.run_tool(argv)
+        self.assertEqual(code, 0, report)
+        mirror = self.work / '.external' / str(self.d.pacer).lstrip('/')
+        self.assertTrue(mirror.is_file())
+        self.assertEqual(mirror.stat().st_mode & 0o777, 0o600)
+        self.assertNotEqual(mirror.stat().st_ino, self.d.pacer.stat().st_ino)
+        for directory in [mirror.parent] + list(mirror.parents)[:3]:
+            if self.work in directory.parents or directory == self.work:
+                self.assertEqual(directory.stat().st_mode & 0o077, 0, directory)
+
+    # --- evidence gates still work through the external layout
+    def test_retained_null_pass_still_blocks(self):
+        with sqlite3.connect(self.d.f.progress.store.path) as c:
+            c.execute('CREATE TABLE IF NOT EXISTS paper_observation_passes(id TEXT PRIMARY KEY,intent_hash TEXT NOT NULL,outcome_hash TEXT)')
+            c.execute('INSERT INTO paper_observation_passes VALUES(?,?,NULL)', ('a' * 32, 'b' * 64))
+        code, report = self.run_tool()
+        self.assertEqual((code, report['gate']['gate_result']), (2, 'OBSERVATION_RECOVERY_REQUIRED'), report)
+        self.assertEqual(report['pending_null_pass_ids'], ['a' * 32])
+
+    def test_a_different_external_discovery_path_is_a_context_mismatch(self):
+        other = self.shared / 'discovery' / 'other.sqlite'
+        shutil.copyfile(self.d.discovery, other)
+        os.chmod(other, 0o600)
+        code, report = self.run_tool(self.argv(discovery_db=other))
+        self.assertEqual(code, 2, report)
+        self.assertIn('paths', report['preflight']['journal_context_diff'])
+        self.assertIn('CONTEXT_MISMATCH', report['blockers'])
+
+    # --- live findings (same rules as for stores inside --data) apply to the external stores
+    def test_external_pacing_mode_and_owner_are_checked_like_an_in_root_store(self):
+        os.chmod(self.d.pacer, 0o640)
+        code, report = self.run_tool()
+        self.assertEqual((code, report['status']), (2, 'BLOCKED'), report)
+        self.assertTrue(any(b.startswith('LIVE_pacing:MODE_640') for b in report['blockers']), report['blockers'])
+        os.chmod(self.d.pacer, 0o600)
+        with self.fake_stat(lambda path, uid: uid + 4242 if path == str(self.d.pacer) else uid):
+            code, report = self.run_tool()
+        self.assertTrue(any(b.startswith('LIVE_pacing:OWNER_') for b in report['blockers']), report['blockers'])
+
+    def test_external_discovery_owner_and_group_writable_directory_block(self):
+        with self.fake_stat(lambda path, uid: uid + 4242 if path == str(self.d.discovery) else uid):
+            code, report = self.run_tool()
+        self.assertEqual((code, report['status']), (2, 'BLOCKED'), report)
+        self.assertTrue(any(b.startswith('LIVE_external_discovery_db:OWNER_') for b in report['blockers']), report['blockers'])
+        os.chmod(self.d.discovery.parent, 0o777)
+        self.addCleanup(os.chmod, self.d.discovery.parent, 0o755)
+        code, report = self.run_tool()
+        self.assertTrue(any(b.startswith('LIVE_external_discovery_db_dir:MODE_777') for b in report['blockers']), report['blockers'])
+
+    def test_sidecar_created_beside_an_external_store_is_a_blocker(self):
+        original = tool._copy_external
+
+        def copy_and_litter(work, external):
+            result = original(work, external)
+            Path(str(self.d.discovery) + '-wal').write_bytes(b'')      # what a plain read-only open leaves behind
+            return result
+        with patch.object(tool, '_copy_external', side_effect=copy_and_litter):
+            code, report = self.run_tool()
+        self.assertEqual((code, report['status']), (2, 'BLOCKED'), report)
+        self.assertIn('LIVE_SIDECAR_CREATED:' + str(self.d.discovery) + '-wal', report['blockers'])
+        self.assertEqual(report['live_sidecars_created'], [str(self.d.discovery) + '-wal'])
+
+    def test_external_store_modified_during_the_run_is_detected_by_sha256(self):
+        original = tool._copy_external
+
+        def copy_then_tamper(work, external):
+            result = original(work, external)
+            target = self.d.discovery
+            info = target.stat()
+            blob = bytearray(target.read_bytes())
+            blob[-1] ^= 0xFF
+            target.write_bytes(bytes(blob))
+            os.utime(target, ns=(info.st_atime_ns, info.st_mtime_ns))
+            return result
+        with patch.object(tool, '_copy_external', side_effect=copy_then_tamper):
+            code, report = self.run_tool()
+        self.assertEqual((code, report['status']), (2, 'BLOCKED'), report)
+        self.assertFalse(report['live_sources_unchanged'])
+        self.assertIn('LIVE_SOURCE_CHANGED_DURING_RUN', report['blockers'])
+
+    # --- refusals (parent-side, before anything is copied)
+    def test_external_path_validation_refuses_aliases_and_non_regular_files(self):
+        link = self.shared / 'link.sqlite'
+        link.symlink_to(self.d.pacer)
+        victim = self.shared / 'victim.sqlite'                       # NOT a store in use: linking it must not affect the fixture
+        shutil.copyfile(self.d.pacer, victim)
+        hard = self.shared / 'hard.sqlite'
+        os.link(victim, hard)
+        linked_dir = self.scratch / 'linked'
+        linked_dir.symlink_to(self.shared)
+        # (path, text the refusal must name): the REASON matters, another failure further down must not satisfy the test
+        cases = {'symlink': (link, 'canonical absolute path'), 'hardlink': (hard, 'regular single-link file'),
+                 'directory': (self.shared, 'regular single-link file'), 'missing': (self.shared / 'nope.sqlite', 'does not exist'),
+                 'symlinked directory component': (linked_dir / 'provider-pacing.sqlite', 'canonical absolute path'),
+                 'dotdot': (Path(str(self.shared) + '/../' + self.shared.name + '/provider-pacing.sqlite'), 'canonical absolute path')}
+        for label, (path, reason) in cases.items():
+            for key in ('pacing_db', 'discovery_db'):
+                with self.subTest(label=label, key=key):
+                    code, report = self.run_tool(self.argv(**{key: path}))
+                    self.assertEqual((code, report['status']), (3, 'REFUSED'), report)
+                    self.assertIn(reason, report['reason'])
+                    self.assertFalse(self.work.exists())
+        with self.subTest('research stays relative-only'):
+            code, report = self.run_tool(self.argv(research_db=self.d.f.jobs.path))
+            self.assertEqual((code, report['status']), (3, 'REFUSED'))
+
+    def test_external_directory_containing_the_data_root_is_refused(self):
+        outside = self.data.parent / 'pacing-above.sqlite'
+        shutil.copyfile(self.d.pacer, outside)
+        os.chmod(outside, 0o600)
+        self.addCleanup(outside.unlink)
+        code, report = self.run_tool(self.argv(pacing_db=outside))
+        self.assertEqual((code, report['status']), (3, 'REFUSED'), report)
+        self.assertIn('must not contain or sit inside', report['reason'])
+        self.assertFalse(self.work.exists())
+
+    def test_absolute_ledger_inside_data_is_treated_as_the_in_root_name(self):
+        code, report = self.run_tool(self.argv(ledger=self.d.ledger))
+        self.assertEqual((code, report['status'], report['blockers']), (0, 'PASS', []), report)
+        self.assertNotIn('ledger', report['external_stores'])
+
+    def test_absolute_path_inside_data_is_treated_as_in_root(self):
+        inside = self.data / 'discovery-in-root.sqlite'
+        shutil.copyfile(self.d.discovery, inside)
+        os.chmod(inside, 0o600)
+        code, report = self.run_tool(self.argv(discovery_db=inside))
+        self.assertNotIn('discovery_db', report.get('external_stores', {}))         # in-root: no mirror, as before
+        self.assertIn('discovery-in-root.sqlite', {c['path'] for c in report['copy']['files']})
+
+    # --- helpers and the namespace-less mode
+    def test_mount_points_collapse_nested_directories(self):
+        a, b, c = Path('/srv/shared/provider-pacing.sqlite'), Path('/srv/shared/discovery/continuous.sqlite'), Path('/var/x/ledger.sqlite')
+        self.assertEqual(tool._mount_points([b, a, c]), [Path('/srv/shared'), Path('/var/x')])
+        self.assertEqual(tool._mount_points([b]), [Path('/srv/shared/discovery')])
+        self.assertEqual(tool._mirror(Path('/w'), a), Path('/w/.external/srv/shared/provider-pacing.sqlite'))
+
+    def test_without_namespace_external_copies_are_mirrored_and_live_stores_untouched(self):
+        before = tree(self.shared)
+        code, report = self.run_tool(self.argv() + ['--no-namespace'])
+        self.assertEqual(report['isolation'], 'NONE')
+        self.assertEqual(tree(self.shared), before)
+        self.assertTrue(report['live_sources_unchanged'])
+        mirrored = {c['path'] for c in report['copy']['files'] if c.get('external')}
+        self.assertGreaterEqual(mirrored, {str(self.d.pacer), str(self.d.discovery)})
+        # Stores bind absolute paths the copies cannot satisfy without the namespace: the run must fail closed
+        # (guard violation or blocked stages), never PASS.
+        self.assertNotEqual(report['status'], 'PASS')
+        self.assertTrue(report['blockers'])
+
+
+class FreshExternalLedgerTests(FreshLayoutBase):
+    """A ledger outside the experiment root: copied and gated like any store, but the real entry scheduler requires
+    ``ledger.parent == research.parent`` (tools/paper_scheduler.py), so its pre-check must say so, not pass."""
+    EXTERNAL_LEDGER = True
+
+    def test_external_ledger_is_copied_gated_and_the_scheduler_refusal_is_reported(self):
+        before = tree(self.shared)
+        code, report = self.run_tool()
+        self.assertEqual(report['external_stores'], {'discovery_db': str(self.d.discovery), 'ledger': str(self.d.ledger),
+                                                     'pacing_db': str(self.d.pacer)})
+        roles = {c['role'] for c in report['copy']['files'] if c.get('external')}
+        self.assertEqual(roles, {'ledger', 'pacing_db', 'discovery_db'})
+        self.assertTrue(report['gate']['ok'], report['gate'])                                  # terminal gate ran on the copy
+        self.assertIsNone(report['gate']['gate_result'])
+        self.assertFalse(report['scheduler']['ok'])
+        self.assertIn('Scheduler ledger context mismatch', report['scheduler']['error'])
+        self.assertEqual((code, report['status'], report['blockers']), (2, 'BLOCKED', ['SCHEDULER_ERROR']))
+        self.assertEqual(tree(self.shared), before)
+        self.assertTrue(report['live_sources_unchanged'])
+
+
 if __name__ == '__main__':
     unittest.main()

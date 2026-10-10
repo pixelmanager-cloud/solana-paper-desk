@@ -515,5 +515,132 @@ class QuoteFillLabelTests(StatusFixture):
         self.assertEqual(led['fills'][0]['execution_label'], 'EXECUTION_UNVERIFIED')
 
 
+class FreshLayoutTests(StatusFixture):
+    """Mirrors production after the fresh start: the experiment root holds the trading stores and the
+    shared provider-pacing and discovery databases live OUTSIDE it."""
+
+    def setUp(self):
+        super().setUp()
+        from discovery import continuous
+        self.shared = self.data.parent / 'shared'
+        (self.shared / 'discovery').mkdir(parents=True)
+        self.pacing = self.shared / 'provider-pacing.sqlite'
+        shutil.move(self.data / 'provider-pacing.sqlite', self.pacing)
+        self.discovery = self.shared / 'discovery' / 'continuous.sqlite'
+        continuous.initialize(self.discovery)
+        with sqlite3.connect(self.discovery) as c:
+            c.execute("INSERT INTO reservations VALUES(1, ?, 'listen')", (NOW - 30.0,))
+            c.execute("INSERT INTO completions VALUES(1, ?, 100, 1, 'RECEIVED', NULL)", (NOW - 20.0,))
+            c.execute("INSERT INTO raw_events VALUES(1, 's1', ?, 5, '{}', 'h')", (NOW - 100.0,))
+        for path in (self.pacing, self.discovery):
+            path.chmod(0o600)
+        with sqlite3.connect(self.data / 'evidence.sqlite') as c:                  # resolve the fixture's NULL pass
+            c.execute("UPDATE paper_observation_passes SET outcome_hash='o' WHERE id='p1'")
+
+    def fresh(self, **kw):
+        kw.setdefault('pacing_db', str(self.pacing))
+        kw.setdefault('discovery_db', str(self.discovery))
+        return self.report(**kw)
+
+    def test_without_the_options_the_in_root_default_still_fails_closed(self):
+        r = self.report()
+        self.assertEqual(r['provider_pacing']['status'], 'ERROR')
+        self.assertIn('UNREADABLE_PROVIDER_PACING', r['blockers'])
+        self.assertEqual(r['discovery']['status'], 'SKIPPED')                     # not provided, none in the root: no error
+
+    def test_healthy_fresh_layout_reports_no_blockers(self):
+        r = self.fresh(check=True)
+        self.assertEqual((r['status'], r['blockers'], r['warnings']), ('OK', [], []))
+        self.assertEqual({p['provider'] for p in r['provider_pacing']['providers']}, {'helius', 'jupiter'})
+        d = r['discovery']
+        self.assertEqual(d['counts'], {'reservations': 1, 'completions': 1, 'raw_events': 1})
+        self.assertEqual((d['latest_completion_age_seconds'], d['latest_event_age_seconds']), (20.0, 100.0))
+        external = {s['role']: s for s in r['store_inventory']['stores'] if s.get('external')}
+        self.assertEqual(set(external), {'provider_pacing', 'discovery'})
+        self.assertTrue(all(s['quick_check'] == 'ok' for s in external.values()))
+        self.assertEqual(external['discovery']['name'], str(self.discovery))
+
+    def test_external_ledger_path_is_inventoried_too(self):
+        elsewhere = self.shared / 'ledger.sqlite'
+        shutil.copy(self.ledger, elsewhere)
+        elsewhere.chmod(0o600)
+        r = self.fresh(ledger=elsewhere)
+        self.assertIn('ledger', {s.get('role') for s in r['store_inventory']['stores']})
+
+    def test_explicit_in_root_paths_behave_like_the_defaults(self):
+        shutil.move(self.pacing, self.data / 'provider-pacing.sqlite')
+        r = self.report(pacing_db=str(self.data / 'provider-pacing.sqlite'))
+        self.assertEqual(r['provider_pacing']['status'], 'OK')
+        self.assertFalse([s for s in r['store_inventory']['stores'] if s.get('external') and s['role'] == 'provider_pacing'])
+
+    def test_default_discovery_inside_the_root_is_picked_up_when_present(self):
+        (self.data / 'discovery').mkdir()
+        shutil.copy(self.discovery, self.data / 'discovery' / 'continuous.sqlite')
+        self.assertEqual(self.report(pacing_db=str(self.pacing))['discovery']['status'], 'OK')
+
+    def test_bad_external_paths_fail_closed_and_block(self):
+        link = self.shared / 'link.sqlite'
+        link.symlink_to(self.pacing)
+        hard = self.shared / 'hard.sqlite'
+        os.link(self.pacing, hard)
+        linked_dir = self.data.parent / 'shared-link'
+        linked_dir.symlink_to(self.shared)
+        cases = {'relative': 'shared/provider-pacing.sqlite', 'symlink': str(link), 'hardlink': str(hard),
+                 'missing': str(self.shared / 'nope.sqlite'), 'directory': str(self.shared),
+                 'symlinked directory component': str(linked_dir / 'provider-pacing.sqlite')}
+        for label, value in cases.items():
+            with self.subTest(label):
+                r = self.fresh(pacing_db=value)
+                self.assertEqual(r['provider_pacing']['status'], 'ERROR')
+                self.assertIn('UNREADABLE_PROVIDER_PACING', r['blockers'])
+        os.unlink(hard)
+
+    def test_bad_explicit_discovery_is_an_error_not_a_skip(self):
+        for value in ('relative.sqlite', str(self.shared / 'nope.sqlite')):
+            with self.subTest(value):
+                r = self.fresh(discovery_db=value)
+                self.assertEqual(r['discovery']['status'], 'ERROR')
+                self.assertIn('UNREADABLE_DISCOVERY', r['blockers'])
+
+    def test_symlinked_or_hardlinked_external_store_is_a_store_blocker(self):
+        link = self.shared / 'link.sqlite'
+        link.symlink_to(self.pacing)
+        self.assertIn('STORE_SYMLINKED', self.fresh(pacing_db=str(link))['blockers'])
+        os.unlink(link)
+        hard = self.shared / 'hard.sqlite'
+        os.link(self.pacing, hard)
+        self.assertIn('STORE_HARDLINKED', self.fresh(pacing_db=str(hard))['blockers'])
+
+    def test_external_stores_are_never_written_or_given_sidecars(self):
+        before = tree_state(self.shared)
+        self.fresh(check=True)
+        self.assertEqual(tree_state(self.shared), before)
+        self.assertEqual(sorted(p.name for p in self.shared.rglob('*.sqlite*')), ['continuous.sqlite', 'provider-pacing.sqlite'])
+
+    def test_external_rollback_journal_stores_are_never_opened_immutable(self):
+        self.assertEqual(status.open_mode(self.pacing), 'ro')
+        self.assertEqual(status.open_mode(self.discovery), 'ro')
+
+    def test_pacing_state_of_the_external_store_drives_the_blockers(self):
+        with sqlite3.connect(self.pacing) as c:
+            c.execute('UPDATE state SET blocked_until=? WHERE provider=?', (NOW + 60, 'helius'))
+        self.assertIn('PACING_BLOCKED_OR_PENDING', self.fresh()['blockers'])
+
+    def test_cli_options(self):
+        out = io.StringIO()
+        code = status.main(['--data', str(self.data), '--ledger', str(self.ledger), '--config', str(self.config_path),
+                            '--pacing-db', str(self.pacing), '--discovery-db', str(self.discovery)],
+                           runner=FakeRunner(), out=out)
+        report = json.loads(out.getvalue())
+        self.assertEqual(code, 0)
+        self.assertEqual(report['provider_pacing']['status'], 'OK')
+        self.assertEqual(report['discovery']['status'], 'OK')
+        out = io.StringIO()
+        code = status.main(['--data', str(self.data), '--ledger', str(self.ledger), '--config', str(self.config_path),
+                            '--pacing-db', 'relative.sqlite'], runner=FakeRunner(), out=out)
+        self.assertEqual(code, 2)
+        self.assertIn('UNREADABLE_PROVIDER_PACING', json.loads(out.getvalue())['blockers'])
+
+
 if __name__ == '__main__':
     unittest.main()
