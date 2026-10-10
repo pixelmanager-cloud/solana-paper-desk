@@ -1,6 +1,6 @@
 {
   "schema_version": 1,
-  "revision": 85,
+  "revision": 86,
   "repository": "pixelmanager-cloud/solana-paper-desk",
   "source_main_sha": "e298e15cd758932e81d2241130716632702f5bd0",
   "observed_date": "2026-10-08",
@@ -5482,6 +5482,88 @@
       "readiness_verified": false,
       "reported_desktop_status": "KRAKEN_USD_INTEGRATION_ASSIGNED_NO_BUY",
       "schedule": "NOT_REPROBED_NO_DURABLE_BINDING_CLAIM"
+    },
+    {
+      "kind": "HOURLY_GITHUB_RECONCILIATION",
+      "at": "2026-10-10T02:58:55Z",
+      "status": "RESERVED_COMPONENT_REVIEWS_NO_DUPLICATE",
+      "cloud_execution": {
+        "provider": "cloud",
+        "observations_current": true,
+        "observed_phase": "running",
+        "spec_revision": "200"
+      },
+      "queue_blob_sha": "344940378b6a6f75b04ad1423bb773dbfad7ad26",
+      "observed_prs": [
+        {
+          "pr": 188,
+          "head_sha": "1a4e76c3f761ed80bd016a8384179e92825840e5",
+          "base_sha": "a1f72add852e7afa1cfb74bb87f8aaeb4ed40c42",
+          "comment_ids": [
+            6092694141,
+            5477134926,
+            6092818594,
+            5477167688,
+            6092844439,
+            6092943016,
+            6092990250,
+            5477238731
+          ],
+          "ci": {
+            "workflow_runs": [
+              {
+                "id": 38018401128,
+                "name": "Tests",
+                "status": "in_progress",
+                "conclusion": null,
+                "run_number": 1398,
+                "jobs_url": "https://api.github.com/repos/pixelmanager-cloud/solana-paper-desk/actions/runs/38018401128/jobs",
+                "logs_url": "https://api.github.com/repos/pixelmanager-cloud/solana-paper-desk/actions/runs/38018401128/logs",
+                "workflow_id": 377958194
+              }
+            ]
+          },
+          "status": "EXTERNAL_WORKER07_REPAIR_AND_TEST_DELTA_REVIEWS_PRESENT",
+          "tests_this_run": "NOT_RUN",
+          "limitations": "External observations only; no own correctness, acceptance or live certification."
+        },
+        {
+          "pr": 189,
+          "head_sha": "45da2f4130d8a575b3f8a5bd5d95b5054ef0b9c7",
+          "base_sha": "a1f72add852e7afa1cfb74bb87f8aaeb4ed40c42",
+          "comment_ids": [
+            6092882004,
+            6092904163,
+            6093074466
+          ],
+          "ci": {
+            "workflow_runs": [
+              {
+                "id": 38018899232,
+                "name": "Tests",
+                "status": "in_progress",
+                "conclusion": null,
+                "run_number": 1400,
+                "jobs_url": "https://api.github.com/repos/pixelmanager-cloud/solana-paper-desk/actions/runs/38018899232/jobs",
+                "logs_url": "https://api.github.com/repos/pixelmanager-cloud/solana-paper-desk/actions/runs/38018899232/logs",
+                "workflow_id": 377958194
+              }
+            ]
+          },
+          "status": "RESERVED_WORKER09_REVIEW_DEPENDENT_COMPOSITION_PENDING",
+          "tests_this_run": "NOT_RUN",
+          "limitations": "External observations only; no own correctness, acceptance or live certification."
+        }
+      ],
+      "observed_codex_branch_count": 188,
+      "branch_pagination_complete": true,
+      "tests": "NOT_RUN_RESERVED_COMPONENT_SCOPES",
+      "review_comments_posted": 0,
+      "infrastructure_failures": 0,
+      "provider_calls": 0,
+      "readiness_verified": false,
+      "reported_desktop_status": "KRAKEN_USD_INTEGRATION_ASSIGNED_NO_BUY",
+      "schedule": "NOT_REPROBED_NO_DURABLE_BINDING_CLAIM"
     }
   ],
   "artifact_pr": {
@@ -9104,117 +9186,79 @@
   ],
   "last_reconciliation": {
     "kind": "HOURLY_GITHUB_RECONCILIATION",
-    "at": "2026-10-10T01:56:53Z",
-    "status": "EXTERNAL_REVIEWS_RECONCILED_NO_DUPLICATE",
+    "at": "2026-10-10T02:58:55Z",
+    "status": "RESERVED_COMPONENT_REVIEWS_NO_DUPLICATE",
     "cloud_execution": {
       "provider": "cloud",
       "observations_current": true,
       "observed_phase": "running",
-      "spec_revision": "197"
+      "spec_revision": "200"
     },
     "queue_blob_sha": "344940378b6a6f75b04ad1423bb773dbfad7ad26",
     "observed_prs": [
       {
-        "pr": 185,
-        "head_sha": "8aad8a827ce015f16a7ec8fd8a88ab2102e07084",
-        "base_sha": "9504728bf099b72db83f344747e057a6ec45d4d3",
-        "merged": true,
-        "observed_merge_sha": "6cf5cfbb1966c5a9da961eec1bfc2e17f5e92290",
+        "pr": 188,
+        "head_sha": "1a4e76c3f761ed80bd016a8384179e92825840e5",
+        "base_sha": "a1f72add852e7afa1cfb74bb87f8aaeb4ed40c42",
         "comment_ids": [
-          5476772929,
-          5476826498,
-          5476843908
+          6092694141,
+          5477134926,
+          6092818594,
+          5477167688,
+          6092844439,
+          6092943016,
+          6092990250,
+          5477238731
         ],
         "ci": {
           "workflow_runs": [
             {
-              "id": 38012740335,
+              "id": 38018401128,
               "name": "Tests",
-              "status": "completed",
-              "conclusion": "success",
-              "run_number": 1368,
-              "jobs_url": "https://api.github.com/repos/pixelmanager-cloud/solana-paper-desk/actions/runs/38012740335/jobs",
-              "logs_url": "https://api.github.com/repos/pixelmanager-cloud/solana-paper-desk/actions/runs/38012740335/logs",
+              "status": "in_progress",
+              "conclusion": null,
+              "run_number": 1398,
+              "jobs_url": "https://api.github.com/repos/pixelmanager-cloud/solana-paper-desk/actions/runs/38018401128/jobs",
+              "logs_url": "https://api.github.com/repos/pixelmanager-cloud/solana-paper-desk/actions/runs/38018401128/logs",
               "workflow_id": 377958194
             }
           ]
         },
-        "status": "DESKTOP_MERGED_RESERVED_WORKER09_REVIEW_QUEUE_RECORD_ONLY",
+        "status": "EXTERNAL_WORKER07_REPAIR_AND_TEST_DELTA_REVIEWS_PRESENT",
         "tests_this_run": "NOT_RUN",
-        "limitations": "External observations only; no own acceptance/live certification. Historical failed heads retained."
+        "limitations": "External observations only; no own correctness, acceptance or live certification."
       },
       {
-        "pr": 186,
-        "head_sha": "e0c79e849856a58248a23ad70f34d0c2592505f4",
-        "base_sha": "9504728bf099b72db83f344747e057a6ec45d4d3",
-        "merged": true,
-        "observed_merge_sha": "3444eb281d5f7e53a29185526ef2a7ec8a85f1d0",
+        "pr": 189,
+        "head_sha": "45da2f4130d8a575b3f8a5bd5d95b5054ef0b9c7",
+        "base_sha": "a1f72add852e7afa1cfb74bb87f8aaeb4ed40c42",
         "comment_ids": [
-          5476871005,
-          5476873897,
-          6092189024,
-          6092228048,
-          6092265647,
-          5476920946,
-          6092421086
+          6092882004,
+          6092904163,
+          6093074466
         ],
         "ci": {
           "workflow_runs": [
             {
-              "id": 38013922978,
+              "id": 38018899232,
               "name": "Tests",
-              "status": "completed",
-              "conclusion": "success",
-              "run_number": 1380,
-              "jobs_url": "https://api.github.com/repos/pixelmanager-cloud/solana-paper-desk/actions/runs/38013922978/jobs",
-              "logs_url": "https://api.github.com/repos/pixelmanager-cloud/solana-paper-desk/actions/runs/38013922978/logs",
+              "status": "in_progress",
+              "conclusion": null,
+              "run_number": 1400,
+              "jobs_url": "https://api.github.com/repos/pixelmanager-cloud/solana-paper-desk/actions/runs/38018899232/jobs",
+              "logs_url": "https://api.github.com/repos/pixelmanager-cloud/solana-paper-desk/actions/runs/38018899232/logs",
               "workflow_id": 377958194
             }
           ]
         },
-        "status": "DESKTOP_MERGED_EXTERNAL_WORKER07_REVIEW_PRESENT",
+        "status": "RESERVED_WORKER09_REVIEW_DEPENDENT_COMPOSITION_PENDING",
         "tests_this_run": "NOT_RUN",
-        "limitations": "External observations only; no own acceptance/live certification. Historical failed heads retained."
-      },
-      {
-        "pr": 187,
-        "head_sha": "b453a745542cae6b394aec379362f0d6d6d1fe6b",
-        "base_sha": "9504728bf099b72db83f344747e057a6ec45d4d3",
-        "merged": true,
-        "observed_merge_sha": "08982472866c670c5045932e80c0ba216ac63de4",
-        "comment_ids": [
-          6092179302,
-          5476878357,
-          5476883198,
-          5476886292,
-          6092233314,
-          6092243625,
-          6092255423,
-          5476905815,
-          5476920513
-        ],
-        "ci": {
-          "workflow_runs": [
-            {
-              "id": 38013862415,
-              "name": "Tests",
-              "status": "completed",
-              "conclusion": "success",
-              "run_number": 1378,
-              "jobs_url": "https://api.github.com/repos/pixelmanager-cloud/solana-paper-desk/actions/runs/38013862415/jobs",
-              "logs_url": "https://api.github.com/repos/pixelmanager-cloud/solana-paper-desk/actions/runs/38013862415/logs",
-              "workflow_id": 377958194
-            }
-          ]
-        },
-        "status": "DESKTOP_MERGED_EXTERNAL_WORKER07_REVIEW_PRESENT",
-        "tests_this_run": "NOT_RUN",
-        "limitations": "External observations only; no own acceptance/live certification. Historical failed heads retained."
+        "limitations": "External observations only; no own correctness, acceptance or live certification."
       }
     ],
-    "observed_codex_branch_count": 186,
+    "observed_codex_branch_count": 188,
     "branch_pagination_complete": true,
-    "tests": "NOT_RUN_RESERVED_OR_COMPLETED_EXTERNAL_REVIEWS",
+    "tests": "NOT_RUN_RESERVED_COMPONENT_SCOPES",
     "review_comments_posted": 0,
     "infrastructure_failures": 0,
     "provider_calls": 0,
