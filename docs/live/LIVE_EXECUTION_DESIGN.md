@@ -1,6 +1,6 @@
 # Live execution design (DESIGN ONLY — nothing here is implemented or authorised)
 
-Status: proposal for the developer to approve or reject. Task T15, base `r1-base` (`c1e22c2`).
+Status: proposal for the developer to approve or reject. Task T15, base `r1-base` (`c1e22c2`); amended by T17 (review findings 1-6).
 
 This document adds **no executable trading code**. Interface sketches below are
 prose/pseudo-signatures for discussion; they are not importable, and nothing in this
@@ -128,14 +128,14 @@ What the current code assumes versus what happens live:
   per-trade `minimumOut` derived from measured drift (T14 output), not a constant.
 * **Fees.** Paper uses a fixed `fixed_fee_sol` (0.00005 SOL in the experiment config).
   Live cost = base fee + **priority fee** + optional **Jito tip** + first-time ATA rent
-  (~0.002 SOL, 4% of a 0.05 SOL trade) + pump.fun/PumpSwap protocol and creator fees
+  (~0.00204 SOL for a standard 165-byte token account, 2% of a 0.1 SOL trade, 20% of a 0.01 SOL trade; Token-2022 accounts with extensions cost more) + pump.fun/PumpSwap protocol and creator fees
   already inside the quote. Priority fee and tip are market-priced and spike exactly when
   a token is hot. `check_effects` caps fee lamports at 50,000 by default (`effects.py:7`);
   that cap and a realistic landing fee will conflict and must be reconciled explicitly.
 * **Landing.** Plain RPC `sendTransaction` on a congested leader can drop. Options:
   higher priority fee; Jito bundle or private submission (Jito docs are cited in
   `docs/threat-model.md` S9; `jupiter_sequence_probe` already requests
-  `forJitoBundle=true` at `providers.py:223`). Bundles reduce sandwich exposure but cost a
+  `forJitoBundle=true` at `providers.py:213`). Bundles reduce sandwich exposure but cost a
   tip and add landing-rate and ordering semantics; neither is a guarantee. The threat model
   already lists "MEV and adverse execution" as "Cost model only; live executor pending"
   (`docs/threat-model.md`, MEV row).
@@ -183,10 +183,27 @@ What the current code assumes versus what happens live:
 * **Signer enforces policy, not just signs.** Before signing, the signer independently
   re-runs the unsigned-tx checks (`effects.check_effects`, program allowlist
   `ALLOWED_PROGRAMS` at `desk/instructions.py:12`, signer/destination checks) and refuses: any transfer to an unlisted
-  address, any approval/authority change, any account close, fee above cap, amount above
-  per-trade cap, notional above remaining daily budget.
+  address, any approval/authority change, any account close **except** `CloseAccount` on a
+  token account that (a) is the desk's own ATA for the traded mint, (b) has a zero token
+  balance in the simulated post-state, and (c) names the hot wallet as both close
+  destination and owner; fee above cap, amount above per-trade cap, notional above
+  remaining daily budget.
+
+  *Why the close exception is needed (rent math).* A token account holds ~0.00204 SOL of
+  rent. If the exit never closes it, each round trip strands that amount: on a 0.01 SOL
+  canary trade that is 0.00204 / 0.01 = **20.4%** of the trade size per round trip, which
+  would dominate every other cost and make the canary unable to measure anything else
+  (30 trades strand ~0.061 SOL, 12% of the 0.5 SOL wallet cap). Closing returns the rent
+  to the wallet, so the net rent cost of a round trip is only the extra transaction fee of
+  the close instruction. The rent is therefore treated as a temporary lock-up, **not**
+  as a cost, in the PnL model, while the *fee* of the close is a cost. The close-to-self
+  rule keeps the drain surface closed: a close to any other destination, of any account
+  not owned by the hot wallet, or of an account with a non-zero balance is still refused.
+  If the developer prefers never to allow closes, the alternative is a canary of at least
+  0.1 SOL per trade (rent 2%), which raises the wallet cap (see §4 item 8).
 * **Limits (proposed defaults, developer to set):** per-trade cap 0.01 SOL for the canary
-  (paper is 0.1 SOL: `--amount-raw 100000000` in the dispatcher unit); max open
+  (paper is 0.1 SOL: `--amount-raw 100000000` in the dispatcher unit; see §4 item 8 for the
+  size-mismatch rule); max open
   exposure equal to the engine's existing fraction; **daily loss cap** (e.g. 10% of the
   wallet cap) that flips the ledger to `LIQUIDATING`→`STOPPED` (`engine.py:38-49,263`);
   wallet cap e.g. 0.5 SOL for the whole canary.
@@ -214,19 +231,60 @@ ledger already pins config and implementation hashes, `ledger.py:129-139`):
    condition below as the real test. There are **zero** live-data paper fills so far
    (`docs/readiness.md`), so the trade rate and variance are unknown; recompute N from the
    first 30 trades.
-2. **Latency-adjusted profit.** Net PnL after fees is positive **under T14's +5 s and +10 s
-   fills**, not only the instantaneous quote. If the edge disappears at +5 s, stop.
-3. **Statistical test.** Bootstrap 95% CI lower bound on mean per-trade return > 0 (T10's
-   report), or an explicit written risk acceptance by the developer naming the loss they
-   accept. Include the holdout split by time; the holdout must also be positive.
-4. **Shadow period.** ≥ K days (propose 7) of build + simulate-only with zero
-   reconciliation errors, simulated fee within tolerance, and build success ≥ a stated rate.
+2. **Latency-adjusted profit.** Net PnL after the **full live fee stack** (below) is
+   positive **under T14's +5 s fills** and still non-negative under +10 s, not only the
+   instantaneous quote. If the edge disappears at +5 s, stop.
+3. **Statistical test.** Bootstrap 95% CI (10,000 resamples, T10's report) lower bound on
+   mean per-trade return > 0, **computed on T14's +5 s latency-adjusted fills with the
+   real fee stack applied per trade**: base fee + priority fee + Jito tip (if bundles are
+   used) + the close-transaction fee, with ATA rent treated as a recoverable lock-up
+   (§3). It must not be computed on the instantaneous quote and must not use the flat
+   `fixed_fee_sol` (0.00005 SOL, `quote_execution.py:46-47`), which understates live cost.
+   Until measured fees exist, use the shadow-mode simulated fee and the highest priority
+   fee/tip the signer policy would accept (a conservative upper bound). The holdout split
+   by time must also have a positive point estimate.
+   *Risk-acceptance escape hatch (replaces the CI condition only, nothing else):* a
+   written, dated acceptance by the developer naming a total loss figure **no larger
+   than the canary wallet cap** (propose 0.5 SOL), valid for at most **30 days** and one
+   frozen config version; it expires automatically and must be re-issued with the new data.
+   It cannot waive items 2, 4, 5, 6 or 8, and cannot raise the wallet cap.
+4. **Shadow period.** ≥ 7 days and ≥ 500 build+simulate attempts (never `send`), with
+   all of: zero reconciliation errors (definition below); build success rate ≥ 95%;
+   simulation success ≥ 90% of builds, with every failure classified; simulated fee within
+   ±20% of the fee used in the item-3 model at the median and no single fee above the
+   signer cap; simulated out-amount within the lower of 1.0% or the trade's `minimumOut`
+   tolerance of the quote at the 90th percentile and never below `minimumOut`; build→simulate
+   stage time p95 ≤ 3 s.
+   *Definition of "reconciliation" in simulate-only shadow mode:* for each simulated
+   transaction, take the simulated post-state account deltas (`simulateTransaction` with
+   `accounts` requested for the wallet and the token account) and compare them with the
+   expected deltas from the intent: wallet SOL delta must equal
+   `-(input + simulated fee + any rent paid) + (rent refunded by a close)` within
+   1,000 lamports + 0.5% of the input; token delta must be ≥ `minimumOut` and within
+   the out-amount tolerance above. Any breach, any account touched outside the allowlist,
+   or any simulated state the ledger projection cannot explain is one reconciliation
+   error. Live-mode reconciliation uses the same rule on confirmed on-chain balance
+   deltas with a dust tolerance of 1,000 lamports (§3 halts on a breach).
 5. **Exit-path proof.** At least one paper position per exit class
    (stop / trailing / time / liquidate) has completed on live data, and the held path has
    survived cold restarts (T06 verifier). Live exits are the dangerous half.
 6. **Security review.** Independent review of the signer, tx allowlist, kill switch and
    auto-halt, with adversarial tests (§6 items 8–9).
 7. **Tiny live phase** (§5). Only then.
+8. **Size-match rule.** Paper trades 0.1 SOL while the canary trades 0.01 SOL, and
+   fixed costs (base fee, priority fee, tip, close fee) do not scale with size. Illustration
+   with *assumed* values (replace with measured ones): priority fee + tip + base fee
+   ≈ 0.0015 SOL per transaction, two transactions per round trip = 0.003 SOL, which is
+   3% of a 0.1 SOL trade but **30%** of a 0.01 SOL trade. Therefore a paper edge at 0.1 SOL
+   says nothing about the canary. The gate requires **either**
+   (a) items 2 and 3 recomputed at the canary size: each paper trade's gross return is
+   kept, but its cost is rebuilt as `fixed_costs_sol / canary_size + proportional_costs`
+   (fixed costs must not be scaled down with size; price impact is smaller at the smaller
+   size and may be reduced only using measured T14 drift, not assumed), and the CI and
+   +5 s tests must still pass; **or** (b) the canary trades the same 0.1 SOL as paper
+   (recommended if the developer accepts a larger wallet cap, e.g. ≥ 1.0 SOL, with the
+   same 10% daily loss cap), so no rescaling is needed. In case (a) the canary's
+   purpose is to measure fixed costs and landing, not to confirm profit.
 
 Anything weaker (for example, "tests pass" or "the dashboard looks good") is not a gate.
 
@@ -237,7 +295,7 @@ Anything weaker (for example, "tests pass" or "the dashboard looks good") is not
 | 0. Paper (now) | none | decision loop, accounting, restart | gate §4 items 1–3, 5 |
 | 1. T14 drift measurement | none | latency penalty on paper | PnL positive at +5 s/+10 s |
 | 2. Shadow (build+simulate) | none / dust for rent | build rate, sim errors, stage timing | gate §4 item 4 |
-| 3. Canary | wallet cap ≈ 0.5 SOL, 0.01 SOL/trade | landing rate, real fee, real slippage, sell works | ≥ 30 live trades, reconciliation clean, realised cost ≈ T14 model |
+| 3. Canary | wallet cap ≈ 0.5 SOL, 0.01 SOL/trade (or §4 item 8(b)) | landing rate, real fee, real slippage, sell works | ≥ 30 live trades; zero reconciliation errors; landing rate ≥ 90%; mean realised round-trip cost within +1.0 percentage point of the item-3 model, and no single trade more than 3 pp above it; all ATAs closed back to the wallet |
 | 4. Scale | step up only after a full clean review | — | each step needs the developer's explicit approval |
 
 **Failure handling.** Order states are explicit (§1.3). Dropped tx: confirm by signature
