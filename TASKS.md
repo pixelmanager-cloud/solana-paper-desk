@@ -1526,3 +1526,16 @@ AVOID: desk/**
    - The daily-report unit gets `ReadWritePaths=<STATE_DIR>/reports`, `PrivateNetwork=true`, `CPUWeight`/`IOWeight`, the same as T39/T40.
    - The `daily_report.py` error text drops `str(error)`; report the class name only.
 6. **(LOW) Read-only open rule.** `healthcheck.py` ~:71, `forward_eval.py` ~:61 and `fill_realism_report.py` ~:118 use the shared read-only open rule (`mode=ro`, falling back to `immutable` only for a quiet WAL), so sections don't become ERROR under `ReadOnlyPaths`.
+
+---
+
+## T32H — Finish T32G (stalled worker; continue its branch) — CRITICAL PATH
+STATUS: OPEN
+DEPENDS: none
+BASE: origin/cloud/T32G (its last commit: "report wording (limitations)"). Continue from there, then merge origin/integration/r1.
+OWNS: the T32G files
+AVOID: desk/**
+
+The worker on T32G went silent for more than 2 hours just before finishing. Read `reports/T32G.md` on `origin/cloud/T32G`, verify each T32G item against the spec in this file (items 1-8), finish anything missing, and make the RUNBOOK commands match the merged tools. T34 added `--pacing-db`/`--discovery-db`/`--ledger` to status, preflight and verify_cycle: steps 6 and 8 and the verify_cycle snapshots must pass them. Also add the T36 pacing-policy step with the correct ordering: apply ONLY after the new release is on every unit, run as solana-desk, and treat the policy JSON as append-only.
+
+Run every `tests/test_ops_*.py` module plus the e2e test with the real exit code, then commit `DONE T32H:`. If `cloud/T32G` gets a DONE commit meanwhile, stop and say so in your report.
