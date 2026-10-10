@@ -107,10 +107,13 @@ class PaperReadTests(unittest.TestCase):
         for body in [b'',b'{"looks":"valid"}',self.body()]:
             with self.assertRaises(m.PaperReadError) as caught:self.call(Response(IncompleteRead(body)))
             error=caught.exception;self.assertEqual(error.code,'RESPONSE_TRUNCATED');self.assertEqual(base64.b64decode(self.outcome(error)['response_bytes_base64']),body)
-        with self.assertRaises(m.PaperReadError) as caught:self.call(opened_error=RuntimeError('secret-url-'+KEY))
-        self.assertEqual(str(caught.exception),'TRANSPORT_ERROR');self.assertIsNone(caught.exception.__cause__)
-        self.assertNotIn(KEY,canonical(self.outcome(caught.exception)))
-        self.assertEqual(self.progress.admission('scan')['requests_used'],4)
+        # T25: only a known network exception is TRANSPORT_ERROR (transient); an unknown exception such as a
+        # RuntimeError is UNCLASSIFIED_ERROR and latches the monitoring allowance. Redaction is unchanged for both.
+        for raised,expected in ((RuntimeError('secret-url-'+KEY),'UNCLASSIFIED_ERROR'),(ConnectionResetError('secret-url-'+KEY),'TRANSPORT_ERROR')):
+            with self.assertRaises(m.PaperReadError) as caught:self.call(opened_error=raised)
+            self.assertEqual(str(caught.exception),expected);self.assertIsNone(caught.exception.__cause__)
+            self.assertNotIn(KEY,canonical(self.outcome(caught.exception)))
+        self.assertEqual(self.progress.admission('scan')['requests_used'],5)
         self.assertEqual(self.outcome(error)['observed_at'],100)
     def test_header_ambiguity_transfer_encoding_caps_truncation(self):
         for headers in [[('Transfer-Encoding','gzip')],[('Content-Encoding','gzip')],[('Content-Length','1'),('Content-Length','1')],[('Content-Length','-1')],[('Content-Length',str(m.MAX_RESPONSE_BYTES+1))]]:

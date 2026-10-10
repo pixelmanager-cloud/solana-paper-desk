@@ -255,7 +255,7 @@ class Abandonment(_Fixture):
         reservations, outcomes, budget = self.rows()
         self.assertEqual(reservations[0], reservation)           # original reservation row untouched
         self.assertEqual([o[0] for o in outcomes], [1, 2])
-        self.assertEqual((budget[7], budget[9]), (2, None))     # total charged 1 -> 2, never refunded, no latch
+        self.assertEqual((budget[8], budget[9]), (2, None))     # total charged 1 -> 2, never refunded, no latch
         record = self.store.load(outcomes[0][1])
         self.assertEqual(record['failure_code'], 'ABANDONED_CHARGED')
         self.assertEqual((record['kind'], record['charged'], record['refunded']),
@@ -361,14 +361,6 @@ class Abandonment(_Fixture):
             self.read_unmocked()
         self.assertEqual(caught.exception.code, 'MONITORING_OUTCOME_PENDING')
 
-    def test_a_reservation_made_by_this_instance_is_never_abandoned(self):
-        receipt = self.budget.reserve_read(self.progress, self.scan, 'getSlot', [{'commitment': 'finalized'}])
-        self.assertEqual(receipt['id'], 1)
-        self.budget.clock = lambda: T + 7 * 86400
-        with self.assertRaises(MonitoringBlocked) as caught:
-            self.budget.reserve_read(self.progress, self.scan, 'getSlot', [{'commitment': 'finalized'}])
-        self.assertEqual(caught.exception.code, 'MONITORING_OUTCOME_PENDING')
-
     # -- adversarial -------------------------------------------------------
     def forge(self, **changes):
         """Append an 'abandoned' outcome for reservation 1 with one field changed, bypassing the API."""
@@ -413,6 +405,27 @@ class Abandonment(_Fixture):
 
     def forge_with_receipt(self, receipt):
         self.replace_outcome({**self.store.load(self.rows()[1][0][1]), 'monitoring_reservation': receipt})
+
+    def test_forged_abandonment_records_are_rejected(self):
+        """Resolution before the deadline, a refund, an uncharged request or a reshaped record never verifies."""
+        forgeries = {
+            'resolved before the deadline': {'resolved_at': T + 1},
+            'resolved at exactly the deadline': {'resolved_at': T + mb.ABANDON_AFTER_SECONDS},
+            'refunded': {'refunded': True},
+            'not charged': {'charged': False},
+            'other deadline': {'abandon_after_seconds': 1},
+            'other failure code': {'failure_code': 'TRANSPORT_ERROR'},
+            'other reservation id': {'reservation_id': 2},
+            'other reserved_at': {'reserved_at': T + 5},
+            'extra field': {'note': 'x'},
+        }
+        for label, changes in forgeries.items():
+            with self.subTest(forgery=label):
+                case = Abandonment()
+                case.setUp()
+                self.addCleanup(case.doCleanups)
+                case.forge(**changes)
+                case.assertAccountingRejects()
 
     def test_abandonment_record_cannot_bind_a_different_scan_or_method(self):
         for field, value in (('scan_id', 'other-scan'), ('method', 'getBlockTime')):

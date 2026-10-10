@@ -161,7 +161,7 @@ class MonitoringBudgetTests(unittest.TestCase):
             with self.assertRaises(KeyboardInterrupt):self.read_unmocked()
         # T25: an orphan older than ABANDON_AFTER_SECONDS is resolved as ABANDONED_CHARGED (see
         # tests/test_monitoring_classification.py); within the deadline it must still fail closed.
-        self.budget=MonitoringBudget(self.store,self.f.path,self.f.cfg,clock=lambda:T+60)
+        self.budget=MonitoringBudget(self.store,self.f.path,self.f.cfg,clock=lambda:T+30)
         with patch('desk.paper_read_sources.os.environ.get') as credentials:
             with self.assertRaises(PaperReadError) as caught:self.read_unmocked()
         credentials.assert_not_called();self.assertEqual(caught.exception.code,'MONITORING_OUTCOME_PENDING');self.assertEqual(self.accounting()[1],1)

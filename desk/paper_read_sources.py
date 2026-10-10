@@ -8,11 +8,14 @@ return/raise; the collector independently saves its original parsed responses.
 """
 import base64
 from collections import deque
+import errno
 import math
 import os
+import socket
+import ssl
 import time
 from http.client import HTTPResponse, IncompleteRead
-from urllib.error import HTTPError
+from urllib.error import HTTPError, URLError
 from urllib.parse import urlencode
 from urllib.request import Request, build_opener
 
@@ -28,6 +31,38 @@ from . import provider_pacing
 MAX_REQUEST_BYTES = 8192
 MAX_RESPONSE_BYTES = 2 * 1024 * 1024
 MAX_PRICE_RESPONSE_BYTES = 65536
+
+# Socket-level conditions that mean "the provider was unreachable", not "something is wrong
+# with our request, our code or the peer's identity".
+_UNREACHABLE_ERRNOS = frozenset({errno.ENETUNREACH, errno.EHOSTUNREACH, errno.ENETDOWN, errno.EHOSTDOWN,
+                                 errno.ETIMEDOUT, errno.ECONNRESET, errno.ECONNREFUSED,
+                                 errno.ECONNABORTED, errno.EPIPE})
+
+
+def classify_exception(error):
+    """Failure code for an exception raised while talking to a provider.
+
+    Only a known network-availability exception is TRANSPORT_ERROR (charged, retained, not
+    latching): timeouts, connection reset/refused/aborted, DNS, unreachable network, a TLS
+    connection closed by the peer. A TLS verification/handshake failure is TLS_ERROR and
+    anything else (ValueError, AttributeError, a bare OSError, a URLError that carries only a
+    message) is UNCLASSIFIED_ERROR; both latch, so a bug or a man-in-the-middle symptom
+    cannot silently burn the allowance. The exception text is never retained.
+    """
+    for _ in range(4):                      # urllib wraps the socket error in URLError.reason
+        if isinstance(error, URLError) and not isinstance(error, HTTPError):
+            error = error.reason
+        else:
+            break
+    if isinstance(error, (ssl.SSLEOFError, ssl.SSLZeroReturnError)):
+        return 'TRANSPORT_ERROR'
+    if isinstance(error, ssl.SSLError):     # includes SSLCertVerificationError
+        return 'TLS_ERROR'
+    if isinstance(error, (TimeoutError, ConnectionError, socket.gaierror, socket.herror)):
+        return 'TRANSPORT_ERROR'
+    if isinstance(error, OSError) and error.errno in _UNREACHABLE_ERRNOS:
+        return 'TRANSPORT_ERROR'
+    return 'UNCLASSIFIED_ERROR'
 RPC_ID = 'paper-read-v1'
 
 
@@ -341,6 +376,7 @@ class PaperReadSources:
                 except Exception: pass
             elif isinstance(error, strict.CoordinatorRPCError): code = 'HTTP_REJECTED'
             elif isinstance(error, provider_pacing.PacingError): code = error.code
+            elif code == 'TRANSPORT_ERROR': code = classify_exception(error)   # network stage only; see docstring
         if pacing_ticket is not None and pacing_release:
             try:
                 pacer.finish(provider, pacing_ticket)
