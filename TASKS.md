@@ -154,6 +154,23 @@ Benchmark before and after with fixtures sized for 7 days of 24/7 operation, and
 
 ---
 
+## T06F — Fix coordinator review findings in T06 (cycle verifier)
+STATUS: OPEN
+DEPENDS: none
+BASE: origin/cloud/T06
+OWNS: tools/ops/verify_cycle.py, tests/test_ops_verify_cycle.py
+AVOID: desk/**
+
+1. **Immutable opens.** `immutable=1` is only allowed when the DB header bytes 18/19 == 2 (WAL) and there are no sidecars. Otherwise use plain `mode=ro`. This matters because `provider-pacing.sqlite` and the dispatcher journals are rollback-journal stores and are live.
+2. **Monitoring budget store.** Read the monitoring budget from evidence.sqlite (`paper_monitoring_*` live in the EvidenceStore; see desk/monitoring_budget.py:44-47,155), not research.sqlite. Build test fixtures with the REAL EvidenceStore/MonitoringBudget APIs, not hand-written tables.
+3. **`--allow-progress` prefix.** It must verify the exact old prefix: record the digest at the exact old row count (or the old final), so a rewrite of any old row is detected beyond 20k rows. Add a test with more than 20k rows that rewrites the last old row.
+4. **Concurrency tests.** Add known-answer tests for concurrent positions (buy A, buy B, sell B, sell A) and for a take-profit ladder of partial sells.
+5. **Per-sell PnL.** Check each sell's realized PnL against a proportional cost basis (`cost_left*qty/qty_held`), not only the aggregate.
+6. **Volatile pacing fields.** Exclude them (`next_at`, `blocked_until`, `pending`, waiters) from strict compare. Report them separately; only `high_water` must not decrease.
+7. **Duplicate-fill key.** Make it a tuple or JSON (event_id, side, mint), not a concatenated string.
+
+---
+
 ## T02F — Fix coordinator review findings in T02 (status CLI)
 STATUS: OPEN
 DEPENDS: none
