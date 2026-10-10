@@ -620,10 +620,10 @@ def _prewire_lineage(c,v,original,*,review_source=None):
 
 
 def lineage(c,expected,original,*,ledger_locked=None):
-    from .runtime_performance_continuation import dispatch_predecessor
+    from .runtime_performance_continuation import dispatch_binding
     ledger=Path(expected['paths']['ledger_db']['path'])
     with closing(sqlite3.connect(ledger.as_uri()+'?mode=ro',uri=True)) as lc:
-        lc.execute('BEGIN');expected=dispatch_predecessor(lc,expected)
+        lc.execute('BEGIN');expected,performance_bindings,performance_contexts=dispatch_binding(lc,expected,c)
     store=EvidenceStore(expected['paths']['evidence_db']['path'],read_only=True)
     with closing(store.connect()) as ec:prewire=[v for v in rows(ec) if v['association']==PREWIRE and v['producer_context']['journal']==expected['journal']]
     if prewire:
@@ -634,7 +634,7 @@ def lineage(c,expected,original,*,ledger_locked=None):
             b,r,h=_prewire_lineage(c,v,original)
             if any(k in bindings and bindings[k]!=x for k,x in b.items()):raise ValueError('Conflicting pre-entry lineage')
             bindings.update(b);retired.update(r);contexts.update(h)
-        return bindings,retired,contexts
+        return bindings|performance_bindings,retired,contexts|performance_contexts
     with closing(store.connect()) as ec:latest=[v for v in rows(ec) if v['association']==REVIEWED_DECODE_GAP and v['producer_context']['journal']==expected['journal']]
     if latest:
         if len(latest)!=1:raise ValueError('Ambiguous decoder-gap continuation')
