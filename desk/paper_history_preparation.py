@@ -1,6 +1,6 @@
 """History-first preparation under the enclosing cycle's continuous locks."""
 from dataclasses import replace
-import math,time,uuid
+import math,sqlite3,time,uuid
 from . import paper_cycle as cycle, paper_history_source
 from .paper_history_source import PaperHistorySource
 from . import history_preparation_rejection as rejection
@@ -76,6 +76,7 @@ def prepare(store,progress,ledger_db,cfg,item,*,research_db,pacing_path):
         ledger_before = None
     try:
         as_of, _, _ = cycle._history(progress, item, budget, PaperHistorySource)
+        if as_of != item.history_as_of: raise ValueError('Captured history changed')    # T22H L2: inside the held try
     except PreparationRejected as error:
         try:
             result = rejection.publish(store,progress,ledger_db,cfg,pass_id=identity,
@@ -92,7 +93,6 @@ def prepare(store,progress,ledger_db,cfg,item,*,research_db,pacing_path):
         # FAILED_CHARGED when provable (never for integrity causes); the failure still propagates.
         cycle._close_failed(store,progress,identity,error,(),ledger_before)
         raise
-    if as_of != item.history_as_of: raise ValueError('Captured history changed')
     outcome = store.save({'kind':'history_first_paper_preparation_outcome_v1',
                           'intent_hash':intent, 'history_as_of':as_of,
                           'admission':progress.admission(item.target.scan_id)})

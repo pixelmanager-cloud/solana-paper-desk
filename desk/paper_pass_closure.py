@@ -72,14 +72,15 @@ TRANSIENT_CAUSES = frozenset({
     'INVESTIGATION_REQUEST_BUDGET_EXHAUSTED', 'CYCLE_REQUEST_BUDGET_EXHAUSTED', 'SHARED_REQUEST_BUDGET_EXHAUSTED',
     'MONITORING_REQUEST_BUDGET_EXHAUSTED', 'UNRESOLVED_QUOTE_DEMAND', 'UNRESOLVED_POSITION_EXIT',
     'SOURCE_RESPONSE_STALE', 'HELD_OBSERVATION_CONTENT_REJECTED', 'CYCLE_DEADLINE_UNAVAILABLE',
-    'HISTORY_PREPARATION_DEADLINE_UNAVAILABLE', 'HISTORY_RECOVERY_REQUIRED',     # the pager's own RETRYABLE_ERROR state
+    'HISTORY_PREPARATION_DEADLINE_UNAVAILABLE',
     # dispatcher typed outcomes after the intent was written
     'CANDIDATE_EXPIRED_DURING_PREPARATION', 'ACQUISITION_INCOMPLETE',
-    'SOURCE_REQUEST_FAILED', 'HTTP_REJECTED'})        # these two additionally need transient attempt evidence
+    'SOURCE_REQUEST_FAILED', 'HTTP_REJECTED',         # these additionally need transient attempt evidence
+    'HISTORY_RECOVERY_REQUIRED'})                     # T22H: the pager's RETRYABLE_ERROR state, evidence-bearing since T22H
 # Causes that say only THAT a read failed, not why. They may retire a pass only when the retained attempt original(s)
 # prove every failed read was transient (network error, 408/429/5xx); TLS, auth, malformed and unclassified failures,
 # or the absence of an original, keep the pass latched.
-EVIDENCE_CAUSES = frozenset({'SOURCE_REQUEST_FAILED', 'HTTP_REJECTED'})
+EVIDENCE_CAUSES = frozenset({'SOURCE_REQUEST_FAILED', 'HTTP_REJECTED', 'HISTORY_RECOVERY_REQUIRED'})
 # Diagnostic blockers that are not producer vocabulary but are ordinary control facts.
 CONTROL_DIAGNOSTICS = frozenset({'ENTRY_CONTROL_OR_EXISTING_POSITION'})
 HOLD_SENTINEL = '.hold-pending.'
@@ -119,6 +120,9 @@ def classify(error, store=None):
     if type(code) is str and 1 <= len(code) <= 128:
         if code == 'HTTP_REJECTED' and _transient_http(store, getattr(error, 'evidence_hash', None)):
             return 'HTTP_TRANSIENT', True
+        if code == 'HISTORY_RECOVERY_REQUIRED':        # transient only when the failed page's retained original says so
+            evidence = getattr(error, 'evidence_hash', None)
+            return code, type(evidence) is str and store is not None and failed_reads_transient(store, [evidence])
         return code, code in TRANSIENT_CAUSES and code not in EVIDENCE_CAUSES
     from urllib.error import HTTPError
     if isinstance(error, HTTPError):
@@ -358,6 +362,8 @@ def _verify(store, progress, rec, *, row=None, ledger=True):
         refs_by_scan[scan][used] = key
     if rec['status'] == 'FAILED_CHARGED' and rec['cause'] in EVIDENCE_CAUSES and not failed_reads_transient(store, rec['attempt_refs']):
         raise ValueError('Pass closure failed read is not proven transient')
+    if rec['status'] == 'FAILED_CHARGED':
+        _consistent(rec['cause'], rec['scans'])
     monitoring = rec['monitoring']
     if monitoring is not None:
         first = intent.get('monitoring_total')
@@ -383,6 +389,17 @@ def _verify(store, progress, rec, *, row=None, ledger=True):
     if retired is not None and (rec['role'] != 'ENTRY' or rec['status'] != 'FAILED_CHARGED' or set(rec['scans']) != {retired}):
         raise ValueError('Pass closure retirement binding')
     return intent
+
+
+def _consistent(cause, scans):
+    """T22H L5: the necessary charge conditions of a budget cause (the same ones publish's `_consistent` demands of a no-entry)."""
+    charged = sum(w['after'] - w['before'] for w in scans.values())
+    if cause == 'INVESTIGATION_REQUEST_BUDGET_EXHAUSTED' and not any(w['after'] >= 18 for w in scans.values()):
+        raise HoldRequired('Investigation budget exhaustion requires the full ceiling charged')
+    if cause == 'CYCLE_REQUEST_BUDGET_EXHAUSTED' and charged < 18:
+        raise HoldRequired('Cycle budget exhaustion requires eighteen charged requests')
+    if cause == 'FEATURE_HISTORY_PAGE_LIMIT' and charged < 8:
+        raise HoldRequired('History page limit requires at least eight charged requests')
 
 
 def close(store, progress, *, pass_id, status, cause, result_hash=None, attempt_refs=(), ledger_before=None):
@@ -520,19 +537,73 @@ def hold_durably(store, *, pass_id, cause, result_hash=None, attempts=3):
             return False                       # already bound or not an unresolved pass: nothing to protect
         except (ValueError, OSError, sqlite3.Error):
             time.sleep(0.05 * (attempt + 1))
+    return write_sentinel(store, pass_id, cause)
+
+
+def write_sentinel(store, pass_id, cause):
+    """fsynced `<evidence db>.hold-pending.<pass_id>`: recover_abandoned never abandons a pass that has one. Never raises."""
     try:
         import os
-        fd = os.open(sentinel_path(store, pass_id), os.O_WRONLY | os.O_CREAT | os.O_EXCL, 0o640)
+        path = sentinel_path(store, pass_id)
+        fd = os.open(path, os.O_WRONLY | os.O_CREAT | os.O_EXCL, 0o640)
         try:
             os.write(fd, canonical({'pass_id': pass_id, 'cause': str(cause)[:128]}).encode())
             os.fsync(fd)
         finally:
             os.close(fd)
+        dfd = os.open(os.path.dirname(path) or '.', os.O_RDONLY)
+        try:
+            os.fsync(dfd)
+        finally:
+            os.close(dfd)
     except FileExistsError:
         pass
     except OSError:
         return False
     return True
+
+
+def result_requires_hold(store, result, intent_hash, attempt_refs=()):
+    """True when a BLOCKED result with charges can NOT be closed FAILED_CHARGED (so its pass must be held).
+
+    Same decision as `_close_unfinished` makes after the result is saved; paper_cycle uses it to write the hold sentinel
+    BEFORE the result is saved, so a kill between the two can never leave a pass that recovery would abandon (T22H L4).
+    Uncertainty answers True: a needless sentinel on a pass that is then closed is harmless.
+    """
+    try:
+        causes = list(result['blockers'])
+        if result['status'] == 'RECOVERY_REQUIRED' or not causes:
+            return True
+        hazards = declared_hazards(terminal._load(store, intent_hash))
+        if not nested_blockers_clear(result, hazards):
+            return True
+        cause = causes[0]
+        if is_integrity(cause) or cause not in TRANSIENT_CAUSES:
+            return True
+        if cause in EVIDENCE_CAUSES and not failed_reads_transient(store, tuple(attempt_refs)):
+            return True
+        return False
+    except Exception:
+        return True
+
+
+def latching_attempt_for_scan(store, scan, limit=20000):
+    """True if the newest `limit` retained pages hold a LATCHING failed read attempt of this scan (or cannot be read)."""
+    from .monitoring_budget import _latching_failure
+    try:
+        with closing(store.connect()) as c:
+            keys = [r[0] for r in c.execute('SELECT hash FROM pages ORDER BY rowid DESC LIMIT ?', (limit,))]
+    except sqlite3.Error:
+        return True
+    for key in keys:
+        try:
+            record = store.load(key)
+        except (ValueError, OSError, sqlite3.Error):
+            continue                                     # not a readable page of ours; integrity is the gate's business
+        if (type(record) is dict and record.get('kind') == 'paper_read_attempt_v1' and record.get('scan_id') == scan
+                and record.get('failure_code') is not None and _latching_failure(record)):
+            return True
+    return False
 
 
 def sentinel_path(store, pass_id):
@@ -552,10 +623,11 @@ def recover_abandoned(store, progress, *, ledger_db, cfg, clock, research_db):
             return outcome
         skip = {r[0] for r in _table_rows(c) if r[3] == HOLD} | certified_ids(c)
         import os
-        skip |= {r[0] for r in c.execute('SELECT id FROM paper_observation_passes WHERE outcome_hash IS NULL LIMIT 1024')
-                 if os.path.exists(sentinel_path(store, r[0]))}      # a hold that could not be written stays a hold
-        pending = [r[0] for r in c.execute('SELECT id FROM paper_observation_passes WHERE outcome_hash IS NULL ORDER BY rowid LIMIT 1024')
-                   if r[0] not in skip]
+        # T22H L3: sentinels are checked over the SAME ordered set that `pending` is taken from (an unordered LIMIT could
+        # skip a different 1024 rows and let a sentinel-held pass through)
+        ordered = [r[0] for r in c.execute('SELECT id FROM paper_observation_passes WHERE outcome_hash IS NULL ORDER BY rowid LIMIT 1024')]
+        skip |= {i for i in ordered if os.path.exists(sentinel_path(store, i))}      # a hold that could not be written stays a hold
+        pending = [i for i in ordered if i not in skip]
         has_monitoring = bool(c.execute("SELECT 1 FROM sqlite_master WHERE type='table' AND name='paper_monitoring_outcomes'").fetchone())
         dangling = has_monitoring and c.execute('SELECT 1 FROM paper_monitoring_reservations r LEFT JOIN paper_monitoring_outcomes o '
                                                 'ON o.reservation_id=r.id WHERE o.reservation_id IS NULL LIMIT 1').fetchone()
