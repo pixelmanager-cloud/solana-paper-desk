@@ -20,20 +20,34 @@ copy directory is bind-mounted over ``--data``: the live files are not even
 visible to the child. Where namespaces are unavailable the tool refuses unless
 ``--no-namespace`` is given; that mode only works for stores that bind no
 absolute paths and reports ``isolation: NONE``. Device/inode identities of the
-copies differ from live files, so ``paths``/``journal`` are excluded from the
-journal-context comparison (the excluded names are reported).
+copies differ from live files, so only ``paths.*.device``, ``paths.*.inode`` and
+the config copy's path are excluded from the journal-context comparison (reported
+as ``excluded_context_fields``). The store paths and the journal path ARE compared.
+
+Requirements: the namespace mode needs Linux ``unshare`` + ``mount`` and either
+euid 0 (the VPS case: stores are owned by ``solana-desk``, the tool runs as root,
+so ownership is checked against ``--expect-owner``, default the owner of ``--data``)
+or unprivileged user namespaces. Where that probe fails the namespace tests skip.
+
+Live-store safety: a plain read-only open of a WAL database creates ``-wal``/``-shm``
+beside it (root-owned when run as root, which the service user cannot write).
+Sources without a ``-wal``/``-journal`` file are therefore read with
+``immutable=1`` (no sidecars); any sidecar or other file that still appears under
+``--data`` is a blocker, and live sources are re-hashed (sha256) after the run.
 """
+import sys
+sys.dont_write_bytecode = True   # the parent must not write bytecode beside live code/data either
 import argparse
 from contextlib import closing
 import hashlib
 import json
 import os
 from pathlib import Path
+import pwd
 import shutil
 import sqlite3
 import stat
 import subprocess
-import sys
 import time
 
 MAX_FILES = 64
@@ -45,7 +59,22 @@ RESULT_PREFIX = 'PREFLIGHT_RESULT:'
 # Only device/inode identities and the config copy's path legitimately differ on copies.
 SKIPPED_CONTEXT_FIELDS = ('paths.*.device', 'paths.*.inode', 'paths.config.path')
 
-CHILD = r'''
+# Resolves the directory behind a dir_fd. /proc/self/fd exists only on Linux; macOS needs F_GETPATH.
+# Anything else fails closed (the hook then refuses the mutation).
+FD_PATH_HELPER = r'''
+def fd_path(fd, platform=None, fcntl_module=None):
+    platform = sys.platform if platform is None else platform
+    if platform.startswith('linux'):
+        return os.readlink('/proc/self/fd/%d' % fd)
+    if platform == 'darwin':
+        fcntl_module = fcntl_module if fcntl_module is not None else __import__('fcntl')
+        if hasattr(fcntl_module, 'F_GETPATH'):
+            raw = fcntl_module.fcntl(fd, fcntl_module.F_GETPATH, b'\0' * 1024)
+            return os.fsdecode(raw.split(b'\0', 1)[0])
+    raise OSError('dir_fd path resolution unsupported on ' + platform)
+'''
+
+CHILD_TEMPLATE = r'''
 import contextlib, io, json, os, sys, time
 from pathlib import Path
 from urllib.parse import unquote, urlparse
@@ -62,6 +91,8 @@ MUTATE = {'os.remove': [(0, 1)], 'os.rmdir': [(0, 1)], 'os.mkdir': [(0, 2)], 'os
           'os.symlink': [(1, 2)], 'shutil.copyfile': [(0, None), (1, None)], 'shutil.copytree': [(0, None), (1, None)],
           'shutil.move': [(0, None), (1, None)], 'shutil.rmtree': [(0, None)]}
 WRITE = os.O_WRONLY | os.O_RDWR | os.O_CREAT | os.O_APPEND | os.O_TRUNC
+
+#FD_PATH_HELPER#
 
 def inside(p):
     try:
@@ -103,7 +134,7 @@ def hook(event, args):
             fd = args[fd_index] if fd_index is not None and fd_index < len(args) else None
             if isinstance(fd, int) and not isinstance(fd, bool) and fd >= 0 and not os.path.isabs(target):
                 try:
-                    target = os.path.join(os.readlink('/proc/self/fd/%d' % fd), target)
+                    target = os.path.join(fd_path(fd), target)
                 except OSError:
                     refuse('MUTATION_OUTSIDE_WORKDIR', event, 'unresolvable dir_fd')
             if not inside(target):
@@ -216,10 +247,39 @@ if result['stages']['import']['ok']:
     run('scheduler', scheduler_stage)
 sys.stdout.write('\n' + spec['prefix'] + json.dumps(result, sort_keys=True) + '\n')
 '''
+CHILD = CHILD_TEMPLATE.replace('#FD_PATH_HELPER#', FD_PATH_HELPER)
 
 
 class Refused(Exception):
     pass
+
+
+class PendingUnreadable(Exception):
+    pass
+
+
+# Injection points for tests: ownership is checked against the EXPECTED service user, never euid
+# (the tool runs as root on the VPS while the stores belong to ``solana-desk``).
+_stat = os.lstat
+_getpwnam = pwd.getpwnam
+SIDECAR_SUFFIXES = ('-wal', '-shm', '-journal')
+BOOTSTRAP_HINTS = {
+    'scheduler_lock': 'created with mode 0600 by the fresh-start bootstrap (tools.ops.fresh_start apply, '
+                      'T13F pre-creates the lock); this tool never creates it in the live tree',
+    'journal': 'created and activated by the fresh-start bootstrap (tools.ops.fresh_start apply, T13F '
+               'activates the dispatcher journal context); this tool has no bypass',
+}
+
+
+def expected_owner(spec, data):
+    if spec is None:
+        return _stat(data).st_uid, 'DATA_OWNER'
+    if spec.isdigit():
+        return int(spec), 'FLAG_UID'
+    try:
+        return _getpwnam(spec).pw_uid, 'FLAG_USER'
+    except KeyError:
+        raise Refused('--expect-owner user not found: ' + spec) from None
 
 
 def namespace_prefix():
@@ -279,6 +339,17 @@ def _sha256(path):
     return h.hexdigest()
 
 
+def _source_state(path):
+    """Content identity of a live source: size, mtime and sha256 of the file and of its -wal."""
+    info = path.stat()
+    wal = path.with_name(path.name + '-wal')
+    try:
+        wal_state = (wal.stat().st_size, _sha256(wal))
+    except FileNotFoundError:
+        wal_state = None
+    return info.st_size, info.st_mtime_ns, _sha256(path), wal_state
+
+
 def _copy(data, work, sources):
     copies = []
     for src in sources:
@@ -286,28 +357,33 @@ def _copy(data, work, sources):
         dst = work / rel
         dst.parent.mkdir(mode=0o700, parents=True, exist_ok=True)
         os.chmod(dst.parent, 0o700)
-        with closing(sqlite3.connect(src.as_uri() + '?mode=ro', uri=True)) as source, \
+        # No -wal/-journal beside the source means nothing can be pending in a sidecar, so read it
+        # immutable: SQLite then creates no -wal/-shm next to a live store (and none owned by root).
+        quiet = not any(src.with_name(src.name + suffix).exists() for suffix in ('-wal', '-journal'))
+        mode = 'mode=ro&immutable=1' if quiet else 'mode=ro'
+        with closing(sqlite3.connect(src.as_uri() + '?' + mode, uri=True)) as source, \
                 closing(sqlite3.connect(dst)) as target:
             source.backup(target)
         os.chmod(dst, 0o600)
-        copies.append({'path': str(rel), 'bytes': dst.stat().st_size, 'sha256': _sha256(dst)})
+        copies.append({'path': str(rel), 'bytes': dst.stat().st_size, 'sha256': _sha256(dst),
+                       'read_mode': 'IMMUTABLE_NO_SIDECARS' if quiet else 'READ_ONLY_SIDECAR_PRESENT'})
     return copies
 
 
-def _live_findings(data, names, sources):
+def _live_findings(data, names, uid):
     """Modes/links the copy would mask (copies are forced to 0600/0700)."""
     found = []
     def bad(label, path, forbidden, exact=None):
         try:
-            info = path.lstat()
+            info = _stat(path)
         except OSError:
             found.append(f'{label}:MISSING')
             return
         mode = stat.S_IMODE(info.st_mode)
         if (exact is not None and mode != exact) or mode & forbidden or info.st_nlink != 1 and path.is_file():
             found.append(f'{label}:MODE_{mode:o}_LINKS_{info.st_nlink}')
-        if path.is_file() and info.st_uid != os.geteuid():
-            found.append(f'{label}:OWNER')
+        if path.is_file() and info.st_uid != uid:
+            found.append(f'{label}:OWNER_{info.st_uid}_EXPECTED_{uid}')
     journal = data / names['journal']
     if journal.exists():
         bad('journal', journal, 0o077)
@@ -319,13 +395,32 @@ def _live_findings(data, names, sources):
 
 
 def _pending(evidence):
+    """NULL pass ids from the COPY. A fresh store has no table yet (nothing pending); any read
+    error is NOT 'nothing pending': it raises so the caller can block."""
     try:
         with closing(sqlite3.connect(evidence.as_uri() + '?mode=ro', uri=True)) as c:
+            if c.execute("SELECT 1 FROM sqlite_master WHERE type='table' AND name='paper_observation_passes'"
+                         ).fetchone() is None:
+                return [], False
             rows = c.execute('SELECT id FROM paper_observation_passes WHERE outcome_hash IS NULL '
                              'ORDER BY rowid LIMIT ?', (MAX_PENDING + 1,)).fetchall()
-    except sqlite3.Error:
-        return [], False
+    except sqlite3.Error as error:
+        raise PendingUnreadable(type(error).__name__) from None
     return [r[0] for r in rows[:MAX_PENDING]], len(rows) > MAX_PENDING
+
+
+def _details(data, names, blockers):
+    """Say exactly what is missing and which bootstrap step creates it (never a bypass)."""
+    details = []
+    for blocker in blockers:
+        if blocker == 'LIVE_scheduler_lock:MISSING':
+            path, hint = (names['research_db'].parent / 'paper-scheduler.lock'), BOOTSTRAP_HINTS['scheduler_lock']
+        elif blocker == 'JOURNAL_ABSENT':
+            path, hint = names['journal'], BOOTSTRAP_HINTS['journal']
+        else:
+            continue
+        details.append({'blocker': blocker, 'missing': str(path), 'under': str(data), 'created_by': hint})
+    return details
 
 
 def _blockers(stages, violations):
@@ -389,15 +484,18 @@ def run(args):
     present_rel = {p.relative_to(data) for p in sources}
     for key, rel in names.items():
         if key != 'journal' and rel not in present_rel:
-            raise Refused(f'Required store missing under --data: {rel}')
-    before = {str(p): (p.stat().st_size, p.stat().st_mtime_ns) for p in sources}
+            raise Refused(f'Required store missing under --data: {rel} (a fresh store set is created by the '
+                          'fresh-start bootstrap, tools.ops.fresh_start apply)')
+    uid, owner_source = expected_owner(args.expect_owner, data)
+    before = {str(p): _source_state(p) for p in sources}
     listing_before = {str(p) for p in data.rglob('*')}
-    findings = _live_findings(data, names, sources)
+    findings = _live_findings(data, names, uid)
     work.mkdir(mode=0o700)
     os.chmod(work, 0o700)
     report = {'kind': 'preflight_dryrun_v1', 'paper_only': True, 'execution_status': 'EXECUTION_UNVERIFIED',
               'live_readiness': False, 'workdir': str(work), 'kept': bool(args.keep),
-              'isolation': 'MOUNT_NAMESPACE' if prefix else 'NONE'}
+              'isolation': 'MOUNT_NAMESPACE' if prefix else 'NONE',
+              'expected_owner': {'uid': uid, 'source': owner_source}}
     try:
         (work / 'tmp').mkdir(mode=0o700)
         copy_started = time.monotonic()
@@ -439,14 +537,24 @@ def run(args):
             raise Refused('Child produced no result (exit %s): %s' % (proc.returncode, proc.stderr.strip()[-300:]))
         child = json.loads(lines[0][len(RESULT_PREFIX):])
         stages, violations = child['stages'], child['violations']
-        pending, truncated = _pending(work / names['evidence_db'])
+        try:
+            pending, truncated = _pending(work / names['evidence_db'])
+            unreadable = False
+        except PendingUnreadable:
+            pending, truncated, unreadable = [], False, True   # unreadable is NOT 'nothing pending'
         blockers = _blockers(stages, violations) + ['LIVE_' + f for f in findings]
+        if unreadable:
+            blockers.append('PENDING_UNREADABLE')
+        if not (data / names['journal']).exists() and 'JOURNAL_ABSENT' not in blockers:
+            blockers.append('JOURNAL_ABSENT')   # reported even when a stage failed before looking
         report.update({
             'status': 'GUARD_VIOLATION' if violations else ('PASS' if not blockers else 'BLOCKED'),
             'blockers': blockers, 'implementation_hash': child.get('implementation_hash'),
             'gate': stages.get('gate'), 'preflight': stages.get('preflight'), 'scheduler': stages.get('scheduler'),
             'import': stages.get('import'), 'guard_violations': violations,
             'pending_null_pass_ids': pending, 'pending_null_pass_ids_truncated': truncated,
+            'pending_null_pass_ids_readable': not unreadable,
+            'blocker_details': _details(data, names, blockers),
             'excluded_context_fields': list(SKIPPED_CONTEXT_FIELDS),
             'timing': {'child_seconds': child_seconds, 'copy_seconds': report['copy']['seconds'],
                        'total_seconds': round(time.monotonic() - started, 3)}})
@@ -454,17 +562,20 @@ def run(args):
         if not args.keep:
             shutil.rmtree(work, ignore_errors=True)
             report['workdir_removed'] = not work.exists()
-    after = {str(p): (p.stat().st_size, p.stat().st_mtime_ns) for p in sources}
+    after = {str(p): _source_state(p) for p in sources}
     report['live_sources_unchanged'] = before == after
-    # A reader of a WAL database may create -wal/-shm beside it; report, never hide.
-    report['live_sidecars_created'] = sorted(str(Path(x).relative_to(data)) for x in
-                                             {str(p) for p in data.rglob('*')} - listing_before)
+    created = sorted(str(Path(x).relative_to(data)) for x in {str(p) for p in data.rglob('*')} - listing_before)
+    sidecars = [x for x in created if x.endswith(SIDECAR_SUFFIXES)]
+    report['live_sidecars_created'] = sidecars
+    report['live_files_created'] = [x for x in created if x not in sidecars]
     report['live_permission_findings'] = findings
-    if before != after:
-        # Live writers moved while copying: copies may be cross-store inconsistent. Fail closed.
-        report['status'] = 'BLOCKED'
-        report['blockers'] = report['blockers'] + ['LIVE_SOURCE_CHANGED_DURING_RUN']
-    elif findings and report['status'] == 'PASS':
+    extra = (['LIVE_SOURCE_CHANGED_DURING_RUN'] if before != after else []) \
+        + ['LIVE_SIDECAR_CREATED:' + x for x in sidecars] + ['LIVE_FILE_CREATED:' + x for x in report['live_files_created']]
+    if extra:
+        # Live writers moved while copying (copies may be cross-store inconsistent) or this tool left
+        # files beside a live store (a root-owned -wal/-shm can lock the service user out): fail closed.
+        report['blockers'] = report['blockers'] + extra
+    if (extra or findings) and report['status'] == 'PASS':
         report['status'] = 'BLOCKED'
     return report
 
@@ -484,6 +595,8 @@ def main(argv=None):
     p.add_argument('--pacing-db', default='provider-pacing.sqlite')
     p.add_argument('--discovery-db', default='discovery/continuous.sqlite')
     p.add_argument('--journal', default='entry-dispatch/dispatch.sqlite')
+    p.add_argument('--expect-owner', help='user name or numeric uid that must own the live store files '
+                   '(default: the owner of --data; never the uid this tool runs as)')
     p.add_argument('--taker')
     p.add_argument('--amount-raw', type=int)
     p.add_argument('--pool-fee-bps')
