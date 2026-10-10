@@ -1070,6 +1070,7 @@ Required:
 9. **Healthcheck watchdog.** A dead healthcheck timer must be detected within 15 minutes (a separate watchdog timer or a systemd `OnFailure=`), not only by the daily summary.
 10. **Rollback docs.** Document that rendered unit files stay installed after rollback, or remove them.
 11. **Unit file check.** The RUNBOOK includes `systemd-analyze verify` for every rendered unit, and the e2e test checks the systemd quoting of the backup unit's `python -c` line.
+11b. **Research units.** The research templates merged later (`deploy/fresh/desk-counterfactual.*`, `desk-held-watcher.*`) still use `/var/lib/solana-desk/exp-FRESH` (inside the archived root). Move them to the fresh-root layout, and include them in the render/cutover flow as OPTIONAL units: off by default, and enabled only by an explicit RUNBOOK step.
 12. **E2E realism.** The e2e must not turn `mkdir`/`cp`/`ls`/`is-active` into no-ops where avoidable. Run the real filesystem commands inside the sandbox root, cover stage and rotate, and include `--chown`, which is simulated by asserting the intended owner in a fake chown layer.
 
 ---
