@@ -125,11 +125,14 @@ class PostIntentTerminal(held.CheckpointTerminalResult):
         self.assertEqual(tool.bounded_checkpoint_record('a' * 32, intent, 'b' * 32, 'intake', halt, size), full)
 
     def test_the_size_bound_in_the_dispatcher_still_publishes_a_terminal_result(self):
+        """An impossible payload bound forces the minimal record path; the intent still ends terminally (and the record is valid)."""
         self.book()
-        with self.real_pass_with(code=2), patch.object(tool, 'MAX_PAYLOAD', 480):
+        real = tool.bounded_checkpoint_record
+        with self.real_pass_with(code=2), patch.object(tool, 'bounded_checkpoint_record', lambda i, t, s, p, h, limit: real(i, t, s, p, h, 1)):
             result = self.timed_dispatch(acquisition=70, intake=40, caps=held.SLOW_CAPS, real_held=True)
         self.assertEqual(result['paper_status'], 'NO_ENTRY')
         self.assertEqual(len(self.journal_results()[-1]['result']['reasons']), 1)
+        self.assert_not_orphaned()
 
     def test_the_dispatch_rate_bound_that_the_reserve_assumes_is_enforced_before_the_intent(self):
         self.book()

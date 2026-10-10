@@ -320,7 +320,7 @@ class ThreePositionRestart(Latency):
         crashed = self.totals()
         self.assertEqual(crashed[1][0] - crashed[1][1], 1, 'one reservation without an outcome')
         self.assertEqual((crashed[0], crashed[2:]), (base[0], base[2:]))      # nothing else moved
-        self.f.at += 70                                              # restart: the next tick's legs
+        self.f.at += 20                                              # restart inside the 60 s abandonment window
         for mint in pc.held_order(cycle._state(self.ledger, self.cfg)['positions']):
             leg = self.held_leg(mint)
             self.assertEqual((leg['status'], leg['attempted_requests']), ('RECOVERY_REQUIRED', 0), leg)
@@ -330,6 +330,16 @@ class ThreePositionRestart(Latency):
             self.timed_dispatch(intents=4, raw=self.second_raw)
         self.assertEqual(self.totals(), crashed, 'a pending monitoring outcome also refuses every new entry before any charge')
         self.assertEqual(len(cycle._state(self.ledger, self.cfg)['positions']), 3)
+        # After ABANDON_AFTER_SECONDS (T22G's reviewed rule, merged in T16I) the orphan is closed as ABANDONED_CHARGED: it
+        # stays charged (never refunded, never repeated), and the held legs resume with their own five requests each.
+        self.f.at += 60
+        first = pc.held_order(cycle._state(self.ledger, self.cfg)['positions'])[0]
+        leg = self.held_leg(first)
+        self.assertEqual((leg['status'], leg['monitoring_attempted_requests']), ('COMPLETE', 5), leg)
+        after = self.totals()
+        self.assertEqual(after[1][0], crashed[1][0] + 5)                     # the orphan's reservation is still counted
+        self.assertEqual(after[1][1], crashed[1][1] + 6)                     # its ABANDONED_CHARGED outcome + the leg's five
+        self.assertEqual((after[0], after[2]), (crashed[0], crashed[2]))      # no investigation charge, no fill
 
     def test_interrupted_entry_restart_never_repeats_the_intent_or_its_charges(self):
         self.three_positions(upto=2)
