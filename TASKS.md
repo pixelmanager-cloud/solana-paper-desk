@@ -273,8 +273,9 @@ Review T01 as an adversary. Can a category-(b) integrity condition be mislabelle
 
 ## T14 — Execution-realism measurement (latency-adjusted paper fills)
 STATUS: OPEN
-DEPENDS: branch `cloud/T01` has a `DONE T01:` commit (this task touches the fill path near T01's files; rebase onto it)
-BASE: origin/cloud/T01
+DEPENDS: none (unblocked by the coordinator for speed)
+BASE: r1-base
+NOTE: T01 is being developed in parallel and may edit desk/paper_cycle.py, desk/paper_terminal_reconciliation.py and the dispatcher's gate handling. Keep your edits to those files minimal and well-separated (new functions or modules, not rewrites), so the coordinator can merge both cleanly.
 OWNS: desk/quote_execution.py, a new desk/fill_realism.py, the related tests, and tools/research/fill_realism_report.py
 AVOID: desk/paper_terminal_reconciliation.py and T13's files
 
@@ -315,8 +316,9 @@ Be concrete, with file:line references. Be harsh about the risks.
 
 ## T16 — Concurrent multi-position trading (entries while holding)
 STATUS: OPEN
-DEPENDS: branch `cloud/T01` has a `DONE T01:` commit
-BASE: origin/cloud/T01
+DEPENDS: none (unblocked by the coordinator for speed)
+BASE: r1-base
+NOTE: T01 is being developed in parallel and may edit desk/paper_cycle.py, desk/paper_terminal_reconciliation.py and the dispatcher's gate handling. Keep your edits to those files minimal and well-separated (new functions or modules, not rewrites), so the coordinator can merge both cleanly.
 OWNS: tools/paper_scheduler.py, tools/paper_entry_dispatcher.py, tools/history_first_paper_entry.py, desk/paper_scheduler.py, desk/paper_monitor_service.py, the related tests, and docs/MULTI_POSITION.md
 AVOID: desk/paper_terminal_reconciliation.py, T13's and T14's files. Touch desk/paper_cycle.py only for the per-item held-mint gate, and say so in the report.
 
