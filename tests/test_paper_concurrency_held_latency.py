@@ -223,6 +223,28 @@ class CheckpointTerminalResult(Latency):
         self.assertEqual(sorted(halt['reasons']), ['HELD_EXIT_UNRESOLVED', 'MONITORING_BLOCKED'])
         self.assertEqual(halt['exit_code'], 0)
 
+    def test_the_checkpoint_before_the_cycle_halts_with_the_preparation_phase(self):
+        self.book()
+        with self.real_pass_with(code=2):
+            result = self.timed_dispatch(acquisition=45, intake=40, caps={'acquisition': 80.0, 'intake': 50.0}, real_held=True)
+        self.assertEqual((result['paper_status'], result['checkpoint_no_entry']['phase'], result['checkpoint_no_entry']['reasons']),
+                         ('NO_ENTRY', 'preparation', ['HELD_PASS_NONZERO']))
+        self.assert_not_orphaned()
+
+    def test_checkpoint_record_binding_and_shape_are_verified(self):
+        intent = {'version': 1, 'at': 1.0}
+        halt = {'reasons': ['HELD_PASS_NONZERO'], 'ran': True, 'exit_code': 2, 'mode': 'RUNNING'}
+        good = tool.checkpoint_record('a' * 32, intent, 'b' * 32, 'intake', halt)
+        valid = lambda r, d='a' * 32, s='b' * 32, h=tool.digest(intent): tool._checkpoint_record_valid(r, d, s, h)
+        self.assertTrue(valid(good))
+        self.assertFalse(valid(good, d='c' * 32))
+        self.assertFalse(valid(good, s='c' * 32))
+        self.assertFalse(valid(good, h='0' * 64))
+        for change in ({'phase': 'cycle'}, {'reasons': []}, {'reasons': ['NOPE']}, {'reasons': ['MONITORING_BLOCKED', 'HELD_PASS_NONZERO']},
+                       {'entry_authorized': True}, {'no_retry': False}, {'version': 2}, {'kind': 'x'}, {'extra': 1},
+                       {'held_pass': {'ran': True}}, {'held_pass': {'ran': 1, 'exit_code': 2}}, {'mode': 3}):
+            self.assertFalse(valid({**good, **change}), change)
+
     def test_acquisition_overrun_is_cut_with_a_terminal_no_entry(self):
         self.book()
         result = self.timed_dispatch(acquisition=70)                    # default cap 30 s
@@ -253,7 +275,9 @@ class CheckpointTerminalResult(Latency):
             result = self.timed_dispatch(acquisition=0, intake=0, prep_cycle=0)
         self.assertEqual(result['checkpoint_no_entry']['reasons'], ['PHASE_CAP_EXCEEDED'])
         self.assertEqual(result['checkpoint_no_entry']['phase'], 'acquisition')
-        self.assertLessEqual(len(calls), 3, 'the second request after the 30 s cap never started')
+        provider_calls = [c for c in self.calls if c != 'intake']
+        self.assertEqual(len(calls), 2, 'the guard ran for two requests; the third started after the 30 s cap and was cut')
+        self.assertEqual(len(provider_calls), 2)
         self.assert_not_orphaned()
 
     def test_caps_are_enforced_not_just_estimated(self):
