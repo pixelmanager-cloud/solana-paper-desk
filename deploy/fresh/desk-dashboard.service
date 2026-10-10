@@ -13,6 +13,7 @@ WorkingDirectory=<RELEASE_DIR>
 Environment=DESK_PAPER_SCHEDULER_LOCK=<FRESH_ROOT>/paper-scheduler.lock
 Environment=DESK_PAPER_SCHEDULER_IDENTITY=<SCHEDULER_IDENTITY>
 Environment=DESK_PAPER_LEDGER_DB=<FRESH_ROOT>/paper-ledger.sqlite
+Environment=DESK_PROVIDER_PACING_DB=<PACING_DB>
 LoadCredential=provider-keys.json:/etc/solana-desk/provider-keys.json
 ExecStart=/opt/solana-desk/.venv/bin/python -m desk --secrets-file %d/provider-keys.json serve --db <FRESH_ROOT>/research.sqlite --port 8765
 Restart=on-failure
@@ -22,7 +23,8 @@ NoNewPrivileges=true
 PrivateTmp=true
 ProtectSystem=strict
 ProtectHome=true
-ReadWritePaths=<FRESH_ROOT>
+# The shared pacing database uses a rollback journal: SQLite needs its DIRECTORY writable.
+ReadWritePaths=<FRESH_ROOT> <PACING_DIR>
 RestrictAddressFamilies=AF_INET AF_INET6 AF_UNIX
 MemoryMax=384M
 TasksMax=32

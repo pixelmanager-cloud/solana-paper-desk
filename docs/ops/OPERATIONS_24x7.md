@@ -18,6 +18,7 @@ are already running, and starts, verifies and only then enables them.
 | `desk-backup.timer` | yes | every 6 h (`tools.ops.backup`, prunes snapshots older than 7 days only after a successful new one) |
 | `desk-healthcheck.timer` | yes | every 5 min; alerts through `tools.ops.notify` |
 | `desk-notify-daily.timer` | yes | 08:05 UTC summary |
+| `desk-notify-watchdog.timer` | yes | every 5 min, independent of the healthcheck timer; alerts when `health.json` is older than 600 s, so a dead healthcheck is reported within 15 minutes |
 | `desk-paper-entry-dispatcher.timer` | **NO, coordinator only** | the first live-data BUY is a deliberate step (RUNBOOK step 9) |
 | `desk-paper-monitor.timer` | **NO, manual** | stale-mark watchdog; with a slow held cadence it flags every position stale and mode sticks at `EXIT_ONLY` until an operator `RESUME` (T09 F5). `cutover` refuses to start or enable it without `--allow-monitor`; do not pass that before T23 (EXIT_ONLY stickiness) lands |
 
@@ -110,14 +111,20 @@ shared pacing store. Entry runs `--execute --systemd-credentials`; held, entry a
 
 ## Known limitations
 
-- The templates were never loaded by a real systemd; the tests render and parse them. Run `systemd-analyze verify` on the VPS.
+- The templates were never loaded by a real systemd; the tests render and parse them. Run `systemd-analyze verify` on the VPS
+  (RUNBOOK step 7a does, for every desk unit, before cutover).
+- Production units carry a Codex-era drop-in stack; it is MOVED to a verified archive (`cutover archive-dropins`) and never layered on.
+  `cutover rollback --restore-archive` puts it back byte-for-byte; rendered unit files stay installed after a rollback without it.
 - `desk.backup` cannot back up the fresh set (it requires `launches.sqlite`, `raw.sqlite`, `active-paper.sqlite`), so
   `desk-backup.service` uses `tools.ops.backup` from T03. That tool must be present in the release. Shared pacing and discovery
   stores are not part of these snapshots.
 - The manifest argv and the rendered templates now agree (entry carries `--execute --systemd-credentials`, `TimeoutStartSec=600/120`);
   `tests/test_ops_fresh_start_wiring.py::RenderUnitsTests` fails if they drift apart. The shared pacing database uses a rollback journal, so the
   entry and held units must be able to write its DIRECTORY (the archived root); a single-file `ReadWritePaths` would break pacing.
-  The archived stores in that directory are protected by `chmod 0400` and by the cutover archived-store guard instead.
+  The archived stores in that directory are protected by `cutover seal-archive` (root-owned, files 0444, directories 0555; the two
+  directories holding a shared database are `root:solana-desk 1775` so the service can create the journal but the sticky bit stops it
+  deleting or renaming an archived file) and by the cutover archived-store guard. The healthcheck and notify units mount the archived root
+  `ReadOnlyPaths=` (their shared-database reads need no journal write).
 - A malformed `telegram.json` logs a WARNING (never its contents) and falls back to the journal notifier.
 - Investigation daily/lifetime budget headroom is not probed (their tables are not a stable read-only interface); monitoring headroom is.
   The monitoring cap is a threshold (`monitoring_cap`, default 3600), because the stored `cap` column does not reflect the activated allowance.

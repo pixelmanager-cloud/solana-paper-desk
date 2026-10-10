@@ -14,9 +14,11 @@ NoNewPrivileges=true
 PrivateTmp=true
 ProtectSystem=strict
 ProtectHome=true
-# Databases are opened mode=ro but SQLite still needs writable WAL shared-memory files.
-ReadWritePaths=<STATE_DIR> <FRESH_ROOT> <PACING_DIR>
-ReadOnlyPaths=<DISCOVERY_DIR> <BACKUP_ROOT>
+# The fresh stores are WAL databases: even a mode=ro reader needs their -shm files, so only the fresh root is writable.
+# The archived (old) root, which holds the shared pacing/discovery inputs, is read-only: both use a rollback journal,
+# which a read-only open never writes (T32F item 8).
+ReadWritePaths=<STATE_DIR> <FRESH_ROOT>
+ReadOnlyPaths=<ARCHIVED_ROOT> <DISCOVERY_DIR> <BACKUP_ROOT>
 RestrictAddressFamilies=AF_INET AF_INET6 AF_UNIX
 TimeoutStartSec=120
 MemoryMax=128M

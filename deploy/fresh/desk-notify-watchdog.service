@@ -1,0 +1,22 @@
+# Dead-healthcheck watchdog (T32F item 9). desk-healthcheck.service only notifies from its own ExecStopPost, so if its
+# timer dies nothing is ever sent. This unit is driven by a SEPARATE timer, reads the last report and alerts when it
+# is older than 2 x the healthcheck interval (600 s), i.e. a dead healthcheck is reported within 15 minutes
+# (600 s staleness + at most one 300 s watchdog period). Own state file: it never shares de-duplication with the alert unit.
+[Unit]
+Description=Fresh-start desk healthcheck watchdog (alerts when health.json is stale)
+[Service]
+Type=oneshot
+User=solana-desk
+Group=solana-desk
+WorkingDirectory=<RELEASE_DIR>
+ExecStart=/opt/solana-desk/.venv/bin/python -m tools.ops.notify alert --report <STATE_DIR>/health.json --state <STATE_DIR>/watchdog-state.json
+UMask=0077
+NoNewPrivileges=true
+PrivateTmp=true
+ProtectSystem=strict
+ProtectHome=true
+ReadWritePaths=<STATE_DIR>
+ReadOnlyPaths=<FRESH_ROOT> <ARCHIVED_ROOT>
+RestrictAddressFamilies=AF_INET AF_INET6 AF_UNIX
+TimeoutStartSec=60
+MemoryMax=128M

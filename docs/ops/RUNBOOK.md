@@ -26,6 +26,8 @@ LEDGER=$NEW/paper-ledger.sqlite
 PACING=$OLD/provider-pacing.sqlite         # SHARED, never reset or copied
 DISCOVERY=$OLD/discovery/continuous.sqlite # SHARED candidate source
 UNITS=/root/units-$SHA                     # rendered unit files (step 7)
+INV=/var/backups/solana-desk/systemd-inventory-$SHA   # saved ls -la + systemctl cat of every desk unit (step 2)
+SDA=/var/backups/solana-desk/systemd-archive-$SHA     # the Codex-era unit files and drop-in stacks, moved here (step 7a)
 ```
 
 ### Working directory rule (exact cwd for every `python -m tools.ops.*`)
@@ -34,7 +36,11 @@ UNITS=/root/units-$SHA                     # rendered unit files (step 7)
 |---|---|---|
 | `tools.ops.cutover stage` | `$SRC` | The release is not staged yet; run the reviewed checkout of the same commit. |
 | every other `tools.ops.*` command | `$REL` | The ledger, evidence store and dispatcher context record the implementation hash of the code that created them. |
-| `systemctl`, `chmod`, `install`, `cp` | any | |
+| `systemctl`, `install`, `systemd-analyze` | any | |
+
+Read-only tools (`healthcheck`, `status`, `verify_cycle`, `entry_latch`) run as the service user, not as root:
+prefix them with `runuser -u solana-desk --`. A root-run reader can leave root-owned `-shm`/`-wal` files in the
+store directory that the services then cannot open. Mutating steps (`cutover`, `fresh_start`, `backup`) keep running as root.
 
 Never run a tool from `$OLD`, from `/root`, or from a checkout whose `desk/` differs from `$REL/desk/`
 (`implementation_hash()` hashes every `.py` and `.json` under `desk/`; compare with step 1's `runtime_digest`).
@@ -64,7 +70,19 @@ $PY -m tools.ops.cutover --apply stage --tar release-$SHA.tar.gz --sha256 <HASH>
 member names, any symlink or hardlink, colliding or duplicate members, oversize archives and an already-staged commit.
 It prints `runtime_digest`; record it as `DIGEST`. Use `--strip-components 1` for wrapped tarballs.
 
-## 2. Stop writers
+## 2. Inventory, then stop writers
+
+**Inventory first, before anything is changed.** It saves `ls -la` of every `/etc/systemd/system/desk-*` entry (unit files AND
+their `*.d` drop-in directories) and `systemctl cat` of every desk unit, with sha256 per file, to a new `0700` directory:
+
+```
+cd $REL
+$PY -m tools.ops.cutover inventory --out $INV
+$PY -m tools.ops.cutover --apply inventory --out $INV
+```
+
+Production units carry a stack of Codex-era drop-ins (`60-`, `90..99-reviewed-*`, `zz-`, `zzz-`, `zzzz-`) that load after any
+drop-in written by this flow. They are never layered on: step 7a MOVES them to `$SDA`.
 
 Stop everything that writes the OLD stores, timers first. Stopping is deliberate and separate from `cutover`:
 
@@ -74,6 +92,17 @@ systemctl stop desk-paper-entry-dispatcher.timer desk-paper-held-cycle.timer des
 systemctl stop desk-paper-entry-dispatcher.service desk-paper-held-cycle.service desk-paper-monitor.service \
   desk-decisions.service desk-discovery.service desk-recorder.service desk-dashboard.service desk-continuous-discovery.service
 systemctl is-active desk-paper-entry-dispatcher.service desk-paper-held-cycle.service desk-continuous-discovery.service   # expect inactive
+```
+
+Then DISABLE every old unit so a reboot cannot restart anything against the archived stores. The units the fresh set reuses
+(`desk-paper-held-cycle.timer`, `desk-decisions.timer`, `desk-backup.timer`, `desk-dashboard.service`,
+`desk-continuous-discovery.service`) are enabled again by `cutover --enable` in step 7b once they are healthy; the rest
+(`desk-discovery.*`, `desk-recorder.service`, the old monitor and entry timers) stay disabled:
+
+```
+systemctl disable desk-paper-entry-dispatcher.timer desk-paper-held-cycle.timer desk-paper-monitor.timer desk-decisions.timer \
+  desk-discovery.timer desk-backup.timer desk-discovery.service desk-recorder.service desk-dashboard.service desk-continuous-discovery.service
+systemctl is-enabled desk-discovery.timer desk-recorder.service desk-paper-monitor.timer          # expect disabled
 ```
 
 `desk-discovery` (writes `launches.sqlite`) and `desk-recorder` (writes `raw.sqlite`) feed archived stores only; leave them
@@ -87,7 +116,8 @@ cd $REL
 $PY -m tools.ops.backup --data $OLD --destination /var/backups/solana-desk/pre-fresh-$SHA \
   --label "pre-fresh-start $SHA" \
   --require-quiesced desk-paper-entry-dispatcher.service desk-paper-held-cycle.service desk-paper-monitor.service \
-                     desk-decisions.service desk-discovery.service desk-recorder.service desk-continuous-discovery.service \
+                     desk-decisions.service desk-discovery.service desk-recorder.service desk-dashboard.service \
+                     desk-continuous-discovery.service \
   --expect-count 14
 $PY -m tools.ops.verify_backup /var/backups/solana-desk/pre-fresh-$SHA        # must exit 0
 ```
@@ -95,17 +125,24 @@ $PY -m tools.ops.verify_backup /var/backups/solana-desk/pre-fresh-$SHA        # 
 `--expect-count 14` is the 12 production stores plus `demo.sqlite` and `verified-demo.sqlite`. A different count means the
 data directory is not what this runbook assumes: stop and investigate, do not adjust the number to make it pass.
 This destination (`pre-fresh-<sha>`) is the archive of the OLD set; the fresh set's backups go to `$BK` only.
+Continuous discovery and the dashboard are in `--require-quiesced`, so they stay stopped for the whole backup; discovery is
+started again in step 7b against the SHARED `$DISCOVERY` (the DECISION keeps that input shared, so no fresh discovery path exists).
 
-## 4. Mark the old stores read-only
+## 4. Seal the old stores (root-owned, read-only)
 
 ```
-find $OLD -maxdepth 2 -name '*.sqlite' ! -name 'provider-pacing.sqlite' ! -path '*/discovery/*' -exec chmod 0400 {} +
+cd $REL
+$PY -m tools.ops.cutover seal-archive --root $OLD --shared-path $PACING --shared-path $DISCOVERY
+$PY -m tools.ops.cutover --apply seal-archive --root $OLD --shared-path $PACING --shared-path $DISCOVERY
 ```
 
-Never touch `provider-pacing.sqlite` or `discovery/continuous.sqlite`: the new experiment shares them. This `chmod` is the
-only intended change to the old set. (The shared pacing database uses a rollback journal, so the units that use it must be
-allowed to write its DIRECTORY, which is `$OLD`; this `chmod` and the cutover archived-store guard are what keep the
-archived stores from being written.)
+Every archived file becomes `root:root 0444` and every archived directory `root:root 0555`, so the service user cannot modify,
+delete or replace an old store. The two SHARED databases are not touched. The shared pacing database uses a rollback journal
+(`<db>-journal` is created and removed per write), so the service user must be able to create files in its DIRECTORY (`$OLD`),
+and the discovery database the same in `$OLD/discovery`. Those two directories are therefore `root:solana-desk 1775`: group
+write lets the service create the journal; the sticky bit stops it from deleting or renaming any root-owned (archived) file
+in them. The shared pacing database is deliberately NOT moved: its migration receipt binds its path. Never touch
+`provider-pacing.sqlite` or `discovery/continuous.sqlite` otherwise: the new experiment shares them.
 
 ## 5. Bootstrap the new store set (T13)
 
@@ -145,18 +182,30 @@ refuses any it cannot fill); `render-dropins` writes the per-unit store drop-ins
 
 ```
 cd $REL
-$PY -m tools.ops.fresh_start render-units --root $NEW --out $UNITS --release-dir $REL --state-dir $STATE
+$PY -m tools.ops.fresh_start render-units --root $NEW --out $UNITS --release-dir $REL --state-dir $STATE --archived-root $OLD
 $PY -m tools.ops.fresh_start render-dropins --root $NEW --out $UNITS/dropins
 ```
 
-Keep the old units for a rollback, then install the rendered ones (the entry unit MUST come from this set: the stock one
-has `ReadWritePaths` on the old root only, `ConditionPathExists` on the old journal and `TimeoutStartSec=180`):
+Archive the old configuration, then install the rendered units. `archive-dropins` MOVES every
+`/etc/systemd/system/desk-*.d/` directory (the whole Codex-era stack) and the desk unit files that the rendered set replaces into
+`$SDA`, with a sha256 manifest (content, modes, owners). The copy is verified against the manifest before any original is
+removed. Nothing is layered on top of the old stack. Units that the fresh set does not replace (for example `desk-discovery.*`,
+`desk-recorder.service`) are left in place and stay disabled (step 2). The entry unit MUST come from the rendered set: the stock one
+has `ReadWritePaths` on the old root only, `ConditionPathExists` on the old journal and `TimeoutStartSec=180`:
 
 ```
-mkdir -p /root/units-pre-fresh-$SHA && cp -a /etc/systemd/system/desk-*.service /etc/systemd/system/desk-*.timer /root/units-pre-fresh-$SHA/
+cd $REL
+$PY -m tools.ops.cutover archive-dropins --name systemd-archive-$SHA --fresh-units $UNITS
+$PY -m tools.ops.cutover --apply archive-dropins --name systemd-archive-$SHA --fresh-units $UNITS
 install -m 0644 $UNITS/*.service $UNITS/*.timer /etc/systemd/system/
 systemctl daemon-reload
+systemd-analyze verify /etc/systemd/system/desk-*.service /etc/systemd/system/desk-*.timer
 ```
+
+`systemd-analyze verify` must print nothing for the desk units (warnings about the units you intentionally leave disabled are
+not errors; any "Failed to parse"/"Unknown key"/quoting message is a stop). The `desk-backup.service` `ExecStart` carries a
+`python -c` program: `%` is written `%%` and `$` as `$$` by the renderer; check it with
+`systemctl cat desk-backup.service | grep ExecStart` and `systemd-analyze verify` before cutting over.
 
 The entry-latch drop-in in `$UNITS/desk-paper-entry-dispatcher.service.d/` is installed in step 9, not here.
 
@@ -176,13 +225,13 @@ mode at `EXIT_ONLY` between slow held passes until T23 lands; starting or enabli
 cd $REL
 $PY -m tools.ops.cutover cutover --release $REL --store-env $NEW/fresh-start-manifest.json \
    --units desk-continuous-discovery.service desk-dashboard.service desk-paper-held-cycle.timer \
-           desk-decisions.timer desk-backup.timer desk-healthcheck.timer desk-notify-daily.timer \
+           desk-decisions.timer desk-backup.timer desk-healthcheck.timer desk-notify-daily.timer desk-notify-watchdog.timer \
    --configure-only desk-paper-held-cycle.service desk-decisions.service desk-backup.service \
-           desk-healthcheck.service desk-notify-daily.service desk-paper-monitor.service \
+           desk-healthcheck.service desk-notify-daily.service desk-notify-watchdog.service desk-paper-monitor.service \
            desk-paper-entry-dispatcher.service \
    --keep-off desk-paper-entry-dispatcher.timer desk-paper-monitor.timer \
    --enable desk-continuous-discovery.service desk-dashboard.service desk-paper-held-cycle.timer \
-           desk-decisions.timer desk-backup.timer desk-healthcheck.timer desk-notify-daily.timer \
+           desk-decisions.timer desk-backup.timer desk-healthcheck.timer desk-notify-daily.timer desk-notify-watchdog.timer \
    --archived-root $OLD --expect-digest <DIGEST from step 1>
 $PY -m tools.ops.cutover --apply cutover <same arguments>
 ```
@@ -218,31 +267,38 @@ verifies, `--disable` also undoes boot persistence. It never starts anything.
 
 ```
 cd $REL
-$PY -m tools.ops.cutover --apply rollback --stop --disable --units desk-continuous-discovery.service desk-dashboard.service \
+$PY -m tools.ops.cutover --apply rollback --stop --disable --restore-archive $SDA --units desk-continuous-discovery.service desk-dashboard.service \
    desk-paper-held-cycle.service desk-decisions.service desk-backup.service desk-healthcheck.service \
-   desk-notify-daily.service desk-paper-monitor.service desk-paper-entry-dispatcher.service
+   desk-notify-daily.service desk-notify-watchdog.service desk-paper-monitor.service desk-paper-entry-dispatcher.service
 ```
 
-After a rollback the units are the fresh base units without drop-ins; to run the OLD experiment again, restore
-`/root/units-pre-fresh-$SHA` over `/etc/systemd/system/` and `daemon-reload`, and only if that is what you intend. Never restore
-old backups over the new stores to "roll back code".
+`--restore-archive $SDA` is validated BEFORE anything is stopped or removed (the archive is re-verified against its manifest;
+a hand-written file in a drop-in directory, a rendered unit that was edited after installation, or a tampered archive aborts
+the rollback with nothing changed). Then the managed drop-ins are removed, the rendered units this flow installed are removed,
+the archived unit files and the whole `desk-*.d` stack are copied back with their recorded modes, and the tree is verified
+byte-for-byte against the manifest. Without `--restore-archive` the rendered unit files STAY installed (and the archive stays
+in `$SDA`); restore later with the same command. Rollback never restarts anything, and never restores old backups over the new
+stores to "roll back code". After a restore the old units are disabled (step 2); re-enable what you intend to run.
 
 ## 8. Verify
 
 ```
 cd $REL
-$PY -m tools.ops.healthcheck --root $NEW --discovery-db $DISCOVERY --pacing-db $PACING --backup-root $BK --config $CFG
+runuser -u solana-desk -- $PY -m tools.ops.healthcheck --root $NEW --discovery-db $DISCOVERY --pacing-db $PACING --backup-root $BK --config $CFG
 ss -ltn 'sport = :8765'            # the dashboard listens on 127.0.0.1 only
 ```
+
+`desk-notify-watchdog.timer` (every 5 min, own state file) alerts when `health.json` is older than 600 s, so a dead
+healthcheck timer is reported within 15 minutes even though the healthcheck itself only notifies from its own `ExecStopPost`.
 
 Right after cutover expect exit 2 with exactly two CRITICAL checks, both legitimate: `discovery_frames` (no listener frame has
 completed yet) and `backup` (none exists until `desk-backup.timer` fires; `systemctl start desk-backup.service` clears it). It must
 clear `discovery_frames` within minutes; any other CRITICAL is a stop. `mode`, `monitoring_budget` and `pacing:*` must be OK. Also check every `desk-*` unit's effective
 `WorkingDirectory` (`systemctl show -p WorkingDirectory`), discovery rows are fresh and the mode is `RUNNING`. With the
 read-only status tool (T02/T02F, when merged) run
-`$PY -m tools.ops.status --data $NEW --ledger $LEDGER --config $CFG --release-dir $REL --systemd` and expect empty `blockers`.
+`runuser -u solana-desk -- $PY -m tools.ops.status --data $NEW --ledger $LEDGER --config $CFG --release-dir $REL --systemd` and expect empty `blockers`.
 Take the pre-entry snapshot (T06, when merged):
-`$PY -m tools.ops.verify_cycle snapshot --data $NEW --ledger $LEDGER --config $CFG --out /root/snap-before.json`.
+`runuser -u solana-desk -- $PY -m tools.ops.verify_cycle snapshot --data $NEW --ledger $LEDGER --config $CFG --out /var/lib/solana-desk-health/snap-before.json`.
 
 ## 9. Latch, then enable entries (T07)
 
@@ -254,7 +310,7 @@ removes it):
 install -D -m 0644 $UNITS/desk-paper-entry-dispatcher.service.d/70-entry-latch.conf /etc/systemd/system/desk-paper-entry-dispatcher.service.d/70-entry-latch.conf
 systemctl daemon-reload
 cd $REL
-$PY -m tools.ops.entry_latch --config $CFG --ledger $LEDGER
+runuser -u solana-desk -- $PY -m tools.ops.entry_latch --config $CFG --ledger $LEDGER
 ```
 
 The last command is read-only (no BUY yet, nothing to do). Enable entries by the coordinator's explicit decision only:
@@ -270,9 +326,9 @@ After a position has been opened or closed and with no new activity expected:
 ```
 cd $REL
 systemctl restart desk-paper-held-cycle.timer desk-dashboard.service
-$PY -m tools.ops.verify_cycle snapshot --data $NEW --ledger $LEDGER --config $CFG --out /root/snap-after.json
-$PY -m tools.ops.verify_cycle compare /root/snap-before.json /root/snap-after.json            # exact
-$PY -m tools.ops.verify_cycle compare /root/snap-before.json /root/snap-after.json --allow-progress
+runuser -u solana-desk -- $PY -m tools.ops.verify_cycle snapshot --data $NEW --ledger $LEDGER --config $CFG --out /var/lib/solana-desk-health/snap-after.json
+runuser -u solana-desk -- $PY -m tools.ops.verify_cycle compare /var/lib/solana-desk-health/snap-before.json /var/lib/solana-desk-health/snap-after.json            # exact
+runuser -u solana-desk -- $PY -m tools.ops.verify_cycle compare /var/lib/solana-desk-health/snap-before.json /var/lib/solana-desk-health/snap-after.json --allow-progress
 ```
 
 Any differing fill, checkpoint or budget, or a duplicate fill/charge, is a failure. A cycle is verified only when `snapshot`
@@ -283,18 +339,21 @@ reports `VALIDATED_LIVE_DATA_PAPER_ROUND_TRIP` and the compare passes.
 Code under `desk/` changed (or a new experiment version starts) and the ledger holds no position: do not pin a successor. Roll
 to a new store set. The previous fresh root becomes an archived root too.
 
-1. `cd $REL && $PY -m tools.ops.healthcheck ...` and the status tool: no held position, no unresolved exit; mode `RUNNING` or `ENTRY_PAUSED`.
-2. Stop EVERYTHING that reads or writes the current root, timers first, including the dashboard and the health/notify timers:
+1. `cd $REL && runuser -u solana-desk -- $PY -m tools.ops.healthcheck ...` and the status tool: no held position, no unresolved exit; mode `RUNNING` or `ENTRY_PAUSED`.
+2. DISABLE the entry timer first, so a reboot in the rotation window cannot start entries (this is what makes the "fails closed"
+   claim below true), then stop EVERYTHING that reads or writes the current root, timers first, including the dashboard and
+   the health/notify/watchdog timers:
    ```
+   systemctl disable desk-paper-entry-dispatcher.timer
    systemctl stop desk-paper-entry-dispatcher.timer desk-paper-held-cycle.timer desk-paper-monitor.timer desk-decisions.timer \
-     desk-backup.timer desk-healthcheck.timer desk-notify-daily.timer
+     desk-backup.timer desk-healthcheck.timer desk-notify-daily.timer desk-notify-watchdog.timer
    systemctl stop desk-paper-entry-dispatcher.service desk-paper-held-cycle.service desk-paper-monitor.service desk-decisions.service \
-     desk-backup.service desk-healthcheck.service desk-notify-daily.service desk-dashboard.service desk-continuous-discovery.service
+     desk-backup.service desk-healthcheck.service desk-notify-daily.service desk-notify-watchdog.service desk-dashboard.service desk-continuous-discovery.service
    ```
    The stopped units stay enabled; until the new cutover re-points their drop-ins they still name the old root, whose stores are
    about to be read-only, so a reboot in this window fails closed (nothing can write) rather than trading.
 3. Backup the current root (step 3 with `--data $NEW` and its own `--expect-count`, destination `/var/backups/solana-desk/pre-rotate-<next version>`)
-   and mark its stores read-only (step 4, `chmod` on `$NEW`).
+   and seal its stores (step 4, `seal-archive --root $NEW`; the shared inputs stay in `$OLD` and are not part of `$NEW`).
 4. Stage the new release (step 1), then from the NEW release directory run `fresh_start rotate` (dry run first; it refuses an
    open position and leaves `--from` untouched; `<hash>` is the `plan_hash` of the dry run):
    ```
@@ -311,7 +370,7 @@ procedure. Held monitoring must keep running; do not stop the held cycle or the 
 
 ## Things that are deliberately not automated
 
-- Stopping writers, `chmod` of old stores, installing unit files and enabling the entry timer are explicit commands above.
+- Stopping writers, sealing the old stores, installing unit files and enabling the entry timer are explicit commands above.
 - `cutover` never edits `deploy/*.service` templates, never touches stores, and never calls a provider.
 - Dashboard exposure: any ExecStart (override, base unit or the live effective value) that binds off loopback aborts the cutover.
 - Writing to the archived stores: any unit that references an archived root (other than the shared pacing and discovery inputs)
