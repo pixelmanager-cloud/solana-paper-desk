@@ -1,0 +1,28 @@
+[Unit]
+Description=Counterfactual candidate tracking: ingest, sample vault prices (research only, no fills)
+# INACTIVE TEMPLATE: no [Install]. Coordinator enables it (with a timer, e.g. every 60s) on the fresh store set only.
+After=network-online.target
+[Service]
+Type=oneshot
+User=solana-desk
+Group=solana-desk
+WorkingDirectory=/opt/solana-desk
+LoadCredential=provider-keys.json:/etc/solana-desk/provider-keys.json
+# Shared two-second provider pacing: the same database every other desk unit uses. Never reset it.
+Environment=DESK_PROVIDER_PACING_DB=/var/lib/solana-desk/provider-pacing.sqlite
+ExecStartPre=/opt/solana-desk/.venv/bin/python -m tools.research.counterfactual ingest --store /var/lib/solana-desk/exp-FRESH/counterfactual.sqlite --discovery-db /var/lib/solana-desk/discovery/continuous.sqlite --journal /var/lib/solana-desk/exp-FRESH/entry-dispatch/dispatch.sqlite
+ExecStart=/opt/solana-desk/.venv/bin/python -m tools.research.counterfactual sample --store /var/lib/solana-desk/exp-FRESH/counterfactual.sqlite --systemd-credentials
+UMask=0077
+NoNewPrivileges=true
+PrivateTmp=true
+ProtectSystem=strict
+ProtectHome=true
+# Writes ONLY its own store; discovery, journal and the ledger are opened read-only (mode=ro).
+ReadWritePaths=/var/lib/solana-desk/exp-FRESH
+ReadOnlyPaths=/var/lib/solana-desk/discovery
+RestrictAddressFamilies=AF_INET AF_INET6 AF_UNIX
+TimeoutStartSec=60
+MemoryMax=256M
+TasksMax=32
+# Replace FRESH with the experiment root created by tools.ops.fresh_start. Initialise once with:
+#   python -m tools.research.counterfactual init --store <root>/counterfactual.sqlite --allowance-per-hour 300
