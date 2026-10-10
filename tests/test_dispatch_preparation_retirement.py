@@ -4,6 +4,7 @@ No real provider access. Failure, NULL row, reservation and charges are original
 production-interface artifacts; no passing proof or gate mocks.
 """
 import base64
+import hashlib
 from contextlib import closing, redirect_stdout
 from dataclasses import asdict
 import copy
@@ -19,7 +20,11 @@ from desk import paper_read_sources as transport, paper_cycle as cycle
 from desk.model import canonical,digest
 from desk.security import base58
 from desk.history_progress import HistoryProgress
-from tools import history_first_paper_entry as entry
+# Byte-identical historical producer from PR188 7d8af35cbfd76e71aca3c004ab2f684a38f16444,
+# tools/history_first_paper_entry.py. PR189's prospective early NO_ENTRY path must
+# not replace the original v1 producer when reconstructing the uncaptured case.
+# Imported dependencies/validators remain the current code under test.
+from tests.fixtures import history_first_paper_entry_pre189 as entry
 from tests import test_paper_observation_collector as fixtures
 from tests.test_graduation_witness import fixture as migration_fixture
 from tests.helpers import config
@@ -30,6 +35,8 @@ from tests.test_paper_read_sources import Response
 
 class DispatchPreparationRetirementTests(unittest.TestCase):
     def setUp(self):
+        self.assertEqual(hashlib.sha256(Path(entry.__file__).read_bytes()).hexdigest(),
+            '2cce07d1a2f86c129abc869d29fc152190f283b82c2db11389413e53fb129ef5')
         fixture=fixtures.PaperObservationCollectorTests();fixture.setUp();self.addCleanup(fixture.doCleanups)
         fixture.at=int(time.time());root=Path(fixture.tmp.name).resolve()
         raw,mint,pool=migration_fixture();raw["transaction"]["signatures"]=[base58(bytes([9])*64)]
@@ -89,6 +96,12 @@ class DispatchPreparationRetirementTests(unittest.TestCase):
             with self.assertRaises(ValueError):entry.execute(self.f.config,self.f.f.jobs.path,self.f.f.progress.store.path,self.f.ledger,path,live=True,systemd_credentials=True)
         with self.f.f.progress.store.connect() as c:
             self.pass_id,self.intent_hash=c.execute('SELECT id,intent_hash FROM paper_observation_passes WHERE outcome_hash IS NULL').fetchone()
+        original_intent=self.f.f.progress.store.load(self.intent_hash)
+        self.assertEqual(set(original_intent),{'kind','config_hash','target','admission'})
+        self.assertEqual(original_intent['kind'],'history_first_paper_preparation_v1')
+        self.assertEqual(original_intent['admission']['requests_used'],6)
+        self.assertEqual(calls[0],6)
+        self.assertEqual(self.f.f.progress.admission(self.scan)['requests_used'],12)
         from tools import paper_entry_dispatcher as dispatcher
         self.journal=self.f.root/'dispatch.sqlite';self.dispatch_id='a'*32
         from discovery import continuous
