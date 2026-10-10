@@ -7,7 +7,7 @@ a fill; its requests are charged against its own recorded hourly allowance and
 go through the shared provider pacing. Prices here are NOT fill evidence.
 
     python -m tools.research.counterfactual init --store S [--allowance-per-hour 300]
-    python -m tools.research.counterfactual ingest --store S --discovery-db D [--journal J]
+    python -m tools.research.counterfactual ingest --store S --discovery-db D [--journal J] [--ledger L] [--decisions-db X]
     python -m tools.research.counterfactual sample --store S [--systemd-credentials]
     python -m tools.research.counterfactual report --store S
 """
@@ -15,6 +15,7 @@ import argparse
 import base64
 import json
 import math
+import os
 import sqlite3
 import statistics
 import sys
@@ -28,6 +29,10 @@ LABEL = 'RESEARCH_ONLY_NOT_FILL_EVIDENCE'
 DEFAULT_ALLOWANCE = 300
 DEFAULT_GRACE = 120
 BATCH_TASKS = 50  # two vault accounts per task -> 100 accounts, the RPC maximum
+BASELINE_HORIZON = HORIZONS[0]  # ONE baseline for every candidate: the +5m sample
+WINDOW_MAX_SECONDS = 7200       # the dispatcher selects candidates 300..7200 s after the migration
+NULL_POOL_BACKOFF = (60, 900)   # retry a not-yet-visible pool account after 60 s, doubling, capped at 15 min
+MAX_RESULT_ROWS = 100000
 MAX_RESPONSE_BYTES = 4 * 1024 * 1024
 SCHEMA = '''
 CREATE TABLE candidates(mint TEXT PRIMARY KEY,pool TEXT NOT NULL,signature TEXT NOT NULL,slot INTEGER NOT NULL,
@@ -39,9 +44,10 @@ CREATE TABLE request_results(request_id INTEGER PRIMARY KEY,status TEXT NOT NULL
 CREATE TABLE samples(mint TEXT NOT NULL,horizon INTEGER NOT NULL,due_at REAL NOT NULL,sampled_at REAL,slot INTEGER,
   base_raw TEXT,quote_raw TEXT,price TEXT,status TEXT NOT NULL,code TEXT,request_id INTEGER,PRIMARY KEY(mint,horizon));
 CREATE TABLE policy(id INTEGER PRIMARY KEY AUTOINCREMENT,at REAL NOT NULL,allowance_per_hour INTEGER NOT NULL,grace_seconds INTEGER NOT NULL);
+CREATE TABLE vault_attempts(id INTEGER PRIMARY KEY AUTOINCREMENT,mint TEXT NOT NULL,at REAL NOT NULL,code TEXT NOT NULL);
 CREATE TABLE meta(key TEXT PRIMARY KEY,value TEXT NOT NULL);
 '''
-APPEND_ONLY = ('candidates', 'outcomes', 'vaults', 'requests', 'request_results', 'samples', 'policy')
+APPEND_ONLY = ('candidates', 'outcomes', 'vaults', 'requests', 'request_results', 'samples', 'policy', 'vault_attempts')
 
 
 class CounterfactualError(ValueError):
@@ -54,10 +60,35 @@ class TransportError(CounterfactualError):
         super().__init__(code)
 
 
+def _is_wal_file(path):
+    fd = os.open(path, os.O_RDONLY | os.O_NOFOLLOW)
+    try:
+        head = os.read(fd, 100)
+    finally:
+        os.close(fd)
+    return len(head) >= 20 and head[:16] == b'SQLite format 3\x00' and head[18] == 2
+
+
+def open_mode(path):
+    """T02F rule: ``immutable`` ONLY for a quiet WAL file (header byte 18 == 2, no ``-wal``); else ``ro``.
+
+    A plain read-only open of a WAL database with no sidecars makes SQLite create ``-wal``/``-shm``
+    (unwritable under ReadOnlyPaths, or owned by the wrong user). A rollback-journal store (for example
+    the discovery or pacing database) can change under the read and is never opened immutable.
+    """
+    p = Path(path)
+    return 'immutable' if _is_wal_file(p) and not Path(str(p) + '-wal').exists() else 'ro'
+
+
 def _connect(path, *, readonly=False):
     path = Path(path)
     if readonly:
-        return sqlite3.connect(path.as_uri() + '?mode=ro', uri=True)
+        if os.path.islink(path):
+            raise CounterfactualError('Symlinked store refused')
+        uri = path.resolve().as_uri() + ('?immutable=1' if open_mode(path) == 'immutable' else '?mode=ro')
+        c = sqlite3.connect(uri, uri=True, timeout=2)
+        c.execute('PRAGMA query_only=1')
+        return c
     return sqlite3.connect(path, isolation_level=None, timeout=5)
 
 
@@ -85,6 +116,10 @@ def init(store, *, allowance_per_hour=DEFAULT_ALLOWANCE, grace_seconds=DEFAULT_G
 
 def set_allowance(store, allowance_per_hour, *, grace_seconds=None, now=None):
     """Append a new recorded policy row; earlier rows stay as history."""
+    if type(allowance_per_hour) is not int or not 1 <= allowance_per_hour <= 3600:
+        raise CounterfactualError('Allowance out of range (1..3600)')
+    if grace_seconds is not None and (type(grace_seconds) is not int or not 0 <= grace_seconds <= 3600):
+        raise CounterfactualError('Grace out of range (0..3600)')
     with closing(_connect(store)) as c:
         grace = c.execute('SELECT grace_seconds FROM policy ORDER BY id DESC LIMIT 1').fetchone()[0] if grace_seconds is None else grace_seconds
         c.execute('INSERT INTO policy(at,allowance_per_hour,grace_seconds) VALUES(?,?,?)',
@@ -103,11 +138,27 @@ def add_candidate(store, *, mint, pool, signature, slot, migrated_at, seq, now=N
         return c.total_changes > 0
 
 
-def discovery_hints(discovery_db, *, after_seq=0, limit=500):
+def discovery_cutoff(now, grace):
+    """Oldest migration worth tracking: after this a candidate has no future horizon left to sample."""
+    return now - (HORIZONS[-1] + grace)
+
+
+def first_start_cursor(discovery_db, cutoff):
+    """Cursor for a brand-new store: just before the first frame young enough to matter (never backfill)."""
+    with closing(_connect(discovery_db, readonly=True)) as d:
+        d.execute('BEGIN')
+        first = d.execute('SELECT MIN(seq) FROM raw_events WHERE received_at>=?', (cutoff,)).fetchone()[0]
+        if first is not None:
+            return first - 1
+        return d.execute('SELECT COALESCE(MAX(seq),0) FROM raw_events').fetchone()[0]
+
+
+def discovery_hints(discovery_db, *, after_seq=0, limit=500, min_received=None):
     """Migration hints from continuous discovery (read-only), same decode as the dispatcher.
 
     Rows whose stored hash does not match their payload are skipped and counted:
-    a research tool must never learn from altered originals.
+    a research tool must never learn from altered originals. Frames received before
+    ``min_received`` are skipped WITHOUT decoding (too old to have any horizon left).
     """
     from desk.decode import decode
     from desk.model import digest
@@ -117,6 +168,8 @@ def discovery_hints(discovery_db, *, after_seq=0, limit=500):
         d.execute('BEGIN')
         rows = d.execute('SELECT seq,source_id,received_at,slot,payload_hash FROM raw_events WHERE seq>? ORDER BY seq LIMIT ?', (after_seq, limit)).fetchall()
         for seq, source, received, slot, stored_hash in rows:
+            if min_received is not None and type(received) in (int, float) and received < min_received:
+                continue
             try:
                 payload = d.execute('SELECT payload FROM raw_events WHERE seq=?', (seq,)).fetchone()[0]
                 raw = json.loads(payload, parse_constant=lambda _: (_ for _ in ()).throw(ValueError('Nonfinite')))
@@ -137,50 +190,212 @@ def discovery_hints(discovery_db, *, after_seq=0, limit=500):
     return hints, skipped, (rows[-1][0] if rows else after_seq)
 
 
-def _outcome(journal_db, mint):
-    """Dispatcher outcome for a mint (read-only join); never raises on odd records."""
-    if journal_db is None:
-        return {'dispatched': None, 'status': None, 'codes': []}
+# ------------------------------------------------------- outcome classification
+# Same stage/code vocabulary as the funnel report: TOKEN, MIGRATION, HISTORY, OBSERVATIONS, ENGINE, DECISION.
+def _code(value, default):
+    if type(value) is str and value:
+        return value[:96]
+    if isinstance(value, dict):
+        for key in ('code', 'reason', 'status'):
+            if type(value.get(key)) is str and value[key]:
+                return value[key][:96]
+    return default
+
+
+def classify_result(body):
+    """One stored dispatcher result -> {'class','stage','codes','detail'}. Every known shape is parsed.
+
+    BOUGHT: the cycle result holds a BUY fill. REJECTED:<stage>:<code>: a typed normal rejection.
+    UNKNOWN: anything unresolved, corrupt, recovery-required or of an unrecognised kind (never guessed).
+    """
+    if not isinstance(body, dict):
+        return {'class': 'UNKNOWN', 'stage': None, 'codes': [], 'detail': 'RESULT_NOT_AN_OBJECT'}
+    kind = body.get('kind')
+    if kind == 'dispatcher_token_rejection_v1':
+        policy = body.get('token_policy') if isinstance(body.get('token_policy'), dict) else {}
+        codes = [r[:96] for r in policy.get('reasons', []) if type(r) is str and r] or ['TOKEN_POLICY_SKIP']
+        return {'class': 'REJECTED', 'stage': 'TOKEN', 'codes': codes, 'detail': None}
+    if kind == 'dispatcher_migration_no_entry_v1':
+        return {'class': 'REJECTED', 'stage': 'MIGRATION', 'codes': [_code(body.get('reason'), 'NO_ENTRY')], 'detail': None}
+    if kind == 'history_preparation_no_entry_v1':
+        return {'class': 'REJECTED', 'stage': 'HISTORY', 'codes': [_code(body.get('reason'), 'NO_ENTRY')], 'detail': None}
+    if kind == 'paper_cycle_v1':
+        outcomes = [o for o in body.get('outcomes', []) if isinstance(o, dict)]
+        if any(o.get('type') == 'fill' and o.get('side') == 'buy' for o in outcomes):
+            return {'class': 'BOUGHT', 'stage': None, 'codes': [], 'detail': None}
+        status = body.get('status')
+        if status == 'COMPLETE':
+            codes = []
+            for o in outcomes:
+                if o.get('type') != 'reject':
+                    continue
+                for c in [_code(o.get('reason'), 'REJECTED')] + [r[:96] for r in o.get('reasons', []) if type(r) is str and r]:
+                    if c not in codes:
+                        codes.append(c)
+            if codes:
+                return {'class': 'REJECTED', 'stage': 'ENGINE', 'codes': codes, 'detail': None}
+            return {'class': 'UNKNOWN', 'stage': None, 'codes': [], 'detail': 'COMPLETE_WITHOUT_FILL_OR_REJECTION'}
+        if status == 'RECOVERY_REQUIRED':
+            return {'class': 'UNKNOWN', 'stage': None, 'codes': [], 'detail': 'RECOVERY_REQUIRED'}
+        blockers = [b[:96] for b in body.get('blockers', []) if type(b) is str and b]
+        if blockers:
+            return {'class': 'REJECTED', 'stage': 'OBSERVATIONS', 'codes': blockers, 'detail': None}
+        return {'class': 'UNKNOWN', 'stage': None, 'codes': [], 'detail': 'BLOCKED_WITHOUT_CODE'}
+    return {'class': 'UNKNOWN', 'stage': None, 'codes': [], 'detail': 'UNKNOWN_RESULT_KIND'}
+
+
+class OutcomeReader:
+    """Read-only view of the journal, the ledger and the decision store, opened ONCE and reused.
+
+    Priority: ledger BUY fill > typed journal result > decision-store rejection > NOT_DISPATCHED.
+    A missing store is UNKNOWN (never silently NOT_DISPATCHED), unreadable rows are UNKNOWN.
+    """
+
+    def __init__(self, journal_db=None, ledger_db=None, decisions_db=None):
+        self.journal = self.buys = self.decisions = None
+        self.errors = {}
+        if journal_db is not None:
+            try:
+                self.journal = _connect(journal_db, readonly=True)
+                self.journal.execute('BEGIN')
+            except (sqlite3.Error, OSError, CounterfactualError):
+                self.journal, self.errors['journal'] = None, 'JOURNAL_UNREADABLE'
+        if ledger_db is not None:
+            try:
+                self.buys = self._load_buys(ledger_db)
+            except (sqlite3.Error, OSError, ValueError, CounterfactualError):
+                self.errors['ledger'] = 'LEDGER_UNREADABLE'
+        if decisions_db is not None:
+            try:
+                self.decisions = self._load_decisions(decisions_db)
+            except (sqlite3.Error, OSError, ValueError, CounterfactualError):
+                self.errors['decisions'] = 'DECISIONS_UNREADABLE'
+
+    @staticmethod
+    def _load_buys(ledger_db):
+        with closing(_connect(ledger_db, readonly=True)) as c:
+            c.execute('BEGIN')
+            return {m for (m,) in c.execute("SELECT json_extract(payload,'$.mint') FROM outcomes WHERE json_extract(payload,'$.type')='fill' "
+                                            "AND json_extract(payload,'$.side')='buy' LIMIT ?", (MAX_RESULT_ROWS,)) if m}
+
+    @staticmethod
+    def _load_decisions(decisions_db):
+        found = {}
+        with closing(_connect(decisions_db, readonly=True)) as c:
+            c.execute('BEGIN')
+            if not c.execute("SELECT 1 FROM sqlite_master WHERE type='table' AND name='decisions'").fetchone():
+                raise ValueError('decisions table missing')
+            for (text,) in c.execute('SELECT decision FROM decisions LIMIT ?', (MAX_RESULT_ROWS,)):
+                try:
+                    value = json.loads(text)
+                except ValueError:
+                    continue
+                if isinstance(value, dict) and type(value.get('mint')) is str and value.get('decision') == 'REJECT':
+                    reasons = [r[:96] for r in value.get('reasons', []) if type(r) is str and r]
+                    found[value['mint']] = reasons or ['REJECTED_WITHOUT_REASON']
+        return found
+
+    def close(self):
+        if self.journal is not None:
+            self.journal.close()
+            self.journal = None
+
+    def classify(self, mint):
+        if self.buys is not None and mint in self.buys:
+            return {'v': 2, 'class': 'BOUGHT', 'stage': None, 'codes': [], 'detail': None, 'source': 'LEDGER'}
+        if self.journal is None and self.decisions is None:
+            return {'v': 2, 'class': 'UNKNOWN', 'stage': None, 'codes': [], 'source': None,
+                    'detail': self.errors.get('journal') or 'NO_OUTCOME_SOURCE'}
+        if self.journal is not None:
+            try:
+                row = self.journal.execute('SELECT id FROM intents WHERE mint=?', (mint,)).fetchone()
+                result = None if row is None else self.journal.execute('SELECT payload FROM results WHERE id=?', (row[0],)).fetchone()
+                if row is not None:
+                    if result is None:
+                        return {'v': 2, 'class': 'UNKNOWN', 'stage': None, 'codes': [], 'source': 'JOURNAL', 'detail': 'UNRESOLVED_NO_RESULT'}
+                    body = json.loads(result[0]).get('result')
+                    return {'v': 2, **classify_result(body), 'source': 'JOURNAL'}
+            except (sqlite3.Error, ValueError, TypeError, AttributeError):
+                return {'v': 2, 'class': 'UNKNOWN', 'stage': None, 'codes': [], 'source': 'JOURNAL', 'detail': 'OUTCOME_UNREADABLE'}
+        if self.decisions is not None and mint in self.decisions:
+            return {'v': 2, 'class': 'REJECTED', 'stage': 'DECISION', 'codes': self.decisions[mint], 'detail': None, 'source': 'DECISIONS'}
+        if self.journal is not None:
+            if self.errors.get('decisions'):   # a decision-store rejection cannot be ruled out: never claim NOT_DISPATCHED
+                return {'v': 2, 'class': 'UNKNOWN', 'stage': None, 'codes': [], 'source': 'JOURNAL', 'detail': self.errors['decisions']}
+            return {'v': 2, 'class': 'NOT_DISPATCHED', 'stage': None, 'codes': [], 'detail': None, 'source': 'JOURNAL'}
+        return {'v': 2, 'class': 'UNKNOWN', 'stage': None, 'codes': [], 'source': None, 'detail': self.errors.get('journal') or 'JOURNAL_NOT_PROVIDED'}
+
+
+def _outcome(journal_db, mint, *, ledger_db=None, decisions_db=None):
+    """Single-candidate convenience wrapper (tests/tools); production paths reuse one OutcomeReader."""
+    reader = OutcomeReader(journal_db, ledger_db, decisions_db)
     try:
-        with closing(_connect(journal_db, readonly=True)) as j:
-            j.execute('BEGIN')
-            row = j.execute('SELECT id FROM intents WHERE mint=?', (mint,)).fetchone()
-            if row is None:
-                return {'dispatched': False, 'status': None, 'codes': []}
-            result = j.execute('SELECT payload FROM results WHERE id=?', (row[0],)).fetchone()
-            if result is None:
-                return {'dispatched': True, 'status': 'UNRESOLVED', 'codes': []}
-            body = json.loads(result[0]).get('result') or {}
-            codes = [x for x in (body.get('blockers') or ([body['reason']] if body.get('reason') else [])) if type(x) is str]
-            return {'dispatched': True, 'status': body.get('status'), 'codes': codes}
-    except (sqlite3.Error, ValueError, TypeError, AttributeError):
-        return {'dispatched': None, 'status': 'OUTCOME_UNREADABLE', 'codes': []}
+        return reader.classify(mint)
+    finally:
+        reader.close()
 
 
-def ingest(store, discovery_db, *, journal_db=None, now=None, limit=500):
+def _is_final(payload, migrated_at, now, grace):
+    """A typed result never changes; NOT_DISPATCHED is final only once the dispatch window has closed."""
+    if type(payload) is not dict or payload.get('v') != 2:
+        return False
+    if payload['class'] in ('BOUGHT', 'REJECTED'):
+        return True
+    return payload['class'] == 'NOT_DISPATCHED' and now > migrated_at + WINDOW_MAX_SECONDS + grace
+
+
+def ingest(store, discovery_db, *, journal_db=None, ledger_db=None, decisions_db=None, now=None, limit=500):
     now = time.time() if now is None else now
     with closing(_connect(store)) as c:
         after = int(c.execute("SELECT value FROM meta WHERE key='last_discovery_seq'").fetchone()[0])
-    hints, skipped, last = discovery_hints(discovery_db, after_seq=after, limit=limit)
+        grace = _policy(c)[1]
+    cutoff = discovery_cutoff(now, grace)
+    if after == 0:
+        # First start: never backfill the whole history, begin at the first frame that can still be sampled.
+        after = first_start_cursor(discovery_db, cutoff)
+        with closing(_connect(store)) as c:
+            c.execute("INSERT OR REPLACE INTO meta VALUES('last_discovery_seq',?)", (str(after),))
+    hints, skipped, last = discovery_hints(discovery_db, after_seq=after, limit=limit, min_received=cutoff)
     added = 0
     for h in hints:
         added += bool(add_candidate(store, mint=h['mint'], pool=h['pool'], signature=h['signature'], slot=h['slot'],
                                     migrated_at=h['migrated_at'], seq=h['seq'], now=now))
     with closing(_connect(store)) as c:
         c.execute("INSERT OR REPLACE INTO meta VALUES('last_discovery_seq',?)", (str(last),))
-    refresh_outcomes(store, journal_db, now=now)
-    return {'candidates_added': added, 'rows_skipped': skipped, 'last_seq': last}
+    refreshed = refresh_outcomes(store, journal_db, ledger_db=ledger_db, decisions_db=decisions_db, now=now)
+    return {'candidates_added': added, 'rows_skipped': skipped, 'last_seq': last, 'cursor_start': after,
+            'outcomes_appended': refreshed['appended'], 'outcomes_final': refreshed['final']}
 
 
-def refresh_outcomes(store, journal_db, *, now=None):
-    """Append an outcome row only when the dispatcher outcome changed."""
+def refresh_outcomes(store, journal_db, *, ledger_db=None, decisions_db=None, now=None):
+    """Append an outcome row only when the classification changed, and only for candidates whose
+    latest outcome is not final. One journal/ledger/decision view is opened once for the whole pass."""
     now = time.time() if now is None else now
+    appended = final = 0
     with closing(_connect(store)) as c:
-        for (mint,) in c.execute('SELECT mint FROM candidates').fetchall():
-            new = _outcome(journal_db, mint)
-            last = c.execute('SELECT payload FROM outcomes WHERE mint=? ORDER BY id DESC LIMIT 1', (mint,)).fetchone()
-            if last is None or json.loads(last[0]) != new:
-                c.execute('INSERT INTO outcomes(mint,at,payload) VALUES(?,?,?)', (mint, now, json.dumps(new, sort_keys=True)))
+        grace = _policy(c)[1]
+        rows = c.execute('SELECT c.mint,c.migrated_at,(SELECT payload FROM outcomes o WHERE o.mint=c.mint ORDER BY o.id DESC LIMIT 1) '
+                         'FROM candidates c').fetchall()
+        reader = None
+        try:
+            for mint, migrated, last in rows:
+                try:
+                    previous = json.loads(last) if last is not None else None
+                except ValueError:
+                    previous = None
+                if previous is not None and _is_final(previous, migrated, now, grace):
+                    final += 1
+                    continue
+                if reader is None:
+                    reader = OutcomeReader(journal_db, ledger_db, decisions_db)
+                new = reader.classify(mint)
+                if previous != new:
+                    c.execute('INSERT INTO outcomes(mint,at,payload) VALUES(?,?,?)', (mint, now, json.dumps(new, sort_keys=True)))
+                    appended += 1
+        finally:
+            if reader is not None:
+                reader.close()
+    return {'appended': appended, 'final': final}
 
 
 # ----------------------------------------------------------------- price
@@ -206,24 +421,46 @@ def price_from_reserves(base_raw, quote_raw):
 
 
 def metrics(samples):
-    """Max gain/drawdown, return and liquidity per horizon, pool death. Baseline = first priced sample."""
-    priced = [(s['horizon'], Decimal(s['price'])) for s in samples if s['status'] == 'OK' and s['price'] is not None]
-    out = {'baseline_horizon': None, 'returns': {}, 'liquidity_lamports': {}, 'max_gain': None, 'max_drawdown': None,
+    """Return per horizon, max gain/drawdown, liquidity and pool death.
+
+    ONE baseline for every candidate: the +5m sample (``BASELINE_HORIZON``) price. If it is missing, failed
+    or unpriced the candidate has NO returns (``baseline='MISSING'``) and is counted as such by the report;
+    it is never re-baselined to a later horizon. A pool that is dead at +5m has ``baseline='DEAD'`` and
+    counts as -100% at every horizon. A dead pool is -100% at its horizon and at every later horizon that
+    has no priced sample of its own: survivorship is never hidden by dropping the dead.
+    """
+    by_horizon = {s['horizon']: s for s in samples}
+    out = {'baseline_horizon': BASELINE_HORIZON, 'baseline': 'MISSING', 'returns': {}, 'liquidity_lamports': {},
+           'max_gain': None, 'max_drawdown': None, 'died_at': None,
            'pool_died': any(s['status'] == 'POOL_DEAD' for s in samples)}
     for s in samples:
         if s['status'] in ('OK', 'POOL_DEAD') and s['quote_raw'] is not None:
             out['liquidity_lamports'][s['horizon']] = 2 * int(s['quote_raw'])
-    if not priced:
-        if out['pool_died']:
-            out['max_drawdown'] = Decimal(-1)
+    base = by_horizon.get(BASELINE_HORIZON)
+    if base is None:
         return out
-    out['baseline_horizon'], p0 = priced[0]
-    peak, worst = p0, Decimal(0)
-    for horizon, price in priced:
-        out['returns'][horizon] = price / p0 - 1
-        peak = max(peak, price)
-        worst = min(worst, price / peak - 1)
-    out['max_gain'] = max(out['returns'].values())
+    if base['status'] == 'POOL_DEAD':
+        out.update(baseline='DEAD', died_at=BASELINE_HORIZON, max_gain=Decimal(0), max_drawdown=Decimal(-1))
+        out['returns'] = {h: Decimal(-1) for h in HORIZONS}
+        return out
+    if base['status'] != 'OK' or base['price'] is None:
+        return out
+    p0 = Decimal(base['price'])
+    out['baseline'] = 'OK'
+    peak, worst, dead = p0, Decimal(0), False
+    for horizon in HORIZONS:
+        sample = by_horizon.get(horizon)
+        if sample is not None and sample['status'] == 'OK' and sample['price'] is not None:
+            price = Decimal(sample['price'])
+            out['returns'][horizon] = price / p0 - 1
+            dead = False
+            peak = max(peak, price)
+            worst = min(worst, price / peak - 1)
+        elif (sample is not None and sample['status'] == 'POOL_DEAD') or dead:
+            dead = True
+            out['returns'][horizon] = Decimal(-1)
+            out['died_at'] = out['died_at'] if out['died_at'] is not None else horizon
+    out['max_gain'] = max(r for h, r in out['returns'].items() if r != -1 or h == BASELINE_HORIZON) if out['returns'] else None
     out['max_drawdown'] = Decimal(-1) if out['pool_died'] else worst
     return out
 
@@ -324,10 +561,36 @@ def _call(c, transport, now, kind, addresses):
     return rid, slot, values
 
 
+def _ensure_attempts_table(c):
+    """Stores created before ``vault_attempts`` existed gain it (append-only like every other table)."""
+    c.execute('CREATE TABLE IF NOT EXISTS vault_attempts(id INTEGER PRIMARY KEY AUTOINCREMENT,mint TEXT NOT NULL,at REAL NOT NULL,code TEXT NOT NULL)')
+    for action in ('UPDATE', 'DELETE'):
+        c.execute(f"CREATE TRIGGER IF NOT EXISTS vault_attempts_{action.lower()} BEFORE {action} ON vault_attempts "
+                  "BEGIN SELECT RAISE(ABORT,'Counterfactual record is immutable'); END")
+
+
+def null_pool_delay(attempts):
+    """Backoff before the next try of a pool account that was not visible yet: 60 s, 120 s ... capped at 15 min."""
+    return min(NULL_POOL_BACKOFF[0] * 2 ** max(0, attempts - 1), NULL_POOL_BACKOFF[1])
+
+
 def _resolve_vaults(c, transport, now, summary):
     from desk.pools import parse_pool
     from desk.providers import SOL
-    todo = c.execute('SELECT mint,pool FROM candidates WHERE mint NOT IN (SELECT mint FROM vaults) ORDER BY migrated_at').fetchall()
+    grace = _policy(c)[1]
+    todo = []
+    for mint, pool, migrated in c.execute('SELECT mint,pool,migrated_at FROM candidates WHERE mint NOT IN (SELECT mint FROM vaults) '
+                                          'ORDER BY migrated_at').fetchall():
+        attempts, last = c.execute('SELECT COUNT(*),COALESCE(MAX(at),0) FROM vault_attempts WHERE mint=?', (mint,)).fetchone()
+        if now > migrated + HORIZONS[-1] + grace:
+            # The sampling window has passed: stop retrying and record why, once.
+            c.execute('INSERT INTO vaults VALUES(?,?,?,?,?,?)', (mint, None, None, 'UNRESOLVED',
+                      'POOL_ACCOUNT_NULL_WINDOW_PASSED' if attempts else 'WINDOW_PASSED_BEFORE_RESOLUTION', now))
+            summary['abandoned'] = summary.get('abandoned', 0) + 1
+            continue
+        if attempts and now < last + null_pool_delay(attempts):
+            continue  # backing off: a null pool account usually means the pool is not visible yet
+        todo.append((mint, pool))
     for i in range(0, len(todo), 100):
         chunk = todo[i:i + 100]
         rid, slot, values = _call(c, transport, now, 'POOL', [p for _, p in chunk])
@@ -339,6 +602,10 @@ def _resolve_vaults(c, transport, now, summary):
             continue  # transient batch failure: candidates stay unresolved and retry next run
         summary['requests'] += 1
         for (mint, pool), account in zip(chunk, values):
+            if account is None:   # not (yet) visible: retry with backoff until the horizon window passes
+                c.execute('INSERT INTO vault_attempts(mint,at,code) VALUES(?,?,?)', (mint, now, 'POOL_ACCOUNT_NULL'))
+                summary['null_pool'] = summary.get('null_pool', 0) + 1
+                continue
             try:
                 fields = parse_pool(account)
                 if fields['base_mint'] != mint or fields['quote_mint'] != SOL:
@@ -367,6 +634,7 @@ def sample(store, transport, *, now=None):
     now = time.time() if now is None else now
     summary = {'requests': 0, 'failed_requests': 0, 'samples': 0, 'missed': 0, 'allowance_exhausted': False}
     with closing(_connect(store)) as c:
+        _ensure_attempts_table(c)
         _resolve_vaults(c, transport, now, summary)
         due, missed = due_tasks(c, now)
         for mint, _, h, due_at, *_ in missed:  # late samples would be mislabeled; record the gap instead
@@ -407,12 +675,23 @@ def sample(store, transport, *, now=None):
 
 
 # ----------------------------------------------------------------- report
-def _group(outcome):
-    if outcome is None or outcome.get('dispatched') is None:
-        return ['UNKNOWN_OUTCOME']
-    if not outcome['dispatched']:
-        return ['NOT_DISPATCHED']
-    return list(outcome['codes']) or [f"ADMITTED:{outcome.get('status') or 'NO_RESULT'}"]
+def groups_of(payload):
+    """Report groups of one candidate: BOUGHT | REJECTED:<stage>:<code> (one per code) | NOT_DISPATCHED | UNKNOWN.
+
+    A candidate rejected for several reasons appears once per reason (each filter's own view); the
+    report also states the number of distinct candidates so groups are never read as a partition.
+    """
+    if type(payload) is not dict or payload.get('v') != 2:
+        return ['UNKNOWN'], ('LEGACY_OUTCOME_FORMAT' if type(payload) is dict else 'NO_OUTCOME_RECORDED')
+    kind = payload.get('class')
+    if kind == 'BOUGHT':
+        return ['BOUGHT'], None
+    if kind == 'REJECTED':
+        codes = payload.get('codes') or ['UNSPECIFIED']
+        return [f"REJECTED:{payload.get('stage') or 'UNKNOWN_STAGE'}:{code}" for code in codes], None
+    if kind == 'NOT_DISPATCHED':
+        return ['NOT_DISPATCHED'], None
+    return ['UNKNOWN'], payload.get('detail') or 'UNSPECIFIED'
 
 
 def _rank(values, q):
@@ -421,29 +700,52 @@ def _rank(values, q):
 
 
 def report(store, *, horizon=3600):
-    """Forward-return distribution per rejection group at one horizon (default +1h)."""
-    groups = {}
+    """Forward-return distribution per outcome group at one horizon (default +1h).
+
+    Fixed +5m baseline; pools that died count as -100% (never dropped); candidates with no usable baseline
+    sample are excluded from return statistics and counted (``baseline_missing``) per group.
+    """
+    groups, unknown, distinct = {}, {}, 0
     with closing(_connect(store, readonly=True)) as c:
         c.execute('BEGIN')
         for mint, in c.execute('SELECT mint FROM candidates').fetchall():
+            distinct += 1
             samples = [dict(zip(('horizon', 'status', 'price', 'quote_raw'), r)) for r in c.execute(
                 'SELECT horizon,status,price,quote_raw FROM samples WHERE mint=? ORDER BY horizon', (mint,))]
             last = c.execute('SELECT payload FROM outcomes WHERE mint=? ORDER BY id DESC LIMIT 1', (mint,)).fetchone()
             m = metrics(samples)
-            for name in _group(json.loads(last[0]) if last else None):
-                g = groups.setdefault(name, {'candidates': 0, 'with_return': 0, 'returns': [], 'died': 0, 'max_gains': []})
+            try:
+                payload = json.loads(last[0]) if last else None
+            except ValueError:
+                payload = {}
+            names, detail = groups_of(payload)
+            if detail:
+                unknown[detail] = unknown.get(detail, 0) + 1
+            for name in names:
+                g = groups.setdefault(name, {'candidates': 0, 'with_return': 0, 'returns': [], 'died': 0, 'max_gains': [],
+                                             'baseline_missing': 0, 'dead_at_baseline': 0, 'dead_at_horizon': 0})
                 g['candidates'] += 1
                 g['died'] += m['pool_died']
+                if m['baseline'] == 'MISSING':
+                    g['baseline_missing'] += 1
+                    continue
+                g['dead_at_baseline'] += m['baseline'] == 'DEAD'
                 if horizon in m['returns']:
-                    g['with_return'] += 1; g['returns'].append(m['returns'][horizon])
+                    g['with_return'] += 1
+                    g['returns'].append(m['returns'][horizon])
+                    g['dead_at_horizon'] += m['returns'][horizon] == -1
                 if m['max_gain'] is not None:
                     g['max_gains'].append(m['max_gain'])
-    result = {'label': LABEL, 'horizon_seconds': horizon,
-              'baseline': 'first priced sample (+5m); the migration-time price is not observed', 'groups': {}}
+    result = {'label': LABEL, 'horizon_seconds': horizon, 'distinct_candidates': distinct, 'unknown_breakdown': dict(sorted(unknown.items())),
+              'baseline': f'the +{BASELINE_HORIZON // 60}m sample, fixed for every candidate; a missing baseline excludes the candidate '
+                          '(counted as baseline_missing) and never re-baselines; the migration-time price is not observed',
+              'survivorship': 'pools that died are -100% (dead_at_horizon / dead_at_baseline) and included in the return statistics',
+              'groups': {}}
     for name, g in sorted(groups.items()):
         r = g['returns']
         result['groups'][name] = {
-            'candidates': g['candidates'], 'with_return': g['with_return'], 'pool_died': g['died'],
+            'candidates': g['candidates'], 'with_return': g['with_return'], 'baseline_missing': g['baseline_missing'],
+            'pool_died': g['died'], 'dead_at_baseline': g['dead_at_baseline'], 'dead_at_horizon': g['dead_at_horizon'],
             'mean_return': str(sum(r) / len(r)) if r else None, 'median_return': str(statistics.median(r)) if r else None,
             'p10_return': str(_rank(r, .1)) if r else None, 'p90_return': str(_rank(r, .9)) if r else None,
             'share_positive': str(Decimal(sum(1 for x in r if x > 0)) / len(r)) if r else None,
@@ -465,6 +767,8 @@ def main(argv=None):
         if name == 'ingest':
             p.add_argument('--discovery-db', required=True)
             p.add_argument('--journal')
+            p.add_argument('--ledger', help='read-only ledger: BUY fills make a candidate BOUGHT')
+            p.add_argument('--decisions-db', help='read-only decision store (paper-decisions.sqlite)')
         if name == 'sample':
             p.add_argument('--systemd-credentials', action='store_true')
         if name == 'report':
@@ -476,7 +780,7 @@ def main(argv=None):
         elif args.command == 'set-allowance':
             set_allowance(args.store, args.allowance_per_hour); out = {'status': 'RECORDED'}
         elif args.command == 'ingest':
-            out = ingest(args.store, args.discovery_db, journal_db=args.journal)
+            out = ingest(args.store, args.discovery_db, journal_db=args.journal, ledger_db=args.ledger, decisions_db=args.decisions_db)
         elif args.command == 'sample':
             from desk import provider_pacing
             if args.systemd_credentials:
