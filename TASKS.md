@@ -1129,3 +1129,19 @@ AVOID: T22/T22F reconciliation work; T16F's `scan is None` guard (keep it)
 6. **(LOW) Bounded tables.**
    - Account for re-evaluations consuming the bounded tables (512 preparation rejections, 8192 no-entry rows). Stop scheduling re-evaluations when a table is ≥80% full, and raise a health warning.
    - Add a test that a fresh hint is chosen over a due entry.
+
+---
+
+## T31F — Portfolio-risk follow-ups (from the T31 review)
+STATUS: OPEN
+DEPENDS: branch `cloud/T23F` has a `DONE T23F:` commit
+BASE: origin/integration/r1 (by then it contains T23F; then merge origin/cloud/T31. Resolve the two audit-test add/add conflicts by taking the version with `expectedFailure` removed for tests that pass)
+OWNS: desk/ledger.py (checkpoint validator only), desk/engine.py (T31 gate reject records only), tests/test_portfolio_risk.py, docs/PORTFOLIO_RISK.md
+AVOID: everything else
+
+1. **Checkpoint validation.** The validator (`desk/ledger.py` ~:49-110) must validate `portfolio_entries` and `portfolio_cooldown_until` when the flag is on. A missing or malformed key gives the standard recovery-required error, never a silent reset or a bare TypeError.
+2. **Reject records.** `PORTFOLIO_RISK_CAP` (and `BELOW_MINIMUM`) reject records carry `reasons`, scores and policy fields, as the docs claim. Otherwise fix the docs.
+3. **Liquidation and the loss streak.** Decide explicitly whether liquidation closes count toward the loss streak, document it, and test it.
+4. **Config validation.** Validate `max_entries_per_10m` ≤ 10 (ENTRY_THROTTLE already allows only one entry per minute).
+
+Leave the pre-I/O `portfolio_blockers` call to T16F.
