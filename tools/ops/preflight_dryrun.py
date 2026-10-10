@@ -42,7 +42,8 @@ DEFAULT_MAX_BYTES = 4 * 1024 * 1024 * 1024
 FORBIDDEN_ENV = ('HELIUS_API_KEY', 'JUPITER_API_KEY', 'KRAKEN_API_KEY', 'KRAKEN_API_SECRET',
                  'CREDENTIALS_DIRECTORY')
 RESULT_PREFIX = 'PREFLIGHT_RESULT:'
-SKIPPED_CONTEXT_FIELDS = ('paths', 'journal')
+# Only device/inode identities and the config copy's path legitimately differ on copies.
+SKIPPED_CONTEXT_FIELDS = ('paths.*.device', 'paths.*.inode', 'paths.config.path')
 
 CHILD = r'''
 import contextlib, io, json, os, sys, time
@@ -174,9 +175,13 @@ def preflight_stage():
     ctx = tool.plan(**args)
     out = {'context_mismatch': False, 'refusal_reason': None, 'journal_context': 'ABSENT', 'journal_context_diff': []}
     if journal_context is not None:
-        diff = sorted(k for k in set(ctx) | set(journal_context)
-                      if k not in spec['skipped_context_fields'] and ctx.get(k) != journal_context.get(k))
-        out['journal_context'] = 'MATCH_EXCLUDING_PATHS' if not diff else 'MISMATCH'
+        def normal(value):
+            value = dict(value)
+            value['paths'] = {k: v['path'] for k, v in value['paths'].items() if k != 'config'}
+            return value
+        a, b = normal(ctx), normal(journal_context)
+        diff = sorted(k for k in set(a) | set(b) if a.get(k) != b.get(k))
+        out['journal_context'] = 'MATCH_EXCLUDING_IDENTITIES' if not diff else 'MISMATCH'
         out['journal_context_diff'] = diff
         out['context_mismatch'] = bool(diff)
     try:
@@ -289,6 +294,30 @@ def _copy(data, work, sources):
     return copies
 
 
+def _live_findings(data, names, sources):
+    """Modes/links the copy would mask (copies are forced to 0600/0700)."""
+    found = []
+    def bad(label, path, forbidden, exact=None):
+        try:
+            info = path.lstat()
+        except OSError:
+            found.append(f'{label}:MISSING')
+            return
+        mode = stat.S_IMODE(info.st_mode)
+        if (exact is not None and mode != exact) or mode & forbidden or info.st_nlink != 1 and path.is_file():
+            found.append(f'{label}:MODE_{mode:o}_LINKS_{info.st_nlink}')
+        if path.is_file() and info.st_uid != os.geteuid():
+            found.append(f'{label}:OWNER')
+    journal = data / names['journal']
+    if journal.exists():
+        bad('journal', journal, 0o077)
+        bad('journal_dir', journal.parent, 0o077)
+    bad('pacing', data / names['pacing_db'], 0, exact=0o600)
+    bad('research_dir', (data / names['research_db']).parent, 0o022)
+    bad('scheduler_lock', (data / names['research_db']).parent / 'paper-scheduler.lock', 0o177)
+    return found
+
+
 def _pending(evidence):
     try:
         with closing(sqlite3.connect(evidence.as_uri() + '?mode=ro', uri=True)) as c:
@@ -306,6 +335,7 @@ def _blockers(stages, violations):
     for name in ('import', 'gate', 'preflight', 'scheduler'):
         stage = stages.get(name)
         if stage is None:
+            blockers.append(f'{name.upper()}_MISSING')
             continue
         if not stage['ok']:
             blockers.append(f'{name.upper()}_ERROR')
@@ -314,8 +344,10 @@ def _blockers(stages, violations):
         blockers.append('GATE_' + str(gate['gate_result']))
     pre = stages.get('preflight', {})
     if pre.get('ok'):
-        if pre['refusal_reason']:
+        if pre['refusal_reason'] is not None:
             blockers.append('PREFLIGHT_REFUSED')
+        if pre['journal_context'] == 'ABSENT':
+            blockers.append('JOURNAL_ABSENT')
         if pre['context_mismatch']:
             blockers.append('CONTEXT_MISMATCH')
     sched = stages.get('scheduler', {})
@@ -359,6 +391,8 @@ def run(args):
         if key != 'journal' and rel not in present_rel:
             raise Refused(f'Required store missing under --data: {rel}')
     before = {str(p): (p.stat().st_size, p.stat().st_mtime_ns) for p in sources}
+    listing_before = {str(p) for p in data.rglob('*')}
+    findings = _live_findings(data, names, sources)
     work.mkdir(mode=0o700)
     os.chmod(work, 0o700)
     report = {'kind': 'preflight_dryrun_v1', 'paper_only': True, 'execution_status': 'EXECUTION_UNVERIFIED',
@@ -405,8 +439,8 @@ def run(args):
             raise Refused('Child produced no result (exit %s): %s' % (proc.returncode, proc.stderr.strip()[-300:]))
         child = json.loads(lines[0][len(RESULT_PREFIX):])
         stages, violations = child['stages'], child['violations']
-        pending, truncated = _pending(Path(paths['evidence']))
-        blockers = _blockers(stages, violations)
+        pending, truncated = _pending(work / names['evidence_db'])
+        blockers = _blockers(stages, violations) + ['LIVE_' + f for f in findings]
         report.update({
             'status': 'GUARD_VIOLATION' if violations else ('PASS' if not blockers else 'BLOCKED'),
             'blockers': blockers, 'implementation_hash': child.get('implementation_hash'),
@@ -419,11 +453,19 @@ def run(args):
     finally:
         if not args.keep:
             shutil.rmtree(work, ignore_errors=True)
+            report['workdir_removed'] = not work.exists()
     after = {str(p): (p.stat().st_size, p.stat().st_mtime_ns) for p in sources}
     report['live_sources_unchanged'] = before == after
+    # A reader of a WAL database may create -wal/-shm beside it; report, never hide.
+    report['live_sidecars_created'] = sorted(str(Path(x).relative_to(data)) for x in
+                                             {str(p) for p in data.rglob('*')} - listing_before)
+    report['live_permission_findings'] = findings
     if before != after:
-        report['status'] = 'GUARD_VIOLATION'
-        report['blockers'] = report['blockers'] + ['LIVE_SOURCE_CHANGED']
+        # Live writers moved while copying: copies may be cross-store inconsistent. Fail closed.
+        report['status'] = 'BLOCKED'
+        report['blockers'] = report['blockers'] + ['LIVE_SOURCE_CHANGED_DURING_RUN']
+    elif findings and report['status'] == 'PASS':
+        report['status'] = 'BLOCKED'
     return report
 
 
@@ -451,7 +493,7 @@ def main(argv=None):
     args = p.parse_args(argv)
     try:
         report = run(args)
-    except (Refused, OSError, sqlite3.Error, ValueError) as e:
+    except (Refused, OSError, sqlite3.Error, ValueError, KeyError, TypeError, json.JSONDecodeError) as e:
         print(json.dumps({'kind': 'preflight_dryrun_v1', 'status': 'REFUSED', 'reason': str(e)[:300],
                           'paper_only': True, 'live_readiness': False}, sort_keys=True))
         return 3
