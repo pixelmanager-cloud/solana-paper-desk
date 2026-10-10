@@ -1314,6 +1314,33 @@ class ReviewFixTests(WatcherBase):
         self.assertEqual(len([c for c in self.rpc_calls if c[0] == 'getAccountInfo']), 2)
         self.assertEqual(w2.facts[self.mint]['transfer_fee_bps'], 250)
 
+    async def test_creator_fee_moves_the_stop_from_the_operator_flag_and_from_the_pool_account_override(self):
+        self.reserves = (10 ** 15, int(8.6 * 10 ** 9))                  # ratio ~0.8446: above stop + margin without a creator fee
+        plain = hw.implied_ratio(position(), self.reserves[0], self.reserves[1], self.cfg, '25')
+        with_fee = hw.implied_ratio(position(), self.reserves[0], self.reserves[1], self.cfg, '25', creator_fee_bps=500)
+        self.assertGreater(plain, D('0.84'))
+        self.assertLessEqual(with_fee, D('0.84'))
+        self.write_state({self.mint: self.pos()})
+        w = self.make()
+        await w.tick()
+        self.assertEqual(self.triggers(), [])                           # no creator fee known: no nudge
+        self.store.close()
+        w = self.make(creator_fee_bps='500')                            # the operator knows the creator fee
+        await w.tick()
+        self.assertEqual([r[1] for r in self.triggers()], ['STOP'])
+        # A creator fee found in the pool account (cached facts) works without the flag.
+        self.store.close()
+        self.root = Path(tempfile.mkdtemp()); self.addCleanup(shutil.rmtree, self.root, True)
+        self.write_state({self.mint: self.pos()})
+        store = hw.WatcherStore(self.root / 'state' / 'watcher.sqlite')
+        store.save_vault(self.pool.pool_s, self.mint, self.pool.base_vault, self.pool.quote_vault, 1.0,
+                         {'creator_fee_bps': 500, 'transfer_fee_bps': 0, 'decimals': 6, 'virtual_quote_reserves': 0})
+        store.close()
+        w = self.make()
+        await w.tick()
+        self.assertEqual(w.facts[self.mint]['creator_fee_bps'], 500)
+        self.assertEqual([r[1] for r in self.triggers()], ['STOP'])
+
     async def test_position_without_quote_execution_warns_and_still_prices_from_the_mint(self):
         position_without = self.pos()
         del position_without['quote_execution']
