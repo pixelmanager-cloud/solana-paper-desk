@@ -45,7 +45,7 @@ PRODUCER_INTEGRITY = frozenset({
     'COLLECTOR_TARGET_OBSERVATION_REQUIRED', 'COORDINATOR_TARGET_BINDING_MISMATCH', 'COLLECTOR_OBSERVATION_REJECTED',
     'COLLECTOR_SOURCE_BINDING_OR_CONTENT_INVALID', 'BOUNDED_RAW_TRADE_SEQUENCE_REQUIRED',
     'CAPTURED_HISTORY_WINDOW_STALE_OR_FUTURE', 'SOL_USD_SOURCE_OR_EXACT_BLOCK_TIME_MISSING',
-    'SOL_USD_TRUSTED_INPUT_INVALID', 'EXPLICIT_OBSERVABLE_SIGNAL_PROFILE_REQUIRED',
+    'SOL_USD_TRUSTED_INPUT_INVALID', 'SOL_USD_SOURCE_FAULT', 'EXPLICIT_OBSERVABLE_SIGNAL_PROFILE_REQUIRED',
     'EXPLICIT_PAPER_FEE_ASSUMPTION_REQUIRED', 'PAPER_EVENT_BYTE_LIMIT_EXCEEDED', 'EXPERIMENTAL_EVENT_CONTRACT_INVALID'})
 RESERVED_PREFIXES = WINDOW_BLOCKER_PREFIXES + ('SOL_USD:', 'ORIGINAL_', 'COLLECTOR_', 'COORDINATOR_')
 
@@ -253,14 +253,19 @@ def _check_result(result, blocker, scan, before, after, hazards=()):
         raise ValueError('Producer blockers outside the normal vocabulary')
 
 
-def _cited_usd_failure(key, record, result, scan):
-    """A failed charged attempt that `result` cites as USD evidence and that is a SOL/USD attempt of `scan`."""
+def _cited_usd_failure(key, record, result, scan, *, kraken_measured=False):
+    """A failed charged attempt that `result` cites as USD evidence, is a SOL/USD attempt of `scan`, AND is an ORDINARY failure.
+
+    T37G: ordinary = transient (the monitoring allowance's non-latching vocabulary) or, for a Jupiter 401/403 only, a pass
+    whose valuation was carried by a valid Kraken observation (`kraken_measured`). TLS, unclassified, other 4xx
+    rejections and every malformed answer are provider/path FAULTS: they are never a normal no-entry."""
     from . import usd_valuation as usd
     from . import kraken_usd_observation as kraken
     return (key in result['usd_evidence_refs'] and record.get('scan_id') == scan
             and (record.get('source_id'), record.get('method')) in ((usd.JUPITER_SOURCE_ID, usd.JUPITER_METHOD),
                                                                    (kraken.SOURCE, kraken.METHOD))
-            and type(record.get('failure_code')) is str)
+            and type(record.get('failure_code')) is str
+            and usd.attempt_fault(record, kraken_measured=kraken_measured) is None)
 
 
 def _consistent(blocker, before, after, records):
@@ -304,6 +309,18 @@ def _proof(store, progress, rec, *, publishing=False):
     if type(rec['attempt_refs']) is not list:
         raise ValueError('Cycle no-entry attempt inventory mismatch')
     index = _index(store, scan, rec['attempt_refs'])
+    from . import usd_valuation as usd
+    cited = []
+    for ref in result['usd_evidence_refs']:
+        try:
+            cited.append(terminal._load(store, ref))
+        except (ValueError, OSError, sqlite3.Error):
+            raise ValueError('Cycle no-entry cited USD attempt unreadable') from None
+    measured = usd.fallback_measured(cited)
+    # Valuation v2 only (it always cites its Jupiter primary); a v0/v1 result keeps its previous proof untouched.
+    if (any(type(r) is dict and r.get('method') == usd.JUPITER_METHOD for r in cited)
+            and usd.faulted_scans(lambda ref: terminal._load(store, ref), result['usd_evidence_refs'])):
+        raise ValueError('Cycle no-entry cites a SOL/USD provider fault')
     refs = []
     for n in range(before['requests_used']+1, after['requests_used']+1):
         if n not in index.get(scan, {}):
@@ -313,7 +330,7 @@ def _proof(store, progress, rec, *, publishing=False):
                 or type(record.get('observed_at')) is not int):
             # T37F: a failed attempt is acceptable only when the result CITES it as USD evidence and it is a SOL/USD
             # attempt of this scan (valuation v2 treats a provider failure as a retained value, never as a latch).
-            if not _cited_usd_failure(key, record, result, scan):
+            if not _cited_usd_failure(key, record, result, scan, kraken_measured=measured):
                 raise ValueError('Cycle no-entry charged attempt incomplete or failed')
         refs.append(key)
     if refs != rec['attempt_refs'] or not set(result['attempt_refs']+result['usd_evidence_refs']) <= set(refs):

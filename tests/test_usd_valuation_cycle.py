@@ -24,7 +24,7 @@ _KRAKEN_LINE = """                wire=('{"error":[],"result":{"SOLUSD":[["100.0
 _JUPITER_LINE = """                wire=canonical({SOL:{'usdPrice':100,'blockId':100,'decimals':9}}).encode()"""
 assert _KRAKEN_LINE in _SOURCE and _JUPITER_LINE in _SOURCE, 'fixture changed: update the USD wire overrides'
 _SOURCE = _SOURCE.replace(_KRAKEN_LINE, """                outer.kraken_calls=getattr(outer,'kraken_calls',0)+1
-                if getattr(outer,'kraken_fail',False):raise ConnectionResetError('fixture: kraken down')
+                if getattr(outer,'kraken_fail',False):raise getattr(outer,'kraken_exc',ConnectionResetError)('fixture: kraken down')
                 wire=('{"error":[],"result":{"SOLUSD":[["'+getattr(outer,'kraken_price','100.00000')+'","1.00000",'+str(outer.f.at-1)+'.25,"s","l","",123]],"last":"123000000000"}}').encode()""")
 _SOURCE = _SOURCE.replace(_JUPITER_LINE, """                outer.jupiter_calls=getattr(outer,'jupiter_calls',0)+1
                 if getattr(outer,'jupiter_fail',False):raise getattr(outer,'jupiter_exc',ConnectionResetError)('fixture: jupiter down')

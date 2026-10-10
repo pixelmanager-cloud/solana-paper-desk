@@ -91,7 +91,12 @@ def _jupiter_prices(evidence_db, ts):
     return out
 
 
-def sol_usd_change_pct(evidence_db, ts, ttl, valuation_version=1):
+def sol_usd_change_pct(evidence_db, ts, ttl, valuation_version=1, source=None):
+    if valuation_version == 2 and source == "KRAKEN":
+        # T37G: the valuation used the Kraken fallback (the primary failed this pass), so the regime reads THAT series.
+        # A Jupiter price up to `ttl` old must not stand in for the observation the decision actually used; too little
+        # Kraken history means no regime evidence (the gate fails closed), never a silent switch back.
+        return _change(_kraken_prices(evidence_db, ts), ts, ttl)
     if valuation_version == 2:
         for series in (_jupiter_prices, _kraken_prices):
             change = _change(series(evidence_db, ts), ts, ttl)
@@ -117,12 +122,12 @@ def _change(prices, ts, ttl):
         return format(change.quantize(Decimal("0.0001")), "f"), newest
 
 
-def evidence(research_db, evidence_db, ts, ttl, valuation_version=1):
+def evidence(research_db, evidence_db, ts, ttl, valuation_version=1, source=None):
     """Regime evidence dict for decision second ``ts`` or None. Never raises."""
     try:
         if type(ts) is not int or ts < 0:
             return None
-        change, as_of = sol_usd_change_pct(evidence_db, ts, ttl, valuation_version)
+        change, as_of = sol_usd_change_pct(evidence_db, ts, ttl, valuation_version, source)
         if change is None:
             return None
         return {"version": 1, "as_of": as_of, "graduations_per_hour": graduations_per_hour(research_db, ts),

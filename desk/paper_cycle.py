@@ -775,7 +775,7 @@ def run_once(research_db, evidence_db, ledger_db, cfg, *, position_targets=(), c
                                 if not is_position and diagnostic['event'] is not None and regime.enabled(cfg):
                                     from . import regime_producer
                                     event=diagnostic['event']
-                                    found=regime_producer.evidence(research,evidence,event['ts'],regime.policy(cfg)['ttl_seconds'],**({'valuation_version':2} if valuation_version==2 else {}))
+                                    found=regime_producer.evidence(research,evidence,event['ts'],regime.policy(cfg)['ttl_seconds'],**({'valuation_version':2,'source':event['paper_usd_valuation'].get('selected_source')} if valuation_version==2 else {}))
                                     if found is not None:
                                         event['regime']=found
                                         event['event_id']='paper-market:'+digest({k:v for k,v in event.items() if k!='event_id'})
@@ -819,6 +819,13 @@ def run_once(research_db, evidence_db, ledger_db, cfg, *, position_targets=(), c
                                 result['monitoring_budget']={'status':'RECOVERY_REQUIRED','blockers':['MONITORING_SNAPSHOT_UNAVAILABLE']}
                         result['budget']={scan:{'used':progress.admission(scan)['requests_used'],
                             'ceiling':progress.admission(scan)['request_ceiling']} for scan in intent['admissions']}
+                    if valuation_version==2 and result['status']!='COMPLETE':
+                        # T37G: a pass that did not finish and cites a SOL/USD provider FAULT (TLS, unclassified, 4xx, a malformed
+                        # answer; a Jupiter 401/403 only counts when Kraken did not carry the valuation) is not an ordinary
+                        # outcome: the fault diagnostic is not producer vocabulary, so the no-entry proof refuses and the
+                        # closure HOLDS instead of retiring the pass.
+                        for faulted in usd_valuation.faulted_scans(store.load,list(attempt_refs)+list(result['usd_evidence_refs'])):
+                            result['diagnostics'].append({'scan_id':faulted,'blockers':[usd_valuation.BLOCKER_SOURCE_FAULT]})
                     if result['status']!='COMPLETE' and (budget.attempted>0 or budget.monitoring_attempted>0):
                         # T22H L4: when this pass can not be closed, the hold goes to disk BEFORE the result is saved, so a kill in
                         # between cannot leave a NULL pass that a later recovery would abandon.

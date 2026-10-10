@@ -54,6 +54,15 @@ BLOCKER_UNAVAILABLE = 'SOL_USD_UNAVAILABLE'
 # attempt original). They are valuation-only facts about a provider, never evidence about our own stores, so the
 # no-entry vocabulary (paper_cycle_no_entry.producer_blocker_is_normal) and the pass closure accept them.
 NORMAL_BLOCKERS = frozenset({BLOCKER_DIVERGENCE, BLOCKER_UNAVAILABLE})
+# T37G: NOT ordinary. A cited SOL/USD attempt that failed for a reason other than a transient one (TLS, an unclassified
+# exception, a 4xx rejection, a malformed or contradictory answer) is evidence about the provider or the path to it, not
+# a market fact. It is never part of NORMAL_BLOCKERS: a pass that cites one is held, not retired (see `faulted_scans`).
+BLOCKER_SOURCE_FAULT = 'SOL_USD_SOURCE_FAULT'
+AUTH_REJECTIONS = frozenset({401, 403})
+# The only parse-level blockers that are ordinary: the answer was fine but old (a quiet market, a slow path). Every other
+# parse blocker (malformed JSON, a missing/extra mint, a bad price, wrong decimals, a missing blockId, an invalid Kraken
+# answer, a non-200 body) says the answer itself is wrong.
+ORDINARY_PARSE_BLOCKERS = frozenset({'ACQUISITION_STALE_OR_FUTURE', 'TRADE_STALE_OR_FUTURE'})
 KEY_CROSS_CHECK = 'usd_cross_check_seconds'
 DEFAULT_CROSS_CHECK = 300           # Kraken cross-check at most every 5 minutes (T37 spec item 4)
 MIN_CROSS_CHECK = 1                 # the config loader requires every numeric key to be positive
@@ -250,6 +259,77 @@ def observe_kraken(record, *, now, scan):
                                      bounds=kraken.TrustedTimeBounds(now))
     return Observation('KRAKEN', parsed.status, parsed.usd_price, parsed.blockers, key, parsed.payload_sha256, request,
                        parsed.price_at)
+
+
+def _observe_at_acquisition(record):
+    """The attempt judged at its OWN acquisition second (decision-time freshness was enforced when it was used)."""
+    if record.get('method') == JUPITER_METHOD:
+        return observe_jupiter(record, now=record['observed_at'], scan=record['scan_id'])
+    return observe_kraken(record, now=record['acquired_at_decimal'], scan=record['scan_id'])
+
+
+def _is_usd_attempt(record):
+    return (type(record) is dict and record.get('kind') == 'paper_read_attempt_v1'
+            and (record.get('source_id'), record.get('method')) in ((JUPITER_SOURCE_ID, JUPITER_METHOD),
+                                                                   (kraken.SOURCE, kraken.METHOD)))
+
+
+def fallback_measured(records):
+    """True iff one of the retained attempts is a Kraken observation that is valid (MEASURED at its own second)."""
+    for record in records:
+        try:
+            if (_is_usd_attempt(record) and record.get('method') == kraken.METHOD and record.get('failure_code') is None
+                    and _observe_at_acquisition(record).status == 'MEASURED'):
+                return True
+        except (ValueError, TypeError, KeyError, AttributeError, ArithmeticError):
+            continue
+    return False
+
+
+def attempt_fault(record, *, kraken_measured=False):
+    """None when this retained SOL/USD attempt is an ORDINARY outcome, else a short reason (T37G).
+
+    Ordinary: it measured a price; the transport failed in a way the monitoring allowance already treats as non-latching
+    (network errors, 408/429/5xx, pacing contention: `monitoring_budget._latching_failure`); or the answer was only
+    stale. Exception: a Jupiter 401/403 is ordinary ONLY when a valid Kraken observation of the same pass carried the
+    valuation (`kraken_measured`; the persistent-rejection health WARNING covers the key). Everything else is a fault.
+    """
+    from .monitoring_budget import _latching_failure
+    try:
+        if record.get('failure_code') is not None:
+            if not _latching_failure(record):
+                return None
+            if (kraken_measured and record.get('method') == JUPITER_METHOD and record.get('failure_code') == 'HTTP_REJECTED'
+                    and record.get('http_status') in AUTH_REJECTIONS):
+                return None
+            return str(record.get('failure_code'))[:64] + (':%s' % record['http_status'] if type(record.get('http_status')) is int else '')
+        observation = _observe_at_acquisition(record)
+    except (ValueError, TypeError, KeyError, AttributeError, ArithmeticError):
+        return 'ATTEMPT_UNREADABLE'
+    if observation.status == 'MEASURED' or all(code in ORDINARY_PARSE_BLOCKERS for code in observation.blockers):
+        return None
+    return ','.join(observation.blockers)[:96]
+
+
+def faulted_scans(load, refs):
+    """Scans whose retained SOL/USD attempts (among `refs`) contain a fault. `load(ref)` returns the retained original.
+
+    Unreadable refs are skipped (they are not USD evidence of ours); the verdict is per scan, with `kraken_measured`
+    taken from the same scan's attempts, so one scan's measured fallback can never excuse another scan's rejection."""
+    by_scan = {}
+    for ref in refs:
+        try:
+            record = load(ref)
+        except (ValueError, TypeError, OSError, KeyError):
+            continue
+        if _is_usd_attempt(record) and type(record.get('scan_id')) is str:
+            by_scan.setdefault(record['scan_id'], []).append(record)
+    faulted = []
+    for scan, records in by_scan.items():
+        measured = fallback_measured(records)
+        if any(attempt_fault(r, kraken_measured=measured) is not None for r in records):
+            faulted.append(scan)
+    return sorted(faulted)
 
 
 def divergence(primary_price, fallback_price):
