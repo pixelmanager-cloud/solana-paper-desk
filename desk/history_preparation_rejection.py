@@ -3,7 +3,7 @@
 Caller owns research/evidence/ledger locks. Ambiguity is never a rejection.
 Dispatcher and global-gate integration are separate reviewed consumers.
 """
-from contextlib import closing
+from contextlib import closing, ExitStack
 from pathlib import Path
 import sqlite3
 import time
@@ -215,7 +215,7 @@ def verify(store,progress,result):
     return _proof(store,progress,value)
 
 
-def gate(store,research,scan_ids):
+def gate(store,research,scan_ids,*,ledger_locked=None):
     """Companion global-gate hook: replay every rejection; never trust a marker."""
     progress=HistoryProgress.__new__(HistoryProgress);progress.store=store
     with closing(store.connect()) as c:
@@ -239,6 +239,13 @@ def gate(store,research,scan_ids):
     if bound!=set(retired):raise ValueError('Preparation rejection inventory incomplete')
     for identity,scan,intent_key,outcome_key in retired:
         value=terminal._load(store,outcome_key)
-        original=verify(store,progress,{**value,'evidence_hash':outcome_key})
-        if original['context']['research_db']!=str(research):raise ValueError('Preparation rejection research context')
+        intent_record=terminal._load(store,intent_key)
+        from .paper_cycle import _lock, canonical_job_path
+        path=canonical_job_path(intent_record['context']['ledger_db'])
+        with ExitStack() as locks:
+            if ledger_locked!=str(path):
+                if not locks.enter_context(_lock(str(path)+'.paper-cycle.lock')):
+                    raise ValueError('Preparation receipt ledger busy')
+            original=verify(store,progress,{**value,'evidence_hash':outcome_key})
+            if original['context']['research_db']!=str(research):raise ValueError('Preparation rejection research context')
     return 'REJECTED_SCAN_RETIRED' if any(row[1] in scan_ids for row in retired) else None

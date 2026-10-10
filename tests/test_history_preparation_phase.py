@@ -125,6 +125,16 @@ class PreparationTests(unittest.TestCase):
             rejection.verify(self.store,self.progress,result)
         with self.assertRaisesRegex(ValueError,'live charge changed'):
             terminal.gate(self.store,self.context['research_db'],('b'*32,))
+    def test_receipt_ledger_contention_and_existing_lock_passthrough(self):
+        self.rejected()
+        with cycle._lock(str(self.ledger)+'.paper-cycle.lock') as locked:
+            self.assertTrue(locked)
+            with self.assertRaisesRegex(ValueError,'ledger busy'):
+                terminal.gate(self.store,self.context['research_db'],('b'*32,))
+            self.assertEqual(terminal.gate(self.store,self.context['research_db'],
+                (self.target.scan_id,),ledger_locked=str(self.ledger)), 'REJECTED_SCAN_RETIRED')
+            self.assertIsNone(terminal.gate(self.store,self.context['research_db'],
+                ('b'*32,),ledger_locked=str(self.ledger)))
     def test_fresh_context_without_pass_table_has_no_rejection(self):
         with closing(self.store.connect()) as c:c.execute('DROP TABLE paper_observation_passes')
         self.assertIsNone(terminal.gate(self.store,self.context['research_db'],('b'*32,)))

@@ -95,7 +95,7 @@ def _context(research_db, evidence_db, ledger_db, cfg, item):
                 from desk.paper_terminal_reconciliation import gate
                 blocked=gate(store,research,(item.target.scan_id,),ledger_locked=str(ledger))
                 if blocked:raise ValueError('Observation recovery required: '+blocked)
-                blocked=rejection.gate(store,research,(item.target.scan_id,))
+                blocked=rejection.gate(store,research,(item.target.scan_id,),ledger_locked=str(ledger))
                 if blocked:raise ValueError('Observation recovery required: '+blocked)
                 graduation = cycle._graduation(store, item, int(time.time()))
                 if graduation['status'] != 'OBSERVED_MIGRATION': raise ValueError('Retained migration required')
