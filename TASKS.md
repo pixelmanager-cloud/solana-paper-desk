@@ -344,3 +344,20 @@ Requirements:
    - default-off byte-identical behaviour.
 
 Write `docs/MULTI_POSITION.md`: the scheduling model, the budget math, the failure modes, and the recommended first setting (e.g. max_positions 2, then 4) for the coordinator to activate after the first single-position cycle is verified.
+
+---
+
+## T17 — Fix review findings in the live-execution design doc
+STATUS: OPEN
+DEPENDS: none
+BASE: origin/cloud/T15
+OWNS: docs/live/LIVE_EXECUTION_DESIGN.md (docs only)
+AVOID: all code
+
+Coordinator review of T15. Amend the doc:
+1. **Signer policy vs rent.** §3 refuses "any account close", but each round trip then strands about 0.002 SOL of ATA rent, roughly 20% of a 0.01 SOL canary trade. Allow closing the desk's own ATA back to the hot wallet (and only that), or justify a different canary size. Show the math.
+2. **Bootstrap CI basis.** §4.3's CI must be computed on T14's +5s latency-adjusted fills including the real fee stack (priority fee, Jito tip, rent), not on the instantaneous quote or `fixed_fee_sol`.
+3. **Size mismatch.** Paper trades 0.1 SOL and the canary 0.01 SOL. The gate must require PnL recomputed at canary size, with fixed costs scaled correctly. Alternatively, recommend matching sizes.
+4. **Numbers everywhere.** Put a number on every gate threshold: shadow build success rate, fee tolerance, canary realised-vs-model cost tolerance. Define "reconciliation" in simulate-only shadow mode (e.g. simulated balance deltas vs the expected quote).
+5. **Risk acceptance.** Cap the "explicit written risk acceptance" escape hatch at no more than the wallet cap, with a time limit.
+6. **Reference fix.** `forJitoBundle` is at providers.py:213, not :223.
