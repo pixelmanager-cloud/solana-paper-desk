@@ -1211,3 +1211,24 @@ AVOID: desk/**, tools/research/counterfactual.py
 1. **Keep receipt classes separate.** `shadow_strategies.py` ~:172 drops `detail`. When the detail is `TERMINAL_RECEIPT_UNVERIFIED`, group the result as `REJECTED:...:UNVERIFIED`, and keep UNRESOLVED as its own group. Test both classes.
 2. **Non-circular parity.** Rebuild a candidate from RECORDED reserves and timestamps (a fixture ledger with real held/entry events). Run the shadow's own `simulate` with `max_intra_marks=0` and `build_config(saved_cfg, {})`. Compare its entry and exit decisions with the recorded engine decisions, and report the expected gap from neutral features explicitly. The test `test_a_different_config_changes_the_replayed_decisions` must exercise a real difference.
 3. **Provisional results.** Flag a provisional NOT_DISPATCHED (dispatch window still open) separately, or exclude it until it is final.
+
+---
+
+## T16G — Concurrency: bounded held latency, rollover, wiring (from the T16F review)
+STATUS: OPEN
+DEPENDS: none
+BASE: origin/cloud/T16F, then merge origin/integration/r1. Resolve `deploy/fresh/desk-paper-held-cycle.service` to `<POOL_FEE_BPS>` plus `--wall-seconds 64`.
+OWNS: the T16/T16F files, plus tools/ops/fresh_start.py (held argv only)
+AVOID: T22/T22F files, T23G files
+
+**Coordinator decision pending** on T16F's `paper_portfolio_mark_ttl_seconds` (a relaxation of held-mark freshness for entry decisions). Keep it behind its flag, and default it to ABSENT in example configs until the coordinator decides. Do not change its semantics.
+
+1. **Wiring.** Add `--wall-seconds 64` to the held manifest argv (`fresh_start.py` ~:215) so `test_ops_fresh_start_wiring` passes after the merge. Fix the stale "held 10 s pass" comment (~:86).
+2. **Bounded held latency during an entry.** The worst case today is ~5 min between monitoring passes, against a 120s cadence. Bound it:
+   - cap each entry phase so it releases the lease between phases, or
+   - run held legs inside the entry at a bounded interval (≤ cadence).
+
+   Prove it with a test that uses REALISTIC phase durations (simulated clock advancing by the code's own budgets: preparation 18s, cycle 12s, acquisition and intake as measured), not a 1s entry.
+3. **Rollover.** Guarantee a day rollover at least once per rollover window even when the book is full, no candidate exists, or the mode is EXIT_ONLY. For example, let the held pass's final leg roll over using fresh marks for all positions, under a versioned rule. Test all three cases.
+4. **Entry estimate.** `ENTRY_SECONDS` must include acquisition and intake time (dispatcher ~:646-667). The pipeline test must not freeze `time.time` to 0 for those phases.
+5. **Restart test.** Use 3 positions, a crash mid-leg (a reservation without an outcome) and an interrupted-entry restart. Prove there are no duplicate charges or fills.
