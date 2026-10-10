@@ -1,0 +1,20 @@
+[Unit]
+Description=Record reject-only paper candidate decisions from completed investigations
+ConditionPathExists=<FRESH_ROOT>/paper-scheduler.lock
+[Service]
+Type=oneshot
+User=solana-desk
+Group=solana-desk
+WorkingDirectory=<RELEASE_DIR>
+Environment=DESK_PAPER_SCHEDULER_IDENTITY=<SCHEDULER_IDENTITY>
+ExecStart=/opt/solana-desk/.venv/bin/python -m tools.paper_scheduler --research-db <FRESH_ROOT>/research.sqlite --mode decisions -- --db <FRESH_ROOT>/research.sqlite --journal <FRESH_ROOT>/paper-decisions.sqlite --evidence-db <FRESH_ROOT>/evidence.sqlite
+UMask=0077
+NoNewPrivileges=true
+PrivateTmp=true
+ProtectSystem=strict
+ProtectHome=true
+ReadWritePaths=<FRESH_ROOT>
+RestrictAddressFamilies=AF_UNIX
+PrivateNetwork=true
+TimeoutStartSec=60
+MemoryMax=128M

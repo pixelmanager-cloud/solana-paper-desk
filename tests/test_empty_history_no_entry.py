@@ -95,6 +95,14 @@ class ProspectiveEmptyTests(unittest.TestCase):
         self.assertIsNone(p.marker())
 
 class RetainedEmptyTests(unittest.TestCase):
+    @staticmethod
+    def legacy_null_pass():
+        """These tests cover retrospective receipts for passes retained NULL by the
+        pre-fix runtime, so the generic prospective publication is disabled for
+        this fixture only (assertions unchanged; see test_cycle_no_entry)."""
+        from desk import paper_cycle_no_entry
+        return patch.object(paper_cycle_no_entry,'publish',side_effect=ValueError('legacy NULL fixture'))
+
     def setUp(self):
         import inspect,json,textwrap,time
         from pathlib import Path
@@ -139,7 +147,7 @@ class RetainedEmptyTests(unittest.TestCase):
         def historical_intent(*a,**k):return {**original_intent(*a,**k),'kind':'history_first_paper_preparation_v3'}
         def historical_bounds(*a,**k):return original_bounds(*a,**{**k,'required_measurements':False})
         def historical_reason(*a,**k):return original_reason(*a,**{**k,'empty_window':False})
-        with patch.object(first.tool.cli,'_credentials'),patch.dict('os.environ',{'HELIUS_API_KEY':'SYNTHETIC_TEST_ONLY','JUPITER_API_KEY':'SYNTHETIC_TEST_ONLY'}),patch.object(transport,'build_opener',return_value=HTTP()),patch.object(rejection,'intent',side_effect=historical_intent),patch.object(rejection,'bounds',side_effect=historical_bounds),patch.object(rejection,'reason_for',side_effect=historical_reason):
+        with patch.object(first.tool.cli,'_credentials'),patch.dict('os.environ',{'HELIUS_API_KEY':'SYNTHETIC_TEST_ONLY','JUPITER_API_KEY':'SYNTHETIC_TEST_ONLY'}),patch.object(transport,'build_opener',return_value=HTTP()),patch.object(rejection,'intent',side_effect=historical_intent),patch.object(rejection,'bounds',side_effect=historical_bounds),patch.object(rejection,'reason_for',side_effect=historical_reason),self.legacy_null_pass():
             self.result=h.invoke(live=True,systemd_credentials=True)
         self.assertEqual(self.result['blockers'],['MARKET_PRODUCER_BLOCKED'],self.result)
         self.assertEqual(self.result['investigation_attempted_requests'],5)

@@ -1,0 +1,9 @@
+# OPTIONAL Telegram notifications. Off unless you install this as a drop-in for BOTH
+#   /etc/systemd/system/desk-healthcheck.service.d/telegram.conf
+#   /etc/systemd/system/desk-notify-daily.service.d/telegram.conf
+# and create /etc/solana-desk/telegram.json (root:root 0600) containing
+#   {"token": "<bot token from @BotFather>", "chat_id": "<numeric chat id>"}
+# The token is delivered through systemd credentials only ($CREDENTIALS_DIRECTORY/telegram.json);
+# it never appears in Git, unit files, logs or the notify state file.
+[Service]
+LoadCredential=telegram.json:/etc/solana-desk/telegram.json

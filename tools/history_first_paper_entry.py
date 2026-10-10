@@ -24,6 +24,7 @@ from desk.model import canonical
 from desk.replay_history import replay_history
 from desk.live_strategy_features import MAX_RECORDS, MAX_RECORD_BYTES, MAX_TOTAL_BYTES
 from desk import history_preparation_rejection as rejection
+from desk import paper_concurrency as concurrency
 
 
 from desk.paper_history_preparation import PREPARATION_SECONDS, PreparationRejected, _PreparationBudget
@@ -44,8 +45,11 @@ def _context(research_db, evidence_db, ledger_db, cfg, item):
                 if not acquired: raise ValueError('Paper cycle busy')
                 jobs, store, progress = cycle._existing_context(research, evidence, (item.target,))
                 state = cycle._state(ledger, cfg)
-                if state['positions']: raise ValueError('No open positions permitted')
-                if state['mode'] != 'RUNNING': raise ValueError('Entry mode not running')
+                if concurrency.selected(cfg):
+                    if concurrency.state_blockers(state, cfg): raise ValueError('Concurrent entry not permitted')
+                else:
+                    if state['positions']: raise ValueError('No open positions permitted')
+                    if state['mode'] != 'RUNNING': raise ValueError('Entry mode not running')
                 from desk.paper_terminal_reconciliation import gate
                 blocked=gate(store,research,(item.target.scan_id,),ledger_locked=str(ledger))
                 if blocked:raise ValueError('Observation recovery required: '+blocked)
