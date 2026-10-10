@@ -129,6 +129,8 @@ class MathTests(unittest.TestCase):
     def test_take_profit_rungs_follow_the_stage(self):
         self.assertEqual(self.reasons('1.4', stage=0), ['TAKE_PROFIT'])
         self.assertEqual(self.reasons('1.39', stage=0), [])
+        self.assertEqual(self.reasons('1.39', stage=0, margin=D('0.02')), ['TAKE_PROFIT'])   # nudged slightly early
+        self.assertEqual(self.reasons('1.37', stage=0, margin=D('0.02')), [])
         self.assertEqual(self.reasons('1.4', stage=1, stop_ratio='1'), [])
         self.assertEqual(self.reasons('2', stage=1, stop_ratio='1'), ['TAKE_PROFIT'])
         self.assertEqual(self.reasons('3', stage=2, stop_ratio='1.4'), ['TAKE_PROFIT'])
