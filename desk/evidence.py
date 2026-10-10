@@ -33,6 +33,12 @@ class EvidenceStore:
                 c.execute('ROLLBACK');raise
         return key
     def load(self,key):
+        # Subclass load preflights still execute before super().load(). Reuse
+        # only immutable evidence bytes in an explicitly active dispatcher/gate
+        # scope; terminal._load rereads current SQL bytes and returns fresh JSON.
+        from . import paper_terminal_reconciliation as terminal
+        if terminal._GATE_BYTES.get() is not None:
+            return terminal._load(self,key)
         with closing(self.connect()) as c:row=c.execute('SELECT payload,raw_bytes FROM pages WHERE hash=?',(key,)).fetchone()
         if not row or not 0<=row[1]<=16*1024*1024:raise ValueError('Evidence missing or oversized')
         inflater=zlib.decompressobj();raw=inflater.decompress(row[0],row[1]+1)

@@ -57,8 +57,8 @@ class DispatchByteScopeTests(unittest.TestCase):
         self.assertIsNone(terminal._GATE_BYTES.get())
 
     def test_page_and_byte_caps_apply_across_nested_gates(self):
-        self.assertEqual(terminal.MAX_GATE_CACHE_BYTES,8*1024*1024)
-        self.assertEqual(terminal.MAX_GATE_CLASSIFICATION_BYTES,8*1024*1024)
+        self.assertEqual(terminal.MAX_GATE_CACHE_BYTES,32*1024*1024)
+        self.assertEqual(terminal.MAX_GATE_CLASSIFICATION_BYTES,32*1024*1024)
         self.assertEqual(terminal.MAX_GATE_CACHE_PAGES,512)
         for field in ('MAX_GATE_CACHE_BYTES','MAX_GATE_CACHE_PAGES'):
             with patch.object(terminal,field,0),terminal.verified_bytes_scope(),patch.object(terminal,'digest',wraps=terminal.digest) as digest:
