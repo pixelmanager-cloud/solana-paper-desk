@@ -57,7 +57,8 @@ def selected(cfg):
     cap = cfg.get('max_positions')
     if cfg.get('mode') != 'paper' or type(cap) is not int or not 2 <= cap <= MAX_CONCURRENT:
         raise ValueError('Concurrent entries require paper mode and 2..8 max_positions')
-    if TTL_KEY not in cfg:
+    if TTL_KEY not in cfg and not cfg.get(portfolio_marks.KEY):
+        # Batched reserve-implied marks (portfolio_marks) keep the 10 s rule; otherwise the relaxed TTL is required.
         raise ValueError('Concurrent entries require paper_portfolio_mark_ttl_seconds')
     engine.portfolio_ttl(cfg)  # type and range validation
     engine.rollover_after_mark(cfg)
@@ -117,7 +118,9 @@ def entry_blockers(state, cfg, *, monitoring_remaining=None, now=None, entry_sec
     after = len(state['positions']) + 1
     if monitoring_remaining is not None and monitoring_remaining < monitoring_required(after):
         blockers.append('MONITORING_RESERVE_INSUFFICIENT')
-    if now is not None and state['positions']:
+    if now is not None and state['positions'] and not portfolio_marks.selected(cfg):
+        # With batched portfolio marks the cycle refreshes every mark right before the decision, so the age of the
+        # marks at the start of the tick says nothing about their age at the decision.
         age = portfolio_age_at_decision(state, now, entry_seconds)
         if age > decimal(portfolio_ttl(cfg)):
             blockers.append('PORTFOLIO_MARKS_TOO_OLD_FOR_ENTRY')
