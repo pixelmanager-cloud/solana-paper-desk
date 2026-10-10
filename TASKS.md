@@ -978,3 +978,26 @@ AVOID: desk/**
    - Include the PumpSwap creator fee and Token-2022 transfer fees in the mark where known, and state any remaining assumptions.
    - A position without `quote_execution` raises a health WARNING; it does not silently drop price triggers.
 9. **(LOW) Trailing peak.** TRAILING uses the engine's recorded peak (from the ledger state), with the watcher's peak only as an early hint inside the margin.
+
+---
+
+## T33 — Regime evidence producer + T30 hardening
+STATUS: OPEN
+DEPENDS: branch `cloud/T22F` has a `DONE T22F:` commit AND branch `cloud/T23F` has a `DONE T23F:` commit
+BASE: origin/integration/r1 (by then it contains T22F, T23F and T30; if T30 is not merged yet, merge origin/cloud/T30 first)
+OWNS: desk/regime.py, a new desk/regime_producer.py, the minimal hook in the entry event builder (list it exactly), tests/test_regime*.py
+AVOID: desk/paper_terminal_reconciliation.py; held/exit paths
+
+T30's regime gate (opt-in, `paper_regime_version: 1`) has no producer: nothing fills `event["regime"]`, so turning the flag on rejects every entry (fail closed). Build the producer and fix the T30 review items:
+1. **Producer.** Attach regime evidence to ENTRY events only, computed from data already collected:
+   - the graduations/hour from the discovery store (bounded read, `mode=ro`, immutable only for a quiet WAL);
+   - the SOL/USD change from the existing Kraken observations, with no new provider calls;
+   - optionally the T26F counterfactual forward return.
+
+   Requirements:
+   - It must not create a new NULL-latch path: a producer failure yields missing evidence, which leads to a REGIME_EVIDENCE_REQUIRED reject (a normal, terminal no-entry), never an exception escaping the pass.
+   - It charges no requests.
+   - The evidence carries its `as_of`, and the engine's TTL check stays.
+2. **(T30 issue 1)** `score()` can raise `decimal.Overflow` on huge or tiny values. Bound magnitudes in `validate_record` and catch ArithmeticError, mapping it to INVALID.
+3. **(nit)** Validate the flag and policy config at load or initialize time, not at the first entry candidate.
+4. **Tests:** the producer fills evidence deterministically from fixture stores; a producer failure becomes a terminal no-entry; the flag stays off by default; replay determinism holds.
