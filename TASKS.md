@@ -1167,3 +1167,16 @@ AVOID: everything else
 4. **Config validation.** Validate `max_entries_per_10m` ≤ 10 (ENTRY_THROTTLE already allows only one entry per minute).
 
 Leave the pre-I/O `portfolio_blockers` call to T16F.
+
+---
+
+## T27G — Shadow strategies: last fixes (from the T27F review)
+STATUS: OPEN
+DEPENDS: none
+BASE: origin/integration/r1 (T27F is merged)
+OWNS: tools/research/shadow_strategies.py, tests/test_shadow_strategies.py
+AVOID: desk/**, tools/research/counterfactual.py
+
+1. **Keep receipt classes separate.** `shadow_strategies.py` ~:172 drops `detail`. When the detail is `TERMINAL_RECEIPT_UNVERIFIED`, group the result as `REJECTED:...:UNVERIFIED`, and keep UNRESOLVED as its own group. Test both classes.
+2. **Non-circular parity.** Rebuild a candidate from RECORDED reserves and timestamps (a fixture ledger with real held/entry events). Run the shadow's own `simulate` with `max_intra_marks=0` and `build_config(saved_cfg, {})`. Compare its entry and exit decisions with the recorded engine decisions, and report the expected gap from neutral features explicitly. The test `test_a_different_config_changes_the_replayed_decisions` must exercise a real difference.
+3. **Provisional results.** Flag a provisional NOT_DISPATCHED (dispatch window still open) separately, or exclude it until it is final.
