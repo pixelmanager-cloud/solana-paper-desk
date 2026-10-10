@@ -158,8 +158,8 @@ def plan(*, root, config, pacing_db, discovery_db, taker=PRODUCTION_TAKER, amoun
         raise FreshStartError('Reviewed fee hypothesis string required')
     cfg = cli._config(config)
     cycle._config(cfg)
-    if cfg.get('paper_usd_valuation_version') != 1:
-        raise FreshStartError('Explicit Kraken experiment (usd valuation v1) required')
+    if cfg.get('paper_usd_valuation_version') not in (1, 2):
+        raise FreshStartError('Explicit Kraken experiment (usd valuation v1 or v2) required')
     if len({root, config, pacing_db, discovery_db}) != 4 or root in (config.parent, pacing_db.parent, discovery_db.parent):
         raise FreshStartError('Distinct context paths required; shared stores must live outside the new root')
     if rotate_from is not None:

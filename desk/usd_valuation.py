@@ -82,7 +82,7 @@ def max_divergence(cfg):
 
 def fresh_requests(version):
     """Requests a fresh entry reserves: 9 (version 0), 7 (Kraken only), 8 (Jupiter + one Kraken cross-check)."""
-    return {0: 9, 1: 7, 2: 8}[version]
+    return {1: 7, 2: 8}.get(version, 9) if type(version) is int else 9
 
 
 @dataclass(frozen=True)
@@ -94,6 +94,7 @@ class Observation:
     attempt_hash: str
     payload_sha256: str | None
     request_sha256: str
+    price_at: int | None = None  # Jupiter: acquisition second; Kraken: the trade second (the event's freshness anchor)
 
 
 @dataclass(frozen=True)
@@ -103,6 +104,16 @@ class Decision:
     usd_price: Decimal | None
     divergence: Decimal | None
     blockers: tuple
+    price_at: int | None = None
+
+
+@dataclass(frozen=True)
+class Measured:
+    """What the market adapter needs from a decision: the price and its freshness anchor."""
+    usd_price: Decimal
+    price_at: int
+    status: str = 'MEASURED'
+    blockers: tuple = ()
 
 
 def _request_hash(url):
@@ -195,7 +206,7 @@ def observe_jupiter(record, *, now, scan):
         raise ValueError('USD attempt transport metadata')
     price, blockers, _block = parse_jupiter(raw, acquired_at=record['observed_at'], http_status=record['http_status'], now=now)
     return Observation('JUPITER', 'UNKNOWN' if blockers else 'MEASURED', price, blockers, key,
-                       hashlib.sha256(raw).hexdigest(), request)
+                       hashlib.sha256(raw).hexdigest(), request, None if blockers else record['observed_at'])
 
 
 def observe_kraken(record, *, now, scan):
@@ -213,7 +224,8 @@ def observe_kraken(record, *, now, scan):
     parsed = kraken.parse_kraken_usd(kraken.KrakenTradesResponse('GET', kraken.URL, raw, record['acquired_at_decimal'],
                                                                  record['http_status']),
                                      bounds=kraken.TrustedTimeBounds(now))
-    return Observation('KRAKEN', parsed.status, parsed.usd_price, parsed.blockers, key, parsed.payload_sha256, request)
+    return Observation('KRAKEN', parsed.status, parsed.usd_price, parsed.blockers, key, parsed.payload_sha256, request,
+                       parsed.price_at)
 
 
 def divergence(primary_price, fallback_price):
@@ -233,11 +245,11 @@ def choose(primary, fallback, *, purpose, limit):
         gap = divergence(primary.usd_price, fallback.usd_price)
         if gap > limit and purpose == 'entry':
             return Decision('DIVERGENCE', None, None, gap, (BLOCKER_DIVERGENCE,))
-        return Decision('PRIMARY', 'JUPITER', primary.usd_price, gap, ())
+        return Decision('PRIMARY', 'JUPITER', primary.usd_price, gap, (), primary.price_at)
     if good_primary:
-        return Decision('PRIMARY', 'JUPITER', primary.usd_price, None, ())
+        return Decision('PRIMARY', 'JUPITER', primary.usd_price, None, (), primary.price_at)
     if good_fallback:
-        return Decision('FALLBACK', 'KRAKEN', fallback.usd_price, None, ())
+        return Decision('FALLBACK', 'KRAKEN', fallback.usd_price, None, (), fallback.price_at)
     return Decision('UNAVAILABLE', None, None, None, (BLOCKER_UNAVAILABLE,))
 
 
@@ -246,7 +258,7 @@ def _summary(observation, record):
         'attempt_hash': observation.attempt_hash, 'attempt': record, 'status': observation.status,
         'blockers': list(observation.blockers),
         'usd_price': None if observation.usd_price is None else str(observation.usd_price),
-        'payload_sha256': observation.payload_sha256, 'request_sha256': observation.request_sha256}
+        'price_at': observation.price_at, 'payload_sha256': observation.payload_sha256, 'request_sha256': observation.request_sha256}
 
 
 def decide(attempts, *, now, scan, purpose, cfg):
@@ -270,7 +282,8 @@ def evidence(attempts, *, now, scan, purpose, cfg):
         raise ValueError('USD valuation unavailable: ' + ','.join(decision.blockers))
     return {'version': VERSION, 'source': SOURCE, 'purpose': 'USD_VALUATION_ONLY', 'scan_id': scan,
             'decision_at': now, 'decision_purpose': purpose, 'selection': decision.status,
-            'selected_source': decision.source, 'usd_price': str(decision.usd_price), **body,
+            'selected_source': decision.source, 'usd_price': str(decision.usd_price),
+            'price_at': decision.price_at, **body,
             'source_authentication': 'PROVIDER_OBSERVATION_NOT_CRYPTOGRAPHIC', 'solana_slot_witness': None}
 
 

@@ -285,3 +285,15 @@ class ConfigTests(unittest.TestCase):
 
 if __name__ == '__main__':
     unittest.main()
+
+
+class ExampleConfigTests(unittest.TestCase):
+    ROOT = __import__('pathlib').Path(__file__).resolve().parents[1] / 'config' / 'experiments'
+
+    def test_v2_example_loads_with_the_real_loader_and_v1_example_is_untouched(self):
+        from desk.model import load_config
+        v2 = load_config(self.ROOT / 'paper-jupiter-kraken-fresh.example.json')
+        self.assertEqual((v2['paper_usd_valuation_version'], uv.max_divergence(v2)), (2, D("0.01")))
+        v1 = load_config(self.ROOT / 'paper-kraken-fresh.example.json')
+        self.assertEqual(v1['paper_usd_valuation_version'], 1)
+        self.assertNotIn(uv.KEY_DIVERGENCE, v1)

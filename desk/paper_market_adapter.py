@@ -38,6 +38,7 @@ class MarketContext:
     history_as_of: int | None = None  # original query end, independent of decision now
     token_profile_version: int = 0
     usd_valuation_version: int = 0
+    usd_divergence: str = '0.01'     # version 2 only: the configured cross-check limit (a fraction)
 
 
 def build_market_event(collected, *, context, load_evidence, raw_trades=(),
@@ -105,11 +106,19 @@ def build_market_event(collected, *, context, load_evidence, raw_trades=(),
                 if int(timestamp(usd_bounds.now))!=context.now:raise ValueError('clock mismatch')
                 response,usd=from_attempt(usd_attempt,now=usd_bounds.now,scan=target.scan_id)
                 if response!=usd_response:raise ValueError('Kraken original response mismatch')
+            elif context.usd_valuation_version==2:
+                from . import usd_valuation
+                from .kraken_usd_observation import timestamp
+                if int(timestamp(usd_bounds.now))!=context.now:raise ValueError('clock mismatch')
+                decision,_=usd_valuation.decide(usd_attempt,now=usd_bounds.now,scan=target.scan_id,purpose='entry',
+                                                cfg={usd_valuation.KEY_DIVERGENCE:context.usd_divergence})
+                if decision.usd_price is None:blockers.update(decision.blockers)   # divergence / unavailable: a normal no-entry
+                else:usd=usd_valuation.Measured(decision.usd_price,decision.price_at)
             elif context.usd_valuation_version==0:
                 if usd_bounds.now!=context.now:raise ValueError('clock mismatch')
                 usd=parse_sol_usd(usd_response,bounds=usd_bounds)
             else:raise ValueError('USD version invalid')
-            if usd.status!='MEASURED':blockers.update('SOL_USD:'+r for r in usd.blockers)
+            if usd is not None and usd.status!='MEASURED':blockers.update('SOL_USD:'+r for r in usd.blockers)
         except (ValueError,AttributeError):blockers.add('SOL_USD_TRUSTED_INPUT_INVALID')
     for name,at in (('graduated_at',context.graduated_at),('holder_at',context.holder_at)):
         if at is None and name=='holder_at':continue
@@ -158,7 +167,12 @@ def build_market_event(collected, *, context, load_evidence, raw_trades=(),
         with localcontext() as ctx:
             ctx.prec=100
             e['market_cap_usd']=str((decimal(atomic_supply)/(10**mint.decimals))*pool.spot_sol_per_token*usd.usd_price)
-        if context.usd_valuation_version==1:
+        if context.usd_valuation_version==2:
+            from . import usd_valuation
+            e['paper_usd_valuation']=usd_valuation.evidence(usd_attempt,now=usd_bounds.now,scan=target.scan_id,purpose='entry',
+                                                            cfg={usd_valuation.KEY_DIVERGENCE:context.usd_divergence})
+            e['paper_source_evidence']['usd']=usd_valuation.summary_for_source(e['paper_usd_valuation'])
+        elif context.usd_valuation_version==1:
             from .kraken_usd_observation import evidence as usd_evidence
             e['paper_usd_valuation']=usd_evidence(usd_attempt,now=usd_bounds.now,scan=target.scan_id)
             e['paper_source_evidence']['usd']={k:v for k,v in e['paper_usd_valuation'].items() if k!='attempt'}

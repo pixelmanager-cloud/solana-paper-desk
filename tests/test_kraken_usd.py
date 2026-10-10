@@ -35,7 +35,9 @@ class KrakenUsdTests(unittest.TestCase):
         self.assertEqual(usd.selected({'mode':'paper'}),0)
         cfg={'mode':'paper','paper_signal_policy_version':3,'paper_quote_execution_version':1,'paper_usd_valuation_version':1}
         self.assertEqual(usd.selected(cfg),1)
-        for key,value in [('mode','live'),('paper_usd_valuation_version',True),('paper_usd_valuation_version',2),('paper_quote_execution_version',0)]:
+        # T37: version 2 (Jupiter PriceV3 primary, this module as fallback) is now a valid selection; 3 is not.
+        self.assertEqual(usd.selected(cfg|{'paper_usd_valuation_version':2}),2)
+        for key,value in [('mode','live'),('paper_usd_valuation_version',True),('paper_usd_valuation_version',3),('paper_quote_execution_version',0)]:
             with self.assertRaises(ValueError):usd.selected(cfg|{key:value})
 
 class KrakenPacingTests(unittest.TestCase):

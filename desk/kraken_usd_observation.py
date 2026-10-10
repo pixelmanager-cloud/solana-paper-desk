@@ -155,6 +155,9 @@ def evidence(record,*,now,scan):
 
 def validate_event(event,cfg):
     version=selected(cfg)
+    if version==2:
+        from .usd_valuation import validate_event as validate_v2
+        return validate_v2(event,cfg)
     value=event.get('paper_usd_valuation')
     if event.get('kind') not in ('market','quote_exit'):
         if value is not None:raise ValueError('USD valuation on unsupported event')

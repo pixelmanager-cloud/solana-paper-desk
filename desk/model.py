@@ -217,7 +217,13 @@ def validate_event(event, *, mode=PAPER_STRICT, policy_version=None,token_profil
         if token_profile_version==2:required.add('paper_pool_evidence')
         if 'paper_usd_valuation' in event:
             from .kraken_usd_observation import validate_event as validate_usd
-            validate_usd(event,{'mode':'paper','paper_usd_valuation_version':1,'paper_signal_policy_version':3,'paper_quote_execution_version':1})
+            saved=event['paper_usd_valuation']
+            if type(saved) is dict and saved.get('version')==2:
+                # The saved valuation names its own divergence limit; it is rebuilt with exactly that limit.
+                validate_usd(event,{'mode':'paper','paper_usd_valuation_version':2,'paper_signal_policy_version':3,
+                                    'paper_quote_execution_version':1,'usd_divergence_max_fraction':saved.get('divergence_max_fraction')})
+            else:
+                validate_usd(event,{'mode':'paper','paper_usd_valuation_version':1,'paper_signal_policy_version':3,'paper_quote_execution_version':1})
             required.add('paper_usd_valuation')
         if (set(event)!=required or type(event['schema_version']) is not int
                 or type(event['exit_contract_version']) is not int or event['exit_contract_version']!=1

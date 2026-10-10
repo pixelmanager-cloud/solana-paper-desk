@@ -19,7 +19,8 @@ class _PreparationBudget(cycle._Budget):
     def __init__(self, progress, item, cfg):
         self.item = item
         self.cfg = cfg
-        self.fresh_requests = 7 if cfg.get('paper_usd_valuation_version',0) == 1 else 9
+        from .usd_valuation import fresh_requests
+        self.fresh_requests = fresh_requests(cfg.get('paper_usd_valuation_version',0))
         self.history_id = progress.create(item.target.scan_id,item.target.pool,
             item.history_as_of-300,item.history_as_of+1,
             page_size=paper_history_source.PAPER_HISTORY_PAGE_SIZE)
