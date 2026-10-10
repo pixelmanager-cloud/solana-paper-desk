@@ -5546,7 +5546,7 @@
     },
     "production_commit": "5746912cd88b9527e2b196a2edefc66b72c257a0",
     "kraken_usd_integration": {
-      "status": "FULL_LINUX_PENDING_DEPLOYMENT_PREPARATION",
+      "status": "QUIESCED_BACKUP_COMPLETE_EXACT_PRODUCTION_PINS_IN_REVIEW",
       "base_head": "c1c613b696755c53912feb45639191045b831554",
       "author_thread": "01a118fd-0f1c-749c-b85b-5e730937d0a8",
       "reviewer_thread": "01a118fd-3f90-77d9-9549-c4497f5b10a6",
@@ -5556,7 +5556,7 @@
       "user_authorization": "Ok begin integration. Is the api rate limited?",
       "source_evaluation": "docs/free-sol-usd-source-evaluation.json",
       "minimum_request_interval_seconds": 2,
-      "production_changed": false,
+      "production_changed": "WRITERS_QUIESCED_NEW_DISTINCT_LEDGER_INITIALIZED_ORIGINALS_NOT_MIGRATED",
       "pr": 183,
       "head": "2d507b83fec026d247d68b564b3ada83993562ca",
       "constraints": [
@@ -5587,9 +5587,11 @@
       "vps_full_suite": {
         "unit": "desk-fixture-kraken-2d507b8",
         "invocation": "53f14e3e97ea40709a5858764e45828e",
-        "status": "RUNNING",
+        "status": "PASS",
         "network": "PrivateNetwork",
-        "production_paths": "inaccessible"
+        "production_paths": "inaccessible",
+        "tests": 2700,
+        "seconds": 1278.665
       },
       "review_turn": "01a1232c-7700-76ac-aa4c-379568f45a34",
       "ops_turn": "01a1232d-12d5-714b-b512-1fb8a8ee32c1",
@@ -5692,7 +5694,12 @@
           "setup_failures": "Default Mac TMPDIR symlink then normal umask022 copied pacing file0644; explicit fixturechmod assigned"
         },
         "fixture_fix_turn": "01a12339-eea2-7027-9de5-0df7de8c02d6",
-        "tree": "df0da6deecc5ba5dbe8c359144ceb9f77d03343a"
+        "tree": "df0da6deecc5ba5dbe8c359144ceb9f77d03343a",
+        "vps_focused": {
+          "tests": 16,
+          "seconds": 53.372,
+          "status": "PASS_PRIVATE_NETWORK_PRODUCTION_INACCESSIBLE"
+        }
       },
       "candidate_hints": {
         "path": "work/kraken-predeployment-candidate-hints.json",
@@ -5756,6 +5763,32 @@
         "status": "PASS_NOT_EXECUTED",
         "review_turn": "01a1233b-0cc5-73bd-b279-7007eec58bc4",
         "sha256": "5f10592e7c572588c0b52f5701b4d0eebffc9e7fc3f15b5dc8494a8a4a2c8292"
+      },
+      "local_integration_head": "a0869a4198e4be2a82c469a7883f24d4ad3d65bb",
+      "autonomous_candidate_path_audit": {
+        "worker": "07",
+        "status": "GAP_CONFIRMED_IMPLEMENTATION_ASSIGNED",
+        "scope": "External tools dispatcher; no desk runtime change; separate reviewed activation; one candidate per invocation",
+        "turn": "01a1233f-a054-77c9-8ef6-819376bb04ff",
+        "claim": "KRAKEN-AUTO-ENTRY-1"
+      },
+      "pre_backup": {
+        "path": "/var/backups/solana-desk/pre-kraken-77de75a2",
+        "databases": 10,
+        "status": "PASS"
+      },
+      "proposals": {
+        "path": "work/kraken-production-proposals.json",
+        "successor_hash": "494cbf72ecb0316cc792d237c1e084f3dd52e64521b483605b3ee182ae0e89f0",
+        "pacing_hash": "b040092fd3792cacfcc74881b6d1fd3553260d6afaed1d99a33ad86a1c8d073c",
+        "status": "CONDITIONAL_INDEPENDENT_PASS_NOT_ACTIVATED",
+        "new_ledger": "/var/lib/solana-desk/paper-kraken-77de75a2.sqlite",
+        "review_turn": "01a12342-4f42-77fb-9a76-7165f8aec45f"
+      },
+      "pre_activation_originals": {
+        "databases": 10,
+        "tables": 72,
+        "status": "UNCHANGED_AFTER_NEW_LEDGER_INITIALIZATION"
       }
     },
     "quote_alternative": {

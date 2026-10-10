@@ -1,1 +1,46 @@
-{"version":1,"pins":[]}
+{
+  "version": 1,
+  "pins": [
+    {
+      "kraken_policy": [
+        "kraken",
+        2,
+        2.0,
+        30.0
+      ],
+      "old_policy": [
+        [
+          "helius",
+          2,
+          2.0,
+          30.0
+        ],
+        [
+          "jupiter",
+          2,
+          2.0,
+          30.0
+        ]
+      ],
+      "old_state": [
+        [
+          "helius",
+          1791578499.3716908,
+          0.0,
+          1791578497.5257106,
+          null
+        ],
+        [
+          "jupiter",
+          1791589473.4139216,
+          0.0,
+          1791589471.4957244,
+          null
+        ]
+      ],
+      "path": "/var/lib/solana-desk/provider-pacing.sqlite",
+      "source_hash": "77de75a248fd087e62bcc2bac4a581c667905dfcb709e28ed8e80a58afcd4d54",
+      "version": 1
+    }
+  ]
+}
