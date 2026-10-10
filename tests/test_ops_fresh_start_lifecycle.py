@@ -7,6 +7,7 @@ experiment config. Shared pacing is a fixture copy.
 import json
 import os
 from pathlib import Path
+import pwd
 import shutil
 import sqlite3
 import time
@@ -83,7 +84,8 @@ class FreshFixture(unittest.TestCase):
         self.exp = self.root / 'exp'
         manifest = fs.apply(fs.plan(root=str(self.exp), config=str(self.config), pacing_db=str(self.pacer),
                                     discovery_db=str(self.discovery), taker=self.f.taker, amount_raw=100_000_000,
-                                    pool_fee_bps='25'))
+                                    pool_fee_bps='25'),
+                             service_user=pwd.getpwuid(os.geteuid()).pw_name)
         self.manifest = manifest
         s = {k: Path(v['path']) for k, v in manifest['stores'].items()}
         self.f.jobs = JobPersistence(s['research_db'])
