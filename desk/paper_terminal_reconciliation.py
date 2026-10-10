@@ -162,7 +162,7 @@ MAX_GATE_CACHE_BYTES = 8 * 1024 * 1024
 MAX_GATE_CACHE_PAGES = 512
 
 
-def _load(store,key):
+def _current_proof_bytes(store,key):
     if not runtime._hash(key):raise ValueError('Evidence identity malformed')
     # Pin SQL shape and payload to one read snapshot. In particular, do not
     # fetch a corrupt TEXT raw_bytes value or any compressed content as part of
@@ -180,6 +180,11 @@ def _load(store,key):
                 or type(rows[0][1]) is not int or rows[0][1]!=shapes[0][5]):
             raise ValueError('Proof content changed or exceeded preflight')
         compressed,raw_bytes=rows[0]
+    return compressed,raw_bytes
+
+
+def _load(store,key):
+    compressed,raw_bytes=_current_proof_bytes(store,key)
     cache=_GATE_BYTES.get()
     identity=(str(store.path.resolve()),key)
     cached=cache['pages'].get(identity) if cache is not None else None
@@ -201,6 +206,27 @@ def _load(store,key):
         if len(cache['pages'])<MAX_GATE_CACHE_PAGES and cache['bytes']+size<=MAX_GATE_CACHE_BYTES:
             cache['pages'][identity]=(compressed,raw);cache['bytes']+=size
     return value
+
+
+def _classification(store,key):
+    """Only the two preparation inventory scanners use these immutable scalars."""
+    cache=_GATE_BYTES.get()
+    identity=(str(store.path.resolve()),key)
+    compressed,raw_bytes=_current_proof_bytes(store,key)
+    previous=cache['classifications'].get(identity) if cache is not None else None
+    if previous is not None and previous[:2]==(compressed,raw_bytes):
+        return previous[2]
+    value=_load(store,key)
+    scalars=tuple(value.get(name) if type(value) is dict and type(value.get(name)) is str else None
+                  for name in ('kind','scan_id','intent_hash'))
+    if cache is not None and identity not in cache['classifications']:
+        size=len(compressed)+sum(len(x.encode()) for x in scalars if x is not None)+128
+        if (all(x is None or len(x)<=128 for x in scalars)
+                and len(cache['classifications'])<MAX_GATE_CACHE_PAGES
+                and cache['classification_bytes']+size<=MAX_GATE_CACHE_BYTES):
+            cache['classifications'][identity]=(compressed,raw_bytes,scalars)
+            cache['classification_bytes']+=size
+    return scalars
 
 
 def _wire(encoded,limit):
@@ -451,7 +477,7 @@ def reconcile(research_db,evidence_db,ledger_db,cfg,*,pass_id,outcome_hash,attem
 
 def gate(store,research,scan_ids,*,ledger_locked=None):
     """Active gate always validates the current runtime, never a proposal."""
-    token=_GATE_BYTES.set({'pages':{},'bytes':0})
+    token=_GATE_BYTES.set({'pages':{},'bytes':0,'classifications':{},'classification_bytes':0})
     try:
         return _gate(store,research,scan_ids,ledger_locked=ledger_locked)
     finally:

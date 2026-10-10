@@ -114,9 +114,10 @@ def _attempts(store,scan,*,intent_hash=None):
         keys=[r[0] for r in c.execute('SELECT hash FROM pages ORDER BY hash')]
     result=[]
     for key in keys:
-        value=terminal._load(store,key)
-        if intent_hash is not None and type(value) is dict and value.get('kind')=='history_first_paper_preparation_outcome_v1' and value.get('intent_hash')==intent_hash:raise ValueError('Conflicting completed preparation outcome')
-        if type(value) is dict and value.get('kind')=='paper_read_attempt_v1' and value.get('scan_id')==scan:
+        kind,scan_id,original_intent=terminal._classification(store,key)
+        if intent_hash is not None and kind=='history_first_paper_preparation_outcome_v1' and original_intent==intent_hash:raise ValueError('Conflicting completed preparation outcome')
+        if kind=='paper_read_attempt_v1' and scan_id==scan:
+            value=terminal._load(store,key)
             used=value.get('requests_used')
             if type(used) is not int or not 1<=used<=7:raise ValueError('Preparation attempt charge bound')
             result.append((used,key,value))
