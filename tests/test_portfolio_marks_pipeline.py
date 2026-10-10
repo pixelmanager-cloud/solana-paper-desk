@@ -6,7 +6,10 @@ open positions' real PDAs). The data clock moves between the steps like a real t
 """
 import base64
 import copy
+import email.message
+import io
 import json
+import ssl
 import shutil
 import sqlite3
 import tempfile
@@ -14,6 +17,7 @@ import unittest
 from pathlib import Path
 from types import SimpleNamespace
 from unittest.mock import patch
+from urllib.error import HTTPError
 
 from desk import paper_concurrency as pc, paper_cycle as cycle, portfolio_marks as pm
 from desk import paper_read_sources as transport
@@ -45,8 +49,11 @@ def marks_cycle(h, *, positions=(), candidates=None, usd_refs=(), monitoring=Fal
                 method, params = call['method'], call['params']
                 if method == 'getMultipleAccounts' and params[1].get('minContextSlot') == 0:
                     outer.chain.marks_calls.append((outer.f.at, params[0]))
-                    if outer.chain.marks_failure:
+                    failure = outer.chain.marks_failure
+                    if failure is True:
                         raise ConnectionResetError('SYNTHETIC_TEST_ONLY marks transport failure')
+                    if failure:
+                        return failure(request)           # raises, or returns a (possibly invalid) wire Response
                     result = {'context': {'slot': 900 + len(outer.chain.marks_calls)}, 'value': outer.chain.marks_answer(params[0])}
                 elif method == 'getSlot':
                     result = 110
@@ -292,6 +299,74 @@ class FailureAndFlagTests(MarksPipeline):
         self.assertEqual(self.null_passes(), [], 'a stale reject is terminal, never a store-wide latch')
         self.assertFalse(self.gate())
         self.assertEqual(self.ledger_events('portfolio_marks'), [])
+
+    FAILURE_CLASSES = {
+        'TRANSPORT_ERROR': lambda r: (_ for _ in ()).throw(ConnectionResetError('x')),
+        'UNCLASSIFIED_ERROR': lambda r: (_ for _ in ()).throw(ValueError('x')),
+        'TLS_ERROR': lambda r: (_ for _ in ()).throw(ssl.SSLError('x')),
+        'HTTP_REJECTED/400': lambda r: (_ for _ in ()).throw(HTTPError(r.full_url, 400, 'Bad Request', email.message.Message(), io.BytesIO(b''))),
+        'HTTP_REJECTED/403': lambda r: (_ for _ in ()).throw(HTTPError(r.full_url, 403, 'Forbidden', email.message.Message(), io.BytesIO(b''))),
+        'RESPONSE_INVALID': lambda r: base.Response(b'this is not json'),
+        'RESPONSE_OVERSIZED': lambda r: base.Response(b'x' * (transport.MAX_RESPONSE_BYTES + 2)),
+        'RPC_ERROR': lambda r: base.Response(canonical({'jsonrpc': '2.0', 'id': 'paper-read-v1', 'error': {'code': -32000, 'message': 'x'}}).encode()),
+        'HTTP_REJECTED/429': lambda r: (_ for _ in ()).throw(HTTPError(r.full_url, 429, 'Too Many', email.message.Message(), io.BytesIO(b''))),
+    }
+
+    def test_no_failure_class_of_the_valuation_only_read_ever_latches_monitoring(self):
+        """T35F item 2: charged and typed, marks stale, a normal STALE_PORTFOLIO reject; held exit reads keep working."""
+        self.first_entry()
+        mint = next(iter(self.entered))
+        for number, (name, failure) in enumerate(self.FAILURE_CLASSES.items()):
+            with self.subTest(failure=name):
+                self.append_second_candidate(seed=30 + number)
+                self.idle()
+                before = self.monitoring_rows()
+                held = len(self.ledger_events('portfolio_marks'))
+                self.marks_failure = failure
+                self.dispatch(intents=2 + number, raw=self.second_raw)
+                self.marks_failure = None
+                rows = self.monitoring_rows()
+                self.assertEqual((rows[0] - before[0], rows[1] - before[1]), (1, 1), 'charged once, outcome retained')
+                with sqlite3.connect(self.exp / 'evidence.sqlite') as c:
+                    self.assertIsNone(c.execute('SELECT blocked FROM paper_monitoring_budget').fetchone()[0], name)
+                    record = None
+                    import zlib
+                    for (page,) in c.execute('SELECT payload FROM pages'):
+                        try:
+                            candidate = json.loads(zlib.decompress(page))
+                        except Exception:
+                            continue
+                        if candidate.get('method') == 'getMultipleAccounts' and 'monitoring_reservation' in candidate \
+                                and candidate['monitoring_reservation']['id'] == rows[0]:
+                            record = candidate
+                self.assertEqual(record['failure_code'], name.split('/')[0], 'typed failure retained')
+                notes = [d for d in self.cycle_result['diagnostics'] if 'portfolio_marks' in d]
+                self.assertEqual(notes[-1], {'portfolio_marks': 'UNAVAILABLE', 'code': name.split('/')[0]})
+                self.assertEqual(len(self.ledger_events('portfolio_marks')), held)
+                self.assertEqual(len(cycle._state(self.ledger, self.cfg)['positions']), 1)
+                self.assertIn('STALE_PORTFOLIO', [o.get('reason') for o in self.outcomes()])
+                self.assertEqual(self.null_passes(), [])
+                self.assertFalse(self.gate())
+                if name.endswith('/429'):
+                    continue          # a 429 arms the provider's pacing backoff (expected); it is still not a monitoring latch
+                # held exit protection is untouched: a real held leg (5 monitoring requests) still runs
+                leg = self.held_leg(mint)
+                self.assertEqual((leg['status'], leg['monitoring_attempted_requests']), ('COMPLETE', 5), leg)
+
+    def test_the_seven_key_pool_snapshot_of_a_held_leg_still_latches(self):
+        """Only the 3N-key valuation read is exempt: a failing exit-protecting read keeps its existing latch."""
+        from desk.monitoring_budget import _latching_failure
+        self.assertTrue(_latching_failure({'failure_code': 'RESPONSE_INVALID'}))
+        self.first_entry()
+        budget = tool.monitor.MonitoringBudget(self.f.progress.store, self.ledger, self.cfg)
+        self.assertTrue(budget.portfolio_marks_version)
+        valuation = {'method': 'getMultipleAccounts', 'params': [['k'] * 3, dict(pm.OPTIONS)]}
+        self.assertTrue(budget._valuation_only(valuation))
+        for other in ({'method': 'getMultipleAccounts', 'params': [['k'] * 7, {'encoding': 'base64', 'commitment': 'confirmed', 'minContextSlot': 100}]},
+                      {'method': 'getMultipleAccounts', 'params': [['k'] * 3, {**pm.OPTIONS, 'minContextSlot': 5}]},
+                      {'method': 'getAccountInfo', 'params': [['k'] * 3, dict(pm.OPTIONS)]},
+                      {'method': 'jupiter_probe', 'params': {}}):
+            self.assertFalse(budget._valuation_only(other), other)
 
     def test_a_position_whose_vault_fails_verification_keeps_a_stale_mark_and_rejects(self):
         self.open_positions(2)
