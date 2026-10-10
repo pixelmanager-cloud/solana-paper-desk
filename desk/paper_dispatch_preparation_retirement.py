@@ -22,7 +22,7 @@ MAX_INVENTORY_PAGES=4096
 MAX_INVENTORY_BYTES=256*1024*1024
 FIELDS={'version','association','pass_id','intent_hash','dispatch_id','dispatch_intent_hash','dispatch_context_hash','journal_path','journal_original_hash','attempt_refs',
         'source_hash','producer_source_hash','context','config_hash','scan_id','before','after',
-        'history_id','history_inventory_hash','ledger_anchors','ledger_original_hash','ledger_prefix_hash','ledger_backup_hash','failure','no_retry','successor_context','stopped_witness_hash'}
+        'history_id','history_inventory_hash','ledger_anchors','ledger_original_hash','ledger_prefix_hash','ledger_backup_hash','failure','no_retry','first_receipt_hash','successor_context','stopped_witness_hash'}
 
 
 def _schema():
@@ -40,6 +40,7 @@ def shape(v):
         and terminal._id(v['scan_id']) and terminal._id(v['dispatch_id']) and type(v['journal_path']) is str and Path(v['journal_path']).is_absolute() and str(Path(v['journal_path']).resolve())==v['journal_path'] and all(runtime._hash(v[k]) for k in
             ('intent_hash','dispatch_intent_hash','dispatch_context_hash','journal_original_hash','stopped_witness_hash','source_hash','producer_source_hash','config_hash','history_id','history_inventory_hash','ledger_original_hash','ledger_prefix_hash','ledger_backup_hash'))
         and type(v['before']) is int and v['before']==6 and type(v['after']) is int and v['after']==12
+        and (v['first_receipt_hash'] is None or runtime._hash(v['first_receipt_hash']))
         and type(v['successor_context']) is dict and v['successor_context'].get('source_hash')==v['source_hash'] and v['successor_context'].get('journal')==v['journal_path']
         and v['failure']=='RESERVATION_OUTCOME_UNCAPTURED' and v['no_retry'] is True
         and type(v['attempt_refs']) is list and 1<=len(v['attempt_refs'])<=11
@@ -186,6 +187,33 @@ def proof(store,progress,v,cfg,*,current_budget):
     replay_history(coverage,store)
     attempts=_attempts(store,v['scan_id'],intent_hash=v['intent_hash'])
     if [x[1] for x in attempts]!=v['attempt_refs'] or [x[0] for x in attempts]!=[5,6,7,8,9,10,11]:raise ValueError('Complete retained attempt inventory; reservation12 must remain uncaptured')
+    # Charges5/6 are the finalized slot intake, not unchecked lead-in records.
+    slot=dispatch['hint']['slot']
+    intake_query={'address':target.pool,'start':0,'end':1,'token_accounts_filter':'none','slot_range':{'gte':slot,'lt':slot+1}}
+    intake_id=digest({'budget':v['scan_id'],'query':intake_query})
+    intake_rows=[r for r in histories if r[1]==intake_id]
+    if len(intake_rows)!=1 or intake_rows[0][2]!=v['scan_id'] or intake_rows[0][3]!=canonical(intake_query) or intake_rows[0][5:]!=('DONE',2) or intake_rows[0][4] is None:raise ValueError('Exact completed intake reservation required')
+    intake_coverage=runtime._parse(intake_rows[0][4])
+    if len(intake_coverage['pages'])!=2 or intake_coverage.get('query_coverage_verified') is not True:raise ValueError('Exact complete intake coverage required')
+    replay_history(intake_coverage,store)
+    if list(bound.graduation_refs)!=[page['request_evidence_hash'] for page in intake_coverage['pages']]:raise ValueError('Preparation retained intake references mismatch')
+    intake_records=[];cursor=None
+    fields={'kind','scan_id','requests_used','source_id','method','params','request_bytes_base64','response_bytes_base64','observed_at','http_status','failure_code'}
+    for charge,key,r in attempts[:2]:
+        options={'transactionDetails':'full','sortOrder':'asc','limit':100,'commitment':'finalized','encoding':'jsonParsed','maxSupportedTransactionVersion':1,'filters':{'slot':intake_query['slot_range'],'status':'any','tokenAccounts':'none'}}
+        if cursor:options['paginationToken']=cursor
+        params=[target.pool,options];body=canonical({'jsonrpc':'2.0','id':'paper-read-v1','method':'getTransactionsForAddress','params':params}).encode()
+        if set(r)!=fields or r['method']!='getTransactionsForAddress' or r['params']!=params or r['source_id']!='helius-mainnet-paper-confirmed-v1' or r['failure_code'] is not None or type(r['http_status']) is not int or r['http_status']!=200 or type(r['observed_at']) is not int or not 0<=r['observed_at']<=witness['observed_at'] or r['request_bytes_base64']!=base64.b64encode(body).decode():raise ValueError('Original successful intake transport required')
+        response=terminal._wire(r['response_bytes_base64'],16*1024*1024)
+        if set(response)!={'jsonrpc','id','result'} or response['jsonrpc']!='2.0' or response['id']!='paper-read-v1':raise ValueError('Intake response envelope')
+        data=response['result'];page=intake_coverage['pages'][charge-5]
+        if digest(data)!=page['payload_hash']:raise ValueError('Intake wire/retained page disagreement')
+        manifest=terminal._load(store,page['request_evidence_hash'])
+        if manifest.get('method')!=r['method'] or manifest.get('params')!=params or manifest!={'kind':'history_request_v1','method':r['method'],'params':params,'response_hash':digest(data)}:raise ValueError('Intake manifest/transport disagreement')
+        intake_records.extend(data['data']);cursor=data.get('paginationToken')
+    from .graduation_witness import extract_graduation
+    migration=extract_graduation(intake_records,mint=target.mint,pool=target.pool,now=bound.history_as_of,provenance=bound.provenance)
+    if migration['status']!='OBSERVED_MIGRATION' or not any(w['signature']==dispatch['hint']['signature'] and w['slot']==slot for w in migration['witnesses']):raise ValueError('Original finalized migration witness required')
     prior=None
     for charge,key,r in attempts:
         if charge<7:continue
@@ -201,6 +229,11 @@ def proof(store,progress,v,cfg,*,current_budget):
         prior=data['paginationToken']
     with closing(sqlite3.connect(Path(v['context']['ledger_db']).as_uri()+'?mode=ro',uri=True)) as c:
         c.execute('BEGIN')
+        if v['first_receipt_hash'] is not None:
+            from .runtime_continuation import _first
+            extra=bool(c.execute("SELECT 1 FROM sqlite_master WHERE type='table' AND name='paper_runtime_extensions'").fetchone())
+            first,key=_first(c,_extensions=extra)
+            if key!=v['first_receipt_hash'] or first.get('successor')!=v['producer_source_hash'] or first.get('config_hash')!=v['config_hash']:raise ValueError('Preserved first receipt binding changed')
         if base._ledger_originals(c,prefix=not current_budget)!=v['ledger_original_hash' if current_budget else 'ledger_prefix_hash']:raise ValueError('Ledger originals changed')
 
 def plan(research_db,evidence_db,ledger_db,cfg,*,pass_id,dispatch_id,pacing_db,producer_source_hash,ledger_backup,journal_path,stopped_witness_hash):
@@ -215,15 +248,39 @@ def plan(research_db,evidence_db,ledger_db,cfg,*,pass_id,dispatch_id,pacing_db,p
     query={'address':pool,'start':as_of-300,'end':as_of+1,'token_accounts_filter':'none','page_size':50}
     backup=Path(ledger_backup)
     if not backup.is_absolute() or not backup.is_file() or backup.resolve(strict=True)!=backup or backup.samefile(context['ledger_db']) or backup.stat().st_size>32*1024*1024:raise ValueError('Distinct bounded canonical pre-attempt ledger backup required')
-    with closing(sqlite3.connect(backup.as_uri()+'?mode=ro',uri=True)) as c:
-        c.execute('BEGIN');backup_anchors,_=terminal._ledger(c,cfg,initial=True,historical_source=producer_source_hash);original_hash=base._ledger_originals(c);prefix_hash=base._ledger_originals(c,prefix=True)
+    from . import runtime_continuation as continuation
     with closing(sqlite3.connect(Path(context['ledger_db']).as_uri()+'?mode=ro',uri=True)) as c:
-        c.execute('BEGIN');anchors,_=terminal._ledger(c,cfg,initial=True,historical_source=producer_source_hash)
-        if anchors!=backup_anchors or base._ledger_originals(c)!=original_hash:raise ValueError('Ledger differs from original pre-attempt backup')
+        c.execute('BEGIN')
+        # Current live readers and monitoring remain authoritative. Never ask a
+        # continued ledger to masquerade as its historical effective source.
+        anchors,_=terminal._ledger(c,cfg,initial=True)
+        live_original=base._ledger_originals(c);prefix_hash=base._ledger_originals(c,prefix=True)
+        first_key=None;first=None
+        if c.execute("SELECT 1 FROM sqlite_master WHERE type='table' AND name=?",(runtime.TABLE,)).fetchone():
+            extensions=bool(c.execute("SELECT 1 FROM sqlite_master WHERE type='table' AND name='paper_runtime_extensions'").fetchone())
+            first,first_key=continuation._first(c,_extensions=extensions)
+            continued=bool(c.execute("SELECT 1 FROM sqlite_master WHERE type='table' AND name=?",(continuation.TABLE,)).fetchone())
+            runtime._require_first(c,implementation=producer_source_hash,continuation=continued,_extensions=extensions)
+            if first['successor']!=producer_source_hash or first['context']!={k:context[k] for k in ('research_db','evidence_db','ledger_db')}:raise ValueError('Preserved original producer receipt/context required')
+        else:
+            if dict(c.execute('SELECT key,value FROM metadata')).get('implementation_hash')!=producer_source_hash:raise ValueError('Native producer mismatch')
+    with closing(sqlite3.connect(backup.as_uri()+'?mode=ro',uri=True)) as c:
+        c.execute('BEGIN')
+        original_hash=base._ledger_originals(c)
+        if original_hash!=live_original:raise ValueError('Ledger differs from original pre-attempt backup')
+        # Snapshot comparison only: no active reader/path identity is granted to
+        # the backup. Authenticate its first receipt by exact bounded equality
+        # with the already validated canonical live first receipt.
+        if first is not None:
+            saved,key=continuation._first(c)
+            if saved!=first or key!=first_key:raise ValueError('Backup original first receipt differs')
+            names={r[0] for r in c.execute("SELECT name FROM sqlite_master WHERE type='table' AND name LIKE 'paper_runtime_%'")}
+            if names!={runtime.TABLE}:raise ValueError('Exact pre-continuation backup required')
+        elif c.execute("SELECT 1 FROM sqlite_master WHERE type='table' AND name LIKE 'paper_runtime_%'").fetchone():raise ValueError('Unexpected backup runtime receipt')
     v={'version':1,'association':'EXPLICIT_REVIEWED_DISPATCH_PREPARATION_UNCAPTURED','pass_id':pass_id,'intent_hash':row[0],'dispatch_id':dispatch_id,'journal_path':str(Path(journal_path).resolve()),
        'attempt_refs':[r[1] for r in _attempts(store,scan,intent_hash=row[0])],'source_hash':runtime.implementation_hash(),'producer_source_hash':producer_source_hash,
        'context':context,'config_hash':digest(cfg),'scan_id':scan,'before':6,'after':12,'history_id':digest({'budget':scan,'query':query}),
-       'history_inventory_hash':digest(base._histories(store,scan)),'ledger_anchors':anchors,'ledger_original_hash':original_hash,'ledger_prefix_hash':prefix_hash,'ledger_backup_hash':hashlib.sha256(backup.read_bytes()).hexdigest(),'failure':'RESERVATION_OUTCOME_UNCAPTURED','no_retry':True,'stopped_witness_hash':stopped_witness_hash,'successor_context':{}}
+       'history_inventory_hash':digest(base._histories(store,scan)),'ledger_anchors':anchors,'ledger_original_hash':original_hash,'ledger_prefix_hash':prefix_hash,'ledger_backup_hash':hashlib.sha256(backup.read_bytes()).hexdigest(),'failure':'RESERVATION_OUTCOME_UNCAPTURED','no_retry':True,'first_receipt_hash':first_key,'stopped_witness_hash':stopped_witness_hash,'successor_context':{}}
     v.update(_journal_pin(v))
     from tools import paper_entry_dispatcher as dispatcher
     old,_=_journal(v,initial=True)

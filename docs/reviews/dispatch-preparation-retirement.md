@@ -44,10 +44,16 @@ in `config/paper-dispatch-preparation-retirement.json`. Arguments:
 research/evidence/ledger/config, pass-id, dispatch-id, pacing-db,
 producer-source-hash, ledger-backup, journal-path, stopped-witness-hash.
 
-Plan/apply use the explicitly historical producer while keeping staged source
-separate. The actual ledger already has its first runtime edge: a separately
-reviewed continuation/extensions chain to the final combined source is required,
-not another first transition. This tool does not write runtime receipts or enable
+The actual ledger already has its first runtime edge. First apply the separately
+reviewed runtime continuation to the final combined source under quiescence;
+then plan/review/install the retirement pin and explicitly apply. Plan/apply
+require the live CURRENT-source checkpoint and monitoring validators. The
+historical producer is bound to the preserved first receipt, not supplied as
+the continued live reader identity. A distinct pre-attempt backup is historical
+data only: compare all native rows/types/rowids/schema to validated live originals
+and require exact bounded first-receipt equality at its original canonical
+context. No canonical-path waiver or active identity is granted to the backup.
+Neither another first transition nor overwriting the first receipt is supported. This tool does not write runtime receipts or enable
 services. Final source/config/tool pins must be regenerated after composition.
 
 ## Observed incident supplied by coordinator (not cloud-accessed)
@@ -64,3 +70,12 @@ Synthetic fixtures use actual acquisition4/intake2/preparation reservation APIs,
 five raw50-row responses and a sixth pre-transport exception; they do not claim
 the live uncaptured reservation never reached the network. Native timing and
 worker03's prospective preparation/rejection repair are separate dependencies.
+
+## Composition seams
+
+Worker03 owns prospective bounded preparation and typed replay-validated
+NO_ENTRY dispositions. This retrospective unknown-reservation family does not
+authorize or classify those future outcomes. Coordinator must combine03's
+normal dispatcher result-validator hook and global gate companion so typed
+rejections stay retired through all entry paths; partial/missing rejection
+publication must fail closed. These are separate review/test dependencies.

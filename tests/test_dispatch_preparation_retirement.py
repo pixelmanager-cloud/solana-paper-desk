@@ -166,32 +166,48 @@ class DispatchPreparationRetirementTests(unittest.TestCase):
         with patch.object(retire,'rows',side_effect=[[],[],ValueError('fault')]):
             with self.assertRaises(ValueError):self.apply()
         with self.f.f.progress.store.connect() as c:self.assertIsNone(c.execute('SELECT 1 FROM sqlite_master WHERE name=?',(retire.TABLE,)).fetchone())
-    def test_historical_context_transition_is_explicit_and_cumulative(self):
+    def test_real_first_receipt_then_continuation_then_retirement_with_distinct_backup(self):
         from tools import paper_entry_dispatcher as dispatcher
-        old='f'*64
-        for path in (self.f.ledger,self.backup):
-            with sqlite3.connect(path) as c:c.execute("UPDATE metadata SET value=? WHERE key='implementation_hash'",(old,))
-        with sqlite3.connect(self.journal) as c:
-            for name in dispatcher._guards():c.execute('DROP TRIGGER '+name)
-            ctx=copy.deepcopy(self.expected);ctx['source_hash']=old
-            raw=c.execute('SELECT payload FROM intents').fetchone()[0];intent=json.loads(raw);intent['context_hash']=digest(ctx)
-            c.execute('UPDATE context SET payload=?,hash=?',(canonical(ctx),digest(ctx)))
-            c.execute('UPDATE intents SET payload=?,hash=?',(canonical(intent),digest(intent)))
-            for sql in dispatcher._guards().values():c.execute(sql)
-        witness=self.f.f.progress.store.load(self.stopped);witness.update(producer_source_hash=old,dispatch_intent_hash=digest(intent))
-        self.kw.update(producer_source_hash=old,stopped_witness_hash=self.f.f.progress.store.save(witness))
-        pin=retire.review_plan(*self.args,**self.kw);self.policy.write_text(canonical({'version':1,'retirements':[pin]}));self.apply()
-        with self.assertRaises(ValueError):self.gate()
-        runtime_policy=self.f.root/'runtime-policy.json';context={k:str(p) for k,p in zip(('research_db','evidence_db','ledger_db'),self.args[:3])}
-        runtime_policy.write_text(canonical({'version':1,'transitions':[{'predecessor':old,'successor':self.source,'config_hash':digest(self.f.cfg),'context':context}]}))
+        from desk import runtime_continuation as continuation
+        native='f'*64;producer='e'*64
+        context={k:str(p) for k,p in zip(('research_db','evidence_db','ledger_db'),self.args[:3])}
+        with sqlite3.connect(self.f.ledger) as c:c.execute("UPDATE metadata SET value=? WHERE key='implementation_hash'",(native,))
+        runtime_policy=self.f.root/'runtime-policy.json'
+        runtime_policy.write_text(canonical({'version':1,'transitions':[{'predecessor':native,'successor':producer,'config_hash':digest(self.f.cfg),'context':context}]}))
+        cont_policy=self.f.root/'continuation-policy.json'
         with patch.object(retire.runtime,'POLICY',runtime_policy):
-            retire.runtime.transition(*self.args,predecessor=old,successor=self.source)
-            self.assertIsNone(self.gate())
+            with patch.object(retire.runtime,'implementation_hash',return_value=producer):
+                retire.runtime.transition(*self.args,predecessor=native,successor=producer)
+            with sqlite3.connect(self.f.ledger) as c:first,first_hash=continuation._first(c)
+            self.backup.unlink()
+            with closing(sqlite3.connect(self.f.ledger)) as old,closing(sqlite3.connect(self.backup)) as saved:old.backup(saved)
             with sqlite3.connect(self.journal) as c:
-                dispatcher._validate(c,pin['successor_context'])
-                self.assertEqual(c.execute('SELECT count(*) FROM intents').fetchone(),(1,));self.assertEqual(c.execute('SELECT count(*) FROM results').fetchone(),(0,))
-                bad=copy.deepcopy(pin['successor_context']);bad['amount_raw']+=1
-                with self.assertRaises(ValueError):dispatcher._validate(c,bad)
+                for name in dispatcher._guards():c.execute('DROP TRIGGER '+name)
+                ctx=copy.deepcopy(self.expected);ctx['source_hash']=producer
+                raw=c.execute('SELECT payload FROM intents').fetchone()[0];intent=json.loads(raw);intent['context_hash']=digest(ctx)
+                c.execute('UPDATE context SET payload=?,hash=?',(canonical(ctx),digest(ctx)))
+                c.execute('UPDATE intents SET payload=?,hash=?',(canonical(intent),digest(intent)))
+                for sql in dispatcher._guards().values():c.execute(sql)
+            witness=self.f.f.progress.store.load(self.stopped);witness.update(producer_source_hash=producer,dispatch_intent_hash=digest(intent))
+            self.kw.update(producer_source_hash=producer,stopped_witness_hash=self.f.f.progress.store.save(witness))
+            with self.assertRaises(ValueError):retire.review_plan(*self.args,**self.kw) # current runtime required first
+            with sqlite3.connect(self.backup) as c:
+                with self.assertRaises(ValueError):terminal._ledger(c,self.f.cfg,initial=True,historical_source=producer) # backup is not active canonical ledger
+            cont_policy.write_text(canonical({'version':1,'continuations':[{'first_receipt_hash':first_hash,'predecessor':producer,'successor':self.source,'config_hash':digest(self.f.cfg),'context':context}]}))
+            with patch.object(continuation,'POLICY',cont_policy):
+                continuation.continue_runtime(*self.args,first_receipt_hash=first_hash,predecessor=producer,successor=self.source)
+                with sqlite3.connect(self.f.ledger) as c:
+                    with self.assertRaises(ValueError):terminal._ledger(c,self.f.cfg,initial=True,historical_source=producer) # continued runtime cannot masquerade as producer
+                pin=retire.review_plan(*self.args,**self.kw)
+                self.assertEqual(pin['first_receipt_hash'],first_hash)
+                self.policy.write_text(canonical({'version':1,'retirements':[pin]}));self.apply()
+                self.assertIsNone(self.gate());self.assertEqual(self.gate((self.scan,)),'REJECTED_SCAN_RETIRED')
+                with sqlite3.connect(self.journal) as c:
+                    dispatcher._validate(c,pin['successor_context'])
+                    self.assertEqual(c.execute('SELECT count(*) FROM intents').fetchone(),(1,));self.assertEqual(c.execute('SELECT count(*) FROM results').fetchone(),(0,))
+                    bad=copy.deepcopy(pin['successor_context']);bad['amount_raw']+=1
+                    with self.assertRaises(ValueError):dispatcher._validate(c,bad)
+                with sqlite3.connect(self.f.ledger) as c:self.assertEqual(continuation._first(c),(first,first_hash))
 
     def test_oversized_attempt_hash_refused_before_load(self):
         self.sql('INSERT INTO pages VALUES(?,?,?)',('x'*(20*1024*1024),b'x',1))
@@ -221,3 +237,22 @@ class DispatchPreparationRetirementTests(unittest.TestCase):
             c.execute('UPDATE intents SET rowid=44')
             for sql in dispatcher._guards().values():c.execute(sql)
         with self.assertRaisesRegex(ValueError,'Journal reviewed binding'):self.gate()
+
+    def test_intake_http403_or_missing_body_cannot_be_retired(self):
+        for charge in (5,6):
+            with self.subTest(charge=charge):
+                key=next(key for used,key,_ in retire._attempts(self.f.f.progress.store,self.scan) if used==charge)
+                original=self.f.f.progress.store.load(key);changed={**original,'http_status':403,'failure_code':'HTTP_STATUS_403','response_bytes_base64':None}
+                self.sql('DELETE FROM pages WHERE hash=?',(key,));new=self.f.f.progress.store.save(changed)
+                try:
+                    with self.assertRaisesRegex(ValueError,'successful intake'):retire.review_plan(*self.args,**self.kw)
+                finally:
+                    self.sql('DELETE FROM pages WHERE hash=?',(new,));self.f.f.progress.store.save(original)
+
+    def test_intake_request_binding_must_match_retained_slot(self):
+        key=next(key for used,key,_ in retire._attempts(self.f.f.progress.store,self.scan) if used==5)
+        original=self.f.f.progress.store.load(key);changed=copy.deepcopy(original)
+        changed['params'][1]['filters']['slot']['lt']+=1
+        changed['request_bytes_base64']=base64.b64encode(canonical({'jsonrpc':'2.0','id':transport.RPC_ID,'method':changed['method'],'params':changed['params']}).encode()).decode()
+        self.sql('DELETE FROM pages WHERE hash=?',(key,));self.f.f.progress.store.save(changed)
+        with self.assertRaisesRegex(ValueError,'successful intake'):retire.review_plan(*self.args,**self.kw)
