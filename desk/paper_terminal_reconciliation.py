@@ -427,13 +427,15 @@ def gate(store,research,scan_ids,*,ledger_locked=None):
         if not found:
             from .paper_http403_retirement import rows as http_rows
             from .paper_preparation_retirement import rows as preparation_rows
-            if _rows(c) or http_rows(c) or preparation_rows(c):raise ValueError('Original pass table missing')
+            from .paper_dispatch_preparation_retirement import rows as dispatch_rows
+            if _rows(c) or http_rows(c) or preparation_rows(c) or dispatch_rows(c):raise ValueError('Original pass table missing')
             _monitoring(c,store=store)
             return None
         _passes(c)
         from .paper_http403_retirement import rows as http_rows
         from .paper_preparation_retirement import rows as preparation_rows
-        rows=_rows(c)+http_rows(c)+preparation_rows(c)
+        from .paper_dispatch_preparation_retirement import rows as dispatch_rows
+        rows=_rows(c)+http_rows(c)+preparation_rows(c)+dispatch_rows(c)
         if len({v['pass_id'] for v in rows})!=len(rows) or len({v['scan_id'] for v in rows})!=len(rows):raise ValueError('Conflicting terminal receipts')
         _monitoring(c,store=store)
         pending=c.execute('SELECT id,intent_hash FROM paper_observation_passes WHERE outcome_hash IS NULL LIMIT 257').fetchall()
@@ -468,6 +470,9 @@ def gate(store,research,scan_ids,*,ledger_locked=None):
             elif v['association']=='EXPLICIT_REVIEWED_PREPARATION_OVERSIZE':
                 from .paper_preparation_retirement import proof as preparation_proof
                 preparation_proof(store,progress,v,cfg,current_budget=False)
+            elif v['association']=='EXPLICIT_REVIEWED_DISPATCH_PREPARATION_UNCAPTURED':
+                from .paper_dispatch_preparation_retirement import proof as dispatch_proof
+                dispatch_proof(store,progress,v,cfg,current_budget=False)
             else:_proof(store,progress,v,cfg,current_budget=False)
         _pacing(v['context']['pacing_db'])
         certified[v['pass_id']]=v['intent_hash']
