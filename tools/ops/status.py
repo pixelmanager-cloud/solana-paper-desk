@@ -4,6 +4,10 @@ Every SQLite file is opened ``mode=ro`` with ``query_only`` after a canonical
 path check (absolute, no symlink component, regular file, single link). Any
 section that cannot be read fails closed: it is reported as an error, adds a
 blocker and makes the process exit 2. Nothing is written except stdout.
+
+Fresh layout (T34): the shared provider-pacing and discovery databases live outside the experiment
+root; ``--pacing-db`` and ``--discovery-db`` take their absolute canonical paths (read ``mode=ro``,
+``immutable`` only for a quiet WAL file) and they are inventoried with the same link checks.
 """
 import argparse
 from contextlib import closing

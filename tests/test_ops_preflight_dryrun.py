@@ -815,15 +815,17 @@ class FreshLayoutTests(FreshLayoutBase):
         """Prove isolation: tamper with the live shared pacing store DURING the run and the child's view is unaffected."""
         original = tool._copy_external
 
-        def copy_then_tamper(work, external):
+        def copy_then_destroy(work, external):
             result = original(work, external)
-            with sqlite3.connect(self.d.pacer) as c:                  # a live writer moves on after the copy
-                c.execute("UPDATE state SET high_water=high_water+1000 WHERE provider='helius'")
+            for live in (self.d.pacer, self.d.discovery):             # the live files become unreadable garbage after the copy
+                live.write_bytes(b'not a database' * 20)
             return result
-        with patch.object(tool, '_copy_external', side_effect=copy_then_tamper):
+        with patch.object(tool, '_copy_external', side_effect=copy_then_destroy):
             code, report = self.run_tool()
-        self.assertEqual(report['preflight']['refusal_reason'], None, report)    # the child still read the consistent copy
-        self.assertIn('LIVE_SOURCE_CHANGED_DURING_RUN', report['blockers'])       # ... and the movement is reported
+        # If the child read the live files these stages would fail; they pass because it only sees the copies.
+        self.assertTrue(report['preflight']['ok'] and report['scheduler']['ok'] and report['gate']['ok'], report)
+        self.assertEqual(report['scheduler']['status'], 'PLAN')
+        self.assertEqual(report['blockers'], ['LIVE_SOURCE_CHANGED_DURING_RUN'])  # ... and the live movement is reported
         self.assertEqual((code, report['status']), (2, 'BLOCKED'))
 
     def test_keep_retains_mirrored_private_copies(self):
@@ -912,18 +914,23 @@ class FreshLayoutTests(FreshLayoutBase):
     def test_external_path_validation_refuses_aliases_and_non_regular_files(self):
         link = self.shared / 'link.sqlite'
         link.symlink_to(self.d.pacer)
+        victim = self.shared / 'victim.sqlite'                       # NOT a store in use: linking it must not affect the fixture
+        shutil.copyfile(self.d.pacer, victim)
         hard = self.shared / 'hard.sqlite'
-        os.link(self.d.pacer, hard)
+        os.link(victim, hard)
         linked_dir = self.scratch / 'linked'
         linked_dir.symlink_to(self.shared)
-        cases = {'symlink': link, 'hardlink': hard, 'directory': self.shared, 'missing': self.shared / 'nope.sqlite',
-                 'symlinked directory component': linked_dir / 'provider-pacing.sqlite',
-                 'dotdot': Path(str(self.shared) + '/../' + self.shared.name + '/provider-pacing.sqlite')}
-        for label, path in cases.items():
+        # (path, text the refusal must name): the REASON matters, another failure further down must not satisfy the test
+        cases = {'symlink': (link, 'canonical absolute path'), 'hardlink': (hard, 'regular single-link file'),
+                 'directory': (self.shared, 'regular single-link file'), 'missing': (self.shared / 'nope.sqlite', 'does not exist'),
+                 'symlinked directory component': (linked_dir / 'provider-pacing.sqlite', 'canonical absolute path'),
+                 'dotdot': (Path(str(self.shared) + '/../' + self.shared.name + '/provider-pacing.sqlite'), 'canonical absolute path')}
+        for label, (path, reason) in cases.items():
             for key in ('pacing_db', 'discovery_db'):
                 with self.subTest(label=label, key=key):
                     code, report = self.run_tool(self.argv(**{key: path}))
                     self.assertEqual((code, report['status']), (3, 'REFUSED'), report)
+                    self.assertIn(reason, report['reason'])
                     self.assertFalse(self.work.exists())
         with self.subTest('research stays relative-only'):
             code, report = self.run_tool(self.argv(research_db=self.d.f.jobs.path))

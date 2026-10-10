@@ -24,6 +24,18 @@ copies differ from live files, so only ``paths.*.device``, ``paths.*.inode`` and
 the config copy's path are excluded from the journal-context comparison (reported
 as ``excluded_context_fields``). The store paths and the journal path ARE compared.
 
+Fresh layout (T34): the SHARED pacing and discovery databases live outside the experiment root,
+and ``--pacing-db``, ``--discovery-db`` and ``--ledger`` therefore also accept an ABSOLUTE path. Such
+a store must be canonical (no symlink or ``..`` component) and a regular single-link file; it is copied
+into ``<workdir>/.external/<absolute path>`` with the same backup API, and in the namespace that copy is
+bind-mounted over its real directory, so the child sees it at the real path while the rest of that
+directory (for example the archived old stores) is hidden. An absolute path inside ``--data`` is treated
+exactly like the relative name. The external store's directory must not contain or sit inside ``--data`` or
+``--workdir``. The same live checks apply (pacing mode 0600, expected owner, no group/world-writable
+directory), a ``-wal``/``-shm``/``-journal`` appearing beside an external store or a changed sha256 is a
+blocker. Note the real entry scheduler requires the ledger to sit beside the research database, so an
+external ledger is copied and gated but the scheduler pre-check will report it.
+
 Requirements: the namespace mode needs Linux ``unshare`` + ``mount`` and either
 euid 0 (the VPS case: stores are owned by ``solana-desk``, the tool runs as root,
 so ownership is checked against ``--expect-owner``, default the owner of ``--data``)

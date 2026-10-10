@@ -897,6 +897,15 @@ class FreshLayoutTests(StoreBase):
             c.commit()
         self.assertEqual(vc.compare(a, self.fresh(discovery=str(self.discovery)))['status'], 'FAIL')
 
+    def test_compare_requires_the_same_ledger_spelling_in_both_snapshots(self):
+        """A plain name and an absolute path to the same file are different identities: use one style before and after."""
+        by_name = self.fresh()
+        by_path = vc.snapshot(self.data, str(self.ledger_path), self.config_path, pacing=str(self.pacing))
+        mixed = vc.compare(by_name, by_path)
+        self.assertEqual((mixed['status'], mixed['failures']), ('FAIL', ['ledger differs', 'ledger differs']))
+        again = vc.snapshot(self.data, str(self.ledger_path), self.config_path, pacing=str(self.pacing))
+        self.assertEqual(vc.compare(by_path, again)['status'], 'PASS')
+
     def test_cli_options(self):
         out = self.data.parent / 'snap.json'
         argv = ['snapshot', '--data', str(self.data), '--ledger', str(self.external_ledger), '--config', str(self.config_path),
