@@ -592,6 +592,13 @@ def _write(c, table, identity, value, hint=None):
 
 
 def dispatch(expected, *, execute=False, systemd_credentials=False):
+    # Include journal lineage validation and all subsequent gates; discard bytes
+    # on every return/error. Mutable state and proof decisions are never cached.
+    with terminal.verified_bytes_scope():
+        return _dispatch(expected,execute=execute,systemd_credentials=systemd_credentials)
+
+
+def _dispatch(expected, *, execute=False, systemd_credentials=False):
     paths = {k: v['path'] for k,v in expected['paths'].items()}
     with _journal(expected['journal']) as journal:
         _validate(journal, expected)
