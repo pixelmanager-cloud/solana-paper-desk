@@ -4,6 +4,7 @@ from dataclasses import replace
 import json
 from pathlib import Path
 import sqlite3
+from tests import legacy_null_pass
 import unittest
 from types import SimpleNamespace
 from unittest.mock import patch
@@ -23,6 +24,7 @@ def dump(path):
 
 class HTTP403RetirementTests(unittest.TestCase):
     def setUp(self):
+        legacy_null_pass.install(self)    # T22: these tests certify retained pre-T22 NULL/unresolved states
         self.h=fixtures.PaperCycleTests();self.h.setUp();self.addCleanup(self.h.doCleanups)
         self.f=self.h.f;self.store=self.f.progress.store;self.cfg=self.h.cfg
         self.policy=Path(self.f.tmp.name)/'http403-policy.json'

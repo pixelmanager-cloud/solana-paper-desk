@@ -66,15 +66,32 @@ def prepare(store,progress,ledger_db,cfg,item,*,research_db,pacing_path):
     context = {'research_db':str(cycle.canonical_job_path(research_db)),
                'evidence_db':str(store.path),'ledger_db':str(cycle.canonical_job_path(ledger_db)),
                'pacing_db':str(pacing_path)}
-    intent = store.save(rejection.intent(store,ledger_db,cfg,item,before,context))
+    intent = store.save({**rejection.intent(store,ledger_db,cfg,item,before,context),'closure_v1':True})
     with store.connect() as c:
         c.execute('INSERT INTO paper_observation_passes VALUES(?,?,NULL)', (identity,intent))
     try:
+        from .paper_cycle_no_entry import ledger_snapshot
+        ledger_before = ledger_snapshot(ledger_db)    # preparation never writes the ledger
+    except (ValueError, OSError, sqlite3.Error):
+        ledger_before = None
+    try:
         as_of, _, _ = cycle._history(progress, item, budget, PaperHistorySource)
     except PreparationRejected as error:
-        result = rejection.publish(store,progress,ledger_db,cfg,pass_id=identity,
-            intent_hash=intent,history_id=budget.history_id,reason=error.code)
+        try:
+            result = rejection.publish(store,progress,ledger_db,cfg,pass_id=identity,
+                intent_hash=intent,history_id=budget.history_id,reason=error.code)
+        except BaseException as failure:
+            # T22G: a failure while publishing the typed rejection is not a transient provider fault. It must
+            # never fall through to a later ABANDONED_CHARGED recovery: hold the pass (fail closed), then re-raise.
+            from . import paper_pass_closure as closure
+            closure.hold_durably(store, pass_id=identity, cause='PREPARATION_REJECTION_PUBLICATION_FAILED')
+            raise failure
         return result
+    except BaseException as error:
+        # A transient/typed failure after a charge must not latch the store: retire the pass as
+        # FAILED_CHARGED when provable (never for integrity causes); the failure still propagates.
+        cycle._close_failed(store,progress,identity,error,(),ledger_before)
+        raise
     if as_of != item.history_as_of: raise ValueError('Captured history changed')
     outcome = store.save({'kind':'history_first_paper_preparation_outcome_v1',
                           'intent_hash':intent, 'history_as_of':as_of,

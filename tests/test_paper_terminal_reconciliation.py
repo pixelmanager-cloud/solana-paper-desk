@@ -10,6 +10,7 @@ from dataclasses import replace
 import json
 from pathlib import Path
 import sqlite3
+from tests import legacy_null_pass
 import unittest
 from unittest.mock import patch
 
@@ -28,6 +29,10 @@ def dump(path):
 
 class TerminalReconciliationTests(unittest.TestCase):
     def setUp(self):
+        # T22: these tests certify retained pre-T22 NULL/unresolved states. The intrinsic receipt test runs against the
+        # real new code: a receipt-certified NULL pass must survive the abandoned-pass recovery of the second cycle.
+        if self._testMethodName != 'test_future_known_rejection_certifies_intrinsic_without_policy_or_retry':
+            legacy_null_pass.install(self)
         self.h=fixtures.PaperCycleTests();self.h.setUp();self.addCleanup(self.h.doCleanups)
         self.f=self.h.f;self.store=self.f.progress.store;self.progress=self.f.progress
         self.cfg=self.h.cfg;self.ledger=self.h.path;self.target=self.h.target

@@ -451,7 +451,10 @@ class NoMarginTests(Base):
         with patch.object(tool, '_preflight', side_effect=slow):
             with self.assertRaisesRegex(ValueError, 'expired during preparation'):
                 self.run_dispatch(THIN)
-        self.assertEqual((len(self.journal('intents')), len(self.journal('results'))), (1, 0))   # the stranded intent
+        # T22: a failure after the intent is written no longer strands it; it is closed FAILED_CHARGED (the candidate
+        # is spent and never retried, the store is usable). The control still shows the missing margin is what
+        # expires the candidate: the margin variant above produces no such failure.
+        self.assertEqual((len(self.journal('intents')), len(self.journal('results'))), (1, 1))
 
 
 class ReconcileRealShapeTests(unittest.TestCase):
