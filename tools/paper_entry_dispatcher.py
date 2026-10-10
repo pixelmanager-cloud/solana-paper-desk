@@ -205,7 +205,7 @@ def _validate(c, expected):
                 raise ValueError('Dispatch result binding invalid')
             original_result = result['result']
             if type(original_result) is dict and original_result.get('kind') == 'history_preparation_no_entry_v1':
-                from tools import history_preparation_rejection
+                from desk import history_preparation_rejection
                 store = EvidenceStore(expected['paths']['evidence_db']['path'],read_only=True)
                 from desk.history_progress import HistoryProgress
                 progress = HistoryProgress.__new__(HistoryProgress); progress.store = store
@@ -614,7 +614,7 @@ def dispatch(expected, *, execute=False, systemd_credentials=False):
         rejection_published = False
         def publish_no_entry(result):
             nonlocal rejection_published
-            from tools import history_preparation_rejection
+            from desk import history_preparation_rejection
             from desk.history_progress import HistoryProgress
             store=EvidenceStore(paths['evidence_db'],read_only=True)
             progress=HistoryProgress.__new__(HistoryProgress);progress.store=store

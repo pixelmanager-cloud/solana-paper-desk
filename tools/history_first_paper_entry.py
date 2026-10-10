@@ -23,7 +23,7 @@ from desk.model import digest
 from desk.model import canonical
 from desk.replay_history import replay_history
 from desk.live_strategy_features import MAX_RECORDS, MAX_RECORD_BYTES, MAX_TOTAL_BYTES
-from tools import history_preparation_rejection as rejection
+from desk import history_preparation_rejection as rejection
 
 
 PREPARATION_SECONDS = 18

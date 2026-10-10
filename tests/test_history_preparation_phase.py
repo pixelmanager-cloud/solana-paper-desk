@@ -11,7 +11,8 @@ from desk import paper_cycle as cycle, paper_read_sources as transport, provider
 from desk.model import canonical,digest
 from desk.paper_history_source import PaperHistorySource
 from desk.security import base58
-from tools import history_first_paper_entry as entry, history_preparation_rejection as rejection
+from tools import history_first_paper_entry as entry
+from desk import history_preparation_rejection as rejection
 from tests import test_paper_entry_dispatcher as fixture
 from tests.test_live_strategy_features import transaction
 from tests.test_paper_read_sources import Response
