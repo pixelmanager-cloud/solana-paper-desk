@@ -4,7 +4,7 @@ from .programs import address
 from .model import digest
 
 
-def collect_history(owner,start,end,rpc,max_pages=2,capture=None,token_accounts="balanceChanged",slot_range=None,*,page_size=100):
+def collect_history(owner,start,end,rpc,max_pages=2,capture=None,token_accounts="balanceChanged",slot_range=None,*,page_size=100,retain_observations=True):
     address(owner)
     if type(start) is not int or type(end) is not int or not 0<=start<end or not 1<=max_pages<=20:
         raise ValueError('Invalid history bounds')
@@ -52,7 +52,7 @@ def collect_history(owner,start,end,rpc,max_pages=2,capture=None,token_accounts=
             if last_slot is not None and slot<last_slot:reasons.append('HISTORY_ORDER_REGRESSION')
             last_slot=slot
             obs['commitment']='finalized_provider_response'
-            if obs['status']=='OBSERVED':observations.append(obs)
+            if retain_observations and obs['status']=='OBSERVED':observations.append(obs)
         next_cursor=response.get('paginationToken')
         if next_cursor is not None and (not isinstance(next_cursor,str) or not next_cursor):
             reasons.append('HISTORY_INVALID_CURSOR');break

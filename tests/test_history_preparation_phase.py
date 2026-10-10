@@ -60,7 +60,15 @@ class PreparationTests(unittest.TestCase):
             intent_hash=self.intent,history_id=self.budget.history_id,reason=reason)
     def marker(self):
         with closing(self.store.connect()) as c:return c.execute('SELECT outcome_hash FROM paper_observation_passes WHERE id=?',(self.identity,)).fetchone()[0]
-    def test_three_full_pages_cross_aggregate_and_publish_exact_no_entry(self):
+    def test_historical_v2_three_full_pages_replay_original_aggregate_rejection(self):
+        original=self.store.load(self.intent);original.pop('feature_semantics_version');original['kind']='history_first_paper_preparation_v2'
+        self.intent=self.store.save(original)
+        with closing(self.store.connect()) as c:c.execute('UPDATE paper_observation_passes SET intent_hash=? WHERE id=?',(self.intent,self.identity))
+        bounds=rejection.bounds;reason=rejection.reason_for
+        def old_bounds(*args,**kwargs):return bounds(*args,**{**kwargs,'semantics_version':1})
+        def old_reason(*args,**kwargs):return reason(*args,**{**kwargs,'semantics_version':1})
+        a=patch.object(rejection,'bounds',side_effect=old_bounds);a.start();self.addCleanup(a.stop)
+        b=patch.object(rejection,'reason_for',side_effect=old_reason);b.start();self.addCleanup(b.stop)
         self.advance({'data':self.rows(50,padding=13000),'paginationToken':'p2'})
         self.advance({'data':self.rows(50,start=50,padding=13000),'paginationToken':'p3'})
         with self.assertRaises(entry.PreparationRejected) as caught:
@@ -69,6 +77,7 @@ class PreparationTests(unittest.TestCase):
         state=self.progress.snapshot(self.budget.history_id);self.assertEqual(state['requests_used'],9)
         before=cycle._state(self.ledger,self.cfg)
         result=self.publish(caught.exception.code)
+        a.stop();b.stop()  # Replay the historical receipt through unpatched current validators.
         self.assertEqual(rejection.verify(self.store,self.progress,result)['admission']['requests_used'],6)
         self.assertEqual(self.marker(),result['evidence_hash']);self.assertEqual(result['status'],'NO_ENTRY')
         self.assertFalse(result['entry_authorized']);self.assertEqual(len(result['attempt_refs']),3)
