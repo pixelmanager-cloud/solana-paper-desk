@@ -190,7 +190,7 @@ class FailedEntryClosureTests(Base):
     def test_unsupported_or_malformed_intents_are_never_closed(self):
         self.h.run_cycle(candidates=())
         bad = self.store.save({'kind': 'something_else_v1'})
-        worse = self.store.save({'kind': 'paper_cycle_intent_v1', 'admissions': {}, 'ledger': str(self.h.path)})
+        worse = self.store.save({'kind': 'paper_cycle_intent_v1', 'closure_v1': True, 'admissions': {}, 'ledger': str(self.h.path)})
         with closing(self.store.connect()) as c:
             c.execute('INSERT INTO paper_observation_passes VALUES(?,?,NULL)', ('d' * 32, bad))
             c.execute('INSERT INTO paper_observation_passes VALUES(?,?,NULL)', ('e' * 32, worse))
@@ -199,20 +199,21 @@ class FailedEntryClosureTests(Base):
                 closure.close(self.store, self.progress, pass_id=pass_id, status='ABANDONED_CHARGED', cause=closure.ABANDONED_CAUSE)
         result = closure.recover_abandoned(self.store, self.progress, ledger_db=self.h.path, cfg=self.h.cfg, clock=lambda: self.h.f.at)
         self.assertEqual(result['closed'], [])
-        self.assertEqual(len(result['refused']), 2)
+        self.assertEqual(len(result['refused']), 1)          # the pre-closure intent is never even attempted
         self.assertEqual(self.gate(), 'OBSERVATION_RECOVERY_REQUIRED')   # still latched: unknown shapes fail closed
 
 
 class IntegrityHoldTests(Base):
     def history_failure(self):
-        class HistoryFailure:
-            def __init__(self, progress, scan, key, *, timeout_seconds): pass
-            def __call__(self, method, params): raise OSError('SYNTHETIC interrupted history response')
-        return self.h.run_cycle(history_source_factory=HistoryFailure)
+        # corrupt retained evidence surfacing mid-pass: an integrity cause, not a provider failure
+        def corrupt(progress, scan):
+            raise ValueError('Original evidence missing/corrupt')
+        with self.assertRaises(ValueError):
+            self.h.run_cycle(source_factory=corrupt)
+        return {'blockers': ['HISTORY_RECOVERY_REQUIRED']}
 
     def test_integrity_cause_holds_the_latch_and_recovery_cannot_close_it(self):
         first = self.history_failure()
-        self.assertEqual(first['blockers'], ['HISTORY_RECOVERY_REQUIRED'])
         self.assertEqual(len(self.null_passes()), 1)                      # deliberately left NULL
         hold = self.rows()
         self.assertEqual([r[3] for r in hold], ['INTEGRITY_HOLD'])
@@ -234,12 +235,48 @@ class IntegrityHoldTests(Base):
         held = self.null_passes()[0][0]
         with closing(self.store.connect()) as c:                          # a second, truly abandoned pass
             c.execute('INSERT INTO paper_observation_passes VALUES(?,?,NULL)', ('a1' * 16, self.passes()[0][1] if False else self.store.save(
-                {'kind': 'paper_cycle_intent_v1', 'config_hash': digest(self.h.cfg), 'ledger': str(self.h.path), 'targets': [],
+                {'kind': 'paper_cycle_intent_v1', 'closure_v1': True, 'config_hash': digest(self.h.cfg), 'ledger': str(self.h.path), 'targets': [],
                  'admissions': {self.scan: self.progress.admission(self.scan)}})))
         result = closure.recover_abandoned(self.store, self.progress, ledger_db=self.h.path, cfg=self.h.cfg, clock=lambda: self.h.f.at)
         self.assertEqual(result['closed'], ['a1' * 16])
         self.assertEqual(sorted(r[3] for r in self.rows()), ['ABANDONED_CHARGED', 'INTEGRITY_HOLD'])
         self.assertEqual([p[0] for p in self.null_passes()], [held])
+
+
+class ReviewRegressionTests(Base):
+    def test_receipt_certified_and_pre_closure_passes_are_never_recovered(self):
+        self.h.run_cycle(candidates=())
+        intent = self.store.save({'kind': 'paper_cycle_intent_v1', 'closure_v1': True, 'config_hash': digest(self.h.cfg),
+                                  'ledger': str(self.h.path), 'targets': [], 'admissions': {self.scan: self.progress.admission(self.scan)}})
+        legacy = self.store.save({'kind': 'paper_cycle_intent_v1', 'config_hash': digest(self.h.cfg), 'ledger': str(self.h.path),
+                                  'targets': [], 'admissions': {self.scan: self.progress.admission(self.scan)}})
+        with closing(self.store.connect()) as c:
+            c.execute('INSERT INTO paper_observation_passes VALUES(?,?,NULL)', ('c1' * 16, intent))
+            c.execute('INSERT INTO paper_observation_passes VALUES(?,?,NULL)', ('c2' * 16, legacy))
+        with patch.object(closure, 'certified_ids', return_value={'c1' * 16}):
+            result = closure.recover_abandoned(self.store, self.progress, ledger_db=self.h.path, cfg=self.h.cfg, clock=lambda: self.h.f.at)
+        self.assertEqual((result['closed'], result['refused']), ([], []))
+        self.assertEqual(sorted(p[0] for p in self.null_passes()), ['c1' * 16, 'c2' * 16])   # byte-for-byte untouched
+        with patch.object(closure, 'certified_ids', return_value={'c1' * 16}), self.assertRaises(closure.ClosureRefused):
+            closure.close(self.store, self.progress, pass_id='c1' * 16, status='ABANDONED_CHARGED', cause=closure.ABANDONED_CAUSE)
+
+    def test_corrupt_evidence_and_unclassified_defects_hold_while_transport_errors_close(self):
+        cases = {'corrupt': (ValueError('Evidence checksum mismatch'), True), 'defect': (RuntimeError('boom'), True),
+                 'json': (json.JSONDecodeError('x', 'y', 0), True), 'sqlite': (sqlite3.DatabaseError('malformed'), True),
+                 'timeout': (OSError('timeout'), False), 'interrupt': (KeyboardInterrupt(), False)}
+        for name, (error, held) in cases.items():
+            with self.subTest(name):
+                self.assertEqual(closure.is_integrity(closure.cause_of(error)), held, closure.cause_of(error))
+
+    def test_zero_charge_failure_does_not_retire_the_scan(self):
+        def defect(progress, scan):
+            raise OSError('SYNTHETIC source factory failure before any request')
+        with self.assertRaises(OSError):
+            self.h.run_cycle(source_factory=defect)
+        self.assertEqual(self.progress.admission(self.scan)['requests_used'], 0)
+        self.assertEqual([r[3] for r in self.rows()], ['FAILED_CHARGED'])
+        self.assertIsNone(self.rows()[0][4])
+        self.assertIsNone(self.gate((self.scan,)))
 
 
 class MonitoringAbandonTests(Base):

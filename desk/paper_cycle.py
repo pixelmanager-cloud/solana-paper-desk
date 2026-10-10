@@ -552,7 +552,7 @@ def run_once(research_db, evidence_db, ledger_db, cfg, *, position_targets=(), c
                     validate_event(control)
                     if control['kind']!='control' or control['ts']!=budget.now():
                         raise ValueError('Current explicit operator controls required')
-                intent = {'kind':'paper_cycle_intent_v1','config_hash':digest(cfg),'ledger':str(path),
+                intent = {'kind':'paper_cycle_intent_v1','closure_v1':True,'config_hash':digest(cfg),'ledger':str(path),
                           'targets':[asdict(x) for x in items],
                           'admissions':{x.target.scan_id:progress.admission(x.target.scan_id) for x in items}}
                 # Intrinsic certification is intentionally restricted to a new

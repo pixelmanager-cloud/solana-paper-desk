@@ -41,9 +41,15 @@ FIELDS = {'kind', 'version', 'status', 'cause', 'role', 'pass_id', 'intent_hash'
           'attempt_refs', 'monitoring', 'ledger', 'retired_scan', 'execution_status', 'live_readiness',
           'entry_authorized'}
 # Causes that mean the retained evidence is corrupt, contradictory or unidentifiable: never closed here.
-INTEGRITY_MARKERS = ('BINDING_INVALID', 'MISMATCH', 'PERSISTENCE_FAILED', 'RECOVERY_REQUIRED', 'RECOVERYREQUIRED',
-                     'ACCOUNTING_INVALID', 'EVIDENCE_INVALID', 'MUTATED', 'IDENTITY', 'INTEGRITY', 'CONTEXT_BINDING',
-                     'CHECKPOINT', 'OUTCOME_PENDING', 'CLOCK_ROLLBACK', 'IMPLEMENTATION', 'CONFIG_MISMATCH')
+INTEGRITY_MARKERS = ('BINDING_INVALID', 'MISMATCH', 'PERSISTENCE_FAILED', 'RECOVERYREQUIRED', 'LEDGER_INTEGRITY',
+                     'OBSERVATION_RECOVERY_REQUIRED', 'MONITORING_RECOVERY_REQUIRED', 'ACCOUNTING_INVALID',
+                     'EVIDENCE_INVALID', 'MUTATED', 'IDENTITY', 'INTEGRITY', 'CONTEXT_BINDING', 'CHECKPOINT',
+                     'OUTCOME_PENDING', 'CLOCK_ROLLBACK', 'IMPLEMENTATION', 'CONFIG_MISMATCH',
+                     # corrupt or unreadable retained evidence (message text of EvidenceStore/terminal._load errors)
+                     'CHECKSUM', 'CORRUPT', 'EVIDENCE MISSING', 'EVIDENCE ENCODING', 'EVIDENCE_MISSING', 'ENCODING MISMATCH',
+                     'ORIGINAL EVIDENCE')
+# Exception types that are never an ordinary provider/transport failure: stored data is unreadable or inconsistent.
+INTEGRITY_TYPES = ('DatabaseError', 'IntegrityError', 'DataError', 'error', 'JSONDecodeError', 'UnicodeDecodeError')
 HOLD_FIELDS = {'kind', 'version', 'status', 'cause', 'pass_id', 'intent_hash', 'result_hash', 'execution_status',
                'live_readiness', 'entry_authorized'}
 SQL = (f'CREATE TABLE {TABLE}(pass_id TEXT PRIMARY KEY,intent_hash TEXT NOT NULL,closure_hash TEXT NOT NULL,'
@@ -63,13 +69,31 @@ def is_integrity(cause):
 
 def cause_of(error):
     code = getattr(error, 'code', None)
-    return code if type(code) is str and 1 <= len(code) <= 128 else 'EXCEPTION_' + type(error).__name__.upper()
+    if type(code) is str and 1 <= len(code) <= 128:
+        return code
+    name = type(error).__name__
+    if name in INTEGRITY_TYPES or isinstance(error, sqlite3.DatabaseError):
+        return 'EXCEPTION_INTEGRITY_' + name.upper()
+    if not isinstance(error, (OSError, ValueError, KeyboardInterrupt, SystemExit)):
+        # an unclassified defect (RuntimeError, TypeError, ...): stays visible and latched until reviewed
+        return 'EXCEPTION_INTEGRITY_UNCLASSIFIED_' + name.upper()
+    return ('EXCEPTION_' + name.upper() + ':' + ' '.join(str(error).split())[:80])[:128]
+
+
+def certified_ids(c):
+    """Pass ids already certified by any reviewed per-incident receipt; their NULL outcome is load-bearing."""
+    from .paper_http403_retirement import rows as http_rows
+    from .paper_preparation_retirement import rows as preparation_rows
+    from .paper_dispatch_preparation_retirement import rows as dispatch_rows
+    ids = {v['pass_id'] for v in terminal._rows(c)}
+    ids |= {v['pass_id'] for v in http_rows(c)} | {v['pass_id'] for v in preparation_rows(c)} | {v['pass_id'] for v in dispatch_rows(c)}
+    return ids
 
 
 def _baselines(intent):
     """(scan -> requests_used before, scans that were open positions, ledger path)."""
-    if type(intent) is not dict or intent.get('kind') not in INTENT_KINDS:
-        raise ClosureRefused('Unsupported pass intent')
+    if type(intent) is not dict or intent.get('kind') not in INTENT_KINDS or intent.get('closure_v1') is not True:
+        raise ClosureRefused('Unsupported or pre-closure pass intent')
     if intent['kind'] == 'paper_cycle_intent_v1':
         admissions = intent['admissions']
         if type(admissions) is not dict or not 1 <= len(admissions) <= 32:
@@ -235,6 +259,8 @@ def close(store, progress, *, pass_id, status, cause, result_hash=None, attempt_
         if row is None or row[1] is not None:
             raise ClosureRefused('Not an unresolved original pass')
         intent_hash = row[0]
+        if pass_id in certified_ids(c):
+            raise ClosureRefused('Pass is certified by a reviewed receipt; its NULL outcome is load-bearing')
         intent = terminal._load(store, intent_hash)
         before, positions, ledger_path = _baselines(intent)
         monitoring = _monitoring_window(c, intent) if positions else None
@@ -262,6 +288,7 @@ def close(store, progress, *, pass_id, status, cause, result_hash=None, attempt_
             refs.append(key)
     retired = None
     if (status == 'FAILED_CHARGED' and not positions and len(scans) == 1 and ledger_before is not None
+            and all(w['after'] > w['before'] for w in scans.values())
             and (ledger_before['events'], ledger_before['outcomes']) == (snapshot['events'], snapshot['outcomes'])
             and ledger_before['events_hash'] == snapshot['events_hash']
             and ledger_before['outcomes_hash'] == snapshot['outcomes_hash']):
@@ -328,29 +355,39 @@ def hold(store, *, pass_id, cause, result_hash=None):
 def recover_abandoned(store, progress, *, ledger_db, cfg, clock):
     """Close every unresolved pass left by a dead process. Caller owns research -> evidence -> ledger locks.
 
-    Returns {'closed': [...], 'refused': [(pass_id, reason)], 'monitoring_resolved': [...]}; refusals keep the
-    latch. Bounded: more than MAX_RECOVER unresolved passes is refused as a whole.
+    Only passes created by this code (intent closure_v1) that are neither integrity-held nor certified by a reviewed
+    receipt are eligible; everything else keeps its NULL outcome untouched. At most MAX_RECOVER passes are attempted
+    per call. Returns {'closed': [...], 'refused': [(pass_id, reason)], 'monitoring_resolved': [...]}.
     """
     outcome = {'closed': [], 'refused': [], 'monitoring_resolved': []}
     with closing(store.connect()) as c:
         if not c.execute("SELECT 1 FROM sqlite_master WHERE type='table' AND name='paper_observation_passes'").fetchone():
             return outcome
-        held = {r[0] for r in _table_rows(c) if r[3] == HOLD}
-        pending = [r[0] for r in c.execute('SELECT id FROM paper_observation_passes WHERE outcome_hash IS NULL ORDER BY rowid LIMIT ?',
-                                           (MAX_RECOVER+len(held)+1,)) if r[0] not in held]
+        skip = {r[0] for r in _table_rows(c) if r[3] == HOLD} | certified_ids(c)
+        pending = [r[0] for r in c.execute('SELECT id FROM paper_observation_passes WHERE outcome_hash IS NULL ORDER BY rowid LIMIT 1024')
+                   if r[0] not in skip]
         has_monitoring = bool(c.execute("SELECT 1 FROM sqlite_master WHERE type='table' AND name='paper_monitoring_outcomes'").fetchone())
         dangling = has_monitoring and c.execute('SELECT 1 FROM paper_monitoring_reservations r LEFT JOIN paper_monitoring_outcomes o '
                                                 'ON o.reservation_id=r.id WHERE o.reservation_id IS NULL LIMIT 1').fetchone()
-    if len(pending) > MAX_RECOVER:
+    eligible = []
+    for pass_id in pending:
+        with closing(store.connect()) as c:
+            intent_hash = c.execute('SELECT intent_hash FROM paper_observation_passes WHERE id=?', (pass_id,)).fetchone()[0]
+        try:
+            if terminal._load(store, intent_hash).get('closure_v1') is True:
+                eligible.append(pass_id)
+        except (ValueError, OSError, sqlite3.Error):
+            pass                                             # unreadable intent: never touched
+    if len(eligible) > MAX_RECOVER:
         outcome['refused'].append((None, 'Too many unresolved passes for bounded recovery'))
         return outcome
-    if dangling:
+    if dangling and eligible:
         from .monitoring_budget import MonitoringBudget, MonitoringBlocked
         try:
             outcome['monitoring_resolved'] = MonitoringBudget(store, ledger_db, cfg, clock=clock).abandon_pending()
         except (MonitoringBlocked, ValueError, OSError, sqlite3.Error) as error:
             outcome['refused'].append((None, 'Monitoring reservations unresolved: ' + str(error)[:100]))
-    for pass_id in pending:
+    for pass_id in eligible:
         try:
             close(store, progress, pass_id=pass_id, status='ABANDONED_CHARGED', cause=ABANDONED_CAUSE)
             outcome['closed'].append(pass_id)

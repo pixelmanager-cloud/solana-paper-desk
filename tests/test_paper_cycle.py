@@ -549,7 +549,9 @@ class PaperCycleTests(unittest.TestCase):
         self.assertEqual(result['blockers'],['GRADUATION_TIMESTAMP_CONFLICT'])
         self.assertEqual(self.f.calls,[])
 
-    def test_history_failure_enclosed_by_durable_intent_blocks_restart(self):
+    def test_history_failure_enclosed_by_durable_intent_is_closed_and_the_scan_retired(self):
+        # T22: was ..._blocks_restart (OBSERVATION_RECOVERY_REQUIRED for every scan). A failed history source is an
+        # ordinary charged failure: the pass is closed FAILED_CHARGED, charges stay, and only that scan is retired.
         class HistoryFailure:
             def __init__(self,progress,scan,key,*,timeout_seconds):pass
             def __call__(self,method,params):raise OSError('SYNTHETIC interrupted history response')
@@ -559,7 +561,7 @@ class PaperCycleTests(unittest.TestCase):
         self.assertEqual(result['budget'][self.target.scan_id]['used'],5)
         self.f.calls.clear()
         repeated=self.run_cycle()
-        self.assertEqual(repeated['blockers'],['OBSERVATION_RECOVERY_REQUIRED'])
+        self.assertEqual(repeated['blockers'],['REJECTED_SCAN_RETIRED'])
         self.assertEqual(self.f.calls,[])
         self.assertEqual(self.f.progress.admission(self.target.scan_id)['requests_used'],5)
 

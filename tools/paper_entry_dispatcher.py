@@ -638,6 +638,8 @@ def _close_dispatch(expected, journal, identity, intent, scan, cause, status):
     cfg = cli._config(paths['config'])
     with monitor._context(paths['research_db'], paths['evidence_db'], paths['ledger_db'], cfg) as (store, ledger, state):
         progress = HistoryProgress.__new__(HistoryProgress); progress.store = store
+        if intent['hint']['mint'] in state['positions']:
+            raise ValueError('Candidate already has an open paper position; not a failed dispatch')
         recover_abandoned(store, progress, ledger_db=ledger, cfg=cfg, clock=_now)
         if terminal.gate(store, Path(paths['research_db']), (), ledger_locked=str(ledger)):
             raise ValueError('Store still latched after dispatch failure')

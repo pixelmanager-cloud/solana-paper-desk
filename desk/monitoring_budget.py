@@ -250,7 +250,7 @@ class MonitoringBudget:
                     or receipt.get('mint') != mint
                     or original.get('scan_id') != scan or original.get('method') != method
                     or (original.get('params_hash') != params_hash or original.get('failure_code') != 'ABANDONED'
-                        or original.get('request_completed') is not False
+                        or original.get('request_completed') is not None
                         if original.get('kind') == ABANDONED_KIND
                         else digest(original.get('params')) != params_hash)):
                 raise MonitoringBlocked('MONITORING_ACCOUNTING_INVALID')
@@ -467,7 +467,7 @@ class MonitoringBudget:
                 if successor is not None:
                     receipt['successor_context_hash'] = successor
             record = {'kind': ABANDONED_KIND, 'failure_code': 'ABANDONED', 'cause': cause, 'scan_id': scan,
-                      'method': method, 'params_hash': params_hash, 'request_completed': False,
+                      'method': method, 'params_hash': params_hash, 'request_completed': None,
                       'monitoring_reservation': receipt}
             planned.append((identity, self.store.save(record)))
         if not planned:

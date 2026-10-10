@@ -65,7 +65,7 @@ def prepare(store,progress,ledger_db,cfg,item,*,research_db,pacing_path):
     context = {'research_db':str(cycle.canonical_job_path(research_db)),
                'evidence_db':str(store.path),'ledger_db':str(cycle.canonical_job_path(ledger_db)),
                'pacing_db':str(pacing_path)}
-    intent = store.save(rejection.intent(store,ledger_db,cfg,item,before,context))
+    intent = store.save({**rejection.intent(store,ledger_db,cfg,item,before,context),'closure_v1':True})
     with store.connect() as c:
         c.execute('INSERT INTO paper_observation_passes VALUES(?,?,NULL)', (identity,intent))
     try:
