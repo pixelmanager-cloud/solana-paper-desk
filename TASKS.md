@@ -912,3 +912,18 @@ T22 was claimed before the coordinator addendum was written. Read the "Coordinat
 - **Addendum.** The `history_first` path through `paper_history_preparation.prepare` must not leave a NULL pass for normal blockers (FEATURE_HISTORY_PAGE_LIMIT, budget exhaustion).
 
 Run every T09/T12 audit module and report which `expectedFailure` tests remain, and why.
+
+---
+
+## T29F — Fix coordinator review findings in T29 (funnel report)
+STATUS: OPEN
+DEPENDS: none
+BASE: origin/cloud/T29, then merge origin/integration/r1 (it contains T01's `paper_cycle_no_entry`)
+OWNS: tools/research/funnel_report.py, tests/test_funnel_report.py
+AVOID: desk/**
+
+1. **(HIGH) Latches counted as normal deaths.** Join `paper_observation_passes` (outcome_hash NULL vs set) and T01's `paper_cycle_no_entry` per scan_id. A BLOCKED result whose pass is still NULL and has no no-entry row is `UNRESOLVED:<code>` (a latch), never `OBSERVATIONS:<code>`. Show UNRESOLVED prominently at the top of the report. Add a fixture with a category-(b) blocker (e.g. `USD_ORIGINAL_BINDING_INVALID`) built through the real `run_once`/publish path where feasible.
+2. **(MED) Selection filter.** Apply the dispatcher's own selection filter (`migration._hints('selection-only', …)`, `tools/paper_entry_dispatcher.py` ~:567; import it, don't copy it) so `EXPIRED_NOT_DISPATCHED` is not inflated.
+3. **(LOW) Mint filter.** Filter fills and rejects by the candidate's mint, so held-position outcomes are never attributed to a candidate.
+4. **(LOW) Docstring.** Fix the dead-pool docstring. Once T26F lands, align the dead-pool semantics with it (dead = -100% or a separate bucket counted in the totals).
+5. **(LOW) Real-store fixture.** Add at least one dispatched-rejection fixture generated from real stores.
