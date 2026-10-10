@@ -1,0 +1,33 @@
+# Event-driven held-position watcher (T28). Reads the ledger read-only and asks systemd (through the
+# desk-paper-held-cycle.path unit) to run the NORMAL held pass early. It never writes the ledger and never fills.
+# Own request allowance and pacing in <STATE_DIR>/held-watcher/watcher.sqlite: it must NOT set
+# DESK_PROVIDER_PACING_DB (a kill while holding a shared pacing ticket would block the whole desk).
+# Start it only after the first position can exist, i.e. together with the entry timer (see docs/ops/HELD_WATCHER.md).
+[Unit]
+Description=Event-driven held-position watcher (nudges the held pass; never trades)
+After=network-online.target
+Wants=network-online.target
+ConditionPathExists=<FRESH_ROOT>/paper-ledger.sqlite
+StartLimitIntervalSec=600
+StartLimitBurst=10
+[Service]
+Type=simple
+User=solana-desk
+Group=solana-desk
+WorkingDirectory=<RELEASE_DIR>
+LoadCredential=provider-keys.json:/etc/solana-desk/provider-keys.json
+ExecStart=/opt/solana-desk/.venv/bin/python -m tools.ops.held_watcher run --ledger <FRESH_ROOT>/paper-ledger.sqlite --config <CONFIG> --state-dir <STATE_DIR>/held-watcher --trigger path --pool-fee-bps 25
+Restart=on-failure
+RestartSec=5
+UMask=0077
+NoNewPrivileges=true
+PrivateTmp=true
+ProtectSystem=strict
+ProtectHome=true
+ReadOnlyPaths=<FRESH_ROOT>
+ReadWritePaths=<STATE_DIR>
+RestrictAddressFamilies=AF_INET AF_INET6 AF_UNIX
+MemoryMax=128M
+TasksMax=32
+[Install]
+WantedBy=multi-user.target
