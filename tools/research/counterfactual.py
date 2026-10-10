@@ -222,6 +222,9 @@ def classify_result(body, *, scan_id=None, no_entry_scans=frozenset()):
         return {'class': 'REJECTED', 'stage': 'TOKEN', 'codes': codes, 'detail': None}
     if kind == 'dispatcher_migration_no_entry_v1':
         return {'class': 'REJECTED', 'stage': 'MIGRATION', 'codes': [_code(body.get('reason'), 'NO_ENTRY')], 'detail': None}
+    if kind == 'dispatcher_checkpoint_no_entry_v1':
+        reasons = [r[:96] for r in body.get('reasons', []) if type(r) is str and r] if type(body.get('reasons')) is list else []
+        return {'class': 'REJECTED', 'stage': 'CHECKPOINT', 'codes': reasons or ['NO_ENTRY'], 'detail': None}
     if kind == 'history_preparation_no_entry_v1':
         return {'class': 'REJECTED', 'stage': 'HISTORY', 'codes': [_code(body.get('reason'), 'NO_ENTRY')], 'detail': None}
     if kind == 'paper_cycle_v1':

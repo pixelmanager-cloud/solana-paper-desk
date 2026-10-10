@@ -381,7 +381,10 @@ def _preflight(ctx, scan=None):
             refusal = concurrency.entry_blockers(state, cfg, monitoring_remaining=snapshot['remaining'],
                                                  now=concurrency.clock())
             if refusal:
-                raise ValueError('Concurrent entry refused: ' + ','.join(refusal))
+                detail = concurrency.allowance_refusal(snapshot['remaining'], snapshot.get('cap'), len(state['positions']) + 1,
+                                                       marks=bool(portfolio_marks.selected(cfg))) \
+                    if 'MONITORING_RESERVE_INSUFFICIENT' in refusal else None
+                raise ValueError('Concurrent entry refused: ' + ','.join(refusal) + (' | ' + detail if detail else ''))
         pacer = pacing.configured(priority='investigation')
         if pacer is None or str(pacer.path) != paths['pacing_db']:
             raise ValueError('Pacer context mismatch')
@@ -442,7 +445,13 @@ def _held_pass(ctx):
 
 CHECKPOINT_KIND = 'dispatcher_checkpoint_no_entry_v1'
 CHECKPOINT_REASONS = frozenset({'HELD_PASS_NONZERO', 'LEDGER_MODE_NOT_RUNNING', 'HELD_EXIT_UNRESOLVED',
-                                'MAX_POSITIONS_REACHED', 'MONITORING_BLOCKED', 'PHASE_CAP_EXCEEDED'})
+                                'MAX_POSITIONS_REACHED', 'MONITORING_BLOCKED', 'PHASE_CAP_EXCEEDED',
+                                # T16I: refusals that surface AFTER the intent (another process moved the book, a lock was
+                                # busy, the reserve or freshness gate no longer holds, the provider is backing off)
+                                'CHECKPOINT_STATE_UNAVAILABLE', 'MONITORING_RESERVE_INSUFFICIENT',
+                                'PORTFOLIO_MARKS_TOO_OLD_FOR_ENTRY', 'HELD_POSITION_PRIORITY',
+                                'PACING_BACKOFF_EXCEEDS_PHASE_BUDGET'})
+BUSY_MESSAGES = ('Research worker busy', 'Evidence invocation busy', 'Cycle ledger busy')
 CHECKPOINT_PHASES = ('acquisition', 'intake', 'preparation')
 CHECKPOINT_FIELDS = {'version', 'kind', 'dispatch_id', 'scan_id', 'intent_hash', 'phase', 'reasons', 'held_pass',
                      'mode', 'entry_authorized', 'execution_status', 'no_retry'}
@@ -455,6 +464,18 @@ def checkpoint_record(identity, intent, scan, phase, halt):
             'intent_hash': digest(intent), 'phase': phase, 'reasons': sorted(halt['reasons']),
             'held_pass': {'ran': halt['ran'], 'exit_code': halt['exit_code']}, 'mode': halt['mode'],
             'entry_authorized': False, 'execution_status': 'EXECUTION_UNVERIFIED', 'no_retry': True}
+
+
+def bounded_checkpoint_record(identity, intent, scan, phase, halt, limit):
+    """`checkpoint_record`, shrunk (first reason only, short mode) if the journal payload bound would be exceeded, so the
+    size bound can never turn a terminal result into an orphaned intent."""
+    record = checkpoint_record(identity, intent, scan, phase, halt)
+    outcome = {'version': 1, 'intent_hash': digest(intent), 'at': 0.0, 'scan_id': scan, 'result': record}
+    if len(canonical(outcome).encode()) <= limit:
+        return record
+    small = checkpoint_record(identity, intent, scan, phase, {'reasons': [sorted(halt['reasons'])[0]], 'ran': bool(halt['ran']),
+                                                              'exit_code': halt['exit_code'], 'mode': str(halt['mode'])[:16]})
+    return small
 
 
 def _checkpoint_record_valid(record, dispatch_id, scan_id, intent_digest):
@@ -472,22 +493,81 @@ def _checkpoint_record_valid(record, dispatch_id, scan_id, intent_digest):
 
 
 class _PhaseCut(ValueError):
-    """The phase passed its wall cap: no further request of that phase may start."""
+    """The phase passed its wall cap: no further request of that phase may start (or the one in flight is interrupted)."""
+
+
+class _Deadline:
+    """A real-time alarm (SIGALRM, main thread only) that interrupts a blocking provider call at the phase deadline.
+
+    Without it a request that starts just inside the cap could run 15 s past it (the provider transport's own bound).
+    Disarmed on exit; a no-op off the main thread or without SIGALRM."""
+    def __init__(self, phase):
+        self.phase = phase
+        self.armed = False
+
+    def arm(self):
+        import signal, threading
+        if threading.current_thread() is not threading.main_thread() or not hasattr(signal, 'setitimer'):
+            return
+        phase = self.phase
+
+        def interrupt(signum, frame):
+            phase.cut = True
+            raise _PhaseCut(phase.name)
+        self.previous = signal.signal(signal.SIGALRM, interrupt)
+        signal.setitimer(signal.ITIMER_REAL, max(phase.remaining(), 0.001))
+        self.armed = True
+
+    def disarm(self):
+        if self.armed:
+            import signal
+            signal.setitimer(signal.ITIMER_REAL, 0)
+            signal.signal(signal.SIGALRM, self.previous)
+            self.armed = False
+
+    def __enter__(self):
+        self.arm()
+        return self
+
+    def __exit__(self, *exc):
+        self.disarm()
+        return False
+
+
+def _pacing_wait(pacing_db, provider, now):
+    """Seconds until the shared pacing store lets `provider` run (read-only; 0 when unreadable): the next slot or a backoff."""
+    try:
+        with closing(sqlite3.connect(Path(pacing_db).as_uri() + '?mode=ro', uri=True, timeout=1)) as c:
+            row = c.execute('SELECT next_at,blocked_until FROM state WHERE provider=?', (provider,)).fetchone()
+    except (sqlite3.Error, OSError, ValueError):
+        return 0.0
+    return 0.0 if row is None else max(0.0, max(row[0], row[1]) - now)
 
 
 class _Phase:
     def __init__(self, name, cap, clock):
         self.name, self.cap, self.clock = name, cap, clock
         self.started, self.cut = clock(), False
+        self.reason = 'PHASE_CAP_EXCEEDED'
 
-    def check(self):
-        if self.clock() - self.started > self.cap:
+    def remaining(self):
+        return self.cap - (self.clock() - self.started)
+
+    def check(self, pacing_db=None, provider='helius', wall=None):
+        """Called before every request of the phase. Cuts when the cap has passed, or when the provider's pacing backoff is
+        longer than what is left of the phase (before waiting, not after)."""
+        left = self.remaining()
+        if left <= 0:
             self.cut = True
+            raise _PhaseCut(self.name)
+        if pacing_db is not None and _pacing_wait(pacing_db, provider, (wall or time.time)()) > left:
+            self.cut = True
+            self.reason = 'PACING_BACKOFF_EXCEEDS_PHASE_BUDGET'
             raise _PhaseCut(self.name)
 
     def finish(self):
         """True when the phase overran its cap (also when it finished, late)."""
-        if self.clock() - self.started > self.cap:
+        if self.remaining() < 0:
             self.cut = True
         return self.cut
 
@@ -527,17 +607,42 @@ class _HeldCadence:
         reasons = []
         if code != 0:
             reasons.append('HELD_PASS_NONZERO')
-        with monitor._context(paths['research_db'], paths['evidence_db'], paths['ledger_db'], cfg) as (store, ledger, state):
-            reasons += [{'LEDGER_MODE_NOT_RUNNING': 'LEDGER_MODE_NOT_RUNNING', 'MAX_POSITIONS_REACHED': 'MAX_POSITIONS_REACHED',
-                         'HELD_EXIT_UNRESOLVED': 'HELD_EXIT_UNRESOLVED'}[b] for b in concurrency.state_blockers(state, cfg)]
-            snapshot = monitor.MonitoringBudget(store, ledger, cfg).snapshot()
-            if snapshot['status'] != 'AVAILABLE' or snapshot.get('blockers'):
-                reasons.append('MONITORING_BLOCKED')
+        mode = 'UNKNOWN'
+        try:
+            with monitor._context(paths['research_db'], paths['evidence_db'], paths['ledger_db'], cfg) as (store, ledger, state):
+                mode = state['mode']
+                reasons += [{'LEDGER_MODE_NOT_RUNNING': 'LEDGER_MODE_NOT_RUNNING', 'MAX_POSITIONS_REACHED': 'MAX_POSITIONS_REACHED',
+                             'HELD_EXIT_UNRESOLVED': 'HELD_EXIT_UNRESOLVED'}[b] for b in concurrency.state_blockers(state, cfg)]
+                snapshot = monitor.MonitoringBudget(store, ledger, cfg).snapshot()
+                if snapshot['status'] != 'AVAILABLE' or snapshot.get('blockers'):
+                    reasons.append('MONITORING_BLOCKED')
+        except ValueError as error:
+            if str(error) not in BUSY_MESSAGES:
+                raise
+            reasons.append('CHECKPOINT_STATE_UNAVAILABLE')       # a non-blocking lock was busy: typed, never an orphan
         if not reasons:
             return None
-        return {'reasons': reasons, 'ran': True, 'exit_code': code, 'mode': state['mode']}
+        return {'reasons': sorted(set(reasons)), 'ran': True, 'exit_code': code, 'mode': mode}
 
 
+
+
+def _refusal_halt(error, current_mode):
+    """Typed halt for a post-intent `_preflight` refusal caused by the book moving, else None (integrity: stays a raise)."""
+    text = str(error)
+    if text == 'Held-position priority or paused ledger':
+        reasons = ['LEDGER_MODE_NOT_RUNNING']
+    elif text == 'Monitoring pending or blocked':
+        reasons = ['MONITORING_BLOCKED']
+    elif text in BUSY_MESSAGES:
+        reasons = ['CHECKPOINT_STATE_UNAVAILABLE']
+    elif text.startswith('Concurrent entry refused: '):
+        reasons = text.split(': ', 1)[1].split(' | ', 1)[0].split(',')
+        if not reasons or not set(reasons) <= CHECKPOINT_REASONS:
+            return None
+    else:
+        return None
+    return {'reasons': sorted(set(reasons)), 'ran': False, 'exit_code': None, 'mode': current_mode()}
 
 
 def _intake_guard(ctx, scan):
@@ -1019,6 +1124,12 @@ def _dispatch(expected, *, execute=False, systemd_credentials=False):
             raise ValueError('Explicit managed credentials required')
         if journal.execute('SELECT COUNT(*) FROM intents').fetchone()[0] >= MAX_DISPATCHES:
             raise ValueError('Dispatcher journal capacity exhausted; no reset')
+        if concurrency.selected(cli._config(paths['config'])):
+            # The monitoring reserve is derived from this bound (checkpoint passes per hour): enforced durably from the journal,
+            # BEFORE the intent, so a refusal costs nothing.
+            recent = journal.execute("SELECT COUNT(*) FROM intents WHERE json_extract(payload,'$.at')>?", (now - 3600,)).fetchone()[0]
+            if recent >= concurrency.MAX_ENTRY_DISPATCHES_PER_HOUR:
+                raise ValueError('Entry dispatch rate bound reached: %d per hour' % concurrency.MAX_ENTRY_DISPATCHES_PER_HOUR)
         written = []; known_scan = []
         try:
             identity = uuid.uuid4().hex
@@ -1051,22 +1162,45 @@ def _dispatch(expected, *, execute=False, systemd_credentials=False):
             phase = None
 
             def no_entry(phase_name, halt):
-                record = checkpoint_record(identity, intent, scan, phase_name, halt)
+                record = bounded_checkpoint_record(identity, intent, scan, phase_name, halt, MAX_PAYLOAD)
                 outcome = {'version':1,'intent_hash':digest(intent),'at':_now(),'scan_id':scan,'result':record}
-                if len(canonical(outcome).encode()) > MAX_PAYLOAD:raise ValueError('Checkpoint outcome exceeds bound')
                 _write(journal,'results',identity,outcome)
                 return {'status':'DISPATCHED','dispatch_id':identity,'scan_id':scan,'paper_status':'NO_ENTRY',
                         'checkpoint_no_entry':{'phase':phase_name,'reasons':record['reasons'],'held_pass':record['held_pass']},
                         'entry_authorized':False,'execution_status':'EXECUTION_UNVERIFIED','live_readiness':False}
 
+            def current_mode():
+                try:
+                    return cycle._state(Path(paths['ledger_db']),cfg)['mode']
+                except Exception:
+                    return 'UNKNOWN'       # an unreadable ledger must not turn the terminal result into a raise
+
             def overrun():
-                return {'reasons':['PHASE_CAP_EXCEEDED'],'ran':False,'exit_code':None,'mode':cycle._state(Path(paths['ledger_db']),cfg)['mode']}
+                return {'reasons':[getattr(phase,'reason','PHASE_CAP_EXCEEDED')],'ran':False,'exit_code':None,'mode':current_mode()}
+
+            def state_gate(phase_name):
+                """`_preflight` AFTER the intent: a refusal caused by the book moving (another process changed the mode,
+                monitoring is busy or blocked, a lock is held, the reserve/freshness gate no longer holds) ends the intent
+                as a typed terminal result. Integrity refusals (context/identity/source changed, observation recovery,
+                pacing pending) still raise and become durable holds."""
+                try:
+                    _preflight(expected,scan)
+                except ValueError as error:
+                    halt = _refusal_halt(error, current_mode)
+                    if halt is None:
+                        raise
+                    return no_entry(phase_name,halt)
+                return None
             rpc_state = {'error': None}
             def guarded_rpc(method,params):
-                if phase is not None:phase.check()      # OUTSIDE the rpc_state capture: a cut is never a provider failure
+                if phase is not None:phase.check(paths['pacing_db'])   # OUTSIDE the rpc_state capture: a cut is never a provider failure
                 with _held_guard(expected,scan):
                     try:
-                        value = helius_rpc(method,params)
+                        if phase is None:
+                            value = helius_rpc(method,params)
+                        else:
+                            with _Deadline(phase):          # the request in flight is bounded by the phase's remaining budget
+                                value = helius_rpc(method,params)
                     except BaseException as failure:
                         rpc_state['error'] = failure         # the acquisition swallows it into an ambiguous status
                         raise
@@ -1102,19 +1236,25 @@ def _dispatch(expected, *, execute=False, systemd_credentials=False):
                 raise ValueError('Acquisition incomplete; dispatcher recovery required')
             halt = cadence.checkpoint(concurrency.PHASE_CAPS['intake'])
             if halt:return no_entry('intake',halt)
-            _preflight(expected,scan)
+            refused = state_gate('intake')
+            if refused:return refused
             phase = cadence.phase('intake')
+            deadline = _Deadline(phase)
 
             def intake_guard():
-                phase.check()
+                phase.check(paths['pacing_db'])
                 _intake_guard(expected,scan)
+                deadline.disarm()
+                deadline.arm()                  # the I/O that follows is bounded by what is left of the intake phase
             try:
                 retained = migration.intake(paths['research_db'],paths['evidence_db'],scan_id=scan,
                     mint=hint['mint'],pool=hint['pool'],signature=hint['signature'],slot=hint['slot'],
                     provenance=PROVENANCE,credentials_loader=intake_guard,paper_token_profile_version=cli._config(paths['config']).get('paper_token_profile_version',0))
-            except Exception:
+            except BaseException:
+                deadline.disarm()
                 if not phase.cut:raise
                 return no_entry('intake',overrun())
+            deadline.disarm()
             if phase.finish():return no_entry('intake',overrun())
             if retained['status'] != 'RETAINED_MIGRATION_WITNESS':
                 from desk import paper_migration_no_entry
@@ -1128,7 +1268,8 @@ def _dispatch(expected, *, execute=False, systemd_credentials=False):
                         'entry_authorized':False,'execution_status':'EXECUTION_UNVERIFIED','live_readiness':False}
             halt = cadence.checkpoint(concurrency.PREPARATION_SECONDS + concurrency.CYCLE_SECONDS)
             if halt:return no_entry('preparation',halt)
-            _preflight(expected,scan)
+            refused = state_gate('preparation')
+            if refused:return refused
             window = expected['watchlist_maximum_age'] if v2 and evaluation > 1 else expected['maximum_age']
             if not 300 <= _now()-hint['received_at'] <= window:
                 raise DispatchFailure('CANDIDATE_EXPIRED_DURING_PREPARATION', 'Candidate expired during preparation')

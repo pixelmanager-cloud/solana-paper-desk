@@ -106,9 +106,8 @@ class ConfigAndGateTests(unittest.TestCase):
         need = pc.monitoring_required(2, marks=True)
         self.assertEqual(pc.entry_blockers(one, marks_cfg, monitoring_remaining=need - 1), ['MONITORING_RESERVE_INSUFFICIENT'])
         self.assertEqual(pc.entry_blockers(one, marks_cfg, monitoring_remaining=need), [])
-        # the planning time grows by the two refreshes; the held pass spends its refresh before the first leg
-        self.assertEqual(pc.entry_seconds(marks_cfg), pc.ENTRY_SECONDS + 2 * pc.MARKS_REFRESH_SECONDS)
-        self.assertEqual(pc.entry_seconds(cfg_on()), pc.ENTRY_SECONDS)
+        self.assertFalse(hasattr(pc, 'entry_seconds'))     # T16I: removed (the marks-on estimate is not used anywhere)
+        # the held pass spends its refresh before the first leg
         positions = {m: position(mark_at=i) for i, m in enumerate('ABCD')}
         self.assertEqual(len(pc.plan_legs(positions, 32)[0]), 4)                              # 4 x 7.8 = 31.2 fits 32 s
         self.assertEqual(len(pc.plan_legs(positions, 32, refresh_seconds=pc.MARKS_REFRESH_SECONDS)[0]), 3)  # 29.5 s left: 3 legs

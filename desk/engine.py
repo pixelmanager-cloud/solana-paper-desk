@@ -367,7 +367,7 @@ def _quote_sell(state,e,cfg,fraction,reason,output,book):
             cost=dec(p['cost_left'])*D(raw)/D(current)
             pnl=proceeds-cost
             p['qty']=str(qe.units(current-raw,book.decimals))
-            for stale in ('portfolio_mark_value','portfolio_mark_at','portfolio_mark_source','portfolio_mark_reason'):
+            for stale in ('portfolio_mark_value','portfolio_mark_at','portfolio_mark_source','portfolio_mark_reason','portfolio_mark_nulls','portfolio_mark_null_at'):
                 p.pop(stale,None)   # a reserve-implied value of the larger remainder must not outlive the partial sale
             p['cost_left']=str(dec(p['cost_left'])-cost)
             p['trade_pnl']=str(dec(p['trade_pnl'])+pnl)
@@ -479,7 +479,7 @@ def _portfolio_marks(state, e, cfg):
     if e["ts"] < state["last_ts"]:
         return state, [{"type": "reject", "reason": "OUT_OF_ORDER"}]
     state["last_ts"] = e["ts"]
-    applied = []
+    applied, unconfirmed = [], []
     for mint, mark in sorted(e["marks"].items()):
         p = state["positions"].get(mint)
         if p is None or p["pool"] != mark["pool"]:
@@ -487,6 +487,20 @@ def _portfolio_marks(state, e, cfg):
             continue
         if p.get("portfolio_mark_at") is not None and e["observed_at"] <= p["portfolio_mark_at"]:
             continue                                   # never move a valuation mark backwards or sideways
+        if mark.get("reason") in pm.NULL_REASONS:
+            # A null account is an observation, not proof of closure: count consecutive DISTINCT observations and value
+            # the position at zero only after pm.CLOSED_CONFIRMATIONS of them. Until then the previous mark just ages out.
+            if e["observed_at"] <= p.get("portfolio_mark_null_at", -1):
+                continue
+            p["portfolio_mark_nulls"] = p.get("portfolio_mark_nulls", 0) + 1
+            p["portfolio_mark_null_at"] = e["observed_at"]
+            if p["portfolio_mark_nulls"] < pm.CLOSED_CONFIRMATIONS:
+                unconfirmed.append(mint)
+                continue
+            mark = {**mark, "reason": pm.CONFIRMED[mark["reason"]]}
+        else:
+            p.pop("portfolio_mark_nulls", None)       # an ordinary answer resets the count
+            p.pop("portfolio_mark_null_at", None)
         p["portfolio_mark_value"] = str(dec(mark["value_sol"]))
         p["portfolio_mark_at"] = e["observed_at"]
         p["portfolio_mark_source"] = pm.SOURCE
@@ -500,7 +514,8 @@ def _portfolio_marks(state, e, cfg):
         if not _roll_day(state, cfg, day, output):
             output.append({"type": "control", "reason": "DAY_ROLLOVER_DEFERRED_UNVERIFIED_MARKS"})
     risk(state, cfg, output)
-    return state, output + [{"type": "portfolio_marks", "source": pm.SOURCE, "slot": e["slot"], "applied": applied}]
+    return state, output + [{"type": "portfolio_marks", "source": pm.SOURCE, "slot": e["slot"], "applied": applied,
+                                          **({"unconfirmed_null": unconfirmed} if unconfirmed else {})}]
 
 
 def transition(state, e, cfg, *, _quote_book=None):

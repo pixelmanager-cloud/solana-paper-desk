@@ -318,6 +318,10 @@ def classify_result(body, mint=None, latch='UNVERIFIED'):
         return 'admitted', 'TOKEN:' + reasons[0], ['TOKEN:' + r for r in reasons[1:]], requests, used
     if kind == 'dispatcher_migration_no_entry_v1':
         return 'admitted', 'MIGRATION:' + _reason(body.get('reason'), 'NO_ENTRY'), [], requests, used
+    if kind == 'dispatcher_checkpoint_no_entry_v1':
+        reasons = [r for r in body.get('reasons', []) if isinstance(r, str)] if isinstance(body.get('reasons'), list) else []
+        reasons = reasons or ['NO_ENTRY']
+        return 'admitted', 'CHECKPOINT:' + reasons[0], ['CHECKPOINT:' + r for r in reasons[1:]], requests, used
     if kind == 'history_preparation_no_entry_v1':
         return 'admitted', 'HISTORY:' + _reason(body.get('reason'), 'NO_ENTRY'), [], requests, used
     if kind == 'paper_cycle_no_entry_v1':

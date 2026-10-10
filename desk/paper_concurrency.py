@@ -19,12 +19,26 @@ MAX_CONCURRENT = 8
 
 # Held monitoring cost per position per leg; matches paper_monitor_operator.preflight.
 LEG_REQUESTS = 5
-# The held unit's timer is OnUnitInactiveSec=120, so a pass starts at most every 120 s + its own run time (>= one leg).
-# One hour of passes stays reserved for every position, new one included: ceil(3600 / (120 + 7.8)) = 29 passes (T35F;
-# the earlier 12 assumed a five-minute cadence the shipped timer never had).
+# Held passes that spend the monitoring allowance, per hour, from EVERY source (T16I). The reserve is derived from these
+# bounds, not from the timer alone:
+#   timer      OnUnitInactiveSec=120, so a pass starts at most every 120 + 7.8 s: ceil(3600 / 127.8) = 29
+#   watcher    tools/ops/held_watcher.py `.path` trigger, bounded by its per-reason budgets (--max-triggers-hour 60 price
+#              triggers plus --max-time-triggers-hour 30 time triggers); a parity test pins these to the watcher's defaults
+#   checkpoint dispatcher checkpoints: at most 3 per entry dispatch, and at most MAX_ENTRY_DISPATCHES_PER_HOUR dispatches
+#              per hour in a concurrent experiment (enforced from the dispatcher journal before the intent)
 HELD_TIMER_SECONDS = 120.0
 LEG_SECONDS = 7.8
-RESERVE_PASSES = -(-3600 // int(HELD_TIMER_SECONDS + LEG_SECONDS + 0.999))
+TIMER_PASSES_PER_HOUR = -(-3600 // int(HELD_TIMER_SECONDS + LEG_SECONDS + 0.999))
+WATCHER_PRICE_TRIGGERS_PER_HOUR = 60
+WATCHER_TIME_TRIGGERS_PER_HOUR = 30
+MAX_ENTRY_DISPATCHES_PER_HOUR = 12
+CHECKPOINTS_PER_DISPATCH = 3
+CHECKPOINT_PASSES_PER_HOUR = MAX_ENTRY_DISPATCHES_PER_HOUR * CHECKPOINTS_PER_DISPATCH
+RESERVE_PASSES = (TIMER_PASSES_PER_HOUR + WATCHER_PRICE_TRIGGERS_PER_HOUR + WATCHER_TIME_TRIGGERS_PER_HOUR
+                  + CHECKPOINT_PASSES_PER_HOUR)
+# The allowance this experiment needs: the approved 3600/rolling-hour ceiling. The legacy provisioned 60/hour cannot carry it.
+APPROVED_ALLOWANCE = 3600
+LEGACY_ALLOWANCE = 60
 # Batched portfolio marks (T35): one extra monitoring request per held pass, two per entry that has positions.
 MARKS_PASS_REQUESTS = 1
 MARKS_ENTRY_REQUESTS = 2
@@ -53,8 +67,8 @@ HELD_MAX_GAP_SECONDS = 120.0
 def selected(cfg):
     """0 when absent; 1 when explicitly and validly enabled; otherwise fail closed.
 
-    The experiment also fixes the portfolio mark TTL explicitly (see engine.portfolio_ttl): without it
-    no concurrent entry could ever fill under real provider pacing, so the flag alone is refused.
+    The 10 s price TTL applies to every held mark. With N positions it is met by the batched portfolio marks
+    (`paper_portfolio_mark_source_version`), not by relaxing it; the flag requires neither.
     """
     if KEY not in cfg:
         if engine.ROLLOVER_KEY in cfg:
@@ -105,15 +119,22 @@ def monitoring_required(positions_after_entry, reserve_passes=None, marks=False)
     """Allowance that must remain so every position, the new one included, keeps its passes.
 
     Per pass: LEG_REQUESTS per position (+1 batched marks read when ``marks``); plus the entry's own two marks reads.
-    Worked: 4 positions with marks = 29 x (5 x 4 + 1) + 2 = 611 of the 3600/hour allowance; 8 positions = 29 x 41 + 2 = 1191."""
+    Worked (RESERVE_PASSES = 29 timer + 60 + 30 watcher + 36 checkpoint = 155): 4 positions with marks = 155 x (5 x 4 + 1) + 2 = 3257 of
+    the 3600/hour allowance; 5 positions = 155 x 26 + 2 = 4032 > 3600, so the bounded worst case carries at most 4."""
     reserve_passes = RESERVE_PASSES if reserve_passes is None else reserve_passes
     per_pass = LEG_REQUESTS * positions_after_entry + (MARKS_PASS_REQUESTS if marks else 0)
     return reserve_passes * per_pass + (MARKS_ENTRY_REQUESTS if marks else 0)
 
 
-def entry_seconds(cfg=None):
-    """Planning wall time of an entry: the four phases, plus the two marks refreshes when batched marks are on."""
-    return ENTRY_SECONDS + (MARKS_ENTRY_REQUESTS * MARKS_REFRESH_SECONDS if cfg is not None and portfolio_marks.selected(cfg) else 0.0)
+def allowance_refusal(remaining, cap, positions_after_entry, marks=False):
+    """None when the allowance can carry the entry, else a CLEAR reason: names the legacy 60/hour store explicitly."""
+    need = monitoring_required(positions_after_entry, marks=marks)
+    if remaining is None or remaining >= need:
+        return None
+    if cap is not None and cap <= LEGACY_ALLOWANCE:
+        return ('MONITORING_ALLOWANCE_LEGACY_60: the store is on the legacy %d/hour allowance; %d positions need %d of the '
+                'approved %d/hour (upgrade it explicitly)' % (cap, positions_after_entry, need, APPROVED_ALLOWANCE))
+    return 'MONITORING_RESERVE_INSUFFICIENT: %d of the allowance remain, %d positions need %d' % (remaining, positions_after_entry, need)
 
 
 def portfolio_age_at_decision(state, now, entry_seconds=ENTRY_SECONDS):

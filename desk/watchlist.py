@@ -57,6 +57,19 @@ NOT_YET = {
     'HISTORY_FEATURE_EMPTY_WINDOW': 'empty five-minute trade window; trades can arrive',
     'HISTORY_REQUIRED_MEASUREMENTS_UNAVAILABLE': 'insufficient history for required measurements',
     'HISTORY_FEATURE_MOMENTUM_STALE': 'latest captured momentum too old; fresh scan re-captures',
+    # dispatcher_checkpoint_no_entry_v1 (T16I): the HELD side cut the attempt (a held pass failed, the book's state moved,
+    # monitoring was busy, or a phase overran its wall cap); nothing is wrong with the candidate, so retry is fine.
+    'HELD_PASS_NONZERO': 'a checkpoint held pass exited non-zero; the candidate itself is untouched',
+    'LEDGER_MODE_NOT_RUNNING': 'a checkpoint left the ledger not RUNNING; may resume',
+    'HELD_EXIT_UNRESOLVED': 'a checkpoint left a held exit unresolved; may clear',
+    'MAX_POSITIONS_REACHED': 'the book filled during the attempt; a slot may free',
+    'MONITORING_BLOCKED': 'monitoring was blocked at a checkpoint; may clear',
+    'PHASE_CAP_EXCEEDED': 'an entry phase overran its wall cap; transient provider latency',
+    'CHECKPOINT_STATE_UNAVAILABLE': 'a non-blocking lock was busy at a checkpoint; retry',
+    'MONITORING_RESERVE_INSUFFICIENT': 'the monitoring allowance cannot carry another position yet; refills',
+    'PORTFOLIO_MARKS_TOO_OLD_FOR_ENTRY': 'the held marks cannot be refreshed in time; may change',
+    'HELD_POSITION_PRIORITY': 'a held position has priority right now; may clear',
+    'PACING_BACKOFF_EXCEEDS_PHASE_BUDGET': 'the provider is backing off longer than the phase may wait; retry later',
 }
 # Inner producer blockers (paper_market_adapter) for a window that is empty or stale RIGHT NOW. Every other producer
 # blocker (binding/integrity/identity codes) is deliberately absent => PERMANENT.
@@ -337,6 +350,8 @@ def reason_codes(result, mint=None, scan_id=None):
         codes.extend(x for x in (policy or {}).get('reasons', []) if type(x) is str)
     elif kind == 'dispatcher_migration_no_entry_v1' and type(result.get('reason')) is str:
         codes.append(result['reason'])
+    elif kind == 'dispatcher_checkpoint_no_entry_v1' and type(result.get('reasons')) is list:
+        codes.extend(x for x in result['reasons'] if type(x) is str)
     for outcome in result.get('outcomes', []) if type(result.get('outcomes')) is list else []:
         if type(outcome) is not dict:
             continue

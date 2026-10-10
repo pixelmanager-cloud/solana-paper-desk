@@ -128,6 +128,8 @@ class OneRolloverRuleTests(unittest.TestCase):
 
 
 class ClosedVaultTests(unittest.TestCase):
+    """A null pool/vault account is one OBSERVATION; the position is valued at zero (reason *_CLOSED) only after two
+    consecutive distinct observations (T16I: a transient null must not zero a healthy position)."""
     def setUp(self):
         self.cfg = cfg_marks()
         self.chains = sorted([Chain(7), Chain(8)], key=lambda c: str(c.mint))
@@ -137,8 +139,8 @@ class ClosedVaultTests(unittest.TestCase):
     def parse(self, response):
         return pm.marks_from_result(self.positions, pm.request_keys(self.positions), response, self.cfg, pool_fee_bps=Decimal(25))
 
-    def test_a_closed_vault_or_pool_marks_zero_with_an_explicit_reason(self):
-        for index, reason in ((1, 'VAULT_CLOSED'), (2, 'VAULT_CLOSED'), (0, 'POOL_CLOSED')):
+    def test_a_null_account_is_reported_as_a_null_observation_with_a_reason(self):
+        for index, reason in ((1, 'VAULT_NULL'), (2, 'VAULT_NULL'), (0, 'POOL_NULL')):
             response = reply(self.chains, self.amounts)
             response['value'][index] = None
             marks, slot, errors = self.parse(response)
@@ -149,31 +151,56 @@ class ClosedVaultTests(unittest.TestCase):
             self.assertGreater(Decimal(marks[str(self.chains[1].mint)]['value_sol']), 0)       # the other position is unaffected
             pm.validate_event(pm.build_event(T, T - 1, slot, 'f' * 64, marks))
 
-    def test_reason_requires_a_zero_value_and_a_known_code(self):
+    def test_the_event_cannot_claim_closure_itself_and_a_reason_needs_a_zero_value(self):
         response = reply(self.chains, self.amounts)
         response['value'][1] = None
         marks, slot, _ = self.parse(response)
         victim = str(self.chains[0].mint)
-        for change in ({'value_sol': '0.5'}, {'reason': 'WHATEVER'}):
+        for change in ({'value_sol': '0.5'}, {'reason': 'WHATEVER'}, {'reason': 'VAULT_CLOSED'}, {'reason': 'POOL_CLOSED'}):
             bad = copy.deepcopy(marks)
             bad[victim].update(change)
-            with self.assertRaises(ValueError):
+            with self.assertRaises(ValueError, msg=str(change)):
                 pm.validate_event(pm.build_event(T, T - 1, slot, 'f' * 64, bad))
 
-    def test_engine_values_the_closed_position_at_zero_instead_of_leaving_it_stale(self):
+    def observation(self, state, ts, reason='VAULT_NULL', only=0):
+        mints = sorted(state['positions'])
+        marks = {m: {'value_sol': '0.9', 'pool': state['positions'][m]['pool'], 'base_raw': '1', 'quote_raw': '1'} for m in mints}
+        marks[mints[only]] = {'value_sol': '0', 'pool': state['positions'][mints[only]]['pool'], 'base_raw': '0', 'quote_raw': '0',
+                              'reason': reason}
+        return pm.build_event(ts + 2, ts, 9, 'e' * 64, marks)
+
+    def test_closure_needs_two_consecutive_distinct_observations(self):
         cfg = cfg_marks()
         state = book(cfg)
         state['positions'] = {m: {**p, 'pool': self.positions[m]['pool']} for m, p in zip(sorted(self.positions), state['positions'].values())}
-        mints = sorted(state['positions'])
-        marks = {m: {'value_sol': '0', 'pool': state['positions'][m]['pool'], 'base_raw': '0', 'quote_raw': '0', 'reason': 'VAULT_CLOSED'}
-                 for m in mints[:1]}
-        marks[mints[1]] = {'value_sol': '0.9', 'pool': state['positions'][mints[1]]['pool'], 'base_raw': '1', 'quote_raw': '1'}
-        out, _ = transition(copy.deepcopy(state), pm.build_event(T + 5, T + 3, 9, 'e' * 64, marks), cfg)
-        closed = out['positions'][mints[0]]
+        victim = sorted(state['positions'])[0]
+        first, out = transition(copy.deepcopy(state), self.observation(state, T + 3), cfg)
+        p = first['positions'][victim]
+        self.assertEqual((p['portfolio_mark_nulls'], 'portfolio_mark_value' in p), (1, False))     # unconfirmed: not valued at zero
+        self.assertEqual(out[-1]['unconfirmed_null'], [victim])
+        replay, _ = transition(copy.deepcopy(first), self.observation(state, T + 3), cfg)           # the SAME observation again
+        self.assertEqual(replay['positions'][victim]['portfolio_mark_nulls'], 1)
+        second, out = transition(copy.deepcopy(first), self.observation(state, T + 6), cfg)
+        closed = second['positions'][victim]
         self.assertEqual((closed['portfolio_mark_value'], closed['portfolio_mark_reason']), ('0', 'VAULT_CLOSED'))
-        self.assertNotIn('portfolio_mark_reason', out['positions'][mints[1]])
-        self.assertEqual(closed['mark_value'], '1.0')                 # the executable mark is untouched
-        self.assertEqual(engine.valuation(closed), (Decimal('0'), T + 3))
+        self.assertEqual(closed['mark_value'], '1.0')                      # the executable mark is untouched
+        self.assertEqual(engine.valuation(closed), (Decimal('0'), T + 6))
+        pool_case, _ = transition(copy.deepcopy(first), self.observation(state, T + 6, 'POOL_NULL'), cfg)
+        self.assertEqual(pool_case['positions'][victim]['portfolio_mark_reason'], 'POOL_CLOSED')
+
+    def test_an_ordinary_answer_in_between_resets_the_count(self):
+        cfg = cfg_marks()
+        state = book(cfg)
+        state['positions'] = {m: {**p, 'pool': self.positions[m]['pool']} for m, p in zip(sorted(self.positions), state['positions'].values())}
+        victim = sorted(state['positions'])[0]
+        first, _ = transition(copy.deepcopy(state), self.observation(state, T + 3), cfg)
+        healthy = pm.build_event(T + 8, T + 6, 9, 'e' * 64, {m: {'value_sol': '0.9', 'pool': state['positions'][m]['pool'],
+                                 'base_raw': '1', 'quote_raw': '1'} for m in state['positions']})
+        reset, _ = transition(copy.deepcopy(first), healthy, cfg)
+        self.assertNotIn('portfolio_mark_nulls', reset['positions'][victim])
+        again, _ = transition(copy.deepcopy(reset), self.observation(state, T + 10), cfg)
+        self.assertEqual(again['positions'][victim]['portfolio_mark_nulls'], 1)                   # starts over
+        self.assertNotIn('portfolio_mark_reason', again['positions'][victim])
 
 
 class FlagAbsentIdentityTests(unittest.TestCase):

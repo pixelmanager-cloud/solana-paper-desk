@@ -233,13 +233,19 @@ def request_params(positions):
 # --------------------------------------------------------------------------- response
 
 CLOSED_REASONS = ('POOL_CLOSED', 'VAULT_CLOSED')
+# A null account in ONE answer is only an observation (commitment lag, a transient provider gap). The engine counts
+# consecutive null observations per position and values the position at zero, with the CLOSED reason, only after
+# CLOSED_CONFIRMATIONS of them (distinct observations); any ordinary answer for the position resets the count.
+NULL_REASONS = ('POOL_NULL', 'VAULT_NULL')
+CLOSED_CONFIRMATIONS = 2
+CONFIRMED = {'POOL_NULL': 'POOL_CLOSED', 'VAULT_NULL': 'VAULT_CLOSED'}
 
 
-def CLOSED_REASONS_BY_MISSING(pool_account, base_account, quote_account):
+def NULL_REASON_BY_MISSING(pool_account, base_account, quote_account):
     if pool_account is None:
-        return 'POOL_CLOSED'
+        return 'POOL_NULL'
     if base_account is None or quote_account is None:
-        return 'VAULT_CLOSED'
+        return 'VAULT_NULL'
     return None
 
 
@@ -265,10 +271,10 @@ def marks_from_result(positions, keys, result, cfg, *, pool_fee_bps):
         try:
             if keys[3 * index] != position['pool']:
                 raise MarkError('KEY_ORDER')
-            closed = CLOSED_REASONS_BY_MISSING(pool_account, base_account, quote_account)
+            closed = NULL_REASON_BY_MISSING(pool_account, base_account, quote_account)
             if closed:
-                # A closed pool or vault holds nothing: worth zero, with an explicit reason, instead of a mark that
-                # stays stale for ever. Valuation only (exits still need executable quotes).
+                # A null pool/vault account is an OBSERVATION of closure, not yet proof: the engine confirms it over
+                # CLOSED_CONFIRMATIONS consecutive observations before valuing the position at zero (valuation only).
                 marks[mint] = {'value_sol': '0', 'pool': position['pool'], 'base_raw': '0', 'quote_raw': '0', 'reason': closed}
                 continue
             fields = parse_pool(pool_account)
@@ -319,7 +325,7 @@ def validate_event(e):
         if (type(mint) is not str or type(mark) is not dict or set(mark) not in (base_keys, base_keys | {'reason'})
                 or any(type(v) is not str or not 1 <= len(v) <= 64 for v in mark.values())):
             raise ValueError('Portfolio mark entry')
-        if 'reason' in mark and (mark['reason'] not in CLOSED_REASONS or mark['value_sol'] != '0'):
+        if 'reason' in mark and (mark['reason'] not in NULL_REASONS or mark['value_sol'] != '0'):
             raise ValueError('Portfolio mark reason')
         try:
             value = Decimal(mark['value_sol'])
