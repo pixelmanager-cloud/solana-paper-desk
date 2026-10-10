@@ -1,0 +1,29 @@
+{
+  "passes": [
+    {
+      "pass_id": "a7bb6c8fb0c240a6b51c5bd6d1b6fed7",
+      "intent_hash": "0697ddc2b53f327e179e49cf7fa1e0c9c7a942829ceaf87ec992f5bc7c635799",
+      "outcome_hash": "e09c3bf2be397542971dc58567566a726a8b8b2303530f2b3da774325d3b4c7a",
+      "kind": "history_first_paper_preparation_v3"
+    },
+    {
+      "pass_id": "5c3226ceffeb489e922b88fdb516cc32",
+      "intent_hash": "9e79b317b902657b065e292efe05935ae6140dff73856d51129cbd816532b916",
+      "outcome_hash": null,
+      "kind": "paper_cycle_intent_v1"
+    }
+  ],
+  "dispatcher_result_hash": "6a4fd3f73e43230c53132e4d83b15d67137c33df6c9eab74b67b5a1a27952745",
+  "dispatcher_effective_context_hash": "a76f2b255aa2bc256db2b200269c8f189bde2b7d66e9b60ce402eb5bfdcd2181",
+  "attempt_refs": [
+    "4db5d8aebb28714a4c7018784bc687503ecc6f6b27686b51cf1fc0245c437535",
+    "0ad13b1f3e3239da7b0089647349a8b301f375a554053cc6f09c4a770df1b463",
+    "6d7107c99e704fea1fad2707b6c80da7e6fb6f61510577a9824bf5079f848caa",
+    "0a8ffc995d061d03394656647a3ead9df312c110e93b74c3b3610c94e903b33e"
+  ],
+  "usd_evidence_refs": [
+    "25446936aca18081524eb98daff1c00e83e773b2cd384208d369a1de3063414b"
+  ],
+  "ledger_backup": "/var/backups/solana-desk/pre-empty-window-recovery/paper-kraken-77de75a2.sqlite",
+  "ledger_backup_sha256": "c7b7364c768ec90ff1960ab3b23a1ba4d65fedbaa29fd9ca65ef02c6a32f427f"
+}

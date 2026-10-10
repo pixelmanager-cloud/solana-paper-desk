@@ -1,0 +1,13 @@
+test_real_four_edges_performance_recovery_and_successor (tests.test_empty_history_successor_lifecycle.EmptyHistorySuccessorLifecycleTests.test_real_four_edges_performance_recovery_and_successor) ... COMPILED_PHASE_PASS 2.597 
+COMPILED_PHASE_PASS 17.573 
+COMPILED_PHASE_PASS 31.168 
+COMPILED_PHASE_PASS 49.711 NATIVE_BUY 8 [('buy', 'ENTRY')]
+NATIVE_HELD 5
+NATIVE_EXIT 5 [('sell', 'STOP')]
+BUY_HELD_EXIT_RESTART_VALIDATORS_PASS
+ok
+
+----------------------------------------------------------------------
+Ran 1 test in 147.276s
+
+OK

@@ -4,7 +4,7 @@
 
 ## Handoff from Codex (2026-10-10)
 
-The Codex handoff documents (`CLAUDE_CODE_HANDOFF.md`, `FINAL_STATUS.md`, `GITHUB_CLEANUP.md`, `support/`) are not in the repository; ask the user for them before production-facing work. Older status in `docs/readiness.md` and `docs/agent-task-queue.json` is historical; the handoff supersedes it.
+Read `docs/handoff/CLAUDE_CODE_HANDOFF.md` and `docs/handoff/FINAL_STATUS.md` before production-facing work. `docs/handoff/support/` holds the reviewed (unexecuted) migration helpers, pins and CI logs; `SHA256SUMS.txt` verifies the bundle. Older status in `docs/readiness.md` and `docs/agent-task-queue.json` is historical; the handoff supersedes it.
 
 - `integration/cloud-wave1` (default): deployed baseline `0dcc2117b094bfced0e92feebac9f2df47cfd1d4`.
 - `integration/empty-history-ready` (PR #209): reviewed, undeployed candidate `c1e22c289780a0b068190d4938847c0858d0a465`.

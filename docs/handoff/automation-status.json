@@ -1,0 +1,14 @@
+{
+  "recorded_at": "2026-10-10T12:50:50.381549+00:00",
+  "local_recovery": {
+    "id": "finish-solana-paper-trading-desk",
+    "status": "PAUSED",
+    "confirmed_by": "automation_update tool"
+  },
+  "hosted_review": {
+    "id": "6ac6eaa238008191b06af7534c3b0cb9",
+    "is_enabled": false,
+    "confirmed_by": "durable reviewer turn 01a125cf-4452-73b1-b9c5-e5db3ccc1f2b"
+  },
+  "vps_discovery": "left running; distinct from Codex development automations"
+}

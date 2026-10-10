@@ -1,0 +1,109 @@
+{
+  "environment": "solana-paper-desk",
+  "published": true,
+  "requested_workers": 10,
+  "status": "DISPATCHED",
+  "note": "Initial dispatch manifest; current claims and reviews are in docs/agent-task-queue.json. Desktop owns integration and five-minute recovery dispatch; hourly cloud GitHub review schedule is enabled but first scheduled execution remains unverified.",
+  "workers": [
+    {
+      "agent": "01",
+      "thread_id": "01a118fc-39bc-722c-b442-8bf5a749e0bb",
+      "host_id": "durable",
+      "title": "Agent 01: OWN-1 finalized snapshot integration Work in the\u2026",
+      "url": "https://chatgpt.com/local/01a118fc-39bc-722c-b442-8bf5a749e0bb?hostId=durable",
+      "status_at_dispatch": "active",
+      "assignment": "OWN-1 finalized snapshot integration",
+      "prompt": "Agent 01: OWN-1 finalized snapshot integration\n\nWork in the published solana-paper-desk cloud environment on pixelmanager-cloud/solana-paper-desk. Read AGENTS.md, docs/readiness.md and docs/agent-task-queue.json. This is one of 10 parallel workers. Use only your isolated checkout and create a unique branch named codex/cloud-wave1-01. Do not spawn additional agents. Use Python 3.12 and fixture-only tests. Never access VPS, secrets, live providers, signers or broadcasting. Preserve fail-closed evidence gates, 18-RPC investigation ceiling, original records and private loopback access. Do not merge, deploy, close issues, enable entries or mark paper readiness. Only the coordinator integrates; respect queue dependencies. Implement the assigned scoped deliverable, add meaningful adversarial tests, run the full unittest suite, and finish with changed files, exact results, unresolved dependencies and a reviewable diff/commit. Leave tracked changes in this cloud workspace for coordinator retrieval; do not wait for routine approval. Do not edit shared AGENTS.md, readiness.md or task queue. \nAssignment: Implement issue #1: finalized snapshot capture and slot-bounded history integration, scoped to desk/ownership_worker.py, desk/history_progress.py, desk/ownership_snapshot.py and dedicated tests. Persist immutable cutoff and bank snapshot before replay, resume without changing cutoff, preserve budget reservation before I/O and reject missing account coverage. Existing pure snapshot validation must be connected to collection/history requests using mock provider fixtures. Live acceptance remains coordinator-only."
+    },
+    {
+      "agent": "02",
+      "thread_id": "01a118fc-666c-70b6-9fa8-2c7520f0a0bb",
+      "host_id": "durable",
+      "title": "Agent 02: OWN-2 account classification Work in the publishe\u2026",
+      "url": "https://chatgpt.com/local/01a118fc-666c-70b6-9fa8-2c7520f0a0bb?hostId=durable",
+      "status_at_dispatch": "active",
+      "assignment": "OWN-2 account classification",
+      "prompt": "Agent 02: OWN-2 account classification\n\nWork in the published solana-paper-desk cloud environment on pixelmanager-cloud/solana-paper-desk. Read AGENTS.md, docs/readiness.md and docs/agent-task-queue.json. This is one of 10 parallel workers. Use only your isolated checkout and create a unique branch named codex/cloud-wave1-02. Do not spawn additional agents. Use Python 3.12 and fixture-only tests. Never access VPS, secrets, live providers, signers or broadcasting. Preserve fail-closed evidence gates, 18-RPC investigation ceiling, original records and private loopback access. Do not merge, deploy, close issues, enable entries or mark paper readiness. Only the coordinator integrates; respect queue dependencies. Implement the assigned scoped deliverable, add meaningful adversarial tests, run the full unittest suite, and finish with changed files, exact results, unresolved dependencies and a reviewable diff/commit. Leave tracked changes in this cloud workspace for coordinator retrieval; do not wait for routine approval. Do not edit shared AGENTS.md, readiness.md or task queue. \nAssignment: Implement issue #2 in a new desk/account_classification.py module and dedicated fixtures/tests. Every pool/service classification needs evidence provenance, exact account/program binding, scope and expiry. Unknown/conflicting evidence must remain unresolved; ordinary system accounts or shared funding never prove private control. Provide explicit conservative API for later ownership integration. Do not edit ownership_worker/history_progress/snapshot/distribution modules."
+    },
+    {
+      "agent": "03",
+      "thread_id": "01a118fc-9478-778a-b77a-8f8f6ec7e0ad",
+      "host_id": "durable",
+      "title": "Agent 03: Ownership history adversarial fixtures Work in th\u2026",
+      "url": "https://chatgpt.com/local/01a118fc-9478-778a-b77a-8f8f6ec7e0ad?hostId=durable",
+      "status_at_dispatch": "active",
+      "assignment": "Ownership history adversarial fixtures",
+      "prompt": "Agent 03: Ownership history adversarial fixtures\n\nWork in the published solana-paper-desk cloud environment on pixelmanager-cloud/solana-paper-desk. Read AGENTS.md, docs/readiness.md and docs/agent-task-queue.json. This is one of 10 parallel workers. Use only your isolated checkout and create a unique branch named codex/cloud-wave1-03. Do not spawn additional agents. Use Python 3.12 and fixture-only tests. Never access VPS, secrets, live providers, signers or broadcasting. Preserve fail-closed evidence gates, 18-RPC investigation ceiling, original records and private loopback access. Do not merge, deploy, close issues, enable entries or mark paper readiness. Only the coordinator integrates; respect queue dependencies. Implement the assigned scoped deliverable, add meaningful adversarial tests, run the full unittest suite, and finish with changed files, exact results, unresolved dependencies and a reviewable diff/commit. Leave tracked changes in this cloud workspace for coordinator retrieval; do not wait for routine approval. Do not edit shared AGENTS.md, readiness.md or task queue. \nAssignment: Build dedicated tests and public/synthetic provenance fixtures for current ownership snapshot and history replay: same-slot cutoff boundaries, reordered pages, duplicates, missing accounts, contradictory balances, restart reservations and exhausted budgets. Add only tests/test_cloud_history_adversarial.py and fixtures/cloud_history/ plus a scoped findings report docs/reviews/cloud-history.md. Do not modify production modules; document actual uncovered defects with minimal reproductions. Coordinate later fixes via report."
+    },
+    {
+      "agent": "04",
+      "thread_id": "01a118fc-b862-7340-ab3a-e1115a3280a4",
+      "host_id": "durable",
+      "title": "Agent 04: OWN-3 distribution exposure core Work in the publ\u2026",
+      "url": "https://chatgpt.com/local/01a118fc-b862-7340-ab3a-e1115a3280a4?hostId=durable",
+      "status_at_dispatch": "active",
+      "assignment": "OWN-3 distribution exposure core",
+      "prompt": "Agent 04: OWN-3 distribution exposure core\n\nWork in the published solana-paper-desk cloud environment on pixelmanager-cloud/solana-paper-desk. Read AGENTS.md, docs/readiness.md and docs/agent-task-queue.json. This is one of 10 parallel workers. Use only your isolated checkout and create a unique branch named codex/cloud-wave1-04. Do not spawn additional agents. Use Python 3.12 and fixture-only tests. Never access VPS, secrets, live providers, signers or broadcasting. Preserve fail-closed evidence gates, 18-RPC investigation ceiling, original records and private loopback access. Do not merge, deploy, close issues, enable entries or mark paper readiness. Only the coordinator integrates; respect queue dependencies. Implement the assigned scoped deliverable, add meaningful adversarial tests, run the full unittest suite, and finish with changed files, exact results, unresolved dependencies and a reviewable diff/commit. Leave tracked changes in this cloud workspace for coordinator retrieval; do not wait for routine approval. Do not edit shared AGENTS.md, readiness.md or task queue. \nAssignment: Prepare the dependency-independent core of issue #3 in new desk/distribution_exposure.py and dedicated tests. Trace ordered token transfers, split distributions and current-holder exposure with bounded traversal, exact integer amounts, cycles, missing paths and unresolved exposure. Define typed inputs for validated snapshot and classification artifacts; default missing/unverified classifications to unresolved. Do not wire into entry decisions or claim issue #3 complete until OWN-1/2 integrated. Do not modify existing ownership/distribution modules."
+    },
+    {
+      "agent": "05",
+      "thread_id": "01a118fc-dd83-7672-ac81-7445f85fe09f",
+      "host_id": "durable",
+      "title": "Agent 05: Evidence gate bypass review Work in the published\u2026",
+      "url": "https://chatgpt.com/local/01a118fc-dd83-7672-ac81-7445f85fe09f?hostId=durable",
+      "status_at_dispatch": "active",
+      "assignment": "Evidence gate bypass review",
+      "prompt": "Agent 05: Evidence gate bypass review\n\nWork in the published solana-paper-desk cloud environment on pixelmanager-cloud/solana-paper-desk. Read AGENTS.md, docs/readiness.md and docs/agent-task-queue.json. This is one of 10 parallel workers. Use only your isolated checkout and create a unique branch named codex/cloud-wave1-05. Do not spawn additional agents. Use Python 3.12 and fixture-only tests. Never access VPS, secrets, live providers, signers or broadcasting. Preserve fail-closed evidence gates, 18-RPC investigation ceiling, original records and private loopback access. Do not merge, deploy, close issues, enable entries or mark paper readiness. Only the coordinator integrates; respect queue dependencies. Implement the assigned scoped deliverable, add meaningful adversarial tests, run the full unittest suite, and finish with changed files, exact results, unresolved dependencies and a reviewable diff/commit. Leave tracked changes in this cloud workspace for coordinator retrieval; do not wait for routine approval. Do not edit shared AGENTS.md, readiness.md or task queue. \nAssignment: Independently adversarially test current entry_evidence and decision_runner using new tests/test_cloud_entry_gates.py and docs/reviews/cloud-entry-gates.md only. Attempt stale/missing/forged/cross-mint/inconsistent evidence and timestamp refresh bypasses. Add reproductions and precise findings, no production edits. This is preliminary review, not issue #4 final signoff; later integrated snapshot/classification need re-review."
+    },
+    {
+      "agent": "06",
+      "thread_id": "01a118fc-f867-7233-8eec-c20659e70095",
+      "host_id": "durable",
+      "title": "Agent 06: Token control and supply revocation checks Work i\u2026",
+      "url": "https://chatgpt.com/local/01a118fc-f867-7233-8eec-c20659e70095?hostId=durable",
+      "status_at_dispatch": "active",
+      "assignment": "Token control and supply revocation checks",
+      "prompt": "Agent 06: Token control and supply revocation checks\n\nWork in the published solana-paper-desk cloud environment on pixelmanager-cloud/solana-paper-desk. Read AGENTS.md, docs/readiness.md and docs/agent-task-queue.json. This is one of 10 parallel workers. Use only your isolated checkout and create a unique branch named codex/cloud-wave1-06. Do not spawn additional agents. Use Python 3.12 and fixture-only tests. Never access VPS, secrets, live providers, signers or broadcasting. Preserve fail-closed evidence gates, 18-RPC investigation ceiling, original records and private loopback access. Do not merge, deploy, close issues, enable entries or mark paper readiness. Only the coordinator integrates; respect queue dependencies. Implement the assigned scoped deliverable, add meaningful adversarial tests, run the full unittest suite, and finish with changed files, exact results, unresolved dependencies and a reviewable diff/commit. Leave tracked changes in this cloud workspace for coordinator retrieval; do not wait for routine approval. Do not edit shared AGENTS.md, readiness.md or task queue. \nAssignment: Audit existing token authority/extensions/holder account checks and add scoped tests/test_cloud_token_controls.py and docs/reviews/cloud-token-controls.md. Cover mint/freeze/delegate/close authority, account owner mismatches, malformed layouts and Token-2022 unsupported behavior. No on-chain research/provider calls. Use existing source/spec fixtures; mark uncertain assumptions. Do not change production modules or relax unsupported-token rejection."
+    },
+    {
+      "agent": "07",
+      "thread_id": "01a118fd-0f1c-749c-b85b-5e730937d0a8",
+      "host_id": "durable",
+      "title": "Agent 07: Unsigned route and sellability audit Work in the\u2026",
+      "url": "https://chatgpt.com/local/01a118fd-0f1c-749c-b85b-5e730937d0a8?hostId=durable",
+      "status_at_dispatch": "active",
+      "assignment": "Unsigned route and sellability audit",
+      "prompt": "Agent 07: Unsigned route and sellability audit\n\nWork in the published solana-paper-desk cloud environment on pixelmanager-cloud/solana-paper-desk. Read AGENTS.md, docs/readiness.md and docs/agent-task-queue.json. This is one of 10 parallel workers. Use only your isolated checkout and create a unique branch named codex/cloud-wave1-07. Do not spawn additional agents. Use Python 3.12 and fixture-only tests. Never access VPS, secrets, live providers, signers or broadcasting. Preserve fail-closed evidence gates, 18-RPC investigation ceiling, original records and private loopback access. Do not merge, deploy, close issues, enable entries or mark paper readiness. Only the coordinator integrates; respect queue dependencies. Implement the assigned scoped deliverable, add meaningful adversarial tests, run the full unittest suite, and finish with changed files, exact results, unresolved dependencies and a reviewable diff/commit. Leave tracked changes in this cloud workspace for coordinator retrieval; do not wait for routine approval. Do not edit shared AGENTS.md, readiness.md or task queue. \nAssignment: Prepare issue #5 with tests/test_cloud_sellability.py and docs/reviews/cloud-sellability.md only. Audit current unsigned transaction validation, exact input/output amounts, recipients/account effects, malicious extra instructions, unsupported routes/extensions and exit-size mismatch. Produce executable adversarial reproductions where possible without signer, broadcast or network. Do not claim live sellability or implement dependent integration before ownership review."
+    },
+    {
+      "agent": "08",
+      "thread_id": "01a118fd-2563-7126-90d7-bd07693de0b2",
+      "host_id": "durable",
+      "title": "Agent 08: Paper ledger restart adversarial tests Work in th\u2026",
+      "url": "https://chatgpt.com/local/01a118fd-2563-7126-90d7-bd07693de0b2?hostId=durable",
+      "status_at_dispatch": "active",
+      "assignment": "Paper ledger restart adversarial tests",
+      "prompt": "Agent 08: Paper ledger restart adversarial tests\n\nWork in the published solana-paper-desk cloud environment on pixelmanager-cloud/solana-paper-desk. Read AGENTS.md, docs/readiness.md and docs/agent-task-queue.json. This is one of 10 parallel workers. Use only your isolated checkout and create a unique branch named codex/cloud-wave1-08. Do not spawn additional agents. Use Python 3.12 and fixture-only tests. Never access VPS, secrets, live providers, signers or broadcasting. Preserve fail-closed evidence gates, 18-RPC investigation ceiling, original records and private loopback access. Do not merge, deploy, close issues, enable entries or mark paper readiness. Only the coordinator integrates; respect queue dependencies. Implement the assigned scoped deliverable, add meaningful adversarial tests, run the full unittest suite, and finish with changed files, exact results, unresolved dependencies and a reviewable diff/commit. Leave tracked changes in this cloud workspace for coordinator retrieval; do not wait for routine approval. Do not edit shared AGENTS.md, readiness.md or task queue. \nAssignment: Add tests/test_cloud_ledger_restart.py and docs/reviews/cloud-ledger-restart.md for existing ledger/engine: duplicate event replay, crash boundaries, restart, partial positions, fees/costs, stale marks, unsellable exits. Synthetic fixtures only, no production edits or automatic runner activation. Report concrete gaps for issue #7; preserve dependency gates."
+    },
+    {
+      "agent": "09",
+      "thread_id": "01a118fd-3f90-77d9-9549-c4497f5b10a6",
+      "host_id": "durable",
+      "title": "Agent 09: Evidence dashboard contract Work in the published\u2026",
+      "url": "https://chatgpt.com/local/01a118fd-3f90-77d9-9549-c4497f5b10a6?hostId=durable",
+      "status_at_dispatch": "active",
+      "assignment": "Evidence dashboard contract",
+      "prompt": "Agent 09: Evidence dashboard contract\n\nWork in the published solana-paper-desk cloud environment on pixelmanager-cloud/solana-paper-desk. Read AGENTS.md, docs/readiness.md and docs/agent-task-queue.json. This is one of 10 parallel workers. Use only your isolated checkout and create a unique branch named codex/cloud-wave1-09. Do not spawn additional agents. Use Python 3.12 and fixture-only tests. Never access VPS, secrets, live providers, signers or broadcasting. Preserve fail-closed evidence gates, 18-RPC investigation ceiling, original records and private loopback access. Do not merge, deploy, close issues, enable entries or mark paper readiness. Only the coordinator integrates; respect queue dependencies. Implement the assigned scoped deliverable, add meaningful adversarial tests, run the full unittest suite, and finish with changed files, exact results, unresolved dependencies and a reviewable diff/commit. Leave tracked changes in this cloud workspace for coordinator retrieval; do not wait for routine approval. Do not edit shared AGENTS.md, readiness.md or task queue. \nAssignment: Prepare docs/design/cloud-evidence-dashboard.md plus isolated tests/test_cloud_dashboard_evidence.py for existing read-only dashboard APIs. Define clear evidence provenance, unresolved ownership, decision freshness, positions/PnL and pause/exit-only state presentation based on actual schemas. Verify read endpoints with temporary databases, no submitted scans. Do not edit production dashboard/static or enable entries; document integration dependencies on issue #8."
+    },
+    {
+      "agent": "10",
+      "thread_id": "01a118fd-56d5-70b8-ad31-dba13e982082",
+      "host_id": "durable",
+      "title": "Agent 10: End-to-end readiness harness design Work in the p\u2026",
+      "url": "https://chatgpt.com/local/01a118fd-56d5-70b8-ad31-dba13e982082?hostId=durable",
+      "status_at_dispatch": "active",
+      "assignment": "End-to-end readiness harness design",
+      "prompt": "Agent 10: End-to-end readiness harness design\n\nWork in the published solana-paper-desk cloud environment on pixelmanager-cloud/solana-paper-desk. Read AGENTS.md, docs/readiness.md and docs/agent-task-queue.json. This is one of 10 parallel workers. Use only your isolated checkout and create a unique branch named codex/cloud-wave1-10. Do not spawn additional agents. Use Python 3.12 and fixture-only tests. Never access VPS, secrets, live providers, signers or broadcasting. Preserve fail-closed evidence gates, 18-RPC investigation ceiling, original records and private loopback access. Do not merge, deploy, close issues, enable entries or mark paper readiness. Only the coordinator integrates; respect queue dependencies. Implement the assigned scoped deliverable, add meaningful adversarial tests, run the full unittest suite, and finish with changed files, exact results, unresolved dependencies and a reviewable diff/commit. Leave tracked changes in this cloud workspace for coordinator retrieval; do not wait for routine approval. Do not edit shared AGENTS.md, readiness.md or task queue. \nAssignment: Create docs/design/cloud-paper-readiness-gates.md and isolated tests/test_cloud_readiness_invariants.py. Inspect current offline replay and readiness to map discovery-evidence-decision-entry-monitor-exit-accounting-restart with explicit proof requirements, failure injection and forward-observation gate. Test already-supported invariants using synthetic isolated databases; do not fabricate acceptance or weaken gates. No production edits, no changes to shared readiness checklist, no live checks."
+    }
+  ]
+}

@@ -1,0 +1,203 @@
+tests	Set up job	﻿2026-10-10T12:22:55.6370427Z Current runner version: '2.337.0'
+tests	Set up job	2026-10-10T12:22:55.6397205Z ##[group]Runner Image Provisioner
+tests	Set up job	2026-10-10T12:22:55.6398227Z Hosted Compute Agent
+tests	Set up job	2026-10-10T12:22:55.6398841Z Version: 20261002.596
+tests	Set up job	2026-10-10T12:22:55.6399478Z Commit: c3d12f3313a95f25162a1503be624f3b0617f8c0
+tests	Set up job	2026-10-10T12:22:55.6400310Z Build Date: 2026-10-02T22:28:27Z
+tests	Set up job	2026-10-10T12:22:55.6401103Z Worker ID: {725a44a7-a9b9-4777-9ca9-749dcd55118c}
+tests	Set up job	2026-10-10T12:22:55.6401935Z Region: westcentralus
+tests	Set up job	2026-10-10T12:22:55.6402549Z Cloud: Azure
+tests	Set up job	2026-10-10T12:22:55.6403094Z ##[endgroup]
+tests	Set up job	2026-10-10T12:22:55.6404604Z ##[group]Operating System
+tests	Set up job	2026-10-10T12:22:55.6405306Z Ubuntu
+tests	Set up job	2026-10-10T12:22:55.6406208Z 24.04.5
+tests	Set up job	2026-10-10T12:22:55.6406783Z LTS
+tests	Set up job	2026-10-10T12:22:55.6407331Z ##[endgroup]
+tests	Set up job	2026-10-10T12:22:55.6407972Z ##[group]Runner Image
+tests	Set up job	2026-10-10T12:22:55.6408654Z Image: ubuntu-24.04
+tests	Set up job	2026-10-10T12:22:55.6409319Z Version: 20261004.327.1
+tests	Set up job	2026-10-10T12:22:55.6410460Z Included Software: https://github.com/actions/runner-images/blob/ubuntu24/20261004.327/images/ubuntu/Ubuntu2404-Readme.md
+tests	Set up job	2026-10-10T12:22:55.6412267Z Image Release: https://github.com/actions/runner-images/releases/tag/ubuntu24%2F20261004.327
+tests	Set up job	2026-10-10T12:22:55.6413293Z ##[endgroup]
+tests	Set up job	2026-10-10T12:22:55.6414504Z ##[group]GITHUB_TOKEN Permissions
+tests	Set up job	2026-10-10T12:22:55.6416996Z Contents: read
+tests	Set up job	2026-10-10T12:22:55.6417711Z Metadata: read
+tests	Set up job	2026-10-10T12:22:55.6418366Z ##[endgroup]
+tests	Set up job	2026-10-10T12:22:55.6420434Z Secret source: Actions
+tests	Set up job	2026-10-10T12:22:55.6421836Z Cache mode: write
+tests	Set up job	2026-10-10T12:22:55.6422579Z Prepare workflow directory
+tests	Set up job	2026-10-10T12:22:55.6757574Z Prepare all required actions
+tests	Set up job	2026-10-10T12:22:55.6805521Z Getting action download info
+tests	Set up job	2026-10-10T12:22:55.9843166Z Download action repository 'actions/checkout@v4' (SHA:11d5960a326750d5838078e36cf38b85af677262)
+tests	Set up job	2026-10-10T12:22:56.3830137Z Download action repository 'actions/setup-python@v5' (SHA:a26af69be951a213d495a4c3e4e4022e16d87065)
+tests	Set up job	2026-10-10T12:22:56.6170092Z Complete job name: tests
+tests	Run actions/checkout@v4	﻿2026-10-10T12:22:56.6918050Z ##[group]Run actions/checkout@v4
+tests	Run actions/checkout@v4	2026-10-10T12:22:56.6918963Z with:
+tests	Run actions/checkout@v4	2026-10-10T12:22:56.6919529Z   repository: pixelmanager-cloud/solana-paper-desk
+tests	Run actions/checkout@v4	2026-10-10T12:22:56.6923508Z   token: ***
+tests	Run actions/checkout@v4	2026-10-10T12:22:56.6923956Z   ssh-strict: true
+tests	Run actions/checkout@v4	2026-10-10T12:22:56.6924410Z   ssh-user: git
+tests	Run actions/checkout@v4	2026-10-10T12:22:56.6924872Z   persist-credentials: true
+tests	Run actions/checkout@v4	2026-10-10T12:22:56.6925370Z   clean: true
+tests	Run actions/checkout@v4	2026-10-10T12:22:56.6926031Z   sparse-checkout-cone-mode: true
+tests	Run actions/checkout@v4	2026-10-10T12:22:56.6926556Z   fetch-depth: 1
+tests	Run actions/checkout@v4	2026-10-10T12:22:56.6927008Z   fetch-tags: false
+tests	Run actions/checkout@v4	2026-10-10T12:22:56.6927461Z   show-progress: true
+tests	Run actions/checkout@v4	2026-10-10T12:22:56.6927906Z   lfs: false
+tests	Run actions/checkout@v4	2026-10-10T12:22:56.6928321Z   submodules: false
+tests	Run actions/checkout@v4	2026-10-10T12:22:56.6928773Z   set-safe-directory: true
+tests	Run actions/checkout@v4	2026-10-10T12:22:56.6929286Z   allow-unsafe-pr-checkout: false
+tests	Run actions/checkout@v4	2026-10-10T12:22:56.6930011Z ##[endgroup]
+tests	Run actions/checkout@v4	2026-10-10T12:22:56.7917602Z Syncing repository: pixelmanager-cloud/solana-paper-desk
+tests	Run actions/checkout@v4	2026-10-10T12:22:56.7920578Z ##[group]Getting Git version info
+tests	Run actions/checkout@v4	2026-10-10T12:22:56.7921568Z Working directory is '/home/runner/work/solana-paper-desk/solana-paper-desk'
+tests	Run actions/checkout@v4	2026-10-10T12:22:56.7922866Z [command]/usr/bin/git version
+tests	Run actions/checkout@v4	2026-10-10T12:22:56.9420551Z git version 2.55.0
+tests	Run actions/checkout@v4	2026-10-10T12:22:56.9443371Z ##[endgroup]
+tests	Run actions/checkout@v4	2026-10-10T12:22:56.9458512Z Temporarily overriding HOME='/home/runner/work/_temp/3406320e-ebea-4452-86a1-302ac0d0ecf8' before making global git config changes
+tests	Run actions/checkout@v4	2026-10-10T12:22:56.9460662Z Adding repository directory to the temporary git global config as a safe directory
+tests	Run actions/checkout@v4	2026-10-10T12:22:56.9464209Z [command]/usr/bin/git config --global --add safe.directory /home/runner/work/solana-paper-desk/solana-paper-desk
+tests	Run actions/checkout@v4	2026-10-10T12:22:56.9731421Z Deleting the contents of '/home/runner/work/solana-paper-desk/solana-paper-desk'
+tests	Run actions/checkout@v4	2026-10-10T12:22:56.9736260Z ##[group]Initializing the repository
+tests	Run actions/checkout@v4	2026-10-10T12:22:56.9741289Z [command]/usr/bin/git init /home/runner/work/solana-paper-desk/solana-paper-desk
+tests	Run actions/checkout@v4	2026-10-10T12:22:57.0289911Z hint: Using 'master' as the name for the initial branch. This default branch name
+tests	Run actions/checkout@v4	2026-10-10T12:22:57.0293002Z hint: will change to "main" in Git 3.0. To configure the initial branch name
+tests	Run actions/checkout@v4	2026-10-10T12:22:57.0295372Z hint: to use in all of your new repositories, which will suppress this warning,
+tests	Run actions/checkout@v4	2026-10-10T12:22:57.0297637Z hint: call:
+tests	Run actions/checkout@v4	2026-10-10T12:22:57.0298290Z hint:
+tests	Run actions/checkout@v4	2026-10-10T12:22:57.0299138Z hint: 	git config --global init.defaultBranch <name>
+tests	Run actions/checkout@v4	2026-10-10T12:22:57.0300265Z hint:
+tests	Run actions/checkout@v4	2026-10-10T12:22:57.0301234Z hint: Names commonly chosen instead of 'master' are 'main', 'trunk' and
+tests	Run actions/checkout@v4	2026-10-10T12:22:57.0303311Z hint: 'development'. The just-created branch can be renamed via this command:
+tests	Run actions/checkout@v4	2026-10-10T12:22:57.0304744Z hint:
+tests	Run actions/checkout@v4	2026-10-10T12:22:57.0305320Z hint: 	git branch -m <name>
+tests	Run actions/checkout@v4	2026-10-10T12:22:57.0306133Z hint:
+tests	Run actions/checkout@v4	2026-10-10T12:22:57.0307005Z hint: Disable this message with "git config set advice.defaultBranchName false"
+tests	Run actions/checkout@v4	2026-10-10T12:22:57.0308512Z Initialized empty Git repository in /home/runner/work/solana-paper-desk/solana-paper-desk/.git/
+tests	Run actions/checkout@v4	2026-10-10T12:22:57.0311393Z [command]/usr/bin/git remote add origin https://github.com/pixelmanager-cloud/solana-paper-desk
+tests	Run actions/checkout@v4	2026-10-10T12:22:57.0631512Z ##[endgroup]
+tests	Run actions/checkout@v4	2026-10-10T12:22:57.0632671Z ##[group]Disabling automatic garbage collection
+tests	Run actions/checkout@v4	2026-10-10T12:22:57.0635174Z [command]/usr/bin/git config --local gc.auto 0
+tests	Run actions/checkout@v4	2026-10-10T12:22:57.0672339Z ##[endgroup]
+tests	Run actions/checkout@v4	2026-10-10T12:22:57.0673400Z ##[group]Setting up auth
+tests	Run actions/checkout@v4	2026-10-10T12:22:57.0678931Z [command]/usr/bin/git config --local --name-only --get-regexp core\.sshCommand
+tests	Run actions/checkout@v4	2026-10-10T12:22:57.0715485Z [command]/usr/bin/git submodule foreach --recursive sh -c "git config --local --name-only --get-regexp 'core\.sshCommand' && git config --local --unset-all 'core.sshCommand' || :"
+tests	Run actions/checkout@v4	2026-10-10T12:22:57.8694274Z [command]/usr/bin/git config --local --name-only --get-regexp http\.https\:\/\/github\.com\/\.extraheader
+tests	Run actions/checkout@v4	2026-10-10T12:22:57.8733702Z [command]/usr/bin/git submodule foreach --recursive sh -c "git config --local --name-only --get-regexp 'http\.https\:\/\/github\.com\/\.extraheader' && git config --local --unset-all 'http.https://github.com/.extraheader' || :"
+tests	Run actions/checkout@v4	2026-10-10T12:22:57.8976812Z [command]/usr/bin/git config --local --name-only --get-regexp ^includeIf\.gitdir:
+tests	Run actions/checkout@v4	2026-10-10T12:22:57.9016105Z [command]/usr/bin/git submodule foreach --recursive git config --local --show-origin --name-only --get-regexp remote.origin.url
+tests	Run actions/checkout@v4	2026-10-10T12:22:57.9263512Z [command]/usr/bin/git config --local http.https://github.com/.extraheader AUTHORIZATION: basic ***
+tests	Run actions/checkout@v4	2026-10-10T12:22:57.9308609Z ##[endgroup]
+tests	Run actions/checkout@v4	2026-10-10T12:22:57.9310037Z ##[group]Fetching the repository
+tests	Run actions/checkout@v4	2026-10-10T12:22:57.9319389Z [command]/usr/bin/git -c protocol.version=2 fetch --no-tags --prune --no-recurse-submodules --depth=1 origin +c1e22c289780a0b068190d4938847c0858d0a465:refs/remotes/origin/integration/empty-history-ready
+tests	Run actions/checkout@v4	2026-10-10T12:22:59.4173425Z From https://github.com/pixelmanager-cloud/solana-paper-desk
+tests	Run actions/checkout@v4	2026-10-10T12:22:59.4174575Z  * [new ref]         c1e22c289780a0b068190d4938847c0858d0a465 -> origin/integration/empty-history-ready
+tests	Run actions/checkout@v4	2026-10-10T12:22:59.4178164Z ##[endgroup]
+tests	Run actions/checkout@v4	2026-10-10T12:22:59.4178758Z ##[group]Determining the checkout info
+tests	Run actions/checkout@v4	2026-10-10T12:22:59.4181606Z ##[endgroup]
+tests	Run actions/checkout@v4	2026-10-10T12:22:59.4187683Z [command]/usr/bin/git sparse-checkout disable
+tests	Run actions/checkout@v4	2026-10-10T12:22:59.4448380Z [command]/usr/bin/git config --local --unset-all extensions.worktreeConfig
+tests	Run actions/checkout@v4	2026-10-10T12:22:59.4454038Z ##[group]Checking out the ref
+tests	Run actions/checkout@v4	2026-10-10T12:22:59.4455322Z [command]/usr/bin/git checkout --progress --force -B integration/empty-history-ready refs/remotes/origin/integration/empty-history-ready
+tests	Run actions/checkout@v4	2026-10-10T12:22:59.5198421Z Switched to a new branch 'integration/empty-history-ready'
+tests	Run actions/checkout@v4	2026-10-10T12:22:59.5201244Z branch 'integration/empty-history-ready' set up to track 'origin/integration/empty-history-ready'.
+tests	Run actions/checkout@v4	2026-10-10T12:22:59.5214239Z ##[endgroup]
+tests	Run actions/checkout@v4	2026-10-10T12:22:59.5261274Z [command]/usr/bin/git log -1 --format=%H
+tests	Run actions/checkout@v4	2026-10-10T12:22:59.5290402Z c1e22c289780a0b068190d4938847c0858d0a465
+tests	Run actions/setup-python@v5	﻿2026-10-10T12:22:59.5563858Z ##[group]Run actions/setup-python@v5
+tests	Run actions/setup-python@v5	2026-10-10T12:22:59.5564160Z with:
+tests	Run actions/setup-python@v5	2026-10-10T12:22:59.5564603Z   python-version: 3.12
+tests	Run actions/setup-python@v5	2026-10-10T12:22:59.5564838Z   check-latest: false
+tests	Run actions/setup-python@v5	2026-10-10T12:22:59.5567797Z   token: ***
+tests	Run actions/setup-python@v5	2026-10-10T12:22:59.5568023Z   update-environment: true
+tests	Run actions/setup-python@v5	2026-10-10T12:22:59.5568277Z   allow-prereleases: false
+tests	Run actions/setup-python@v5	2026-10-10T12:22:59.5568529Z   freethreaded: false
+tests	Run actions/setup-python@v5	2026-10-10T12:22:59.5568786Z ##[endgroup]
+tests	Run actions/setup-python@v5	2026-10-10T12:22:59.7048151Z ##[group]Installed versions
+tests	Run actions/setup-python@v5	2026-10-10T12:22:59.8668949Z (node:2390) [DEP0040] DeprecationWarning: The `punycode` module is deprecated. Please use a userland alternative instead.
+tests	Run actions/setup-python@v5	2026-10-10T12:22:59.8669689Z (Use `node --trace-deprecation ...` to show where the warning was created)
+tests	Run actions/setup-python@v5	2026-10-10T12:22:59.8670320Z Successfully set up CPython (3.12.15)
+tests	Run actions/setup-python@v5	2026-10-10T12:22:59.8671155Z ##[endgroup]
+tests	Run python -m pip install -e . -r requirements-live.txt	﻿2026-10-10T12:22:59.8858014Z ##[group]Run python -m pip install -e . -r requirements-live.txt
+tests	Run python -m pip install -e . -r requirements-live.txt	2026-10-10T12:22:59.8858582Z ^[[36;1mpython -m pip install -e . -r requirements-live.txt^[[0m
+tests	Run python -m pip install -e . -r requirements-live.txt	2026-10-10T12:23:00.0298494Z shell: /usr/bin/bash -e {0}
+tests	Run python -m pip install -e . -r requirements-live.txt	2026-10-10T12:23:00.0298875Z env:
+tests	Run python -m pip install -e . -r requirements-live.txt	2026-10-10T12:23:00.0299200Z   pythonLocation: /opt/hostedtoolcache/Python/3.12.15/x64
+tests	Run python -m pip install -e . -r requirements-live.txt	2026-10-10T12:23:00.0299778Z   PKG_CONFIG_PATH: /opt/hostedtoolcache/Python/3.12.15/x64/lib/pkgconfig
+tests	Run python -m pip install -e . -r requirements-live.txt	2026-10-10T12:23:00.0300233Z   Python_ROOT_DIR: /opt/hostedtoolcache/Python/3.12.15/x64
+tests	Run python -m pip install -e . -r requirements-live.txt	2026-10-10T12:23:00.0300627Z   Python2_ROOT_DIR: /opt/hostedtoolcache/Python/3.12.15/x64
+tests	Run python -m pip install -e . -r requirements-live.txt	2026-10-10T12:23:00.0301011Z   Python3_ROOT_DIR: /opt/hostedtoolcache/Python/3.12.15/x64
+tests	Run python -m pip install -e . -r requirements-live.txt	2026-10-10T12:23:00.0301386Z   LD_LIBRARY_PATH: /opt/hostedtoolcache/Python/3.12.15/x64/lib
+tests	Run python -m pip install -e . -r requirements-live.txt	2026-10-10T12:23:00.0301718Z ##[endgroup]
+tests	Run python -m pip install -e . -r requirements-live.txt	2026-10-10T12:23:03.2172184Z Obtaining file:///home/runner/work/solana-paper-desk/solana-paper-desk
+tests	Run python -m pip install -e . -r requirements-live.txt	2026-10-10T12:23:03.2188465Z   Installing build dependencies: started
+tests	Run python -m pip install -e . -r requirements-live.txt	2026-10-10T12:23:04.7259320Z   Installing build dependencies: finished with status 'done'
+tests	Run python -m pip install -e . -r requirements-live.txt	2026-10-10T12:23:04.7265120Z   Checking if build backend supports build_editable: started
+tests	Run python -m pip install -e . -r requirements-live.txt	2026-10-10T12:23:05.1026848Z   Checking if build backend supports build_editable: finished with status 'done'
+tests	Run python -m pip install -e . -r requirements-live.txt	2026-10-10T12:23:05.1034293Z   Getting requirements to build editable: started
+tests	Run python -m pip install -e . -r requirements-live.txt	2026-10-10T12:23:05.6227546Z   Getting requirements to build editable: finished with status 'done'
+tests	Run python -m pip install -e . -r requirements-live.txt	2026-10-10T12:23:05.6236972Z   Preparing editable metadata (pyproject.toml): started
+tests	Run python -m pip install -e . -r requirements-live.txt	2026-10-10T12:23:05.8286068Z   Preparing editable metadata (pyproject.toml): finished with status 'done'
+tests	Run python -m pip install -e . -r requirements-live.txt	2026-10-10T12:23:06.0914576Z Collecting websockets==15.0.1 (from -r requirements-live.txt (line 2))
+tests	Run python -m pip install -e . -r requirements-live.txt	2026-10-10T12:23:06.1829104Z   Downloading websockets-15.0.1-cp312-cp312-manylinux_2_5_x86_64.manylinux1_x86_64.manylinux_2_17_x86_64.manylinux2014_x86_64.whl.metadata (6.8 kB)
+tests	Run python -m pip install -e . -r requirements-live.txt	2026-10-10T12:23:06.7344844Z Collecting solders==0.29.0 (from -r requirements-live.txt (line 4))
+tests	Run python -m pip install -e . -r requirements-live.txt	2026-10-10T12:23:06.7536480Z   Downloading solders-0.29.0-cp310-abi3-manylinux_2_17_x86_64.manylinux2014_x86_64.whl.metadata (737 bytes)
+tests	Run python -m pip install -e . -r requirements-live.txt	2026-10-10T12:23:06.7842027Z Collecting typing-extensions>=4.2.0 (from solders==0.29.0->-r requirements-live.txt (line 4))
+tests	Run python -m pip install -e . -r requirements-live.txt	2026-10-10T12:23:06.8031811Z   Downloading typing_extensions-4.16.0-py3-none-any.whl.metadata (3.3 kB)
+tests	Run python -m pip install -e . -r requirements-live.txt	2026-10-10T12:23:06.8301500Z Collecting jsonalias==0.1.1 (from solders==0.29.0->-r requirements-live.txt (line 4))
+tests	Run python -m pip install -e . -r requirements-live.txt	2026-10-10T12:23:06.8490869Z   Downloading jsonalias-0.1.1-py3-none-any.whl.metadata (469 bytes)
+tests	Run python -m pip install -e . -r requirements-live.txt	2026-10-10T12:23:06.8714387Z Downloading websockets-15.0.1-cp312-cp312-manylinux_2_5_x86_64.manylinux1_x86_64.manylinux_2_17_x86_64.manylinux2014_x86_64.whl (182 kB)
+tests	Run python -m pip install -e . -r requirements-live.txt	2026-10-10T12:23:06.9341583Z Downloading solders-0.29.0-cp310-abi3-manylinux_2_17_x86_64.manylinux2014_x86_64.whl (11.9 MB)
+tests	Run python -m pip install -e . -r requirements-live.txt	2026-10-10T12:23:07.1212471Z    ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━ 11.9/11.9 MB 70.5 MB/s  0:00:00
+tests	Run python -m pip install -e . -r requirements-live.txt	2026-10-10T12:23:07.1402498Z Downloading jsonalias-0.1.1-py3-none-any.whl (1.3 kB)
+tests	Run python -m pip install -e . -r requirements-live.txt	2026-10-10T12:23:07.1607879Z Downloading typing_extensions-4.16.0-py3-none-any.whl (45 kB)
+tests	Run python -m pip install -e . -r requirements-live.txt	2026-10-10T12:23:07.1830227Z Building wheels for collected packages: solana-desk
+tests	Run python -m pip install -e . -r requirements-live.txt	2026-10-10T12:23:07.1838331Z   Building editable for solana-desk (pyproject.toml): started
+tests	Run python -m pip install -e . -r requirements-live.txt	2026-10-10T12:23:07.4188921Z   Building editable for solana-desk (pyproject.toml): finished with status 'done'
+tests	Run python -m pip install -e . -r requirements-live.txt	2026-10-10T12:23:07.4193871Z   Created wheel for solana-desk: filename=solana_desk-0.2.0-0.editable-py3-none-any.whl size=3068 sha256=95c34eec471c63824508f2aa61c76ca505b73f512c90012c05df6991e71532ab
+tests	Run python -m pip install -e . -r requirements-live.txt	2026-10-10T12:23:07.4195518Z   Stored in directory: /tmp/pip-ephem-wheel-cache-7tc1uni6/wheels/21/8b/8e/0f6d103fd8d000d499c14c9027a6eb9e4bc9dceb07989f5bd3
+tests	Run python -m pip install -e . -r requirements-live.txt	2026-10-10T12:23:07.4210268Z Successfully built solana-desk
+tests	Run python -m pip install -e . -r requirements-live.txt	2026-10-10T12:23:07.4385235Z Installing collected packages: websockets, typing-extensions, solana-desk, jsonalias, solders
+tests	Run python -m pip install -e . -r requirements-live.txt	2026-10-10T12:23:07.7570847Z 
+tests	Run python -m pip install -e . -r requirements-live.txt	2026-10-10T12:23:07.7583562Z Successfully installed jsonalias-0.1.1 solana-desk-0.2.0 solders-0.29.0 typing-extensions-4.16.0 websockets-15.0.1
+tests	Run python -m unittest discover -q	﻿2026-10-10T12:23:07.8235205Z ##[group]Run python -m unittest discover -q
+tests	Run python -m unittest discover -q	2026-10-10T12:23:07.8235838Z ^[[36;1mpython -m unittest discover -q^[[0m
+tests	Run python -m unittest discover -q	2026-10-10T12:23:07.8308467Z shell: /usr/bin/bash -e {0}
+tests	Run python -m unittest discover -q	2026-10-10T12:23:07.8308734Z env:
+tests	Run python -m unittest discover -q	2026-10-10T12:23:07.8309008Z   pythonLocation: /opt/hostedtoolcache/Python/3.12.15/x64
+tests	Run python -m unittest discover -q	2026-10-10T12:23:07.8309448Z   PKG_CONFIG_PATH: /opt/hostedtoolcache/Python/3.12.15/x64/lib/pkgconfig
+tests	Run python -m unittest discover -q	2026-10-10T12:23:07.8309881Z   Python_ROOT_DIR: /opt/hostedtoolcache/Python/3.12.15/x64
+tests	Run python -m unittest discover -q	2026-10-10T12:23:07.8310261Z   Python2_ROOT_DIR: /opt/hostedtoolcache/Python/3.12.15/x64
+tests	Run python -m unittest discover -q	2026-10-10T12:23:07.8310635Z   Python3_ROOT_DIR: /opt/hostedtoolcache/Python/3.12.15/x64
+tests	Run python -m unittest discover -q	2026-10-10T12:23:07.8311011Z   LD_LIBRARY_PATH: /opt/hostedtoolcache/Python/3.12.15/x64/lib
+tests	Run python -m unittest discover -q	2026-10-10T12:23:07.8311336Z ##[endgroup]
+tests	Run python -m unittest discover -q	2026-10-10T12:30:35.4578600Z COMPILED_PHASE_PASS 2.235 
+tests	Run python -m unittest discover -q	2026-10-10T12:30:50.5819619Z COMPILED_PHASE_PASS 15.124 
+tests	Run python -m unittest discover -q	2026-10-10T12:31:16.5714551Z COMPILED_PHASE_PASS 25.946 
+tests	Run python -m unittest discover -q	2026-10-10T12:31:59.5278176Z COMPILED_PHASE_PASS 42.956 NATIVE_BUY 8 [('buy', 'ENTRY')]
+tests	Run python -m unittest discover -q	2026-10-10T12:31:59.5278882Z NATIVE_HELD 5
+tests	Run python -m unittest discover -q	2026-10-10T12:31:59.5279193Z NATIVE_EXIT 5 [('sell', 'STOP')]
+tests	Run python -m unittest discover -q	2026-10-10T12:31:59.5279620Z BUY_HELD_EXIT_RESTART_VALIDATORS_PASS
+tests	Run python -m unittest discover -q	2026-10-10T12:50:03.7128343Z ----------------------------------------------------------------------
+tests	Run python -m unittest discover -q	2026-10-10T12:50:03.7129031Z Ran 2941 tests in 1613.774s
+tests	Run python -m unittest discover -q	2026-10-10T12:50:03.7129274Z 
+tests	Run python -m unittest discover -q	2026-10-10T12:50:03.7129391Z OK
+tests	Post Run actions/setup-python@v5	﻿2026-10-10T12:50:03.7928288Z Post job cleanup.
+tests	Post Run actions/setup-python@v5	2026-10-10T12:50:03.9166592Z (node:3991) [DEP0040] DeprecationWarning: The `punycode` module is deprecated. Please use a userland alternative instead.
+tests	Post Run actions/setup-python@v5	2026-10-10T12:50:03.9167464Z (Use `node --trace-deprecation ...` to show where the warning was created)
+tests	Post Run actions/checkout@v4	﻿2026-10-10T12:50:03.9409646Z Post job cleanup.
+tests	Post Run actions/checkout@v4	2026-10-10T12:50:04.0296544Z [command]/usr/bin/git version
+tests	Post Run actions/checkout@v4	2026-10-10T12:50:04.0338620Z git version 2.55.0
+tests	Post Run actions/checkout@v4	2026-10-10T12:50:04.0379917Z Temporarily overriding HOME='/home/runner/work/_temp/d7d50271-efd4-4260-9903-b9fc7dd3007a' before making global git config changes
+tests	Post Run actions/checkout@v4	2026-10-10T12:50:04.0381199Z Adding repository directory to the temporary git global config as a safe directory
+tests	Post Run actions/checkout@v4	2026-10-10T12:50:04.0386193Z [command]/usr/bin/git config --global --add safe.directory /home/runner/work/solana-paper-desk/solana-paper-desk
+tests	Post Run actions/checkout@v4	2026-10-10T12:50:04.0426259Z [command]/usr/bin/git config --local --name-only --get-regexp core\.sshCommand
+tests	Post Run actions/checkout@v4	2026-10-10T12:50:04.0466015Z [command]/usr/bin/git submodule foreach --recursive sh -c "git config --local --name-only --get-regexp 'core\.sshCommand' && git config --local --unset-all 'core.sshCommand' || :"
+tests	Post Run actions/checkout@v4	2026-10-10T12:50:04.0735200Z [command]/usr/bin/git config --local --name-only --get-regexp http\.https\:\/\/github\.com\/\.extraheader
+tests	Post Run actions/checkout@v4	2026-10-10T12:50:04.0763898Z http.https://github.com/.extraheader
+tests	Post Run actions/checkout@v4	2026-10-10T12:50:04.0774567Z [command]/usr/bin/git config --local --unset-all http.https://github.com/.extraheader
+tests	Post Run actions/checkout@v4	2026-10-10T12:50:04.0811700Z [command]/usr/bin/git submodule foreach --recursive sh -c "git config --local --name-only --get-regexp 'http\.https\:\/\/github\.com\/\.extraheader' && git config --local --unset-all 'http.https://github.com/.extraheader' || :"
+tests	Post Run actions/checkout@v4	2026-10-10T12:50:04.1142554Z [command]/usr/bin/git config --local --name-only --get-regexp ^includeIf\.gitdir:
+tests	Post Run actions/checkout@v4	2026-10-10T12:50:04.1187276Z [command]/usr/bin/git submodule foreach --recursive git config --local --show-origin --name-only --get-regexp remote.origin.url
+tests	Complete job	﻿2026-10-10T12:50:04.1691772Z Cleaning up orphan processes
+tests	Complete job	2026-10-10T12:50:04.2004161Z ##[warning]Node.js 20 is deprecated. The following actions target Node.js 20 but are being forced to run on Node.js 24: actions/checkout@v4, actions/setup-python@v5. For more information see: https://github.blog/changelog/2025-09-19-deprecation-of-node-20-on-github-actions-runners/
