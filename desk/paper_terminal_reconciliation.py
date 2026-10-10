@@ -8,7 +8,7 @@ import base64
 import json
 import zlib
 from contextvars import ContextVar
-from contextlib import closing, ExitStack
+from contextlib import closing, ExitStack, contextmanager
 from pathlib import Path
 import sqlite3
 
@@ -476,13 +476,27 @@ def reconcile(research_db,evidence_db,ledger_db,cfg,*,pass_id,outcome_hash,attem
         return {'status':status,'receipt_hash':digest(v),'retired_scan':v['scan_id'],'entry_authorized':False}
 
 
-def gate(store,research,scan_ids,*,ledger_locked=None):
-    """Active gate always validates the current runtime, never a proposal."""
+@contextmanager
+def verified_bytes_scope():
+    """Reuse bounded immutable bytes only within the current invocation.
+
+    Every hit still rereads SQL scalars/content and returns fresh decoded objects.
+    No proof result, lock, ledger or admission state is cached.
+    """
+    if _GATE_BYTES.get() is not None:
+        yield
+        return
     token=_GATE_BYTES.set({'pages':{},'bytes':0,'classifications':{},'classification_bytes':0})
     try:
-        return _gate(store,research,scan_ids,ledger_locked=ledger_locked)
+        yield
     finally:
         _GATE_BYTES.reset(token)
+
+
+def gate(store,research,scan_ids,*,ledger_locked=None):
+    """Active gate always validates the current runtime, never a proposal."""
+    with verified_bytes_scope():
+        return _gate(store,research,scan_ids,ledger_locked=ledger_locked)
 
 
 def _gate(store,research,scan_ids,*,ledger_locked=None,review_source=None):
