@@ -315,6 +315,36 @@ Run all `tests/test_ops_*.py` in ONE process (real exit code), with `TMPDIR` bot
 
 ---
 
+## T22I — T22H regression in the retirement-receipt modules + small hold gaps — CRITICAL PATH
+STATUS: OPEN
+DEPENDS: none
+BASE: origin/cloud/T22H, then merge origin/cloud/T23H (removes the unrelated pacing-clock noise)
+OWNS: desk/history_progress.py (classification only), the T22H files, tests
+AVOID: desk/provider_pacing.py (T38)
+
+Coordinator review of T22H: every safety probe PASSES. Integrity causes HOLD through the real history path and history_first; transients close; the dispatcher holds durably; a dead dispatcher with only transient originals is ABANDONED. Blocking regression: 63 errors in the reviewed retirement-receipt modules:
+- `test_dispatch_preparation_retirement` (21)
+- `test_paper_preparation_retirement` (28)
+- `test_intake_uncaptured_retirement` (10)
+- `test_captured_intake_decode_no_entry`
+- `test_migration_recovery_lineage`
+- `test_pre_entry_abandonment`
+- `test_empty_history_successor_lifecycle`
+
+They fail with "Exact sixth unresolved reservation" (`desk/paper_dispatch_preparation_retirement.py:184`) and "Exact initial failed preparation reservation required" (`desk/paper_preparation_retirement.py:186`).
+
+Cause: `HistoryProgress.advance` no longer sets RETRYABLE_ERROR when a failure has no transient original, but `PaperHistorySource` itself raises `PaperReadError('DEADLINE_EXCEEDED')` after the reservation and BEFORE any transport call, so there is no original.
+
+1. **Fix.** Treat a TYPED pre-transport transient raised by the desk's own source (`DEADLINE_EXCEEDED`, and any other code the source raises before transport that is in the transient vocabulary) as RETRYABLE_ERROR. Keep every integrity cause HOLDing; re-run the coordinator probe table (TLS, UNCLASSIFIED, bare OSError, digest conflict, HISTORY_BINDING_INVALID, Cached request mismatch → HOLD; timeout/reset/429/502/pacing busy → FAILED_CHARGED) as committed tests. Do NOT edit the receipt modules' proofs.
+2. **(MED) Hold-file write failure.** If `_hold_dispatch` cannot write its file (OSError), the intent must not be abandonable later. Fall back to a second durable mechanism (a journal row in the same DB, or `fsync` of a sibling sentinel), and if both fail, refuse further dispatch (fail closed) with a visible reason.
+3. **(MED) Swallowed exceptions.** An exception inside `classify` or `_close_dispatch` in the dispatcher's except handler must write a hold, not be swallowed.
+4. **(LOW) Sentinel check.** `recover_abandoned` uses `os.path.lexists` for sentinels, like the dispatcher does.
+5. **(LOW) Closure consistency.** The closure `_consistent` checks match publish's for `FEATURE_HISTORY_PAGE_LIMIT`: 8 retained `getTransactionsForAddress` originals, and `==18` where publish uses `==18`.
+
+**Acceptance:** all 7 modules above plus the T22H test set are green in ONE process (real exit code) under both `TMPDIR=/private/var/folders/...` and `/private/tmp`. Also run `test_empty_history_successor_lifecycle`; its only allowed failure is the T38 pacing-clock one, if T38 is not merged yet, and you must say so.
+
+---
+
 ## T22H — Close the last two allow-list holes in T22G (history laundering, dispatcher abandonment) — CRITICAL PATH
 STATUS: OPEN
 DEPENDS: none
