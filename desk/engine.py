@@ -28,7 +28,28 @@ def equity(state):
     return dec(state["cash"]) + sum((dec(p["mark_value"]) for p in state["positions"].values()), ZERO)
 
 
+def _exit_only_recovery(cfg):
+    """Opt-in versioned: EXIT_ONLY caused by an unresolved exit returns to RUNNING once cleared."""
+    version = cfg.get("paper_exit_only_recovery_version")
+    if version is None:
+        return False
+    if type(version) is not int or version != 1:
+        raise ValueError("Unsupported exit-only recovery configuration")
+    return True
+
+
 def risk(state, cfg, output):
+    recovery = _exit_only_recovery(cfg)
+    if recovery:
+        if state["mode"] != "EXIT_ONLY":
+            state.pop("exit_only_cause", None)
+        elif (state.get("exit_only_cause") == "UNRESOLVED_EXIT"
+              and not any(p.get("exit_blocked") for p in state["positions"].values())):
+            # Only the engine's own unresolved-exit pause is lifted; operator EXIT_ONLY, risk pauses,
+            # liquidation and daily limits are re-evaluated below and still hold.
+            state.pop("exit_only_cause")
+            state["mode"] = "RUNNING"
+            output.append({"type": "control", "reason": "UNRESOLVED_EXIT_CLEARED"})
     eq = equity(state)
     peak = max(dec(state["peak_equity"]), eq)
     state["peak_equity"] = str(peak)
@@ -41,6 +62,7 @@ def risk(state, cfg, output):
     elif any(p.get("exit_blocked") for p in state["positions"].values()):
         if state["mode"]=="RUNNING":
             state["mode"]="EXIT_ONLY"
+            if recovery:state["exit_only_cause"]="UNRESOLVED_EXIT"
             output.append({"type":"control","reason":"UNRESOLVED_EXIT_BLOCKS_ENTRY"})
     elif (daily_drawdown >= dec(cfg["daily_pause_fraction"]) * dec(state["day_start_equity"])
           or state["loss_streak"] >= 6):
@@ -346,6 +368,7 @@ def transition(state, e, cfg, *, _quote_book=None):
                 if not p.get("exit_blocked"):p["exit_blocked"]="STALE_OR_UNAVAILABLE_EXIT"
         if any(p.get("exit_blocked") for p in state["positions"].values()) and state["mode"]=="RUNNING":
             state["mode"]="EXIT_ONLY"
+            if _exit_only_recovery(cfg):state["exit_only_cause"]="UNRESOLVED_EXIT"
             output.append({"type":"control","reason":"UNRESOLVED_EXIT_BLOCKS_ENTRY"})
         return state,output
     day = datetime.fromtimestamp(e["ts"], timezone.utc).date().isoformat()
@@ -362,6 +385,7 @@ def transition(state, e, cfg, *, _quote_book=None):
         mapping = {"PAUSE_ENTRY": "ENTRY_PAUSED", "EXIT_ONLY": "EXIT_ONLY",
                    "LIQUIDATE": "LIQUIDATING", "RESUME": "RUNNING"}
         state["mode"] = mapping[e["command"]]
+        state.pop("exit_only_cause", None)   # operator authority replaces any engine-set pause
         risk(state, cfg, output)
         return state, output + [{"type": "control", "reason": e["command"], "mode": state["mode"]}]
     mint = e["mint"]
