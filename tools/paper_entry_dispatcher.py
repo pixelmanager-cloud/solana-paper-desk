@@ -569,21 +569,24 @@ def dispatch(expected, *, execute=False, systemd_credentials=False):
             raise ValueError('Dispatcher journal capacity exhausted; no reset')
         identity = uuid.uuid4().hex
         intent = {'version':1,'context_hash':digest(expected),'at':now,'hint':hint}
-        _write(journal,'intents',identity,intent,hint)
-        # Any exception/interruption leaves this intent unresolved; no catch/retry.
-        cli._credentials()
+        # A competing held/worker invocation is a zero-intent refusal. Complete
+        # the final lock reacquisition before publishing the irreversible latch.
         _preflight(expected)
         from desk.providers import helius_rpc
         cfg = cli._config(paths['config'])
         with monitor._context(paths['research_db'],paths['evidence_db'],paths['ledger_db'],cfg) as (store, ledger, state):
             if state['positions'] or state['mode'] != 'RUNNING':
                 raise ValueError('Held-position priority or paused ledger')
+            cli._credentials()
             jobs = JobPersistence.__new__(JobPersistence); jobs.path = Path(paths['research_db'])
             with closing(jobs.connect()) as c:
                 if c.execute('SELECT 1 FROM scans WHERE mint=? LIMIT 1',(hint['mint'],)).fetchone():
                     raise ValueError('Already admitted candidate')
             if terminal.gate(store,jobs.path,(),ledger_locked=str(ledger)):
                 raise ValueError('Observation recovery required')
+            _write(journal,'intents',identity,intent,hint)
+            # From this point any interruption stays unresolved; never retry or
+            # erase an intent merely because acquisition has not yet spent.
             scan = jobs.admit(hint['mint'],kind=BIRTH_ACQUISITION_V1,evidence_db=store.path,
                               paper_token_profile_version=cfg.get('paper_token_profile_version',0))
         def guarded_rpc(method,params):
