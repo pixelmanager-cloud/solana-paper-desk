@@ -119,12 +119,22 @@ class MathTests(unittest.TestCase):
         self.assertEqual(self.reasons('0.8201', margin=D('0.02')), ['STOP'])
         self.assertEqual(self.reasons('0.85', margin=D('0.02')), [])
 
-    def test_trailing_only_from_stage_three_and_uses_the_larger_peak(self):
+    def test_trailing_only_from_stage_three_and_follows_the_engines_recorded_peak(self):
         self.assertEqual(self.reasons('1.5', stage=2, peak_ratio='3'), [])
         self.assertEqual(self.reasons('2.0', stage=3, peak_ratio='3', stop_ratio='1.4'), ['TRAILING_STOP'])   # 2.0 <= 3*0.7=2.1
         self.assertEqual(self.reasons('2.2', stage=3, peak_ratio='3', stop_ratio='1.4'), [])
-        # the watcher saw a higher peak than the ledger recorded
-        self.assertEqual(self.reasons('2.2', stage=3, peak_ratio='3', stop_ratio='1.4', peak=D('4')), ['TRAILING_STOP'])
+        # The watcher saw a higher peak than the ledger recorded. The ENGINE trails its recorded peak, so the
+        # watcher's peak may move the line only by one margin (T28F item 9); beyond that it would trigger passes
+        # the engine will not act on.
+        self.assertEqual(self.reasons('2.2', stage=3, peak_ratio='3', stop_ratio='1.4', peak=D('4')), [])
+        self.assertEqual(self.reasons('2.2', stage=3, peak_ratio='3', stop_ratio='1.4', peak=D('4'), margin=D('0.02')), [])
+        # inside the margin the hint counts: recorded 3, watcher 3.01 moves the line 2.12 -> 2.127 (with the margin)
+        self.assertEqual(self.reasons('2.125', stage=3, peak_ratio='3', stop_ratio='1.4', margin=D('0.02')), [])
+        self.assertEqual(self.reasons('2.125', stage=3, peak_ratio='3', stop_ratio='1.4', peak=D('3.01'), margin=D('0.02')),
+                         ['TRAILING_STOP'])
+        self.assertEqual(self.reasons('2.12', stage=3, peak_ratio='3', stop_ratio='1.4', peak=D('9'), margin=D('0.02')),
+                         ['TRAILING_STOP'])                       # capped at recorded+margin = 3.02: line 2.134
+        self.assertEqual(self.reasons('2.14', stage=3, peak_ratio='3', stop_ratio='1.4', peak=D('9'), margin=D('0.02')), [])
 
     def test_take_profit_rungs_follow_the_stage(self):
         self.assertEqual(self.reasons('1.4', stage=0), ['TAKE_PROFIT'])
@@ -274,7 +284,7 @@ class StoreTests(unittest.TestCase):
     def test_vault_cache_is_first_write_wins(self):
         self.store.save_vault('P', 'M', 'B1', 'Q1', 1.0)
         self.store.save_vault('P', 'M', 'B2', 'Q2', 2.0)
-        self.assertEqual(self.store.vault('P'), ('M', 'B1', 'Q1'))
+        self.assertEqual(self.store.vault('P'), ('M', 'B1', 'Q1', None))      # the 4th column holds optional pool/mint facts
 
     def test_allowance_is_a_rolling_window_and_failures_are_charged(self):
         for t in (10.0, 20.0, 4000.0):
@@ -300,6 +310,7 @@ class WatcherBase(unittest.IsolatedAsyncioTestCase):
         self.cfg = load_config(CONFIG)
         self.rpc_calls = []
         self.rpc_failure = None
+        self.block_times = {}
         self.reserves = (10 ** 15, 10 * 10 ** 9)          # base raw, quote raw (ratio ~0.982)
         self.slot = 100
         self.sleeps = []
@@ -321,7 +332,11 @@ class WatcherBase(unittest.IsolatedAsyncioTestCase):
         if self.rpc_failure is not None:
             raise self.rpc_failure
         if method == 'getAccountInfo':
+            if params[0] == self.mint:
+                return {'context': {'slot': self.slot}, 'value': self.mint_account()}
             return {'context': {'slot': self.slot}, 'value': self.pool.account()}
+        if method == 'getBlockTime':
+            return self.block_times.get(params[0], 1_700_000_000)
         if method == 'getMultipleAccounts':
             values = []
             for acct in params[0]:
@@ -331,6 +346,13 @@ class WatcherBase(unittest.IsolatedAsyncioTestCase):
                     values.append(token_account(SOL, self.reserves[1]))
             return {'context': {'slot': self.slot}, 'value': values}
         raise AssertionError(method)
+
+    def mint_account(self, owner=TOKEN_PROGRAM, decimals=6, extensions=b''):
+        data = bytearray(82)
+        data[36:44] = (10 ** 15).to_bytes(8, 'little')
+        data[44], data[45] = decimals, 1
+        raw = bytes(data) + (bytes(83) + b'\x01' + extensions if extensions else b'')
+        return {'owner': owner, 'executable': False, 'lamports': 1, 'data': [base64.b64encode(raw).decode(), 'base64']}
 
     def vault_values(self, base=None, quote=None):
         return (token_account(self.pool.mint_s, self.reserves[0] if base is None else base),
@@ -371,7 +393,8 @@ class PollingTests(WatcherBase):
         self.write_state({self.mint: self.pos()})
         w = self.make()
         await w.tick()                                                      # refresh, resolve vaults (getAccountInfo), poll
-        self.assertEqual([c[0] for c in self.rpc_calls], ['getAccountInfo', 'getMultipleAccounts'])
+        # pool account, mint account (decimals / transfer fee), then ONE same-slot poll of both vaults
+        self.assertEqual([c[0] for c in self.rpc_calls], ['getAccountInfo', 'getAccountInfo', 'getMultipleAccounts'])
         self.assertEqual(w.status, 'POLLING')
         self.assertEqual(self.triggers(), [])
         self.reserves = (10 ** 15, 5 * 10 ** 9)                             # liquidity pulled: ratio ~0.49
@@ -391,12 +414,12 @@ class PollingTests(WatcherBase):
         self.rpc_failure = hw.RpcError('HTTP_429')
         self.t += 2.5
         await w.tick()
-        self.t += 2.5
+        self.t += 1.0                                                       # still inside the 429 hold (2 s): nothing is sent
         await w.tick()
         kinds = [r[0] for r in self.store.db.execute('SELECT kind FROM requests ORDER BY id')]
-        self.assertEqual(kinds, ['getAccountInfo', 'getMultipleAccounts', 'getMultipleAccounts', 'getMultipleAccounts'])
+        self.assertEqual(kinds, ['getAccountInfo', 'getAccountInfo', 'getMultipleAccounts', 'getMultipleAccounts'])
         results = [r[0] for r in self.store.db.execute('SELECT ok FROM request_results ORDER BY request_id')]
-        self.assertEqual(results, [1, 1, 0, 0])
+        self.assertEqual(results, [1, 1, 1, 0])
         self.assertIn('POLL_FAILED', w.warnings)
         self.assertEqual(w.status, 'DEGRADED')
 
@@ -418,7 +441,8 @@ class PollingTests(WatcherBase):
         self.write_state({self.mint: self.pos()})
         w = self.make(min_request_interval=1.0)
         await w.tick()
-        self.assertTrue(self.sleeps and abs(sum(self.sleeps) - 1.0) < 1e-6)
+        # pool account, mint account, first poll: three requests, two enforced gaps
+        self.assertTrue(self.sleeps and abs(sum(self.sleeps) - 2.0) < 1e-6)
 
     async def test_stale_reserves_never_trigger_a_price_exit_but_time_exits_still_fire(self):
         self.write_state({self.mint: self.pos()})
@@ -647,12 +671,15 @@ class StreamTests(WatcherBase):
         self.assertEqual(len(polls), 1 + 1)                                 # initial polling tick + the post-connect seed
         feed.queue.put_nowait((self.pool.quote_vault, token_account(SOL, 3 * 10 ** 9), self.slot + 1))
         await self.settle()
-        self.assertEqual([(r[1], r[4]) for r in self.triggers()], [('STOP', 'stream')])
+        self.assertEqual(self.triggers(), [])                               # one vault alone is never priced (T28F item 2)
+        feed.queue.put_nowait((self.pool.base_vault, token_account(self.pool.mint_s, self.reserves[0]), self.slot + 1))
+        await self.settle()
+        self.assertEqual([(r[1], r[4]) for r in self.triggers()], [('STOP', 'stream')])   # the pair of ONE slot completes
         # quiet pool: no notifications, reserves stay valid while the stream is up (reconcile keeps them fresh)
-        before = len(self.rpc_calls)
+        polls_before = len([c for c in self.rpc_calls if c[0] == 'getMultipleAccounts'])
         self.t += 10
         await w.tick()
-        self.assertEqual(len(self.rpc_calls), before)                       # not polling at 2 s while streaming
+        self.assertEqual(len([c for c in self.rpc_calls if c[0] == 'getMultipleAccounts']), polls_before)  # not polling at 2 s while streaming
 
     async def test_reconcile_poll_catches_a_missed_notification(self):
         feed = FakeFeed()
@@ -718,7 +745,7 @@ class StreamTests(WatcherBase):
         await asyncio.wait_for(task, 2)
         health = json.loads((self.root / 'state' / 'health.json').read_text())
         self.assertEqual(health['positions_watched'], 1)
-        self.assertEqual(health['allowance_limit'], 3600)
+        self.assertEqual(health['allowance_limit'], 1800)
         self.assertEqual(os.stat(self.root / 'state' / 'health.json').st_mode & 0o777, 0o600)
         self.assertTrue(w.stream_task is None or w.stream_task.done())
 
@@ -885,9 +912,11 @@ class CliTests(WatcherBase):
     def args(self, **over):
         values = dict(ledger=str(self.ledger), config=str(CONFIG), state_dir=str(self.root / 'state'), credentials_dir=None,
                       trigger='path', unit=UNIT, pool_fee_bps='25', poll_seconds=2.0, reconcile_seconds=30.0,
-                      refresh_seconds=5.0, allowance_per_hour=3600, min_request_interval=0.0, debounce_seconds=30.0,
+                      refresh_seconds=5.0, allowance_per_hour=1800, min_request_interval=0.0, debounce_seconds=30.0,
                       max_triggers_per_position_hour=12, max_triggers_hour=60, margin='0.02', no_stream=False, once=True,
-                      dry_run=False, min_trigger_gap_seconds=5.0)
+                      dry_run=False, min_trigger_gap_seconds=5.0, creator_fee_bps='0', http_backoff_cap=300.0,
+                      settle_seconds=1.0, refire_seconds=5.0, max_refires=3, stall_seconds=60.0, stable_seconds=60.0,
+                      price_guarantee_seconds=60.0, max_time_triggers_per_position_hour=6, max_time_triggers_hour=30)
         values.update(over)
         return SimpleNamespace(**values)
 
@@ -912,7 +941,9 @@ class CliTests(WatcherBase):
     async def test_argument_validation_fails_closed(self):
         for over in ({'poll_seconds': 0.1}, {'poll_seconds': 600}, {'allowance_per_hour': 0}, {'margin': '0.9'},
                      {'debounce_seconds': -1}, {'max_triggers_hour': 0}, {'refresh_seconds': 0.1},
-                     {'min_trigger_gap_seconds': -1}, {'min_trigger_gap_seconds': 601}):
+                     {'min_trigger_gap_seconds': -1}, {'min_trigger_gap_seconds': 601}, {'http_backoff_cap': 0},
+                     {'refire_seconds': 0}, {'max_refires': 11}, {'price_guarantee_seconds': 0}, {'creator_fee_bps': 'x'},
+                     {'max_time_triggers_hour': 0}, {'stall_seconds': -1}):
             with self.subTest(over), self.assertRaises(hw.WatcherError):
                 await hw.run_command(self.args(**over), rpc=self.fake_rpc)
 
@@ -952,41 +983,82 @@ class CliTests(WatcherBase):
 
 
 class LatencyReportTests(WatcherBase):
-    def test_known_answer(self):
+    def build(self, passes, trigger_rows, slot_times=()):
+        """passes: (event_id, ts, mint, kind, fill_reason-or-None); trigger_rows: record_trigger positional args."""
         ledger = Ledger(str(self.ledger))
-        for i, (event_id, ts, outcome) in enumerate([
-                ('e1', 5_000, {'type': 'fill', 'side': 'buy', 'mint': 'M1', 'reason': 'ENTRY'}),
-                ('e2', 5_105, {'type': 'fill', 'side': 'sell', 'mint': 'M1', 'reason': 'STOP'}),
-                ('e3', 6_030, {'type': 'fill', 'side': 'sell', 'mint': 'M2', 'reason': 'TRAILING_STOP'})], 1):
-            ledger.db.execute('INSERT INTO events(event_id, ts, payload, payload_hash) VALUES(?,?,?,?)', (event_id, ts, '{}', 'h'))
-            ledger.db.execute('INSERT INTO outcomes(event_id, payload) VALUES(?,?)', (event_id, json.dumps(outcome)))
+        for event_id, ts, mint, kind, fill in passes:
+            ledger.db.execute('INSERT INTO events(event_id, ts, payload, payload_hash) VALUES(?,?,?,?)',
+                              (event_id, ts, json.dumps({'kind': kind, 'mint': mint, 'ts': ts}), 'h'))
+            if fill is not None:
+                side, reason = fill
+                ledger.db.execute('INSERT INTO outcomes(event_id, payload) VALUES(?,?)',
+                                  (event_id, json.dumps({'type': 'fill', 'side': side, 'mint': mint, 'reason': reason})))
         ledger.close()
         store = hw.WatcherStore(self.root / 'state' / 'watcher.sqlite')
-        store.record_trigger(5_100.0, 'M1', ['STOP'], D('0.5'), 77, 5_099.5, 'stream', 'path', True, 'ok')
-        store.record_trigger(6_000.0, 'M2', ['TRAILING_STOP'], D('2'), 78, 5_999.0, 'poll', 'path', True, 'ok')
-        store.record_trigger(7_000.0, 'M3', ['STOP'], None, None, None, 'tick', 'path', True, 'ok')
+        ids = [store.record_trigger(*row) for row in trigger_rows]
+        for index, slot, block_time in slot_times:
+            store.record_slot_time(ids[index], slot, 0.0, block_time, True)
         store.close()
-        report = hw.latency_report(self.ledger, self.root / 'state' / 'watcher.sqlite')
-        self.assertEqual(report['summary']['triggers'], 3)
-        self.assertEqual(report['summary']['with_fill'], 2)
+        return hw.latency_report(self.ledger, self.root / 'state' / 'watcher.sqlite')
+
+    def test_known_answer(self):
+        report = self.build(
+            [('e1', 5_000, 'M1', 'market', ('buy', 'ENTRY')), ('e2', 5_105, 'M1', 'quote_exit', ('sell', 'STOP')),
+             ('e3', 6_030, 'M2', 'quote_exit', ('sell', 'TRAILING_STOP'))],
+            [(5_100.0, 'M1', ['STOP'], D('0.5'), 77, 5_099.5, 'stream', 'path', True, 'ok', 'price'),
+             (6_000.0, 'M2', ['TRAILING_STOP'], D('2'), 78, 5_999.0, 'poll', 'path', True, 'ok', 'price'),
+             (7_000.0, 'M3', ['STOP'], None, None, None, 'tick', 'path', True, 'ok', 'price')],
+            slot_times=[(0, 77, 5_098)])
+        self.assertEqual((report['summary']['triggers'], report['summary']['with_fill'], report['summary']['with_pass']), (3, 2, 2))
         self.assertEqual(report['summary']['trigger_to_fill_median_seconds'], 17.5)       # (5 and 30)
         first, second, third = report['triggers']
         self.assertEqual((first['trigger_to_fill_seconds'], first['fill_reason'], first['watch_to_trigger_seconds']), (5.0, 'STOP', 0.5))
-        self.assertEqual((second['trigger_to_fill_seconds'], second['fill_reason']), (30.0, 'TRAILING_STOP'))
+        self.assertEqual((first['trigger_to_pass_seconds'], first['slot_block_time'], first['slot_to_trigger_seconds']), (5.0, 5_098, 2.0))
+        self.assertEqual(first['slot_wall_time'], 'BLOCK_TIME')
+        self.assertEqual((second['trigger_to_fill_seconds'], second['fill_reason'], second['slot_wall_time']), (30.0, 'TRAILING_STOP', 'NOT_RECORDED'))
         self.assertIsNone(third['trigger_to_fill_seconds'])
-        self.assertEqual(first['slot_wall_time'], 'NOT_RECORDED')
+        self.assertEqual(report['summary']['slot_to_trigger_median_seconds'], 2.0)
 
-    def test_buy_fills_and_other_mints_are_not_matched(self):
-        ledger = Ledger(str(self.ledger))
-        ledger.db.execute("INSERT INTO events(event_id, ts, payload, payload_hash) VALUES('e1', 5100, '{}', 'h')")
-        ledger.db.execute('INSERT INTO outcomes(event_id, payload) VALUES(?,?)',
-                          ('e1', json.dumps({'type': 'fill', 'side': 'buy', 'mint': 'M1', 'reason': 'ENTRY'})))
-        ledger.close()
-        store = hw.WatcherStore(self.root / 'state' / 'watcher.sqlite')
-        store.record_trigger(5_100.0, 'M1', ['STOP'], None, None, None, 'poll', 'path', True, 'ok')
-        store.close()
-        report = hw.latency_report(self.ledger, self.root / 'state' / 'watcher.sqlite')
+    def test_pairing_is_strictly_after_the_trigger_and_inside_the_window(self):
+        report = self.build(
+            [('before', 5_099, 'M1', 'quote_exit', ('sell', 'STOP')),       # a fill BEFORE the trigger is never its fill
+             ('same', 5_100, 'M1', 'quote_exit', ('sell', 'STOP')),         # same whole second: not provably after
+             ('far', 5_100 + 301, 'M1', 'quote_exit', ('sell', 'STOP'))],   # beyond the bounded window
+            [(5_100.0, 'M1', ['STOP'], None, 1, 5_099.0, 'stream', 'path', True, 'ok', 'price')])
+        entry = report['triggers'][0]
+        self.assertEqual((entry['trigger_to_pass_seconds'], entry['trigger_to_fill_seconds']), (None, None))
         self.assertEqual(report['summary']['with_fill'], 0)
+
+    def test_buy_fills_other_mints_and_unfired_triggers_are_not_matched(self):
+        report = self.build(
+            [('b', 5_110, 'M1', 'market', ('buy', 'ENTRY')), ('o', 5_120, 'M2', 'quote_exit', ('sell', 'STOP'))],
+            [(5_100.0, 'M1', ['STOP'], None, None, None, 'poll', 'path', True, 'ok', 'price'),
+             (5_101.0, 'M2', ['STOP'], None, None, None, 'poll', 'path', False, 'RUNNER_OSError', 'price')])
+        self.assertEqual(report['summary']['with_fill'], 0)
+        first, second = report['triggers']
+        self.assertEqual(first['trigger_to_pass_seconds'], 10.0)             # a pass is attributed ...
+        self.assertIsNone(first['trigger_to_fill_seconds'])                  # ... but a BUY fill is not an exit fill
+        self.assertFalse(second['fired']); self.assertIsNone(second['trigger_to_pass_seconds'])
+
+    def test_several_requests_for_one_pass_attribute_the_latency_once_to_the_last(self):
+        report = self.build(
+            [('p', 5_130, 'M1', 'quote_exit', ('sell', 'STOP'))],
+            [(5_100.0, 'M1', ['STOP'], None, 1, 5_099.0, 'stream', 'path', True, 'ok', 'price'),
+             (5_105.0, 'M1', ['STOP'], None, 1, 5_099.0, 'refire', 'path', True, 'ok', 'price'),
+             (5_110.0, 'M1', ['STOP'], None, 1, 5_099.0, 'refire', 'path', True, 'ok', 'price')])
+        flags = [(t['superseded'], t['trigger_to_fill_seconds']) for t in report['triggers']]
+        self.assertEqual(flags, [(True, None), (True, None), (False, 20.0)])
+        self.assertEqual((report['summary']['with_fill'], report['summary']['superseded']), (1, 2))   # the fill is counted once
+
+    def test_a_later_unrelated_pass_is_not_attributed_to_a_lost_request(self):
+        report = self.build(
+            [('late', 5_100 + 4_000, 'M1', 'quote_exit', ('sell', 'MAX_HOLD'))],
+            [(5_100.0, 'M1', ['STOP'], None, 1, 5_099.0, 'stream', 'path', True, 'ok', 'price')])
+        self.assertIsNone(report['triggers'][0]['trigger_to_pass_seconds'])
+
+    def test_unreadable_inputs_fail_closed(self):
+        with self.assertRaises(hw.WatcherError):
+            hw.latency_report(self.root / 'missing.sqlite', self.root / 'state' / 'watcher.sqlite')
 
 
 class UnitTemplateTests(unittest.TestCase):
