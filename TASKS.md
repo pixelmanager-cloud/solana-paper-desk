@@ -1396,3 +1396,17 @@ AVOID: T22G files (desk/paper_cycle.py closure logic, desk/paper_pass_closure.py
 3. **Flag dependency.** The concurrent flag must NOT require the TTL key. Remove that dependency.
 4. **Docs and reports.** Remove every recommendation of `paper_portfolio_mark_ttl_seconds` (docs/MULTI_POSITION.md ~:177; correct reports/T16F.md's suggestion with a note). Fix the stale `ENTRY_SECONDS = 30` line (it is 52).
 5. **Phase caps.** Cap each entry phase so the held-latency bound is enforced, not just estimated. A phase that overruns is cut, with a terminal no-entry result, never an orphaned intent.
+
+---
+
+## T39 — Resource isolation for research/optional units
+STATUS: OPEN
+DEPENDS: none
+BASE: origin/integration/r1
+OWNS: deploy/fresh/desk-counterfactual.*, deploy/fresh/desk-held-watcher.service, the fill-realism worker unit template if present, tests/test_ops_healthcheck.py (unit invariants only)
+AVOID: desk/**, the trading unit templates (entry/held/monitor/decisions/dashboard/discovery)
+
+Research and optional services must never degrade trading:
+- Add `CPUQuota=100%` (one core), `Nice=10`, `IOSchedulingClass=idle` (or best-effort with priority 7), `CPUWeight=20`, `IOWeight=20`, and a sane `MemoryMax`/`TasksMax` to `desk-counterfactual.service`, the fill-realism worker, and any other research unit. The held watcher is trading-relevant (it triggers exits fast), so give it NORMAL priority but a `MemoryMax`/`TasksMax`.
+- Extend the unit-invariant test so every research unit has these limits and no trading unit gets throttled.
+- Document in docs/ops/OPERATIONS_24x7.md how to read per-unit CPU and memory (`systemd-cgtop`, `systemctl show -p CPUUsageNSec,MemoryCurrent`), and add a healthcheck WARN when a research unit's CPU over the last interval exceeds its quota for 3 consecutive checks.
