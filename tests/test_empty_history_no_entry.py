@@ -126,13 +126,15 @@ class RetainedEmptyTests(unittest.TestCase):
         h.config.write_text(canonical(f.cfg));h.row['provenance']='PUBLIC_MAINNET_CAPTURE_NOT_TRADING_EVIDENCE';h.save()
         code=textwrap.dedent(inspect.getsource(f.actual_cycle));a=code.index('    class Opener:');b=code.index('    with ExitStack()')
         namespace={**vars(protocol),'outer':f};exec(textwrap.dedent(code[a:b]),namespace);delegate=namespace['Opener']()
+        owner=self;self.empty_history=True
         class HTTP:
             def open(self,request,*,timeout):
-                if request.method=='POST' and json.loads(request.data)['method']=='getTransactionsForAddress':
+                if owner.empty_history and request.method=='POST' and json.loads(request.data)['method']=='getTransactionsForAddress':
                     return Response(canonical({'jsonrpc':'2.0','id':transport.RPC_ID,'result':{'data':[],'paginationToken':None}}).encode())
                 if 'api.kraken.com/0/public/Trades?' in request.full_url:
                     return Response(canonical({'error':[],'result':{'SOLUSD':[['100','1',time.time()-1,'s','l','',123]],'last':'123'}}).encode())
                 return delegate.open(request,timeout=timeout)
+        self.http=HTTP()
         original_intent=rejection.intent;original_bounds=rejection.bounds;original_reason=rejection.reason_for
         def historical_intent(*a,**k):return {**original_intent(*a,**k),'kind':'history_first_paper_preparation_v3'}
         def historical_bounds(*a,**k):return original_bounds(*a,**{**k,'required_measurements':False})
@@ -204,3 +206,48 @@ class RetainedEmptyTests(unittest.TestCase):
             recovery.plan(*(self.ctx[k] for k in ('research_db','evidence_db','ledger_db')),f.cfg,
                 pass_id=self.pending[0],outcome_hash=self.result['evidence_hash'],empty_history=self.details,pacing_db=self.ctx['pacing_db'])
         with closing(self.store.connect()) as c:self.assertIsNone(c.execute('SELECT outcome_hash FROM paper_observation_passes WHERE id=?',(self.pending[0],)).fetchone()[0])
+
+    def test_post_recovery_real_buy_monitor_full_exit(self):
+        import time
+        from dataclasses import replace
+        from desk import paper_cycle as cycle,paper_read_sources as transport
+        from desk.model import canonical
+        from desk.programs import unbase58
+        from desk.security import base58
+        from desk.ownership_acquisition import _Setup
+        from desk.monitoring_budget import MonitoringBudget
+        from desk.quote_execution import raw_quantity
+        f=self.h.f
+        pin=recovery.plan(*(self.ctx[k] for k in ('research_db','evidence_db','ledger_db')),f.cfg,
+            pass_id=self.pending[0],outcome_hash=self.result['evidence_hash'],empty_history=self.details,pacing_db=self.ctx['pacing_db'])
+        self.policy.write_text(canonical({'version':1,'associations':[pin]}))
+        recovery.reconcile(*(self.ctx[k] for k in ('research_db','evidence_db','ledger_db')),f.cfg,pin=pin)
+        retired=f.target.scan_id;original=self.progress.admission(retired)
+        f.f.at=int(time.time());f.target=f.f.target()
+        _Setup(self.store,f.f.jobs.descriptor(f.target.scan_id),self.progress.admission(f.target.scan_id))
+        self.empty_history=False
+        manifest=self.store.load(f.item.graduation_refs[0]);response=copy.deepcopy(self.store.load(manifest['response_hash']))
+        raw=response['data'][0];raw['blockTime']=f.f.at-600
+        ix=raw['meta']['innerInstructions'][0]['instructions'][0]
+        data=bytearray(unbase58(ix['data']));data[136:144]=raw['blockTime'].to_bytes(8,'little',signed=True);ix['data']=base58(data)
+        key=self.store.save(response);ref=self.store.save({**manifest,'response_hash':key})
+        item=replace(f.item,target=f.target,provenance='PUBLIC_MAINNET_CAPTURE_NOT_TRADING_EVIDENCE',
+                     graduated_at=f.f.at-600,graduation_refs=(ref,),history_as_of=None)
+        with patch.dict('os.environ',{'HELIUS_API_KEY':'SYNTHETIC_TEST_ONLY','JUPITER_API_KEY':'SYNTHETIC_TEST_ONLY'}),patch.object(transport,'build_opener',return_value=self.http):
+            result=cycle.run_once(f.f.jobs.path,self.store.path,f.path,f.cfg,candidates=(item,),dependency_blockers=())
+            self.assertEqual(result['status'],'COMPLETE',result)
+            self.assertTrue(any(x.get('side')=='buy' for x in result['outcomes']),result)
+            position=cycle._state(f.path,f.cfg)['positions'][f.target.mint]
+            allowance=MonitoringBudget(self.store,f.path,f.cfg);allowance.provision()
+            held=replace(item,target=replace(f.target,amount_raw=raw_quantity(position['qty'],position['quote_execution']['mint_decimals'])))
+            f.f.at=int(time.time());f.sell_output=10_000_000
+            mark=cycle.run_once(f.f.jobs.path,self.store.path,f.path,f.cfg,candidates=(),position_targets=(held,),dependency_blockers=(),monitoring=True)
+            self.assertEqual(mark['status'],'COMPLETE',mark)
+            self.assertTrue(cycle._state(f.path,f.cfg)['positions'])
+            f.sell_output=1_000_000;f.f.at=int(time.time())
+            exited=cycle.run_once(f.f.jobs.path,self.store.path,f.path,f.cfg,candidates=(),position_targets=(held,),dependency_blockers=(),monitoring=True)
+            self.assertEqual(exited['status'],'COMPLETE',exited)
+            self.assertTrue(any(x.get('side')=='sell' for x in exited['outcomes']),exited)
+        self.assertEqual(cycle._state(f.path,f.cfg)['positions'],{})
+        self.assertEqual(self.progress.admission(retired),original)
+        self.assertIsNone(terminal.gate(self.store,self.ctx['research_db'],()))

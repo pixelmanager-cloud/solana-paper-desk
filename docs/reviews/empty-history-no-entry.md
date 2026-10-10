@@ -34,3 +34,10 @@ for its unrelated-pool rows. New matrix binds actual trade bytes to the candidat
 pool and includes a one-buyer measured-window control that cannot claim missing
 measurements. Post-recovery BUY/held/exit and runtime successor validation remain
 pending. Successor draft is preserved locally outside runtime source, unpublished.
+
+Post-recovery actual lifecycle regression PASS, 1 test / 28.843 seconds: a fresh
+admission BUY, verified open-position monitoring mark, then full exit run through
+actual transport parsing, feature calculation, quotes, ledger and checkpoints.
+Only synthetic HTTPS response transport is replaced. The retired scan remains
+unchanged and the global gate clears after the completed lifecycle. This tests
+current-source proof replay; the separate source successor remains pending.
