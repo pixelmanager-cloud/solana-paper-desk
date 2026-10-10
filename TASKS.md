@@ -1280,3 +1280,30 @@ AVOID: the Kraken lane: its row, its migration receipt and `config/kraken-pacing
   - a 429 still triggers the 30s backoff.
 
 Add the separate per-provider budget note to docs: Helius `getMultipleAccounts` counts as one RPC call; DAS calls have their own 10/s cap.
+
+---
+
+## T37 — SOL/USD: Jupiter PriceV3 primary, Kraken fallback, divergence guard
+STATUS: OPEN
+DEPENDS: none
+BASE: origin/integration/r1
+OWNS: desk/sol_usd_observation.py, desk/kraken_usd_observation.py (only to expose a shared interface), a new desk/usd_valuation.py (source selection and cross-check), the minimal hook where the entry/held pipeline obtains SOL/USD, config/experiments/paper-kraken-fresh.example.json (or a new example file), tests/test_usd_valuation*.py
+AVOID: desk/provider_pacing.py (use the existing jupiter and kraken lanes as they are), T22F/T32G files
+
+**DECISION (CK, 2026-10-11).** Jupiter PriceV3 (`https://api.jup.ag/price/v3?ids=<SOL mint>`, header `x-api-key`) was verified working from the VPS on the paid Developer plan (HTTP 200, `usdPrice` field present, rate-limit headers present). Make Jupiter the PRIMARY SOL/USD source and Kraken (public Trades SOLUSD, shared 2s pacing, unchanged) the FALLBACK and cross-check.
+
+Behind a new versioned flag, `paper_usd_valuation_version: 2` (absent or 1 means today's Kraken-only behaviour, byte-identical):
+1. **Primary.** Fetch the Jupiter PriceV3 observation through the existing jupiter pacing lane. Retain the original bytes as evidence like the other sources. Validate the shape strictly: `usdPrice` is a finite positive number, `blockId` is present and the `decimals` are sane. Fail closed on any malformed field. Every failure is charged.
+2. **Fallback.** If Jupiter fails, is stale (beyond the price TTL), or its shape is invalid, use the Kraken observation when it is fresh. Record which source was used in the event evidence.
+3. **Divergence guard.** When both are fresh and differ by more than `usd_divergence_max_fraction` (default 0.01), there are no new ENTRIES: give a normal terminal no-entry (`USD_SOURCE_DIVERGENCE`), never a latch. Exits are never blocked by divergence; they use the primary, or the fallback if the primary is unavailable.
+4. **Cost.** Fetch Kraken at most once per cycle, only when needed (fallback) or on a cross-check schedule (default every 5 min). This keeps Kraken traffic low.
+5. **Tests:**
+   - a fixture Jupiter body (real shape, as observed) parses;
+   - each malformed shape is refused;
+   - fallback selection;
+   - the divergence no-entry, with exits unaffected;
+   - flag-absent byte identity;
+   - replay determinism;
+   - a failure becomes a normal terminal outcome, with no NULL pass.
+
+Add an example config with the flag on, validated by the real loader. The coordinator will decide whether the fresh experiment ships with it.
