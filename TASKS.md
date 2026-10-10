@@ -1092,3 +1092,18 @@ Add explicit `--pacing-db PATH`, `--discovery-db PATH` and `--ledger PATH` (abso
 - verify_cycle snapshots them.
 
 The defaults stay backward compatible. Tests use a fixture layout that mirrors production (fresh root plus an external shared pacing/discovery DB). Show `status` reporting empty blockers on a healthy fresh layout.
+
+---
+
+## T25F — Fix the T25 review findings (monitoring classification)
+STATUS: OPEN
+DEPENDS: none
+BASE: origin/cloud/T25 (it merges cleanly onto integration/r1)
+OWNS: desk/monitoring_budget.py, desk/paper_read_sources.py (classification only), tests/test_monitoring_classification.py
+AVOID: other desk files
+
+1. **Catch-all.** The `_read_chunked` catch-all (paper_read_sources.py ~:130-132) still maps any Exception to TRANSPORT_ERROR (transient). Route it through `classify_exception`, so programming errors (ValueError, AttributeError, ...) LATCH. Add a test.
+2. **Missing lock file means owner unknown.** `_lock_holders` (monitoring_budget.py ~:74) treats FileNotFoundError as "owner gone". That is the same bug class as T23 F6: a live process can hold an unlinked inode. A missing or recreated lock file must fail closed (owner unknown, so no abandonment). Make the T09 test exercise the real owner check by creating the lock files in its fixture.
+3. **macOS tests.** The two `/proc/locks` tests fail on macOS (test_monitoring_classification.py ~:318, :338). Make the lock table injectable or mockable so they run on both platforms, or `skipUnless` Linux with an explicit reason (and keep them running in Linux CI).
+4. **None-status scope.** Narrow the None-status transient rule to `CoordinatorRPCError` specifically, or document why a broader rule is safe.
+5. **Handoff after a kill.** Handoff context (allowance version 3) is never abandonable after a kill, so it blocks forever. Either support abandonment there with the same owner-gone proof, or make it a clear health CRITICAL with operator guidance.
