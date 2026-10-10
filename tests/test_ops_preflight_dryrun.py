@@ -67,7 +67,8 @@ NO_NAMESPACE_TESTS = {
     'test_copy_with_pending_wal_keeps_uncheckpointed_rows', 'test_fd_path_helper_per_platform',
     'test_child_uses_the_portable_fd_path_helper', 'test_parent_never_writes_bytecode',
     'test_docstring_states_what_is_compared', 'test_pending_unreadable_vs_absent_table_unit',
-    'test_dir_fd_mutation_is_resolved_and_judged_without_proc_assumption'}
+    'test_dir_fd_mutation_is_resolved_and_judged_without_proc_assumption',
+    'test_unresolvable_or_unsupported_dir_fd_fails_closed'}
 
 
 class PreflightDryrunTests(unittest.TestCase):
@@ -446,6 +447,28 @@ class PreflightDryrunTests(unittest.TestCase):
         self.assertEqual(len(details), 1, report['guard_violations'])
         self.assertTrue(details[0].endswith('outside-bad'), details)
         self.assertFalse((self.data / 'outside-bad').exists())
+
+    def test_unresolvable_or_unsupported_dir_fd_fails_closed(self):
+        code, report = self.run_fake(f'''
+            import os, sys
+            fd = os.open({str(self.work)!r}, os.O_RDONLY)
+            os.close(fd)                        # a dir_fd that no longer resolves to any path
+            try:
+                os.mkdir("closed-fd", dir_fd=fd)
+            except OSError:
+                pass
+            good = os.open({str(self.work)!r}, os.O_RDONLY)
+            sys.platform = "freebsd13"          # no /proc and no F_GETPATH: cannot be judged -> refuse
+            try:
+                os.mkdir("unsupported-platform", dir_fd=good)
+            except OSError:
+                pass
+            return None
+            ''')
+        self.assertEqual((code, report['status']), (3, 'GUARD_VIOLATION'), report)
+        details = [v['detail'] for v in report['guard_violations'] if v['kind'] == 'MUTATION_OUTSIDE_WORKDIR']
+        self.assertEqual(details, ['unresolvable dir_fd', 'unresolvable dir_fd'], report['guard_violations'])
+        self.assertFalse((self.work / 'closed-fd').exists() or (self.work / 'unsupported-platform').exists())
 
     # --- T05F minor items.
     def test_parent_never_writes_bytecode(self):
