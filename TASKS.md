@@ -1488,3 +1488,23 @@ One read-only command builds a single self-contained HTML file (no external asse
 It starts with a 10-line "what changed since yesterday / what to try next" section computed from the data (no LLM). Label everything paper-only and EXECUTION_UNVERIFIED, and show sample sizes, with explicit "insufficient sample" flags.
 
 The timer runs daily at 23:30 UTC (08:30 KST), writing to `<STATE_DIR>/reports/YYYY-MM-DD.html`. Tests use fixture stores with known numbers, cover HTML escaping, and cover empty/young data.
+
+---
+
+## T35F — Portfolio-marks fixes (from the T35 review); fold together with T16H's output
+STATUS: OPEN
+DEPENDS: branch `cloud/T16H` has a `DONE T16H:` commit
+BASE: origin/cloud/T16H (it is built on T35)
+OWNS: desk/portfolio_marks.py, desk/engine.py (valuation and mark precedence only), desk/monitoring_budget.py (classification of the valuation-only read only), desk/paper_cycle.py (marks deadline only), desk/paper_concurrency.py (estimates only), docs/MULTI_POSITION.md, tests/test_portfolio_marks*.py
+AVOID: desk/paper_pass_closure.py (T22G)
+
+1. **(HIGH) Real timing in tests.** `tests/test_portfolio_marks_pipeline.py` (~:100, ~:186) freezes monotonic and wall time, so "≤10s" is only true at zero elapsed time, and ~:258 compares the marks event with itself. Use a simulated clock that advances by realistic per-request durations (pacing per T36: helius 0.1s; the quote and sleep budgets), and assert freshness at the ENTRY DECISION time for 4 positions.
+2. **(HIGH) No latch from a valuation-only read.** A non-transient marks-read failure (RESPONSE_INVALID, HTTP 4xx) sets monitoring `SOURCE_FAILURE` (`monitoring_budget.py` ~:634) and blocks held exit quotes. That is a latch. The valuation-only read must NEVER latch monitoring: record a typed failure (charged), leave the marks stale, and let a normal STALE_PORTFOLIO terminal reject follow. Test every failure class.
+3. **(MED) Deadline accounting.**
+   - Do not extend the 10s cycle deadline by the marks-read time (`paper_cycle.py` ~:353 `budget.start +=`). Do the read inside the budget, or account for it explicitly.
+   - Update `ENTRY_SECONDS`/`CYCLE_SECONDS` in `paper_concurrency.py`, and count the held pass's extra refresh in `plan_legs` against `--wall-seconds`.
+4. **(MED) Reserve.** Retune `RESERVE_PASSES` (entries now cost +2 requests, held passes +1). Show the math.
+5. **(MED) Model marks vs liquidation.** Model (reserve-implied) marks may feed exposure and position limits, but `peak_equity`, `day_start_equity` and DAILY_LIQUIDATE must use executable marks, or a model mark only when it is within `portfolio_mark_max_divergence` (default 3%) of the latest executable mark. Make this a versioned rule and test it.
+6. **(MED) TTL doc.** Remove the TTL-120 recommendation (`docs/MULTI_POSITION.md` ~:205).
+7. **(LOW) One rollover rule.** T35 added a rollover inside the marks event (`engine.py` ~:469) without a flag. Unify it with T16H's rollover rule under one versioned flag; there must be exactly one rollover rule.
+8. **(LOW) Closed vault.** A closed vault sets the mark to zero, with an explicit reason, rather than leaving it stale forever. Add a golden byte-identity test with the flag absent.
