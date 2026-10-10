@@ -1107,3 +1107,25 @@ AVOID: other desk files
 3. **macOS tests.** The two `/proc/locks` tests fail on macOS (test_monitoring_classification.py ~:318, :338). Make the lock table injectable or mockable so they run on both platforms, or `skipUnless` Linux with an explicit reason (and keep them running in Linux CI).
 4. **None-status scope.** Narrow the None-status transient rule to `CoordinatorRPCError` specifically, or document why a broader rule is safe.
 5. **Handoff after a kill.** Handoff context (allowance version 3) is never abandonable after a kill, so it blocks forever. Either support abandonment there with the same owner-gone proof, or make it a clear health CRITICAL with operator guidance.
+
+---
+
+## T20F — Fix the T20 review findings (watchlist)
+STATUS: OPEN
+DEPENDS: none
+BASE: origin/cloud/T20, then merge origin/integration/r1 (T01 and T16 are there)
+OWNS: desk/watchlist.py, tools/paper_entry_dispatcher.py (selection only), tests/test_watchlist*.py, docs/WATCHLIST.md
+AVOID: T22/T22F reconciliation work; T16F's `scan is None` guard (keep it)
+
+1. **(HIGH) Empty-window rejections are never NOT_YET.** `reason_codes` folds in `diagnostics[*].blockers` such as `MISSING_WINDOW_MEASUREMENT:*` (from paper_market_adapter ~:88, and required by T01's no-entry proof), so the case always classifies PERMANENT. Map the inner producer codes explicitly:
+   - `MISSING_WINDOW_MEASUREMENT:*` and `STALE_WINDOW_MEASUREMENT:*` → NOT_YET;
+   - integrity/binding producer codes → PERMANENT, the same allow-list as T22F R1.
+
+   Add an end-to-end test using the real T01 result shape: an empty window at t0 is re-evaluated at t0+10m and admitted with new fixture data.
+2. **(HIGH) Full-table scans every tick.** The age-window query scans the whole shared discovery table (`received_at` has no index; `ORDER BY seq DESC LIMIT 20000`). The benchmark showed 7s per tick at 600k rows, and it grows forever. Walk seq DESC and stop at the first `received_at < now - maximum_age`, or bound by a seq range kept in a cursor. The 20000 cap must not truncate a 6h window at 5000/h. Add a benchmark assertion with generous bounds on ≥500k rows.
+3. **(MED-HIGH) New latch path.** A near-expiry pick trips `Candidate expired during preparation` after the intent is written, which leaves an unresolved intent and stalls the dispatcher. Require a preparation margin (e.g. ≥ 900s before `expires_at`) both when scheduling and when selecting. Test the expiry-during-preparation case.
+4. **(MED) Filter by candidate.** `reason_codes` must filter outcomes by the candidate's mint and diagnostics by its scan_id, so held-position rejects (T16F) do not taint the classification.
+5. **(MED) Fresh selection age.** In v2, fresh selection admits hints up to 21600s old instead of 7200. Revert fresh selection to the configured dispatch window (7200). Only the watchlist uses the longer engine window. Document this.
+6. **(LOW) Bounded tables.**
+   - Account for re-evaluations consuming the bounded tables (512 preparation rejections, 8192 no-entry rows). Stop scheduling re-evaluations when a table is ≥80% full, and raise a health warning.
+   - Add a test that a fresh hint is chosen over a due entry.
