@@ -130,13 +130,30 @@ class MonitoringBudgetTests(unittest.TestCase):
         with self.store.connect() as c:self.assertEqual(c.execute('SELECT count(*) FROM paper_monitoring_reservations').fetchone()[0],61)
 
     def test_failure_charged_original_retained_and_restart_latched(self):
-        with self.assertRaises(PaperReadError) as caught:self.read(fail=True)
+        # T08: this test used a transient TRANSPORT_ERROR (OSError) as its sample failure.
+        # Transient provider-availability failures no longer latch the shared allowance
+        # (see the next test), so the latch is now asserted with a non-transient failure:
+        # a well-formed HTTP 200 whose body is not the expected JSON-RPC envelope.
+        # The latch assertions themselves are unchanged.
+        with self.assertRaises(PaperReadError) as caught:self.read(body=b'{"unexpected":"envelope"}')
         row=self.store.load(caught.exception.evidence_hash)
-        self.assertEqual(row['failure_code'],'TRANSPORT_ERROR');self.assertNotIn('SYNTHETIC_SECRET_SENTINEL',canonical(row))
+        self.assertEqual(row['failure_code'],'RESPONSE_INVALID')
         self.assertEqual(self.accounting()[1:],(1,'SOURCE_FAILURE'))
         self.budget=MonitoringBudget(self.store,self.f.path,self.f.cfg,clock=lambda:T+3600)
         with self.assertRaises(PaperReadError) as caught:self.read_unmocked()
         self.assertEqual(caught.exception.code,'MONITORING_RECOVERY_REQUIRED');self.assertEqual(self.accounting()[1],1)
+
+    def test_transient_failure_charged_original_retained_and_not_latched(self):
+        with self.assertRaises(PaperReadError) as caught:self.read(fail=True)
+        row=self.store.load(caught.exception.evidence_hash)
+        self.assertEqual(row['failure_code'],'TRANSPORT_ERROR');self.assertNotIn('SYNTHETIC_SECRET_SENTINEL',canonical(row))
+        self.assertEqual(self.accounting()[1:],(1,None))
+        with self.store.connect() as c:
+            self.assertEqual(c.execute('SELECT count(*) FROM paper_monitoring_outcomes').fetchone()[0],1)
+        self.budget=MonitoringBudget(self.store,self.f.path,self.f.cfg,clock=lambda:T+3600)
+        _,key=self.read()                                    # the next read is allowed and charged
+        self.assertEqual(self.store.load(key)['monitoring_reservation']['total_used'],2)
+        self.assertEqual(self.accounting()[1:],(2,None))
 
     def test_lost_completion_pending_across_restart(self):
         with patch('desk.paper_read_sources.os.environ.get',return_value=KEY),patch('desk.paper_read_sources.build_opener') as opener:
