@@ -11,12 +11,14 @@ unknown exception (a bug, or a man-in-the-middle symptom) must latch.
 import contextlib
 import errno
 import http.client
+import io
 import os
 import signal
 import socket
 import ssl
 import subprocess
 import sys
+import tempfile
 import textwrap
 import unittest
 from unittest.mock import patch
@@ -28,6 +30,7 @@ from desk import monitoring_budget as mb
 from desk import provider_pacing
 from desk.model import canonical, digest
 from desk.monitoring_budget import MonitoringBudget, MonitoringBlocked
+from desk import paper_read_sources as reads
 from desk.paper_read_sources import PaperReadError, PaperReadSources, RPC_ID
 from tests import test_monitoring_budget as base
 from tests.helpers import T
@@ -42,6 +45,10 @@ class _Fixture(base.MonitoringBudgetTests):
 for _name in dir(base.MonitoringBudgetTests):      # reuse setUp/helpers only
     if _name.startswith('test_'):
         setattr(_Fixture, _name, None)
+
+LINUX_LOCKS = os.path.exists('/proc/locks')
+linux_only = unittest.skipUnless(LINUX_LOCKS, 'needs the real Linux /proc/locks and /proc/<pid>/fd; the injected-table '
+                                 'tests below cover the same logic on every platform')
 
 OK_BODY = canonical({'jsonrpc': '2.0', 'id': RPC_ID, 'result': 100}).encode()
 
@@ -167,6 +174,45 @@ class ClassificationTable(unittest.TestCase):
         self.check([('coordinator', {'raises': strict.CoordinatorRPCError('static safe message')},
                      'HTTP_REJECTED', False)])
 
+    def test_http_error_with_a_malformed_status_latches_and_none_is_only_the_coordinator(self):
+        self.check([
+            ('non-int HTTPError code', {'raises': HTTPError('https://rpc.invalid/', '503', 'x', Message(), None)},
+             'HTTP_REJECTED', True),
+            ('coordinator error (status None)', {'raises': strict.CoordinatorRPCError('safe')}, 'HTTP_REJECTED', False),
+        ])
+        case = Classification()
+        case.setUp()
+        self.addCleanup(case.doCleanups)
+        record, _ = case.attempt(raises=HTTPError('https://rpc.invalid/', '503', 'x', Message(), None))
+        self.assertEqual(record['http_status'], -1)
+
+    def _fresh(self):
+        case = Classification()
+        case.setUp()
+        self.addCleanup(case.doCleanups)
+        return case
+
+    def test_chunked_body_catch_all_classifies_instead_of_assuming_transport(self):
+        def chunked_response(failure):
+            data = b'HTTP/1.1 200 OK\r\nTransfer-Encoding: chunked\r\n\r\n5\r\nhello\r\n0\r\n\r\n'
+            class Sock:
+                def makefile(self, *a, **k):
+                    return io.BytesIO(data)
+            response = http.client.HTTPResponse(Sock())
+            response.begin()
+            def boom(amount):
+                raise failure
+            response._safe_read = boom
+            return response
+        for failure, code in ((ConnectionResetError(), 'TRANSPORT_ERROR'), (TimeoutError('t'), 'TRANSPORT_ERROR'),
+                              (ValueError('bug'), 'UNCLASSIFIED_ERROR'), (AttributeError('bug'), 'UNCLASSIFIED_ERROR'),
+                              (ssl.SSLCertVerificationError('bad'), 'TLS_ERROR'), (RuntimeError('bug'), 'UNCLASSIFIED_ERROR')):
+            with self.subTest(failure=type(failure).__name__):
+                with self.assertRaises(reads._ChunkReadError) as caught:
+                    reads._read_chunked(chunked_response(failure), 1000, lambda: None)
+                self.assertEqual(caught.exception.code, code)
+                self.assertEqual(mb._latching_failure({'failure_code': code}), code != 'TRANSPORT_ERROR')
+
     def test_pacing_contention_is_transient_and_integrity_latches(self):
         self.check([(code, {'pacing': code}, code, latched) for code, latched in (
             ('PACING_DEADLINE_EXCEEDED', False), ('PACING_DATABASE_BUSY', False), ('PACING_QUEUE_FULL', False),
@@ -204,7 +250,35 @@ class LatchPredicate(unittest.TestCase):
 class Abandonment(_Fixture):
     """A reservation committed before the HTTP call, then the process died (T09 audit F5)."""
 
+    def setUp(self):
+        super().setUp()
+        if not LINUX_LOCKS:          # no /proc here: inject empty sources ("nothing holds anything")
+            self.use_lock_sources(table='')
+
+    def use_lock_sources(self, *, table, proc=None):
+        """Point the owner evidence at fixture files (portable): a /proc/locks-format table and a /proc-like tree."""
+        tmp = tempfile.TemporaryDirectory()
+        self.addCleanup(tmp.cleanup)
+        locks = os.path.join(tmp.name, 'locks')
+        with open(locks, 'w') as stream:
+            stream.write(table)
+        root = os.path.join(tmp.name, 'proc')
+        os.mkdir(root)
+        for pid, target in (proc or {}).items():
+            os.makedirs(f'{root}/{pid}/fd')
+            os.symlink(target, f'{root}/{pid}/fd/7')
+        for patcher in (patch.object(mb, 'LOCK_TABLE', locks), patch.object(mb, 'PROC_ROOT', root)):
+            patcher.start()
+            self.addCleanup(patcher.stop)
+
+    def create_locks(self):
+        """run_once creates both lock files (open 'a') before any reservation: so must the fixture."""
+        for path in (self.lock_path(), str(self.f.path) + '.paper-cycle.lock'):
+            with open(path, 'a'):
+                pass
+
     def kill_after_reservation(self):
+        self.create_locks()
         with patch('desk.paper_read_sources.os.environ.get', return_value=KEY), \
                 patch('desk.paper_read_sources.build_opener') as opener:
             opener.return_value.open.side_effect = KeyboardInterrupt()
@@ -304,6 +378,7 @@ class Abandonment(_Fixture):
         self.assertEqual(self.budget.snapshot()['remaining'], mb.CAP - 2)
 
     # -- owner evidence ---------------------------------------------------
+    @linux_only
     def test_live_owner_lock_holder_prevents_abandonment(self):
         self.kill_after_reservation()
         self.start_holder(self.lock_path())
@@ -315,6 +390,7 @@ class Abandonment(_Fixture):
         self.assertEqual(self.rows(), before)
         self.assertIn('MONITORING_OUTCOME_PENDING', self.budget.snapshot()['blockers'])
 
+    @linux_only
     def test_owner_killed_with_sigkill_releases_the_lease_and_the_orphan_resolves(self):
         self.kill_after_reservation()
         holder = self.start_holder(self.lock_path())
@@ -327,6 +403,7 @@ class Abandonment(_Fixture):
         self.read()
         self.assertEqual(self.store.load(self.rows()[1][0][1])['failure_code'], 'ABANDONED_CHARGED')
 
+    @linux_only
     def test_the_cycle_lock_of_the_ledger_also_counts_as_a_live_owner(self):
         self.kill_after_reservation()
         self.start_holder(str(self.f.path) + '.paper-cycle.lock')
@@ -346,6 +423,84 @@ class Abandonment(_Fixture):
             fcntl.flock(b, fcntl.LOCK_EX | fcntl.LOCK_NB)
             self.read()
         self.assertEqual(self.accounting()[1:], (2, None))
+
+    @linux_only
+    # -- portable owner evidence (injected lock table / process tree) --------
+    def table_line(self, path, pid):
+        return f'1: FLOCK  ADVISORY  WRITE {pid} 08:01:{os.stat(path).st_ino} 0 EOF\n'
+
+    def blocked_read(self):
+        before = self.rows()
+        with self.assertRaises(PaperReadError) as caught:
+            self.read_unmocked()
+        self.assertEqual(caught.exception.code, 'MONITORING_OUTCOME_PENDING')
+        self.assertEqual(self.rows(), before)
+
+    def test_injected_table_with_a_foreign_holder_blocks_and_without_resolves(self):
+        self.kill_after_reservation()
+        self.use_lock_sources(table=self.table_line(self.lock_path(), os.getpid() + 1))
+        self.restart(T + mb.ABANDON_AFTER_SECONDS + 1)
+        self.blocked_read()
+        self.use_lock_sources(table=self.table_line(self.lock_path(), os.getpid()))     # only ourselves: the new owner
+        self.now = T + mb.ABANDON_AFTER_SECONDS + 1
+        self.read()
+        self.assertEqual(self.store.load(self.rows()[1][0][1])['failure_code'], 'ABANDONED_CHARGED')
+
+    def test_missing_lock_file_means_owner_unknown_not_owner_gone(self):
+        self.kill_after_reservation()
+        os.unlink(self.lock_path())
+        self.restart(T + mb.ABANDON_AFTER_SECONDS + 1)
+        self.assertIsNone(mb._lock_holders(self.lock_path()))
+        self.blocked_read()
+        self.assertIn('MONITORING_OUTCOME_PENDING', self.budget.snapshot()['blockers'])
+        os.unlink(str(self.f.path) + '.paper-cycle.lock')               # the other lock missing is the same
+        with open(self.lock_path(), 'a'):
+            pass
+        self.blocked_read()
+
+    def test_recreated_lock_file_hides_no_live_owner(self):
+        self.kill_after_reservation()
+        old = self.lock_path()
+        # A live process (pid 4242) still holds the ORIGINAL, now unlinked inode; the path names a new, unlocked file.
+        self.use_lock_sources(table='', proc={4242: old + ' (deleted)'})
+        os.unlink(old)
+        with open(old, 'a'):
+            pass
+        self.restart(T + mb.ABANDON_AFTER_SECONDS + 1)
+        self.assertEqual(mb._lock_holders(old), set())                   # the new file looks free ...
+        self.assertEqual(mb._deleted_lock_holders(old), {4242})          # ... but a live holder is on the old inode
+        self.blocked_read()
+
+    def test_unreadable_process_table_or_same_user_permission_failure_fails_closed(self):
+        self.kill_after_reservation()
+        self.use_lock_sources(table='')
+        self.restart(T + mb.ABANDON_AFTER_SECONDS + 1)
+        with patch.object(mb, 'PROC_ROOT', '/nonexistent-proc-root'):
+            self.assertIsNone(mb._deleted_lock_holders(self.lock_path()))
+            self.blocked_read()
+        real_listdir = os.listdir
+        def deny(path):
+            if str(path).endswith('/fd'):
+                raise PermissionError('denied')
+            return real_listdir(path)
+        self.use_lock_sources(table='', proc={4243: 'x'})
+        with patch.object(mb.os, 'listdir', deny):
+            self.assertIsNone(mb._deleted_lock_holders(self.lock_path()))   # same-uid process we cannot inspect
+
+    def test_handoff_context_orphan_is_critical_with_operator_guidance(self):
+        self.kill_after_reservation()
+        self.restart(T + mb.ABANDON_AFTER_SECONDS + 1)
+        with patch.object(self.budget, '_accounting', return_value=(3,) + self.accounting_row()[1:]):
+            snapshot = self.budget.snapshot()
+        self.assertEqual(snapshot['health'], 'CRITICAL')
+        self.assertEqual(snapshot['operator_guidance'], mb.HANDOFF_PENDING_GUIDANCE)
+        self.assertIn('MONITORING_OUTCOME_PENDING', snapshot['blockers'])
+        normal = self.budget.snapshot()                                     # same orphan, native context: resolvable
+        self.assertNotIn('health', normal)
+
+    def accounting_row(self):
+        with self.store.connect() as c:
+            return self.budget._accounting(c)
 
     def test_unreadable_lock_table_fails_closed(self):
         self.kill_after_reservation()

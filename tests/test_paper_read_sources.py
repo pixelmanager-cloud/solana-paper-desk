@@ -205,7 +205,9 @@ class PaperReadTests(unittest.TestCase):
         response=self.chunked_response(prefix+raw+b'\r\n0\r\n\r\n')
         original=response._safe_read
         def interrupted(amount):
-            if amount==2:raise OSError('fixture-only transport failure')
+            # T25F: only a KNOWN network exception is TRANSPORT_ERROR now; a bare OSError is a latching
+            # UNCLASSIFIED_ERROR, so the fixture's transport failure is a connection reset (same assertions).
+            if amount==2:raise ConnectionResetError('fixture-only transport failure')
             return original(amount)
         with patch.object(response,'_safe_read',side_effect=interrupted),self.assertRaisesRegex(m.PaperReadError,'TRANSPORT_ERROR') as caught:
             self.call(response)

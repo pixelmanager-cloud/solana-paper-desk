@@ -129,7 +129,7 @@ def _read_chunked(response, limit, remaining):
         return response.read(limit + 1)
     except Exception as error:
         code = (error.code if isinstance(error, PaperReadError) else
-                'RESPONSE_TRUNCATED' if isinstance(error, IncompleteRead) else 'TRANSPORT_ERROR')
+                'RESPONSE_TRUNCATED' if isinstance(error, IncompleteRead) else classify_exception(error))
         raise _ChunkReadError(code, bytes(entity)) from None
     finally:
         response._get_chunk_left = original
@@ -280,7 +280,7 @@ class PaperReadSources:
             opener = build_opener(strict._NoRedirect())
             with opener.open(request, timeout=remaining()) as response:
                 code = 'HTTP_REJECTED'
-                http_status = response.status if type(response.status) is int else None
+                http_status = response.status if type(response.status) is int else -1   # None is reserved for CoordinatorRPCError
                 if pacer is not None and provider_pacing.should_throttle(response.status, response.headers):
                     pacing_release = False
                     pacer.throttle(provider, response.headers, ticket=pacing_ticket)
@@ -365,7 +365,7 @@ class PaperReadSources:
         except Exception as error:
             if isinstance(error, HTTPError):
                 code = 'HTTP_REJECTED'
-                http_status = error.code if type(error.code) is int else None
+                http_status = error.code if type(error.code) is int else -1       # None is reserved for CoordinatorRPCError
                 if pacer is not None and provider_pacing.should_throttle(error.code, error.headers):
                     pacing_release = False
                     try:

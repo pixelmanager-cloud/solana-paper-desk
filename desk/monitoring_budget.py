@@ -44,11 +44,23 @@ TRANSIENT_HTTP_STATUSES = frozenset({408, 429}) | frozenset(range(500, 600))
 # the lock lease is the primary owner evidence, the age is the safety margin. During those
 # seconds a held pass fails closed (MONITORING_OUTCOME_PENDING).
 ABANDON_AFTER_SECONDS = 60
+LOCK_TABLE = '/proc/locks'      # injectable: tests (and non-Linux hosts) substitute a fixture table
+PROC_ROOT = '/proc'
+MAX_PROC_SCAN = 65536
 ABANDONED_CODE = 'ABANDONED_CHARGED'
 ABANDONED_KIND = 'paper_monitoring_abandoned_v1'
 ABANDONED_FIELDS = frozenset({
     'kind', 'failure_code', 'scan_id', 'method', 'params_hash', 'reservation_id', 'reserved_at',
     'resolved_at', 'abandon_after_seconds', 'reason', 'charged', 'refunded', 'monitoring_reservation'})
+
+
+# Handoff contexts (allowance version 3) bind every receipt to their context hash, so an abandoned
+# outcome cannot be appended there safely. The orphan stays charged and the allowance stays blocked:
+# report it as a CRITICAL health state instead of an ordinary pending read.
+HANDOFF_PENDING_GUIDANCE = (
+    'A monitoring reservation in a handoff (version 3) allowance has no outcome and its owner is not '
+    'resumable. It is never refunded and cannot be abandoned automatically. Stop the desk-* units, '
+    'archive this store set read-only and start a fresh one (ledger flat) with a new config version.')
 
 
 class MonitoringBlocked(ValueError):
@@ -72,12 +84,12 @@ def _lock_holders(path):
     """
     try:
         inode = os.stat(path).st_ino
-    except FileNotFoundError:
-        return set()                                    # nothing was ever locked here
     except OSError:
+        # A missing lock file is NOT proof of a dead owner (a live process can hold an unlinked
+        # inode, and a recreated file hides its holder): owner unknown, so nothing is abandoned.
         return None
     try:
-        with open('/proc/locks') as table:
+        with open(LOCK_TABLE) as table:
             lines = table.read().splitlines()
     except OSError:
         return None
@@ -93,6 +105,49 @@ def _lock_holders(path):
             return None
         if where.rsplit(':', 1)[-1] == str(inode):      # inode only: a device-id mismatch must not hide a holder
             holders.add(pid)
+    return holders
+
+
+def _deleted_lock_holders(path):
+    """PIDs other than ours holding an open descriptor on a DELETED lock file at ``path``.
+
+    That is the recreated-lock-file hazard: the live owner's flock sits on an unlinked inode the
+    path no longer names. None when the process table cannot be read (fail closed). Processes of
+    other users whose descriptors are unreadable are skipped only when they are not the lock
+    file's owner (a root-owned holder of a user's lock file is a documented residual risk).
+    """
+    target = str(path) + ' (deleted)'
+    try:
+        owner = os.stat(path).st_uid
+    except OSError:
+        owner = os.geteuid()
+    try:
+        pids = [n for n in os.listdir(PROC_ROOT) if n.isdigit()][:MAX_PROC_SCAN]
+    except OSError:
+        return None
+    holders = set()
+    for pid in pids:
+        if int(pid) == os.getpid():
+            continue
+        fd_dir = f'{PROC_ROOT}/{pid}/fd'
+        try:
+            names = os.listdir(fd_dir)
+        except PermissionError:
+            try:
+                if os.stat(f'{PROC_ROOT}/{pid}').st_uid == owner:
+                    return None                         # same user but unreadable: cannot prove
+            except OSError:
+                pass
+            continue
+        except OSError:
+            continue                                    # exited meanwhile
+        for name in names:
+            try:
+                if os.readlink(f'{fd_dir}/{name}') == target:
+                    holders.add(int(pid))
+                    break
+            except OSError:
+                continue
     return holders
 
 
@@ -461,6 +516,9 @@ class MonitoringBudget:
             holders = _lock_holders(path)
             if holders is None or not holders <= {os.getpid()}:
                 return False
+            unlinked = _deleted_lock_holders(path)
+            if unlinked is None or unlinked:
+                return False
         return True
 
     def _abandonable(self, row, pending, now):
@@ -532,6 +590,7 @@ class MonitoringBudget:
             orphans = self._pending(c)
             # Read-only: report whether the next read would resolve the orphan, never resolve it here.
             pending = bool(orphans) and not self._abandonable(row, orphans, now)
+        stuck_handoff = bool(pending) and row[0] == 3
         blockers = []
         if now < clock_floor: blockers.append('MONITORING_CLOCK_ROLLBACK')
         if row[8] is not None: blockers.append('MONITORING_RECOVERY_REQUIRED')
@@ -541,7 +600,8 @@ class MonitoringBudget:
                 'status':'STALE_UNVERIFIED_BLOCKED' if blockers else 'AVAILABLE',
                 'blockers':blockers, 'total_used':row[7], 'window_used':used,
                 'remaining':max(0,row[4]-used), 'cap':row[4], 'window_seconds':WINDOW_SECONDS,
-                'high_water':row[6], 'entries_enabled':False, 'actual_fill_verified':False}
+                'high_water':row[6], 'entries_enabled':False, 'actual_fill_verified':False,
+                **({'health': 'CRITICAL', 'operator_guidance': HANDOFF_PENDING_GUIDANCE} if stuck_handoff else {})}
 
     def retain_outcome(self, reservation, evidence_hash):
         record = self.store.load(evidence_hash)

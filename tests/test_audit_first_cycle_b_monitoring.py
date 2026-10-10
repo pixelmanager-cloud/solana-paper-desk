@@ -38,6 +38,11 @@ class MonitoringLatchTests(_Fixture):
             opener.return_value.open.side_effect = KeyboardInterrupt()
             with self.assertRaises(KeyboardInterrupt):
                 self.read_unmocked()
+        # T25F: the real owner check needs the lock files run_once creates before any reservation
+        # (a missing lock file now means "owner unknown"); no other process holds them.
+        for path in (str(self.store.path) + '.ownership-invocation.lock', str(self.f.path) + '.paper-cycle.lock'):
+            with open(path, 'a'):
+                pass
         self.budget.clock = lambda: base.T + 7 * 86400
         self.assertEqual(self.budget.snapshot()['blockers'], [])
 
