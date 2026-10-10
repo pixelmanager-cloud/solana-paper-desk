@@ -155,7 +155,7 @@ class ConcurrentPipeline(lifecycle.FreshFixture):
             self.assertEqual((leg['status'], leg['monitoring_attempted_requests']), ('COMPLETE', 5), leg)
             marks[mint] = cycle._state(self.ledger, self.cfg)['positions'][mint]['mark_at']
         self.preflight_at = self.f.at                               # the dispatcher (and its pre-I/O estimate) starts here
-        self.f.at += 30                                             # preparation (<= 18 s) + bounded cycle before the decision
+        self.f.at += pc.ENTRY_SECONDS                               # acquisition + intake + preparation + cycle before the decision (T16G item 4: was 30)
         return marks
 
     def monitoring_rows(self):

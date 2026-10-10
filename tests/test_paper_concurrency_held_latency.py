@@ -33,6 +33,12 @@ class Latency(pipe.ConcurrentPipeline):
         with patch.object(cycle, 'run_once', self.real_run_once):    # dispatch() patches run_once for the ENTRY only
             return super().held_leg(mint, sell_output=sell_output)
 
+    def append_second_candidate(self, seed=17):
+        """A distinct migration per seed (the shared helper's default seed keeps its old single candidate)."""
+        original = self.append_distinct_migration
+        with patch.object(self, 'append_distinct_migration', lambda **kw: original(seed=seed, **kw)):
+            return super().append_second_candidate()
+
     def tick(self):
         """The scheduler's held-first legs, as `_concurrent_tick` runs them (idle first so every mark goes stale)."""
         self.f.at += (60 - self.f.at % 60) + 5
@@ -50,7 +56,7 @@ class Latency(pipe.ConcurrentPipeline):
             self.held_leg(mint)                                      # a REAL monitoring cycle, charged and answered
         return 0
 
-    def timed_dispatch(self, *, acquisition=ACQ, intake=INTAKE, prep_cycle=PREP_CYCLE, checkpoints=True):
+    def timed_dispatch(self, *, intents=2, raw=None, acquisition=ACQ, intake=INTAKE, prep_cycle=PREP_CYCLE, checkpoints=True):
         outer = self
         acquire, intake_fn, execute = tool.acquisition.acquire, tool.migration.intake, tool.entry.execute
         cadence = tool._HeldCadence
@@ -72,7 +78,7 @@ class Latency(pipe.ConcurrentPipeline):
               patch.object(tool.entry, 'execute', slow_execute),
               patch.object(tool, '_HeldCadence', side_effect=lambda ctx: cadence(ctx, clock=lambda: outer.sim)),
               patch.object(tool.concurrency, 'clock', side_effect=lambda: self.f.at)):
-            return self.dispatch(intents=2, raw=self.second_raw)
+            return self.dispatch(intents=intents, raw=raw or self.second_raw)
 
     def max_gap(self):
         ends = sorted(end for _, end, _ in self.held_log) + [self.decision]
@@ -119,9 +125,74 @@ class RealisticPhases(Latency):
         self.assertFalse(pc.checkpoint_due(60, 30, {'A': 1, 'B': 1, 'C': 1}))
 
 
-for _name in dir(pipe.ConcurrentPipeline):
-    if _name.startswith('test_') and _name not in vars(RealisticPhases):
-        setattr(RealisticPhases, _name, None)
+class ThreePositionRestart(Latency):
+    def fills(self):
+        with sqlite3.connect(self.ledger) as c:
+            return sum(1 for (p,) in c.execute('SELECT payload FROM outcomes') if json.loads(p).get('type') == 'fill')
+
+    def three_positions(self, upto=3):
+        self.first_entry()
+        for n in range(2, upto + 1):
+            self.append_second_candidate(seed=20 + n)
+            self.tick()
+            result = self.timed_dispatch(intents=n, raw=self.second_raw)
+            self.assertEqual((result['status'], result['paper_status']), ('DISPATCHED', 'COMPLETE'), result)
+        self.assertEqual(len(cycle._state(self.ledger, self.cfg)['positions']), upto)
+
+    def totals(self):
+        return (self.charges(), self.monitoring_rows(), self.fills(), self.count('intents'), self.count('results'))
+
+    def test_crash_mid_leg_with_three_positions_latches_without_duplicate_charges_or_fills(self):
+        self.three_positions()
+        self.tick()                                                  # a healthy pass: 3 legs x 5 requests
+        base = self.totals()
+        self.assertEqual(base[1][0] - base[1][1], 0)
+
+        class Crash(transport.PaperReadSources):
+            def rpc(self, method, params, *, timeout_seconds):
+                self.monitoring_budget.reserve_read(self.progress, self.scan_id, method, params)
+                raise SystemExit('SYNTHETIC_TEST_ONLY crash boundary')
+        with patch.object(transport, 'PaperReadSources', Crash), self.assertRaises(SystemExit):
+            self.held_leg(pc.held_order(cycle._state(self.ledger, self.cfg)['positions'])[0])
+        crashed = self.totals()
+        self.assertEqual(crashed[1][0] - crashed[1][1], 1, 'one reservation without an outcome')
+        self.assertEqual((crashed[0], crashed[2:]), (base[0], base[2:]))      # nothing else moved
+        self.f.at += 70                                              # restart: the next tick's legs
+        for mint in pc.held_order(cycle._state(self.ledger, self.cfg)['positions']):
+            leg = self.held_leg(mint)
+            self.assertEqual((leg['status'], leg['attempted_requests']), ('RECOVERY_REQUIRED', 0), leg)
+        self.assertEqual(self.totals(), crashed, 'no duplicate charge, reservation or fill after the restart')
+        self.append_second_candidate(seed=34)
+        with self.assertRaisesRegex(ValueError, 'Monitoring transport unresolved|Monitoring pending or blocked|Observation recovery'):
+            self.timed_dispatch(intents=4, raw=self.second_raw)
+        self.assertEqual(self.totals(), crashed, 'a pending monitoring outcome also refuses every new entry before any charge')
+        self.assertEqual(len(cycle._state(self.ledger, self.cfg)['positions']), 3)
+
+    def test_interrupted_entry_restart_never_repeats_the_intent_or_its_charges(self):
+        self.three_positions(upto=2)
+        self.append_second_candidate(seed=33)
+        self.tick()
+        before = self.totals()
+
+        def die(*a, **k):
+            raise SystemExit('SYNTHETIC_TEST_ONLY crash after intent and acquisition')
+        with patch.object(tool.migration, 'intake', die), self.assertRaises(SystemExit):
+            self.timed_dispatch(intents=3, raw=self.second_raw)
+        crashed = self.totals()
+        self.assertEqual(crashed[3], before[3] + 1, 'the durable intent was written before any I/O')
+        self.assertEqual(crashed[2], before[2])
+        self.f.at += 70
+        with self.assertRaises(ValueError):
+            self.timed_dispatch(intents=3, raw=self.second_raw)      # restart: the unresolved intent refuses a retry
+        again = self.totals()
+        self.assertEqual((again[0], again[2], again[3]), (crashed[0], crashed[2], crashed[3]))
+        self.assertEqual(len(cycle._state(self.ledger, self.cfg)['positions']), 2)
+
+
+for _cls in (RealisticPhases, ThreePositionRestart):
+    for _name in dir(pipe.ConcurrentPipeline):
+        if _name.startswith('test_') and _name not in vars(_cls):
+            setattr(_cls, _name, None)
 
 if __name__ == '__main__':
     unittest.main()

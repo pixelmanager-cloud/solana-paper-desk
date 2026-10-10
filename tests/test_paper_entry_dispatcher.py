@@ -262,7 +262,7 @@ class DispatcherTests(unittest.TestCase):
         with patch.object(tool.cli,'_credentials'),patch('desk.providers.helius_rpc',side_effect=rpc),patch.object(tool.migration,'intake',side_effect=AssertionError('rejected mint intake')):
             return self.invoke(execute=True,systemd_credentials=True)
 
-    def append_distinct_migration(self, *, no_op=False, null_time=False, depth=2, non_sol=False, malformed=False):
+    def append_distinct_migration(self, *, no_op=False, null_time=False, depth=2, non_sol=False, malformed=False, seed=17):
         from solders.pubkey import Pubkey
         from desk import graduation_witness as g
         raw=copy.deepcopy(self.raw)
@@ -272,7 +272,7 @@ class DispatcherTests(unittest.TestCase):
             event=raw['meta']['innerInstructions'][0]['instructions'][0]
             data=bytearray(unbase58(event['data']));data[136:144]=raw['blockTime'].to_bytes(8,'little',signed=True)
             event['data']=base58(data)
-        mint=str(Pubkey.from_bytes(bytes([17])*32))
+        mint=str(Pubkey.from_bytes(bytes([seed])*32))
         authority=g._pda([b'pool-authority',unbase58(mint)],g.PUMP)
         curve=g._pda([b'bonding-curve',unbase58(mint)],g.PUMP)
         quote=str(Pubkey.from_bytes(bytes([18])*32)) if non_sol else g.SOL
@@ -291,7 +291,7 @@ class DispatcherTests(unittest.TestCase):
         if no_op:raw['meta']['innerInstructions']=[]
         if null_time:raw['blockTime']=None
         if malformed:del raw['transaction']['message']
-        signature=base58(bytes([10])*64);raw['transaction']['signatures']=[signature]
+        signature=base58(bytes([10 if seed==17 else seed+100])*64);raw['transaction']['signatures']=[signature]
         wire=canonical({'method':'transactionNotification','params':{'result':{
             'signature':signature,'slot':raw['slot'],'blockTime':raw['blockTime'],
             'transaction':{'transaction':raw['transaction'],'meta':raw['meta']}}}})
