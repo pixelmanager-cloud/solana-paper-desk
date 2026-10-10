@@ -1,0 +1,27 @@
+# INACTIVE, DRY-RUN template; coordinator must review paths/context and activate
+# the separate journal before adding --execute --systemd-credentials.
+# Tool checkout's desk/ must remain byte-identical to the frozen runtime.
+[Unit]
+Description=One bounded discovery-to-paper candidate dispatch (dry run)
+After=network-online.target
+ConditionPathExists=/var/lib/solana-desk/entry-dispatch/dispatch.sqlite
+[Service]
+Type=oneshot
+User=solana-desk
+Group=solana-desk
+WorkingDirectory=/opt/solana-desk-entry-tool
+Environment=DESK_PROVIDER_PACING_DB=/var/lib/solana-desk/provider-pacing.sqlite
+LoadCredential=provider-keys.json:/etc/solana-desk/provider-keys.json
+ExecStart=/opt/solana-desk/.venv/bin/python tools/paper_entry_dispatcher.py --config /etc/solana-paper/paper-kraken-reviewed.json --research-db /var/lib/solana-desk/research.sqlite --evidence-db /var/lib/solana-desk/evidence.sqlite --ledger-db /var/lib/solana-desk/paper-kraken-77de75a2.sqlite --discovery-db /var/lib/solana-desk/discovery/continuous.sqlite --pacing-db /var/lib/solana-desk/provider-pacing.sqlite --journal /var/lib/solana-desk/entry-dispatch/dispatch.sqlite --taker 6E2G75Z3uJEnPo9EvzmLTxp8KB78m3RDsFBjoCTVHZD2 --amount-raw 100000000 --pool-fee-bps 25
+UMask=0077
+NoNewPrivileges=true
+PrivateTmp=true
+ProtectSystem=strict
+ProtectHome=true
+ReadWritePaths=/var/lib/solana-desk
+ReadOnlyPaths=/var/lib/solana-desk/discovery
+RestrictAddressFamilies=AF_INET AF_INET6 AF_UNIX
+TimeoutStartSec=180
+MemoryMax=384M
+TasksMax=32
+# No Install or Restart. Example size/fee/taker are NOT activation approval.

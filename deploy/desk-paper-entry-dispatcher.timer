@@ -1,0 +1,9 @@
+# INACTIVE template; no Install section or automatic enablement.
+[Unit]
+Description=Schedule the explicitly reviewed bounded entry dispatcher
+[Timer]
+OnActiveSec=60
+OnUnitInactiveSec=60
+AccuracySec=5
+Unit=desk-paper-entry-dispatcher.service
+Persistent=false
