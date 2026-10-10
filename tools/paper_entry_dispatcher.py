@@ -176,15 +176,18 @@ def _validate(c, expected):
         if count > (1 if table == 'context' else MAX_DISPATCHES) or size > 16*1024*1024 or bad:
             raise ValueError('Dispatcher input bound invalid')
         values[table] = {i: _parse(payload, h) for i, payload, h in c.execute(f'SELECT id,payload,hash FROM {table}')}
+    retired={}
     if values['context'] != {1: expected}:
-        raise ValueError('Reviewed dispatcher context mismatch')
+        if set(values['context'])!={1}:raise ValueError('Reviewed dispatcher context mismatch')
+        from desk.paper_dispatch_preparation_retirement import lineage
+        retired=lineage(expected,values['context'][1])
     if set(values['results']) - set(values['intents']):
         raise ValueError('Orphan dispatch result')
     for i, mint, signature in c.execute('SELECT id,mint,signature FROM intents'):
         value = values['intents'][i]
         if (type(i) is not str or len(i)!=32 or any(x not in '0123456789abcdef' for x in i)
                 or set(value) != {'version','context_hash','at','hint'} or value['version'] != 1
-                or value['context_hash'] != digest(expected) or type(value['at']) not in (int,float) or not math.isfinite(value['at'])
+                or value['context_hash'] != retired.get(i,digest(expected)) or type(value['at']) not in (int,float) or not math.isfinite(value['at'])
                 or value['at'] < 0 or value['hint']['mint'] != mint
                 or value['hint']['signature'] != signature):
             raise ValueError('Dispatch intent binding invalid')
@@ -221,7 +224,7 @@ def _validate(c, expected):
                     or original_intent['config_hash'] != expected['config_hash']
                     or original_intent['ledger'] != expected['paths']['ledger_db']['path']):
                 raise ValueError('Original cycle intent conflict')
-    if set(values['intents']) != set(values['results']):
+    if set(values['intents']) != set(values['results'])|set(retired) or set(retired)&set(values['results']):
         raise ValueError('Unresolved dispatch; no retry or automatic recovery')
     return values
 
