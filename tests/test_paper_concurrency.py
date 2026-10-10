@@ -82,24 +82,25 @@ class ConfigAndGateTests(unittest.TestCase):
             self.assertIn('LEDGER_MODE_NOT_RUNNING', pc.entry_blockers(state({'A': position()}, mode), cfg))
 
     def test_monitoring_reserve_math_boundaries(self):
-        # T35F item 4, retuned on purpose (previous expectations: 12 five-minute passes, 60 per position): the held timer
-        # is OnUnitInactiveSec=120, so up to ceil(3600 / (120 + 7.8)) = 29 passes per hour are reserved per position.
-        self.assertEqual(pc.RESERVE_PASSES, 29)
+        # T16I item 6a, retuned on purpose (previous expectations: 29 timer-only passes -> 145 per position): the reserve now
+        # counts every source of held passes (timer 29 + watcher 60 + 30 + checkpoints 36 = 155 per hour).
+        self.assertEqual(pc.RESERVE_PASSES, 155)
         cfg = cfg_on()
         one = state({'A': position()})
         need = pc.LEG_REQUESTS * 2 * pc.RESERVE_PASSES  # two positions once the new one is added
-        self.assertEqual(need, 290)
-        self.assertEqual(pc.monitoring_required(1), 145)
+        self.assertEqual(need, 1550)
+        self.assertEqual(pc.monitoring_required(1), 775)
         self.assertEqual(pc.entry_blockers(one, cfg, monitoring_remaining=need - 1), ['MONITORING_RESERVE_INSUFFICIENT'])
         self.assertEqual(pc.entry_blockers(one, cfg, monitoring_remaining=need), [])
-        # The legacy 60/hour allowance cannot carry a second concurrent position; 3600 carries eight.
-        self.assertGreater(pc.monitoring_required(2), 60)
-        self.assertLessEqual(pc.monitoring_required(8), 3600)
+        # The legacy 60/hour allowance cannot carry even one concurrent position; the approved 3600 carries four, not five.
+        self.assertGreater(pc.monitoring_required(1), 60)
+        self.assertLessEqual(pc.monitoring_required(4), 3600)
+        self.assertGreater(pc.monitoring_required(5), 3600 - 600)
 
     def test_batched_marks_add_one_request_per_pass_and_two_per_entry(self):
-        self.assertEqual(pc.monitoring_required(4, marks=True), 29 * (5 * 4 + 1) + 2)        # 611
-        self.assertEqual(pc.monitoring_required(8, marks=True), 29 * (5 * 8 + 1) + 2)        # 1191, well inside 3600
-        self.assertEqual(pc.monitoring_required(4, marks=True) - pc.monitoring_required(4), 29 * 1 + 2)
+        self.assertEqual(pc.monitoring_required(4, marks=True), 155 * (5 * 4 + 1) + 2)       # 3257, inside 3600
+        self.assertEqual(pc.monitoring_required(5, marks=True), 155 * (5 * 5 + 1) + 2)       # 4032: the bounded worst case carries 4
+        self.assertEqual(pc.monitoring_required(4, marks=True) - pc.monitoring_required(4), 155 * 1 + 2)
         marks_cfg = {**cfg_on(), 'paper_quote_execution_version': 1, 'paper_portfolio_mark_source_version': 1,
                      'paper_portfolio_mark_pool_fee_bps': '25'}
         one = state({'A': position()})
@@ -775,22 +776,49 @@ class CycleGateTests(unittest.TestCase):
 
 class DispatcherPreflightTests(unittest.TestCase):
     """_preflight with one open position: budget reserve and mark freshness are checked before any I/O."""
-    def setUp(self):
-        # These dispatcher fixtures provision the legacy 60/hour allowance, calibrated to the pre-T35F reserve of 12 passes.
-        patcher = patch.object(pc, 'RESERVE_PASSES', 12)
-        patcher.start()
-        self.addCleanup(patcher.stop)
-
     def fixture(self):
+        from desk.monitoring_budget import MonitoringBudget
         from tests import test_paper_entry_dispatcher as module
-        with patch.object(module, 'config', lambda: {**config(), KEY: 1, TTL: 120}):
+        # The fixture provisions the legacy 60/hour allowance, which the reserve (rightly) refuses. Only the REPORTED
+        # remaining/cap is raised to the approved 3600 while the fixture initialises and makes its first entry; the reserve
+        # math itself is untouched here and the legacy refusal is asserted below with the real numbers.
+        real = MonitoringBudget.snapshot
+        with patch.object(module, 'config', lambda: {**config(), KEY: 1, TTL: 120}), \
+                patch.object(MonitoringBudget, 'snapshot', lambda self_: {**real(self_), 'remaining': 3600, 'cap': 3600}):
             f = module.DispatcherTests()
             f.setUp()
-        self.addCleanup(f.doCleanups)
-        self.module = module
-        result = f.live()
+            self.addCleanup(f.doCleanups)
+            self.module = module
+            result = f.live()
         self.assertEqual(result['paper_status'], 'COMPLETE', result)
         return f
+
+    def test_legacy_60_allowance_is_refused_with_an_explicit_reason_and_the_real_math(self):
+        f = self.fixture()
+        tool = self.module.tool
+        ctx = tool.plan(**f.args)
+        legacy = {'status': 'AVAILABLE', 'blockers': [], 'remaining': 60, 'cap': 60}
+        with patch.object(tool.monitor.MonitoringBudget, 'snapshot', return_value=legacy), \
+                patch.object(tool.concurrency, 'clock', return_value=f.f.at):
+            with self.assertRaisesRegex(ValueError, r'MONITORING_RESERVE_INSUFFICIENT \| MONITORING_ALLOWANCE_LEGACY_60: the store is on '
+                                                    r'the legacy 60/hour allowance; 2 positions need 1550 of the approved 3600/hour'):
+                tool._preflight(ctx)
+        self.assertEqual(pc.RESERVE_PASSES, 155)              # the real value: nothing was patched
+        self.assertIsNone(pc.allowance_refusal(3600, 3600, 4, marks=True))
+        self.assertIn('MONITORING_RESERVE_INSUFFICIENT: 3500 of the allowance remain, 5 positions need 4032',
+                      pc.allowance_refusal(3500, 3600, 5, marks=True))
+        self.assertIsNone(pc.allowance_refusal(None, None, 5))
+
+    def test_the_reserve_is_derived_from_every_held_pass_source(self):
+        from tools.ops import held_watcher
+        text = Path(held_watcher.__file__).read_text()
+        self.assertIn("'--max-triggers-hour', type=int, default=%d" % pc.WATCHER_PRICE_TRIGGERS_PER_HOUR, text)
+        self.assertIn("'--max-time-triggers-hour', type=int, default=%d" % pc.WATCHER_TIME_TRIGGERS_PER_HOUR, text)
+        self.assertEqual(pc.RESERVE_PASSES, pc.TIMER_PASSES_PER_HOUR + pc.WATCHER_PRICE_TRIGGERS_PER_HOUR
+                         + pc.WATCHER_TIME_TRIGGERS_PER_HOUR + pc.MAX_ENTRY_DISPATCHES_PER_HOUR * pc.CHECKPOINTS_PER_DISPATCH)
+        self.assertEqual((pc.TIMER_PASSES_PER_HOUR, pc.RESERVE_PASSES), (29, 155))
+        self.assertLessEqual(pc.monitoring_required(4, marks=True), pc.APPROVED_ALLOWANCE)       # 3257
+        self.assertGreater(pc.monitoring_required(5, marks=True), pc.APPROVED_ALLOWANCE)         # 4032: 4 is the most it carries
 
     def test_flag_on_preflight_enforces_reserve_and_mark_freshness(self):
         f = self.fixture()

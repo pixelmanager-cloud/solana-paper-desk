@@ -131,6 +131,15 @@ class PostIntentTerminal(held.CheckpointTerminalResult):
         self.assertEqual(result['paper_status'], 'NO_ENTRY')
         self.assertEqual(len(self.journal_results()[-1]['result']['reasons']), 1)
 
+    def test_the_dispatch_rate_bound_that_the_reserve_assumes_is_enforced_before_the_intent(self):
+        self.book()
+        before = (self.charges(), self.count('intents'), self.count('results'))
+        with patch.object(pc, 'MAX_ENTRY_DISPATCHES_PER_HOUR', 1), \
+                self.assertRaisesRegex(ValueError, 'Entry dispatch rate bound reached: 1 per hour'):
+            self.timed_dispatch()
+        self.assertEqual((self.charges(), self.count('intents'), self.count('results')), before)   # zero cost, zero intent
+        self.assertEqual(pc.MAX_ENTRY_DISPATCHES_PER_HOUR * pc.CHECKPOINTS_PER_DISPATCH, pc.CHECKPOINT_PASSES_PER_HOUR)
+
     # -- item 4: caps are enforced ----------------------------------------------------------------------------------
     def test_the_alarm_interrupts_a_request_in_flight_at_the_phase_deadline(self):
         phase = tool._Phase('acquisition', 0.15, time.monotonic)
