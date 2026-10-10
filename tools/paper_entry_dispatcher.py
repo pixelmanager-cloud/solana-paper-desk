@@ -181,7 +181,7 @@ def _read_journal(c):
 
 def _validate(c, expected):
     values = _read_journal(c)
-    retired={}; bindings={}
+    retired={}; bindings={}; historical_contexts={}
     if values['context'] != {1: expected}:
         if set(values['context'])!={1}:raise ValueError('Reviewed dispatcher context mismatch')
         from desk.paper_migration_no_entry import lineage as continuation
@@ -190,11 +190,12 @@ def _validate(c, expected):
             from desk.paper_dispatch_preparation_retirement import lineage
             retired=lineage(expected,values['context'][1])
         else:
-            bindings,retired=edge
-    return _check_records(c,expected,values,bindings,retired)
+            bindings,retired,historical_contexts=edge
+    return _check_records(c,expected,values,bindings,retired,historical_contexts=historical_contexts)
 
 
-def _check_records(c,expected,values,bindings,retired):
+def _check_records(c,expected,values,bindings,retired,*,historical_contexts=None):
+    historical_contexts={} if historical_contexts is None else historical_contexts
     if set(values['results']) - set(values['intents']):
         raise ValueError('Orphan dispatch result')
     for i, mint, signature in c.execute('SELECT id,mint,signature FROM intents'):
@@ -246,7 +247,9 @@ def _check_records(c,expected,values,bindings,retired):
                     raise ValueError('Preparation rejection dispatcher context conflict')
                 continue
             if type(original_result) is dict and original_result.get('kind') == 'dispatcher_token_rejection_v1':
-                if _rejection(expected, value, result['scan_id']) != original_result:
+                record_context=historical_contexts.get(value['context_hash'],expected)
+                if digest(record_context)!=value['context_hash']:raise ValueError('Unknown completed context')
+                if _rejection_evidence(record_context, value, result['scan_id']) != original_result:
                     raise ValueError('Rejection disposition conflict')
                 continue
             if type(original_result) is not dict or not runtime._hash(original_result.get('evidence_hash')):
@@ -399,72 +402,87 @@ def _rejection(ctx, intent, scan, publish=None):
         for key,identity in ctx['paths'].items():
             if _identity(Path(paths[key])) != identity:
                 raise ValueError('Rejection context identity changed')
-        # Both original databases are read in fixed snapshots under their locks.
-        with closing(sqlite3.connect(Path(paths['research_db']).as_uri()+'?mode=ro',uri=True)) as rc, closing(sqlite3.connect(store.path.as_uri()+'?mode=ro',uri=True)) as ec:
-            rc.execute('BEGIN'); ec.execute('BEGIN')
-            descriptor = _bounded_text(rc,'scan_jobs','descriptor','scan_id',scan)
-            report = _bounded_text(rc,'scans','result','id',scan)
-            admission_descriptor = _bounded_text(ec,'ownership_admissions','descriptor','id',scan)
-            prepared = _bounded_text(ec,'ownership_admissions','prepared_source','id',scan)
-            shape = ec.execute("SELECT typeof(a.state),length(a.state),typeof(a.prepared_used),typeof(a.completed_source_hash),length(a.completed_source_hash),typeof(b.source_hash),length(b.source_hash),typeof(b.used),typeof(b.ceiling) FROM ownership_admissions a JOIN ownership_budgets b ON b.id=a.id WHERE a.id=?",(scan,)).fetchall()
-            if shape != [('text',6,'integer','text',64,'text',64,'integer','integer')]:
-                raise ValueError('Sealed admission scalar shape invalid')
-            shape = rc.execute("SELECT typeof(s.id),length(s.id),typeof(s.mint),length(s.mint),typeof(s.created),typeof(s.status),length(s.status),typeof(j.kind),length(j.kind),typeof(j.descriptor_version),typeof(j.descriptor_hash),length(j.descriptor_hash) FROM scans s JOIN scan_jobs j ON j.scan_id=s.id WHERE s.id=?",(scan,)).fetchall()
-            if (len(shape) != 1 or shape[0][:3] != ('text',32,'text') or not 32 <= shape[0][3] <= 44
-                    or shape[0][4:] != ('integer','text',8,'text',len(BIRTH_ACQUISITION_V1),'integer','text',64)):
-                raise ValueError('Completed job scalar shape invalid')
-            admission = HistoryProgress.inspect_admission(ec,scan)
-            row = rc.execute('SELECT id,mint,created,status FROM scans WHERE id=?',(scan,)).fetchone()
-            if not row or row[1] != intent['hint']['mint'] or row[3] != 'COMPLETE':
-                raise ValueError('Completed matching rejection job required')
-            jobs = JobPersistence.__new__(JobPersistence); jobs.path=Path(paths['research_db'])
-            expected_descriptor = jobs._descriptor(scan,row[1],row[2],BIRTH_ACQUISITION_V1,
-                store.path,cfg.get('paper_token_profile_version',0))
-            job = rc.execute('SELECT kind,descriptor_version,descriptor_hash FROM scan_jobs WHERE scan_id=?',(scan,)).fetchone()
-            if canonical(descriptor) != canonical(expected_descriptor) or job != (BIRTH_ACQUISITION_V1,descriptor['schema_version'],digest(descriptor)):
-                raise ValueError('Exact acquisition descriptor required')
-            source = dict(zip(('id','mint','created','status'),row)) | {'result':canonical(report)}
-            if (admission is None or admission['state'] != 'SEALED'
-                    or type(admission['requests_used']) is not int or admission['requests_used'] != 1
-                    or type(admission['prepared_requests_used']) is not int or admission['prepared_requests_used'] != 1
-                    or type(admission['request_ceiling']) is not int or admission['request_ceiling'] != 18
-                    or admission_descriptor != admission['descriptor']
-                    or admission_descriptor['mint'] != row[1] or admission_descriptor['created'] != row[2]
-                    or prepared != source or admission['prepared_source'] != source
-                    or admission['completed_source_hash'] != digest(source)):
-                raise ValueError('Exact sealed one-charge rejection required')
-            setup_row = ec.execute('SELECT typeof(job_descriptor_hash),length(job_descriptor_hash),typeof(mint_hash),length(mint_hash),typeof(cutoff_hash) FROM ownership_acquisition_setup WHERE scan_id=?',(scan,)).fetchall()
-            if setup_row != [('text',64,'text',64,'null')]:
-                raise ValueError('Exact mint-only setup required')
-            job_hash,mint_hash,cutoff = ec.execute('SELECT job_descriptor_hash,mint_hash,cutoff_hash FROM ownership_acquisition_setup WHERE scan_id=?',(scan,)).fetchone()
-            if job_hash != digest(descriptor) or not runtime._hash(mint_hash):
-                raise ValueError('Setup binding invalid')
-            retained = terminal._load(store,mint_hash)
-            if (type(retained) is not dict or retained.get('method') != 'getAccountInfo'
-                    or retained.get('params') != [row[1],{'encoding':'base64','commitment':'confirmed'}]):
-                raise ValueError('Exact retained mint request required')
-            setup = {'mint_hash':mint_hash,'cutoff_hash':None,'mint':retained['result']}
-            policy = acquisition._policy(setup,mint=row[1],token_profile_version=cfg.get('paper_token_profile_version',0))
-            reasons = policy.get('reasons')
-            if (policy.get('decision') != 'SKIP' or type(reasons) is not list or not reasons
-                    or len(reasons) != len(set(reasons))
-                    or not set(reasons) <= {'ACTIVE_MINT_AUTHORITY','ACTIVE_FREEZE_AUTHORITY'}):
-                raise ValueError('Not an allowlisted deterministic token rejection')
-            # Compare the entire original report/source, not selected summary flags.
-            if canonical(acquisition._source(descriptor,setup,admission,None,'UNSUPPORTED_TOKEN')) != canonical(source):
-                raise ValueError('Replayed rejection source/report conflict')
-            proof = {'kind':'dispatcher_token_rejection_v1','intent_hash':digest(intent),
-                'context_hash':digest(ctx),'source_hash':ctx['source_hash'],'config_hash':ctx['config_hash'],
-                'scan_id':scan,'mint':row[1],'signature':intent['hint']['signature'],
-                'job_descriptor_hash':digest(descriptor),'admission_hash':digest(admission),
-                'completed_source_hash':digest(source),'report_hash':report['report_hash'],
-                'mint_response_hash':mint_hash,'requests_before':0,'requests_after':1,
-                'request_ceiling':18,'token_policy':policy,'entry_authorized':False,
-                'execution_status':'EXECUTION_UNVERIFIED','live_readiness':False}
-            if publish is not None:
-                publish(proof)
-            return proof
+        return _rejection_evidence(ctx,intent,scan,publish)
 
+
+def _rejection_evidence(ctx,intent,scan,publish=None):
+    """Original completed evidence replay, not a fresh operation/preflight.
+
+    A saved old rejection retains its old context/source after an explicitly
+    reviewed continuation. Publication still enters through _rejection and all
+    current operational gates; this function alone never creates a result.
+    """
+    paths={k:v['path'] for k,v in ctx['paths'].items()}
+    cfg=cli._config(paths['config'])
+    if digest(cfg)!=ctx['config_hash']:raise ValueError('Rejection config changed')
+    for key,identity in ctx['paths'].items():
+        if _identity(Path(paths[key]))!=identity:raise ValueError('Rejection identity changed')
+    store=EvidenceStore(paths['evidence_db'],read_only=True)
+    # Both original databases are read in fixed snapshots under their locks.
+    with closing(sqlite3.connect(Path(paths['research_db']).as_uri()+'?mode=ro',uri=True)) as rc, closing(sqlite3.connect(store.path.as_uri()+'?mode=ro',uri=True)) as ec:
+        rc.execute('BEGIN'); ec.execute('BEGIN')
+        descriptor = _bounded_text(rc,'scan_jobs','descriptor','scan_id',scan)
+        report = _bounded_text(rc,'scans','result','id',scan)
+        admission_descriptor = _bounded_text(ec,'ownership_admissions','descriptor','id',scan)
+        prepared = _bounded_text(ec,'ownership_admissions','prepared_source','id',scan)
+        shape = ec.execute("SELECT typeof(a.state),length(a.state),typeof(a.prepared_used),typeof(a.completed_source_hash),length(a.completed_source_hash),typeof(b.source_hash),length(b.source_hash),typeof(b.used),typeof(b.ceiling) FROM ownership_admissions a JOIN ownership_budgets b ON b.id=a.id WHERE a.id=?",(scan,)).fetchall()
+        if shape != [('text',6,'integer','text',64,'text',64,'integer','integer')]:
+            raise ValueError('Sealed admission scalar shape invalid')
+        shape = rc.execute("SELECT typeof(s.id),length(s.id),typeof(s.mint),length(s.mint),typeof(s.created),typeof(s.status),length(s.status),typeof(j.kind),length(j.kind),typeof(j.descriptor_version),typeof(j.descriptor_hash),length(j.descriptor_hash) FROM scans s JOIN scan_jobs j ON j.scan_id=s.id WHERE s.id=?",(scan,)).fetchall()
+        if (len(shape) != 1 or shape[0][:3] != ('text',32,'text') or not 32 <= shape[0][3] <= 44
+                or shape[0][4:] != ('integer','text',8,'text',len(BIRTH_ACQUISITION_V1),'integer','text',64)):
+            raise ValueError('Completed job scalar shape invalid')
+        admission = HistoryProgress.inspect_admission(ec,scan)
+        row = rc.execute('SELECT id,mint,created,status FROM scans WHERE id=?',(scan,)).fetchone()
+        if not row or row[1] != intent['hint']['mint'] or row[3] != 'COMPLETE':
+            raise ValueError('Completed matching rejection job required')
+        jobs = JobPersistence.__new__(JobPersistence); jobs.path=Path(paths['research_db'])
+        expected_descriptor = jobs._descriptor(scan,row[1],row[2],BIRTH_ACQUISITION_V1,
+            store.path,cfg.get('paper_token_profile_version',0))
+        job = rc.execute('SELECT kind,descriptor_version,descriptor_hash FROM scan_jobs WHERE scan_id=?',(scan,)).fetchone()
+        if canonical(descriptor) != canonical(expected_descriptor) or job != (BIRTH_ACQUISITION_V1,descriptor['schema_version'],digest(descriptor)):
+            raise ValueError('Exact acquisition descriptor required')
+        source = dict(zip(('id','mint','created','status'),row)) | {'result':canonical(report)}
+        if (admission is None or admission['state'] != 'SEALED'
+                or type(admission['requests_used']) is not int or admission['requests_used'] != 1
+                or type(admission['prepared_requests_used']) is not int or admission['prepared_requests_used'] != 1
+                or type(admission['request_ceiling']) is not int or admission['request_ceiling'] != 18
+                or admission_descriptor != admission['descriptor']
+                or admission_descriptor['mint'] != row[1] or admission_descriptor['created'] != row[2]
+                or prepared != source or admission['prepared_source'] != source
+                or admission['completed_source_hash'] != digest(source)):
+            raise ValueError('Exact sealed one-charge rejection required')
+        setup_row = ec.execute('SELECT typeof(job_descriptor_hash),length(job_descriptor_hash),typeof(mint_hash),length(mint_hash),typeof(cutoff_hash) FROM ownership_acquisition_setup WHERE scan_id=?',(scan,)).fetchall()
+        if setup_row != [('text',64,'text',64,'null')]:
+            raise ValueError('Exact mint-only setup required')
+        job_hash,mint_hash,cutoff = ec.execute('SELECT job_descriptor_hash,mint_hash,cutoff_hash FROM ownership_acquisition_setup WHERE scan_id=?',(scan,)).fetchone()
+        if job_hash != digest(descriptor) or not runtime._hash(mint_hash):
+            raise ValueError('Setup binding invalid')
+        retained = terminal._load(store,mint_hash)
+        if (type(retained) is not dict or retained.get('method') != 'getAccountInfo'
+                or retained.get('params') != [row[1],{'encoding':'base64','commitment':'confirmed'}]):
+            raise ValueError('Exact retained mint request required')
+        setup = {'mint_hash':mint_hash,'cutoff_hash':None,'mint':retained['result']}
+        policy = acquisition._policy(setup,mint=row[1],token_profile_version=cfg.get('paper_token_profile_version',0))
+        reasons = policy.get('reasons')
+        if (policy.get('decision') != 'SKIP' or type(reasons) is not list or not reasons
+                or len(reasons) != len(set(reasons))
+                or not set(reasons) <= {'ACTIVE_MINT_AUTHORITY','ACTIVE_FREEZE_AUTHORITY'}):
+            raise ValueError('Not an allowlisted deterministic token rejection')
+        # Compare the entire original report/source, not selected summary flags.
+        if canonical(acquisition._source(descriptor,setup,admission,None,'UNSUPPORTED_TOKEN')) != canonical(source):
+            raise ValueError('Replayed rejection source/report conflict')
+        proof = {'kind':'dispatcher_token_rejection_v1','intent_hash':digest(intent),
+            'context_hash':digest(ctx),'source_hash':ctx['source_hash'],'config_hash':ctx['config_hash'],
+            'scan_id':scan,'mint':row[1],'signature':intent['hint']['signature'],
+            'job_descriptor_hash':digest(descriptor),'admission_hash':digest(admission),
+            'completed_source_hash':digest(source),'report_hash':report['report_hash'],
+            'mint_response_hash':mint_hash,'requests_before':0,'requests_after':1,
+            'request_ceiling':18,'token_policy':policy,'entry_authorized':False,
+            'execution_status':'EXECUTION_UNVERIFIED','live_readiness':False}
+        if publish is not None:
+            publish(proof)
+        return proof
 
 def _migration_event_hint(raw, decoded, parent):
     """Original websocket event syntax only, including NULL blockTime.

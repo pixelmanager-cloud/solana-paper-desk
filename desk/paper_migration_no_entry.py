@@ -17,7 +17,9 @@ from .history_progress import HistoryProgress
 TABLE='paper_migration_no_entry'
 POLICY=Path(__file__).resolve().parents[1]/'config/paper-migration-recovery.json'
 MAX=4096  # Same lifetime dispatch-count ceiling as the existing journal.
+INSTALL_MARKER={'kind':'migration_disposition_installed_v1','table':TABLE}
 LEGACY_HASH='bd8751533ee11955952342729d794fd34306bcc20b349bc9ef596c973dbef474'
+LEGACY_DEPENDENCIES={'decode.py':'d7a0a3c0c9a525b5c1e38a890540e715bf67cdff1f294ceead1503e6ef3ec93d','programs.py':'e2716d67def3386b162ae345a5a474cd3b30a84bd89e6adbc053b283621a6b59','schemas/pump.json':'ffe966c42f1af41652ee753fe2f1e3f7cd4077d7e6f49faf3138959c8b56064b'}
 FIELDS={'version','kind','association','dispatch_id','scan_id','intent_hash','hint','context','config_hash',
         'source_hash','producer_context','successor_context','journal_prefix','parent_receipt_hash',
         'history_id','history_inventory_hash','admission','canonical_acquisition','wire_attempt_refs',
@@ -120,6 +122,8 @@ def _decline(raw,hint,now,historical):
         if parent['name']!='migrate' or f.get('quote_mint')!=g.NATIVE_SOL_SENTINEL:raise ValueError('Exact historical legacy sentinel only')
         from . import _migration_decline_legacy_v1 as old
         if hashlib.sha256(Path(old.__file__).read_bytes()).hexdigest()!=LEGACY_HASH:raise ValueError('Historical verifier bytes changed')
+        for name,key in LEGACY_DEPENDENCIES.items():
+            if hashlib.sha256((Path(__file__).parent/name).read_bytes()).hexdigest()!=key:raise ValueError('Historical decoder dependency changed')
         measured=old.extract_graduation(raw,mint=mint,pool=pool,now=now,provenance='PUBLIC_MAINNET_CAPTURE_NOT_TRADING_EVIDENCE')
         reason='HISTORICAL_LEGACY_SENTINEL_DECLINED'
     else:
@@ -200,7 +204,7 @@ def _receipt_history(c):
     return result
 
 
-def proof(store,v,*,initial=False,cfg=None):
+def proof(store,v,*,initial=False,cfg=None,review_source=None):
     historical=shape(v);ctx=v['context'];progress=_progress(store)
     if str(store.path)!=ctx['evidence_db']:raise ValueError('Exact evidence context')
     from tools import paper_entry_dispatcher as dispatcher
@@ -213,14 +217,14 @@ def proof(store,v,*,initial=False,cfg=None):
         intent=values['intents'].get(v['dispatch_id'])
         if not intent or digest(intent)!=v['intent_hash'] or intent['hint']!=v['hint'] or intent['context_hash']!=digest(v['producer_context']):raise ValueError('Exact original intent required')
     with closing(sqlite3.connect(Path(ctx['ledger_db']).as_uri()+'?mode=ro',uri=True)) as c:
-        c.execute('BEGIN');_,saved_cfg=terminal._ledger(c,cfg,initial=initial)
+        c.execute('BEGIN');_,saved_cfg=terminal._ledger(c,cfg,initial=initial and historical,historical_source=review_source)
         if digest(saved_cfg)!=v['config_hash'] or base._ledger_originals(c,prefix=True)!=v['ledger_prefix_hash']:raise ValueError('Ledger prefix/config changed')
         if initial and base._ledger_originals(c)!=v['ledger_original_hash']:raise ValueError('Ledger changed before publication')
         if historical and digest(_receipt_history(c))!=v['runtime_receipts_hash']:raise ValueError('Original runtime receipts changed')
     rebuilt=_capture(store,progress,ctx,v['scan_id'],v['hint'],v['evaluated_at'],historical)
     if any(v[k]!=x for k,x in rebuilt.items()):raise ValueError('Captured migration proof changed')
     with closing(store.connect()) as c:
-        c.execute('BEGIN');terminal._monitoring(c,store=store,ledger=Path(ctx['ledger_db']),cfg=saved_cfg,pacing=ctx['pacing_db'])
+        c.execute('BEGIN');terminal._monitoring(c,store=store,ledger=Path(ctx['ledger_db']),cfg=saved_cfg,pacing=ctx['pacing_db'],review_source=review_source)
     terminal._pacing(ctx['pacing_db'])
     with closing(sqlite3.connect(Path(ctx['pacing_db']).as_uri()+'?mode=ro',uri=True)) as c:
         if c.execute('SELECT 1 FROM waiters LIMIT 1').fetchone():raise ValueError('Pacing waiters pending')
@@ -239,7 +243,7 @@ def proof(store,v,*,initial=False,cfg=None):
     return v
 
 
-def _make(store,c,cfg,producer,identity,scan,*,historical=False,backup=None,stopped=None):
+def _make(store,c,cfg,producer,identity,scan,*,historical=False,backup=None,stopped=None,review_source=None):
     from tools import paper_entry_dispatcher as dispatcher
     values,prefix=_journal(c)
     intent=values['intents'].get(identity)
@@ -250,7 +254,7 @@ def _make(store,c,cfg,producer,identity,scan,*,historical=False,backup=None,stop
     ctx={k:producer['paths'][k]['path'] for k in ('research_db','evidence_db','ledger_db','pacing_db')}
     captured=_capture(store,_progress(store),ctx,scan,intent['hint'],now,historical)
     with closing(sqlite3.connect(Path(ctx['ledger_db']).as_uri()+'?mode=ro',uri=True)) as ledger:
-        ledger.execute('BEGIN');terminal._ledger(ledger,cfg,initial=True)
+        ledger.execute('BEGIN');terminal._ledger(ledger,cfg,initial=historical,historical_source=review_source)
         original=base._ledger_originals(ledger);initial_prefix=base._ledger_originals(ledger,prefix=True);receipt_history=_receipt_history(ledger)
     parent_hash=None;successor=None;backup_hash=None
     if historical:
@@ -271,15 +275,18 @@ def _make(store,c,cfg,producer,identity,scan,*,historical=False,backup=None,stop
        'parent_receipt_hash':parent_hash,**captured,'evaluated_at':now,'ledger_original_hash':original,'ledger_prefix_hash':initial_prefix,
        'ledger_backup_hash':backup_hash,'stopped_witness_hash':stopped,'runtime_receipts_hash':digest(receipt_history),
        'entry_authorized':False,'execution_status':'EXECUTION_UNVERIFIED','no_retry':True}
-    proof(store,v,initial=True,cfg=cfg)
+    proof(store,v,initial=True,cfg=cfg,review_source=review_source)
     # Validate every completed old record using the normal dispatcher verifier;
     # this exact target is the only newly proved unresolved exception.
     retired={}
     if values['context']!={1:producer}:
-        from .paper_dispatch_preparation_retirement import lineage as original_lineage
-        retired=original_lineage(producer,values['context'][1])
+        old=matches[0]
+        if digest(values['context'][1])!=old['dispatch_context_hash']:raise ValueError('Original parent context changed')
+        # Full parent replay happens in the gate below with the already-held
+        # ledger declared, avoiding an accidental non-reentrant lock request.
+        retired={old['dispatch_id']:old['dispatch_context_hash']}
     dispatcher._check_records(c,producer,values,retired|{identity:intent['context_hash']},retired|{identity:intent['context_hash']})
-    if terminal.gate(store,Path(ctx['research_db']),(),ledger_locked=ctx['ledger_db']) is not None:raise ValueError('Other observation work unresolved')
+    if terminal._gate(store,Path(ctx['research_db']),(),ledger_locked=ctx['ledger_db'],review_source=review_source) is not None:raise ValueError('Other observation work unresolved')
     return v
 
 
@@ -300,13 +307,18 @@ def _insert(store,v):
             c.execute('INSERT INTO '+TABLE+' VALUES(?,?,?,?)',(v['dispatch_id'],v['scan_id'],canonical(v),digest(v)))
             import zlib
             marker={'kind':'migration_disposition_publication_v1','dispatch_id':v['dispatch_id'],'scan_id':v['scan_id'],'receipt_hash':digest(v)}
-            raw=canonical(marker).encode();key=digest(marker);compressed=zlib.compress(raw)
-            old=c.execute('SELECT payload,raw_bytes FROM pages WHERE hash=?',(key,)).fetchone()
-            if old is None:
-                used=c.execute('SELECT COALESCE(sum(length(payload)),0) FROM pages').fetchone()[0]
-                if used+len(compressed)>store.max_bytes:raise ValueError('Evidence storage bound')
-                c.execute('INSERT INTO pages VALUES(?,?,?)',(key,compressed,len(raw)))
-            elif terminal._load(store,key)!=marker:raise ValueError('Publication marker conflict')
+            for publication in (INSTALL_MARKER,marker):
+                raw=canonical(publication).encode();key=digest(publication);compressed=zlib.compress(raw)
+                # No payload fetch before scalar preflight, including a corrupt
+                # existing publication marker at the otherwise correct hash.
+                shape=c.execute("SELECT typeof(payload),length(payload),typeof(raw_bytes),CASE WHEN typeof(raw_bytes)='integer' THEN raw_bytes END FROM pages WHERE hash=? LIMIT 2",(key,)).fetchall()
+                if not shape:
+                    used=c.execute('SELECT COALESCE(sum(length(payload)),0) FROM pages').fetchone()[0]
+                    if used+len(compressed)>store.max_bytes:raise ValueError('Evidence storage bound')
+                    c.execute('INSERT INTO pages VALUES(?,?,?)',(key,compressed,len(raw)))
+                elif (len(shape)!=1 or shape[0][:3]!=('blob',len(compressed),'integer') or shape[0][3]!=len(raw)):
+                    raise ValueError('Publication marker scalar bound')
+                elif terminal._load(store,key)!=publication:raise ValueError('Publication marker conflict')
             rows(c);c.commit()
         except BaseException:c.rollback();raise
     return 'RECORDED'
@@ -326,7 +338,9 @@ def _locks(ctx,journal,*,owned_journal=False):
     except BaseException:stack.close();raise
 
 
-def review_plan(producer,dispatch_id,scan_id,*,ledger_backup,stopped_witness_hash,apply=False):
+def review_plan(producer,dispatch_id,scan_id,*,ledger_backup,stopped_witness_hash,apply=False,review_source=None):
+    if review_source is not None and (apply or review_source!=producer['source_hash'] or not runtime._hash(review_source)):
+        raise ValueError('Predecessor validation is read-only and exact producer only')
     ctx={k:producer['paths'][k]['path'] for k in ('research_db','evidence_db','ledger_db','pacing_db')}
     store=EvidenceStore(ctx['evidence_db'],read_only=True)
     from .paper_cycle_cli import _config
@@ -334,7 +348,7 @@ def review_plan(producer,dispatch_id,scan_id,*,ledger_backup,stopped_witness_has
     cfg=_config(producer['paths']['config']['path'])
     with _locks(ctx,producer['journal']),closing(sqlite3.connect(Path(producer['journal']).as_uri()+'?mode=ro',uri=True)) as journal:
         journal.execute('BEGIN')
-        v=_make(store,journal,cfg,producer,dispatch_id,scan_id,historical=True,backup=ledger_backup,stopped=stopped_witness_hash)
+        v=_make(store,journal,cfg,producer,dispatch_id,scan_id,historical=True,backup=ledger_backup,stopped=stopped_witness_hash,review_source=review_source)
         if not apply:return v
         approved(v)
         fresh=_make(store,journal,cfg,producer,dispatch_id,scan_id,historical=True,backup=ledger_backup,stopped=stopped_witness_hash)
@@ -366,19 +380,15 @@ def verify(store,result):
 
 def gate(store,research,scan_ids,*,ledger_locked=None):
     from .paper_cycle import _lock
-    with closing(store.connect()) as c:records=rows(c)
-    if not records:
-        # Absence must not erase a committed disposition. Streaming, bounded
-        # original-page inspection is needed only when the table is absent.
-        with closing(store.connect()) as c:
-            c.execute('BEGIN')
-            bad=c.execute("SELECT 1 FROM pages WHERE typeof(hash)!='text' OR length(CAST(hash AS BLOB))!=64 OR typeof(payload)!='blob' OR length(payload)>? OR typeof(raw_bytes)!='integer' OR raw_bytes NOT BETWEEN 1 AND ? LIMIT 1",(terminal.MAX_PROOF_COMPRESSED_BYTES,terminal.MAX_PROOF_RAW_BYTES)).fetchone()
-            n,total=c.execute('SELECT count(*),COALESCE(sum(raw_bytes),0) FROM pages').fetchone()
-            if bad or n>base.MAX_INVENTORY_PAGES or total>base.MAX_INVENTORY_BYTES:raise ValueError('Disposition artifact bounds')
-            keys=[r[0] for r in c.execute('SELECT hash FROM pages')]
-        for key in keys:
-            value=terminal._load(store,key)
-            if type(value) is dict and value.get('kind')=='migration_disposition_publication_v1':raise ValueError('Disposition table missing after publication')
+    with closing(store.connect()) as c:
+        c.execute('BEGIN')
+        records=rows(c)
+        installed=c.execute('SELECT 1 FROM pages WHERE hash=?',(digest(INSTALL_MARKER),)).fetchone()
+        if not records:
+            if installed:raise ValueError('Disposition table missing after publication')
+            return None
+        if not installed:raise ValueError('Disposition installation incomplete')
+    if terminal._load(store,digest(INSTALL_MARKER))!=INSTALL_MARKER:raise ValueError('Disposition installation marker conflict')
     for v in records:
         marker={'kind':'migration_disposition_publication_v1','dispatch_id':v['dispatch_id'],'scan_id':v['scan_id'],'receipt_hash':digest(v)}
         if terminal._load(store,digest(marker))!=marker:raise ValueError('Disposition publication incomplete')
@@ -405,18 +415,18 @@ def lineage(c,expected,original):
     binding={r[1]:runtime._parse(r[-2])['context_hash'] for r in v['journal_prefix']['intents']}
     permitted=set(retired.values())|{digest(v['producer_context'])}
     if any(value not in permitted for value in binding.values()):raise ValueError('Unknown historical intent context')
-    return binding,retired|{v['dispatch_id']:digest(v['producer_context'])}
+    return binding,retired|{v['dispatch_id']:digest(v['producer_context'])},{digest(original):original,digest(v['producer_context']):v['producer_context']}
 
 
 def main(argv=None):
     import argparse,json
     p=argparse.ArgumentParser(description=__doc__,allow_abbrev=False)
     for k in ('producer-context','dispatch-id','scan-id','ledger-backup','stopped-witness-hash'):p.add_argument('--'+k,required=True)
-    p.add_argument('--apply',action='store_true');a=p.parse_args(argv)
+    p.add_argument('--apply',action='store_true');p.add_argument('--review-source');a=p.parse_args(argv)
     try:
         with Path(a.producer_context).open('rb') as f:raw=f.read(65537)
         if len(raw)>65536:raise ValueError('Producer context byte bound')
-        value=review_plan(runtime._parse(raw.decode()),a.dispatch_id,a.scan_id,ledger_backup=a.ledger_backup,stopped_witness_hash=a.stopped_witness_hash,apply=a.apply)
+        value=review_plan(runtime._parse(raw.decode()),a.dispatch_id,a.scan_id,ledger_backup=a.ledger_backup,stopped_witness_hash=a.stopped_witness_hash,apply=a.apply,review_source=a.review_source)
         print(json.dumps(value,sort_keys=True));return 0
     except (ValueError,TypeError,KeyError,IndexError,AttributeError,OSError,sqlite3.Error,OverflowError,RecursionError):
         print(json.dumps({'status':'BLOCKED','blockers':['MIGRATION_RECOVERY_UNPROVED'],'entry_authorized':False}));return 2

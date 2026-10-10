@@ -300,7 +300,7 @@ def _proof(store,progress,v,cfg,*,current_budget):
                 or not witness[3]['MESSAGE'].startswith(witness[3]['UNIT']+': Consumed ')):raise ValueError('Invocation timing/command/termination disagreement')
 
 
-def _monitoring(c, *, store=None, ledger=None, cfg=None, pacing=None):
+def _monitoring(c, *, store=None, ledger=None, cfg=None, pacing=None, review_source=None):
     tables={x[0] for x in c.execute("SELECT name FROM sqlite_master WHERE type='table' AND name LIKE 'paper_monitoring_%'")}
     if not tables:return
     base={'paper_monitoring_budget','paper_monitoring_reservations','paper_monitoring_outcomes'}
@@ -327,7 +327,20 @@ def _monitoring(c, *, store=None, ledger=None, cfg=None, pacing=None):
                 from .runtime_extensions import _metadata
                 cfg=runtime._parse(_metadata(current)['config'])
         budget=MonitoringBudget(checked,ledger,cfg)
-        budget._checkpoint();budget._accounting(c)
+        if review_source is None:
+            budget._checkpoint()
+        else:
+            # Read-only proposal validates the actual canonical predecessor;
+            # active production gates never supply this private planning option.
+            if not runtime._hash(review_source):raise ValueError('Review source malformed')
+            budget.code_hash=review_source
+            from .monitoring_handoff import validate_active
+            if validate_active(c,budget,checkpoint=False) is None:
+                with closing(sqlite3.connect(Path(ledger).as_uri()+'?mode=ro',uri=True)) as current:
+                    runtime.require_runtime(current,implementation=review_source)
+                    from .paper_checkpoint import read_checkpoint
+                    read_checkpoint(current,_implementation=review_source)
+        budget._accounting(c)
         if pacing is not None:_pacing(pacing)
     if c.execute('SELECT 1 FROM paper_monitoring_budget WHERE blocked IS NOT NULL LIMIT 1').fetchone():raise ValueError('Monitoring latch unresolved')
     if c.execute('SELECT 1 FROM paper_monitoring_reservations r LEFT JOIN paper_monitoring_outcomes o ON o.reservation_id=r.id WHERE o.reservation_id IS NULL LIMIT 1').fetchone():raise ValueError('Monitoring transport unresolved')
@@ -419,7 +432,12 @@ def reconcile(research_db,evidence_db,ledger_db,cfg,*,pass_id,outcome_hash,attem
 
 
 def gate(store,research,scan_ids,*,ledger_locked=None):
-    """Shared conservative pending/retirement gate, invoked under outer locks."""
+    """Active gate always validates the current runtime, never a proposal."""
+    return _gate(store,research,scan_ids,ledger_locked=ledger_locked)
+
+
+def _gate(store,research,scan_ids,*,ledger_locked=None,review_source=None):
+    """Private read-only predecessor validation for coordinator pin planning."""
     from .paper_migration_no_entry import gate as migration_gate
     migration = migration_gate(store,research,scan_ids,ledger_locked=ledger_locked)
     if migration is not None:
@@ -437,7 +455,7 @@ def gate(store,research,scan_ids,*,ledger_locked=None):
             from .paper_preparation_retirement import rows as preparation_rows
             from .paper_dispatch_preparation_retirement import rows as dispatch_rows
             if _rows(c) or http_rows(c) or preparation_rows(c) or dispatch_rows(c):raise ValueError('Original pass table missing')
-            _monitoring(c,store=store)
+            _monitoring(c,store=store,review_source=review_source)
             return None
         _passes(c)
         from .paper_http403_retirement import rows as http_rows
@@ -445,7 +463,7 @@ def gate(store,research,scan_ids,*,ledger_locked=None):
         from .paper_dispatch_preparation_retirement import rows as dispatch_rows
         rows=_rows(c)+http_rows(c)+preparation_rows(c)+dispatch_rows(c)
         if len({v['pass_id'] for v in rows})!=len(rows) or len({v['scan_id'] for v in rows})!=len(rows):raise ValueError('Conflicting terminal receipts')
-        _monitoring(c,store=store)
+        _monitoring(c,store=store,review_source=review_source)
         pending=c.execute('SELECT id,intent_hash FROM paper_observation_passes WHERE outcome_hash IS NULL LIMIT 257').fetchall()
     if len(pending)>256:raise ValueError('Pending pass bound')
     certified={}
@@ -455,7 +473,7 @@ def gate(store,research,scan_ids,*,ledger_locked=None):
         with ExitStack() as stack:
             if ledger_locked!=str(path):
                 if not stack.enter_context(_lock(str(path)+'.paper-cycle.lock')):raise ValueError('Receipt ledger busy')
-            historical_source=None
+            historical_source=review_source
             with closing(store.connect()) as evidence:
                 from .monitoring_handoff import read as read_handoff
                 from .monitoring_successor import rows as successor_rows
@@ -470,7 +488,7 @@ def gate(store,research,scan_ids,*,ledger_locked=None):
             if (anchors['metadata_hash']!=v['ledger_anchors']['metadata_hash'] or anchors['events_hash']!=v['ledger_anchors']['events_hash']
                     or digest(cfg)!=v['config_hash']):raise ValueError('Certified ledger prefix/config changed')
             with closing(store.connect()) as c:
-                _monitoring(c,store=store,ledger=path,cfg=cfg,pacing=v['context']['pacing_db'])
+                _monitoring(c,store=store,ledger=path,cfg=cfg,pacing=v['context']['pacing_db'],review_source=review_source)
             progress=HistoryProgress.__new__(HistoryProgress);progress.store=store
             if v['association']=='EXPLICIT_REVIEWED_HTTP403':
                 from .paper_http403_retirement import proof as http_proof

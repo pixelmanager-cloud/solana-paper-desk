@@ -113,3 +113,50 @@ class MigrationNoEntryTests(unittest.TestCase):
             with self.assertRaises(ValueError):self.f.invoke(execute=True,systemd_credentials=True)
         self.assertEqual(self.f.calls,calls)
         self.assertEqual(self.f.count('intents'),1)
+
+    def test_corrupt_publication_marker_scalar_bound_precedes_load(self):
+        self.reject()
+        store=self.f.f.progress.store
+        with store.connect() as c:
+            value=copy.deepcopy(rejection.rows(c)[0])
+            value.update(dispatch_id='d'*32,scan_id='e'*32)
+            c.execute('UPDATE pages SET payload=? WHERE hash=?',(b'x'*(20*1024*1024),digest(rejection.INSTALL_MARKER)))
+        with patch.object(terminal,'_load',side_effect=AssertionError('must not load corrupt payload')):
+            with self.assertRaisesRegex(ValueError,'marker scalar bound'):rejection._insert(store,value)
+        with store.connect() as c:self.assertEqual(c.execute('SELECT count(*) FROM '+rejection.TABLE).fetchone(),(1,))
+
+    def test_absence_gate_uses_exact_marker_lookup_without_page_loads(self):
+        store=self.f.f.progress.store
+        for n in range(100):store.save({'kind':'unrelated_fixture','n':n})
+        with patch.object(terminal,'_load',side_effect=AssertionError('absence must not load pages')):
+            self.assertIsNone(rejection.gate(store,self.f.f.jobs.path,()))
+
+    def test_prospective_decline_after_actual_buy_and_sell_preserves_trade_history(self):
+        from dataclasses import replace
+        from desk import paper_cycle as cycle,quote_execution as qe,provider_pacing as pace
+        from desk.monitoring_budget import MonitoringBudget
+        from tests import test_kraken_lifecycle as lifecycle
+        h=lifecycle.KrakenLifecycleTests();h.setUp()
+        try:
+            self.assertEqual(h.h.cfg,self.f.cfg)
+            with patch.dict('os.environ',{pace.ENV:str(h.path)}):
+                bought=lifecycle.actual_cycle(h.h)
+                self.assertEqual(bought['status'],'COMPLETE',bought)
+                position=cycle._state(h.h.path,h.h.cfg)['positions'][h.h.target.mint]
+                MonitoringBudget(h.h.f.progress.store,h.h.path,h.h.cfg).provision()
+                item=replace(h.h.item,target=replace(h.h.target,amount_raw=qe.raw_quantity(position['qty'],position['quote_execution']['mint_decimals'])),known_hazards=('MAYHEM_POOL',))
+                sold=lifecycle.actual_cycle(h.h,positions=(item,),candidates=(),monitoring=True)
+                self.assertEqual(sold['status'],'COMPLETE',sold)
+                self.assertEqual(cycle._state(h.h.path,h.h.cfg)['positions'],{})
+            # Fixture-only transplant of a genuine completed experiment into the
+            # separate dispatcher fixture; keep its recorded file inode intact.
+            with closing(sqlite3.connect(h.h.path)) as source,closing(sqlite3.connect(self.f.ledger)) as target:source.backup(target)
+        finally:h.doCleanups()
+        with sqlite3.connect(self.f.ledger) as c:
+            before=c.execute('SELECT seq,event_id,payload,payload_hash FROM events ORDER BY seq').fetchall()
+            fills=c.execute('SELECT * FROM outcomes ORDER BY seq').fetchall()
+        result=self.reject();self.assertEqual(result['paper_status'],'NO_ENTRY')
+        with sqlite3.connect(self.f.ledger) as c:
+            self.assertEqual(c.execute('SELECT seq,event_id,payload,payload_hash FROM events ORDER BY seq').fetchall(),before)
+            self.assertEqual(c.execute('SELECT * FROM outcomes ORDER BY seq').fetchall(),fills)
+        self.assertGreater(len(before),1)
