@@ -893,3 +893,22 @@ AVOID: desk/**, tools/research/counterfactual.py (T26F owns it)
 7. **Carry timers.** Carry-timer events must not sidestep `price_ttl_seconds`. Document the behaviour, or mark those exits ambiguous.
 8. **Opening stores.** `mode=ro` on a WAL store with a missing `-shm`: follow the T02F rule (immutable only for a quiet WAL).
 9. **`migrated_at`.** Use T26F's on-chain migration time if it provides one. Otherwise label the age windows as "since hint receipt".
+
+---
+
+## T22F — Verify T22 covers the T01/T12 review findings; fix any gaps
+STATUS: OPEN
+DEPENDS: branch `cloud/T22` has a `DONE T22:` commit
+BASE: origin/cloud/T22 (merge origin/integration/r1 in first; it contains T01, T12's RED tests, T08 and T16)
+OWNS: the same files as T22
+AVOID: tools/ops/**
+
+T22 was claimed before the coordinator addendum was written. Read the "Coordinator addendum (T01 review)" under T22 in this file and `reports/T12.md` (on `origin/cloud/T12`), then make sure ALL of the following hold. Fix whatever T22 did not do.
+- **R1 / addendum MED.** Allow-list the inner producer vocabulary of `MARKET_PRODUCER_BLOCKED` (`MISSING_WINDOW_MEASUREMENT:*`, `STALE_WINDOW_MEASUREMENT:*`, declared known hazards). Every retained diagnostic blocker must be in the allow-list, or the pass stays NULL. The T12 `expectedFailure` tests in `tests/test_review_t01_integrity.py` must pass with the decorator removed.
+- **R2 / addendum HIGH.** Per-scan page indexing, with no global 4096-page or 256 MB bound in the no-entry gate or in publish. The `tests/test_review_t01_bounds.py` `expectedFailure` tests must pass with the decorator removed. Gate cost must stay roughly flat with store size; add a measurement assertion with generous bounds.
+- **R3.** `publish` refusals swallowed in `run_once` must record a typed, visible `publish_refused` reason (log plus a queryable row or state file) that the healthcheck can read. Fail closed as before.
+- **R4.** Replace the `MAX_ROWS=8192` hard stop with a rotation warning at 80%, plus a hard stop that leaves the store flat-rotatable, not mid-position-latched. Document this in the RUNBOOK rotation section.
+- **R5.** Remove `RETAINED_MIGRATION_WITNESS_REQUIRED` from the allow-list, or constrain it to `MIGRATION_WITNESS_ABSENT` only.
+- **Addendum.** The `history_first` path through `paper_history_preparation.prepare` must not leave a NULL pass for normal blockers (FEATURE_HISTORY_PAGE_LIMIT, budget exhaustion).
+
+Run every T09/T12 audit module and report which `expectedFailure` tests remain, and why.
