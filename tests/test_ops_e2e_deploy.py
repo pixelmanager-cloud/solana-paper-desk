@@ -16,6 +16,7 @@ import shlex
 import shutil
 import subprocess
 import sys
+import unittest
 from pathlib import Path
 from unittest import mock
 
@@ -560,10 +561,47 @@ class E2E(FreshStartBase):
         self.assertIn('--execute', real)
         for command in (dry, real):
             self.assertIn('--policy $REL/config/provider-pacing-policy.json', command)
-        for phrase in ('ONLY after the new release is on every unit', 'BEFORE the first unit starts', 'append-only', 'Kraken stays at exactly 2.0 s',
-                       'Never edit', 'ALREADY_APPLIED', 'One-way door', 'PACING_DATABASE_INVALID', 'shared database must not be reset'):
-            self.assertIn(phrase, section.replace('\n', ' ').replace('  ', ' ') if phrase.startswith('shared') else section, phrase)
+        for phrase in ('ONLY after the new release is on every unit', 'BEFORE the first unit starts', '**The policy file is append-only.**', 'Kraken stays at exactly 2.0 s',
+                       'Never edit, reorder or delete an entry that was applied', 'ALREADY_APPLIED', 'One-way door', 'PACING_DATABASE_INVALID', 'shared database must not be reset'):
+            self.assertIn(phrase, ' '.join(section.split()), phrase)
         self.assertIn('If step 7a2 was applied, the OLD stack cannot be started again', text)         # the rollback section says so
+
+    @unittest.skipUnless((REPO / 'tools' / 'ops' / 'pacing_policy.py').is_file(), 'T36 (tools.ops.pacing_policy) is not merged into this tree yet')
+    def test_the_pacing_policy_commands_run_as_written_against_the_sandbox_pacing_database(self):
+        """T32H: once T36 is merged, the RUNBOOK's 7a2 commands are executed, not only read."""
+        import sqlite3
+        from tools.ops import pacing_policy
+        shutil.copytree(REPO / 'config', self.rel / 'config', dirs_exist_ok=True)
+        prod = self.variables(RUNBOOK.read_text())
+        commands = [c for sec, c in self.runbook_blocks() if sec.startswith('7a2.')][1:]
+        self.assertEqual(len(commands), 3)
+
+        def kraken_lane():
+            with sqlite3.connect(self.pacer) as c:
+                return (c.execute("SELECT * FROM policy WHERE provider='kraken'").fetchall(),
+                        c.execute("SELECT * FROM state WHERE provider='kraken'").fetchall(),
+                        c.execute('SELECT * FROM kraken_pacing_migration').fetchall())
+        before_kraken = kraken_lane()
+        results = []
+        with mock.patch.object(pace, 'POLICY_FILE', self.rel / 'config' / 'provider-pacing-policy.json'):   # the tool accepts only THIS release's file
+            for command in commands + commands[2:]:                        # ...and the real apply a second time: a no-op
+                words = shlex.split(self.sandbox(command, prod))
+                self.assertEqual(words[:4], ['runuser', '-u', 'solana-desk', '--'])
+                self.assertEqual(words[4:7], [sys.executable, '-m', 'tools.ops.pacing_policy'])
+                out = io.StringIO()
+                with contextlib.redirect_stdout(out):
+                    code = pacing_policy.main(words[7:], runner=lambda unit: 'inactive')
+                results.append((code, json.loads(out.getvalue())))
+        self.assertEqual([r[0] for r in results], [0, 0, 0, 0], results)
+        plan, dry, real, again = (r[1] for r in results)
+        self.assertEqual((plan['status'], dry['status']), ('PLAN', 'DRY_RUN'))
+        self.assertTrue(plan['ready_to_apply'] and dry['ready_to_apply'])
+        self.assertEqual({c['provider'] for c in plan['changes']}, {'helius', 'jupiter'})   # never kraken
+        with sqlite3.connect(self.pacer) as c:
+            rows = c.execute('SELECT provider FROM pacing_policy_changes ORDER BY id').fetchall()
+        self.assertEqual(sorted(r[0] for r in rows), ['helius', 'jupiter'])               # appended exactly once
+        self.assertIn('ALREADY_APPLIED', json.dumps(again))
+        self.assertEqual(kraken_lane(), before_kraken)                                      # the Kraken lane is byte-identical
 
     def test_runbook_never_chowns_or_installs_into_the_backup_parent(self):
         """T32G item 4: /var/backups/solana-desk is root:root 0755 on the VPS and stays so; fresh_start creates $BK in it."""
