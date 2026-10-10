@@ -6,6 +6,7 @@ import sys
 import tempfile
 import unittest
 from unittest.mock import patch
+from tools import paper_scheduler as wrapper
 from desk.paper_scheduler import lease
 
 class SchedulerTests(unittest.TestCase):
@@ -22,6 +23,14 @@ class SchedulerTests(unittest.TestCase):
         with lease(self.research) as fd:
             self.assertIsNotNone(fd)
             for _ in range(4):self.assertEqual(self.contender(),'BUSY')
+        self.assertEqual(self.contender(),'ACQUIRED')
+    def test_in_process_command_keeps_lease_across_handoffs(self):
+        def invoke(args):
+            self.assertEqual(args,['--research-db',str(self.research)])
+            for _ in range(3):self.assertEqual(self.contender(),'BUSY')
+            return 0
+        with patch('desk.paper_monitor_service.main',side_effect=invoke):
+            self.assertEqual(wrapper.main(['--research-db',str(self.research),'--mode','held','--','--research-db',str(self.research)]),0)
         self.assertEqual(self.contender(),'ACQUIRED')
     def test_exec_retains_lease_without_parent_child_gap(self):
         code="from desk.paper_scheduler import lease\nimport os,sys\nwith lease(sys.argv[1]) as fd:\n os.set_inheritable(fd,True)\n os.execv(sys.executable,[sys.executable,'-c',\"import sys;print('READY',flush=True);sys.stdin.readline()\"])"

@@ -52,18 +52,5 @@ def main(argv=None):
             args=[('paper-monitor' if a.mode=='expire' else 'consume-scans'),*args]
         return invoke(args)
     return 0
-                # Every entry wake-up services existing positions instead; an
-                # entry timer cannot starve held work by repeatedly winning.
-                held=[]
-                for name in ('--config','--research-db','--evidence-db','--ledger-db','--pool-fee-bps'):
-                    held.extend([name,argument(name)])
-                if '--systemd-credentials' in args:held.append('--systemd-credentials')
-                os.set_inheritable(fd,True)
-                os.execv(sys.executable,[sys.executable,*COMMANDS['held'],*held])
-        # Exec replaces this process: no parent/child release gap, retained fd
-        # survives exec and is released by normal exit, crash or systemd cleanup.
-        os.set_inheritable(fd,True)
-        os.execv(sys.executable,[sys.executable,*COMMANDS[a.mode],*args])
-    return 0
 
 if __name__=='__main__':raise SystemExit(main())
