@@ -266,18 +266,50 @@ class ApplyTests(Base):
         p.Pacer(self.path)
         self.assertAlmostEqual(self.gap('helius'), 0.2, delta=0.1)
         self.assertAlmostEqual(self.gap('jupiter'), 0.25, delta=0.1)       # untouched by the second entry
+        pacer = self.make()                                                  # the newest backoff (60 s) is the one a 429 uses
+        ticket = pacer.acquire('helius', timeout_seconds=5)
+        now = self.clock.wall
+        pacer.throttle('helius', Message(), ticket=ticket)
+        self.assertEqual(self.rows("SELECT blocked_until FROM state WHERE provider='helius'")[0][0], now + 60.0)
         # removing the first entry from the file orphans its rows: history is append-only in the file too
         first = copy.deepcopy(doc)
         del first['policies'][0]
         self.policy_file.write_text(json.dumps(first))
         self.invalid()
 
-    def test_the_effective_values_drive_reclaim_arithmetic_too(self):
+    def test_effective_values_per_provider(self):
         self.apply()
         with closing(sqlite3.connect(self.path)) as c:
             self.assertEqual(p._effective(c, 'helius'), (0.1, 30.0))
             self.assertEqual(p._effective(c, 'jupiter'), (0.25, 30.0))
             self.assertEqual(p._effective(c, 'kraken'), (2.0, 30.0))
+
+    def test_reclaim_arithmetic_uses_the_effective_cadence(self):
+        """An orphaned grant is dated from next_at - cadence: the cadence in force, not the original policy row."""
+        self.apply()
+        self.assertEqual(p.upgrade(self.path), 'UPGRADED')                  # the reclaim table (T23F); orthogonal to the policy table
+        ticket = 'a' * 32
+        granted = T0 - 100.0
+        with closing(sqlite3.connect(self.path)) as c:
+            c.execute("UPDATE state SET next_at=?,pending=?,high_water=? WHERE provider='helius'", (granted + 0.1, ticket, granted))
+            c.commit()
+        self.assertEqual(self.make().reclaim_orphans(), ['helius'])         # no process holds the lock: the owner is gone
+        (row,) = self.rows('SELECT provider,granted_at FROM pacing_reclaims')
+        self.assertEqual((row[0], row[1]), ('helius', granted))
+
+    def test_the_chain_is_validated_before_the_commit_and_a_failure_rolls_back(self):
+        before = file_digest(self.path)
+        real = p._reviewed
+        calls = []
+
+        def flaky():
+            calls.append(1)
+            return real() if len(calls) == 1 else ({}, 'f' * 64)           # the in-transaction validation sees no reviewed entry
+        with patch.object(p, '_reviewed', side_effect=flaky):
+            with self.assertRaisesRegex(p.PacingError, 'PACING_POLICY_INVALID'):
+                self.apply()
+        self.assertEqual(file_digest(self.path), before)
+        self.assertEqual(self.rows("SELECT name FROM sqlite_master WHERE name='pacing_policy_changes'"), [])
 
 
 class ForgedChangeTests(Base):
