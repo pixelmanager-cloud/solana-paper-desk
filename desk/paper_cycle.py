@@ -526,7 +526,7 @@ def run_once(research_db, evidence_db, ledger_db, cfg, *, position_targets=(), c
                         intent.update(ledger_anchors=anchors,terminal_context=context,source_hash=terminal.runtime.implementation_hash())
                     except (ValueError,OSError,sqlite3.Error):pass
                 identity = uuid.uuid4().hex; key = store.save(intent)
-                attempt_refs=[]; terminal_hazards=()
+                attempt_refs=[]; terminal_hazards=(); realism_jobs=[]
                 result.update(pass_id=identity,intent_hash=key,attempt_refs=attempt_refs)
                 with store.connect() as c:c.execute('INSERT INTO paper_observation_passes VALUES(?,?,NULL)',(identity,key))
                 ledger = Ledger(path,must_exist=True)
@@ -544,7 +544,6 @@ def run_once(research_db, evidence_db, ledger_db, cfg, *, position_targets=(), c
                         result['outcomes'].extend(ledger.apply(event,cfg,checked,engine.initial_state))
                         result['events'].append(event['event_id'])
                     for control in controls:deliver(control)
-                    realism_jobs=[]  # opt-in paper_fill_realism_version only; empty and unused when off
                     usd = None
                     for item in items:
                         state = _state(path,cfg)
@@ -638,8 +637,7 @@ def run_once(research_db, evidence_db, ledger_db, cfg, *, position_targets=(), c
                         before_outcomes=len(result['outcomes'])
                         deliver(event,quotes)
                         if fill_realism.selected(cfg):
-                            realism_jobs+=fill_realism.collect(result['outcomes'][before_outcomes:],event,collected,source,action_budget is not budget,
-                                lambda scan=target.scan_id:source_factory(progress,scan))
+                            realism_jobs+=fill_realism.collect(result['outcomes'][before_outcomes:],event,collected,is_position)
                         _state(path,cfg)
                         if is_position and any(x['type']=='blocked_exit' for x in planned['outcomes']):
                             raise CycleBlocked('UNRESOLVED_POSITION_EXIT')
@@ -660,9 +658,6 @@ def run_once(research_db, evidence_db, ledger_db, cfg, *, position_targets=(), c
                     else:raise
                 finally:
                     ledger.close()
-                    if 'realism_jobs' in locals() and realism_jobs:
-                        # Post-fill measurement; never raises, never alters the recorded fill.
-                        result['fill_realism']=fill_realism.measure(realism_jobs,cfg,path,budget,allowance)
                     result['attempted_requests']=budget.attempted+budget.monitoring_attempted
                     result['investigation_attempted_requests']=budget.attempted
                     result['monitoring_attempted_requests']=budget.monitoring_attempted
@@ -673,6 +668,7 @@ def run_once(research_db, evidence_db, ledger_db, cfg, *, position_targets=(), c
                     result['budget']={scan:{'used':progress.admission(scan)['requests_used'],
                         'ceiling':progress.admission(scan)['request_ceiling']} for scan in intent['admissions']}
                 outcome = store.save(result)
+                if realism_jobs:fill_realism.enqueue(path,realism_jobs,digest(cfg))  # opt-in; after the outcome is durable; never raises
                 if terminal_hazards and 'terminal_context' in intent:
                     try:
                         receipt=terminal.certify_intrinsic(store,progress,cfg,pass_id=identity,intent_hash=key,

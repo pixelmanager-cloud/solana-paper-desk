@@ -1,73 +1,84 @@
 """Opt-in, versioned latency measurement of simulated paper fills (EXECUTION_UNVERIFIED).
 
-With ``paper_fill_realism_version: 1`` (absent = off, behaviour unchanged), every
-simulated BUY/SELL fill produced by a cycle is followed by bounded re-quotes of
-the SAME route/input at +2s, +5s and +10s after the decision. Each attempt goes
-through the cycle's existing charged budget classes (investigation admission for
-entries, the shared monitoring allowance for held exits); a failed attempt is
-charged like any other. Results are appended to ``paper_fill_realism_samples``
-inside the ledger file, bound to the fill's event id, and are trigger-guarded
-against UPDATE/DELETE. The recorded paper fill, checkpoint and accounting are
-never touched: this module only reads outcomes and appends measurements.
+With ``paper_fill_realism_version: 1`` (absent = off, behaviour byte-identical) the
+trading pass only ENQUEUES one append-only job per simulated BUY/SELL fill, after
+its pass outcome is durable. It never sleeps, requotes, charges a budget or can
+raise. A separate worker (``tools/ops/fill_realism_worker.py``) re-quotes the
+SAME route/input at +2s, +5s and +10s after the decision, with its own request
+allowance and the shared provider pacing, and appends the samples.
 
-Drift convention (all signed basis points, Decimal, stored as strings):
+The measurement store is its own SQLite file next to the ledger
+(``<ledger>.fill-realism.sqlite``): the ledger, its checkpoint, the research and
+evidence stores and every NULL/outcome pass state are never touched by the worker.
+
+Drift convention (signed basis points, Decimal, stored as strings):
   out_drift_bps       = (requote simulated out / decision simulated out - 1) * 1e4
                         (negative = fewer output units than the paper fill got)
   adverse_slippage_bps = -out_drift_bps (positive = the delayed fill is worse)
   price_drift_bps     = (requote SOL-per-token / decision SOL-per-token - 1) * 1e4
 This is a measurement of quote drift, not a verified fill or a latency guarantee.
 """
-from decimal import Decimal, localcontext
 from contextlib import closing
+from decimal import Decimal, localcontext
 import json
 from pathlib import Path
 import sqlite3
 import time
 
 from . import quote_execution as qe
-from .live_observation import ProviderObservation, ingest_quote, ObservationError
-from .model import canonical, digest
-from .providers import SOL
 
 KEY = 'paper_fill_realism_version'
 VERSION = 1
 DELAYS = (2, 5, 10)
-LATE_SECONDS = 3          # a sample later than delay+3s is skipped, not requested
-MAX_WAIT_SLACK = 1        # refuse to sleep longer than delay+1s (clock defects)
-MONITORING_RESERVE = 16  # keep two held mark+exit passes (8 reads each) affordable; works for 60 or 3600 caps
-INVESTIGATION_RESERVE = 8  # a held mark + exit pass (4 + 4 reads) must stay affordable on the 18-read admission
-MAX_JSON_BYTES = 256 * 1024
 STATUS = qe.STATUS
-TABLE = 'paper_fill_realism_samples'
-CODES_STOP = ('SHARED_BUDGET_CHARGE_OR_IDENTITY_MISMATCH', 'MONITORING_CHARGE_OR_ADMISSION_MISMATCH',
-              'INVESTIGATION_REQUEST_BUDGET_EXHAUSTED', 'CYCLE_REQUEST_BUDGET_EXHAUSTED',
-              'MONITORING_REQUEST_BUDGET_EXHAUSTED', 'PERSISTED_ADMISSION_REQUIRED',
-              'REALISM_MONITORING_RESERVE', 'REALISM_INVESTIGATION_RESERVE', 'REALISM_SOURCE_UNAVAILABLE',
-              'MONITORING_OPEN_POSITION_REQUIRED')
+STORE_SUFFIX = '.fill-realism.sqlite'
+MAX_JOBS = 100_000
+MAX_RECORD_BYTES = 8192
+
+JOB_TABLE = 'fill_realism_jobs'
+ATTEMPT_TABLE = 'fill_realism_attempts'
+SAMPLE_TABLE = 'fill_realism_samples'
+POLICY_TABLE = 'fill_realism_policy'
+TABLE = SAMPLE_TABLE
+SAMPLE_STATUSES = ('MEASURED', 'FAILED', 'LATE', 'STALE')
+
+
+def _guards(table):
+    return (f"CREATE TRIGGER IF NOT EXISTS {table}_no_update BEFORE UPDATE ON {table} "
+            f"BEGIN SELECT RAISE(ABORT,'fill realism records are append-only'); END;\n"
+            f"CREATE TRIGGER IF NOT EXISTS {table}_no_delete BEFORE DELETE ON {table} "
+            f"BEGIN SELECT RAISE(ABORT,'fill realism records are append-only'); END;\n")
+
 
 SCHEMA = f'''
-CREATE TABLE IF NOT EXISTS {TABLE}(
+CREATE TABLE IF NOT EXISTS {JOB_TABLE}(
   fill_event_id TEXT NOT NULL, side TEXT NOT NULL CHECK(side IN ('buy','sell')),
-  delay_seconds INTEGER NOT NULL CHECK(delay_seconds IN (2,5,10)),
-  mint TEXT NOT NULL, decision_at INTEGER NOT NULL, config_hash TEXT NOT NULL,
-  status TEXT NOT NULL CHECK(status IN ('MEASURED','FAILED')), code TEXT,
-  charged INTEGER NOT NULL CHECK(charged IN (0,1)), measured_at INTEGER, elapsed_seconds TEXT,
-  decision_input_raw INTEGER, decision_estimated_out_raw INTEGER, decision_simulated_out_raw INTEGER,
-  decision_quote_hash TEXT, requote_estimated_out_raw INTEGER, requote_min_out_raw INTEGER,
-  requote_simulated_out_raw INTEGER, requote_hash TEXT, requote_json TEXT,
-  decision_price_sol TEXT, requote_price_sol TEXT, price_drift_bps TEXT, out_drift_bps TEXT,
-  adverse_slippage_bps TEXT, execution_status TEXT NOT NULL CHECK(execution_status='{STATUS}'),
+  mint TEXT NOT NULL, scan_id TEXT NOT NULL, pool TEXT NOT NULL, taker TEXT NOT NULL,
+  decision_ts INTEGER NOT NULL, decision_at REAL NOT NULL, config_hash TEXT NOT NULL,
+  held INTEGER NOT NULL CHECK(held IN (0,1)), mint_decimals INTEGER NOT NULL,
+  mint_observed_at INTEGER NOT NULL, record_json TEXT NOT NULL CHECK(length(record_json)<={MAX_RECORD_BYTES}),
+  enqueued_at REAL NOT NULL, execution_status TEXT NOT NULL CHECK(execution_status='{STATUS}'),
+  PRIMARY KEY(fill_event_id, side));
+CREATE TABLE IF NOT EXISTS {ATTEMPT_TABLE}(
+  fill_event_id TEXT NOT NULL, side TEXT NOT NULL, delay_seconds INTEGER NOT NULL CHECK(delay_seconds IN (2,5,10)),
+  started_at REAL NOT NULL, PRIMARY KEY(fill_event_id, side, delay_seconds),
+  FOREIGN KEY(fill_event_id, side) REFERENCES {JOB_TABLE}(fill_event_id, side));
+CREATE TABLE IF NOT EXISTS {SAMPLE_TABLE}(
+  fill_event_id TEXT NOT NULL, side TEXT NOT NULL, delay_seconds INTEGER NOT NULL CHECK(delay_seconds IN (2,5,10)),
+  status TEXT NOT NULL CHECK(status IN ('MEASURED','FAILED','LATE','STALE')), code TEXT,
+  due_at REAL NOT NULL, started_at REAL, completed_at REAL, lag_seconds TEXT,
+  charged INTEGER NOT NULL CHECK(charged IN (0,1)),
+  requote_estimated_out_raw INTEGER, requote_min_out_raw INTEGER, requote_simulated_out_raw INTEGER,
+  requote_hash TEXT, requote_json TEXT, requote_observed_at INTEGER,
+  decision_price_sol TEXT, requote_price_sol TEXT, price_drift_bps TEXT, out_drift_bps TEXT, adverse_slippage_bps TEXT,
+  execution_status TEXT NOT NULL CHECK(execution_status='{STATUS}'),
   PRIMARY KEY(fill_event_id, side, delay_seconds),
+  FOREIGN KEY(fill_event_id, side) REFERENCES {JOB_TABLE}(fill_event_id, side),
   CHECK((status='MEASURED' AND code IS NULL AND requote_json IS NOT NULL AND out_drift_bps IS NOT NULL)
-     OR (status='FAILED' AND code IS NOT NULL)));
-CREATE TRIGGER IF NOT EXISTS {TABLE}_bound BEFORE INSERT ON {TABLE}
-  WHEN NOT EXISTS(SELECT 1 FROM events WHERE event_id=NEW.fill_event_id AND ts=NEW.decision_at)
-  BEGIN SELECT RAISE(ABORT,'fill realism sample must bind to a ledger event'); END;
-CREATE TRIGGER IF NOT EXISTS {TABLE}_no_update BEFORE UPDATE ON {TABLE}
-  BEGIN SELECT RAISE(ABORT,'fill realism samples are append-only'); END;
-CREATE TRIGGER IF NOT EXISTS {TABLE}_no_delete BEFORE DELETE ON {TABLE}
-  BEGIN SELECT RAISE(ABORT,'fill realism samples are append-only'); END;
-'''
+     OR (status<>'MEASURED' AND code IS NOT NULL AND out_drift_bps IS NULL)));
+CREATE TABLE IF NOT EXISTS {POLICY_TABLE}(
+  id INTEGER PRIMARY KEY AUTOINCREMENT, at REAL NOT NULL, allowance_per_hour INTEGER NOT NULL CHECK(allowance_per_hour BETWEEN 1 AND 3600));
+''' + ''.join(_guards(t) for t in (JOB_TABLE, ATTEMPT_TABLE, SAMPLE_TABLE, POLICY_TABLE))
 
 
 def selected(cfg):
@@ -80,10 +91,26 @@ def selected(cfg):
     return VERSION
 
 
-def _sleep(seconds):
-    time.sleep(seconds)
+def store_path(ledger_path):
+    return Path(str(ledger_path) + STORE_SUFFIX)
 
 
+def connect(path, *, readonly=False):
+    if readonly:
+        return sqlite3.connect(Path(path).resolve().as_uri() + '?mode=ro', uri=True, timeout=5)
+    c = sqlite3.connect(path, timeout=5, isolation_level=None)
+    c.execute('PRAGMA foreign_keys=ON')
+    return c
+
+
+def ensure_schema(c, *, allowance_per_hour=None, now=None):
+    c.executescript(SCHEMA)
+    if allowance_per_hour is not None and c.execute(f'SELECT 1 FROM {POLICY_TABLE}').fetchone() is None:
+        c.execute(f'INSERT INTO {POLICY_TABLE}(at,allowance_per_hour) VALUES(?,?)',
+                  (time.time() if now is None else now, allowance_per_hour))
+
+
+# ----------------------------------------------------------------- math
 def _dec(value):
     return Decimal(value)
 
@@ -110,155 +137,56 @@ def drift(side, decision, requote_estimated, requote_simulated, decimals):
                 'out_drift_bps': format(out, 'f'), 'adverse_slippage_bps': format(-out, 'f')}
 
 
-def ensure_schema(db):
-    db.executescript(SCHEMA)
-
-
-def collect(outcomes, event, collected, source, held, plain_source=None):
-    """Detached job specs for fills of one delivered event (nothing is read or charged here)."""
-    jobs = []
-    for outcome in outcomes:
-        if outcome.get('type') != 'fill' or outcome.get('side') not in ('buy', 'sell'):
-            continue
-        record = outcome.get('quote_execution')
-        if type(record) is not dict or record.get('direction') != outcome['side']:
-            continue
-        jobs.append({'event_id': event['event_id'], 'decision_at': event['ts'], 'side': outcome['side'],
-                     'mint': outcome['mint'], 'record': dict(record), 'target': collected.target,
-                     'typed_mint': collected.mint, 'source': source, 'held': bool(held), 'plain_source': plain_source})
-    return jobs
-
-
-def _monitoring_provisioned(progress):
+# --------------------------------------------- enqueue (the ONLY pass-side code)
+def collect(outcomes, event, collected, held, wall_clock=time.time):
+    """Detached job specs for the fills of one delivered event. Pure, bounded, NEVER raises."""
     try:
-        with progress.store.connect() as c:
-            return c.execute('SELECT 1 FROM paper_monitoring_budget LIMIT 1').fetchone() is not None
-    except sqlite3.Error:
-        return False
-
-
-def _position_open(path, mint):
-    """Conservative: any doubt means the position is still open and needs its exit budget."""
-    try:
-        with closing(sqlite3.connect(Path(path).resolve().as_uri() + '?mode=ro', uri=True)) as c:
-            row = c.execute('SELECT payload FROM state WHERE id=1').fetchone()
-        return mint in json.loads(row[0])['positions']
-    except (sqlite3.Error, TypeError, KeyError, ValueError, OSError):
-        return True
-
-
-def _insert(path, row):
-    row = {**row, 'execution_status': STATUS}
-    names = ','.join(row)
-    with closing(sqlite3.connect(path, timeout=20, isolation_level=None)) as c:
-        ensure_schema(c)
-        try:
-            c.execute(f'INSERT INTO {TABLE}({names}) VALUES({",".join("?" * len(row))})', tuple(row.values()))
-        except sqlite3.IntegrityError as error:
-            if str(error).startswith('UNIQUE constraint failed'):
-                return False  # an identity already has its one immutable sample
-            raise  # unbound/invalid rows must surface, never be silently dropped
-    return True
-
-
-def measure(jobs, cfg, ledger_path, budget, allowance, *, wall_clock=None):
-    """Take the +2/+5/+10s samples. Never raises into the paper cycle; returns a summary."""
-    from . import paper_cycle as cycle
-    from .monitoring_budget import MonitoringBlocked
-    if selected(cfg) != VERSION:
+        jobs = []
+        decision_at = float(wall_clock())
+        for outcome in outcomes:
+            if outcome.get('type') != 'fill' or outcome.get('side') not in ('buy', 'sell'):
+                continue
+            record = outcome.get('quote_execution')
+            if type(record) is not dict or record.get('direction') != outcome['side']:
+                continue
+            text = json.dumps(record, sort_keys=True, separators=(',', ':'))
+            if len(text) > MAX_RECORD_BYTES:
+                continue
+            target = collected.target
+            jobs.append({'fill_event_id': event['event_id'], 'side': outcome['side'], 'mint': outcome['mint'],
+                         'scan_id': target.scan_id, 'pool': target.pool, 'taker': target.taker,
+                         'decision_ts': int(event['ts']), 'decision_at': decision_at, 'held': 1 if held else 0,
+                         'mint_decimals': int(record['mint_decimals']), 'mint_observed_at': int(collected.mint.source.observed_at),
+                         'record_json': text})
+        return jobs
+    except BaseException as error:  # noqa: BLE001 - a measurement defect must never reach the pass
+        if isinstance(error, (KeyboardInterrupt, SystemExit)):
+            raise
         return []
-    clock = wall_clock or budget.wall_clock
-    config_hash = digest(cfg)
-    summary = []
-    for job in jobs:
-        record, side, stop = job['record'], job['side'], None
-        # The monitoring allowance only funds quotes for an OPEN position; once a fill has closed it, the
-        # re-quotes are charged to the scan's investigation admission through a plain (unbound) source.
-        open_now = _position_open(ledger_path, job['mint'])
-        use_monitoring = job['held'] and open_now
-        # Investigation reads are shared with later held exits on the same 18-read admission unless the
-        # dedicated monitoring allowance is provisioned: never let measurement starve an exit.
-        reserve = INVESTIGATION_RESERVE if (not use_monitoring and open_now
-                                            and not _monitoring_provisioned(budget.progress)) else 0
-        job = {**job, 'use_monitoring': use_monitoring}
-        if job['held'] and not use_monitoring:
-            try:
-                job['source'] = job['plain_source']()
-            except Exception:   # a source that cannot even be built must not reach the cycle
-                job['source'], stop = None, 'REALISM_SOURCE_UNAVAILABLE'
-        decision = (record['input_raw'], record['estimated_output_raw'], record['simulated_output_raw'])
-        for delay in DELAYS:
-            base = {'fill_event_id': job['event_id'], 'side': side, 'delay_seconds': delay, 'mint': job['mint'],
-                    'decision_at': job['decision_at'], 'config_hash': config_hash,
-                    'decision_input_raw': decision[0], 'decision_estimated_out_raw': decision[1],
-                    'decision_simulated_out_raw': decision[2], 'decision_quote_hash': record['quote_hash']}
-            charged_before = budget.attempted + budget.monitoring_attempted
-            row = None
-            try:
-                if stop is not None:
-                    row = {**base, 'status': 'FAILED', 'code': stop, 'charged': 0}
-                else:
-                    wait = job['decision_at'] + delay - clock()
-                    if wait > delay + MAX_WAIT_SLACK:
-                        row = {**base, 'status': 'FAILED', 'code': 'REALISM_CLOCK_UNAVAILABLE', 'charged': 0}
-                    else:
-                        if wait > 0:
-                            _sleep(wait)
-                        elapsed = clock() - job['decision_at']
-                        if elapsed > delay + LATE_SECONDS:
-                            row = {**base, 'status': 'FAILED', 'code': 'REALISM_SAMPLE_LATE', 'charged': 0,
-                                   'elapsed_seconds': format(Decimal(str(elapsed)), 'f')}
-                        elif use_monitoring and allowance is not None and allowance.snapshot()['remaining'] - 1 < MONITORING_RESERVE:
-                            row = {**base, 'status': 'FAILED', 'code': 'REALISM_MONITORING_RESERVE', 'charged': 0}
-                        elif not use_monitoring and reserve and (lambda a: a is None or a['request_ceiling'] - a['requests_used'] - 1 < reserve)(
-                                budget.progress.admission(job['target'].scan_id)):
-                            row = {**base, 'status': 'FAILED', 'code': 'REALISM_INVESTIGATION_RESERVE', 'charged': 0}
-                        else:
-                            row = _sample(cycle, job, cfg, budget, allowance, clock, base, delay, decision, elapsed)
-            except (cycle.CycleBlocked, MonitoringBlocked) as error:
-                row = {**base, 'status': 'FAILED', 'code': error.code}
-            except (ObservationError, qe.QuoteExecutionError, ValueError, TypeError, KeyError, ArithmeticError):
-                row = {**base, 'status': 'FAILED', 'code': 'REQUOTE_INVALID'}
-            row.setdefault('charged', 1 if budget.attempted + budget.monitoring_attempted > charged_before else 0)
-            if row['status'] == 'FAILED' and row['code'] in CODES_STOP:
-                stop = row['code']
-            try:
-                _insert(ledger_path, row)
-            except sqlite3.Error:
-                row = {**row, 'status': 'FAILED', 'code': 'REALISM_STORE_UNAVAILABLE'}
-                stop = 'REALISM_STORE_UNAVAILABLE'
-            summary.append({k: row.get(k) for k in ('fill_event_id', 'side', 'delay_seconds', 'status', 'code',
-                                                    'charged', 'out_drift_bps', 'adverse_slippage_bps')})
-    return summary
 
 
-def _sample(cycle, job, cfg, budget, allowance, clock, base, delay, decision, elapsed):
-    fresh = cycle._Budget(budget.progress, budget.wall_clock, budget.monotonic)
-    fresh.attempted, fresh.monitoring_attempted = budget.attempted, budget.monitoring_attempted
-    spender = cycle._HeldBudget(fresh, allowance) if job['use_monitoring'] else fresh
-    target, source, side = job['target'], job['source'], job['side']
-    input_mint, output_mint = (SOL, target.mint) if side == 'buy' else (target.mint, SOL)
+def enqueue(ledger_path, jobs, cfg_hash, *, now=None):
+    """Append job rows to the separate measurement store. Swallows EVERY error; returns rows added."""
+    if not jobs:
+        return 0
     try:
-        payload = spender.call(target.scan_id, lambda timeout: source.quote(
-            input_mint, output_mint, decision[0], target.taker, timeout_seconds=timeout))
-    finally:
-        budget.attempted, budget.monitoring_attempted = fresh.attempted, fresh.monitoring_attempted
-    # Measurement-only: the typed mint (decimals/identity) is the decision-time one, so allow its age
-    # to span the delay. The re-quote itself must still be fresh under the configured TTL.
-    ttl = cfg['price_ttl_seconds']
-    now = spender.now()
-    quote = ingest_quote(lambda: ProviderObservation(source.quote_source_id, payload['observed_at'], payload),
-                         mint=job['typed_mint'], direction=side, amount_raw=decision[0], taker=target.taker,
-                         expected_pool=target.pool, now=now, max_age_seconds=ttl + delay + LATE_SECONDS + 15)
-    if len(quote.source.original_json.encode()) > MAX_JSON_BYTES:
-        raise qe.QuoteExecutionError('REALISM_JSON_BOUND')
-    simulated = qe.output_raw(quote, cfg)
-    values = drift(side, decision, quote.estimated_output_raw, simulated, job['record']['mint_decimals'])
-    return {**base, 'status': 'MEASURED', 'code': None, 'charged': 1, 'measured_at': now,
-            'elapsed_seconds': format(Decimal(str(elapsed)), 'f'),
-            'requote_estimated_out_raw': quote.estimated_output_raw, 'requote_min_out_raw': quote.minimum_output_raw,
-            'requote_simulated_out_raw': simulated, 'requote_hash': quote.source.raw_hash,
-            'requote_json': quote.source.original_json, **values}
+        added = 0
+        with closing(connect(store_path(ledger_path))) as c:
+            ensure_schema(c)
+            for job in jobs:
+                try:
+                    c.execute(f'INSERT INTO {JOB_TABLE} VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)', (
+                        job['fill_event_id'], job['side'], job['mint'], job['scan_id'], job['pool'], job['taker'],
+                        job['decision_ts'], job['decision_at'], cfg_hash, job['held'], job['mint_decimals'],
+                        job['mint_observed_at'], job['record_json'], time.time() if now is None else now, STATUS))
+                    added += 1
+                except sqlite3.IntegrityError:
+                    pass  # an identity already has its one job
+        return added
+    except BaseException as error:  # noqa: BLE001
+        if isinstance(error, (KeyboardInterrupt, SystemExit)):
+            raise
+        return 0
 
 
 # ---- read-only reporting math (shared with tools/research/fill_realism_report.py) ----

@@ -1,12 +1,14 @@
 """Read-only latency-adjusted fill report (EXECUTION_UNVERIFIED, paper only).
 
-``python -m tools.research.fill_realism_report --ledger L`` reads the ledger
-with mode=ro, verifies every stored +2/+5/+10s sample against its decision fill
-and recomputes the drift from raw integers, then reports per-trade and
-aggregate drift plus the paper round trip re-priced as if each leg had filled at
-the delayed re-quote ("what a bot with N seconds of latency would have got").
-Unverifiable samples are listed under integrity_errors and excluded; failed or
-missing samples are counted, never imputed. Nothing is written.
+``python -m tools.research.fill_realism_report --ledger L`` reads the ledger and its
+measurement store ``L.fill-realism.sqlite`` with mode=ro, binds every job to the
+ledger fill it was enqueued for, re-verifies every stored +2/+5/+10s sample and
+recomputes the drift from raw integers, then reports per-trade and aggregate drift
+plus the paper round trip re-priced as if each leg had filled at the delayed
+re-quote. COVERAGE is explicit per side (entry/exit) and delay: fills never
+enqueued, samples that were LATE, STALE, FAILED (by code), still pending, or
+measured. Latency-adjusted PnL is computed ONLY for trades with every leg
+measured; partial coverage is labelled, never imputed. Nothing is written.
 """
 import argparse
 from decimal import Decimal, localcontext
@@ -46,16 +48,15 @@ def _stats(values):
                 'max': format(max(values), 'f')}
 
 
-def _verify(row, fill):
-    """Return an error code, or None when the sample is bound to its fill and self-consistent."""
+def _verify(row, job, fill):
+    """Return an error code, or None when the sample is bound to its job/fill and self-consistent."""
     record = fill['payload'].get('quote_execution') or {}
-    decision = (row['decision_input_raw'], row['decision_estimated_out_raw'], row['decision_simulated_out_raw'])
-    if (fill['payload'].get('side') != row['side'] or fill['payload'].get('mint') != row['mint']
-            or decision != (record.get('input_raw'), record.get('estimated_output_raw'), record.get('simulated_output_raw'))
-            or row['decision_quote_hash'] != record.get('quote_hash')):
+    if (fill['payload'].get('side') != job['side'] or fill['payload'].get('mint') != job['mint'] or fill['ts'] != job['decision_ts']
+            or json.loads(job['record_json']) != record):
         return 'DECISION_BINDING_MISMATCH'
     if row['status'] != 'MEASURED':
         return None
+    decision = (record['input_raw'], record['estimated_output_raw'], record['simulated_output_raw'])
     try:
         if digest(json.loads(row['requote_json'])) != row['requote_hash']:
             return 'REQUOTE_HASH_MISMATCH'
@@ -86,10 +87,34 @@ def _trades(fills):
     return trades
 
 
+def _coverage(fills, jobs, rows, good):
+    """Per side and delay: where every fill's samples went. Nothing is hidden or imputed."""
+    out = {}
+    for side in SIDES:
+        side_fills = [f for f in fills if f['payload']['side'] == side and isinstance(f['payload'].get('quote_execution'), dict)]
+        keys = {(f['event_id'], side) for f in side_fills}
+        enqueued = keys & {(j['fill_event_id'], j['side']) for j in jobs}
+        entry = {'fills': len(side_fills), 'enqueued': len(enqueued), 'not_enqueued': len(keys - enqueued), 'delays': {}}
+        for delay in fr.DELAYS:
+            sel = [r for (e, s, d), r in good.items() if s == side and d == delay and (e, s) in keys]
+            codes = {}
+            for r in sel:
+                if r['status'] != 'MEASURED':
+                    codes[r['code']] = codes.get(r['code'], 0) + 1
+            counted = {st: sum(1 for r in sel if r['status'] == st) for st in fr.SAMPLE_STATUSES}
+            entry['delays'][str(delay)] = {**{k.lower(): v for k, v in counted.items()}, 'pending': len(enqueued) - len(sel),
+                                           'non_measured_codes': codes,
+                                           'complete': bool(side_fills) and counted['MEASURED'] == len(side_fills)}
+        entry['complete'] = bool(side_fills) and all(v['complete'] for v in entry['delays'].values())
+        out[side] = entry
+    return out
+
+
 def report(ledger):
     path = Path(ledger)
     if os.path.islink(path) or not path.is_file():
         raise ValueError('Existing non-symlink ledger required')
+    store = fr.store_path(path)
     with closing(sqlite3.connect(path.resolve().as_uri() + '?mode=ro', uri=True)) as c:
         c.row_factory = sqlite3.Row
         meta = dict(c.execute("SELECT key,value FROM metadata WHERE key IN ('config_hash','config')").fetchall())
@@ -97,36 +122,43 @@ def report(ledger):
         fills = [{'event_id': r['event_id'], 'ts': r['ts'], 'payload': json.loads(r['payload'])} for r in c.execute(
             "SELECT o.event_id AS event_id,e.ts AS ts,o.payload AS payload FROM outcomes o JOIN events e "
             "ON e.event_id=o.event_id WHERE json_extract(o.payload,'$.type')='fill' ORDER BY o.seq")]
-        have = c.execute("SELECT 1 FROM sqlite_master WHERE type='table' AND name=?", (fr.TABLE,)).fetchone()
-        rows = [dict(r) for r in c.execute(f'SELECT * FROM {fr.TABLE} ORDER BY fill_event_id,side,delay_seconds')] if have else []
     base = {'kind': 'paper_fill_realism_report_v1', 'execution_status': fr.STATUS, 'paper_only': True,
             'live_readiness': False, 'config_hash': meta.get('config_hash'), 'config_version': config.get('version'),
             'realism_version': config.get(fr.KEY), 'delays_seconds': list(fr.DELAYS), 'fills': len(fills)}
-    if not have:
+    if os.path.islink(store) or not store.is_file():
         return {**base, 'status': 'NO_REALISM_DATA', 'samples': 0}
+    with closing(sqlite3.connect(store.resolve().as_uri() + '?mode=ro', uri=True)) as c:
+        c.row_factory = sqlite3.Row
+        jobs = [dict(r) for r in c.execute(f'SELECT * FROM {fr.JOB_TABLE} ORDER BY fill_event_id,side')]
+        rows = [dict(r) for r in c.execute(f'SELECT * FROM {fr.SAMPLE_TABLE} ORDER BY fill_event_id,side,delay_seconds')]
+        policy = [dict(r) for r in c.execute(f'SELECT at,allowance_per_hour FROM {fr.POLICY_TABLE} ORDER BY id')]
     by_fill = {(f['event_id'], f['payload']['side']): f for f in fills}
+    by_job = {(j['fill_event_id'], j['side']): j for j in jobs}
     errors, good = [], {}
+    def flag(item, code):
+        if len(errors) < MAX_ERRORS:
+            errors.append({**item, 'code': code})
+    for j in jobs:
+        if (j['fill_event_id'], j['side']) not in by_fill:
+            flag({'fill_event_id': j['fill_event_id'], 'side': j['side']}, 'JOB_WITHOUT_LEDGER_FILL')
     for row in rows:
-        fill = by_fill.get((row['fill_event_id'], row['side']))
-        code = 'UNKNOWN_FILL' if fill is None else _verify(row, fill)
+        key = (row['fill_event_id'], row['side'])
+        job, fill = by_job.get(key), by_fill.get(key)
+        code = 'UNKNOWN_JOB' if job is None else 'UNKNOWN_FILL' if fill is None else _verify(row, job, fill)
         if code:
-            if len(errors) < MAX_ERRORS:
-                errors.append({'fill_event_id': row['fill_event_id'], 'side': row['side'],
-                               'delay_seconds': row['delay_seconds'], 'code': code})
+            flag({'fill_event_id': row['fill_event_id'], 'side': row['side'], 'delay_seconds': row['delay_seconds']}, code)
             continue
         good[(row['fill_event_id'], row['side'], row['delay_seconds'])] = row
+    coverage = _coverage(fills, jobs, rows, good)
     aggregate = {side: {} for side in SIDES}
     for side in SIDES:
         for delay in fr.DELAYS:
             sel = [r for (e, s, d), r in good.items() if s == side and d == delay]
             measured = [r for r in sel if r['status'] == 'MEASURED']
-            codes = {}
-            for r in sel:
-                if r['status'] == 'FAILED':
-                    codes[r['code']] = codes.get(r['code'], 0) + 1
-            aggregate[side][str(delay)] = {'measured': len(measured), 'failed': len(sel) - len(measured),
-                'charged_attempts': sum(r['charged'] for r in sel), 'failure_codes': codes,
-                **{k: _stats([Decimal(r[k]) for r in measured]) for k in STATS}}
+            aggregate[side][str(delay)] = {'measured': len(measured), 'not_measured': len(sel) - len(measured),
+                'charged_attempts': sum(r['charged'] for r in sel),
+                **{k: _stats([Decimal(r[k]) for r in measured]) for k in STATS},
+                'lag_seconds': _stats([Decimal(r['lag_seconds']) for r in sel if r['lag_seconds'] is not None])}
     out_trades, summary = [], {str(d): {'trades_measured': 0, 'trades_unmeasured': 0, 'paper_pnl_sol': Decimal(0),
                                          'latency_adjusted_pnl_sol': Decimal(0)} for d in fr.DELAYS}
     for trade in _trades(fills):
@@ -153,7 +185,10 @@ def report(ledger):
                 item['latency_adjusted_pnl_sol'][str(delay)] = None
                 summary[str(delay)]['trades_unmeasured'] += 1
             else:
-                adjusted = fr.latency_adjusted_pnl(buy['payload'], [s['payload'] for s in sells], legs[0], legs[1:])
+                dec = lambda f, leg: {'decision_simulated_out_raw': f['payload']['quote_execution']['simulated_output_raw'],
+                                      'requote_simulated_out_raw': leg['requote_simulated_out_raw']}
+                adjusted = fr.latency_adjusted_pnl(buy['payload'], [s['payload'] for s in sells], dec(buy, legs[0]),
+                                                   [dec(s, leg) for s, leg in zip(sells, legs[1:])])
                 item['latency_adjusted_pnl_sol'][str(delay)] = format(adjusted, 'f')
                 s = summary[str(delay)]
                 s['trades_measured'] += 1
@@ -164,7 +199,11 @@ def report(ledger):
                'paper_pnl_sol': format(v['paper_pnl_sol'], 'f'),
                'latency_adjusted_pnl_sol': format(v['latency_adjusted_pnl_sol'], 'f'),
                'delta_sol': format(v['latency_adjusted_pnl_sol'] - v['paper_pnl_sol'], 'f')} for d, v in summary.items()}
+    complete = all(coverage[side]['complete'] for side in SIDES if coverage[side]['fills'])
     return {**base, 'status': 'REPORTED', 'samples': len(rows), 'verified_samples': len(good),
+            'allowance_policy': policy, 'coverage': coverage,
+            'coverage_complete': complete,
+            'coverage_warning': None if complete else 'PARTIAL_COVERAGE: latency-adjusted PnL covers only fully measured trades',
             'integrity_errors': errors, 'aggregate': aggregate, 'pnl_by_delay': pnl, 'trades': out_trades,
             'model': 'each leg re-priced at the delayed re-quote; tokens received scale proceeds; fixed fees unchanged'}
 
