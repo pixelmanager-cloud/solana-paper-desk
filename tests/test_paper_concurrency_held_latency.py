@@ -262,7 +262,7 @@ class CheckpointTerminalResult(Latency):
 
     def test_no_request_starts_once_the_acquisition_cap_has_passed(self):
         self.book()
-        calls = []
+        calls, seen = [], len(self.calls)
         real_guard = tool._held_guard
 
         @contextlib.contextmanager
@@ -275,7 +275,7 @@ class CheckpointTerminalResult(Latency):
             result = self.timed_dispatch(acquisition=0, intake=0, prep_cycle=0)
         self.assertEqual(result['checkpoint_no_entry']['reasons'], ['PHASE_CAP_EXCEEDED'])
         self.assertEqual(result['checkpoint_no_entry']['phase'], 'acquisition')
-        provider_calls = [c for c in self.calls if c != 'intake']
+        provider_calls = [c for c in self.calls[seen:] if c != 'intake']
         self.assertEqual(len(calls), 2, 'the guard ran for two requests; the third started after the 30 s cap and was cut')
         self.assertEqual(len(provider_calls), 2)
         self.assert_not_orphaned()
