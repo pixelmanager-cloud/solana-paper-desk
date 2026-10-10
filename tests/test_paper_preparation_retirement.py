@@ -19,7 +19,9 @@ from desk import paper_read_sources as transport, paper_cycle as cycle
 from desk.model import canonical,digest
 from desk.security import base58
 from desk.history_progress import HistoryProgress
-from tools import history_first_paper_entry as entry
+# Immutable pre189 producer from PR188 1a4e76c3f761ed80bd016a8384179e92825840e5.
+# SHA256 2cce07d1a2f86c129abc869d29fc152190f283b82c2db11389413e53fb129ef5.
+from tests.fixtures import history_first_paper_entry_pre189 as entry
 from tests import test_paper_observation_collector as fixtures
 from tests.test_graduation_witness import fixture as migration_fixture
 from tests.helpers import config

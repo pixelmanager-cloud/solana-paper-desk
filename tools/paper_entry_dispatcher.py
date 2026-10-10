@@ -207,6 +207,20 @@ def _validate(c, expected):
                     or result['at'] < value['at']):
                 raise ValueError('Dispatch result binding invalid')
             original_result = result['result']
+            if type(original_result) is dict and original_result.get('kind') == 'history_preparation_no_entry_v1':
+                from desk import history_preparation_rejection
+                store = EvidenceStore(expected['paths']['evidence_db']['path'],read_only=True)
+                from desk.history_progress import HistoryProgress
+                progress = HistoryProgress.__new__(HistoryProgress); progress.store = store
+                original = history_preparation_rejection.verify(store,progress,original_result)
+                context = original['context']
+                if (original_result['scan_id'] != result['scan_id']
+                        or original['target']['target']['mint'] != mint
+                        or original['config_hash'] != expected['config_hash']
+                        or any(context[k] != expected['paths'][k]['path'] for k in
+                               ('research_db','evidence_db','ledger_db','pacing_db'))):
+                    raise ValueError('Preparation rejection dispatcher context conflict')
+                continue
             if type(original_result) is dict and original_result.get('kind') == 'dispatcher_token_rejection_v1':
                 if _rejection(expected, value, result['scan_id']) != original_result:
                     raise ValueError('Rejection disposition conflict')
@@ -600,11 +614,28 @@ def dispatch(expected, *, execute=False, systemd_credentials=False):
                'amount_raw':expected['amount_raw'],'provenance':PROVENANCE,
                'pool_fee_bps':expected['pool_fee_bps'],'known_hazards':[],
                'graduation_refs':retained['request_evidence_refs']}
+        rejection_published = False
+        def publish_no_entry(result):
+            nonlocal rejection_published
+            from desk import history_preparation_rejection
+            from desk.history_progress import HistoryProgress
+            store=EvidenceStore(paths['evidence_db'],read_only=True)
+            progress=HistoryProgress.__new__(HistoryProgress);progress.store=store
+            original=history_preparation_rejection.verify(store,progress,result)
+            if result['scan_id']!=scan or original['config_hash']!=expected['config_hash']:
+                raise ValueError('Preparation result publication binding')
+            outcome={'version':1,'intent_hash':digest(intent),'at':_now(),'scan_id':scan,'result':result}
+            if len(canonical(outcome).encode())>MAX_PAYLOAD:raise ValueError('Dispatch outcome exceeds bound')
+            _write(journal,'results',identity,outcome)
+            rejection_published = True
         with tempfile.TemporaryDirectory(prefix='dispatch-target-') as d:
             target = Path(d)/'targets.json'
             target.write_text(canonical({'position_targets':[],'candidates':[row],'usd_evidence_refs':[]}))
             result = entry.execute(paths['config'],paths['research_db'],paths['evidence_db'],paths['ledger_db'],target,
-                                   live=True,systemd_credentials=True)
+                                   live=True,systemd_credentials=True,no_entry_publish=publish_no_entry)
+        if rejection_published:
+            return {'status':'DISPATCHED','dispatch_id':identity,'scan_id':scan,'paper_status':'NO_ENTRY',
+                    'entry_authorized':False,'execution_status':'EXECUTION_UNVERIFIED','live_readiness':False}
         outcome = {'version':1,'intent_hash':digest(intent),'at':_now(),'scan_id':scan,'result':result}
         if len(canonical(outcome).encode()) > MAX_PAYLOAD:
             raise ValueError('Dispatch outcome exceeds bound; original evidence retained')
