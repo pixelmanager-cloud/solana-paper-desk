@@ -24,6 +24,11 @@ from . import allowance_policy as policy
 CAP = 60
 WINDOW_SECONDS = 3600
 VERSION = 1
+# Provider-availability failures carry no evidence about the position, so they are
+# charged and retained but do not latch the shared allowance. Every other failure
+# (rejections, malformed or oversized responses, persistence faults) still does.
+TRANSIENT_FAILURE_CODES = frozenset({'TRANSPORT_ERROR', 'DEADLINE_EXCEEDED'})
+TRANSIENT_HTTP_STATUSES = frozenset({408, 429}) | frozenset(range(500, 600))
 
 
 class MonitoringBlocked(ValueError):
@@ -439,12 +444,22 @@ class MonitoringBudget:
                 if old is None:
                     c.execute('INSERT INTO paper_monitoring_outcomes VALUES(?,?)', (reservation['id'], evidence_hash))
                 self._accounting(c,checkpoint=True)
-                if record.get('failure_code') is not None:
+                if _latching_failure(record):
                     c.execute("UPDATE paper_monitoring_budget SET blocked='SOURCE_FAILURE' WHERE id=1 AND blocked IS NULL")
                 c.commit()
             except BaseException:
                 c.rollback()
                 raise
+
+def _latching_failure(record):
+    code = record.get('failure_code')
+    if code is None:
+        return False
+    if code in TRANSIENT_FAILURE_CODES:
+        return False
+    status = record.get('http_status')
+    return not (code == 'HTTP_REJECTED' and type(status) is int and status in TRANSIENT_HTTP_STATUSES)
+
 
 def _research_binding(research, evidence):
     """Existing-only read proof of the actual dispatch/admission context.
