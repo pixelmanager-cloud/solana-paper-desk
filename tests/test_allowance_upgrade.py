@@ -128,7 +128,9 @@ class MonitoringUpgradeTests(unittest.TestCase):
         self.assertEqual(pending['id'],1)
 
     def test_failure_latch_and_clock_highwater_survive(self):
-        with self.assertRaises(Exception):self.f.read(fail=True)
+        # Needs a LATCHING failure. fail=True is a transient transport error (charged, non-latching since T08;
+        # this test was already red on integration/r1), so inject an integrity failure (RESPONSE_INVALID).
+        with self.assertRaises(Exception):self.f.read(body=b'{"unexpected":"envelope"}')
         old=self.f.accounting();self.upgrade()
         self.assertEqual(old,self.f.accounting())
         self.assertIn('MONITORING_RECOVERY_REQUIRED',self.f.budget.snapshot()['blockers'])
