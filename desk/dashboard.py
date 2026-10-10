@@ -31,6 +31,17 @@ class Jobs:
             rows=c.execute('SELECT * FROM scans ORDER BY created DESC,rowid DESC LIMIT 50').fetchall()
             return [{**dict(r),'result':json.loads(r['result']) if r['result'] else None} for r in rows]
     def once(self):
+        import os
+        from .paper_scheduler import lease
+        selected=os.environ.get('DESK_PAPER_SCHEDULER_LOCK')
+        if selected is None:return self._scheduled_once()
+        if selected!=str(self.persistence.path.parent/'paper-scheduler.lock'):
+            raise ValueError('Scheduler context mismatch')
+        with lease(self.persistence.path) as acquired:
+            if acquired is None:return False
+            return self._scheduled_once()
+
+    def _scheduled_once(self):
         with self.persistence.worker() as worker:
             if worker is None:return False
             claim=worker.claim_screen()

@@ -7,6 +7,7 @@ Type=simple
 User=solana-desk
 Group=solana-desk
 WorkingDirectory=/opt/solana-desk
+Environment=DESK_PAPER_SCHEDULER_LOCK=/var/lib/solana-desk/paper-scheduler.lock
 LoadCredential=provider-keys.json:/etc/solana-desk/provider-keys.json
 ExecStart=/opt/solana-desk/.venv/bin/python -m desk --secrets-file %d/provider-keys.json serve --db /var/lib/solana-desk/research.sqlite --port 8765
 Restart=on-failure
