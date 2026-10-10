@@ -237,10 +237,167 @@ class DispatcherTests(unittest.TestCase):
             result['value']['data'][0]=base64.b64encode(raw).decode()
             return result
         with patch.object(tool.cli,'_credentials'),patch('desk.providers.helius_rpc',side_effect=adverse),patch.object(tool.migration,'intake',side_effect=AssertionError('unsafe intake')):
-            with self.assertRaises(ValueError):self.invoke(execute=True,systemd_credentials=True)
+            result=self.invoke(execute=True,systemd_credentials=True)
+        self.assertEqual(result['status'],'TOKEN_REJECTED')
         with self.f.jobs.connect() as c:scan=c.execute('SELECT id FROM scans').fetchone()[0]
         self.assertEqual(self.f.progress.admission(scan)['requests_used'],1)
+        self.assertEqual(self.count('results'),1)
+        self.assertEqual(self.invoke()['status'],'NO_CANDIDATE')
+        self.assertEqual(self.calls,['getAccountInfo'])
+
+    def rejection(self, *, mint_tag=1, freeze_tag=0, zero_supply=False):
+        import base64
+        def rpc(method,params):
+            result=self.setup_rpc(method,params)
+            raw=bytearray(base64.b64decode(result['value']['data'][0]))
+            raw[:4]=mint_tag.to_bytes(4,'little');raw[4:36]=bytes([7])*32
+            raw[46:50]=freeze_tag.to_bytes(4,'little');raw[50:82]=bytes([8])*32
+            if zero_supply:raw[36:44]=bytes(8)
+            result['value']['data'][0]=base64.b64encode(raw).decode()
+            return result
+        with patch.object(tool.cli,'_credentials'),patch('desk.providers.helius_rpc',side_effect=rpc),patch.object(tool.migration,'intake',side_effect=AssertionError('rejected mint intake')):
+            return self.invoke(execute=True,systemd_credentials=True)
+
+    def append_distinct_migration(self, *, no_op=False, null_time=False, depth=2):
+        from solders.pubkey import Pubkey
+        from desk import graduation_witness as g
+        raw=copy.deepcopy(self.raw)
+        mint=str(Pubkey.from_bytes(bytes([17])*32))
+        authority=g._pda([b'pool-authority',unbase58(mint)],g.PUMP)
+        curve=g._pda([b'bonding-curve',unbase58(mint)],g.PUMP)
+        pool=g._pda([b'pool',b'\0\0',unbase58(authority),unbase58(mint),unbase58(g.SOL)],g.AMM)
+        old_authority=g._pda([b'pool-authority',unbase58(self.mint)],g.PUMP)
+        old_curve=g._pda([b'bonding-curve',unbase58(self.mint)],g.PUMP)
+        replacements={self.mint:mint,self.pool:pool,old_authority:authority,old_curve:curve}
+        for ix in raw['transaction']['message']['instructions']:
+            ix['accounts']=[replacements.get(x,x) for x in ix['accounts']]
+        ix=raw['meta']['innerInstructions'][0]['instructions'][0]
+        data=unbase58(ix['data'])
+        for old,new in replacements.items():data=data.replace(unbase58(old),unbase58(new))
+        ix['data']=base58(data)
+        ix['stackHeight']=depth
+        if no_op:raw['meta']['innerInstructions']=[]
+        if null_time:raw['blockTime']=None
+        signature=base58(bytes([10])*64);raw['transaction']['signatures']=[signature]
+        wire=canonical({'method':'transactionNotification','params':{'result':{
+            'signature':signature,'slot':raw['slot'],'blockTime':raw['blockTime'],
+            'transaction':{'transaction':raw['transaction'],'meta':raw['meta']}}}})
+        d=discovery.Store(self.discovery,clock=lambda:self.f.at-500)
+        try:d.complete(d.reserve('RECEIVE'),payload=wire.encode())
+        finally:d.close()
+        return mint
+
+    def test_successful_noop_outer_migration_without_event_is_not_admitted(self):
+        self.append_distinct_migration(no_op=True)
+        with patch.object(tool.time,'time',return_value=self.f.at+6650),patch.object(tool.cli,'_credentials',side_effect=AssertionError('no-op credentials')):
+            self.assertEqual(self.invoke(execute=True,systemd_credentials=True)['status'],'NO_CANDIDATE')
+        self.assertEqual(self.count('intents'),0)
+        with self.f.jobs.connect() as c:self.assertEqual(c.execute('SELECT COUNT(*) FROM scans').fetchone()[0],0)
+        self.assertEqual(self.calls,[])
+
+    def test_null_blocktime_event_hint_preserves_original_and_requires_intake(self):
+        mint=self.append_distinct_migration(null_time=True)
+        result=self.invoke()
+        self.assertEqual(result['status'],'DRY_RUN');self.assertEqual(result['hint']['mint'],mint)
+        with sqlite3.connect(self.discovery) as c:
+            retained=json.loads(c.execute('SELECT payload FROM raw_events ORDER BY seq DESC LIMIT 1').fetchone()[0])
+        self.assertIsNone(retained['params']['result']['blockTime'])
+        self.assertEqual(self.count('intents'),0);self.assertEqual(self.calls,[])
+
+    def test_nested_event_not_direct_migration_child_is_not_candidate_hint(self):
+        self.append_distinct_migration(null_time=True,depth=3)
+        with patch.object(tool.time,'time',return_value=self.f.at+6650):
+            self.assertEqual(self.invoke()['status'],'NO_CANDIDATE')
+        self.assertEqual(self.count('intents'),0)
+
+    def test_rejection_restart_replays_and_considers_only_distinct_unadmitted_mint(self):
+        self.assertEqual(self.rejection()['status'],'TOKEN_REJECTED')
+        mint=self.append_distinct_migration()
+        with patch.object(tool.cli,'_credentials',side_effect=AssertionError('dry-run credentials')):
+            result=self.invoke()
+        self.assertEqual(result['status'],'DRY_RUN');self.assertEqual(result['hint']['mint'],mint)
+        self.assertEqual(self.count('intents'),1);self.assertEqual(self.count('results'),1)
+        with self.f.jobs.connect() as c:self.assertEqual(c.execute('SELECT COUNT(*) FROM scans').fetchone()[0],1)
+        self.insert_concurrent_pending()
+        with self.assertRaises(ValueError):self.invoke()
+        self.assertEqual(self.calls,['getAccountInfo'])
+
+    def test_freeze_only_and_both_authorities_are_explicit_rejections(self):
+        self.assertEqual(self.rejection(mint_tag=0,freeze_tag=1)['status'],'TOKEN_REJECTED')
+        self.assertEqual(self.invoke()['status'],'NO_CANDIDATE')
+
+    def test_both_authorities_replayed_exactly(self):
+        self.assertEqual(self.rejection(freeze_tag=1)['status'],'TOKEN_REJECTED')
+        with sqlite3.connect(self.journal) as c:
+            proof=json.loads(c.execute('SELECT payload FROM results').fetchone()[0])['result']
+        self.assertEqual(proof['token_policy']['reasons'],['ACTIVE_MINT_AUTHORITY','ACTIVE_FREEZE_AUTHORITY'])
+        self.assertEqual(proof['requests_after'],1)
+        self.assertEqual(self.invoke()['status'],'NO_CANDIDATE')
+
+    def test_invalid_option_with_authority_stays_unresolved(self):
+        with self.assertRaises(ValueError):self.rejection(mint_tag=2)
         self.assertEqual(self.count('results'),0)
+        with self.assertRaises(ValueError):self.invoke()
+        self.assertEqual(self.calls,['getAccountInfo'])
+
+    def test_extra_nonallowlisted_zero_supply_stays_unresolved(self):
+        with self.assertRaises(ValueError):self.rejection(zero_supply=True)
+        self.assertEqual(self.count('results'),0)
+        with self.assertRaises(ValueError):self.invoke()
+
+    def test_rejection_restart_detects_corrupt_retained_mint_not_status_string(self):
+        self.assertEqual(self.rejection()['status'],'TOKEN_REJECTED')
+        with sqlite3.connect(self.journal) as c:
+            proof=json.loads(c.execute('SELECT payload FROM results').fetchone()[0])['result']
+        with sqlite3.connect(self.f.progress.store.path) as c:
+            c.execute('UPDATE pages SET payload=? WHERE hash=?',(b'bad',proof['mint_response_hash']))
+        with self.assertRaises(ValueError):self.invoke()
+        self.assertEqual(self.count('results'),1)
+
+    def test_rejection_restart_detects_changed_charge(self):
+        self.assertEqual(self.rejection()['status'],'TOKEN_REJECTED')
+        with sqlite3.connect(self.f.progress.store.path) as c:
+            c.execute('UPDATE ownership_budgets SET used=2')
+        with self.assertRaises(ValueError):self.invoke()
+        self.assertEqual(self.count('results'),1)
+
+    def test_recovery_race_before_rejection_publication_preserves_intent(self):
+        original=tool.acquisition.acquire
+        def acquire(*args,**kw):
+            result=original(*args,**kw);self.insert_concurrent_pending();return result
+        with patch.object(tool.acquisition,'acquire',side_effect=acquire):
+            with self.assertRaises(ValueError):self.rejection()
+        self.assertEqual(self.count('results'),0);self.assertEqual(self.count('intents'),1)
+        with self.assertRaises(ValueError):self.invoke()
+
+    def test_rejection_missing_retained_response_blocks_restart(self):
+        self.assertEqual(self.rejection()['status'],'TOKEN_REJECTED')
+        with sqlite3.connect(self.journal) as c:
+            proof=json.loads(c.execute('SELECT payload FROM results').fetchone()[0])['result']
+        with sqlite3.connect(self.f.progress.store.path) as c:
+            c.execute('DELETE FROM pages WHERE hash=?',(proof['mint_response_hash'],))
+        with self.assertRaises(ValueError):self.invoke()
+
+    def test_rejection_changed_report_cannot_be_trusted_on_restart(self):
+        self.assertEqual(self.rejection()['status'],'TOKEN_REJECTED')
+        with self.f.jobs.connect() as c:
+            row=c.execute('SELECT id,result FROM scans').fetchone()
+            report=json.loads(row['result']);report['findings']=[]
+            c.execute('UPDATE scans SET result=? WHERE id=?',(canonical(report),row['id']))
+        with self.assertRaises(ValueError):self.invoke()
+        self.assertEqual(self.count('results'),1)
+
+    def test_pacing_waiter_before_rejection_publication_blocks(self):
+        original=tool.acquisition.acquire
+        def acquire(*args,**kw):
+            result=original(*args,**kw)
+            with sqlite3.connect(self.pacer) as c:
+                c.execute('INSERT INTO waiters VALUES(?,?,?,?,?)',('rejection-waiter','helius','investigation',self.f.at,self.f.at+20))
+            return result
+        with patch.object(tool.acquisition,'acquire',side_effect=acquire):
+            with self.assertRaises(ValueError):self.rejection()
+        self.assertEqual(self.count('results'),0)
+        with self.assertRaises(ValueError):self.invoke()
 
     def test_admission_race_after_selection_cannot_duplicate_complete_scan(self):
         def competitor():
