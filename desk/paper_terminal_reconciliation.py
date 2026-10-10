@@ -163,8 +163,9 @@ MAX_GATE_CLASSIFICATION_BYTES = 32 * 1024 * 1024
 MAX_GATE_CACHE_PAGES = 512
 
 
-def _current_proof_bytes(store,key):
+def _current_proof_bytes(store,key,*,max_raw_bytes=MAX_PROOF_RAW_BYTES):
     if not runtime._hash(key):raise ValueError('Evidence identity malformed')
+    compressed_limit=min(MAX_PROOF_COMPRESSED_BYTES,max_raw_bytes+65536)
     # Pin SQL shape and payload to one read snapshot. In particular, do not
     # fetch a corrupt TEXT raw_bytes value or any compressed content as part of
     # the scalar preflight; both can otherwise materialize unbounded data.
@@ -172,11 +173,11 @@ def _current_proof_bytes(store,key):
         c.execute('BEGIN')
         shapes=c.execute("SELECT typeof(hash),length(CAST(hash AS BLOB)),typeof(payload),length(CAST(payload AS BLOB)),typeof(raw_bytes),CASE WHEN typeof(raw_bytes)='integer' THEN raw_bytes ELSE NULL END FROM pages WHERE hash=? LIMIT 2",(key,)).fetchall()
         if (len(shapes)!=1 or shapes[0][:3]!=('text',64,'blob')
-                or type(shapes[0][3]) is not int or not 0<shapes[0][3]<=MAX_PROOF_COMPRESSED_BYTES
+                or type(shapes[0][3]) is not int or not 0<shapes[0][3]<=compressed_limit
                 or shapes[0][4]!='integer' or type(shapes[0][5]) is not int
-                or not 0<shapes[0][5]<=MAX_PROOF_RAW_BYTES):
+                or not 0<shapes[0][5]<=max_raw_bytes):
             raise ValueError('Evidence missing or oversized: invalid proof scalar shape')
-        rows=c.execute("SELECT payload,raw_bytes FROM pages WHERE hash=? AND typeof(hash)='text' AND length(CAST(hash AS BLOB))=64 AND typeof(payload)='blob' AND length(payload) BETWEEN 1 AND ? AND typeof(raw_bytes)='integer' AND raw_bytes BETWEEN 1 AND ? LIMIT 2",(key,MAX_PROOF_COMPRESSED_BYTES,MAX_PROOF_RAW_BYTES)).fetchall()
+        rows=c.execute("SELECT payload,raw_bytes FROM pages WHERE hash=? AND typeof(hash)='text' AND length(CAST(hash AS BLOB))=64 AND typeof(payload)='blob' AND length(payload) BETWEEN 1 AND ? AND typeof(raw_bytes)='integer' AND raw_bytes BETWEEN 1 AND ? LIMIT 2",(key,compressed_limit,max_raw_bytes)).fetchall()
         if (len(rows)!=1 or type(rows[0][0]) is not bytes or len(rows[0][0])!=shapes[0][3]
                 or type(rows[0][1]) is not int or rows[0][1]!=shapes[0][5]):
             raise ValueError('Proof content changed or exceeded preflight')
@@ -184,8 +185,9 @@ def _current_proof_bytes(store,key):
     return compressed,raw_bytes
 
 
-def _load(store,key):
-    compressed,raw_bytes=_current_proof_bytes(store,key)
+def _load(store,key,*,max_raw_bytes=MAX_PROOF_RAW_BYTES):
+    if type(max_raw_bytes) is not int or not 0<max_raw_bytes<=MAX_PROOF_RAW_BYTES:raise ValueError('Proof byte bound')
+    compressed,raw_bytes=_current_proof_bytes(store,key,max_raw_bytes=max_raw_bytes)
     cache=_GATE_BYTES.get()
     identity=(str(store.path.resolve()),key)
     cached=cache['pages'].get(identity) if cache is not None else None

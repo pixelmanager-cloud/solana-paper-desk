@@ -72,13 +72,15 @@ def build_market_event(collected, *, context, load_evidence, raw_trades=(),
         out['evidence_refs']=sorted(records)
     except (ValueError,TypeError,KeyError,AttributeError,IndexError,OSError,RecursionError):
         out['blockers']=sorted(blockers|{'COLLECTOR_SOURCE_BINDING_OR_CONTENT_INVALID'});return out
-    if type(raw_trades) not in (tuple,list) or len(raw_trades)>256:
+    from .streaming_history import RetainedHistoryPages,RetainedHistoryRecords
+    streaming=(type(history_pages) is RetainedHistoryPages and type(raw_trades) is RetainedHistoryRecords and raw_trades.pages is history_pages)
+    if not streaming and (type(raw_trades) not in (tuple,list) or len(raw_trades)>256):
         out['blockers']=sorted(blockers|{'BOUNDED_RAW_TRADE_SEQUENCE_REQUIRED'});return out
     history_as_of=context.now if context.history_as_of is None else context.history_as_of
     if type(history_as_of) is not int or not 0<=context.now-history_as_of<=30:
         out['blockers']=sorted(blockers|{'CAPTURED_HISTORY_WINDOW_STALE_OR_FUTURE'});return out
     features=calculate(raw_trades,pool=target.pool,as_of=history_as_of,
-                       provenance=context.provenance,history_pages=history_pages,token_profile_version=context.token_profile_version)
+                       provenance=context.provenance,history_pages=history_pages,token_profile_version=context.token_profile_version,semantics_version=2 if streaming else 1)
     volume_name=BOOST_VOLUME_FEATURE if context.token_profile_version==2 else 'volume_vs_liq'
     names=set(OBSERVABLE_FORMULAS)|{'net_buy_ratio','unique_buyers_5m',volume_name,'drawdown_from_high'}
     measurements={name:features['fields'][name] for name in sorted(names)}

@@ -6,24 +6,25 @@ from .launch import launch_anchor
 from .reconcile import reconcile_movements
 
 
-def replay_history(coverage, store):
+def replay_history(coverage, store, *, retain_observations=True, load_page=None):
     if not isinstance(coverage,dict):raise ValueError('History coverage required')
     copy=dict(coverage);claimed=copy.pop('evidence_hash',None)
     if claimed!=digest(copy):raise ValueError('History coverage hash mismatch')
     pages=coverage['pages']
     if not isinstance(pages,list) or not 1<=len(pages)<=20:raise ValueError('History replay page budget')
     position=0
+    load=store.load if load_page is None else load_page
     def rpc(method,params):
         nonlocal position
         if position>=len(pages):raise ValueError('Replay exceeded recorded pages')
         page=pages[position];position+=1
-        manifest=store.load(page['request_evidence_hash'])
+        manifest=load(page['request_evidence_hash'])
         if (manifest.get('kind')!='history_request_v1' or manifest.get('method')!=method
                 or manifest.get('params')!=params or manifest.get('response_hash')!=page['payload_hash']):
             raise ValueError('History request binding mismatch')
-        return store.load(page['payload_hash'])
+        return load(page['payload_hash'])
     observations,rebuilt=collect_history(coverage['address'],coverage['start'],coverage['end'],rpc,
-        max_pages=len(pages),capture=digest,token_accounts=coverage['token_accounts_filter'],slot_range=coverage.get('slot_range'),page_size=coverage.get('page_size',100))
+        max_pages=len(pages),capture=digest,token_accounts=coverage['token_accounts_filter'],slot_range=coverage.get('slot_range'),page_size=coverage.get('page_size',100),retain_observations=retain_observations)
     if position!=len(pages) or rebuilt!=coverage:raise ValueError('History coverage replay mismatch')
     return observations,rebuilt
 

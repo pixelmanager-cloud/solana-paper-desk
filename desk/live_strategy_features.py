@@ -17,6 +17,8 @@ from .model import canonical, digest
 MAX_RECORDS = 256
 MAX_RECORD_BYTES = 128 * 1024
 MAX_TOTAL_BYTES = 2 * 1024 * 1024
+MAX_DECODED_EVENTS = 4096
+MAX_TRADES = 1024
 PUMPSWAP = 'pAMMBay6oceH9fJKBRHGP5D4bD4sWpmSwMn52FMfXEA'
 PROVENANCES = {'SYNTHETIC_TEST_ONLY','PUBLIC_MAINNET_CAPTURE_NOT_TRADING_EVIDENCE'}
 UNKNOWN = {
@@ -50,18 +52,18 @@ def _positive(value):
 
 
 
-def _history_window(pages,*,pool,start,end,input_hashes):
+def _history_window(pages,*,pool,start,end,input_hashes,semantics_version=1):
     """Replay existing history_request_v1 manifests and raw responses.
 
     Exhaustion is a provider-declared query boundary, NOT authenticated chain
     completeness. No caller coverage flag or normalized report is accepted.
     """
-    hashes=[]; records=[]; cursor=None; seen=set(); total=0; count=0; last_slot=None
+    hashes=[]; records=[]; cursor=None; seen=set(); total=0; count=0; last_slot=None; decoded_events=0
     for page in pages:
         count+=1
         if count>8:raise ValueError('History page ceiling')
-        total+=len(canonical(page).encode())
-        if total>MAX_TOTAL_BYTES:raise ValueError('History byte ceiling')
+        page_bytes=len(canonical(page).encode());total+=page_bytes
+        if (total>MAX_TOTAL_BYTES if semantics_version==1 else page_bytes>MAX_TOTAL_BYTES+128*1024):raise ValueError('History byte ceiling')
         if type(page) is not dict or set(page)!={'request','response'}:raise ValueError('Raw history pair required')
         request,response=page['request'],page['response']
         if type(request) is not dict or type(response) is not dict:raise ValueError('Raw request/response required')
@@ -84,7 +86,10 @@ def _history_window(pages,*,pool,start,end,input_hashes):
         rows=response['data']
         if type(rows) is not list or len(rows)>opts['limit']:raise ValueError('Invalid history page')
         for row in rows:
+            if len(canonical(row).encode())>MAX_RECORD_BYTES:raise ValueError('History record byte ceiling')
             observation=decode(row)
+            decoded_events+=len(observation['program_observations'])
+            if semantics_version==2 and (len(observation['program_observations'])>256 or decoded_events>MAX_DECODED_EVENTS):raise ValueError('Decoded event ceiling')
             if not start<=_integer(observation['block_time'])<=end:raise ValueError('Out-of-window history')
             slot=_integer(observation['slot'])
             if last_slot is not None and slot<last_slot:raise ValueError('History order regression')
@@ -102,7 +107,7 @@ def _history_window(pages,*,pool,start,end,input_hashes):
         raise ValueError('Exhausted matched history required')
     return sorted(set(hashes))
 
-def calculate(raw_transactions,*,pool,as_of,provenance,window_seconds=300,ttl_seconds=30,history_pages=None,token_profile_version=0):
+def calculate(raw_transactions,*,pool,as_of,provenance,window_seconds=300,ttl_seconds=30,history_pages=None,token_profile_version=0,semantics_version=1):
     """Pure read-only calculation; callers must bind pool/mint/quote separately.
 
     Fixed five-minute window keeps unique_buyers_5m's meaning exact. Output
@@ -115,6 +120,8 @@ def calculate(raw_transactions,*,pool,as_of,provenance,window_seconds=300,ttl_se
     """
     from .token2022_paper import check_version
     check_version(token_profile_version)
+    if type(semantics_version) is not int or semantics_version not in (1,2):raise ValueError('Explicit history semantics required')
+    if semantics_version==2 and history_pages is None:raise ValueError('Streaming semantics require original pages')
     _integer(as_of)
     if type(window_seconds) is not int or window_seconds!=300:raise ValueError('Five-minute window required')
     if type(ttl_seconds) is not int or not 1<=ttl_seconds<=300:raise ValueError('Invalid component TTL')
@@ -136,18 +143,22 @@ def calculate(raw_transactions,*,pool,as_of,provenance,window_seconds=300,ttl_se
             'trade_count':0,'provider_calls':0,'eligible_for_trading':False,
             'scope':'Observed pool sample only; event amounts are not authenticated fills or full route effects',
             'blockers':['WINDOW_COVERAGE_UNVERIFIED','POOL_MINT_QUOTE_BINDING_REQUIRED']}
-    fatal=set(); trades=[]; record_times=[]; identities={}; hashes=[]; input_hashes=[]; total=0
+    fatal=set(); trades=[]; record_times=[]; identities={}; hashes=[]; input_hashes=[]; total=0; decoded_events=0
     try:
         for payload in raw_transactions:
             result['records_seen']+=1
             if result['records_seen']>MAX_RECORDS:raise ValueError('Record ceiling')
             encoded=canonical(payload).encode();total+=len(encoded)
-            if len(encoded)>MAX_RECORD_BYTES or total>MAX_TOTAL_BYTES:raise ValueError('Byte ceiling')
+            if len(encoded)>MAX_RECORD_BYTES or (semantics_version==1 and total>MAX_TOTAL_BYTES):raise ValueError('Byte ceiling')
             observation=decode(payload)
+            decoded_events+=len(observation['program_observations'])
+            if semantics_version==2 and (len(observation['program_observations'])>256 or decoded_events>MAX_DECODED_EVENTS):raise ValueError('Decoded event ceiling')
             key=observation['signature'];hash_value=digest(payload);input_hashes.append(hash_value)
             if key in identities:
                 if identities[key]!=hash_value:fatal.add('CONFLICTING_TRANSACTION_IDENTITY')
-                else:result['duplicate_records']+=1
+                else:
+                    result['duplicate_records']+=1
+                    if semantics_version==2:fatal.add('DUPLICATE_TRANSACTION_IDENTITY')
                 continue
             identities[key]=hash_value;hashes.append(hash_value)
             timestamp=_integer(observation['block_time']);slot=_integer(observation['slot'])
@@ -182,6 +193,7 @@ def calculate(raw_transactions,*,pool,as_of,provenance,window_seconds=300,ttl_se
                     if type(virtual) is not int or not -(2**127)<=virtual<2**127 or type(f.get('can_boost')) is not bool:raise ValueError('Missing signed pricing profile')
                     if virtual>0 and f['can_boost'] is not True:raise ValueError('Contradictory boost event')
                     reserve=_positive(int(reserve)+virtual)
+                if semantics_version==2 and len(trades)>=MAX_TRADES:raise ValueError('Trade ceiling')
                 trades.append({'ts':timestamp,'slot':slot,'signature':key,
                                'path':tuple(map(int,path.split('.'))),'side':side,
                                'liquidity_supported':token_profile_version==2 or type(f.get('virtual_quote_reserves')) is int and f['virtual_quote_reserves']==0 and f.get('can_boost') is False,
@@ -202,6 +214,7 @@ def calculate(raw_transactions,*,pool,as_of,provenance,window_seconds=300,ttl_se
                 elif len(matches)!=1:fatal.add('TRADE_INVOCATION_EVENT_BINDING_UNRESOLVED')
     except (ValueError,KeyError,TypeError,OverflowError,RecursionError):
         fatal.add('MALFORMED_OR_BOUNDED_INPUT_UNAVAILABLE')
+    payload=None;observation=None;encoded=None  # retain operands/hashes, not raw/decoded trees
     ordered_times=sorted(record_times)
     if any(a[1]>b[1] for a,b in zip(ordered_times,ordered_times[1:]) if a[0]!=b[0]):
         fatal.add('CHAIN_TIME_SLOT_ORDER_CONFLICT')
@@ -211,7 +224,7 @@ def calculate(raw_transactions,*,pool,as_of,provenance,window_seconds=300,ttl_se
     coverage=False
     if history_pages is not None:
         try:
-            result['history_hashes']=_history_window(history_pages,pool=pool,start=start,end=as_of,input_hashes=input_hashes)
+            result['history_hashes']=_history_window(history_pages,pool=pool,start=start,end=as_of,input_hashes=input_hashes,semantics_version=semantics_version)
             coverage=not (fatal-{'TRADE_COMPONENT_STALE'})
         except (ValueError,KeyError,TypeError,OverflowError,RecursionError):
             result['blockers'].append('HISTORY_WINDOW_BINDING_OR_EXHAUSTION_UNAVAILABLE')
@@ -287,5 +300,6 @@ def calculate(raw_transactions,*,pool,as_of,provenance,window_seconds=300,ttl_se
             'blockers':['HISTORICAL_PHYSICAL_FEE_BUCKETS_UNAVAILABLE']}
         result['volume_feature']=BOOST_VOLUME_FEATURE
         result['volume_formula']=BOOST_VOLUME_FORMULA
+    if semantics_version==2:result['history_semantics_version']=2
     result['manifest_hash']=digest(result)
     return result

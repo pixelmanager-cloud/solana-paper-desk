@@ -296,15 +296,9 @@ def _history(progress, item, budget, source_factory):
             raise CycleBlocked(state.get('blocked') or ('HISTORY_BUSY' if state.get('busy') else 'HISTORY_RECOVERY_REQUIRED'))
         if state['coverage'] and len(state['coverage']['pages']) >= 8 and state['status'] != 'DONE':
             raise CycleBlocked('FEATURE_HISTORY_PAGE_LIMIT')
-    # The existing feature calculator replays these original manifest/response
-    # pairs, not normalized decode output or caller coverage assertions.
-    pairs = []; rows = []
-    for page in state['coverage']['pages']:
-        request = progress.store.load(page['request_evidence_hash'])
-        response = progress.store.load(page['payload_hash'])
-        pairs.append({'request': request, 'response': response})
-        rows.extend(response['data'])
-    return as_of, rows, pairs
+    from .streaming_history import RetainedHistoryPages
+    pairs=RetainedHistoryPages(progress.store,state['coverage'])
+    return as_of, pairs.records(), pairs
 
 
 def _usd(progress, source, scan, budget, refs=(), *, valuation_version=0):

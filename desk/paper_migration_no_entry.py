@@ -244,7 +244,7 @@ def _prewire_inventory(store,scan):
             kind,identity,_=terminal._classification(store,key)
             if key in markers:continue
             if identity==scan:raise ValueError('Retained candidate evidence forbids pre-entry abandonment')
-            if kind not in ('paper_cycle_intent_v1','paper_observation_intent_v1','history_first_paper_preparation_v1'):continue
+            if kind not in ('paper_cycle_intent_v1','paper_observation_intent_v1','history_first_paper_preparation_v1','history_first_paper_preparation_v2','history_first_paper_preparation_v3'):continue
             value=terminal._load(store,key)
             admissions=value.get('admissions',{})
             targets=value.get('targets',[])
