@@ -337,7 +337,9 @@ class ConnectorTests(unittest.TestCase):
             reopened.assert_not_called();credentials.assert_not_called()
         self.assertEqual(f.progress.admission('scan')['requests_used'],2)
         self.clock.wall=230
-        self.make().acquire('helius',timeout_seconds=1)   # owner gone + stale => reclaimed, never charged here
+        with self.assertRaisesRegex(p.PacingError,'DEADLINE_EXCEEDED'):self.make().acquire('helius',timeout_seconds=1)   # owner gone + stale => reclaimed, embargoed
+        self.clock.wall=270
+        self.make().acquire('helius',timeout_seconds=1)   # never charged here
         with sqlite3.connect(self.path) as c:
             self.assertEqual(c.execute('SELECT provider,reason FROM pacing_reclaims').fetchall(),[('helius','OWNER_GONE')])
         self.assertEqual(f.progress.admission('scan')['requests_used'],2)
@@ -390,6 +392,8 @@ class ConnectorTests(unittest.TestCase):
         self.clock.wall=130
         with self.assertRaisesRegex(p.PacingError,'OUTCOME_PENDING'):self.make().acquire('helius',timeout_seconds=1)
         self.clock.wall=200
+        with self.assertRaisesRegex(p.PacingError,'DEADLINE_EXCEEDED'):self.make().acquire('helius',timeout_seconds=1)  # reclaim embargo
+        self.clock.wall=240
         self.make().acquire('helius',timeout_seconds=1)
         with sqlite3.connect(self.path) as c:
             self.assertEqual(c.execute('SELECT provider,reason FROM pacing_reclaims').fetchall(),[('helius','OWNER_GONE')])

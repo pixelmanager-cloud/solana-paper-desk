@@ -40,6 +40,13 @@ class PacingReclaimTests(unittest.TestCase):
         clock = clock or self.clock
         return p.Pacer(self.path, clock=clock.time, monotonic=clock.time, sleep=clock.sleep)
 
+    def after_embargo(self, pacer, provider='helius'):
+        """A reclaim embargoes the provider for the fixed backoff: first attempt times out, then it works."""
+        with self.assertRaisesRegex(p.PacingError, 'DEADLINE_EXCEEDED'):
+            pacer.acquire(provider, timeout_seconds=1)
+        self.clock.wall += 31
+        return pacer.acquire(provider, timeout_seconds=1)
+
     def rows(self, sql):
         with sqlite3.connect(self.path) as c: return c.execute(sql).fetchall()
 
@@ -65,17 +72,18 @@ class PacingReclaimTests(unittest.TestCase):
         before = self.rows('SELECT next_at,blocked_until,high_water,pending FROM state WHERE provider="helius"')[0]
         self.assertIsNotNone(before[3])
         self.clock.wall = T0 + 3600
-        ticket = self.make().acquire('helius', timeout_seconds=1)
+        ticket = self.after_embargo(self.make())
         self.assertEqual(len(ticket), 32)
         (record,) = self.rows('SELECT provider,ticket,granted_at,reclaimed_at,backoff_until,reason FROM pacing_reclaims')
         self.assertEqual((record[0], record[5]), ('helius', 'OWNER_GONE'))
         self.assertAlmostEqual(record[2], T0, delta=3)          # derived grant time
-        self.assertAlmostEqual(record[4], record[2] + 30.0, delta=1e-6)   # unknown outcome = fixed-backoff throttle at grant
+        self.assertEqual(record[4], record[3] + 30.0)   # unknown outcome = fixed-backoff throttle from the reclaim
         self.assertEqual(record[3], T0 + 3600)
+        self.assertGreaterEqual(self.rows('SELECT blocked_until FROM state WHERE provider="helius"')[0][0], record[4])
         self.make()                                   # a DB carrying reclaim rows still validates
         # cadence state never rewound: next_at only moved forward by the NEW grant
         after = self.rows('SELECT next_at,blocked_until,high_water FROM state WHERE provider="helius"')[0]
-        self.assertGreater(after[0], before[0]); self.assertGreaterEqual(after[1], record[4]); self.assertGreaterEqual(after[2], before[2])
+        self.assertGreater(after[0], before[0]); self.assertGreaterEqual(after[2], before[2])
         with sqlite3.connect(self.path) as c:
             for sql in ('UPDATE pacing_reclaims SET reason="x"', 'DELETE FROM pacing_reclaims'):
                 with self.assertRaisesRegex(sqlite3.DatabaseError, 'Immutable pacing reclaim'): c.execute(sql)
@@ -93,7 +101,7 @@ class PacingReclaimTests(unittest.TestCase):
         with self.assertRaisesRegex(p.PacingError, 'OUTCOME_PENDING'):
             self.make().acquire('helius', timeout_seconds=1)
         self.clock.wall = T0 + p.RECLAIM_MIN_SECONDS + 1
-        self.make().acquire('helius', timeout_seconds=1)
+        self.after_embargo(self.make())
 
     def test_normal_finish_releases_holder_and_never_writes_a_reclaim_row(self):
         pacer = self.make()
@@ -115,7 +123,7 @@ class PacingReclaimTests(unittest.TestCase):
         ticket = other.acquire('helius', timeout_seconds=1)         # unrelated provider unaffected
         other.finish('helius', ticket)
         self.assertEqual(self.rows('SELECT COUNT(*) FROM sqlite_master WHERE name="pacing_reclaims"'), [(0,)])
-        ticket = other.acquire('jupiter', timeout_seconds=1)        # reclaims the orphan, then grants
+        ticket = self.after_embargo(other, 'jupiter')               # reclaims the orphan, embargo, then grants
         other.finish('jupiter', ticket)
         self.clock.wall += 10
         other.finish('jupiter', other.acquire('jupiter', timeout_seconds=1))
@@ -124,11 +132,50 @@ class PacingReclaimTests(unittest.TestCase):
     def test_tampered_reclaim_table_fails_closed(self):
         proc = self.spawn_holder(); proc.send_signal(signal.SIGKILL); proc.wait()
         self.clock.wall = T0 + 3600
-        self.make().acquire('helius', timeout_seconds=1)
+        self.after_embargo(self.make())
         with sqlite3.connect(self.path) as c:
             c.execute('DROP TRIGGER pacing_reclaims_no_delete')
         with self.assertRaisesRegex(p.PacingError, 'DATABASE_INVALID'):
             self.make()
+
+    def test_slot_is_released_before_the_commit_so_a_new_grantee_always_finds_the_lock_free(self):
+        pacer = self.make()
+        ticket = pacer.acquire('helius', timeout_seconds=1)
+        original, seen = pacer._release, []
+        def spy(provider, tkt=None):
+            original(provider, tkt)
+            fd = os.open(pacer._lock_path(provider), os.O_RDWR)
+            try:
+                import fcntl
+                fcntl.flock(fd, fcntl.LOCK_EX | fcntl.LOCK_NB); seen.append('lock free')
+            finally: os.close(fd)
+            seen.append(self.rows('SELECT pending FROM state WHERE provider="helius"')[0][0] == ticket)   # not yet committed
+        pacer._release = spy
+        pacer.finish('helius', ticket)
+        self.assertEqual(seen, ['lock free', True])
+        self.assertIsNone(self.rows('SELECT pending FROM state WHERE provider="helius"')[0][0])
+
+    def test_holder_lock_failure_fails_closed_without_leaving_an_unprotected_ticket(self):
+        pacer = self.make()
+        real = p.fcntl.flock
+        def flock(fd, op):
+            if op & p.fcntl.LOCK_EX: raise OSError('simulated')
+            return real(fd, op)
+        with patch.object(p.fcntl, 'flock', side_effect=flock):
+            with self.assertRaisesRegex(p.PacingError, 'HOLDER_LOCK_UNAVAILABLE'):
+                pacer.acquire('helius', timeout_seconds=1)
+        self.assertIsNone(self.rows('SELECT pending FROM state WHERE provider="helius"')[0][0])
+        self.assertEqual(pacer._held, {})
+
+    def test_reclaim_count_cap_is_enforced_on_insert_and_fails_closed(self):
+        for provider in ('helius', 'jupiter'):
+            orphan = self.make(); orphan.acquire(provider, timeout_seconds=1); del orphan
+        self.clock.wall = T0 + 600
+        with patch.object(p, 'MAX_RECLAIMS', 1):
+            self.after_embargo(self.make(), 'helius')
+            with self.assertRaisesRegex(p.PacingError, 'OUTCOME_PENDING'):
+                self.make().acquire('jupiter', timeout_seconds=1)
+        self.make()      # DB still validates
 
     def test_unprovable_owner_keeps_the_old_fail_closed_behavior(self):
         proc = self.spawn_holder(); proc.send_signal(signal.SIGKILL); proc.wait()

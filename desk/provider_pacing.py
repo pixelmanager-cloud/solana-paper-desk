@@ -16,6 +16,7 @@ import sqlite3
 import stat
 import time
 import uuid
+import weakref
 
 PROVIDERS = ('helius', 'jupiter')
 MAX_WAIT = 5.0
@@ -35,6 +36,7 @@ RECLAIM_GUARDS = {
                                          "BEGIN SELECT RAISE(ABORT,'Immutable pacing reclaim record'); END")
     for op in ('UPDATE', 'DELETE')}
 MAX_RECLAIMS = 10000
+_INSTANCES = weakref.WeakSet()   # live Pacers in this process: any of them may acknowledge a grant
 
 
 class PacingError(ValueError):
@@ -92,6 +94,7 @@ class Pacer:
         self.path, self.identity = _path(path)
         self.priority, self.clock, self.monotonic, self.sleep = priority, clock, monotonic, sleep
         self._held = {}
+        _INSTANCES.add(self)
         self._validate()
 
     def _connect(self):
@@ -146,7 +149,7 @@ class Pacer:
     def __del__(self):
         # A discarded Pacer no longer owns an unfinished grant: closing the lock is the owner-gone proof.
         for provider in list(getattr(self, '_held', ())):
-            self._release(provider)
+            self._release_own(provider)
 
     def _lock_path(self, provider):
         return str(self.path) + '.holder-' + provider + '.lock'
@@ -156,17 +159,28 @@ class Pacer:
 
         flock is released by the kernel on any process death (including SIGKILL), which is the
         only owner-gone proof available without extra state. Failure to lock just means the slot
-        can never be reclaimed (the previous fail-closed behavior).
+        cannot be taken is fail-closed: the unused grant is acknowledged (no request was made, so no
+        unknown outcome exists) and the caller gets an error instead of an unprotected ticket.
         """
+        fd = None
         try:
             fd = os.open(self._lock_path(provider), os.O_RDWR | os.O_CREAT | os.O_NOFOLLOW | os.O_CLOEXEC, 0o600)
-        except OSError: return
-        try: fcntl.flock(fd, fcntl.LOCK_EX | fcntl.LOCK_NB)
-        except OSError: os.close(fd); return
-        self._release(provider)
+            fcntl.flock(fd, fcntl.LOCK_EX | fcntl.LOCK_NB)
+        except OSError:
+            if fd is not None: os.close(fd)
+            try: self.finish(provider, ticket)
+            except PacingError: pass
+            raise PacingError('PACING_HOLDER_LOCK_UNAVAILABLE') from None
         self._held[provider] = (ticket, fd)
 
     def _release(self, provider, ticket=None):
+        """Close this process's holder lock for (provider, ticket), whichever Pacer instance took it."""
+        if ticket is not None:
+            for other in list(_INSTANCES):
+                if other is not self: other._release_own(provider, ticket)
+        self._release_own(provider, ticket)
+
+    def _release_own(self, provider, ticket=None):
         held = self._held.get(provider)
         if held and (ticket is None or held[0] == ticket):
             del self._held[provider]
@@ -177,18 +191,21 @@ class Pacer:
         """Release an orphaned grant inside the caller's write transaction; True when released.
 
         Cadence, next_at and the provider embargo are never lowered. The unknown outcome is treated
-        like a throttle without Retry-After at grant time, and an append-only row records the release.
+        like a throttle without Retry-After starting now (fixed backoff), and an append-only row
+        records the release. At MAX_RECLAIMS rows nothing is reclaimed (fail closed).
         """
         cadence, backoff = c.execute('SELECT cadence,backoff FROM policy WHERE provider=?', (provider,)).fetchone()
         granted = next_at - cadence
         if now - granted < max(RECLAIM_MIN_SECONDS, RECLAIM_INTERVALS * cadence): return False
+        if c.execute('SELECT COUNT(*) FROM sqlite_master WHERE name=?', (RECLAIM_TABLE,)).fetchone()[0] and \
+                c.execute('SELECT COUNT(*) FROM pacing_reclaims').fetchone()[0] >= MAX_RECLAIMS: return False
         try:
             fd = os.open(self._lock_path(provider), os.O_RDWR | os.O_CREAT | os.O_NOFOLLOW | os.O_CLOEXEC, 0o600)
         except OSError: return False
         try:
             try: fcntl.flock(fd, fcntl.LOCK_EX | fcntl.LOCK_NB)
             except OSError: return False        # owner alive (or unprovable): never reclaim
-            until = granted + backoff
+            until = now + backoff
             if not (_number(until) and _number(granted)): return False
             if not c.execute("SELECT 1 FROM sqlite_master WHERE type='table' AND name=?", (RECLAIM_TABLE,)).fetchone():
                 c.execute(RECLAIM_SQL)
@@ -263,8 +280,9 @@ class Pacer:
             with closing(self._connect()) as c:
                 c.execute('BEGIN IMMEDIATE');now=self._now(c)
                 self._pending(c,provider,ticket)
-                c.execute('UPDATE state SET pending=NULL,high_water=? WHERE provider=?',(now,provider));c.commit()
-                self._release(provider, ticket)
+                c.execute('UPDATE state SET pending=NULL,high_water=? WHERE provider=?',(now,provider))
+                self._release(provider, ticket)   # before commit: a new grantee must always find the lock free
+                c.commit()
         except sqlite3.Error:
             raise PacingError('PACING_DATABASE_BUSY') from None
 
@@ -303,8 +321,9 @@ class Pacer:
                         if not _number(until):until=2**53-1
                     except (ValueError,TypeError,OverflowError): pass
                 elif values: until=2**53-1  # Ambiguous/oversize instructions cannot permit an early retry.
-                c.execute('UPDATE state SET blocked_until=MAX(blocked_until,?),high_water=?,pending=NULL WHERE provider=?',(until,now,provider));c.commit()
+                c.execute('UPDATE state SET blocked_until=MAX(blocked_until,?),high_water=?,pending=NULL WHERE provider=?',(until,now,provider))
                 self._release(provider, ticket)
+                c.commit()
         except sqlite3.Error:
             raise PacingError('PACING_DATABASE_BUSY') from None
 

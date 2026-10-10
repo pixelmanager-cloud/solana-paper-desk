@@ -69,7 +69,11 @@ class FreshPacingTests(unittest.TestCase):
         PACING_OUTCOME_PENDING and dispatcher _preflight() refuses forever."""
         self.make().acquire('helius', timeout_seconds=1)   # never finished
         self.clock.wall += 86400
-        self.make().acquire('helius', timeout_seconds=1)
+        pacer = self.make()
+        with self.assertRaisesRegex(p.PacingError, 'DEADLINE_EXCEEDED'):   # T23: reclaim embargoes the fixed backoff
+            pacer.acquire('helius', timeout_seconds=1)
+        self.clock.wall += 31
+        pacer.acquire('helius', timeout_seconds=1)
 
     def test_orphaned_pending_blocks_every_provider_call_today(self):
         """GREEN characterisation: the block is real while the owner is provably alive (T23 reclaims

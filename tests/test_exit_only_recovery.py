@@ -4,6 +4,7 @@ Pure engine tests on hand-built state; the end-to-end entry -> stale watchdog ->
 tests.test_audit_first_cycle_c_held.ExitOnlyStickinessTests.
 """
 import copy
+import json
 import unittest
 
 from desk import engine
@@ -121,6 +122,11 @@ class ExitOnlyRecoveryTests(unittest.TestCase):
         state, _ = engine.transition(state, control('RESUME', self.late + 2, 4), self.cfg)
         self.assertEqual(state['mode'], 'RUNNING')
         self.assertNotIn('exit_only_cause', state)
+
+    def test_cause_survives_a_json_round_trip_restart(self):
+        state = json.loads(json.dumps(self.block()))
+        self.clear(state)
+        self.assertEqual(state['mode'], 'RUNNING')
 
     def test_invalid_version_values_are_rejected(self):
         for bad in (0, 2, True, '1', 1.0):
