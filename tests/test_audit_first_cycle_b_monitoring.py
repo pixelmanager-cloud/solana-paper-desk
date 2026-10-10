@@ -29,7 +29,6 @@ class MonitoringLatchTests(_Fixture):
         self.budget.clock = lambda: base.T + 7 * 86400
         self.assertEqual(self.budget.snapshot()['blockers'], [])
 
-    @unittest.expectedFailure
     def test_process_killed_after_reservation_must_not_block_forever(self):
         """Reservation is committed before the HTTP call; SIGKILL/SIGTERM at
         the systemd timeout leaves a reservation without an outcome.

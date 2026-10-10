@@ -75,7 +75,7 @@ class MonitoringBudgetTests(unittest.TestCase):
                     total=c.execute('SELECT total FROM paper_monitoring_budget').fetchone()[0]
                     outer.assertEqual(c.execute('SELECT count(*) FROM paper_monitoring_reservations').fetchone()[0],total)
                 outer.assertEqual(outer.progress.admission(scan)['requests_used'],0)
-                if fail:raise OSError('SYNTHETIC_SECRET_SENTINEL')
+                if fail:raise ConnectionResetError('SYNTHETIC_SECRET_SENTINEL')  # a real transient failure; a bare OSError is unclassified and latches (T25)
                 return Response(body or canonical({'jsonrpc':'2.0','id':RPC_ID,'result':100}).encode())
         with patch('desk.paper_read_sources.os.environ.get',return_value=KEY),patch('desk.paper_read_sources.build_opener',return_value=Opener()):
             return source.rpc_with_evidence('getSlot',[{'commitment':'finalized'}],timeout_seconds=3)
@@ -159,7 +159,9 @@ class MonitoringBudgetTests(unittest.TestCase):
         with patch('desk.paper_read_sources.os.environ.get',return_value=KEY),patch('desk.paper_read_sources.build_opener') as opener:
             opener.return_value.open.side_effect=KeyboardInterrupt()
             with self.assertRaises(KeyboardInterrupt):self.read_unmocked()
-        self.budget=MonitoringBudget(self.store,self.f.path,self.f.cfg,clock=lambda:T+3600)
+        # T25: an orphan older than ABANDON_AFTER_SECONDS is resolved as ABANDONED_CHARGED (see
+        # tests/test_monitoring_classification.py); within the deadline it must still fail closed.
+        self.budget=MonitoringBudget(self.store,self.f.path,self.f.cfg,clock=lambda:T+60)
         with patch('desk.paper_read_sources.os.environ.get') as credentials:
             with self.assertRaises(PaperReadError) as caught:self.read_unmocked()
         credentials.assert_not_called();self.assertEqual(caught.exception.code,'MONITORING_OUTCOME_PENDING');self.assertEqual(self.accounting()[1],1)
