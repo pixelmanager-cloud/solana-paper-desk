@@ -32,6 +32,7 @@ BATCH_TASKS = 50  # two vault accounts per task -> 100 accounts, the RPC maximum
 BASELINE_HORIZON = HORIZONS[0]  # ONE baseline for every candidate: the +5m sample
 WINDOW_MAX_SECONDS = 7200       # the dispatcher selects candidates 300..7200 s after the migration
 NULL_POOL_BACKOFF = (60, 900)   # retry a not-yet-visible pool account after 60 s, doubling, capped at 15 min
+NULL_POOL_IN_WINDOW = 30        # ...but every 30 s while a sample window is open, and never past its start
 MAX_RESULT_ROWS = 100000
 MAX_RESPONSE_BYTES = 4 * 1024 * 1024
 SCHEMA = '''
@@ -202,10 +203,14 @@ def _code(value, default):
     return default
 
 
-def classify_result(body):
+def classify_result(body, *, scan_id=None, no_entry_scans=frozenset()):
     """One stored dispatcher result -> {'class','stage','codes','detail'}. Every known shape is parsed.
 
     BOUGHT: the cycle result holds a BUY fill. REJECTED:<stage>:<code>: a typed normal rejection.
+    UNRESOLVED:<code>: a BLOCKED cycle whose blocker is a latch (not in T01's ``NORMAL`` set, no
+    ``paper_cycle_no_entry`` row for the scan, and no terminal receipt): an integrity-relevant stop, never a
+    filter rejection. A result carrying ``terminal_receipt_hash`` was certified terminal by the cycle itself
+    (known-hazard rejection such as MAYHEM_POOL) and stays a rejection.
     UNKNOWN: anything unresolved, corrupt, recovery-required or of an unrecognised kind (never guessed).
     """
     if not isinstance(body, dict):
@@ -239,7 +244,12 @@ def classify_result(body):
             return {'class': 'UNKNOWN', 'stage': None, 'codes': [], 'detail': 'RECOVERY_REQUIRED'}
         blockers = [b[:96] for b in body.get('blockers', []) if type(b) is str and b]
         if blockers:
-            return {'class': 'REJECTED', 'stage': 'OBSERVATIONS', 'codes': blockers, 'detail': None}
+            from desk.paper_cycle_no_entry import NORMAL   # imported, never copied: one source of truth
+            certified = type(body.get('terminal_receipt_hash')) is str and len(body['terminal_receipt_hash']) == 64 \
+                and all(ch in '0123456789abcdef' for ch in body['terminal_receipt_hash'])
+            if scan_id in no_entry_scans or certified or all(b in NORMAL for b in blockers):
+                return {'class': 'REJECTED', 'stage': 'OBSERVATIONS', 'codes': blockers, 'detail': None}
+            return {'class': 'UNRESOLVED', 'stage': 'OBSERVATIONS', 'codes': blockers, 'detail': 'LATCH_NOT_A_NORMAL_REJECTION'}
         return {'class': 'UNKNOWN', 'stage': None, 'codes': [], 'detail': 'BLOCKED_WITHOUT_CODE'}
     return {'class': 'UNKNOWN', 'stage': None, 'codes': [], 'detail': 'UNKNOWN_RESULT_KIND'}
 
@@ -251,9 +261,15 @@ class OutcomeReader:
     A missing store is UNKNOWN (never silently NOT_DISPATCHED), unreadable rows are UNKNOWN.
     """
 
-    def __init__(self, journal_db=None, ledger_db=None, decisions_db=None):
+    def __init__(self, journal_db=None, ledger_db=None, decisions_db=None, evidence_db=None):
         self.journal = self.buys = self.decisions = None
+        self.no_entry = frozenset()
         self.errors = {}
+        if evidence_db is not None:
+            try:
+                self.no_entry = self._load_no_entry(evidence_db)
+            except (sqlite3.Error, OSError, ValueError, CounterfactualError):
+                self.errors['evidence'] = 'EVIDENCE_UNREADABLE'   # a latch can then not be proven normal: stays UNRESOLVED
         if journal_db is not None:
             try:
                 self.journal = _connect(journal_db, readonly=True)
@@ -277,6 +293,14 @@ class OutcomeReader:
             c.execute('BEGIN')
             return {m for (m,) in c.execute("SELECT json_extract(payload,'$.mint') FROM outcomes WHERE json_extract(payload,'$.type')='fill' "
                                             "AND json_extract(payload,'$.side')='buy' LIMIT ?", (MAX_RESULT_ROWS,)) if m}
+
+    @staticmethod
+    def _load_no_entry(evidence_db):
+        with closing(_connect(evidence_db, readonly=True)) as c:
+            c.execute('BEGIN')
+            if not c.execute("SELECT 1 FROM sqlite_master WHERE type='table' AND name='paper_cycle_no_entry'").fetchone():
+                return frozenset()
+            return frozenset(s for (s,) in c.execute('SELECT scan_id FROM paper_cycle_no_entry LIMIT ?', (MAX_RESULT_ROWS,)))
 
     @staticmethod
     def _load_decisions(decisions_db):
@@ -313,8 +337,12 @@ class OutcomeReader:
                 if row is not None:
                     if result is None:
                         return {'v': 2, 'class': 'UNKNOWN', 'stage': None, 'codes': [], 'source': 'JOURNAL', 'detail': 'UNRESOLVED_NO_RESULT'}
-                    body = json.loads(result[0]).get('result')
-                    return {'v': 2, **classify_result(body), 'source': 'JOURNAL'}
+                    wrapper = json.loads(result[0])
+                    body = wrapper.get('result')
+                    got = classify_result(body, scan_id=wrapper.get('scan_id'), no_entry_scans=self.no_entry)
+                    if got['class'] == 'UNRESOLVED' and self.errors.get('evidence'):
+                        got['detail'] = 'LATCH_EVIDENCE_UNREADABLE'   # a no-entry row could not be looked up
+                    return {'v': 2, **got, 'source': 'JOURNAL'}
             except (sqlite3.Error, ValueError, TypeError, AttributeError):
                 return {'v': 2, 'class': 'UNKNOWN', 'stage': None, 'codes': [], 'source': 'JOURNAL', 'detail': 'OUTCOME_UNREADABLE'}
         if self.decisions is not None and mint in self.decisions:
@@ -326,9 +354,9 @@ class OutcomeReader:
         return {'v': 2, 'class': 'UNKNOWN', 'stage': None, 'codes': [], 'source': None, 'detail': self.errors.get('journal') or 'JOURNAL_NOT_PROVIDED'}
 
 
-def _outcome(journal_db, mint, *, ledger_db=None, decisions_db=None):
+def _outcome(journal_db, mint, *, ledger_db=None, decisions_db=None, evidence_db=None):
     """Single-candidate convenience wrapper (tests/tools); production paths reuse one OutcomeReader."""
-    reader = OutcomeReader(journal_db, ledger_db, decisions_db)
+    reader = OutcomeReader(journal_db, ledger_db, decisions_db, evidence_db)
     try:
         return reader.classify(mint)
     finally:
@@ -336,15 +364,19 @@ def _outcome(journal_db, mint, *, ledger_db=None, decisions_db=None):
 
 
 def _is_final(payload, migrated_at, now, grace):
-    """A typed result never changes; NOT_DISPATCHED is final only once the dispatch window has closed."""
+    """A typed result never changes. NOT_DISPATCHED and a decision-store rejection are provisional until the
+    dispatch window has closed (a later journal result or ledger BUY outranks them); UNRESOLVED never is final."""
     if type(payload) is not dict or payload.get('v') != 2:
         return False
-    if payload['class'] in ('BOUGHT', 'REJECTED'):
+    window_closed = now > migrated_at + WINDOW_MAX_SECONDS + grace
+    if payload['class'] == 'BOUGHT':
         return True
-    return payload['class'] == 'NOT_DISPATCHED' and now > migrated_at + WINDOW_MAX_SECONDS + grace
+    if payload['class'] == 'REJECTED':
+        return payload.get('source') != 'DECISIONS' or window_closed
+    return payload['class'] == 'NOT_DISPATCHED' and window_closed
 
 
-def ingest(store, discovery_db, *, journal_db=None, ledger_db=None, decisions_db=None, now=None, limit=500):
+def ingest(store, discovery_db, *, journal_db=None, ledger_db=None, decisions_db=None, evidence_db=None, now=None, limit=500):
     now = time.time() if now is None else now
     with closing(_connect(store)) as c:
         after = int(c.execute("SELECT value FROM meta WHERE key='last_discovery_seq'").fetchone()[0])
@@ -362,12 +394,13 @@ def ingest(store, discovery_db, *, journal_db=None, ledger_db=None, decisions_db
                                     migrated_at=h['migrated_at'], seq=h['seq'], now=now))
     with closing(_connect(store)) as c:
         c.execute("INSERT OR REPLACE INTO meta VALUES('last_discovery_seq',?)", (str(last),))
-    refreshed = refresh_outcomes(store, journal_db, ledger_db=ledger_db, decisions_db=decisions_db, now=now)
+    refreshed = refresh_outcomes(store, journal_db, ledger_db=ledger_db, decisions_db=decisions_db,
+                                 evidence_db=evidence_db, now=now)
     return {'candidates_added': added, 'rows_skipped': skipped, 'last_seq': last, 'cursor_start': after,
             'outcomes_appended': refreshed['appended'], 'outcomes_final': refreshed['final']}
 
 
-def refresh_outcomes(store, journal_db, *, ledger_db=None, decisions_db=None, now=None):
+def refresh_outcomes(store, journal_db, *, ledger_db=None, decisions_db=None, evidence_db=None, now=None):
     """Append an outcome row only when the classification changed, and only for candidates whose
     latest outcome is not final. One journal/ledger/decision view is opened once for the whole pass."""
     now = time.time() if now is None else now
@@ -387,7 +420,7 @@ def refresh_outcomes(store, journal_db, *, ledger_db=None, decisions_db=None, no
                     final += 1
                     continue
                 if reader is None:
-                    reader = OutcomeReader(journal_db, ledger_db, decisions_db)
+                    reader = OutcomeReader(journal_db, ledger_db, decisions_db, evidence_db)
                 new = reader.classify(mint)
                 if previous != new:
                     c.execute('INSERT INTO outcomes(mint,at,payload) VALUES(?,?,?)', (mint, now, json.dumps(new, sort_keys=True)))
@@ -569,9 +602,24 @@ def _ensure_attempts_table(c):
                   "BEGIN SELECT RAISE(ABORT,'Counterfactual record is immutable'); END")
 
 
-def null_pool_delay(attempts):
-    """Backoff before the next try of a pool account that was not visible yet: 60 s, 120 s ... capped at 15 min."""
-    return min(NULL_POOL_BACKOFF[0] * 2 ** max(0, attempts - 1), NULL_POOL_BACKOFF[1])
+def null_pool_delay(attempts, *, last=None, migrated=None, grace=DEFAULT_GRACE):
+    """Backoff before the next try of a pool account that was not visible yet.
+
+    Base: 60 s, 120 s ... capped at 15 min. With ``last`` (time of the previous try) and ``migrated`` the
+    delay is also capped so a sample window can never be overshot: the next try happens no later than the
+    start of the next window that has not opened (migrated + horizon), and every ``NULL_POOL_IN_WINDOW``
+    seconds while ``last`` lies inside a window [migrated + h, migrated + h + grace].
+    """
+    base = min(NULL_POOL_BACKOFF[0] * 2 ** max(0, attempts - 1), NULL_POOL_BACKOFF[1])
+    if last is None or migrated is None:
+        return base
+    for h in HORIZONS:
+        start, end = migrated + h, migrated + h + grace
+        if last < start:
+            return min(base, max(start - last, 1))
+        if last <= end:
+            return min(base, NULL_POOL_IN_WINDOW)
+    return base
 
 
 def _resolve_vaults(c, transport, now, summary):
@@ -588,7 +636,7 @@ def _resolve_vaults(c, transport, now, summary):
                       'POOL_ACCOUNT_NULL_WINDOW_PASSED' if attempts else 'WINDOW_PASSED_BEFORE_RESOLUTION', now))
             summary['abandoned'] = summary.get('abandoned', 0) + 1
             continue
-        if attempts and now < last + null_pool_delay(attempts):
+        if attempts and now < last + null_pool_delay(attempts, last=last, migrated=migrated, grace=grace):
             continue  # backing off: a null pool account usually means the pool is not visible yet
         todo.append((mint, pool))
     for i in range(0, len(todo), 100):
@@ -676,7 +724,7 @@ def sample(store, transport, *, now=None):
 
 # ----------------------------------------------------------------- report
 def groups_of(payload):
-    """Report groups of one candidate: BOUGHT | REJECTED:<stage>:<code> (one per code) | NOT_DISPATCHED | UNKNOWN.
+    """Report groups of one candidate: BOUGHT | REJECTED:<stage>:<code> (one per code) | UNRESOLVED:<code> | NOT_DISPATCHED | UNKNOWN.
 
     A candidate rejected for several reasons appears once per reason (each filter's own view); the
     report also states the number of distinct candidates so groups are never read as a partition.
@@ -689,6 +737,8 @@ def groups_of(payload):
     if kind == 'REJECTED':
         codes = payload.get('codes') or ['UNSPECIFIED']
         return [f"REJECTED:{payload.get('stage') or 'UNKNOWN_STAGE'}:{code}" for code in codes], None
+    if kind == 'UNRESOLVED':   # latches are shown on their own and never counted as a filter's rejection
+        return [f"UNRESOLVED:{code}" for code in (payload.get('codes') or ['UNSPECIFIED'])], None
     if kind == 'NOT_DISPATCHED':
         return ['NOT_DISPATCHED'], None
     return ['UNKNOWN'], payload.get('detail') or 'UNSPECIFIED'
@@ -769,6 +819,7 @@ def main(argv=None):
             p.add_argument('--journal')
             p.add_argument('--ledger', help='read-only ledger: BUY fills make a candidate BOUGHT')
             p.add_argument('--decisions-db', help='read-only decision store (paper-decisions.sqlite)')
+            p.add_argument('--evidence-db', help='read-only evidence store: paper_cycle_no_entry rows prove a latch was a normal rejection')
         if name == 'sample':
             p.add_argument('--systemd-credentials', action='store_true')
         if name == 'report':
@@ -780,7 +831,8 @@ def main(argv=None):
         elif args.command == 'set-allowance':
             set_allowance(args.store, args.allowance_per_hour); out = {'status': 'RECORDED'}
         elif args.command == 'ingest':
-            out = ingest(args.store, args.discovery_db, journal_db=args.journal, ledger_db=args.ledger, decisions_db=args.decisions_db)
+            out = ingest(args.store, args.discovery_db, journal_db=args.journal, ledger_db=args.ledger,
+                         decisions_db=args.decisions_db, evidence_db=args.evidence_db)
         elif args.command == 'sample':
             from desk import provider_pacing
             if args.systemd_credentials:
