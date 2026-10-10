@@ -54,6 +54,9 @@ def config(cfg):
         raise QuoteExecutionError('QUOTE_EXECUTION_SLIPPAGE_INVALID')
     if type(cfg.get('price_ttl_seconds')) is not int or not 0 < cfg['price_ttl_seconds'] <= 60:
         raise QuoteExecutionError('QUOTE_EXECUTION_TTL_INVALID')
+    if cfg.get('paper_fill_realism_version') is not None:
+        from .fill_realism import selected as realism_selected
+        realism_selected(cfg)  # explicit opt-in measurement only; absent key leaves behaviour untouched
     return True
 
 

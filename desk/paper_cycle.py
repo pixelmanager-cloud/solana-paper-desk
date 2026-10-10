@@ -18,7 +18,7 @@ import sqlite3
 import time
 import uuid
 
-from . import engine, quote_execution as qe
+from . import engine, quote_execution as qe, fill_realism
 from .graduation_witness import extract_graduation
 from .ledger import Ledger
 from .model import canonical, digest, validate_event
@@ -544,6 +544,7 @@ def run_once(research_db, evidence_db, ledger_db, cfg, *, position_targets=(), c
                         result['outcomes'].extend(ledger.apply(event,cfg,checked,engine.initial_state))
                         result['events'].append(event['event_id'])
                     for control in controls:deliver(control)
+                    realism_jobs=[]  # opt-in paper_fill_realism_version only; empty and unused when off
                     usd = None
                     for item in items:
                         state = _state(path,cfg)
@@ -634,7 +635,11 @@ def run_once(research_db, evidence_db, ledger_db, cfg, *, position_targets=(), c
                         event, quotes, planned = fulfill_quotes(state,cfg,event_builder,collected,source,action_budget)
                         result['diagnostics'].append({'scan_id':target.scan_id,'blockers':diagnostic['blockers'],
                                                       'planned_outcomes':planned['outcomes']})
+                        before_outcomes=len(result['outcomes'])
                         deliver(event,quotes)
+                        if fill_realism.selected(cfg):
+                            realism_jobs+=fill_realism.collect(result['outcomes'][before_outcomes:],event,collected,source,action_budget is not budget,
+                                lambda scan=target.scan_id:source_factory(progress,scan))
                         _state(path,cfg)
                         if is_position and any(x['type']=='blocked_exit' for x in planned['outcomes']):
                             raise CycleBlocked('UNRESOLVED_POSITION_EXIT')
@@ -655,6 +660,9 @@ def run_once(research_db, evidence_db, ledger_db, cfg, *, position_targets=(), c
                     else:raise
                 finally:
                     ledger.close()
+                    if 'realism_jobs' in locals() and realism_jobs:
+                        # Post-fill measurement; never raises, never alters the recorded fill.
+                        result['fill_realism']=fill_realism.measure(realism_jobs,cfg,path,budget,allowance)
                     result['attempted_requests']=budget.attempted+budget.monitoring_attempted
                     result['investigation_attempted_requests']=budget.attempted
                     result['monitoring_attempted_requests']=budget.monitoring_attempted
