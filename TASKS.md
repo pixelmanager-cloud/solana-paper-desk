@@ -315,6 +315,38 @@ Run all `tests/test_ops_*.py` in ONE process (real exit code), with `TMPDIR` bot
 
 ---
 
+## T22H — Close the last two allow-list holes in T22G (history laundering, dispatcher abandonment) — CRITICAL PATH
+STATUS: OPEN
+DEPENDS: none
+BASE: origin/cloud/T22G (it merges cleanly onto integration/r1)
+OWNS: the T22G files, desk/history_progress.py (error classification only), desk/paper_history_preparation.py, tools/paper_entry_dispatcher.py (recovery of unresolved intents only), tests
+AVOID: desk/provider_pacing.py (T38)
+
+Coordinator review of T22G: items 1, 3, 4, 6, 7 and 8 PASS, and the T12 R1/R2 tests flipped. Blocking:
+1. **(HIGH) History laundering.** `HistoryProgress.advance` turns ANY ValueError/OSError/KeyError/TypeError/IndexError from the history source into RETRYABLE_ERROR, which the cycle then raises as `HISTORY_RECOVERY_REQUIRED`, and that is ALLOW-LISTED. A probe through the real `run_once` showed that TLS_ERROR, UNCLASSIFIED_ERROR, "History page digest conflict", HISTORY_BINDING_INVALID, a bare OSError and "Cached request mismatch" are all closed FAILED_CHARGED with the scan retired. The same happens in history_first `prepare`.
+   - Fix: `HISTORY_RECOVERY_REQUIRED` becomes an evidence-bearing cause. It closes only when the retained history attempt original proves a TRANSIENT failure (timeout/reset/429/5xx/pacing contention, the same vocabulary as T25F). Everything else goes to INTEGRITY_HOLD. Also narrow `HistoryProgress.advance`'s catch-all the same way T25F did for reads.
+   - Rewrite T22G's "digest conflict" test to raise through the REAL history path, not `source_factory`. Update `test_history_failure_..._closed` (bare OSError must HOLD).
+   - Add probes as tests for every cause listed above.
+2. **(HIGH) Dispatcher abandonment.** A dispatcher intent has no hold record, so `_recover_unresolved` cannot tell a dead dispatcher from a deliberate refusal. `ACQUISITION_RETRY_OR_EVIDENCE_BLOCKED` and a TLS_ERROR during acquisition both become ABANDONED_CHARGED after 900s and dispatch resumes.
+   - Fix: write a durable dispatcher hold record (same mechanism as pass holds: transactional or fsynced sentinel) whenever the dispatcher refuses on purpose or stops on an integrity cause.
+   - `_recover_unresolved` abandons ONLY when there is no hold AND the owner proof says the owner is gone AND the intent's own attempt originals (if any) show only transient causes.
+   - Test both probes.
+3. **(M1) macOS tests.** The two `DispatcherClosureTests` kill/abandon tests fail on macOS. Inject the lock table as T25F does, so they pass on macOS and Linux.
+4. **(M2) Lifecycle fixture.** `test_ops_fresh_start_lifecycle` regressed because its fixture uses `SYNTHETIC_PRODUCER_BLOCK`, which R1 now correctly holds. Switch the fixture to `MISSING_WINDOW_MEASUREMENT:net_buy_ratio`.
+5. **(LOW)**
+   - L1: `paper_history_preparation.py` uses `sqlite3.Error` without importing sqlite3, so a NameError leaves a NULL pass without a hold.
+   - L2: move "Captured history changed" inside the held try.
+   - L3: `recover_abandoned` must check sentinels over the SAME ordered set as `pending`.
+   - L4: write the hold (or sentinel) BEFORE saving the result, or in the same transaction, so a kill between them cannot lead to abandonment.
+   - L5: apply publish's `_consistent` checks in the closure path too.
+
+**Acceptance:**
+- the T22G test set plus every audit/review module is green in ONE process on macOS (lock table injected) with the real exit code;
+- every probe above is a committed test;
+- the remaining `expectedFailure` list is unchanged except for any this fixes.
+
+---
+
 ## T22G — Fix the coordinator review of T22 (MUST be reconciled with T25F and T22F) — CRITICAL PATH
 STATUS: OPEN
 DEPENDS: branch `cloud/T22F` has a `DONE T22F:` commit
@@ -1574,3 +1606,7 @@ AVOID: desk/**, tools/research/funnel_report.py (import only)
 1. **(MED) Discovery.** Discovery is still a capped full rescan from `since=0` (oldest 50k frames first; `features.py` ~:553-556, ~:707), and `stats['truncated']` is ignored, so once there are more than 50k frames, newer hints are silently never ingested. Use a persisted discovery cursor (seq/received_at), the same as the other sources, with an anchor check. If any bound is hit, record `DISCOVERY_TRUNCATED`. Test with more than 60k frames, where the newest hints must be ingested.
 2. **(LOW) False page bound.** `exhausted()` must not count `PAGE_BOUND_HIT` when the last full page drained the source exactly.
 3. **(LOW) Dispatch journal.** Read the dispatch journal incrementally with a cursor, not whole on every run.
+
+---
+
+## NOTE (coordinator, 2026-10-11): T24R and T37F were claimed on top of T22G before its review found H1/H2. When they finish, they must merge `origin/cloud/T22H` (once it is DONE) before the coordinator integrates them. Workers on T24R/T37F: if T22H is DONE before you finish, merge it now.
