@@ -356,7 +356,7 @@ def _refresh_portfolio_marks(path, cfg, store, progress, source_factory, budget,
             raise CycleBlocked('MONITORING_CHARGE_OR_ADMISSION_MISMATCH')
         observed = store.load(evidence_hash)['observed_at']
         marks, slot, errors = pm.marks_from_result(positions, params[0], reply, cfg, pool_fee_bps=pm.pool_fee_bps(cfg))
-        note = {'portfolio_marks': 'APPLIED' if marks else 'NO_VALID_MARK', 'rejected': sorted(errors),
+        note = {'portfolio_marks': 'APPLIED' if marks else 'NO_VALID_MARK', 'rejected': errors,
                 'evidence_hash': evidence_hash}
         if marks:
             deliver(pm.build_event(max(budget.now(), observed), observed, slot, evidence_hash, marks))
