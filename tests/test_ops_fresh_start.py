@@ -3,6 +3,7 @@ from contextlib import closing
 import json
 import os
 from pathlib import Path
+import pwd
 import shutil
 import sqlite3
 import tempfile
@@ -44,6 +45,8 @@ class FreshStartBase(unittest.TestCase):
         with patch.object(discovery.time, 'time', return_value=time.time() - 600):
             discovery.initialize(self.discovery)
         self.shared_before = self.shared_digest()
+        # T13F: apply refuses unless it runs as the service user; the tests are the service user.
+        self.user = pwd.getpwuid(os.geteuid()).pw_name
 
     def shared_digest(self):
         return [__import__('hashlib').sha256(p.read_bytes()).hexdigest() for p in (self.pacer, self.discovery)]
@@ -53,7 +56,7 @@ class FreshStartBase(unittest.TestCase):
                     discovery_db=str(self.discovery), **extra)
 
     def apply(self, name='exp-1'):
-        return fs.apply(fs.plan(**self.args(name)))
+        return fs.apply(fs.plan(**self.args(name)), service_user=self.user)
 
     def cli(self, *argv):
         with patch('builtins.print') as out:
@@ -68,7 +71,8 @@ class FreshStartTests(FreshStartBase):
         self.assertEqual(set(value['stores']), {'research_db', 'evidence_db', 'ledger_db', 'decisions_db',
                                                 'journal', 'scheduler_lock', 'manifest'})
         self.assertEqual(set(value['units']), {'desk-paper-entry-dispatcher', 'desk-paper-held-cycle',
-                                               'desk-paper-monitor', 'desk-decisions', 'desk-dashboard'})
+                                               'desk-paper-monitor', 'desk-decisions', 'desk-dashboard',
+                                               'desk-backup'})
         entry = value['units']['desk-paper-entry-dispatcher']['argv']
         self.assertIn(value['stores']['journal'], entry)
         self.assertIn(f"DESK_PROVIDER_PACING_DB={self.pacer}", value['units']['desk-paper-entry-dispatcher']['environment'])
@@ -160,14 +164,14 @@ class FreshStartTests(FreshStartBase):
         value = fs.plan(**self.args('exp-1'))
         with patch.dict(os.environ, {pace.ENV: str(self.base / 'other.sqlite')}):
             with self.assertRaisesRegex(fs.FreshStartError, 'must equal'):
-                fs.apply(value)
+                fs.apply(value, service_user=self.user)
         self.assertFalse((self.base / 'exp-1').exists())
 
     def test_plan_hash_and_drift_bound_apply(self):
         value = fs.plan(**self.args('exp-1'))
         self.config.write_text(self.config.read_text().replace('"50"', '"51"'))
         with self.assertRaisesRegex(fs.FreshStartError, 'changed since'):
-            fs.apply(value)
+            fs.apply(value, service_user=self.user)
         self.assertFalse((self.base / 'exp-1').exists())
 
     def test_cli_default_is_dry_run_and_execute_needs_exact_hash(self):
@@ -179,7 +183,8 @@ class FreshStartTests(FreshStartBase):
         code, out = self.cli(*base, '--execute', '--approved-plan-hash', '0' * 64)
         self.assertEqual((code, out['status']), (2, 'BLOCKED'))
         self.assertFalse((self.base / 'exp-1').exists())
-        code, out = self.cli(*base, '--execute', '--approved-plan-hash', out_hash(self, base))
+        code, out = self.cli(*base, '--execute', '--approved-plan-hash', out_hash(self, base),
+                             '--service-user', self.user)
         self.assertEqual((code, out['status']), (0, 'APPLIED'))
         self.assertTrue((self.base / 'exp-1' / fs.MANIFEST).is_file())
 
@@ -193,7 +198,9 @@ class RotationTests(FreshStartBase):
         before = fs.tree_digest(self.base / 'exp-1')
         flat = fs.verify_flat(self.base / 'exp-1')
         self.assertEqual((flat['mode'], flat['positions']), ('RUNNING', 0))
-        manifest = fs.apply(fs.plan(**self.rotate_args('exp-1', 'exp-2')))
+        value = fs.plan(**self.rotate_args('exp-1', 'exp-2'))
+        approved = digest({**value, 'old_flat_proof': flat})
+        _, manifest = fs.rotate(value, old_root=self.base / 'exp-1', service_user=self.user, approved_plan_hash=approved)
         self.assertEqual(manifest['rotated_from'], str(self.base / 'exp-1'))
         self.assertEqual(fs.tree_digest(self.base / 'exp-1'), before)
         self.assertNotEqual(manifest['stores']['ledger_db']['path'], str(self.base / 'exp-1' / 'paper-ledger.sqlite'))
@@ -206,7 +213,7 @@ class RotationTests(FreshStartBase):
         code, out = self.cli(*base)
         self.assertEqual((code, out['status']), (0, 'DRY_RUN'))
         self.assertFalse((self.base / 'exp-2').exists())
-        code, out = self.cli(*base, '--execute', '--approved-plan-hash', out['plan_hash'])
+        code, out = self.cli(*base, '--execute', '--approved-plan-hash', out['plan_hash'], '--service-user', self.user)
         self.assertEqual((code, out['status']), (0, 'APPLIED'))
         self.assertEqual(fs.tree_digest(self.base / 'exp-1'), before)
 
@@ -248,9 +255,15 @@ class RotationTests(FreshStartBase):
             fs.verify_flat(self.base / 'exp-1')
 
     def test_rotate_requires_from_and_apply_rejects_from(self):
+        # Subcommand parsing (T13F) refuses both mismatches at argparse level (exit 2) before any I/O.
         base = ['--config', str(self.config), '--pacing-db', str(self.pacer), '--discovery-db', str(self.discovery)]
-        self.assertEqual(self.cli('rotate', '--to', str(self.base / 'x'), *base)[0], 2)
-        self.assertEqual(self.cli('apply', '--root', str(self.base / 'x'), '--from', str(self.base), *base)[0], 2)
+        with patch('sys.stderr'), self.assertRaises(SystemExit) as caught:
+            fs.main(['rotate', '--to', str(self.base / 'x'), *base])
+        self.assertEqual(caught.exception.code, 2)
+        with patch('sys.stderr'), self.assertRaises(SystemExit) as caught:
+            fs.main(['apply', '--root', str(self.base / 'x'), '--from', str(self.base), *base])
+        self.assertEqual(caught.exception.code, 2)
+        self.assertFalse((self.base / 'x').exists())
 
 
 def stat_mode(path):
