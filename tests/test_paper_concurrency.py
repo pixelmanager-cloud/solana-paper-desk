@@ -125,6 +125,32 @@ class ConfigAndGateTests(unittest.TestCase):
         with self.assertRaises(ValueError):                     # the engine itself never trusts a bare key
             portfolio_ttl({**config(), TTL: 60})
 
+    def test_timeline_arithmetic_for_every_book_size(self):
+        """Why the portfolio TTL exists: N sequential legs plus preparation cannot fit the 10 s price TTL."""
+        price = config()['price_ttl_seconds']
+        for n in range(1, pc.MAX_CONCURRENT):          # N held positions, one more entry
+            oldest = pc.held_wall_seconds(n) + pc.ENTRY_SECONDS   # first leg's mark ages through the rest of the tick
+            self.assertGreater(oldest, price, n)        # the original 10 s rule can never admit a concurrent entry
+            self.assertLess(oldest, 120, n)             # the bounded portfolio TTL (max 120 s) admits every book size
+
+    def test_plan_legs_without_a_cap_covers_every_open_position(self):
+        positions = {m: position(mark_at=i) for i, m in enumerate('ABCDEFGH')}
+        run, deferred = pc.plan_legs(positions)
+        self.assertEqual((len(run), deferred), (8, []))
+        self.assertEqual(run, pc.held_order(positions))
+        self.assertEqual(pc.plan_legs(positions, None), (run, []))
+        self.assertEqual(len(pc.plan_legs(positions, 16)[0]), 2)       # an explicit cap still defers, oldest first
+
+    def test_fresh_held_unit_covers_all_positions_inside_its_timeout(self):
+        from tools import paper_scheduler as wrapper
+        text = (Path(__file__).resolve().parents[1] / 'deploy' / 'fresh' / 'desk-paper-held-cycle.service').read_text()
+        line = next(l for l in text.splitlines() if l.startswith('ExecStart='))
+        wall = float(line.split('--wall-seconds ')[1].split()[0])
+        timeout = int(next(l.split('=')[1] for l in text.splitlines() if l.startswith('TimeoutStartSec=')))
+        self.assertGreaterEqual(wall, pc.held_wall_seconds(pc.MAX_CONCURRENT))           # all 8 legs fit the cap
+        self.assertLessEqual(wrapper.HELD_LEASE_WAIT_SECONDS + wall + 10, timeout)       # lease wait + legs + margin
+        self.assertEqual(len(pc.plan_legs({m: position(mark_at=i) for i, m in enumerate('ABCDEFGH')}, wall)[0]), 8)
+
     def test_held_order_and_legs_are_deterministic_unresolved_first(self):
         positions = {'C': position(mark_at=30), 'B': position(mark_at=20), 'A': position(mark_at=20, opened_at=1),
                      'D': position(mark_at=99, exit_blocked='X')}
@@ -408,7 +434,7 @@ class MonitorLegTests(unittest.TestCase):
             seen.append(json.loads(Path(argv[argv.index('--targets') + 1]).read_text()))
             return codes.pop(0) if codes else 0
         args = ['--config', str(path), '--research-db', 'r', '--evidence-db', 'e', '--ledger-db', str(self.ledger),
-                '--pool-fee-bps', '25', '--wall-seconds', str(wall)]
+                '--pool-fee-bps', '25'] + ([] if wall is None else ['--wall-seconds', str(wall)])
         with patch.object(self.service, 'export_targets', side_effect=export), \
                 patch.object(self.service.cli, 'main', side_effect=cycle_cli), \
                 patch('desk.paper_cycle._state', return_value={'positions': checkpoint}), \
@@ -429,6 +455,19 @@ class MonitorLegTests(unittest.TestCase):
         self.assertEqual([[t['mint'] for t in s['position_targets']] for s in seen],
                          [[self.mints[1]], [self.mints[2]], [self.mints[0]]])
         self.assertEqual(json.loads(out)['legs_deferred'], 0)
+
+    def test_flag_on_default_covers_every_open_position_oldest_mark_first(self):
+        code, seen, out = self.run_service(cfg_on(), wall=None)
+        self.assertEqual(code, 0)
+        self.assertEqual([[t['mint'] for t in s['position_targets']] for s in seen],
+                         [[self.mints[1]], [self.mints[2]], [self.mints[0]]])
+        self.assertEqual((json.loads(out)['legs_run'], json.loads(out)['legs_deferred']), (3, 0))
+
+    def test_invalid_wall_budgets_fail_closed_without_running_a_leg(self):
+        for bad in (0, -1, 3601, float('nan')):
+            code, seen, out = self.run_service(cfg_on(), wall=bad)
+            self.assertEqual((code, seen), (2, []), bad)
+            self.assertIn('UNAVAILABLE', out)
 
     def test_every_leg_is_positions_only_and_a_failed_leg_does_not_hide_others(self):
         code, seen, _ = self.run_service(cfg_on(), wall=40.0)
