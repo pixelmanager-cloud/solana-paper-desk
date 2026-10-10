@@ -31,8 +31,9 @@ or unprivileged user namespaces. Where that probe fails the namespace tests skip
 
 Live-store safety: a plain read-only open of a WAL database creates ``-wal``/``-shm``
 beside it (root-owned when run as root, which the service user cannot write).
-Sources without a ``-wal``/``-journal`` file are therefore read with
-``immutable=1`` (no sidecars); any sidecar or other file that still appears under
+A WAL-mode source (database header byte 18 == 2) with no ``-wal`` beside it is therefore
+read with ``immutable=1`` (no sidecars); a rollback-journal source (for example the pacing
+database, rewritten every ~2 s) is never opened immutable. Any sidecar or other file that still appears under
 ``--data`` is a blocker, and live sources are re-hashed (sha256) after the run.
 """
 import sys
@@ -339,6 +340,16 @@ def _sha256(path):
     return h.hexdigest()
 
 
+def _is_wal_file(path):
+    """True only when the database header (byte 18, file-format write version) says WAL."""
+    fd = os.open(path, os.O_RDONLY | os.O_NOFOLLOW)
+    try:
+        head = os.read(fd, 100)
+    finally:
+        os.close(fd)
+    return len(head) >= 20 and head[:16] == b'SQLite format 3\x00' and head[18] == 2
+
+
 def _source_state(path):
     """Content identity of a live source: size, mtime and sha256 of the file and of its -wal."""
     info = path.stat()
@@ -357,16 +368,18 @@ def _copy(data, work, sources):
         dst = work / rel
         dst.parent.mkdir(mode=0o700, parents=True, exist_ok=True)
         os.chmod(dst.parent, 0o700)
-        # No -wal/-journal beside the source means nothing can be pending in a sidecar, so read it
-        # immutable: SQLite then creates no -wal/-shm next to a live store (and none owned by root).
-        quiet = not any(src.with_name(src.name + suffix).exists() for suffix in ('-wal', '-journal'))
+        # Same rule as tools.ops.status (T02F): immutable ONLY for a WAL-mode file (header byte 18 == 2)
+        # with no -wal beside it: nothing is pending in a sidecar and SQLite then creates no -wal/-shm
+        # next to a live store (none owned by root). A rollback-journal store (for example the pacing
+        # database, rewritten every ~2 s) can change under the read and is never opened immutable.
+        quiet = _is_wal_file(src) and not src.with_name(src.name + '-wal').exists()
         mode = 'mode=ro&immutable=1' if quiet else 'mode=ro'
         with closing(sqlite3.connect(src.as_uri() + '?' + mode, uri=True)) as source, \
                 closing(sqlite3.connect(dst)) as target:
             source.backup(target)
         os.chmod(dst, 0o600)
         copies.append({'path': str(rel), 'bytes': dst.stat().st_size, 'sha256': _sha256(dst),
-                       'read_mode': 'IMMUTABLE_NO_SIDECARS' if quiet else 'READ_ONLY_SIDECAR_PRESENT'})
+                       'read_mode': 'IMMUTABLE_QUIET_WAL' if quiet else 'READ_ONLY'})
     return copies
 
 

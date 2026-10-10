@@ -65,6 +65,7 @@ NO_NAMESPACE_TESTS = {
     'test_release_or_python_under_data_is_refused',
     'test_copy_of_quiet_wal_store_is_immutable_and_creates_no_sidecars',
     'test_copy_with_pending_wal_keeps_uncheckpointed_rows', 'test_fd_path_helper_per_platform',
+    'test_rollback_journal_store_is_never_opened_immutable',
     'test_child_uses_the_portable_fd_path_helper', 'test_parent_never_writes_bytecode',
     'test_docstring_states_what_is_compared', 'test_pending_unreadable_vs_absent_table_unit',
     'test_dir_fd_mutation_is_resolved_and_judged_without_proc_assumption',
@@ -357,9 +358,31 @@ class PreflightDryrunTests(unittest.TestCase):
         self.assertEqual(sorted(p.name for p in data.iterdir()), ['wal.sqlite'])
         (info,) = tool._copy(data, work, [src])
         self.assertEqual(sorted(p.name for p in data.iterdir()), ['wal.sqlite'], 'reading must create no -wal/-shm')
-        self.assertEqual(info['read_mode'], 'IMMUTABLE_NO_SIDECARS')
+        self.assertEqual(info['read_mode'], 'IMMUTABLE_QUIET_WAL')
         with contextlib.closing(sqlite3.connect(work / 'wal.sqlite')) as c:
             self.assertEqual(c.execute('SELECT x FROM t ORDER BY x').fetchall(), [(1,)])
+
+    def test_rollback_journal_store_is_never_opened_immutable(self):
+        # provider-pacing.sqlite style: rollback-journal mode, rewritten constantly, no sidecar between writes.
+        data = Path(tempfile.mkdtemp()).resolve(); work = Path(tempfile.mkdtemp()).resolve()
+        for d in (data, work):
+            self.addCleanup(shutil.rmtree, d, True)
+        src = data / 'pacing.sqlite'
+        with contextlib.closing(sqlite3.connect(src)) as c, c:
+            c.execute('CREATE TABLE t(x)'); c.execute('INSERT INTO t VALUES(7)')
+        self.assertFalse(tool._is_wal_file(src))
+        uris = []
+        real = sqlite3.connect
+        def spy(target, *a, **k):
+            uris.append(str(target))
+            return real(target, *a, **k)
+        with patch.object(tool.sqlite3, 'connect', side_effect=spy):
+            (info,) = tool._copy(data, work, [src])
+        self.assertEqual(info['read_mode'], 'READ_ONLY')
+        self.assertTrue(any('mode=ro' in u and 'immutable' not in u for u in uris), uris)
+        self.assertFalse(any('immutable' in u for u in uris), uris)
+        with contextlib.closing(sqlite3.connect(work / 'pacing.sqlite')) as c:
+            self.assertEqual(c.execute('SELECT x FROM t').fetchall(), [(7,)])
 
     def test_copy_with_pending_wal_keeps_uncheckpointed_rows(self):
         data = Path(tempfile.mkdtemp()).resolve(); work = Path(tempfile.mkdtemp()).resolve()
@@ -367,7 +390,7 @@ class PreflightDryrunTests(unittest.TestCase):
             self.addCleanup(shutil.rmtree, d, True)
         src = self.wal_store(data, hold_writer=True)
         (info,) = tool._copy(data, work, [src])
-        self.assertEqual(info['read_mode'], 'READ_ONLY_SIDECAR_PRESENT')   # immutable would silently lose row 2
+        self.assertEqual(info['read_mode'], 'READ_ONLY')   # immutable would silently lose row 2
         with contextlib.closing(sqlite3.connect(work / 'wal.sqlite')) as c:
             self.assertEqual(c.execute('SELECT x FROM t ORDER BY x').fetchall(), [(1,), (2,)])
 
