@@ -169,6 +169,66 @@ def _deleted_lock_holders(path):
     return holders
 
 
+CHAIN_TABLE='paper_monitor_accounting_chain'   # deliberately NOT paper_monitoring_*: the terminal gate whitelists that prefix
+CHAIN_SQL=(f'CREATE TABLE {CHAIN_TABLE}(seq INTEGER PRIMARY KEY,reservation_id INTEGER NOT NULL UNIQUE,chain_hash TEXT NOT NULL)')
+CHAIN_GUARDS={
+    f'{CHAIN_TABLE}_insert':(f"CREATE TRIGGER {CHAIN_TABLE}_insert BEFORE INSERT ON {CHAIN_TABLE} WHEN NEW.seq!=(SELECT count(*) FROM {CHAIN_TABLE})+1 "
+        "OR NOT EXISTS(SELECT 1 FROM paper_monitoring_outcomes WHERE reservation_id=NEW.reservation_id) "
+        "BEGIN SELECT RAISE(ABORT,'Monitoring accounting chain is append-only'); END"),
+    f'{CHAIN_TABLE}_update':f"CREATE TRIGGER {CHAIN_TABLE}_update BEFORE UPDATE ON {CHAIN_TABLE} BEGIN SELECT RAISE(ABORT,'Monitoring accounting chain is append-only'); END",
+    f'{CHAIN_TABLE}_delete':f"CREATE TRIGGER {CHAIN_TABLE}_delete BEFORE DELETE ON {CHAIN_TABLE} BEGIN SELECT RAISE(ABORT,'Monitoring accounting chain is append-only'); END"}
+CHAIN_SAMPLE=2          # chained completed rows re-proved from their blobs per accounting call (deterministic, moves with the head)
+CHAIN_GENESIS='0'*64
+
+
+def _chain_hash(prev, identity, at, scan, mint, checkpoint, method, params_hash, evidence_hash):
+    return digest({'monitoring_chain_version':1,'prev':prev,'id':identity,'at':at,'scan':scan,'mint':mint,'checkpoint':checkpoint,
+                   'method':method,'params':params_hash,'evidence':evidence_hash})
+
+
+def _chain_rows(c):
+    """({reservation_id: chain_hash}, head) after recomputing the whole chain from SQL scalars (no evidence loads).
+
+    A chain entry whose reservation or outcome row changed, vanished or was reordered fails the hash; an extra, missing or
+    non-contiguous entry fails the shape checks. No chain table (older store) means nothing is covered."""
+    objects=c.execute("SELECT type,name,tbl_name,sql FROM sqlite_master WHERE name=? OR substr(name,1,?)=? OR tbl_name=?",
+                      (CHAIN_TABLE,len(CHAIN_TABLE)+1,CHAIN_TABLE+'_',CHAIN_TABLE)).fetchall()
+    if not objects:return {},CHAIN_GENESIS
+    expected={('table',CHAIN_TABLE,CHAIN_TABLE,CHAIN_SQL)}|{('trigger',n,CHAIN_TABLE,q) for n,q in CHAIN_GUARDS.items()}
+    expected|={('index',f'sqlite_autoindex_{CHAIN_TABLE}_1',CHAIN_TABLE,None)}
+    if set(objects)!=expected or len(objects)!=len(expected):raise MonitoringBlocked('MONITORING_ACCOUNTING_INVALID')
+    count=c.execute(f'SELECT count(*) FROM {CHAIN_TABLE}').fetchone()[0]
+    rows=c.execute(f'SELECT ch.seq,ch.reservation_id,ch.chain_hash,r.at,r.scan_id,r.mint,r.checkpoint_hash,r.method,r.params_hash,o.evidence_hash '
+                   f'FROM {CHAIN_TABLE} ch JOIN paper_monitoring_reservations r ON r.id=ch.reservation_id '
+                   'JOIN paper_monitoring_outcomes o ON o.reservation_id=ch.reservation_id ORDER BY ch.seq').fetchall()
+    if len(rows)!=count:raise MonitoringBlocked('MONITORING_ACCOUNTING_INVALID')
+    covered,prev={},CHAIN_GENESIS
+    for n,(seq,identity,stored,at,scan,mint,checkpoint,method,params_hash,evidence_hash) in enumerate(rows,1):
+        prev=_chain_hash(prev,identity,at,scan,mint,checkpoint,method,params_hash,evidence_hash)
+        if seq!=n or stored!=prev or type(stored) is not str:raise MonitoringBlocked('MONITORING_ACCOUNTING_INVALID')
+        covered[identity]=stored
+    return covered,prev
+
+
+def _chain_sample(covered, head):
+    ranked=sorted(covered,key=lambda i:digest({'head':head,'id':i}))
+    return set(ranked[:CHAIN_SAMPLE])
+
+
+def _chain_append(c, identity):
+    """Inside retain_outcome's write transaction, after the row was fully proved: extend the chain by this reservation."""
+    row=c.execute('SELECT r.at,r.scan_id,r.mint,r.checkpoint_hash,r.method,r.params_hash,o.evidence_hash FROM paper_monitoring_reservations r '
+                  'JOIN paper_monitoring_outcomes o ON o.reservation_id=r.id WHERE r.id=?',(identity,)).fetchone()
+    if row is None:raise MonitoringBlocked('MONITORING_ACCOUNTING_INVALID')
+    if not c.execute("SELECT 1 FROM sqlite_master WHERE type='table' AND name=?",(CHAIN_TABLE,)).fetchone():
+        c.execute(CHAIN_SQL)
+        for q in CHAIN_GUARDS.values():c.execute(q)
+    covered,head=_chain_rows(c)
+    if identity in covered:return
+    c.execute(f'INSERT INTO {CHAIN_TABLE}(seq,reservation_id,chain_hash) VALUES((SELECT count(*)+1 FROM {CHAIN_TABLE}),?,?)',
+              (identity,_chain_hash(head,identity,*row)))
+
+
 class MonitoringBudget:
     def __init__(self, store, ledger_db, cfg, *, clock=time.time):
         if type(store) is not EvidenceStore or store.read_only or not callable(clock):
@@ -348,10 +408,15 @@ class MonitoringBudget:
         # Check restored/corrupt completed rows against original hash-addressed
         # transport receipts, not merely count/min/max. Pending rows never permit
         # subsequent I/O, so they cannot silently become replacement allowances.
+        # T24R F14: rows already proved when they completed are covered by an append-only hash chain (verified from SQL scalars,
+        # no blob loads); only unchained rows and a bounded deterministic sample of chained ones are re-proved from the blobs.
         from .monitoring_successor import rows as successor_rows
         history=successor_rows(c,handoff) if handoff else []
+        chained,head=_chain_rows(c)
+        sample=_chain_sample(chained,head)
         for identity, at, scan, mint, checkpoint, method, params_hash, evidence_hash in c.execute(
                 'SELECT r.id,r.at,r.scan_id,r.mint,r.checkpoint_hash,r.method,r.params_hash,o.evidence_hash FROM paper_monitoring_reservations r JOIN paper_monitoring_outcomes o ON o.reservation_id=r.id'):
+            if identity in chained and identity not in sample:continue
             try:
                 original = self.store.load(evidence_hash)
                 receipt = original.get('monitoring_reservation', {})
@@ -679,6 +744,7 @@ class MonitoringBudget:
                 if old is None:
                     c.execute('INSERT INTO paper_monitoring_outcomes VALUES(?,?)', (reservation['id'], evidence_hash))
                 self._accounting(c,checkpoint=True)
+                _chain_append(c,reservation['id'])
                 if _latching_failure(record):
                     c.execute("UPDATE paper_monitoring_budget SET blocked='SOURCE_FAILURE' WHERE id=1 AND blocked IS NULL")
                 c.commit()

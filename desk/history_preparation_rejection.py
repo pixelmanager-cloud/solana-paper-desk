@@ -9,6 +9,7 @@ import sqlite3
 import time
 from desk import paper_terminal_reconciliation as terminal, runtime_compatibility as runtime
 from desk import paper_preparation_retirement as historical
+from desk import verified_index
 from desk.evidence import EvidenceStore
 from desk.history_progress import HistoryProgress
 from desk.live_strategy_features import MAX_RECORDS, MAX_RECORD_BYTES, MAX_TOTAL_BYTES, calculate
@@ -17,6 +18,8 @@ from desk.replay_history import replay_history
 
 TABLE='paper_history_preparation_rejections'
 MAX_REJECTIONS=512
+WINDOW_MAX_PAGES=4096   # pages written during ONE preparation (intent..outcome); not a store-wide cap
+KIND='history_preparation_rejection'
 REASONS={'HISTORY_FEATURE_RECORD_BYTES_EXCEEDED','HISTORY_FEATURE_RECORD_COUNT_EXCEEDED',
          'HISTORY_FEATURE_AGGREGATE_BYTES_EXCEEDED','HISTORY_FRESH_ENTRY_REQUESTS_UNAVAILABLE',
          'HISTORY_FEATURE_MOMENTUM_STALE','HISTORY_FEATURE_EMPTY_WINDOW','HISTORY_REQUIRED_MEASUREMENTS_UNAVAILABLE'}
@@ -97,13 +100,32 @@ def reason_for(measured,remaining,reserve,*,now=None,momentum_ttl=None,exhausted
     return None
 
 
-def _attempts(store,scan,before,after,*,intent_hash=None,allowed_outcome=None):
-    # Scalar inventory preflight is shared with the historical bounded proof.
+def _window(store,intent_hash,allowed_outcome):
+    """Pages saved while THIS preparation ran: after its intent page and not after its outcome page.
+
+    A preparation's charged attempts (and any partial outcome of it) are written between its intent and its outcome, so the
+    scan is O(pages of this preparation), not O(every page the store has ever kept) (T24R F7). Rowid order is insertion
+    order (nothing is deleted); a store whose rowids were renumbered fails closed ('charged attempt missing')."""
     with closing(store.connect()) as c:
-        bad=c.execute("SELECT 1 FROM pages WHERE typeof(hash)!='text' OR length(CAST(hash AS BLOB))!=64 OR typeof(payload)!='blob' OR length(payload) NOT BETWEEN 1 AND ? OR typeof(raw_bytes)!='integer' OR CASE WHEN typeof(raw_bytes)='integer' THEN raw_bytes NOT BETWEEN 1 AND ? ELSE 1 END LIMIT 1",(terminal.MAX_PROOF_COMPRESSED_BYTES,terminal.MAX_PROOF_RAW_BYTES)).fetchone()
-        count,total,compressed=c.execute('SELECT count(*),COALESCE(sum(raw_bytes),0),COALESCE(sum(length(payload)),0) FROM pages').fetchone()
-        if bad or count>4096 or total>256*1024*1024 or compressed>256*1024*1024:raise ValueError('Preparation attempt inventory bound')
-        keys=[r[0] for r in c.execute('SELECT hash FROM pages ORDER BY hash')]
+        lo=c.execute('SELECT rowid FROM pages WHERE hash=?',(intent_hash,)).fetchone()
+        if lo is None:raise ValueError('Preparation intent page missing')
+        hi=c.execute('SELECT rowid FROM pages WHERE hash=?',(allowed_outcome,)).fetchone() if allowed_outcome else None
+        hi=hi[0] if hi else c.execute('SELECT COALESCE(max(rowid),0) FROM pages').fetchone()[0]
+        return lo[0],hi
+
+
+def _attempts(store,scan,before,after,*,intent_hash=None,allowed_outcome=None):
+    if intent_hash is not None:
+        lo,hi=_window(store,intent_hash,allowed_outcome)
+        where,args=' WHERE rowid BETWEEN ? AND ?',(lo,hi)
+    else:   # legacy callers without an intent (retired-incident reconciliation) keep the whole-store scan
+        where,args='',()
+    with closing(store.connect()) as c:
+        bad=c.execute("SELECT 1 FROM pages"+where+(" AND " if where else " WHERE ")+"(typeof(hash)!='text' OR length(CAST(hash AS BLOB))!=64 OR typeof(payload)!='blob' OR length(payload) NOT BETWEEN 1 AND ? OR typeof(raw_bytes)!='integer' OR CASE WHEN typeof(raw_bytes)='integer' THEN raw_bytes NOT BETWEEN 1 AND ? ELSE 1 END) LIMIT 1",args+(terminal.MAX_PROOF_COMPRESSED_BYTES,terminal.MAX_PROOF_RAW_BYTES)).fetchone()
+        count,total,compressed=c.execute('SELECT count(*),COALESCE(sum(raw_bytes),0),COALESCE(sum(length(payload)),0) FROM pages'+where,args).fetchone()
+        # The bound is per preparation window now; the store as a whole has no page-count latch (rotation warnings instead).
+        if bad or count>WINDOW_MAX_PAGES or total>256*1024*1024 or compressed>256*1024*1024:raise ValueError('Preparation attempt inventory bound')
+        keys=[r[0] for r in c.execute('SELECT hash FROM pages'+where+' ORDER BY '+('rowid' if where else 'hash'),args)]
     found={}
     for key in keys:
         record=terminal._load(store,key)
@@ -226,8 +248,12 @@ def publish(store,progress,ledger,cfg,*,pass_id,intent_hash,history_id,reason):
                 for sql in GUARDS.values():c.execute(sql)
             c.execute('INSERT INTO '+TABLE+' VALUES(?,?,?,?)',(pass_id,scan,intent_hash,key))
             if c.execute('UPDATE paper_observation_passes SET outcome_hash=? WHERE id=? AND intent_hash=? AND outcome_hash IS NULL',(key,pass_id,intent_hash)).rowcount!=1:raise ValueError('Preparation pass publication changed')
-            rows(c);c.commit()
+            # T24R F7: the full proof above passed; record what was proved in the same transaction as the receipt.
+            verified_index.record(c,KIND,pass_id,key,verified_index.proof_digest(KIND,key,pass_id,scan,intent_hash))
+            verified_index.rows(c);rows(c);c.commit()
         except BaseException:c.rollback();raise
+    from desk.paper_cycle_no_entry import warn_if_crowded
+    warn_if_crowded(store)
     return {**value,'evidence_hash':key}
 
 
@@ -240,9 +266,13 @@ def verify(store,progress,result,*,review_source=None):
     return _proof(store,progress,value,review_source=review_source)
 
 
-def gate(store,research,scan_ids,*,ledger_locked=None,review_source=None):
-    """Companion global-gate hook: replay every rejection; never trust a marker."""
+def gate(store,research,scan_ids,*,ledger_locked=None,review_source=None,full=False):
+    """Companion global-gate hook: replay new rejections and a bounded deterministic sample; never trust a marker.
+
+    Receipts with a verified-digest row (T24R F7) are re-checked cheaply except for ``verified_index.SAMPLE`` of them per call;
+    receipts without one are always replayed in full. ``full=True`` replays everything."""
     progress=HistoryProgress.__new__(HistoryProgress);progress.store=store
+    full=full or verified_index.full_replay_forced()
     with closing(store.connect()) as c:
         retired=rows(c)
         found=c.execute("SELECT 1 FROM sqlite_master WHERE type='table' AND name='paper_observation_passes'").fetchone()
@@ -250,6 +280,7 @@ def gate(store,research,scan_ids,*,ledger_locked=None,review_source=None):
             if retired:raise ValueError('Preparation original pass table missing')
             return None
         passes=_passes(c)
+        index=verified_index.rows(c)
     # Two-way inventory: deleting the rejection table cannot erase a bound
     # outcome's retirement. All references are bounded by the original pass
     # validator, and their stored bytes are independently checked.
@@ -262,7 +293,14 @@ def gate(store,research,scan_ids,*,ledger_locked=None,review_source=None):
                 raise ValueError('Preparation outcome original pass conflict')
             bound.add((identity,outcome.get('scan_id'),intent_key,outcome_key))
     if bound!=set(retired):raise ValueError('Preparation rejection inventory incomplete')
-    for identity,scan,intent_key,outcome_key in retired:
+    seed=digest({'passes':len(passes),'last':passes[-1][0] if passes else 0})
+    replay,quick=verified_index.plan(index,KIND,retired,seed=seed,full=full)
+    for identity,scan,intent_key,outcome_key in quick:
+        value=terminal._load(store,outcome_key)
+        if digest(value)!=outcome_key or (value['pass_id'],value['scan_id'],value['intent_hash'])!=(identity,scan,intent_key):
+            raise ValueError('Preparation rejection binding changed')
+        if terminal._load(store,intent_key)['context']['research_db']!=str(research):raise ValueError('Preparation rejection research context')
+    for identity,scan,intent_key,outcome_key in replay:
         value=terminal._load(store,outcome_key)
         intent_record=terminal._load(store,intent_key)
         from .paper_cycle import _lock, canonical_job_path

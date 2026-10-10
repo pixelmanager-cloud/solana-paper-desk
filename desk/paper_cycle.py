@@ -66,6 +66,37 @@ class CycleBlocked(ValueError):
         super().__init__(code)
 
 
+# T24R F9: the whole-pass read deadline is configurable (opt-in key; absent = the historical 10 s, byte-identical behaviour).
+DEADLINE_KEY = 'paper_cycle_deadline_seconds'
+DEFAULT_DEADLINE_SECONDS = 10
+REQUEST_TIMEOUT_MAX = 15            # desk.paper_read_sources._attempt accepts 0 < timeout <= 15
+DEADLINE_RANGE = (10, 20)          # whole seconds; see worst_case_seconds and docs/PERFORMANCE_BUDGETS.md for the arithmetic
+# Provider cadences of the paid plans (T36): Helius 0.1 s, Jupiter 0.25 s; the shared Kraken lane stays at 2 s.
+PACING_SECONDS = {'helius': 0.1, 'jupiter': 0.25, 'kraken': 2.0}
+# Charged provider reads that one cycle may spend after its preparation: the entry reserve of history-first
+# (history_preparation_rejection.intent: 9, or 7 with USD valuation v1, one of them the Kraken SOL/USD read) and one held leg.
+CYCLE_REQUESTS = {'entry': (8, 1), 'entry_usd_v1': (6, 1), 'held_leg': (5, 1)}      # (non-Kraken reads, Kraken reads)
+
+
+def deadline_seconds(cfg):
+    """The configured whole-pass deadline: absent -> 10; otherwise an int inside DEADLINE_RANGE, else refused at load."""
+    if DEADLINE_KEY not in cfg:
+        return DEFAULT_DEADLINE_SECONDS
+    value = cfg[DEADLINE_KEY]
+    if type(value) is not int or not DEADLINE_RANGE[0] <= value <= DEADLINE_RANGE[1]:
+        raise ValueError('Cycle deadline outside the reviewed range')
+    return value
+
+
+def worst_case_seconds(pass_type, latency, pacing=PACING_SECONDS):
+    """Upper bound of one cycle's provider reads when every read has to wait out its provider cadence AND takes ``latency``.
+
+    Reads are strictly sequential (one process, the shared pacer serialises providers), so each read costs at most its
+    provider's cadence plus the response time; the non-Kraken reads are bounded by the slower of Helius/Jupiter."""
+    other, kraken = CYCLE_REQUESTS[pass_type]
+    return other * (max(pacing['helius'], pacing['jupiter']) + latency) + kraken * (pacing['kraken'] + latency)
+
+
 def _config(cfg):
     if (type(cfg) is not dict or cfg.get('mode') != 'paper'
             or type(cfg.get('paper_signal_policy_version')) is not int
@@ -73,6 +104,7 @@ def _config(cfg):
             or 'experimental_policy_version' in cfg or not qe.config(cfg)):
         raise ValueError('Explicit signal profile3 and quote execution1 required; no legacy policy field')
     if regime.enabled(cfg):regime.policy(cfg)  # invalid flag/policy refused at load, not at first entry
+    deadline_seconds(cfg)
 
 
 @contextmanager
@@ -148,8 +180,9 @@ def _graduation(store, item, now):
 
 
 class _Budget:
-    def __init__(self, progress, wall_clock, monotonic):
+    def __init__(self, progress, wall_clock, monotonic, deadline=DEFAULT_DEADLINE_SECONDS):
         self.progress, self.wall_clock, self.monotonic = progress, wall_clock, monotonic
+        self.deadline = deadline
         self.start = self.last = monotonic()
         self.attempted = 0
         self.monitoring_attempted = 0
@@ -165,10 +198,10 @@ class _Budget:
         value = self.monotonic()
         if (type(value) not in (int, float) or type(self.start) not in (int, float)
                 or not math.isfinite(value) or not math.isfinite(self.start)
-                or value < self.last or value >= self.start+10):
+                or value < self.last or value >= self.start+self.deadline):
             raise CycleBlocked('CYCLE_DEADLINE_UNAVAILABLE')
         self.last = value
-        return self.start+10-value
+        return self.start+self.deadline-value
 
     def call(self, scan, invoke):
         before = self.progress.admission(scan)
@@ -178,7 +211,7 @@ class _Budget:
             raise CycleBlocked('INVESTIGATION_REQUEST_BUDGET_EXHAUSTED')
         if self.attempted >= 18:
             raise CycleBlocked('CYCLE_REQUEST_BUDGET_EXHAUSTED')
-        timeout = self.remaining()
+        timeout = min(self.remaining(), REQUEST_TIMEOUT_MAX)   # a source refuses a per-request timeout above its own 15 s ceiling
         self.attempted += 1
         try:
             result = invoke(timeout)
@@ -572,7 +605,7 @@ def run_once(research_db, evidence_db, ledger_db, cfg, *, position_targets=(), c
                     if pacer is None or (pacer.path,pacer.identity)!=pacing_identity:
                         raise ValueError('Pacer identity changed')
                     pacer._validate()
-                budget = _Budget(progress,wall_clock,monotonic)
+                budget = _Budget(progress,wall_clock,monotonic,deadline_seconds(cfg))
                 for control in controls:
                     validate_event(control)
                     if control['kind']!='control' or control['ts']!=budget.now():
@@ -644,7 +677,7 @@ def run_once(research_db, evidence_db, ledger_db, cfg, *, position_targets=(), c
                                 collector = collect_observations(jobs=jobs,progress=progress,
                                     sources={target.scan_id:BoundedSource(source.rpc_source_id,source.quote_source_id,source.rpc,source.quote)},
                                     open_positions=(target,) if is_position else (), candidates=() if is_position else (target,),
-                                    request_ceiling=18-budget.attempted,deadline_seconds=budget.remaining(),max_age_seconds=10,
+                                    request_ceiling=18-budget.attempted,deadline_seconds=min(budget.remaining(),REQUEST_TIMEOUT_MAX),max_age_seconds=10,
                                     wall_clock=wall_clock,monotonic=monotonic,token_profile_version=selected(cfg))
                                 budget.attempted += collector.attempted_requests
                                 # Only this bounded transport's original persisted

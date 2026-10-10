@@ -58,7 +58,6 @@ class MonitoringLatchTests(_Fixture):
 
 
 class MonitoringScalingTests(_Fixture):
-    @unittest.expectedFailure
     def test_snapshot_cost_is_independent_of_total_history(self):
         """snapshot() -> _accounting() re-loads and re-hashes EVERY past
         reservation's evidence blob (store.load per row). Each held read calls

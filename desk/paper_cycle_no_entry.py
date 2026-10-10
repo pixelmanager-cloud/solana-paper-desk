@@ -19,6 +19,7 @@ from pathlib import Path
 import sqlite3
 from . import paper_terminal_reconciliation as terminal, runtime_compatibility as runtime
 from . import paper_preparation_retirement as historical
+from . import verified_index
 from .history_progress import HistoryProgress
 from .model import BOOST_VOLUME_FEATURE, OBSERVABLE_FORMULAS, canonical, digest
 
@@ -356,12 +357,44 @@ def publish(store, progress, *, pass_id, intent_hash, result, ledger):
             if c.execute('UPDATE paper_observation_passes SET outcome_hash=? WHERE id=? AND intent_hash=? AND outcome_hash IS NULL',
                          (key, pass_id, intent_hash)).rowcount != 1:
                 raise ValueError('Cycle no-entry pass publication changed')
+            # T24R F7: the full proof above passed; record what was proved in the same transaction as the receipt.
+            verified_index.record(c, INDEX_KIND, pass_id, key, verified_index.proof_digest(INDEX_KIND, key, pass_id, scan, intent_hash))
+            verified_index.rows(c)
             total = len(rows(c)); c.commit()
         except BaseException:
             c.rollback(); raise
     if total >= int(MAX_ROWS * ROTATION_WARN_FRACTION):
         warn_rotation(store, total)
+    warn_if_crowded(store)
     return key
+
+
+PAGE_SOFT_LIMIT = 100_000      # evidence pages: advisory only (T24R F7). There is no store-wide page-count latch any more.
+INDEX_KIND = 'cycle_no_entry'
+
+
+def storage_headroom(store):
+    """Pages and compressed bytes held by the evidence store against the advisory page limit and its write budget."""
+    with closing(store.connect()) as c:
+        pages, size = c.execute('SELECT count(*), COALESCE(sum(length(payload)),0) FROM pages').fetchone()
+    byte_limit = getattr(store, 'max_bytes', 256 * 1024 * 1024)
+    return {'pages': pages, 'pages_limit': PAGE_SOFT_LIMIT, 'bytes': size, 'bytes_limit': byte_limit,
+            'pages_warn': pages >= int(PAGE_SOFT_LIMIT * ROTATION_WARN_FRACTION),
+            'bytes_warn': size >= int(byte_limit * ROTATION_WARN_FRACTION)}
+
+
+def warn_if_crowded(store):
+    """80% rotation warnings for evidence pages / bytes: a typed row in the refusal log (read_refusals) plus the log."""
+    try:
+        h = storage_headroom(store)
+    except (sqlite3.Error, OSError, ValueError) as failure:
+        LOG.error('evidence headroom not measured: %s', type(failure).__name__)
+        return None
+    if h['pages_warn']:
+        warn_rotation(store, h['pages'], limit=h['pages_limit'], label='evidence_pages')
+    if h['bytes_warn']:
+        warn_rotation(store, h['bytes'], limit=h['bytes_limit'], label='evidence_bytes')
+    return h
 
 
 def warn_rotation(store, total, *, limit=None, label='no_entry'):
@@ -381,9 +414,13 @@ def warn_rotation(store, total, *, limit=None, label='no_entry'):
         LOG.error('rotation warning row not written: %s', type(failure).__name__)
 
 
-def gate(store, research, scan_ids, *, ledger_locked=None, review_source=None):
-    """Replay every retained rejection; deleting the table cannot erase a bound outcome."""
+def gate(store, research, scan_ids, *, ledger_locked=None, review_source=None, full=False):
+    """Replay new rejections and a bounded deterministic sample; deleting the table cannot erase a bound outcome.
+
+    A receipt with a verified-digest row (T24R F7) gets the cheap binding check except for ``verified_index.SAMPLE`` of them
+    per call; a receipt without one is always replayed in full. ``full=True`` replays everything."""
     progress = HistoryProgress.__new__(HistoryProgress); progress.store = store
+    full = full or verified_index.full_replay_forced()
     with closing(store.connect()) as c:
         retired = rows(c)
         if not c.execute("SELECT 1 FROM sqlite_master WHERE type='table' AND name='paper_observation_passes'").fetchone():
@@ -392,6 +429,8 @@ def gate(store, research, scan_ids, *, ledger_locked=None, review_source=None):
             return None
         terminal._passes(c)
         passes = c.execute('SELECT id,intent_hash,outcome_hash FROM paper_observation_passes WHERE outcome_hash IS NOT NULL').fetchall()
+        newest = c.execute('SELECT count(*),COALESCE(max(rowid),0) FROM paper_observation_passes').fetchone()
+        index = verified_index.rows(c)
     bound = set()
     for identity, intent_key, outcome_key in passes:
         kind, scan, intent = terminal._classification(store, outcome_key)
@@ -401,17 +440,22 @@ def gate(store, research, scan_ids, *, ledger_locked=None, review_source=None):
             bound.add((identity, scan, intent_key, outcome_key))
     if bound != set(retired):
         raise ValueError('Cycle no-entry inventory incomplete')
-    if retired:
-        for identity, scan, intent_key, outcome_key in retired:
-            rec = terminal._load(store, outcome_key)
-            if (rec.get('pass_id'), rec.get('scan_id'), rec.get('intent_hash')) != (identity, scan, intent_key):
-                raise ValueError('Cycle no-entry row/outcome conflict')
-            from .paper_cycle import _lock, canonical_job_path
-            path = canonical_job_path(rec['ledger']['path'])
-            with ExitStack() as locks:
-                if ledger_locked != str(path) and not locks.enter_context(_lock(str(path)+'.paper-cycle.lock')):
-                    raise ValueError('Cycle no-entry ledger busy')
-                original = _proof(store, progress, rec)
-            if original['targets'][0]['target']['scan_id'] != scan:
-                raise ValueError('Cycle no-entry scan conflict')
+    seed = digest({'passes': newest[0], 'last': newest[1]})
+    replay, quick = verified_index.plan(index, INDEX_KIND, retired, seed=seed, full=full)
+    for identity, scan, intent_key, outcome_key in quick:
+        rec = terminal._load(store, outcome_key)
+        if digest(rec) != outcome_key or (rec.get('pass_id'), rec.get('scan_id'), rec.get('intent_hash')) != (identity, scan, intent_key):
+            raise ValueError('Cycle no-entry row/outcome conflict')
+    for identity, scan, intent_key, outcome_key in replay:
+        rec = terminal._load(store, outcome_key)
+        if (rec.get('pass_id'), rec.get('scan_id'), rec.get('intent_hash')) != (identity, scan, intent_key):
+            raise ValueError('Cycle no-entry row/outcome conflict')
+        from .paper_cycle import _lock, canonical_job_path
+        path = canonical_job_path(rec['ledger']['path'])
+        with ExitStack() as locks:
+            if ledger_locked != str(path) and not locks.enter_context(_lock(str(path)+'.paper-cycle.lock')):
+                raise ValueError('Cycle no-entry ledger busy')
+            original = _proof(store, progress, rec)
+        if original['targets'][0]['target']['scan_id'] != scan:
+            raise ValueError('Cycle no-entry scan conflict')
     return 'REJECTED_SCAN_RETIRED' if any(row[1] in scan_ids for row in retired) else None
