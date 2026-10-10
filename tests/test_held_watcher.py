@@ -982,6 +982,366 @@ class CliTests(WatcherBase):
         self.assertEqual(code, 2)
 
 
+@unittest.skipUnless(HAVE_SOLDERS, 'optional solders dependency')
+class ReviewFixTests(WatcherBase):
+    """T28F: one test (or more) per coordinator finding."""
+
+    async def crossing(self, **kwargs):
+        self.write_state({self.mint: self.pos()})
+        w = self.make(**kwargs)
+        await w.tick()
+        return w
+
+    def pair(self, w, base, quote, slot):
+        """A complete same-slot pair, the way a swap produces it."""
+        w.apply_account(self.pool.base_vault, token_account(self.pool.mint_s, base), slot, 'stream')
+        w.handle_update(self.pool.quote_vault, token_account(SOL, quote), slot, 'stream')
+
+    def add_event(self, mint, ts, kind='quote_exit'):
+        ledger = Ledger(str(self.ledger))
+        ledger.db.execute('INSERT INTO events(event_id, ts, payload, payload_hash) VALUES(?,?,?,?)',
+                          ('ev-%s-%s' % (ts, kind), ts, json.dumps({'kind': kind, 'mint': mint, 'ts': ts}), 'h'))
+        ledger.close()
+
+    # ---- item 2: only complete same-slot pairs are ever priced
+    async def test_a_lone_vault_update_cannot_fake_a_price_spike(self):
+        w = await self.crossing()
+        self.slot += 1
+        # Liquidity doubles: both reserves double, price unchanged. The base notification arrives first.
+        w.handle_update(self.pool.base_vault, token_account(self.pool.mint_s, 2 * 10 ** 15), self.slot, 'stream')
+        self.assertEqual(self.triggers(), [])                       # old base+new... pairing would read ratio ~0.49 -> fake STOP
+        w.handle_update(self.pool.quote_vault, token_account(SOL, 20 * 10 ** 9), self.slot, 'stream')
+        self.assertEqual(self.triggers(), [])
+        self.assertEqual(w.snapshots[self.mint]['slot'], self.slot)
+
+    async def test_vaults_from_different_slots_are_never_combined(self):
+        w = await self.crossing()
+        base_slot = self.slot + 1
+        w.handle_update(self.pool.base_vault, token_account(self.pool.mint_s, self.reserves[0]), base_slot, 'stream')
+        w.handle_update(self.pool.quote_vault, token_account(SOL, 3 * 10 ** 9), base_slot + 1, 'stream')   # a LATER slot
+        self.assertEqual(self.triggers(), [])
+        self.assertLess(w.snapshots[self.mint]['slot'], base_slot)   # still the old complete pair
+        w.handle_update(self.pool.base_vault, token_account(self.pool.mint_s, self.reserves[0]), base_slot + 1, 'stream')
+        self.assertEqual([r[1] for r in self.triggers()], ['STOP'])  # the slot completed: now it is priced
+
+    async def test_a_lone_update_is_completed_by_one_same_slot_poll(self):
+        w = await self.crossing(settle_seconds=1.0)
+        self.slot += 1
+        w.handle_update(self.pool.quote_vault, token_account(SOL, 3 * 10 ** 9), self.slot, 'stream')   # one-sided
+        self.assertIn(self.mint, w.partial_since)
+        self.reserves = (10 ** 15, 3 * 10 ** 9)
+        self.t += 0.5
+        polls = len([c for c in self.rpc_calls if c[0] == 'getMultipleAccounts'])
+        await w.tick()
+        self.assertEqual(len([c for c in self.rpc_calls if c[0] == 'getMultipleAccounts']), polls)      # not yet: it may be a swap arriving
+        self.t += 1.0
+        self.slot += 1
+        await w.tick()
+        self.assertEqual(len([c for c in self.rpc_calls if c[0] == 'getMultipleAccounts']), polls + 1)  # settled by ONE poll
+        self.assertEqual([r[1] for r in self.triggers()], ['STOP'])
+        self.assertNotIn(self.mint, w.partial_since)
+
+    async def test_polls_never_split_a_pools_two_vaults_across_calls(self):
+        w = self.make()
+        w.accounts = {}
+        for n in range(75):                                            # 150 accounts: needs two calls
+            w.accounts['B%03d' % n] = ('M%03d' % n, 'base')
+            w.accounts['Q%03d' % n] = ('M%03d' % n, 'quote')
+        chunks = list(w.poll_chunks())
+        self.assertEqual(len(chunks), 2)
+        for chunk in chunks:
+            self.assertLessEqual(len(chunk), hw.MAX_ACCOUNTS_PER_CALL)
+            mints = [w.accounts[a][0] for a in chunk]
+            self.assertTrue(all(mints.count(m) == 2 for m in mints))   # both vaults of a mint are always together
+
+    # ---- item 1: price exits have their own budget
+    async def test_unresolved_time_reasons_cannot_exhaust_the_price_budget(self):
+        self.write_state({self.mint: self.pos(opened_at=int(self.t) - 21_601)})          # MAX_HOLD holds from the start
+        w = self.make(debounce_seconds=0, min_trigger_gap=0, max_time_triggers_per_position_hour=3,
+                      max_triggers_per_position_hour=2, price_guarantee_seconds=3600)
+        for _ in range(8):
+            await w.tick()
+            self.t += 1
+        self.assertEqual([r[1] for r in self.triggers()], ['MAX_HOLD'] * 3)
+        self.assertIn('TRIGGER_RATE_LIMITED', w.warnings)
+        self.reserves = (10 ** 15, 3 * 10 ** 9)                                           # now a real crash
+        self.slot += 1
+        await w.tick()
+        rows = self.store.db.execute('SELECT reason, klass, ok FROM triggers ORDER BY id').fetchall()
+        self.assertEqual(rows[-1], ('STOP', 'price', 1))
+        self.assertEqual(self.store.triggers_since(self.t - 3600, None, 'time'), 3)          # the time budget stayed exhausted
+        self.assertGreaterEqual(self.store.triggers_since(self.t - 3600, None, 'price'), 1)  # while the price exit was never blocked
+
+    async def test_a_time_reason_the_held_pass_already_handled_is_backed_off_exponentially(self):
+        self.write_state({self.mint: self.pos(opened_at=int(self.t) - 21_601)})
+        w = self.make(debounce_seconds=30, min_trigger_gap=0)
+        await w.tick()
+        first = self.t
+        self.assertEqual(len(self.triggers()), 1)
+        self.add_event(self.mint, int(first) + 2)                    # the held pass looked at it; the position is still open
+        self.t = first + 31
+        await w.tick()
+        self.assertEqual(len(self.triggers()), 1)                    # a plain 30 s debounce would have fired here
+        self.t = first + 61
+        await w.tick()
+        self.assertEqual(len(self.triggers()), 2)
+        self.add_event(self.mint, int(self.t) + 2)
+        self.t += 61
+        await w.tick()
+        self.assertEqual(len(self.triggers()), 2)                    # now 2 x 2 = 120 s
+        self.t += 60
+        await w.tick()
+        self.assertEqual(len(self.triggers()), 3)
+
+    async def test_a_price_exit_fires_once_per_guarantee_window_whatever_the_caps_say(self):
+        w = await self.crossing(debounce_seconds=0, min_trigger_gap=0, max_triggers_per_position_hour=1, price_guarantee_seconds=60)
+        self.pair(w, 10 ** 15, 3 * 10 ** 9, self.slot + 1)
+        self.t += 10
+        self.pair(w, 10 ** 15, 3 * 10 ** 9, self.slot + 2)
+        self.assertEqual(len(self.triggers()), 1)                    # capped inside the window
+        self.t += 55
+        self.pair(w, 10 ** 15, 3 * 10 ** 9, self.slot + 3)
+        self.assertEqual([r[1] for r in self.triggers()], ['STOP', 'STOP'])   # the guarantee overrides the cap
+
+    # ---- item 3: provider backoff and the 0.5 req/s ceiling
+    async def test_provider_failures_put_requests_on_hold_with_exponential_jittered_backoff(self):
+        w = self.make(http_backoff_cap=100.0, rng=lambda: 1.0)
+        for code, hold in (('HTTP_429', 2.0), ('HTTP_503', 4.0), ('TIMEOUT', 8.0)):
+            self.rpc_failure = hw.RpcError(code)
+            with self.assertRaises(hw.RpcError):
+                await w.request('probe', 'getSlot', [])
+            self.assertAlmostEqual(w.backoff_until - self.t, hold)
+            used = self.store.used(self.t)
+            with self.assertRaises(hw.ProviderBackoff):
+                await w.request('probe', 'getSlot', [])
+            self.assertEqual(self.store.used(self.t), used)          # held requests are not sent and not charged
+            self.t = w.backoff_until + 0.01
+        self.assertIn('PROVIDER_BACKOFF', w.warnings)
+        self.rpc_failure = None
+        self.reserves = (10 ** 15, 10 ** 10)
+        await w.request('probe', 'getBlockTime', [1])
+        self.assertEqual((w.http_failures, 'PROVIDER_BACKOFF' in w.warnings), (0, False))   # success resets the ladder
+
+    async def test_backoff_is_capped_jittered_and_not_applied_to_other_errors(self):
+        w = self.make(http_backoff_cap=5.0, rng=lambda: 0.0)
+        for _ in range(6):
+            self.rpc_failure = hw.RpcError('HTTP_429')
+            with self.assertRaises(hw.RpcError):
+                await w.request('probe', 'getSlot', [])
+            self.assertLessEqual(w.backoff_until - self.t, 2.5 + 1e-9)    # cap 5 x jitter 0.5
+            self.t = w.backoff_until + 0.01
+        self.rpc_failure = hw.RpcError('HTTP_401')
+        before = w.backoff_until
+        with self.assertRaises(hw.RpcError):
+            await w.request('probe', 'getSlot', [])
+        self.assertEqual(w.backoff_until, before)                         # an auth error is not a "retry later"
+
+    async def test_default_request_rate_is_at_most_half_a_request_per_second(self):
+        self.write_state({self.mint: self.pos()})
+        store = hw.WatcherStore(self.root / 'rate' / 'watcher.sqlite')
+        self.addCleanup(store.close)
+        trigger = hw.Trigger('none', UNIT, None, None, lambda: self.t)
+        w = hw.Watcher(ledger=self.ledger, cfg=self.cfg, store=store, trigger=trigger, rpc=self.fake_rpc, clock=lambda: self.t,
+                       sleep=self.fake_sleep, rng=lambda: 1.0)
+        self.assertEqual((w.min_interval, w.allowance), (2.0, 1800))
+        start = self.t
+        while self.t - start < 600:
+            await w.tick()
+            self.t += 0.25
+        used = store.used(self.t)
+        self.assertLessEqual(used / (self.t - start), 0.5 + 0.01)
+        parsed = hw.build_parser().parse_args(['run', '--ledger', 'l', '--config', 'c', '--state-dir', 's'])
+        self.assertEqual((parsed.min_request_interval, parsed.allowance_per_hour), (2.0, 1800))
+
+    # ---- item 4: a lost request is asked again
+    async def test_a_request_with_no_following_held_pass_is_refired_then_reported(self):
+        w = await self.crossing(debounce_seconds=300, min_trigger_gap=0)
+        self.reserves = (10 ** 15, 3 * 10 ** 9)                       # the crash persists: polls keep seeing it
+        self.pair(w, 10 ** 15, 3 * 10 ** 9, self.slot + 1)
+        self.assertEqual(len(self.triggers()), 1)
+        for step, expected in ((5.1, 2), (10.1, 3), (20.1, 4)):
+            self.t += step
+            self.slot += 1
+            await w.tick()
+            self.assertEqual(len(self.triggers()), expected)
+        self.assertEqual([r[0] for r in self.store.db.execute('SELECT source FROM triggers ORDER BY id')][1:], ['refire'] * 3)
+        self.t += 41
+        await w.tick()
+        self.assertEqual(len(self.triggers()), 4)                     # three refires at most
+        self.assertIn('TRIGGER_NOT_ACKNOWLEDGED', w.warnings)
+        self.assertEqual(w.stats['refires'], 3)
+
+    async def test_no_refire_when_the_ledger_shows_a_held_pass_after_the_request(self):
+        w = await self.crossing(debounce_seconds=300, min_trigger_gap=0)
+        self.reserves = (10 ** 15, 3 * 10 ** 9)
+        self.pair(w, 10 ** 15, 3 * 10 ** 9, self.slot + 1)
+        self.add_event(self.mint, int(self.t) + 1)                   # the held pass ran after the request
+        self.t += 6
+        self.slot += 1
+        await w.tick()
+        self.assertEqual(len(self.triggers()), 1)
+        self.assertNotIn(self.mint, w.pending_refire)
+
+    async def test_refire_stops_when_the_reason_disappears(self):
+        w = await self.crossing(debounce_seconds=300, min_trigger_gap=0)
+        self.pair(w, 10 ** 15, 3 * 10 ** 9, self.slot + 1)
+        self.reserves = (10 ** 15, 10 * 10 ** 9)                      # price recovered
+        self.t += 6
+        self.slot += 1
+        await w.tick()
+        self.assertEqual(len(self.triggers()), 1)
+        self.assertNotIn(self.mint, w.pending_refire)
+
+    # ---- item 5: slot -> block time
+    async def test_block_time_of_the_observed_slot_is_recorded_after_a_trigger(self):
+        w = await self.crossing(debounce_seconds=300, min_trigger_gap=0)
+        slot = self.slot + 1
+        self.block_times[slot] = 1_700_000_123
+        self.pair(w, 10 ** 15, 3 * 10 ** 9, slot)
+        self.t += 2.5
+        await w.tick()
+        rows = self.store.db.execute('SELECT slot, block_time, ok FROM trigger_slot_times').fetchall()
+        self.assertEqual(rows, [(slot, 1_700_000_123, 1)])
+
+    async def test_block_time_failures_are_recorded_and_retried_a_bounded_number_of_times(self):
+        w = await self.crossing(debounce_seconds=300, min_trigger_gap=0, max_refires=0)
+        self.pair(w, 10 ** 15, 3 * 10 ** 9, self.slot + 1)
+        self.rpc_failure = hw.RpcError('RPC_ERROR')
+        for _ in range(8):
+            self.t += 3
+            await w.tick()
+        rows = self.store.db.execute('SELECT ok FROM trigger_slot_times').fetchall()
+        self.assertEqual(rows, [(0,)] * 3)                            # first try + two retries, then it stops
+
+    # ---- item 6: stream health
+    async def test_a_silent_but_connected_stream_is_verified_and_a_stall_falls_back_to_polling(self):
+        feed = FakeFeed()
+        self.write_state({self.mint: self.pos()})
+        w = self.make(feed=feed, stall_seconds=60, reconcile_seconds=0)
+        await w.tick()
+        await self.settle()
+        feed.queue.put_nowait((hw.CONNECTED, None, 0))
+        await self.settle()
+        await w.tick()
+        self.assertEqual(w.status, 'STREAM')
+        self.t += 61                                                   # a quiet pool: nothing moved
+        await w.tick()
+        self.assertNotIn('STREAM_STALLED', w.warnings)
+        self.assertEqual(w.stats['stalls'], 0)
+        self.t += 61
+        self.reserves = (10 ** 15, 3 * 10 ** 9)                        # moved, but no notification arrived
+        self.slot += 1
+        await w.tick()
+        await self.settle()
+        self.assertEqual(w.stats['stalls'], 1)
+        self.assertIn('STREAM_STALLED', w.warnings)
+        self.assertEqual([r[1] for r in self.triggers()], ['STOP'])    # the poll still caught the crossing
+        self.assertFalse(w.stream_up)                                  # polling again until the new connection is acknowledged
+        await w.tick()
+        await self.settle()
+        self.assertEqual(len(feed.calls), 2)                           # and a fresh stream was started
+
+    async def test_reconnect_backoff_is_kept_across_flapping_connections_and_reset_only_when_stable(self):
+        feed = FakeFeed()
+        w = await self.start_stream(feed, stable_seconds=60)
+        for _ in range(3):                                             # connect, lose it within a second
+            feed.queue.put_nowait((hw.CONNECTED, None, 0))
+            await self.settle()
+            feed.queue.put_nowait(hw.StreamLost('FLAP'))
+            await self.settle(20)
+        self.assertEqual([x for x in self.sleeps if x >= 1], [2.0, 4.0, 8.0])     # not 2, 2, 2
+        feed.queue.put_nowait((hw.CONNECTED, None, 0))
+        await self.settle()
+        self.t += 61                                                   # a stable connection
+        feed.queue.put_nowait(hw.StreamLost('LATE'))
+        await self.settle(20)
+        self.assertEqual([x for x in self.sleeps if x >= 1][-1], 2.0)             # the ladder starts over
+
+    async def start_stream(self, feed, **kwargs):
+        self.write_state({self.mint: self.pos()})
+        w = self.make(feed=feed, **kwargs)
+        await w.tick()
+        await self.settle()
+        return w
+
+    # ---- item 8: mark accuracy and visibility
+    def test_creator_and_transfer_fees_lower_the_mark_and_the_known_answers_hold(self):
+        cfg = load_config(CONFIG)
+        base = hw.implied_ratio(position(), 10 ** 15, 10 * 10 ** 9, cfg, '25')
+        creator = hw.implied_ratio(position(), 10 ** 15, 10 * 10 ** 9, cfg, '25', creator_fee_bps=5)
+        from desk.strategy import swap_quote
+        e = {'route_available': True, 'reserve_sol': '10', 'reserve_tokens': '1000000000', 'pool_fee_bps': '30'}
+        self.assertEqual(creator, (swap_quote(e, D('10000000'), 'sell', cfg) - D(cfg['fixed_fee_sol'])) / D('0.1'))   # 25 + 5 bps
+        self.assertLess(creator, base)
+        transfer = hw.implied_ratio(position(), 10 ** 15, 10 * 10 ** 9, cfg, '25', transfer_fee_bps=100)
+        effective = D('10000000') * (1 - D('0.01')) * (1 - D('0.0025'))
+        out = D(10) * effective / (D(10 ** 9) + effective) * (1 - D(cfg['adverse_slippage_bps']) / 10000)
+        self.assertEqual(transfer, (out - D(cfg['fixed_fee_sol'])) / D('0.1'))
+        virtual = hw.implied_ratio(position(), 10 ** 15, 10 * 10 ** 9, cfg, '25', virtual_quote_raw=10 * 10 ** 9)
+        self.assertGreater(virtual, base)                              # a boosted pool prices on gross + virtual reserves
+
+    def test_mint_facts_decode_decimals_and_the_transfer_fee_extension(self):
+        plain = self.mint_account()
+        self.assertEqual(hw.mint_facts(plain), (6, 0))
+        body = bytes(106) + (250).to_bytes(2, 'little')                       # newer schedule: 250 bps
+        tlv = (1).to_bytes(2, 'little') + (108).to_bytes(2, 'little') + body
+        self.assertEqual(hw.mint_facts(self.mint_account(owner=TOKEN_2022, extensions=tlv)), (6, 250))
+        for bad in (self.mint_account(owner=TOKEN_2022, extensions=(1).to_bytes(2, 'little') + (108).to_bytes(2, 'little') + bytes(10)),
+                    self.mint_account(owner=TOKEN_2022, extensions=(1).to_bytes(2, 'little') + (7).to_bytes(2, 'little') + bytes(7)),
+                    {**plain, 'owner': PUMPSWAP}, {**plain, 'data': ['!!', 'base64']}, None):
+            with self.assertRaises(hw.WatcherError):
+                hw.mint_facts(bad)
+
+    async def test_a_token_2022_transfer_fee_is_read_once_and_moves_the_stop(self):
+        tlv = (1).to_bytes(2, 'little') + (108).to_bytes(2, 'little') + bytes(106) + (250).to_bytes(2, 'little')
+        original = self.mint_account
+        self.mint_account = lambda **kw: original(owner=TOKEN_2022, extensions=tlv)
+        self.write_state({self.mint: self.pos()})
+        w = self.make()
+        self.reserves = (10 ** 15, int(8.6 * 10 ** 9))
+        plain = hw.implied_ratio(position(), self.reserves[0], self.reserves[1], self.cfg, '25')
+        fee = hw.implied_ratio(position(), self.reserves[0], self.reserves[1], self.cfg, '25', transfer_fee_bps=250)
+        self.assertGreater(plain, D('0.82') + D('0.02'))              # without the fee this is still above stop + margin
+        self.assertLessEqual(fee, D('0.82') + D('0.02'))              # with the 2.5% fee it is not
+        await w.tick()
+        self.assertEqual(w.facts[self.mint]['transfer_fee_bps'], 250)
+        self.assertEqual(json.loads(self.store.vault(self.pool.pool_s)[3])['transfer_fee_bps'], 250)   # cached with the vaults
+        self.assertEqual([r[1] for r in self.triggers()], ['STOP'])
+        reads = [c for c in self.rpc_calls if c[0] == 'getAccountInfo']
+        self.assertEqual(len(reads), 2)                               # pool + mint, once
+        w2 = self.make()                                              # a restart reuses the cached facts: no new reads
+        await w2.tick()
+        self.assertEqual(len([c for c in self.rpc_calls if c[0] == 'getAccountInfo']), 2)
+        self.assertEqual(w2.facts[self.mint]['transfer_fee_bps'], 250)
+
+    async def test_position_without_quote_execution_warns_and_still_prices_from_the_mint(self):
+        position_without = self.pos()
+        del position_without['quote_execution']
+        self.write_state({self.mint: position_without})
+        self.reserves = (10 ** 15, 3 * 10 ** 9)
+        w = self.make()
+        await w.tick()
+        self.assertIn('POSITION_NO_QUOTE_EXECUTION', w.warnings)       # visible, never silent
+        self.assertEqual([r[1] for r in self.triggers()], ['STOP'])    # decimals came from the mint account
+        self.assertNotIn('POSITION_NO_DECIMALS', w.warnings)
+
+    async def test_unknown_decimals_are_a_warning_not_a_silent_drop(self):
+        position_without = self.pos()
+        del position_without['quote_execution']
+        self.write_state({self.mint: position_without})
+        original = self.fake_rpc
+        def rpc(method, params):
+            if method == 'getAccountInfo' and params[0] == self.mint:
+                raise hw.RpcError('HTTP_404')
+            return original(method, params)
+        w = self.make()
+        w.rpc = rpc
+        self.reserves = (10 ** 15, 3 * 10 ** 9)
+        await w.tick()
+        self.assertIn('POSITION_NO_DECIMALS', w.warnings)
+        self.assertIn('POSITION_NO_QUOTE_EXECUTION', w.warnings)
+        self.assertEqual(self.triggers(), [])
+
 class LatencyReportTests(WatcherBase):
     def build(self, passes, trigger_rows, slot_times=()):
         """passes: (event_id, ts, mint, kind, fill_reason-or-None); trigger_rows: record_trigger positional args."""
@@ -1061,6 +1421,15 @@ class LatencyReportTests(WatcherBase):
             hw.latency_report(self.root / 'missing.sqlite', self.root / 'state' / 'watcher.sqlite')
 
 
+class DocsTests(unittest.TestCase):
+    def test_the_shared_pacing_rationale_and_the_rate_ceiling_are_documented(self):
+        text = (REPO / 'docs' / 'ops' / 'HELD_WATCHER.md').read_text()
+        for needle in ('T09 F6', '0.5 requests/second', 'PROVIDER_BACKOFF', 'Same-slot reserves', 'price-guarantee',
+                       'TRIGGER_NOT_ACKNOWLEDGED', 'STREAM_STALLED', 'POSITION_NO_QUOTE_EXECUTION', 'superseded',
+                       'ReadWritePaths='):
+            self.assertIn(needle, text)
+
+
 class UnitTemplateTests(unittest.TestCase):
     FRESH = REPO / 'deploy' / 'fresh'
     MAP = {'FRESH_ROOT': '/var/lib/solana-desk-fresh/v1', 'RELEASE_DIR': '/opt/solana-desk-releases/abc1234',
@@ -1078,8 +1447,13 @@ class UnitTemplateTests(unittest.TestCase):
         text = self.render('desk-held-watcher.service')
         for needle in ('ProtectSystem=strict', 'NoNewPrivileges=true', 'ProtectHome=true', 'PrivateTmp=true', 'UMask=0077',
                        'MemoryMax=', 'User=solana-desk', 'Restart=on-failure', 'LoadCredential=provider-keys.json:/etc/solana-desk/provider-keys.json',
-                       'ReadOnlyPaths=/var/lib/solana-desk-fresh/v1', 'ReadWritePaths=/var/lib/solana-desk-health'):
+                       'ReadOnlyPaths=/var/lib/solana-desk-fresh/v1'):
             self.assertIn(needle, text)
+        # T28F item 7: the ONLY writable path is the watcher's own directory, not the shared health/state directory.
+        writable = [l.split('=', 1)[1] for l in text.splitlines() if l.startswith('ReadWritePaths=')]
+        self.assertEqual(writable, ['/var/lib/solana-desk-health/held-watcher'])
+        (exec_line,) = [l for l in text.splitlines() if l.startswith('ExecStart=')]
+        self.assertIn('--state-dir /var/lib/solana-desk-health/held-watcher ', exec_line + ' ')
         (line,) = [l for l in text.splitlines() if l.startswith('ExecStart=')]
         self.assertIn('-m tools.ops.held_watcher run', line)
         self.assertIn('--ledger /var/lib/solana-desk-fresh/v1/paper-ledger.sqlite', line)

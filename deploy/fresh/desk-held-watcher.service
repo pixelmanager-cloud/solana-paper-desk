@@ -2,6 +2,7 @@
 # desk-paper-held-cycle.path unit) to run the NORMAL held pass early. It never writes the ledger and never fills.
 # Own request allowance and pacing in <STATE_DIR>/held-watcher/watcher.sqlite: it must NOT set
 # DESK_PROVIDER_PACING_DB (a kill while holding a shared pacing ticket would block the whole desk).
+# Write scope: ONLY <STATE_DIR>/held-watcher (create it first: install -d -m 0700 -o solana-desk -g solana-desk <STATE_DIR>/held-watcher).
 # Start it only after the first position can exist, i.e. together with the entry timer (see docs/ops/HELD_WATCHER.md).
 [Unit]
 Description=Event-driven held-position watcher (nudges the held pass; never trades)
@@ -25,7 +26,7 @@ PrivateTmp=true
 ProtectSystem=strict
 ProtectHome=true
 ReadOnlyPaths=<FRESH_ROOT>
-ReadWritePaths=<STATE_DIR>
+ReadWritePaths=<STATE_DIR>/held-watcher
 RestrictAddressFamilies=AF_INET AF_INET6 AF_UNIX
 MemoryMax=128M
 TasksMax=32
