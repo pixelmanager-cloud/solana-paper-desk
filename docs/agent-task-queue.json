@@ -6609,7 +6609,7 @@
         "review": "PASS independent07 turn01a12373-5dd4-7654-b661-25ba46c6ce97;43 combined seam tests10.304s",
         "ci": {
           "38013922978": "PASS",
-          "38013918410": "running"
+          "38013918410": "PASS"
         }
       },
       "PR187": {
@@ -6618,14 +6618,14 @@
         "owner": "06 completed implementation; final CI pending",
         "ci": {
           "38013862415": "PASS2744/648.136s",
-          "38013859569": "running"
+          "38013859569": "PASS"
         }
       }
     },
     "activation_draft": {
       "source": "c7be1e9502da954a759dbe34ffd602762caf8bb2b84c70dd99a6fcf3736df8bf",
-      "status": "EXACT_PINS_AND_WRAPPER_REVIEW_PASS03_FINAL_CI_PENDING",
-      "applied": false,
+      "status": "APPLIED_VALIDATORS_AND_PRESERVATION_PASS",
+      "applied": true,
       "retirement_pin_hash": "c250cb00c3cc57ac704a19df0ccbdd0837729cf02c2a335ee22acd8191ed9411",
       "runtime_edge_hash": "20e64d02ad670a723515f379e51fbd35cdde043f87be391a5ef70a6de0c538f2",
       "review_turn": "01a12360-802a-710d-9cca-3bcfe17bb241"
@@ -6664,8 +6664,128 @@
       "turn": "01a12361-2636-71b1-b688-39efa7a5a279",
       "result": "SCOPED_OPERATIONAL_PASS conditional final reviewed source and journal context",
       "head": "8aad8a827ce015f16a7ec8fd8a88ab2102e07084",
-      "initialized": false,
-      "activated": false
+      "initialized": true,
+      "activated": true,
+      "context_hash": "f6d217a44c13b1068cef2d52cd92ccb991edeeeba65b016a3c9d45ed0ff7f0c4",
+      "context_review_turn": "01a12384-298a-741a-9c01-9bbcff70cd87",
+      "context_review": "PASS06",
+      "context": {
+        "version": 1,
+        "journal": "/var/lib/solana-desk/entry-dispatch/dispatch.sqlite",
+        "paths": {
+          "config": {
+            "path": "/etc/solana-paper/paper-kraken-reviewed.json",
+            "device": 64770,
+            "inode": 5780749
+          },
+          "research_db": {
+            "path": "/var/lib/solana-desk/research.sqlite",
+            "device": 64770,
+            "inode": 5210918
+          },
+          "evidence_db": {
+            "path": "/var/lib/solana-desk/evidence.sqlite",
+            "device": 64770,
+            "inode": 5210866
+          },
+          "ledger_db": {
+            "path": "/var/lib/solana-desk/paper-kraken-77de75a2.sqlite",
+            "device": 64770,
+            "inode": 5211401
+          },
+          "discovery_db": {
+            "path": "/var/lib/solana-desk/discovery/continuous.sqlite",
+            "device": 64770,
+            "inode": 5774307
+          },
+          "pacing_db": {
+            "path": "/var/lib/solana-desk/provider-pacing.sqlite",
+            "device": 64770,
+            "inode": 5211365
+          }
+        },
+        "config_hash": "3dc3108e1c23ebbad97b88338e37f4012d3dd6b259f5a911624d799da1c11dff",
+        "source_hash": "c7be1e9502da954a759dbe34ffd602762caf8bb2b84c70dd99a6fcf3736df8bf",
+        "tool_hash": "158e81811fd7b1247dde997a6ba65c075c38563f7f021c4de7cef72a4025417a",
+        "entry_tool_hash": "2cce07d1a2f86c129abc869d29fc152190f283b82c2db11389413e53fb129ef5",
+        "discovery": {
+          "version": 2,
+          "filter": "39azUYFWPz3VHgKCf3VChUwbpURdCHRxjWVowf5jUJjg",
+          "schema_hash": "b63a89135f5ad9eb065a8b9f8f6e101474d57d34d7541a0680ccb67928908f6a"
+        },
+        "taker": "6E2G75Z3uJEnPo9EvzmLTxp8KB78m3RDsFBjoCTVHZD2",
+        "amount_raw": 100000000,
+        "pool_fee_bps": "25",
+        "minimum_age": 300,
+        "maximum_age": 7200
+      },
+      "timer_started": false,
+      "first_live_service_attempt": "BLOCKED57swall44.370sCPU",
+      "dry_run_seq": 1136,
+      "dry_run_mint": "5M77DVfmnd2zhCpNGm25zTszzNRgWWMsTBkZKfTjpump"
+    },
+    "release_candidate": {
+      "head": "a1f72add852e7afa1cfb74bb87f8aaeb4ed40c42",
+      "source": "c7be1e9502da954a759dbe34ffd602762caf8bb2b84c70dd99a6fcf3736df8bf",
+      "archive_hash": "fe40710bc61f25aef393c0b52738617029926466458188ebbbc2441fb2cc54d0",
+      "staged": true,
+      "active": true,
+      "ci_runs": [
+        38014879828,
+        38014876670
+      ],
+      "ci_status": "bothPASS",
+      "ci_full": "2788tests975.914s",
+      "preservation": "PASS11DB80originaltables",
+      "pre_backup": "/var/backups/solana-desk/pre-paper-ready-a1f72ad",
+      "post_backup": "/var/backups/solana-desk/post-paper-ready-a1f72ad",
+      "unit_backup": "/var/backups/solana-desk/paper-ready-unit-g0u3cy0u"
+    },
+    "postappend_validator_review": {
+      "worker": "03",
+      "turn": "01a12384-a8ce-75c8-812b-0a0a101b5767",
+      "result": "PASS currentc7be/origin77de,5retiredscans,initialstate,unchangedmonitoring,pacingquiescence",
+      "script": "work/verify-paper-ready-active-context.py"
+    },
+    "seq1136": {
+      "mint": "5M77DVfmnd2zhCpNGm25zTszzNRgWWMsTBkZKfTjpump",
+      "scan_id": "218c824a072944b2a73dac1503ba3038",
+      "charged": 12,
+      "captured_history_calls": 5,
+      "uncaptured_reservation": 12,
+      "history_id": "02be07593154bb7a047c4c9ee17afe2a4daf4f7ee312a30b813b78da1099b44c",
+      "history_status": "RETRYABLE_ERROR",
+      "history_attempts": 6,
+      "preparation_pass": "a5c0ceb687984d06987e8e21210e2ec0",
+      "preparation_intent": "9a335bf58cdb19f71dc6ffc1861c73106d6688276b1fc4397785a6049c025bfc",
+      "dispatcher_intent": "5d97d8cfdb7743d58ff30254ce38c7e8",
+      "dispatcher_intent_hash": "c647d581c3f46af078edbdb0afb6d118c1dc6946a19780ac298cbb5559a33824",
+      "no_retry": true,
+      "no_buy_verified": true,
+      "checkpoint": {
+        "cash": "5",
+        "positions": 0,
+        "last_ts": 0
+      },
+      "backup": "/var/backups/solana-desk/failed-dispatch-1136-a1f72ad",
+      "journal_backup_hash": "cbafc98b023676e5289ee27b14130af6f626013e0b1567ecf5f510e10ef5c3c1",
+      "readonly_replay_seconds": 1.0627187676727772,
+      "readonly_replay_observations": 178,
+      "diagnosis": "10-second preparation budget incompatible with six requests at2secondpacing; preciseuncapturedreservationcauseunproven; noproviderretry"
+    },
+    "next_claims": {
+      "HISTORY-REPLAY-PERF-1": {
+        "worker": "03",
+        "status": "requested; correctedtohistoricalphaseboundedbudgetdesign"
+      },
+      "DISPATCH-PREPARATION-RETIREMENT-2": {
+        "worker": "06",
+        "status": "requestedexactno-retryretirement"
+      },
+      "CALL-ENVELOPE-1": {
+        "worker": "09",
+        "status": "requestedfreshcycle/lifetimebudgetproof"
+      }
     }
   }
 }
