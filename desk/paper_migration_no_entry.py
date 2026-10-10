@@ -18,6 +18,8 @@ TABLE='paper_migration_no_entry'
 POLICY=Path(__file__).resolve().parents[1]/'config/paper-migration-recovery.json'
 MAX=4096  # Same lifetime dispatch-count ceiling as the existing journal.
 INSTALL_MARKER={'kind':'migration_disposition_installed_v1','table':TABLE}
+DECODE_GAP='CAPTURED_INTAKE_DECODE_GAP'
+REVIEWED_DECODE_GAP='EXPLICIT_REVIEWED_CAPTURED_DECODE_GAP'
 LEGACY_HASH='bd8751533ee11955952342729d794fd34306bcc20b349bc9ef596c973dbef474'
 # Explicit decoder rollover proposal: parsed close operands only. The frozen
 # legacy extractor and its sentinel judgment remain unchanged (golden tests).
@@ -37,14 +39,14 @@ def guards():
 
 def shape(v):
     if type(v) is not dict or set(v)!=FIELDS or type(v['version']) is not int or v['version']!=1 or v['kind']!='dispatcher_migration_no_entry_v1':raise ValueError('Migration disposition shape')
-    if v['association'] not in ('CAPTURED_UNSUPPORTED_QUOTE','CAPTURED_INTAKE_LOCAL_DEADLINE','EXPLICIT_REVIEWED_LEGACY_SENTINEL') or v['entry_authorized'] is not False or v['execution_status']!='EXECUTION_UNVERIFIED' or v['no_retry'] is not True:raise ValueError('Migration disposition semantics')
+    if v['association'] not in ('CAPTURED_UNSUPPORTED_QUOTE','CAPTURED_INTAKE_LOCAL_DEADLINE','EXPLICIT_REVIEWED_LEGACY_SENTINEL',DECODE_GAP,REVIEWED_DECODE_GAP) or v['entry_authorized'] is not False or v['execution_status']!='EXECUTION_UNVERIFIED' or v['no_retry'] is not True:raise ValueError('Migration disposition semantics')
     if not all(terminal._id(v[k]) for k in ('dispatch_id','scan_id')) or not all(runtime._hash(v[k]) for k in ('intent_hash','config_hash','source_hash','history_id','history_inventory_hash','ledger_original_hash','ledger_prefix_hash','runtime_receipts_hash')):raise ValueError('Migration disposition identities')
     if type(v['evaluated_at']) is not int or not 0<=v['evaluated_at']<2**63 or type(v['context']) is not dict or set(v['context'])!={'research_db','evidence_db','ledger_db','pacing_db'}:raise ValueError('Migration disposition context')
     terminal._context(**dict(zip(('research','evidence','ledger','pacing'),(v['context'][k] for k in ('research_db','evidence_db','ledger_db','pacing_db')))))
     if not isinstance(v['wire_attempt_refs'],list) or not 1<=len(v['wire_attempt_refs'])<=2 or len(set(v['wire_attempt_refs']))!=len(v['wire_attempt_refs']) or not all(runtime._hash(x) for x in v['wire_attempt_refs']):raise ValueError('Migration wire inventory')
-    expected_reason={'CAPTURED_UNSUPPORTED_QUOTE':'UNSUPPORTED_MIGRATION_EVENT_QUOTE','CAPTURED_INTAKE_LOCAL_DEADLINE':'INTAKE_DEADLINE_BEFORE_TRANSPORT','EXPLICIT_REVIEWED_LEGACY_SENTINEL':'HISTORICAL_LEGACY_SENTINEL_DECLINED'}
+    expected_reason={'CAPTURED_UNSUPPORTED_QUOTE':'UNSUPPORTED_MIGRATION_EVENT_QUOTE','CAPTURED_INTAKE_LOCAL_DEADLINE':'INTAKE_DEADLINE_BEFORE_TRANSPORT','EXPLICIT_REVIEWED_LEGACY_SENTINEL':'HISTORICAL_LEGACY_SENTINEL_DECLINED',DECODE_GAP:'RETAINED_INTAKE_DECODE_GAP_NO_ENTRY',REVIEWED_DECODE_GAP:'RETAINED_INTAKE_DECODE_GAP_NO_ENTRY'}
     if v['reason']!=expected_reason[v['association']]:raise ValueError('Exact disposition evidence class required')
-    historical=v['association']=='EXPLICIT_REVIEWED_LEGACY_SENTINEL'
+    historical=v['association'] in ('EXPLICIT_REVIEWED_LEGACY_SENTINEL',REVIEWED_DECODE_GAP)
     if historical:
         if not all(runtime._hash(v[k]) for k in ('ledger_backup_hash','stopped_witness_hash','parent_receipt_hash')) or type(v['successor_context']) is not dict:raise ValueError('Historical certificate required')
     elif any(v[k] is not None for k in ('ledger_backup_hash','stopped_witness_hash','parent_receipt_hash','successor_context','journal_prefix')):raise ValueError('No automatic historical adoption')
@@ -55,9 +57,10 @@ def approved(v):
     with POLICY.open('rb') as f:raw=f.read(2*1024*1024+1)
     if len(raw)>2*1024*1024:raise ValueError('Migration policy bound')
     p=runtime._parse(raw.decode())
-    if type(p) is not dict or set(p)!={'version','recoveries'} or type(p['version']) is not int or p['version']!=1 or type(p['recoveries']) is not list or len(p['recoveries'])>1:raise ValueError('Exact first context continuation only')
+    if type(p) is not dict or set(p)!={'version','recoveries'} or type(p['version']) is not int or p['version']!=1 or type(p['recoveries']) is not list or len(p['recoveries'])>2:raise ValueError('Bounded reviewed context continuations only')
     for pin in p['recoveries']:
         if not shape(pin):raise ValueError('Historical recovery pin required')
+    if len({pin['association'] for pin in p['recoveries']})!=len(p['recoveries']):raise ValueError('Ambiguous reviewed association')
     if v not in p['recoveries']:raise ValueError('Historical association not reviewed')
 
 
@@ -78,7 +81,8 @@ def rows(c):
         if identity!=v['dispatch_id'] or scan!=v['scan_id'] or canonical(v)!=raw or digest(v)!=key:raise ValueError('Migration disposition hash')
         if historical:approved(v)
         values.append(v)
-    if sum(v['association']=='EXPLICIT_REVIEWED_LEGACY_SENTINEL' for v in values)>1:raise ValueError('Ambiguous context continuation')
+    for association in ('EXPLICIT_REVIEWED_LEGACY_SENTINEL',REVIEWED_DECODE_GAP):
+        if sum(v['association']==association for v in values)>1:raise ValueError('Ambiguous context continuation')
     return values
 
 
@@ -138,7 +142,77 @@ def _decline(raw,hint,now,historical):
     return measured,reason
 
 
-def _capture(store,progress,ctx,scan,hint,now,historical):
+def _gap_replay(coverage,store):
+    """Verify retained request/page envelope, never reinterpret failed rows.
+
+    The original gap is a discard-only classification, not token safety or
+    address completeness. Decoder repairs cannot authorize retry or overwrite it.
+    """
+    if (coverage.get('reasons')!=['HISTORY_DECODE_GAP'] or coverage.get('query_coverage_verified') is not False
+            or coverage.get('query_range_exhausted') is not True or coverage.get('raw_pages_persisted') is not True
+            or coverage.get('launch_history_complete') is not False or coverage.get('next_cursor') is not None):raise ValueError('Only exact exhausted retained decoder gap')
+    claimed=dict(coverage);key=claimed.pop('evidence_hash',None)
+    if key!=digest(claimed):raise ValueError('Retained coverage hash changed')
+    pages=[];cursor=None;seen=set();size=coverage.get('page_size',100)
+    if type(size) is not int or not 1<=size<=100:raise ValueError('Retained page size')
+    for n,page in enumerate(coverage['pages']):
+        options={'transactionDetails':'full','sortOrder':'asc','limit':size,'commitment':'finalized','encoding':'jsonParsed','maxSupportedTransactionVersion':1,
+                 'filters':{'slot':coverage['slot_range'],'status':'any','tokenAccounts':coverage['token_accounts_filter']}}
+        if cursor:options['paginationToken']=cursor
+        request={'kind':'history_request_v1','method':'getTransactionsForAddress','params':[coverage['address'],options],'response_hash':page['payload_hash']}
+        if terminal._load(store,page['request_evidence_hash'])!=request:raise ValueError('Gap request binding')
+        response=terminal._load(store,page['payload_hash']);data=response.get('data')
+        if type(data) is not list or len(data)>size:raise ValueError('Retained response shape')
+        pages.append({'request_cursor':cursor,'payload_hash':digest(response),'records':len(data),'persisted':True,'request_evidence_hash':digest(request)})
+        cursor=response.get('paginationToken')
+        if n==len(coverage['pages'])-1:
+            if cursor is not None:raise ValueError('Retained gap range not exhausted')
+        elif type(cursor) is not str or not cursor or cursor in seen or not data:raise ValueError('Retained gap cursor invalid')
+        seen.add(cursor)
+    expected={'address':coverage['address'],'token_accounts_filter':coverage['token_accounts_filter'],'start':0,'end':1,'pages':pages,'next_cursor':None,
+        'query_range_exhausted':True,'query_coverage_verified':False,'raw_pages_persisted':True,'launch_history_complete':False,'reasons':['HISTORY_DECODE_GAP'],
+        'notice':'Address-query coverage is not complete token transfer, launch or funding coverage.','slot_range':coverage['slot_range']}
+    if size!=100:expected['page_size']=size
+    expected['evidence_hash']=digest(expected)
+    if expected!=coverage:raise ValueError('Original decoder-gap coverage changed')
+
+
+def _gap_decline(raw,hint,now):
+    # Reject before preparation; no safety/ownership or successful decode claim.
+    targets=[r for r in raw if type(r) is dict and type(r.get('transaction')) is dict
+             and r['transaction'].get('signatures') and r['transaction']['signatures'][0]==hint['signature'] and r.get('slot')==hint['slot']]
+    if len(targets)!=1:raise ValueError('Exact retained hinted transaction required')
+    return {'status':'NOT_EVALUATED','witnesses':[],'blockers':['HISTORY_DECODE_GAP']},'RETAINED_INTAKE_DECODE_GAP_NO_ENTRY'
+
+
+def _no_candidate_pass(store,scan):
+    with closing(store.connect()) as c:
+        if not c.execute("SELECT 1 FROM sqlite_master WHERE type='table' AND name='paper_observation_passes'").fetchone():return
+        terminal._passes(c)
+        keys=c.execute('SELECT intent_hash FROM paper_observation_passes').fetchall()
+    for (key,) in keys:
+        intent=terminal._load(store,key)
+        target=intent.get('target',{})
+        if scan in intent.get('admissions',{}) or (type(target) is dict and type(target.get('target')) is dict and target['target']['scan_id']==scan):
+            raise ValueError('Candidate preparation or execution already entered')
+
+
+def _decode_receipts(c):
+    from . import runtime_extensions as extensions
+    # The historical producer has two immutable extensions. Later reviewed
+    # appends are separately validated by the ordinary ledger validator.
+    return {'first_and_continuation':_receipt_history(c),'extensions':extensions._bounded_rows(c)[:2]}
+
+
+def _decode_parent(store,producer,key=None):
+    from . import paper_intake_uncaptured_retirement as parent
+    with closing(store.connect()) as c:
+        matches=[p for p in parent.rows(c) if p['successor_context']==producer and (key is None or digest(p)==key)]
+    if len(matches)!=1:raise ValueError('Exact prior intake lineage parent required')
+    return matches[0]
+
+
+def _capture(store,progress,ctx,scan,hint,now,historical,*,decode_gap=False):
     from .job_persistence import JobPersistence
     from .ownership_acquisition import _Setup,_policy,_validate_binding
     from .paper_observation_collector import _admission,ObservationTarget
@@ -166,11 +240,16 @@ def _capture(store,progress,ctx,scan,hint,now,historical):
     query={'address':hint['pool'],'start':0,'end':1,'token_accounts_filter':'none','slot_range':{'gte':hint['slot'],'lt':hint['slot']+1}}
     identity=digest({'budget':scan,'query':query});snapshot=progress.snapshot(identity);coverage=snapshot['coverage']
     local_deadline=not historical and snapshot['status']=='RETRYABLE_ERROR'
-    if not local_deadline and (snapshot['query']!=query or snapshot['status']!='DONE' or not coverage or not coverage['query_coverage_verified'] or not coverage['query_range_exhausted'] or not 1<=snapshot['attempts']<=2 or snapshot['attempts']!=len(coverage['pages']) or admission['requests_used']!=4+snapshot['attempts']):raise ValueError('Complete finalized slot coverage required')
+    gap=bool(coverage and coverage.get('reasons')==['HISTORY_DECODE_GAP'] and coverage.get('query_coverage_verified') is False)
+    if decode_gap and not gap:raise ValueError('Reviewed retained decoder gap absent')
+    if gap:_no_candidate_pass(store,scan)
+    if not local_deadline and (snapshot['query']!=query or snapshot['status']!='DONE' or not coverage or (not coverage['query_coverage_verified'] and not gap) or not coverage['query_range_exhausted'] or not 1<=snapshot['attempts']<=2 or snapshot['attempts']!=len(coverage['pages']) or admission['requests_used']!=4+snapshot['attempts']):raise ValueError('Complete finalized slot coverage required')
     if local_deadline:
         pages=coverage['pages'] if coverage else []
         if (snapshot['query']!=query or not 1<=snapshot['attempts']<=2 or snapshot['attempts']!=len(pages)+1 or admission['requests_used']!=4+snapshot['attempts'] or (coverage and coverage['query_range_exhausted'])):raise ValueError('Exact local deadline reservation required')
-    if coverage:replay_history(coverage,store)
+    if coverage:
+        if gap:_gap_replay(coverage,store)
+        else:replay_history(coverage,store)
     histories=base._histories(store,scan)
     if len(histories)!=1 or histories[0][1]!=identity:raise ValueError('Only exact intake reservation query permitted')
     seeds=report.get('history_queries')
@@ -197,6 +276,8 @@ def _capture(store,progress,ctx,scan,hint,now,historical):
         if (set(r)!={'kind','scan_id','requests_used','source_id','method','params','request_bytes_base64','response_bytes_base64','observed_at','http_status','failure_code'} or r['kind']!='paper_read_attempt_v1' or r['scan_id']!=scan or r['requests_used']!=admission['requests_used'] or r['method']!='getTransactionsForAddress' or r['params']!=expected or r['request_bytes_base64']!=base64.b64encode(body).decode() or r['source_id']!='helius-mainnet-paper-confirmed-v1' or r['failure_code']!='INTAKE_DEADLINE_BEFORE_TRANSPORT' or r['response_bytes_base64'] is not None or r['http_status'] is not None or type(r['observed_at']) is not int or not 0<=r['observed_at']<=now):raise ValueError('Exact captured local deadline required; uncaptured stays unknown')
         measured={'status':'NOT_EVALUATED','witnesses':[],'blockers':['INTAKE_DEADLINE_BEFORE_TRANSPORT']}
         reason='INTAKE_DEADLINE_BEFORE_TRANSPORT'
+    elif gap:
+        measured,reason=_gap_decline(raw,hint,now)
     else:
         measured,reason=_decline(raw,hint,now,historical)
     canonical_acquisition={'evidence_class':'CANONICAL_METHOD_PARAMS_RESULTS_NOT_ORIGINAL_WIRE','descriptor_hash':digest(descriptor),'source_hash':digest(source),'setup_hash':digest(state),'prepared_source_hash':admission['completed_source_hash']}
@@ -239,8 +320,8 @@ def proof(store,v,*,initial=False,cfg=None,review_source=None):
         c.execute('BEGIN');_,saved_cfg=terminal._ledger(c,cfg,initial=initial and historical,historical_source=review_source)
         if digest(saved_cfg)!=v['config_hash'] or base._ledger_originals(c,prefix=True)!=v['ledger_prefix_hash']:raise ValueError('Ledger prefix/config changed')
         if initial and base._ledger_originals(c)!=v['ledger_original_hash']:raise ValueError('Ledger changed before publication')
-        if historical and digest(_receipt_history(c))!=v['runtime_receipts_hash']:raise ValueError('Original runtime receipts changed')
-    rebuilt=_capture(store,progress,ctx,v['scan_id'],v['hint'],v['evaluated_at'],historical)
+        if historical and digest(_decode_receipts(c) if v['association']==REVIEWED_DECODE_GAP else _receipt_history(c))!=v['runtime_receipts_hash']:raise ValueError('Original runtime receipts changed')
+    rebuilt=_capture(store,progress,ctx,v['scan_id'],v['hint'],v['evaluated_at'],historical,decode_gap=v['association']==REVIEWED_DECODE_GAP)
     if any(v[k]!=x for k,x in rebuilt.items()):raise ValueError('Captured migration proof changed')
     with closing(store.connect()) as c:
         c.execute('BEGIN');terminal._monitoring(c,store=store,ledger=Path(ctx['ledger_db']),cfg=saved_cfg,pacing=ctx['pacing_db'],review_source=review_source)
@@ -248,12 +329,20 @@ def proof(store,v,*,initial=False,cfg=None,review_source=None):
     with closing(sqlite3.connect(Path(ctx['pacing_db']).as_uri()+'?mode=ro',uri=True)) as c:
         if c.execute('SELECT 1 FROM waiters LIMIT 1').fetchone():raise ValueError('Pacing waiters pending')
     if historical:
-        from . import paper_dispatch_preparation_retirement as parent
-        with closing(store.connect()) as c:matches=[p for p in parent.rows(c) if digest(p)==v['parent_receipt_hash']]
-        if len(matches)!=1 or matches[0]['successor_context']!=v['producer_context'] or matches[0]['journal_path']!=str(path):raise ValueError('Exact original lineage parent required')
-        old=matches[0]
-        original=runtime._parse(v['journal_prefix']['context'][0][2])
-        if digest(original)!=old['dispatch_context_hash']:raise ValueError('Original journal context changed')
+        if v['association']==REVIEWED_DECODE_GAP:
+            old=_decode_parent(store,v['producer_context'],v['parent_receipt_hash'])
+            from . import paper_intake_uncaptured_retirement as intake
+            intake.proof(store,old,review_source=review_source)
+            original=runtime._parse(v['journal_prefix']['context'][0][2])
+            if original!=runtime._parse(old['journal_prefix']['context'][0][2]):raise ValueError('Original journal context changed')
+        else:
+            from . import paper_dispatch_preparation_retirement as parent
+            with closing(store.connect()) as c:matches=[p for p in parent.rows(c) if digest(p)==v['parent_receipt_hash']]
+            if len(matches)!=1 or matches[0]['successor_context']!=v['producer_context'] or matches[0]['journal_path']!=str(path):raise ValueError('Exact original lineage parent required')
+            old=matches[0]
+            original=runtime._parse(v['journal_prefix']['context'][0][2])
+            if digest(original)!=old['dispatch_context_hash']:raise ValueError('Original journal context changed')
+
         wanted={**v['producer_context'],**{k:v['successor_context'].get(k) for k in ('source_hash','tool_hash','entry_tool_hash')}}
         if wanted!=v['successor_context'] or v['successor_context']['source_hash']!=v['source_hash']:raise ValueError('Only explicit source/tool context continuation')
         manager=terminal._load(store,v['stopped_witness_hash'])
@@ -262,7 +351,7 @@ def proof(store,v,*,initial=False,cfg=None,review_source=None):
     return v
 
 
-def _make(store,c,cfg,producer,identity,scan,*,historical=False,backup=None,stopped=None,review_source=None):
+def _make(store,c,cfg,producer,identity,scan,*,historical=False,backup=None,stopped=None,review_source=None,decode_gap=False):
     from tools import paper_entry_dispatcher as dispatcher
     values,prefix=_journal(c)
     intent=values['intents'].get(identity)
@@ -271,24 +360,26 @@ def _make(store,c,cfg,producer,identity,scan,*,historical=False,backup=None,stop
     attempts=base._attempts(store,scan)
     if attempts:now=max(now,*[r['observed_at'] for _,_,r in attempts])
     ctx={k:producer['paths'][k]['path'] for k in ('research_db','evidence_db','ledger_db','pacing_db')}
-    captured=_capture(store,_progress(store),ctx,scan,intent['hint'],now,historical)
+    captured=_capture(store,_progress(store),ctx,scan,intent['hint'],now,historical,decode_gap=decode_gap)
     with closing(sqlite3.connect(Path(ctx['ledger_db']).as_uri()+'?mode=ro',uri=True)) as ledger:
         ledger.execute('BEGIN');terminal._ledger(ledger,cfg,initial=historical,historical_source=review_source)
-        original=base._ledger_originals(ledger);initial_prefix=base._ledger_originals(ledger,prefix=True);receipt_history=_receipt_history(ledger)
+        original=base._ledger_originals(ledger);initial_prefix=base._ledger_originals(ledger,prefix=True);receipt_history=_decode_receipts(ledger) if decode_gap else _receipt_history(ledger)
     parent_hash=None;successor=None;backup_hash=None
     if historical:
-        from . import paper_dispatch_preparation_retirement as parent
-        with closing(store.connect()) as evidence:parents=parent.rows(evidence)
-        matches=[p for p in parents if p['successor_context']==producer and p['journal_path']==producer['journal']]
+        if decode_gap:matches=[_decode_parent(store,producer)]
+        else:
+            from . import paper_dispatch_preparation_retirement as parent
+            with closing(store.connect()) as evidence:parents=parent.rows(evidence)
+            matches=[p for p in parents if p['successor_context']==producer and p['journal_path']==producer['journal']]
         if len(matches)!=1:raise ValueError('Exact original retirement parent')
         parent_hash=digest(matches[0]);successor=dispatcher.plan(**{k:x['path'] for k,x in producer['paths'].items()},journal=producer['journal'],taker=producer['taker'],amount_raw=producer['amount_raw'],pool_fee_bps=producer['pool_fee_bps'])
         p=Path(backup)
         if not p.is_absolute() or not p.is_file() or p.resolve(strict=True)!=p or p.samefile(ctx['ledger_db']) or p.stat().st_size>32*1024*1024:raise ValueError('Bounded distinct original ledger backup')
         with closing(sqlite3.connect(p.as_uri()+'?mode=ro',uri=True)) as saved:
             saved.execute('BEGIN')
-            if base._ledger_originals(saved)!=original or _receipt_history(saved)!=receipt_history:raise ValueError('Ledger originals/first/continuation differ from pre-attempt backup')
+            if base._ledger_originals(saved)!=original or (_decode_receipts(saved) if decode_gap else _receipt_history(saved))!=receipt_history:raise ValueError('Ledger originals/first/continuation differ from pre-attempt backup')
         backup_hash=hashlib.sha256(p.read_bytes()).hexdigest()
-    v={'version':1,'kind':'dispatcher_migration_no_entry_v1','association':'EXPLICIT_REVIEWED_LEGACY_SENTINEL' if historical else ('CAPTURED_INTAKE_LOCAL_DEADLINE' if captured['reason']=='INTAKE_DEADLINE_BEFORE_TRANSPORT' else 'CAPTURED_UNSUPPORTED_QUOTE'),
+    v={'version':1,'kind':'dispatcher_migration_no_entry_v1','association':(REVIEWED_DECODE_GAP if decode_gap else 'EXPLICIT_REVIEWED_LEGACY_SENTINEL') if historical else (DECODE_GAP if captured['reason']=='RETAINED_INTAKE_DECODE_GAP_NO_ENTRY' else 'CAPTURED_INTAKE_LOCAL_DEADLINE' if captured['reason']=='INTAKE_DEADLINE_BEFORE_TRANSPORT' else 'CAPTURED_UNSUPPORTED_QUOTE'),
        'dispatch_id':identity,'scan_id':scan,'intent_hash':digest(intent),'hint':intent['hint'],'context':ctx,'config_hash':digest(cfg),
        'source_hash':runtime.implementation_hash(),'producer_context':producer,'successor_context':successor,'journal_prefix':prefix if historical else None,
        'parent_receipt_hash':parent_hash,**captured,'evaluated_at':now,'ledger_original_hash':original,'ledger_prefix_hash':initial_prefix,
@@ -299,7 +390,16 @@ def _make(store,c,cfg,producer,identity,scan,*,historical=False,backup=None,stop
     # this exact target is the only newly proved unresolved exception.
     retired={};bindings={};historical_contexts={}
     if values['context']!={1:producer}:
-        edge=None if historical else lineage(c,producer,values['context'][1],ledger_locked=ctx['ledger_db'])
+        if historical and decode_gap:
+            from . import paper_intake_uncaptured_retirement as intake
+            old=_decode_parent(store,producer)
+            intake.proof(store,old,review_source=review_source);_prefix(c,old)
+            if values['context'][1]!=runtime._parse(old['journal_prefix']['context'][0][2]):raise ValueError('Original intake context changed')
+            _,bindings,retired,historical_contexts=intake._prior(store,c,old['producer_context'],review_source=review_source)
+            bindings.update({r[1]:runtime._parse(r[-2])['context_hash'] for r in old['journal_prefix']['intents']})
+            historical_contexts=dict(historical_contexts);historical_contexts[digest(producer)]=producer
+            edge=(bindings,retired|{old['dispatch_id']:digest(old['producer_context'])},historical_contexts)
+        else:edge=None if historical else lineage(c,producer,values['context'][1],ledger_locked=ctx['ledger_db'])
         if edge is not None:
             bindings,retired,historical_contexts=edge
         else:
@@ -366,7 +466,8 @@ def _locks(ctx,journal,*,owned_journal=False):
     except BaseException:stack.close();raise
 
 
-def review_plan(producer,dispatch_id,scan_id,*,ledger_backup,stopped_witness_hash,apply=False,review_source=None):
+def review_plan(producer,dispatch_id,scan_id,*,ledger_backup,stopped_witness_hash,apply=False,review_source=None,captured_decode_gap=False):
+    if type(captured_decode_gap) is not bool:raise ValueError('Explicit decoder-gap review mode required')
     if review_source is not None and (apply or review_source!=producer['source_hash'] or not runtime._hash(review_source)):
         raise ValueError('Predecessor validation is read-only and exact producer only')
     ctx={k:producer['paths'][k]['path'] for k in ('research_db','evidence_db','ledger_db','pacing_db')}
@@ -376,10 +477,10 @@ def review_plan(producer,dispatch_id,scan_id,*,ledger_backup,stopped_witness_has
     cfg=_config(producer['paths']['config']['path'])
     with _locks(ctx,producer['journal']),closing(sqlite3.connect(Path(producer['journal']).as_uri()+'?mode=ro',uri=True)) as journal:
         journal.execute('BEGIN')
-        v=_make(store,journal,cfg,producer,dispatch_id,scan_id,historical=True,backup=ledger_backup,stopped=stopped_witness_hash,review_source=review_source)
+        v=_make(store,journal,cfg,producer,dispatch_id,scan_id,historical=True,backup=ledger_backup,stopped=stopped_witness_hash,review_source=review_source,decode_gap=captured_decode_gap)
         if not apply:return v
         approved(v)
-        fresh=_make(store,journal,cfg,producer,dispatch_id,scan_id,historical=True,backup=ledger_backup,stopped=stopped_witness_hash)
+        fresh=_make(store,journal,cfg,producer,dispatch_id,scan_id,historical=True,backup=ledger_backup,stopped=stopped_witness_hash,decode_gap=captured_decode_gap)
         if fresh!=v:raise ValueError('Recovery changed before publication')
         status=_insert(store,v)
         return {'status':status,'receipt_hash':digest(v),'retired_scan':scan_id,'entry_authorized':False}
@@ -429,6 +530,22 @@ def gate(store,research,scan_ids,*,ledger_locked=None,review_source=None):
 
 
 def lineage(c,expected,original,*,ledger_locked=None):
+    store=EvidenceStore(expected['paths']['evidence_db']['path'],read_only=True)
+    with closing(store.connect()) as ec:latest=[v for v in rows(ec) if v['association']==REVIEWED_DECODE_GAP and v['producer_context']['journal']==expected['journal']]
+    if latest:
+        if len(latest)!=1:raise ValueError('Ambiguous decoder-gap continuation')
+        v=latest[0]
+        if expected!=v['successor_context']:raise ValueError('Exact reviewed decoder-gap successor required')
+        proof(store,v);_prefix(c,v)
+        from . import paper_intake_uncaptured_retirement as intake
+        old=_decode_parent(store,v['producer_context'],v['parent_receipt_hash'])
+        edge=intake.lineage(c,v['producer_context'],original,ledger_locked=ledger_locked)
+        if edge is None:raise ValueError('Original intake lineage missing')
+        bindings,retired,contexts=edge
+        bindings.update({r[1]:runtime._parse(r[-2])['context_hash'] for r in v['journal_prefix']['intents']})
+        contexts=dict(contexts);contexts[digest(v['producer_context'])]=v['producer_context']
+        if any(h not in contexts for h in bindings.values()):raise ValueError('Unknown decoder-gap prefix context')
+        return bindings,retired|{v['dispatch_id']:digest(v['producer_context'])},contexts
     from .paper_intake_uncaptured_retirement import lineage as intake_lineage
     edge=intake_lineage(c,expected,original,ledger_locked=ledger_locked)
     if edge is not None:return edge
@@ -460,11 +577,11 @@ def main(argv=None):
     import argparse,json
     p=argparse.ArgumentParser(description=__doc__,allow_abbrev=False)
     for k in ('producer-context','dispatch-id','scan-id','ledger-backup','stopped-witness-hash'):p.add_argument('--'+k,required=True)
-    p.add_argument('--apply',action='store_true');p.add_argument('--review-source');a=p.parse_args(argv)
+    p.add_argument('--captured-decode-gap',action='store_true');p.add_argument('--apply',action='store_true');p.add_argument('--review-source');a=p.parse_args(argv)
     try:
         with Path(a.producer_context).open('rb') as f:raw=f.read(65537)
         if len(raw)>65536:raise ValueError('Producer context byte bound')
-        value=review_plan(runtime._parse(raw.decode()),a.dispatch_id,a.scan_id,ledger_backup=a.ledger_backup,stopped_witness_hash=a.stopped_witness_hash,apply=a.apply,review_source=a.review_source)
+        value=review_plan(runtime._parse(raw.decode()),a.dispatch_id,a.scan_id,ledger_backup=a.ledger_backup,stopped_witness_hash=a.stopped_witness_hash,apply=a.apply,review_source=a.review_source,captured_decode_gap=a.captured_decode_gap)
         print(json.dumps(value,sort_keys=True));return 0
     except (ValueError,TypeError,KeyError,IndexError,AttributeError,OSError,sqlite3.Error,OverflowError,RecursionError):
         print(json.dumps({'status':'BLOCKED','blockers':['MIGRATION_RECOVERY_UNPROVED'],'entry_authorized':False}));return 2
