@@ -832,3 +832,31 @@ With the flag ON, T16 does not work. Fix each item with a test that runs the REA
 4. **Day rollover.** With subset legs the engine defers rollover forever (`engine.py` ~:352-359), so `day_start_equity` and the daily loss counters go stale while 2+ positions are held. Fix by guaranteeing all-fresh marks at least once per rollover window (through item 3), or by a versioned engine rule. Test it.
 5. **Restart.** The cold-restart test must cover monitoring charges and reservations across the restart, not only ledger replay.
 6. **Docs.** Correct docs/MULTI_POSITION.md, including the false claims "exits are never starved" and "max_positions 2 is the useful setting" until they are true.
+
+---
+
+## T26F — Fix coordinator review findings in T26 (counterfactual)
+STATUS: OPEN
+DEPENDS: none
+BASE: origin/cloud/T26
+OWNS: tools/research/counterfactual.py, tests/test_counterfactual.py, deploy/fresh/desk-counterfactual.service (+ a .timer if used), docs/research/COUNTERFACTUAL.md
+AVOID: desk/**
+
+Note: T27 (shadow strategies) is built on T26. After this lands, post the fixed classification and return semantics in the report so T27 can rebase onto them.
+
+1. **Outcome classification is wrong**, so the "does the filter reject winners?" report is invalid. The code only reads `result.blockers`/`result.reason`, so:
+   - dispatcher token rejections (`dispatcher_token_rejection_v1`, codes in `token_policy.reasons`) show as `ADMITTED:NO_RESULT`;
+   - strategy-filter rejections from `entry.execute` (status COMPLETE, reasons in `outcomes[].reason`) show as `ADMITTED:COMPLETE`, the same as a real BUY.
+
+   Parse every result shape, join the decision store (`paper-decisions.sqlite`, read-only) and the ledger fills, and classify as BOUGHT / REJECTED:<stage>:<code> / NOT_DISPATCHED / UNKNOWN. Add known-answer tests for each shape, built with the real writers where possible.
+2. **Survivorship bias.** A pool that is POOL_DEAD at a horizon counts as -100% (or is reported in a separate "died" bucket that is included in the totals), never dropped.
+3. **Fixed baseline.** Use one baseline for every candidate: the price at migration, or the +5m sample. If the baseline sample is missing, the candidate is excluded from the return stats and counted as missing; it never re-baselines to a later horizon.
+4. **Service template.**
+   - Its own store goes in its own subdirectory, and `ReadWritePaths` lists only that subdirectory plus the shared pacing DB (and its directory if SQLite needs it).
+   - The discovery DB is read-only and works even when its `-shm` is missing: open with an immutable fallback only for a quiet WAL file (per the T02F rule), or document the needed ReadWritePaths.
+   - Add a restart policy or a timer.
+5. **Backfill.** On first start, begin at the current max discovery seq, or skip candidates older than 6h plus grace. Never backfill the whole history.
+6. **Minor.**
+   - A null pool account is retried with backoff until the horizon window passes.
+   - `refresh_outcomes` reuses one journal connection and only processes candidates without a final outcome.
+   - `set-allowance` range-checks its input (1..3600).
