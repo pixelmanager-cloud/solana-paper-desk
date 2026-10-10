@@ -10,6 +10,7 @@ from .model import PAPER_EXPERIMENTAL
 from .bundles import audit
 from .security import entry_token_policy, sellability_gate
 from . import quote_execution as qe
+from . import regime
 
 
 def initial_state(cfg):
@@ -386,6 +387,10 @@ def transition(state, e, cfg, *, _quote_book=None):
     if e["provenance"] != "SYNTHETIC_TEST_ONLY" and not quote_mode:
         reasons.append("LIVE_FEATURE_ADAPTER_NOT_READY")
     reasons.extend(entry_token_policy(e,cfg))
+    regime_multiplier, regime_info = ONE, None
+    if regime.enabled(cfg):
+        regime_reasons, regime_multiplier, regime_info = regime.gate(e, cfg, state)
+        reasons.extend(regime_reasons)
     if signal_version==3 and 'bundle_evidence' not in e:
         # Explicit approved V3 omission only. Never manufacture complete bundle
         # history or safe percentages; any supplied evidence still runs audit.
@@ -409,7 +414,8 @@ def transition(state, e, cfg, *, _quote_book=None):
     policy_record = {"entry_policy": deepcopy(policy)} if policy is not None else {}
     if reasons:
         return state, output + [{"type": "reject", "reason": reasons[0], "reasons": reasons,
-                                 "mint": mint, "scores": evidence, "bundle_audit": bundle_audit, **policy_record}]
+                                 "mint": mint, "scores": evidence, "bundle_audit": bundle_audit, **policy_record,
+                                 **({"regime": regime_info} if regime_info else {})}]
     budget = max(ZERO, dec(cfg["daily_pause_fraction"]) * dec(state["day_start_equity"])
                  - dec(state["day_gross_losses"]))
     allocated_risk = exposure(state) * dec(cfg["stress_loss_fraction"])
@@ -417,6 +423,8 @@ def transition(state, e, cfg, *, _quote_book=None):
                           exposure(state), budget, allocated_risk)
     if state["loss_streak"] >= 4:
         amount /= 2
+    if regime_multiplier != ONE:
+        amount *= regime_multiplier
     if quote_mode:
         amount=qe.units(int((amount*10**9).to_integral_value(rounding='ROUND_DOWN')),9)
     if amount < dec(cfg["min_order_sol"]):
@@ -473,6 +481,7 @@ def transition(state, e, cfg, *, _quote_book=None):
                    "amount_sol": str(amount), "quantity": str(qty), "fee_sol": str(fee),
                    "scores": evidence, "estimated_cost_fraction": str(roundtrip),
                    "simulation": "quote_minimum_with_adverse_slippage" if quote_mode else "constant_product", "provenance": e["provenance"],
+                   **({"regime": regime_info} if regime_info else {}),
                    **({'quote_execution':_quote_book.record(quote,cfg),
                        **({'roundtrip_quote_execution':_quote_book.record(exit_quote,cfg)} if qe.selected(cfg)==2 else {}),
                        'execution_status':qe.STATUS} if quote_mode else {}),
