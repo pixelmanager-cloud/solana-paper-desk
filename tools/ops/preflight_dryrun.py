@@ -59,6 +59,9 @@ FORBIDDEN_ENV = ('HELIUS_API_KEY', 'JUPITER_API_KEY', 'KRAKEN_API_KEY', 'KRAKEN_
 RESULT_PREFIX = 'PREFLIGHT_RESULT:'
 # Only device/inode identities and the config copy's path legitimately differ on copies.
 SKIPPED_CONTEXT_FIELDS = ('paths.*.device', 'paths.*.inode', 'paths.config.path')
+# Stores that may be named by an absolute path outside --data (fresh layout: shared pacing and discovery databases).
+EXTERNAL_KEYS = ('ledger', 'pacing_db', 'discovery_db')
+EXTERNAL_DIR = '.external'
 
 # Resolves the directory behind a dir_fd. /proc/self/fd exists only on Linux; macOS needs F_GETPATH.
 # Anything else fails closed (the hook then refuses the mutation).
@@ -310,6 +313,35 @@ def _relative(root, value, what):
     return rel
 
 
+def _external_store(value, what):
+    """An absolute store path: canonical (no symlink or alias component), an existing regular single-link file."""
+    path = Path(value)
+    if not path.is_absolute() or path.resolve() != path or '..' in path.parts:
+        raise Refused(f'{what} must be a canonical absolute path (no symlink or ".." component)')
+    try:
+        info = path.lstat()
+    except OSError:
+        raise Refused(f'{what} does not exist: {path}') from None
+    if not stat.S_ISREG(info.st_mode) or info.st_nlink != 1:
+        raise Refused(f'{what} must be a regular single-link file: {path}')
+    return path
+
+
+def _mirror(work, path):
+    """Where an external store's copy lives inside the workdir (mirrors the absolute path)."""
+    return work / EXTERNAL_DIR / str(path).lstrip('/')
+
+
+def _mount_points(externals):
+    """Minimal set of real directories to cover with a bind of their mirrored copy (nested ones ride along)."""
+    dirs = sorted({p.parent for p in externals}, key=lambda d: (len(d.parts), str(d)))
+    top = []
+    for d in dirs:
+        if not any(t == d or t in d.parents for t in top):
+            top.append(d)
+    return top
+
+
 def _discover(data, max_bytes):
     found, total = [], 0
     for base, dirs, files in os.walk(data, followlinks=False):
@@ -361,6 +393,22 @@ def _source_state(path):
     return info.st_size, info.st_mtime_ns, _sha256(path), wal_state
 
 
+def _backup(src, dst):
+    """Copy one live store into the workdir with the sqlite backup API (read-only source)."""
+    # Same rule as tools.ops.status (T02F): immutable ONLY for a WAL-mode file (header byte 18 == 2)
+    # with no -wal beside it: nothing is pending in a sidecar and SQLite then creates no -wal/-shm
+    # next to a live store (none owned by root). A rollback-journal store (for example the pacing
+    # database, rewritten every ~2 s) can change under the read and is never opened immutable.
+    quiet = _is_wal_file(src) and not src.with_name(src.name + '-wal').exists()
+    mode = 'mode=ro&immutable=1' if quiet else 'mode=ro'
+    with closing(sqlite3.connect(src.as_uri() + '?' + mode, uri=True)) as source, \
+            closing(sqlite3.connect(dst)) as target:
+        source.backup(target)
+    os.chmod(dst, 0o600)
+    return {'bytes': dst.stat().st_size, 'sha256': _sha256(dst),
+            'read_mode': 'IMMUTABLE_QUIET_WAL' if quiet else 'READ_ONLY'}
+
+
 def _copy(data, work, sources):
     copies = []
     for src in sources:
@@ -368,22 +416,34 @@ def _copy(data, work, sources):
         dst = work / rel
         dst.parent.mkdir(mode=0o700, parents=True, exist_ok=True)
         os.chmod(dst.parent, 0o700)
-        # Same rule as tools.ops.status (T02F): immutable ONLY for a WAL-mode file (header byte 18 == 2)
-        # with no -wal beside it: nothing is pending in a sidecar and SQLite then creates no -wal/-shm
-        # next to a live store (none owned by root). A rollback-journal store (for example the pacing
-        # database, rewritten every ~2 s) can change under the read and is never opened immutable.
-        quiet = _is_wal_file(src) and not src.with_name(src.name + '-wal').exists()
-        mode = 'mode=ro&immutable=1' if quiet else 'mode=ro'
-        with closing(sqlite3.connect(src.as_uri() + '?' + mode, uri=True)) as source, \
-                closing(sqlite3.connect(dst)) as target:
-            source.backup(target)
-        os.chmod(dst, 0o600)
-        copies.append({'path': str(rel), 'bytes': dst.stat().st_size, 'sha256': _sha256(dst),
-                       'read_mode': 'IMMUTABLE_QUIET_WAL' if quiet else 'READ_ONLY'})
+        copies.append({'path': str(rel), **_backup(src, dst)})
     return copies
 
 
-def _live_findings(data, names, uid):
+def _copy_external(work, external):
+    """Copies of the shared stores that live outside --data, mirrored under ``work/.external/<absolute path>``."""
+    copies = []
+    for role, src in sorted(external.items()):
+        dst = _mirror(work, src)
+        directories = [d for d in dst.parents if work in d.parents]
+        for directory in reversed(directories):
+            directory.mkdir(mode=0o700, exist_ok=True)
+            os.chmod(directory, 0o700)
+        copies.append({'path': str(src), 'external': True, 'role': role, **_backup(src, dst)})
+    return copies
+
+
+def _external_sidecars(paths):
+    """Sidecar files (-wal/-shm/-journal) that exist beside the external live stores right now."""
+    found = set()
+    for path in paths:
+        for suffix in SIDECAR_SUFFIXES:
+            if os.path.lexists(str(path) + suffix):
+                found.add(str(path) + suffix)
+    return found
+
+
+def _live_findings(data, names, uid, locations, external):
     """Modes/links the copy would mask (copies are forced to 0600/0700)."""
     found = []
     def bad(label, path, forbidden, exact=None):
@@ -401,7 +461,12 @@ def _live_findings(data, names, uid):
     if journal.exists():
         bad('journal', journal, 0o077)
         bad('journal_dir', journal.parent, 0o077)
-    bad('pacing', data / names['pacing_db'], 0, exact=0o600)
+    bad('pacing', locations['pacing_db'], 0, exact=0o600)
+    for key in ('ledger', 'discovery_db'):
+        if key in external:                      # same owner rule as for stores inside --data
+            bad('external_' + key, external[key], 0)
+    for key, path in external.items():
+        bad('external_%s_dir' % key, path.parent, 0o022)
     bad('research_dir', (data / names['research_db']).parent, 0o022)
     bad('scheduler_lock', (data / names['research_db']).parent / 'paper-scheduler.lock', 0o177)
     return found
@@ -491,37 +556,61 @@ def run(args):
     config = Path(args.config)
     if not config.is_absolute() or config.resolve() != config or not config.is_file():
         raise Refused('--config must be an existing canonical absolute file')
-    names = {key: _relative(data, getattr(args, key), '--' + key.replace('_', '-'))
-             for key in ('ledger', 'research_db', 'evidence_db', 'pacing_db', 'discovery_db', 'journal')}
+    names, external = {}, {}
+    for key in ('ledger', 'research_db', 'evidence_db', 'pacing_db', 'discovery_db', 'journal'):
+        value, flag = getattr(args, key), '--' + key.replace('_', '-')
+        if key in EXTERNAL_KEYS and os.path.isabs(value):
+            path = _external_store(value, flag)
+            if data in path.parents:
+                names[key] = path.relative_to(data)           # absolute but inside the experiment root
+            else:
+                external[key] = path
+        else:
+            names[key] = _relative(data, value, flag)
+    for path in external.values():
+        d = path.parent
+        if any(d == x or x in d.parents or d in x.parents for x in (data, work)):
+            raise Refused('An external store directory must not contain or sit inside --data or --workdir: ' + str(d))
     sources = _discover(data, args.max_bytes)
     present_rel = {p.relative_to(data) for p in sources}
     for key, rel in names.items():
         if key != 'journal' and rel not in present_rel:
             raise Refused(f'Required store missing under --data: {rel} (a fresh store set is created by the '
                           'fresh-start bootstrap, tools.ops.fresh_start apply)')
+    locations = {key: data / rel for key, rel in names.items()}
+    locations.update(external)
     uid, owner_source = expected_owner(args.expect_owner, data)
-    before = {str(p): _source_state(p) for p in sources}
+    ext_sources = sorted(set(external.values()))
+    before = {str(p): _source_state(p) for p in list(sources) + ext_sources}
     listing_before = {str(p) for p in data.rglob('*')}
-    findings = _live_findings(data, names, uid)
+    ext_sidecars_before = _external_sidecars(ext_sources)
+    findings = _live_findings(data, names, uid, locations, external)
     work.mkdir(mode=0o700)
     os.chmod(work, 0o700)
     report = {'kind': 'preflight_dryrun_v1', 'paper_only': True, 'execution_status': 'EXECUTION_UNVERIFIED',
               'live_readiness': False, 'workdir': str(work), 'kept': bool(args.keep),
               'isolation': 'MOUNT_NAMESPACE' if prefix else 'NONE',
+              'external_stores': {k: str(v) for k, v in sorted(external.items())},
               'expected_owner': {'uid': uid, 'source': owner_source}}
     try:
         (work / 'tmp').mkdir(mode=0o700)
         copy_started = time.monotonic()
-        copies = _copy(data, work, sources)
+        copies = _copy(data, work, sources) + _copy_external(work, external)
         report['copy'] = {'files': copies, 'seconds': round(time.monotonic() - copy_started, 3)}
         local_config = work / 'config.json'
         fd = os.open(local_config, os.O_CREAT | os.O_EXCL | os.O_WRONLY, 0o600)
         with os.fdopen(fd, 'wb') as stream:
             stream.write(config.read_bytes())
         root = data if prefix else work
-        paths = {k: str(root / v) for k, v in {'research': names['research_db'], 'evidence': names['evidence_db'],
-                 'pacing': names['pacing_db'], 'discovery': names['discovery_db'], 'journal': names['journal'],
-                 'ledger': names['ledger']}.items()}
+
+        def child_path(key):
+            """Inside a namespace the child sees every store at its real absolute path (bound to the copy)."""
+            if key in external:
+                return str(external[key] if prefix else _mirror(work, external[key]))
+            return str(root / names[key])
+        paths = {short: child_path(key) for short, key in (
+            ('research', 'research_db'), ('evidence', 'evidence_db'), ('pacing', 'pacing_db'),
+            ('discovery', 'discovery_db'), ('journal', 'journal'), ('ledger', 'ledger'))}
         paths['config'] = str(local_config)
         lock = work / names['research_db'].parent / 'paper-scheduler.lock'
         fd = os.open(lock, os.O_CREAT | os.O_EXCL | os.O_WRONLY, 0o600)
@@ -531,15 +620,19 @@ def run(args):
                'TMPDIR': str(work / 'tmp'), 'PYTHONDONTWRITEBYTECODE': '1',
                'DESK_PROVIDER_PACING_DB': paths['pacing'],
                'DESK_PAPER_SCHEDULER_IDENTITY': f'{info.st_dev}:{info.st_ino}'}
-        spec = {'allowed_roots': [str(work)] + ([str(data)] if prefix else []), 'release': str(release), 'paths': paths, 'prefix': RESULT_PREFIX,
+        mounts = _mount_points(ext_sources) if prefix else []
+        spec = {'allowed_roots': [str(work)] + ([str(data)] + [str(m) for m in mounts] if prefix else []), 'release': str(release), 'paths': paths, 'prefix': RESULT_PREFIX,
                 'skipped_context_fields': list(SKIPPED_CONTEXT_FIELDS),
                 'dispatch': {'taker': args.taker, 'amount_raw': args.amount_raw, 'pool_fee_bps': args.pool_fee_bps}}
         child_started = time.monotonic()
         try:
             command = [args.python, '-I', '-B', '-c', CHILD, json.dumps(spec)]
             if prefix:
-                command = prefix + ['sh', '-c', 'mount --bind "$1" "$2" && shift 2 && exec "$@"', 'sh',
-                                    str(work), str(data)] + command
+                binds = [str(work), str(data)]
+                for mount in mounts:
+                    binds += [str(work / EXTERNAL_DIR / str(mount).lstrip('/')), str(mount)]
+                command = prefix + ['sh', '-c', 'while [ "$1" != -- ]; do mount --bind "$1" "$2" || exit 1; shift 2; done; '
+                                    'shift; exec "$@"', 'sh'] + binds + ['--'] + command
             proc = subprocess.run(command, cwd=release, env=env, capture_output=True, text=True,
                                   timeout=args.timeout, stdin=subprocess.DEVNULL)
         except subprocess.TimeoutExpired:
@@ -575,10 +668,11 @@ def run(args):
         if not args.keep:
             shutil.rmtree(work, ignore_errors=True)
             report['workdir_removed'] = not work.exists()
-    after = {str(p): _source_state(p) for p in sources}
+    after = {str(p): _source_state(p) for p in list(sources) + ext_sources}
     report['live_sources_unchanged'] = before == after
     created = sorted(str(Path(x).relative_to(data)) for x in {str(p) for p in data.rglob('*')} - listing_before)
     sidecars = [x for x in created if x.endswith(SIDECAR_SUFFIXES)]
+    sidecars += sorted(_external_sidecars(ext_sources) - ext_sidecars_before)
     report['live_sidecars_created'] = sidecars
     report['live_files_created'] = [x for x in created if x not in sidecars]
     report['live_permission_findings'] = findings
@@ -596,7 +690,7 @@ def run(args):
 def main(argv=None):
     p = argparse.ArgumentParser(description=__doc__, allow_abbrev=False)
     p.add_argument('--data', required=True)
-    p.add_argument('--ledger', required=True, help='ledger file name relative to --data')
+    p.add_argument('--ledger', required=True, help='ledger file name relative to --data, or an absolute path (inside or outside --data)')
     p.add_argument('--config', required=True)
     p.add_argument('--release-dir', required=True)
     p.add_argument('--workdir', required=True)
@@ -605,8 +699,10 @@ def main(argv=None):
                    help='skip the private mount namespace (stores binding absolute paths will fail closed)')
     p.add_argument('--research-db', default='research.sqlite')
     p.add_argument('--evidence-db', default='evidence.sqlite')
-    p.add_argument('--pacing-db', default='provider-pacing.sqlite')
-    p.add_argument('--discovery-db', default='discovery/continuous.sqlite')
+    p.add_argument('--pacing-db', default='provider-pacing.sqlite',
+                   help='relative to --data, or the absolute path of the SHARED pacing store outside it (copied, never opened live by the child)')
+    p.add_argument('--discovery-db', default='discovery/continuous.sqlite',
+                   help='relative to --data, or the absolute path of the SHARED discovery store outside it')
     p.add_argument('--journal', default='entry-dispatch/dispatch.sqlite')
     p.add_argument('--expect-owner', help='user name or numeric uid that must own the live store files '
                    '(default: the owner of --data; never the uid this tool runs as)')
