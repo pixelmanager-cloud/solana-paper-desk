@@ -77,6 +77,37 @@ class HistoryFirstTransientFault(unittest.TestCase):
         self.assertEqual(null_passes, 0)
 
 
+    def normal_blocker(self, code, charges):
+        """T22F addendum: the history_first path (paper_history_preparation.prepare) inserts its NULL pass before the
+        history read. The NORMAL blockers raised there (page limit, request-budget exhaustion) must retire it as
+        FAILED_CHARGED like any other charged failure, and the exception still propagates."""
+        h = self.h
+        h.row['provenance'] = 'PUBLIC_MAINNET_CAPTURE_NOT_TRADING_EVIDENCE'
+        h.save()
+
+        def blocked(progress, item, *args):
+            for _ in range(charges):
+                if not progress.reserve(item.target.scan_id):
+                    break
+            raise cycle.CycleBlocked(code)
+        with patch.object(history_first_fixture.tool.cli, '_credentials'), \
+                patch.object(history_first_fixture.tool.cycle, '_history', side_effect=blocked):
+            with self.assertRaises(cycle.CycleBlocked) as caught:
+                h.invoke(live=True, systemd_credentials=True)
+        self.assertEqual(str(caught.exception), code)
+        store = h.f.f.progress.store
+        with closing(store.connect()) as c:
+            self.assertEqual(c.execute('SELECT count(*) FROM paper_observation_passes WHERE outcome_hash IS NULL').fetchone()[0], 0)
+            self.assertEqual([r[0] for r in c.execute('SELECT status FROM paper_pass_closures')], ['FAILED_CHARGED'])
+        self.assertIsNone(terminal.gate(store, h.f.f.jobs.path, ()))
+
+    def test_history_page_limit_in_preparation_does_not_leave_a_null_pass(self):
+        self.normal_blocker('FEATURE_HISTORY_PAGE_LIMIT', 8)
+
+    def test_request_budget_exhaustion_in_preparation_does_not_leave_a_null_pass(self):
+        self.normal_blocker('INVESTIGATION_REQUEST_BUDGET_EXHAUSTED', 18)
+
+
 class PreparationRejectionReplayGrowth(unittest.TestCase):
     """Every retained NO_ENTRY preparation rejection is fully replayed by every terminal.gate."""
 

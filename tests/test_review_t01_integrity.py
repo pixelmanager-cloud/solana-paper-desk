@@ -52,7 +52,6 @@ class NestedIntegrityBlockersTests(unittest.TestCase):
         real = [d['blockers'] for d in self.t.result['diagnostics'] if 'blockers' in d][0]
         self.check(real)
 
-    @unittest.expectedFailure   # DEFECT R1 (HIGH): integrity/contradiction blockers validate as a normal rejection
     def test_integrity_blockers_nested_in_producer_diagnostics_must_not_validate_as_normal(self):
         accepted = []
         for code in INTEGRITY_BLOCKERS:
@@ -63,7 +62,6 @@ class NestedIntegrityBlockersTests(unittest.TestCase):
                 pass
         self.assertEqual(accepted, [], 'category (b) integrity blockers accepted as category (a)')
 
-    @unittest.expectedFailure   # DEFECT R1 end-to-end: the NULL latch is cleared for corrupt supplied evidence
     def test_publish_must_leave_the_null_latch_for_integrity_blockers(self):
         t = self.t
         store = t.store

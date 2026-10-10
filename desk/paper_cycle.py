@@ -740,9 +740,11 @@ def run_once(research_db, evidence_db, ledger_db, cfg, *, position_targets=(), c
                             try:
                                 no_entry.publish(store,progress,pass_id=identity,intent_hash=key,result=result,ledger=ledger_before)
                                 return {**result,'evidence_hash':outcome}
-                            except (ValueError,TypeError,KeyError,OSError,sqlite3.Error):
-                                # Unproved rejection keeps the NULL latch (fail closed).
-                                pass
+                            except (ValueError,TypeError,KeyError,OSError,sqlite3.Error) as refused:
+                                # Unproved rejection is not retired as a normal no-entry (fail closed). T22F R3: the
+                                # refusal is typed and visible (log + <store>.publish-refused.jsonl) instead of silent.
+                                no_entry.record_refusal(store,pass_id=identity,scan_id=next(iter(intent['admissions']),None),
+                                                        blocker=result['blockers'][0],error=refused,at=wall_clock())
                     if result['status']=='COMPLETE' or (budget.attempted==0 and budget.monitoring_attempted==0 and all(
                             progress.admission(scan)==admission for scan,admission in intent['admissions'].items())):
                         with store.connect() as c:c.execute('UPDATE paper_observation_passes SET outcome_hash=? WHERE id=?',(outcome,identity))

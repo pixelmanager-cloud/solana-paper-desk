@@ -12,12 +12,15 @@ prefix is anchored, and no entry, retry, counter reset or waiver is created.
 Caller owns research -> evidence -> ledger locks.
 """
 from contextlib import closing, ExitStack
+import json
+import logging
+import os
 from pathlib import Path
 import sqlite3
 from . import paper_terminal_reconciliation as terminal, runtime_compatibility as runtime
 from . import paper_preparation_retirement as historical
 from .history_progress import HistoryProgress
-from .model import canonical, digest
+from .model import BOOST_VOLUME_FEATURE, OBSERVABLE_FORMULAS, canonical, digest
 
 TABLE = 'paper_cycle_no_entry'
 KIND = 'paper_cycle_no_entry_v1'
@@ -30,6 +33,35 @@ NORMAL = frozenset({
     'FEATURE_HISTORY_PAGE_LIMIT'})
 # Codes whose cause is not recoverable from retained originals stay category (b):
 # EVENT_READER_SIZE_LIMIT and QUOTE_DEMAND_LIMIT (the oversized event/demand plan is not retained).
+# Inner vocabulary of MARKET_PRODUCER_BLOCKED (desk/paper_market_adapter.py). paper_cycle.fulfill_quotes collapses every
+# adapter blocker into that one top-level code, so the top-level code alone cannot tell an empty/stale window (a
+# deterministic outcome of verified reads) from corrupt, contradictory or unbound supplied evidence. Only this
+# positive list is category (a); any other retained producer blocker leaves the pass NULL (fail closed).
+WINDOW_BLOCKER_PREFIXES = ('MISSING_WINDOW_MEASUREMENT:', 'STALE_WINDOW_MEASUREMENT:')
+WINDOW_MEASUREMENTS = frozenset(OBSERVABLE_FORMULAS) | {
+    'net_buy_ratio', 'unique_buyers_5m', 'volume_vs_liq', BOOST_VOLUME_FEATURE, 'drawdown_from_high'}
+# Integrity / contradiction / binding codes: never a normal rejection, even if an operator declares one as a hazard.
+PRODUCER_INTEGRITY = frozenset({
+    'COLLECTOR_TARGET_OBSERVATION_REQUIRED', 'COORDINATOR_TARGET_BINDING_MISMATCH', 'COLLECTOR_OBSERVATION_REJECTED',
+    'COLLECTOR_SOURCE_BINDING_OR_CONTENT_INVALID', 'BOUNDED_RAW_TRADE_SEQUENCE_REQUIRED',
+    'CAPTURED_HISTORY_WINDOW_STALE_OR_FUTURE', 'SOL_USD_SOURCE_OR_EXACT_BLOCK_TIME_MISSING',
+    'SOL_USD_TRUSTED_INPUT_INVALID', 'EXPLICIT_OBSERVABLE_SIGNAL_PROFILE_REQUIRED',
+    'EXPLICIT_PAPER_FEE_ASSUMPTION_REQUIRED', 'PAPER_EVENT_BYTE_LIMIT_EXCEEDED', 'EXPERIMENTAL_EVENT_CONTRACT_INVALID'})
+RESERVED_PREFIXES = WINDOW_BLOCKER_PREFIXES + ('SOL_USD:', 'ORIGINAL_', 'COLLECTOR_', 'COORDINATOR_')
+
+
+def producer_blocker_is_normal(code, declared_hazards=()):
+    """True only for a window-measurement blocker of a known measurement, or a hazard the operator declared."""
+    if type(code) is not str:
+        return False
+    for prefix in WINDOW_BLOCKER_PREFIXES:
+        if code.startswith(prefix):
+            return code[len(prefix):] in WINDOW_MEASUREMENTS
+    if code in PRODUCER_INTEGRITY or code.startswith(RESERVED_PREFIXES):
+        return False
+    return code in declared_hazards
+
+
 RESULT_FIELDS = {'kind', 'status', 'execution_status', 'live_readiness', 'attempted_requests', 'outcomes',
                  'events', 'blockers', 'budget', 'diagnostics', 'usd_evidence_refs', 'pass_id',
                  'intent_hash', 'attempt_refs', 'investigation_attempted_requests',
@@ -39,8 +71,77 @@ FIELDS = {'kind', 'version', 'status', 'execution_status', 'live_readiness', 'en
           'admission_after', 'charged', 'attempt_refs', 'ledger'}
 SQL = (f'CREATE TABLE {TABLE}(pass_id TEXT PRIMARY KEY,scan_id TEXT NOT NULL UNIQUE,'
        'intent_hash TEXT NOT NULL,outcome_hash TEXT NOT NULL)')
-GUARDS = {TABLE+'_insert': f"CREATE TRIGGER {TABLE}_insert BEFORE INSERT ON {TABLE} WHEN EXISTS(SELECT 1 FROM {TABLE} WHERE pass_id=NEW.pass_id OR scan_id=NEW.scan_id OR rowid=NEW.rowid) OR (SELECT count(*) FROM {TABLE})>={MAX_ROWS} BEGIN SELECT RAISE(ABORT,'Cycle no-entry immutable'); END"}
-GUARDS |= {TABLE+'_'+a.lower(): f"CREATE TRIGGER {TABLE}_{a.lower()} BEFORE {a} ON {TABLE} BEGIN SELECT RAISE(ABORT,'Cycle no-entry immutable'); END" for a in ('UPDATE', 'DELETE')}
+
+
+def _guards(limit):
+    guards = {TABLE+'_insert': f"CREATE TRIGGER {TABLE}_insert BEFORE INSERT ON {TABLE} WHEN EXISTS(SELECT 1 FROM {TABLE} WHERE pass_id=NEW.pass_id OR scan_id=NEW.scan_id OR rowid=NEW.rowid) OR (SELECT count(*) FROM {TABLE})>={limit} BEGIN SELECT RAISE(ABORT,'Cycle no-entry immutable'); END"}
+    guards |= {TABLE+'_'+a.lower(): f"CREATE TRIGGER {TABLE}_{a.lower()} BEFORE {a} ON {TABLE} BEGIN SELECT RAISE(ABORT,'Cycle no-entry immutable'); END" for a in ('UPDATE', 'DELETE')}
+    return guards
+
+
+GUARDS = _guards(MAX_ROWS)
+ROTATION_WARN_FRACTION = 0.8   # warn at 80% of MAX_ROWS so the operator rotates while flat, long before the hard stop
+WARNING_KIND = 'rotation_warning_v1'
+
+
+class RotationRequired(ValueError):
+    """The retired-rejection table is full. Only new no-entry publications stop; nothing else is latched."""
+
+
+REFUSAL_SUFFIX = '.publish-refused.jsonl'
+REFUSAL_KIND = 'publish_refused_v1'
+MAX_REFUSAL_BYTES = 1024 * 1024        # the log is append-only; past this it stops growing (logging continues)
+LOG = logging.getLogger(__name__)
+
+
+def refusal_path(store):
+    return str(store.path) + REFUSAL_SUFFIX
+
+
+def record_refusal(store, *, pass_id, scan_id, blocker, error, at):
+    """Make a swallowed publish() refusal visible: one typed JSON line beside the evidence store plus a log record.
+
+    Fail closed as before: the caller still leaves the pass unretired. This never raises (a monitoring aid must not
+    change the cycle outcome); a failure to write is logged instead. Secrets are not involved: only identifiers,
+    the exception class and a bounded message are kept.
+    """
+    row = {'kind': REFUSAL_KIND, 'at': at, 'pass_id': pass_id, 'scan_id': scan_id, 'blocker': blocker,
+           'reason': type(error).__name__, 'detail': str(error)[:200]}
+    LOG.warning('publish_refused pass=%s scan=%s blocker=%s reason=%s detail=%s',
+                pass_id, scan_id, blocker, row['reason'], row['detail'])
+    try:
+        line = (canonical(row) + '\n').encode()
+        fd = os.open(refusal_path(store), os.O_WRONLY | os.O_APPEND | os.O_CREAT, 0o640)
+        try:
+            if os.fstat(fd).st_size + len(line) <= MAX_REFUSAL_BYTES:
+                os.write(fd, line)
+                os.fsync(fd)
+            else:
+                LOG.error('publish_refused log full; rotate the store set (RUNBOOK rotation)')
+        finally:
+            os.close(fd)
+    except OSError as failure:
+        LOG.error('publish_refused row not written: %s', type(failure).__name__)
+    return row
+
+
+def read_refusals(store_path):
+    """Typed rows of the refusal log (oldest first); malformed lines are reported, never skipped silently."""
+    try:
+        with open(str(store_path) + REFUSAL_SUFFIX, 'rb') as handle:
+            raw = handle.read(MAX_REFUSAL_BYTES + 1)
+    except FileNotFoundError:
+        return []
+    out = []
+    for number, line in enumerate(raw.splitlines(), 1):
+        try:
+            row = json.loads(line)
+            if type(row) is not dict or row.get('kind') not in (REFUSAL_KIND, WARNING_KIND):
+                raise ValueError
+        except ValueError:
+            row = {'kind': REFUSAL_KIND, 'reason': 'MALFORMED_LINE', 'line': number}
+        out.append(row)
+    return out
 
 
 def ledger_snapshot(path):
@@ -64,30 +165,31 @@ def _anchor_holds(path, ledger):
                 and runtime._prefix(c, 'outcomes', min(ledger['outcomes'], ANCHOR_EVENTS)) == ledger['outcomes_hash'])
 
 
-def _index(store, scans):
-    """One bounded pass over retained attempt originals, keyed scan -> charge index."""
-    with closing(store.connect()) as c:
-        bad = c.execute("SELECT 1 FROM pages WHERE typeof(hash)!='text' OR length(CAST(hash AS BLOB))!=64 OR typeof(payload)!='blob' OR length(payload) NOT BETWEEN 1 AND ? OR typeof(raw_bytes)!='integer' OR CASE WHEN typeof(raw_bytes)='integer' THEN raw_bytes NOT BETWEEN 1 AND ? ELSE 1 END LIMIT 1",
-                        (terminal.MAX_PROOF_COMPRESSED_BYTES, terminal.MAX_PROOF_RAW_BYTES)).fetchone()
-        count, total, compressed = c.execute('SELECT count(*),COALESCE(sum(raw_bytes),0),COALESCE(sum(length(payload)),0) FROM pages').fetchone()
-        if bad or count > 4096 or total > 256*1024*1024 or compressed > 256*1024*1024:
-            raise ValueError('Cycle no-entry attempt inventory bound')
-        keys = [r[0] for r in c.execute('SELECT hash FROM pages ORDER BY hash')]
-    found = {scan: {} for scan in scans}
-    for key in keys:
+def _index(store, scan, refs):
+    """Charge index of ONE scan, built from its explicitly bound attempt refs.
+
+    Per-scan, O(refs): each ref is loaded by hash, so the cost does not depend on how many unrelated pages
+    the store holds (the former whole-store scan hard-latched every cycle above 4096 pages). Completeness is
+    not inferred from the store: the caller requires the refs to cover exactly the charged range
+    before+1..after with one attempt per charge, and the refs are hash-bound by the published row.
+    """
+    if type(refs) is not list or len(refs) > 18 or len(set(refs)) != len(refs) or not all(runtime._hash(k) for k in refs):
+        raise ValueError('Cycle no-entry attempt refs malformed')
+    found = {}
+    for key in refs:
         record = terminal._load(store, key)
-        if type(record) is not dict or record.get('kind') != 'paper_read_attempt_v1' or record.get('scan_id') not in found:
-            continue
+        if type(record) is not dict or record.get('kind') != 'paper_read_attempt_v1' or record.get('scan_id') != scan:
+            raise ValueError('Cycle no-entry attempt ref is not an attempt of this scan')
         used = record.get('requests_used')
         if type(used) is not int or not 1 <= used <= 18:
             raise ValueError('Cycle no-entry attempt charge malformed')
-        if used in found[record['scan_id']]:
+        if used in found:
             raise ValueError('Cycle no-entry attempt charge ambiguous')
-        found[record['scan_id']][used] = (key, record)
-    return found
+        found[used] = (key, record)
+    return {scan: found}
 
 
-def _check_result(result, blocker, scan, before, after):
+def _check_result(result, blocker, scan, before, after, hazards=()):
     if (type(result) is not dict or set(result) != RESULT_FIELDS or result['kind'] != 'paper_cycle_v1'
             or result['status'] != 'BLOCKED' or result['blockers'] != [blocker] or blocker not in NORMAL
             or result['execution_status'] != 'EXECUTION_UNVERIFIED' or result['live_readiness'] is not False
@@ -107,10 +209,19 @@ def _check_result(result, blocker, scan, before, after):
     observed = graduation[0]['graduation'].get('status') == 'OBSERVED_MIGRATION'
     if (blocker == 'RETAINED_MIGRATION_WITNESS_REQUIRED') == observed:
         raise ValueError('Blocker disagrees with graduation diagnostic')
+    if blocker == 'RETAINED_MIGRATION_WITNESS_REQUIRED' and graduation[0]['graduation'].get('blockers') != ['MIGRATION_WITNESS_ABSENT']:
+        # T22F R5: only the plain absence of a witness is a normal rejection. Conflicting timestamps, account-binding
+        # mismatches, regressing slot times and malformed raw transactions are contradictory evidence (category b).
+        raise ValueError('Only an absent migration witness is a normal rejection')
     if blocker == 'MARKET_PRODUCER_BLOCKED' and not any(
             type(d) is dict and d.get('scan_id') == scan and type(d.get('blockers')) is list and d['blockers']
             and all(type(x) is str for x in d['blockers']) for d in result['diagnostics']):
         raise ValueError('Producer blockers must be retained')
+    if blocker == 'MARKET_PRODUCER_BLOCKED' and any(
+            type(d) is dict and 'blockers' in d and not (
+                type(d['blockers']) is list and all(producer_blocker_is_normal(x, hazards) for x in d['blockers']))
+            for d in result['diagnostics']):
+        raise ValueError('Producer blockers outside the normal vocabulary')
 
 
 def _consistent(blocker, before, after, records):
@@ -123,7 +234,7 @@ def _consistent(blocker, before, after, records):
         raise ValueError('History page limit requires eight retained history pages')
 
 
-def _proof(store, progress, rec, index, *, publishing=False):
+def _proof(store, progress, rec, *, publishing=False):
     if (type(rec) is not dict or set(rec) != FIELDS or rec['kind'] != KIND or type(rec['version']) is not int
             or rec['version'] != 1 or rec['status'] != 'NO_ENTRY' or rec['execution_status'] != 'EXECUTION_UNVERIFIED'
             or rec['live_readiness'] is not False or rec['entry_authorized'] is not False
@@ -144,10 +255,16 @@ def _proof(store, progress, rec, index, *, publishing=False):
             or not before['requests_used'] < after['requests_used'] <= 18
             or rec['charged'] != after['requests_used']-before['requests_used']):
         raise ValueError('Cycle no-entry admission binding')
-    _check_result(result, rec['blocker'], scan, before['requests_used'], after['requests_used'])
+    declared = intent['targets'][0].get('known_hazards', ())
+    if type(declared) not in (list, tuple) or not all(type(x) is str for x in declared):
+        raise ValueError('Cycle no-entry declared hazards malformed')
+    _check_result(result, rec['blocker'], scan, before['requests_used'], after['requests_used'], tuple(declared))
     if result['pass_id'] != rec['pass_id'] or result['intent_hash'] != rec['intent_hash']:
         raise ValueError('Cycle no-entry result/pass binding')
-    # Complete, successful, unambiguous charged-attempt inventory.
+    # Complete, successful, unambiguous charged-attempt inventory (per-scan, from the bound refs).
+    if type(rec['attempt_refs']) is not list:
+        raise ValueError('Cycle no-entry attempt inventory mismatch')
+    index = _index(store, scan, rec['attempt_refs'])
     refs = []
     for n in range(before['requests_used']+1, after['requests_used']+1):
         if n not in index.get(scan, {}):
@@ -206,22 +323,31 @@ def publish(store, progress, *, pass_id, intent_hash, result, ledger):
     intent = terminal._load(store, intent_hash)
     scan = intent['targets'][0]['target']['scan_id']
     before = intent['admissions'][scan]; after = progress.admission(scan)
-    index = _index(store, {scan})
-    attempts = [index[scan][n][0] for n in range(before['requests_used']+1, after['requests_used']+1) if n in index[scan]]
+    # The refs the pass itself retained (charged read attempts plus USD evidence), ordered by charge index.
+    supplied = result.get('attempt_refs'); usd = result.get('usd_evidence_refs')
+    if type(supplied) is not list or type(usd) is not list:
+        raise ValueError('Cycle no-entry attempt refs required')
+    unique = list(dict.fromkeys(supplied+usd))
+    indexed = _index(store, scan, unique)[scan]
+    attempts = [indexed[n][0] for n in range(before['requests_used']+1, after['requests_used']+1) if n in indexed]
     rec = {'kind': KIND, 'version': 1, 'status': 'NO_ENTRY', 'execution_status': 'EXECUTION_UNVERIFIED',
            'live_readiness': False, 'entry_authorized': False, 'mode': 'single_candidate', 'pass_id': pass_id,
            'scan_id': scan, 'intent_hash': intent_hash, 'result_hash': result_hash, 'blocker': result['blockers'][0],
            'admission_before': before, 'admission_after': after, 'charged': after['requests_used']-before['requests_used'],
            'attempt_refs': attempts, 'ledger': {'path': intent['ledger'], **ledger}}
-    _proof(store, progress, rec, index, publishing=True)
+    _proof(store, progress, rec, publishing=True)
     key = store.save(rec)
     with closing(store.connect()) as c:
         c.execute('BEGIN IMMEDIATE')
         try:
-            _proof(store, progress, rec, _index(store, {scan}), publishing=True)
+            _proof(store, progress, rec, publishing=True)
             existing = rows(c)
             if any(row[0] == pass_id or row[1] == scan for row in existing):
                 raise ValueError('Cycle no-entry already bound')
+            if len(existing) >= MAX_ROWS:
+                # Hard stop. It refuses only THIS publication (the caller closes the pass FAILED_CHARGED, so no
+                # position or pass is left latched) and every retained row still replays: rotate while flat.
+                raise RotationRequired('Cycle no-entry table full (%d rows); rotate the store set when flat' % len(existing))
             if not existing:
                 c.execute(SQL)
                 for sql in GUARDS.values():
@@ -230,10 +356,28 @@ def publish(store, progress, *, pass_id, intent_hash, result, ledger):
             if c.execute('UPDATE paper_observation_passes SET outcome_hash=? WHERE id=? AND intent_hash=? AND outcome_hash IS NULL',
                          (key, pass_id, intent_hash)).rowcount != 1:
                 raise ValueError('Cycle no-entry pass publication changed')
-            rows(c); c.commit()
+            total = len(rows(c)); c.commit()
         except BaseException:
             c.rollback(); raise
+    if total >= int(MAX_ROWS * ROTATION_WARN_FRACTION):
+        warn_rotation(store, total)
     return key
+
+
+def warn_rotation(store, total):
+    """Typed, visible 80% capacity warning (log + the refusal log file the healthcheck reads)."""
+    LOG.warning('rotation_warning no_entry rows=%d of %d; rotate the store set while flat (RUNBOOK "Rotate when flat")',
+                total, MAX_ROWS)
+    try:
+        line = (canonical({'kind': WARNING_KIND, 'rows': total, 'limit': MAX_ROWS}) + '\n').encode()
+        fd = os.open(refusal_path(store), os.O_WRONLY | os.O_APPEND | os.O_CREAT, 0o640)
+        try:
+            if os.fstat(fd).st_size + len(line) <= MAX_REFUSAL_BYTES:
+                os.write(fd, line)
+        finally:
+            os.close(fd)
+    except OSError as failure:
+        LOG.error('rotation warning row not written: %s', type(failure).__name__)
 
 
 def gate(store, research, scan_ids, *, ledger_locked=None, review_source=None):
@@ -257,7 +401,6 @@ def gate(store, research, scan_ids, *, ledger_locked=None, review_source=None):
     if bound != set(retired):
         raise ValueError('Cycle no-entry inventory incomplete')
     if retired:
-        index = _index(store, {scan for _, scan, _, _ in retired})
         for identity, scan, intent_key, outcome_key in retired:
             rec = terminal._load(store, outcome_key)
             if (rec.get('pass_id'), rec.get('scan_id'), rec.get('intent_hash')) != (identity, scan, intent_key):
@@ -267,7 +410,7 @@ def gate(store, research, scan_ids, *, ledger_locked=None, review_source=None):
             with ExitStack() as locks:
                 if ledger_locked != str(path) and not locks.enter_context(_lock(str(path)+'.paper-cycle.lock')):
                     raise ValueError('Cycle no-entry ledger busy')
-                original = _proof(store, progress, rec, index)
+                original = _proof(store, progress, rec)
             if original['targets'][0]['target']['scan_id'] != scan:
                 raise ValueError('Cycle no-entry scan conflict')
     return 'REJECTED_SCAN_RETIRED' if any(row[1] in scan_ids for row in retired) else None
