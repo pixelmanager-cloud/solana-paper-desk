@@ -171,6 +171,34 @@ pass's final leg therefore rolls the day even with a full book, no candidate, or
 A single failed or skipped leg leaves its stale mark in place and the rollover stays deferred (fail closed). Key
 absent: the old behaviour, byte for byte.
 
+## Batched on-chain portfolio marks (T35, `paper_portfolio_mark_source_version: 1`)
+
+Decision (coordinator, 2026-10-11): do NOT relax the held-mark TTL. With N positions the executable (Jupiter sell quote)
+marks cannot all be 10 s old at an entry decision, so the entry path refreshes every position's **portfolio mark** with
+ONE `getMultipleAccounts` over the PumpSwap pool and both vaults of every open position (3N accounts, one slot context).
+
+* Config: `paper_portfolio_mark_source_version: 1`, `paper_portfolio_mark_pool_fee_bps` (decimal string, the pool fee
+  hypothesis, config-hash bound), the concurrent-entries flag, quote execution 1, paper mode. `paper_portfolio_mark_ttl_seconds`
+  is then NOT required and should stay absent: the 10 s price TTL applies to the marks. Absent flag: byte-identical behaviour.
+* Mark: constant-product value of the position's remaining quantity from the same-slot base/quote vault balances, net of
+  the pool fee hypothesis, the PumpSwap creator fee and virtual quote reserves (from the pool account), a Token-2022
+  transfer fee where the retained mint evidence shows one, the adverse slippage and the fixed fee. Model parity with
+  `tools/ops/held_watcher.implied_ratio` is a test. Vault addresses are derived (ATAs of the pool), never taken from the
+  response, and verified against the pool account's own fields; a position that fails verification keeps its stale mark.
+* Where it runs: (1) in the entry cycle before the engine plans, and again right after the quote reads (so the marks are
+  seconds old at the decision); (2) at the start of every held pass, as a positions-less monitoring cycle, before the exit
+  legs. Each refresh is one monitoring-allowance request for N positions (charged to the oldest-marked position's entry
+  scan), retained as original evidence, and applied as a ledger `portfolio_marks` event. Its own 5 s read bound is excluded
+  from the entry cycle's 10 s deadline so a refresh cannot starve the quote reads.
+* Use: **valuation only** (equity, exposure/daily checks, `STALE_PORTFOLIO`, day rollover). The marks live in separate
+  position keys (`portfolio_mark_value/at/source`); `mark_at`/`mark_value`, stop/trailing/take-profit and every SELL fill
+  still come from the executable quote path, and a marks event cannot cure a blocked exit or the stale-mark watchdog.
+  A partial sale drops the portfolio mark of the larger remainder.
+* Failure: a failed read is charged and leaves marks stale, so the entry ends as an ordinary `STALE_PORTFOLIO` reject, never
+  a latch. Caveat (existing monitoring design): a non-transient transport failure code (for example `RESPONSE_INVALID`,
+  `UNCLASSIFIED_ERROR`) latches the monitoring allowance for every read; connection resets, timeouts and 408/429/5xx do not.
+* Cost: 2 requests per entry with positions, 1 per held pass.
+
 ## Recommended activation
 
 1. Verify the first single-position cycle (entry, hold, exit, accounting, restart) with the flag off.
