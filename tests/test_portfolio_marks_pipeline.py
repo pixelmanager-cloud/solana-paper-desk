@@ -412,7 +412,8 @@ class FailureAndFlagTests(MarksPipeline):
         self.assertTrue(budget.portfolio_marks_version)
         valuation = {'method': 'getMultipleAccounts', 'params': [['k'] * 3, dict(pm.OPTIONS)]}
         self.assertTrue(budget._valuation_only(valuation))
-        for other in ({'method': 'getMultipleAccounts', 'params': [['k'] * 7, {'encoding': 'base64', 'commitment': 'confirmed', 'minContextSlot': 100}]},
+        for other in ({'method': 'getMultipleAccounts', 'params': [['k'] * 7, dict(pm.OPTIONS)]},     # right options, wrong key count
+                      {'method': 'getMultipleAccounts', 'params': [['k'] * 7, {'encoding': 'base64', 'commitment': 'confirmed', 'minContextSlot': 100}]},
                       {'method': 'getMultipleAccounts', 'params': [['k'] * 3, {**pm.OPTIONS, 'minContextSlot': 5}]},
                       {'method': 'getAccountInfo', 'params': [['k'] * 3, dict(pm.OPTIONS)]},
                       {'method': 'jupiter_probe', 'params': {}}):
