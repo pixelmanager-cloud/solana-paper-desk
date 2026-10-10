@@ -11,9 +11,10 @@ from tests.test_paper_read_sources import Response
 from tools import paper_entry_dispatcher as dispatcher
 
 
-def multisig_close(raw):
+def multisig_close(raw,*,malformed=False):
     value=copy.deepcopy(raw);value['transaction']['signatures']=[base58(bytes([87])*64)]
     value['transaction']['message']['instructions']=[{'programId':'TokenkegQfeZyiNwAJbNbGKPFXCWuBvf9Ss623VQ5DA','parsed':{'type':'closeAccount','info':{'account':base58(bytes([61])*32),'destination':base58(bytes([62])*32),'multisigOwner':base58(bytes([63])*32),'signers':[base58(bytes([64])*32)]}}}]
+    if malformed:value['transaction']['message']['instructions'][0]['parsed']['info']['account']='invalid-address'
     value['meta']['innerInstructions']=[]
     return value
 
@@ -25,7 +26,7 @@ class CapturedGapTests(unittest.TestCase):
         pages=[0]
         def wire(data):
             envelope=json.loads(data);pages[0]+=1
-            envelope['result']['data']=[self.f.raw,multisig_close(self.f.raw)] if pages[0]==1 else []
+            envelope['result']['data']=[self.f.raw,multisig_close(self.f.raw,malformed=True)] if pages[0]==1 else []
             envelope['result']['paginationToken']='remaining' if pages[0]==1 or incomplete else None
             return Response(canonical(envelope).encode())
         with patch.object(transport_fixture,'Response',side_effect=wire):return self.f.live()
@@ -43,14 +44,8 @@ class CapturedGapTests(unittest.TestCase):
     def test_repaired_decoder_cannot_restore_candidate_or_change_original_coverage(self):
         result=self.reject();store=self.f.f.progress.store
         with store.connect() as c:v=r.rows(c)[0]
-        original=self.f.f.progress.snapshot(v['history_id'])['coverage'];actual=__import__('desk.history',fromlist=['decode']).decode
-        def repaired(raw):
-            value=copy.deepcopy(raw)
-            for ix in value['transaction']['message']['instructions']:
-                info=ix.get('parsed',{}).get('info',{})
-                if 'multisigOwner' in info and 'owner' not in info:info['owner']=info['multisigOwner']
-            return actual(value)
-        with patch('desk.history.decode',side_effect=repaired):
+        original=self.f.f.progress.snapshot(v['history_id'])['coverage']
+        with patch('desk.history.decode',side_effect=AssertionError('discard proof never reinterprets failed rows')):
             r.proof(store,v)
             self.assertEqual(terminal.gate(store,self.f.f.jobs.path,(result['scan_id'],)),'REJECTED_SCAN_RETIRED')
         self.assertEqual(self.f.f.progress.snapshot(v['history_id'])['coverage'],original)
@@ -100,7 +95,13 @@ class HistoricalCapturedGapTests(unittest.TestCase):
             def open(self,request,*,timeout):
                 reads[0]+=1
                 return Response(canonical({'jsonrpc':'2.0','id':transport.RPC_ID,'result':{'data':[raw,multisig_close(raw)] if reads[0]==1 else [],'paginationToken':'last' if reads[0]==1 else None}}).encode())
-        with patch.object(transport,'build_opener',return_value=HTTP()),patch.dict('os.environ',{'HELIUS_API_KEY':'SYNTHETIC_ONLY'}):
+        import hashlib,types
+        from pathlib import Path
+        original_decoder=(Path(__file__).parent/'fixtures/decode_4d42b13.py.txt').read_bytes()
+        self.assertEqual(hashlib.sha256(original_decoder).hexdigest(),'d7a0a3c0c9a525b5c1e38a890540e715bf67cdff1f294ceead1503e6ef3ec93d')
+        archived=types.ModuleType('desk._captured_original_decoder_fixture');archived.__package__='desk'
+        exec(compile(original_decoder,'decode_4d42b13.py.txt','exec'),archived.__dict__)
+        with patch.object(transport,'build_opener',return_value=HTTP()),patch.dict('os.environ',{'HELIUS_API_KEY':'SYNTHETIC_ONLY'}),patch('desk.history.decode',archived.decode):
             retained=intake.intake(h.ctx['research_db'],h.ctx['evidence_db'],scan_id=scan,mint=mint,pool=pool,signature=hint['signature'],slot=hint['slot'],provenance=dispatcher.PROVENANCE)
         self.assertNotEqual(retained['status'],'RETAINED_MIGRATION_WITNESS');self.assertEqual(retained['requests_used'],6)
         backup=h.root/'captured-gap-before.sqlite'
