@@ -293,6 +293,27 @@ The main suspect is T23G's module-level fd registry `_HELD` (process-lifetime ho
 
 ---
 
+## T32I — Final deploy-flow fixes (from the T32H review vs the real VPS), composed with T36 — CRITICAL PATH
+STATUS: OPEN
+DEPENDS: none
+BASE: origin/cloud/T32H, then merge origin/cloud/T36 (approved by the coordinator)
+OWNS: docs/ops/RUNBOOK.md, tools/ops/cutover.py (seal parts), tools/ops/preflight_dryrun.py (live-findings mode rule only), tools/ops/pacing_policy.py (DEFAULT_WRITERS only), tests/test_ops_*.py
+AVOID: desk/**
+
+1. **(BLOCKER) Preflight vs the seal.** Step 6 fails after the step-4 seal: `preflight_dryrun._live_findings` flags any external store directory with `mode & 0o022`, and the sealed `$OLD`/`$OLD/discovery` are 1770 `root:solana-desk`, giving `LIVE_external_*_dir:MODE_1770`. Accept the sealed shape (root owner, group = service group, sticky bit, no other-bits) as safe. Add an e2e that runs the REAL `_live_findings` after a real seal; no stubbed preflight `run`.
+2. **(HIGH) Pacing schema upgrade.** The production pacing DB has no `pacing_reclaims` table, so T23F orphan recovery is inert. Add a RUNBOOK step next to 7a2 that runs `python -m desk.provider_pacing --upgrade` (check the exact CLI on the merged tree) with the same quiesce rule, `runuser -u solana-desk`, cwd `$REL`, and a one-way-door note. Test it in the e2e against a production-shaped pacing DB that includes the Kraken receipt.
+3. **T36 composition.**
+   - Keep ONE pacing-policy step: T32H's `### 7a2`. Drop T36's `## 6b` hunk.
+   - `DEFAULT_WRITERS` must include `desk-paper-monitor.*`, `desk-decisions.service`/`.timer`, `desk-backup.*` and `desk-healthcheck.*`, plus everything else that sets `DESK_PROVIDER_PACING_DB`. Derive the list from the rendered units, not by hand, and test that.
+4. **(MED) Seal the evidence files.** Seal the ~40 non-sqlite evidence files in `$OLD` (`acquisition-*.json`, `paper-target-*.json`, `*intake*.json`, `*.jsonl`) as well: default seal patterns include `*.json` and `*.jsonl`. Still NEVER seal lock files.
+5. **(LOW) Rotate manifest.** The rotate step uses a NEW seal manifest path (an existing one is refused).
+6. **(LOW) Rotate seal mode.** A rotate seal of `$NEW` gives 0550 (not 1770); `shared_dirs` must not always include `--root`.
+7. **(LOW) Test portability.** `SealArchiveTests` must compare gid against the parent directory's gid, not `os.getegid()`: on macOS, files under `/private/tmp` get gid 0.
+
+Run all `tests/test_ops_*.py` in ONE process (real exit code), with `TMPDIR` both under `/private/var/folders` and under `/private/tmp`.
+
+---
+
 ## T22G — Fix the coordinator review of T22 (MUST be reconciled with T25F and T22F) — CRITICAL PATH
 STATUS: OPEN
 DEPENDS: branch `cloud/T22F` has a `DONE T22F:` commit
