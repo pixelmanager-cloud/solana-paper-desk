@@ -6801,7 +6801,7 @@
     "next_claims": {
       "HISTORY-REPLAY-PERF-1": {
         "worker": "03",
-        "status": "09re-review finalglobalhook/locks",
+        "status": "Independent runtime and final test-only delta PASS; combined Linux and CI running",
         "design_review_worker": "07",
         "design_review_turn": "01a1239f-ac2a-74ed-ac9b-eb5a9b4efc30",
         "fresh_cycle_seconds": 10,
@@ -6811,24 +6811,30 @@
         "momentum_ttl_seconds": 15,
         "turn": "01a123ab-a120-7525-ac3b-2f33e2ded391",
         "pr": 189,
-        "head": "6b067927aef78bc283e20f341d51822963a181b7",
-        "review_turn": "01a123aa-7125-76a6-b0b6-1135b6d44fa0",
-        "review_status": "HOLD09 confirms extra-charge and missingtable; canonicalledgerlock forwardingrequired",
-        "scoped_tests": "55 Linux PASS89.417s frozenhead"
+        "head": "45da2f4130d8a575b3f8a5bd5d95b5054ef0b9c7",
+        "review_turn": "01a123ae-1983-7310-ac60-8b171901bf8d",
+        "review_status": "PASS independent 09; prior findings repaired",
+        "scoped_tests": "55 Linux PASS89.417s frozenhead",
+        "fixture_repair_assigned": true,
+        "fixture_repair_turn": "01a123be-4c28-7369-a9a2-a425eaa7eb74",
+        "fixture_review_turn": "01a123c1-2f39-76bb-bbab-fc8159003c23",
+        "adjacent_tests": "09 PASS 35 HTTP403/terminal tests18.232s; retain current wrapper imports",
+        "fixture_review_tests": "28 PASS6.326s"
       },
       "DISPATCH-PREPARATION-RETIREMENT-2": {
         "worker": "06",
-        "status": "07 scoped PASS; finalcombined andCIpending",
+        "status": "Independent runtime and final test-only delta PASS; combined Linux and exact-head CI running",
         "design_review_worker": "07",
         "design_review_turn": "01a1239c-a8c8-742a-b668-79edd4647c6a",
         "no_reset_or_replacement": true,
         "pr": 188,
-        "head": "7d8af35cbfd76e71aca3c004ab2f684a38f16444",
+        "head": "1a4e76c3f761ed80bd016a8384179e92825840e5",
         "turn": "01a12397-4d9f-759e-9746-d7c01df90cbd",
         "review_turn": "01a123aa-617d-7521-ab49-e672acdc2575",
         "finding": "HTTP403/no response mutation atcharge5 wrongly allowed retirement; require both intake witnesses binding",
         "source": "9462742d0af52c7408cd0cd6a81334219567e7b9165d12f65089be736ac4cc84",
-        "review_tests": "21 PASS23.098s plus403mutationreject"
+        "review_tests": "21 PASS23.098s plus403mutationreject",
+        "test_delta_review_turn": "01a123b8-90f1-7758-8cf2-4a17c0344255"
       },
       "CALL-ENVELOPE-1": {
         "worker": "09",
@@ -6847,7 +6853,7 @@
     "next_activation_review": {
       "worker": "09",
       "turn": "01a123a4-fcf7-711c-bbb8-e85efa01749d",
-      "status": "HOLD ordering and receipt-bearing backup identity; author repair active",
+      "status": "Independent scoped PASS after ordering, backup identity, first receipt and dispatcher-off repairs; not applied",
       "scripts": [
         "work/activate-dispatch-recovery-reviewed.py",
         "work/verify-dispatch-recovery-originals.py"
@@ -6868,23 +6874,93 @@
     },
     "next_combined": {
       "heads": {
-        "188": "7d8af35cbfd76e71aca3c004ab2f684a38f16444",
-        "189": "6b067927aef78bc283e20f341d51822963a181b7"
+        "188": "1a4e76c3f761ed80bd016a8384179e92825840e5",
+        "189": "45da2f4130d8a575b3f8a5bd5d95b5054ef0b9c7"
       },
       "merge_tree": "463d35ee68f97f65327053dda5e44a93acc342b4",
       "with_continuation_policy_tree": "9bc7852eb48048fcd1333be97078bdab29ffb88a",
       "source": "916dd80f82d13157fd961427450f754baf0b78b7988daee810de02816adc9432",
-      "status": "09 scopedreview thenfullLinuxpending",
+      "status": "PASS full combined Linux 2820 tests, zero skips; both component exact-head CI successful; integrating",
       "review_turn": "01a123ae-1983-7310-ac60-8b171901bf8d",
       "continuation_policy_review": "07 scopedPASS suppliedidentities turn01a123ae-9e09-7347-b6d9-af35390a3dbb",
       "mixed_journal_fixture_worker": "06",
-      "mixed_journal_fixture_turn": "01a123af-1a1c-742e-b6cc-84062e78c699"
+      "mixed_journal_fixture_turn": "01a123af-1a1c-742e-b6cc-84062e78c699",
+      "linux_service": "desk-dispatch-final-tests-174f9112.service",
+      "linux_test_directory": "/opt/solana-desk-tests/dispatch-final-174f9112",
+      "archive_hash": "f22ea70002841ba2af0f404b329057b5e75a203222a35d85a7aa1ba32413c300",
+      "same_journal_result": "PASS1probe1.676s, originalNULL/noresult/12charges retained, secondNO_ENTRY7charges, thirdselected; missingpartialresult/duplicatesreject;acceleratedpacingnotnativeacceptance",
+      "final_tree": "174f91129ced766cfdf6695cfaba1321f0fb5f4d",
+      "native_wholephase": {
+        "worker": "09",
+        "turn": "01a123b7-0840-7746-b56c-1c732c28d3a6",
+        "source": "916dd80f82d13157fd961427450f754baf0b78b7988daee810de02816adc9432",
+        "one_page_seconds": 10.745,
+        "two_page_seconds": 12.848,
+        "fresh_calls": 7,
+        "delayed_result": "STALE_MOMENTUM zero positions",
+        "provenance": "synthetic HTTP fixtures withnativeclocks;notproductionacceptance"
+      },
+      "final_raw_merge_tree": "96479fcc93b0a658d530fa722ceddaad4f8fde24",
+      "component_ci_runs": {
+        "188": [
+          38018401128,
+          38018397132
+        ],
+        "189": [
+          38018899232,
+          38018896167
+        ]
+      },
+      "linux_service_result": "SUCCESS exit0",
+      "ci_failure": {
+        "run": 38017761991,
+        "head": "6b067927aef78bc283e20f341d51822963a181b7",
+        "tests": 2799,
+        "errors": 28,
+        "seconds": 1027.477,
+        "module": "tests.test_paper_preparation_retirement",
+        "reason": "Historical producer fixture generated v2 instead of original v1 intent"
+      },
+      "component_ci_status": {
+        "188": {
+          "head": "1a4e76c3f761ed80bd016a8384179e92825840e5",
+          "runs": [
+            38018401128,
+            38018397132
+          ],
+          "result": "both SUCCESS",
+          "tests": 2809,
+          "seconds": 756.141
+        },
+        "189": {
+          "head": "45da2f4130d8a575b3f8a5bd5d95b5054ef0b9c7",
+          "runs": [
+            38018899232,
+            38018896167
+          ],
+          "result": "both SUCCESS",
+          "tests": 2799,
+          "seconds": 700.523
+        }
+      },
+      "linux_tests": 2820,
+      "linux_seconds": 1417.892,
+      "linux_skips": 0
     },
     "existing_preparation_outcomes_readonly": {
       "passes": 10,
       "nonnull_preparation_outcomes": 4,
       "invalid_references": 0,
       "requests": 0
+    },
+    "prospective_retirement_pin": {
+      "hash": "93a2ce4fe490119af1bb2bdf73bf29042f01cedbeae4eeec2a5aa1c95d88d8cd",
+      "status": "07 scopedPASS for policy inclusion; NOT APPLIED; strictfinalplanmatchrequired",
+      "source": "916dd80f82d13157fd961427450f754baf0b78b7988daee810de02816adc9432",
+      "script": "work/propose-dispatch-retirement-readonly.py",
+      "script_review_turn": "01a123b5-8363-7569-8fde-f37e2e118c55",
+      "strict_after_continuation_plan_match_required": true,
+      "review_turn": "01a123b6-a31a-7747-a40e-07bf16d2cd9b"
     }
   }
 }
