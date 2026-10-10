@@ -438,8 +438,11 @@ def gate(store,research,scan_ids,*,ledger_locked=None):
 
 def _gate(store,research,scan_ids,*,ledger_locked=None,review_source=None):
     """Private read-only predecessor validation for coordinator pin planning."""
+    from .paper_intake_uncaptured_retirement import gate as intake_gate
+    intake=intake_gate(store,research,scan_ids,ledger_locked=ledger_locked,review_source=review_source)
+    if intake is not None:return intake
     from .paper_migration_no_entry import gate as migration_gate
-    migration = migration_gate(store,research,scan_ids,ledger_locked=ledger_locked)
+    migration = migration_gate(store,research,scan_ids,ledger_locked=ledger_locked,review_source=review_source)
     if migration is not None:
         return migration
     from .history_preparation_rejection import gate as preparation_rejection_gate
