@@ -55,8 +55,20 @@ class MigrationNoEntryTests(unittest.TestCase):
         self.assertEqual(self.f.count('results'),0)
     def test_legacy_sentinel_is_not_an_automatic_recovery(self):
         self.quote('11111111111111111111111111111111')
-        with self.assertRaises(ValueError):self.f.live()
+        actual_intake=tool.migration.intake
+        def captured_then_rejection(*args,**kwargs):
+            # Capture with the current parser, then explicitly exercise the
+            # rejection publisher. Corrected legacy intake is not a rejection.
+            actual_intake(*args,**kwargs)
+            with closing(sqlite3.connect(self.f.journal)) as c:
+                identity=c.execute('SELECT id FROM intents').fetchone()[0]
+                return rejection.publish(c,self.f.ctx,identity,kwargs['scan_id'])
+        with patch.object(tool.migration,'intake',side_effect=captured_then_rejection):
+            with self.assertRaises(ValueError):self.f.live()
+        self.assertEqual(self.f.count('intents'),1)
         self.assertEqual(self.f.count('results'),0)
+        with closing(self.f.f.progress.store.connect()) as c:
+            self.assertIsNone(c.execute('SELECT name FROM sqlite_master WHERE name=?',(rejection.TABLE,)).fetchone())
     def test_dropped_table_and_partial_publication_block(self):
         result=self.reject();store=self.f.f.progress.store
         with closing(store.connect()) as c:c.execute('DROP TABLE '+rejection.TABLE)

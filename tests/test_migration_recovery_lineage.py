@@ -15,6 +15,7 @@ from desk import paper_migration_no_entry as recovery, runtime_compatibility as 
 from desk import runtime_continuation as continuation, runtime_extensions as extension
 from desk import ownership_acquisition as acquisition, migration_slot_intake as intake, paper_read_sources as transport
 from desk import graduation_witness as graduation, paper_cycle as cycle, monitoring_budget as monitoring
+from desk import _migration_decline_legacy_v1 as original_extractor
 from desk.model import canonical,digest
 from desk.security import base58
 from desk.programs import unbase58
@@ -92,7 +93,9 @@ class MigrationRecoveryLineageTests(unittest.TestCase):
                 def open(self,request,*,timeout):
                     reads[0]+=1
                     return Response(canonical({'jsonrpc':'2.0','id':transport.RPC_ID,'result':{'data':[raw] if reads[0]==1 else [],'paginationToken':'last' if reads[0]==1 else None}}).encode())
-            with patch.object(transport,'build_opener',return_value=Opener()),patch.dict('os.environ',{'HELIUS_API_KEY':'SYNTHETIC_ONLY'}):
+            # Only historical producer intake uses its frozen original extractor.
+            # Current prospective rejection and certificate proof stay unpatched.
+            with patch.object(intake,'extract_graduation',original_extractor.extract_graduation),patch.object(transport,'build_opener',return_value=Opener()),patch.dict('os.environ',{'HELIUS_API_KEY':'SYNTHETIC_ONLY'}):
                 declined=intake.intake(f.f.f.jobs.path,f.f.f.progress.store.path,scan_id=scan,mint=mint,pool=pool,signature=raw['transaction']['signatures'][0],slot=raw['slot'],provenance=dispatcher.PROVENANCE)
             self.assertNotEqual(declined['status'],'RETAINED_MIGRATION_WITNESS')
             self.assertEqual(f.f.f.progress.admission(scan)['requests_used'],6)
