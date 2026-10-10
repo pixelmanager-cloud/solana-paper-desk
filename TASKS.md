@@ -1410,3 +1410,18 @@ Research and optional services must never degrade trading:
 - Add `CPUQuota=100%` (one core), `Nice=10`, `IOSchedulingClass=idle` (or best-effort with priority 7), `CPUWeight=20`, `IOWeight=20`, and a sane `MemoryMax`/`TasksMax` to `desk-counterfactual.service`, the fill-realism worker, and any other research unit. The held watcher is trading-relevant (it triggers exits fast), so give it NORMAL priority but a `MemoryMax`/`TasksMax`.
 - Extend the unit-invariant test so every research unit has these limits and no trading unit gets throttled.
 - Document in docs/ops/OPERATIONS_24x7.md how to read per-unit CPU and memory (`systemd-cgtop`, `systemctl show -p CPUUsageNSec,MemoryCurrent`), and add a healthcheck WARN when a research unit's CPU over the last interval exceeds its quota for 3 consecutive checks.
+
+---
+
+## T37F — USD valuation v2 follow-ups (from the T37 review)
+STATUS: OPEN
+DEPENDS: branch `cloud/T22G` has a `DONE T22G:` commit (its FAILED_CHARGED closure is part of the fix)
+BASE: origin/cloud/T37, then merge origin/cloud/T22G
+OWNS: desk/usd_valuation.py, desk/sol_usd_observation.py, desk/regime_producer.py (source selection only), desk/model.py (valuation rebuild only), tests/test_usd_valuation*.py
+AVOID: desk/paper_pass_closure.py (T22G owns it; only consume it)
+
+1. **(HIGH) A provider failure must not latch.** Today a failed Jupiter or Kraken USD attempt inside an otherwise-normal no-entry pass leaves a NULL pass, because T01's proof refuses failed charged attempts (`paper_cycle_no_entry.py` ~:154-157). The pass must end terminal instead: either the T22G FAILED_CHARGED closure accepts it (an allow-listed transport/429/5xx cause), or the no-entry proof accepts failed USD attempts that the saved v2 valuation cites. Flip the two committed tests that assert the latch (`tests/test_usd_valuation_cycle.py` ~:163, ~:240) to assert a terminal, non-latching outcome, with charges retained.
+2. **(MED) Regime producer source.** The regime producer reads only Kraken records (`regime_producer.py` ~:68-80). Make it read the SOL/USD observation the v2 valuation actually used (Jupiter or Kraken, recorded in the evidence). Then implement the spec's Kraken schedule (fallback, or a 5-min cross-check) without starving regime evidence. If a cross-check fails, regime uses the primary.
+3. **(MED) Byte identity.** Add a committed flag-absent byte-identity test (ledger, events and outcomes vs a v1 run).
+4. **(LOW) Divergence limit.** `model.py` ~:220-224 must rebuild using the CONFIGURED `divergence_max_fraction` and refuse an event whose stored value differs.
+5. **(LOW) Persistent auth failures.** A persistent Jupiter 401/403 under v2 must raise a health WARNING (it must not stay silent while falling back). The parser refuses responses with extra mints. Move `ExampleConfigTests` above the `unittest.main()` guard.
