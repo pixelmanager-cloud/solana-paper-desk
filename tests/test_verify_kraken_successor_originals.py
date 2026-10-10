@@ -34,7 +34,9 @@ class OriginalsTests(unittest.TestCase):
             else:
                 with closing(sqlite3.connect(old)) as c:
                     c.execute('CREATE TABLE originals(id TEXT,payload BLOB,amount)');c.execute("INSERT INTO originals VALUES('id',x'0012',5)");c.commit()
+            old.chmod(0o600)
             target=self.live/name;target.parent.mkdir(exist_ok=True);shutil.copyfile(old,target)
+            target.chmod(0o600)
         self.source=helper.runtime.implementation_hash()
         self.pacing=migration.review_plan(self.live/'provider-pacing.sqlite')
         policy=root/'pacing.json';policy.write_text(canonical({'version':1,'pins':[self.pacing]}))
