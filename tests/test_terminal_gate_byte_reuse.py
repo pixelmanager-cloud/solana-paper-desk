@@ -61,7 +61,7 @@ class GateReuseTests(unittest.TestCase):
     def test_classification_budget_fallback_and_conflicting_outcome(self):
         from desk import paper_preparation_retirement as preparation
         self.store.save({'kind':'history_first_paper_preparation_outcome_v1','intent_hash':'b'*64})
-        with patch.object(t,'MAX_GATE_CACHE_BYTES',1):
+        with patch.object(t,'MAX_GATE_CLASSIFICATION_BYTES',1):
             def body():
                 self.assertEqual(t._classification(self.store,self.key),('SYNTHETIC_ONLY',None,None))
                 self.assertEqual(t._GATE_BYTES.get()['classification_bytes'],0)
