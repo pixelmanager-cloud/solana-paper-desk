@@ -964,14 +964,14 @@ class OpenModeAndServiceTests(CounterfactualBase):
         self.assertEqual(v['Environment'], ['DESK_PROVIDER_PACING_DB=/var/lib/solana-desk/provider-pacing.sqlite'])
         self.assertIn('--ledger', v['ExecStartPre'][0]); self.assertIn('--decisions-db', v['ExecStartPre'][0])
         self.assertEqual(v['Type'], ['oneshot'])
-        # Coordinator rule (T09 F11/T21): every timer declares [Install]; nothing enables it automatically.
-        self.assertIn('\n[Install]', text)
+        self.assertNotIn('\n[Install]', text)   # the oneshot service is driven by its timer
         self.assertIn('provider-pacing', text)
 
     def test_timer_template_is_the_restart_policy(self):
         text, v = self.unit('desk-counterfactual.timer')
         self.assertEqual((v['Unit'], v['OnUnitInactiveSec'], v['Persistent']), (['desk-counterfactual.service'], ['60s'], ['false']))
-        self.assertNotIn('\n[Install]', text)
+        # Coordinator rule (T09 F11/T21): every timer declares [Install]; nothing enables it automatically.
+        self.assertIn('\n[Install]', text)
 
 
 
