@@ -18,7 +18,7 @@ import sqlite3
 import time
 import uuid
 
-from . import engine, quote_execution as qe, paper_concurrency as concurrency
+from . import engine, quote_execution as qe, paper_concurrency as concurrency, regime
 from .graduation_witness import extract_graduation
 from .ledger import Ledger
 from .model import canonical, digest, validate_event
@@ -71,6 +71,7 @@ def _config(cfg):
             or cfg['paper_signal_policy_version'] != 3
             or 'experimental_policy_version' in cfg or not qe.config(cfg)):
         raise ValueError('Explicit signal profile3 and quote execution1 required; no legacy policy field')
+    if regime.enabled(cfg):regime.policy(cfg)  # invalid flag/policy refused at load, not at first entry
 
 
 @contextmanager
@@ -641,6 +642,13 @@ def run_once(research_db, evidence_db, ledger_db, cfg, *, position_targets=(), c
                                 diagnostic = build_market_event(collected,context=context,load_evidence=store.load,
                                     raw_trades=raw,history_pages=pages,usd_response=response,
                                     usd_bounds=usd_bounds,usd_attempt=usd_attempt,strategy_profile=OBSERVABLE_FLOW_CHURN_CONCENTRATION_V1)
+                            if not is_position and diagnostic['event'] is not None and regime.enabled(cfg):
+                                from . import regime_producer
+                                event=diagnostic['event']
+                                found=regime_producer.evidence(research,evidence,event['ts'],regime.policy(cfg)['ttl_seconds'])
+                                if found is not None:
+                                    event['regime']=found
+                                    event['event_id']='paper-market:'+digest({k:v for k,v in event.items() if k!='event_id'})
                             if diagnostic['event'] is None:
                                 result['diagnostics'].append({'scan_id':target.scan_id,'blockers':diagnostic['blockers']})
                             return diagnostic['event']

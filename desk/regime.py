@@ -55,8 +55,8 @@ def _dec(value, what):
         number = Decimal(value)
     except ArithmeticError:
         raise ValueError(f"{what} must be a decimal string") from None
-    if not number.is_finite():
-        raise ValueError(f"{what} must be finite")
+    if not number.is_finite() or abs(number) > Decimal(10) ** 12:
+        raise ValueError(f"{what} must be finite and bounded")
     return number
 
 
@@ -133,7 +133,10 @@ def gate(event, cfg, state):
         validate_record(record, event["ts"], pol)
     except ValueError as error:
         return ["REGIME_STALE" if str(error) == "STALE" else "REGIME_EVIDENCE_INVALID"], ONE, None
-    value = score(record, pol)
+    try:
+        value = score(record, pol)
+    except ArithmeticError:
+        return ["REGIME_EVIDENCE_INVALID"], ONE, None
     previous = state.get("regime_state", NORMAL)
     current = next_state(previous, value, pol)
     state["regime_state"] = current
