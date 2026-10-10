@@ -27,7 +27,7 @@ _SOURCE = _SOURCE.replace(_KRAKEN_LINE, """                outer.kraken_calls=ge
                 if getattr(outer,'kraken_fail',False):raise ConnectionResetError('fixture: kraken down')
                 wire=('{"error":[],"result":{"SOLUSD":[["'+getattr(outer,'kraken_price','100.00000')+'","1.00000",'+str(outer.f.at-1)+'.25,"s","l","",123]],"last":"123000000000"}}').encode()""")
 _SOURCE = _SOURCE.replace(_JUPITER_LINE, """                outer.jupiter_calls=getattr(outer,'jupiter_calls',0)+1
-                if getattr(outer,'jupiter_fail',False):raise ConnectionResetError('fixture: jupiter down')
+                if getattr(outer,'jupiter_fail',False):raise getattr(outer,'jupiter_exc',ConnectionResetError)('fixture: jupiter down')
                 wire=getattr(outer,'jupiter_wire',None) or canonical({SOL:{'usdPrice':getattr(outer,'jupiter_price',100),'blockId':100,'decimals':9}}).encode()""")
 _NAMESPACE = dict(vars(base))
 exec(_SOURCE, _NAMESPACE)
@@ -218,6 +218,16 @@ class HeldAndExitTests(V2Base):
         self.assertEqual((self.h_calls('jupiter'), self.h_calls('kraken')), (1, 1))
         exits = [e for e in self.events() if e['kind'] == 'quote_exit']
         self.assertEqual((exits[-1]['paper_usd_valuation']['selection'], exits[-1]['paper_usd_valuation']['selected_source']), ('FALLBACK', 'KRAKEN'))
+
+    def test_non_transient_primary_failure_does_not_latch_monitoring_under_v2(self):
+        allowance = self.enter()
+        self.h.jupiter_fail = True
+        self.h.jupiter_exc = OSError                                               # UNCLASSIFIED_ERROR: would latch a Kraken failure
+        self.h.sell_output = 30_000_000
+        result = self.run_cycle(positions=(self.held_item(),), candidates=(), monitoring=True)
+        self.assertEqual(result['status'], 'COMPLETE', result)                     # Kraken answered the same pass
+        with self.h.f.progress.store.connect() as c:
+            self.assertIsNone(c.execute('SELECT blocked FROM paper_monitoring_budget WHERE id=1').fetchone()[0])
 
     def test_exit_with_no_usable_valuation_is_a_blocked_exit_not_a_latch(self):
         self.enter()
