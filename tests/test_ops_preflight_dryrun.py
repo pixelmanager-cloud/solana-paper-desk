@@ -724,9 +724,9 @@ def fresh_dispatcher_class(external_ledger=False):
 
 
 FRESH_NO_NAMESPACE_TESTS = {'test_without_namespace_external_copies_are_mirrored_and_live_stores_untouched',
-                            'test_mount_points_collapse_nested_directories',
-                            'test_external_path_validation_refuses_aliases_and_non_regular_files',
-                            'test_external_directory_containing_the_data_root_is_refused'}
+                            'test_mount_points_collapse_nested_directories'}
+# The two external-path refusal tests reach their checks only after the namespace probe, so they need unshare
+# (they run on Linux/CI; on macOS run() refuses earlier with "Private mount namespace unavailable").
 
 
 class FreshLayoutBase(unittest.TestCase):
