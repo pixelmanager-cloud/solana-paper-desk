@@ -800,3 +800,28 @@ Tests:
 - restart idempotency;
 - the off-path byte identity;
 - the report's known answers.
+
+---
+
+## T16F — Make concurrent multi-position actually work (from the T16 review)
+STATUS: OPEN
+DEPENDS: none
+BASE: integration/r1 (T16 is merged there, with the flag off and behaviour identical)
+OWNS: the T16 files (tools/paper_scheduler.py, tools/paper_entry_dispatcher.py, desk/paper_concurrency.py, desk/paper_monitor_service.py, the held-mint gate in desk/paper_cycle.py), tests/test_paper_concurrency.py, docs/MULTI_POSITION.md, deploy/fresh/desk-paper-held-cycle.service (the `--wall-seconds` arg only)
+AVOID: T22's reconciliation work; if you must touch the same paper_cycle.py lines as T22 (`origin/cloud/T22`), keep the change minimal and isolated
+
+With the flag ON, T16 does not work. Fix each item with a test that runs the REAL pipeline timing (no manual mark refresh in the test):
+1. **No concurrent entry can ever fill.**
+   - Cause: the dispatcher writes `position_targets: []` for entry cycles (`paper_entry_dispatcher.py` ~:139/:703), so held marks are never refreshed. The engine then rejects with STALE_PORTFOLIO (marks older than 10s, `engine.py` ~:406) after history prep (≤18s), a 2s sleep and the quote (~8s), with the investigation requests already charged.
+   - Fix: run the investigation first, then refresh ALL held marks in the same cycle immediately before the entry decision (charged to monitoring, within the 10s freshness).
+   - The pre-I/O estimate in `paper_concurrency.py` (`ENTRY_SECONDS=8.0`) must include preparation, so doomed entries are refused BEFORE any charge.
+2. **Entries delay exits.** The dispatcher holds the scheduler lease for up to 600s, so held ticks print SCHEDULER_BUSY. Held passes must always get through:
+   - split the lease (a separate held lease), or
+   - cap the entry work and release the lease between phases, or
+   - run the held pass inside the entry tick at bounded intervals.
+
+   Prove with a timing test that held-pass latency stays ≤ its cadence plus a small margin while an entry runs.
+3. **Held-first covers only one position.** The `--wall-seconds 12` default gives floor(12/7.8)=1 leg. Size the legs to cover ALL open positions within the held unit's TimeoutStartSec (120s): 4 × 7.8s ≈ 31s. Pass it through the scheduler and the fresh unit.
+4. **Day rollover.** With subset legs the engine defers rollover forever (`engine.py` ~:352-359), so `day_start_equity` and the daily loss counters go stale while 2+ positions are held. Fix by guaranteeing all-fresh marks at least once per rollover window (through item 3), or by a versioned engine rule. Test it.
+5. **Restart.** The cold-restart test must cover monitoring charges and reservations across the restart, not only ledger replay.
+6. **Docs.** Correct docs/MULTI_POSITION.md, including the false claims "exits are never starved" and "max_positions 2 is the useful setting" until they are true.
