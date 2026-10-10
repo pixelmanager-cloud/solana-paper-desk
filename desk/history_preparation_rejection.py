@@ -103,7 +103,7 @@ def _attempts(store,scan,before,after,*,intent_hash=None,allowed_outcome=None):
     return [found[n] for n in range(before+1,after+1)]
 
 
-def _proof(store,progress,value,*,publishing=False,cfg=None):
+def _proof(store,progress,value,*,publishing=False,cfg=None,review_source=None):
     expected={'kind','status','execution_status','live_readiness','entry_authorized','pass_id','scan_id','intent_hash','reason','history_id','coverage_hash','attempt_refs','admission_after','bounds','rejected_at'}
     if type(value) is not dict or set(value)!=expected or value['kind']!='history_preparation_no_entry_v1' or value['status']!='NO_ENTRY' or value['execution_status']!='EXECUTION_UNVERIFIED' or value['live_readiness'] is not False or value['entry_authorized'] is not False or value['reason'] not in REASONS:raise ValueError('Preparation rejection shape')
     original=terminal._load(store,value['intent_hash'])
@@ -139,7 +139,7 @@ def _proof(store,progress,value,*,publishing=False,cfg=None):
         own=c.execute('SELECT intent_hash,outcome_hash FROM paper_observation_passes WHERE id=?',(value['pass_id'],)).fetchone()
         if own!=(value['intent_hash'],None if publishing else digest(value)):raise ValueError('Preparation pass binding')
         if publishing and c.execute('SELECT id FROM paper_observation_passes WHERE rowid>?',(original['pass_cutoff'],)).fetchall()!=[(value['pass_id'],)]:raise ValueError('Fresh cycle entered during preparation')
-        terminal._monitoring(c,store=store)
+        terminal._monitoring(c,store=store,review_source=review_source)
     with closing(sqlite3.connect(Path(ctx['ledger_db']).as_uri()+'?mode=ro',uri=True)) as c:
         c.execute('BEGIN')
         if publishing:
@@ -206,16 +206,16 @@ def publish(store,progress,ledger,cfg,*,pass_id,intent_hash,history_id,reason):
     return {**value,'evidence_hash':key}
 
 
-def verify(store,progress,result):
+def verify(store,progress,result,*,review_source=None):
     if type(result) is not dict or not runtime._hash(result.get('evidence_hash')):raise ValueError('Preparation result reference required')
     value=terminal._load(store,result['evidence_hash'])
     if result!={**value,'evidence_hash':digest(value)}:raise ValueError('Preparation result conflict')
     with closing(store.connect()) as c:
         if (value['pass_id'],value['scan_id'],value['intent_hash'],digest(value)) not in rows(c):raise ValueError('Preparation rejection publication incomplete')
-    return _proof(store,progress,value)
+    return _proof(store,progress,value,review_source=review_source)
 
 
-def gate(store,research,scan_ids,*,ledger_locked=None):
+def gate(store,research,scan_ids,*,ledger_locked=None,review_source=None):
     """Companion global-gate hook: replay every rejection; never trust a marker."""
     progress=HistoryProgress.__new__(HistoryProgress);progress.store=store
     with closing(store.connect()) as c:
@@ -246,6 +246,6 @@ def gate(store,research,scan_ids,*,ledger_locked=None):
             if ledger_locked!=str(path):
                 if not locks.enter_context(_lock(str(path)+'.paper-cycle.lock')):
                     raise ValueError('Preparation receipt ledger busy')
-            original=verify(store,progress,{**value,'evidence_hash':outcome_key})
+            original=verify(store,progress,{**value,'evidence_hash':outcome_key},review_source=review_source)
             if original['context']['research_db']!=str(research):raise ValueError('Preparation rejection research context')
     return 'REJECTED_SCAN_RETIRED' if any(row[1] in scan_ids for row in retired) else None

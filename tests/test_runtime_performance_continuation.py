@@ -114,11 +114,12 @@ class InstalledHistoricalClosureTests(unittest.TestCase):
         from desk import ownership_acquisition as acquisition
         with h.store.connect() as c:key=c.execute('SELECT mint_hash FROM ownership_acquisition_setup WHERE scan_id=?',(h.scan,)).fetchone()[0]
         mint_value=h.store.load(key)['result']
+        safe_mint_value=copy.deepcopy(mint_value)
         raw_mint=bytearray(base64.b64decode(mint_value['value']['data'][0]))
         raw_mint[:4]=(1).to_bytes(4,'little');raw_mint[4:36]=bytes([7])*32
         mint_value['value']['data'][0]=base64.b64encode(raw_mint).decode()
         with patch.object(runtime,'implementation_hash',return_value=old['source_hash']),patch.object(monitoring,'_implementation',return_value=old['source_hash']):
-            for n in range(5):
+            for n in range(3):
                 raw,mint,pool=mint_fixture(40+n)
                 acquired=acquisition.acquire(h.ctx['research_db'],h.ctx['evidence_db'],lambda method,params:copy.deepcopy(mint_value),mint=mint)
                 self.assertEqual(acquired['requests_used'],1)
@@ -127,6 +128,42 @@ class InstalledHistoricalClosureTests(unittest.TestCase):
                 result=dispatcher._rejection_evidence(old,intent,acquired['scan_id'])
                 with dispatcher._journal(h.journal) as journal:
                     dispatcher._write(journal,'intents',identity,intent,hint)
+                    dispatcher._write(journal,'results',identity,{'version':1,'intent_hash':digest(intent),'at':h.intent['at'],'scan_id':acquired['scan_id'],'result':result})
+                    dispatcher._validate(journal,old)
+            # Two genuine historical aggregate-byte preparation NO_ENTRY results,
+            # not five interchangeable token rejections. Keep all captured wire
+            # bytes, charges and old-source monitoring/checkpoint validation.
+            from tests.test_history_preparation_phase import PreparationTests
+            from desk import paper_cycle as cycle,history_preparation_rejection as rejection
+            from desk.history_progress import HistoryProgress
+            from desk.paper_observation_collector import ObservationTarget
+            from tools import history_first_paper_entry as entry
+            for n in range(3,5):
+                raw,mint,pool=mint_fixture(40+n);seed=[0]
+                def rpc(method,params):
+                    if method=='getAccountInfo':return copy.deepcopy(safe_mint_value)
+                    if method=='getSlot':return 120
+                    seed[0]+=1;return {'data':[],'paginationToken':'seed' if seed[0]==1 else None}
+                acquired=acquisition.acquire(h.ctx['research_db'],h.ctx['evidence_db'],rpc,mint=mint)
+                self.assertEqual(acquired['requests_used'],4)
+                hint={**h.intent['hint'],'mint':mint,'pool':pool,'signature':raw['transaction']['signatures'][0],'slot':raw['slot'],'seq':7+n}
+                intent={'version':1,'context_hash':digest(old),'at':h.intent['at'],'hint':hint};identity='%032x'%(100+n)
+                with dispatcher._journal(h.journal) as journal:dispatcher._write(journal,'intents',identity,intent,hint)
+                prep=PreparationTests();prep.store=h.store;prep.progress=HistoryProgress(h.store)
+                prep.target=ObservationTarget(acquired['scan_id'],mint,pool,old['taker'],old['amount_raw'])
+                prep.as_of=int(time.time());prep.cfg=h.cfg;prep.ledger=Path(h.ctx['ledger_db']);prep.pacer=Path(h.ctx['pacing_db']);prep.context=h.ctx
+                prep.item=cycle.CycleTarget(prep.target,provenance='SYNTHETIC_TEST_ONLY',graduated_at=None,holder_at=None,pool_fee_bps='25',history_as_of=prep.as_of)
+                for _ in range(2):self.assertTrue(prep.progress.reserve(prep.target.scan_id))
+                prep.budget=entry._PreparationBudget(prep.progress,prep.item,h.cfg);prep.identity='%032x'%(200+n)
+                prep.intent=h.store.save(rejection.intent(h.store,prep.ledger,h.cfg,prep.item,prep.progress.admission(prep.target.scan_id),h.ctx))
+                with h.store.connect() as c:c.execute('INSERT INTO paper_observation_passes VALUES(?,?,NULL)',(prep.identity,prep.intent))
+                prep.advance({'data':prep.rows(50,padding=13000),'paginationToken':'p2'})
+                prep.advance({'data':prep.rows(50,start=50,padding=13000),'paginationToken':'p3'})
+                with self.assertRaisesRegex(entry.PreparationRejected,'HISTORY_FEATURE_AGGREGATE_BYTES_EXCEEDED'):
+                    prep.advance({'data':prep.rows(50,start=100,padding=13000),'paginationToken':'p4'})
+                result=prep.publish('HISTORY_FEATURE_AGGREGATE_BYTES_EXCEEDED')
+                self.assertEqual(result['admission_after']['requests_used'],9)
+                with dispatcher._journal(h.journal) as journal:
                     dispatcher._write(journal,'results',identity,{'version':1,'intent_hash':digest(intent),'at':h.intent['at'],'scan_id':acquired['scan_id'],'result':result})
                     dispatcher._validate(journal,old)
         new={**old,'source_hash':'7'*64};policy=h.root/'performance-full-chain.json'
@@ -149,6 +186,14 @@ class InstalledHistoricalClosureTests(unittest.TestCase):
 
 
 class ReceiptScalarTests(unittest.TestCase):
+    def test_dispatcher_review_source_cannot_select_another_context(self):
+        from tools import paper_entry_dispatcher as dispatcher
+        with sqlite3.connect(':memory:') as c:
+            for source in ('b'*64,None,False,[],'not-a-hash'):
+                if source is None:continue  # Normal callers retain current-source checks.
+                with self.assertRaisesRegex(ValueError,'Exact historical dispatcher review source required'):
+                    dispatcher._check_records(c,{'source_hash':'a'*64},{}, {}, {},review_source=source)
+
     def test_empty_receipt_and_oversized_payload_fail_before_decode(self):
         with tempfile.TemporaryDirectory() as d,sqlite3.connect(Path(d)/'receipt.sqlite') as c:
             c.execute(perf.schema())

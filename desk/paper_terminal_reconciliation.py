@@ -509,7 +509,7 @@ def _gate(store,research,scan_ids,*,ledger_locked=None,review_source=None):
     if migration is not None:
         return migration
     from .history_preparation_rejection import gate as preparation_rejection_gate
-    rejection = preparation_rejection_gate(store, research, scan_ids, ledger_locked=ledger_locked)
+    rejection = preparation_rejection_gate(store, research, scan_ids, ledger_locked=ledger_locked,review_source=review_source)
     if rejection is not None:
         return rejection
     from .paper_cycle import _lock
