@@ -1,0 +1,35 @@
+name: T38 diagnostics (temporary)
+on:
+  push:
+    branches: [cloud/T38]
+jobs:
+  diag:
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+      - run: python -m pip install -e . -r requirements-live.txt
+      - name: owner-evidence diagnostics
+        run: |
+          python - <<'PY'
+          import os, tempfile
+          from desk import monitoring_budget as mb
+          print('uid', os.getuid(), 'pid', os.getpid())
+          print('--- /proc/locks (head)'); print(open('/proc/locks').read()[:1500])
+          d = tempfile.mkdtemp(); p = d + '/x.lock'; open(p, 'a').close()
+          st = os.stat(p); print('lockfile dev/ino', os.major(st.st_dev), os.minor(st.st_dev), st.st_ino, 'owner', st.st_uid)
+          print('_lock_holders ->', mb._lock_holders(p))
+          print('_deleted_lock_holders ->', mb._deleted_lock_holders(p))
+          bad = []
+          for pid in [n for n in os.listdir('/proc') if n.isdigit()]:
+              try: os.listdir(f'/proc/{pid}/fd')
+              except PermissionError: bad.append((pid, os.stat(f'/proc/{pid}').st_uid))
+              except OSError: pass
+          print('unreadable fd dirs (pid, proc_uid):', bad[:30], 'count', len(bad))
+          print('_owner_gone pieces done')
+          PY
+      - name: monitoring classification only
+        run: python -m unittest tests.test_monitoring_classification -v 2>&1 | tail -80
