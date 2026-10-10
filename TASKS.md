@@ -927,3 +927,31 @@ AVOID: desk/**
 3. **(LOW) Mint filter.** Filter fills and rejects by the candidate's mint, so held-position outcomes are never attributed to a candidate.
 4. **(LOW) Docstring.** Fix the dead-pool docstring. Once T26F lands, align the dead-pool semantics with it (dead = -100% or a separate bucket counted in the totals).
 5. **(LOW) Real-store fixture.** Add at least one dispatched-rejection fixture generated from real stores.
+
+---
+
+## T28F — Fix coordinator review findings in T28 (held watcher)
+STATUS: OPEN
+DEPENDS: none
+BASE: origin/cloud/T28
+OWNS: tools/ops/held_watcher.py, tests/test_held_watcher.py, deploy/fresh/desk-held-watcher.*, docs/ops/HELD_WATCHER.md
+AVOID: desk/**
+
+1. **(HIGH) Trigger budgets.** Triggers that never resolve exhaust the rate caps, so a real STOP crash gets `TRIGGER_RATE_LIMITED` (:644-652).
+   - Price reasons (STOP, TRAILING, TAKE_PROFIT) get their own budget, separate from time/mode reasons (MAX_HOLD, TIME_STOP, LIQUIDATE).
+   - Do not refire a time/mode reason that the held pass already handled (detected from the ledger/state, e.g. a `blocked_exit` or `exit_blocked` recorded after the trigger). Back it off exponentially instead.
+   - A price STOP must always be able to fire at least once per N seconds, regardless of other reasons.
+2. **(HIGH) Same-slot reserves.** Evaluate only when the base and quote vault balances come from the SAME slot (:549-570). Otherwise a swap between the two notifications creates a fake price spike. Buffer per slot, and use `getMultipleAccounts` (one slot) for polling.
+3. **(MED) Provider backoff.** After HTTP 429/5xx, back off exponentially with jitter. Document why the watcher does not use the shared pacing store (T09 F6), and make sure its request rate cannot starve the desk's own Helius calls (configurable cap, default ≤ 0.5 req/s, plus the backoff).
+4. **(MED) Lost triggers.** A trigger can be lost while a held pass is running or on SCHEDULER_BUSY. Re-fire after a short delay (e.g. 5s) unless the ledger shows that a held pass completed after the trigger time.
+5. **(MED) Latency attribution.**
+   - Pair a trigger only with the first held-pass result or fill strictly after the trigger, within a bounded window.
+   - Record the slot of the reserve observation and its block time (or a slot→time estimate) for the "event → trigger" latency.
+6. **(LOW) Stream health.**
+   - Detect a stalled stream (no notifications for N seconds while connected) and fall back to polling.
+   - Keep the reconnect backoff across connects; reset it only after a stable period.
+7. **(LOW) Write scope.** `ReadWritePaths` covers only `<STATE_DIR>/held-watcher`.
+8. **(LOW) Mark accuracy.**
+   - Include the PumpSwap creator fee and Token-2022 transfer fees in the mark where known, and state any remaining assumptions.
+   - A position without `quote_execution` raises a health WARNING; it does not silently drop price triggers.
+9. **(LOW) Trailing peak.** TRAILING uses the engine's recorded peak (from the ledger state), with the watcher's peak only as an early hint inside the margin.
