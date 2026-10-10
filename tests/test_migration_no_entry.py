@@ -83,3 +83,33 @@ class MigrationNoEntryTests(unittest.TestCase):
             for sql in ('UPDATE '+rejection.TABLE+' SET payload=payload','DELETE FROM '+rejection.TABLE):
                 with self.assertRaises(sqlite3.Error):c.execute(sql)
             with self.assertRaises(sqlite3.Error):c.execute('INSERT OR REPLACE INTO '+rejection.TABLE+' VALUES(?,?,?,?)',row)
+
+    def test_ordinary_capacity_matches_journal_not_32_skips(self):
+        self.reject()
+        with self.f.f.progress.store.connect() as c:
+            original=rejection.rows(c)[0]
+            for n in range(1,33):
+                value=copy.deepcopy(original)
+                value.update(dispatch_id=f'{n:032x}',scan_id=f'{n+100:032x}')
+                c.execute('INSERT INTO '+rejection.TABLE+' VALUES(?,?,?,?)',
+                    (value['dispatch_id'],value['scan_id'],canonical(value),digest(value)))
+            self.assertEqual(len(rejection.rows(c)),33)
+        self.assertEqual(rejection.MAX,tool.MAX_DISPATCHES)
+        # This exercises bounded row inventory, not replay authority for invented rows.
+        self.assertIsNone(original['journal_prefix'])
+
+    def test_crash_after_disposition_before_result_stays_no_retry(self):
+        self.quote(base58(bytes([33])*32))
+        original=tool._write
+        def interrupted(c,table,*args,**kw):
+            if table=='results':raise ValueError('simulated result-publication crash')
+            return original(c,table,*args,**kw)
+        with patch.object(tool,'_write',side_effect=interrupted):
+            with self.assertRaisesRegex(ValueError,'publication crash'):self.f.live()
+        self.assertEqual(self.f.count('intents'),1)
+        self.assertEqual(self.f.count('results'),0)
+        calls=list(self.f.calls)
+        with patch.object(tool.cli,'_credentials',side_effect=AssertionError('retry')):
+            with self.assertRaises(ValueError):self.f.invoke(execute=True,systemd_credentials=True)
+        self.assertEqual(self.f.calls,calls)
+        self.assertEqual(self.f.count('intents'),1)

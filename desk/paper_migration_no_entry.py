@@ -16,7 +16,7 @@ from .history_progress import HistoryProgress
 
 TABLE='paper_migration_no_entry'
 POLICY=Path(__file__).resolve().parents[1]/'config/paper-migration-recovery.json'
-MAX=32
+MAX=4096  # Same lifetime dispatch-count ceiling as the existing journal.
 LEGACY_HASH='bd8751533ee11955952342729d794fd34306bcc20b349bc9ef596c973dbef474'
 FIELDS={'version','kind','association','dispatch_id','scan_id','intent_hash','hint','context','config_hash',
         'source_hash','producer_context','successor_context','journal_prefix','parent_receipt_hash',
@@ -41,7 +41,7 @@ def shape(v):
     historical=v['association']=='EXPLICIT_REVIEWED_LEGACY_SENTINEL'
     if historical:
         if not all(runtime._hash(v[k]) for k in ('ledger_backup_hash','stopped_witness_hash','parent_receipt_hash')) or type(v['successor_context']) is not dict:raise ValueError('Historical certificate required')
-    elif any(v[k] is not None for k in ('ledger_backup_hash','stopped_witness_hash','parent_receipt_hash','successor_context')):raise ValueError('No automatic historical adoption')
+    elif any(v[k] is not None for k in ('ledger_backup_hash','stopped_witness_hash','parent_receipt_hash','successor_context','journal_prefix')):raise ValueError('No automatic historical adoption')
     return historical
 
 
@@ -62,7 +62,7 @@ def rows(c):
     expected={('table',TABLE,TABLE,schema())}|{('trigger',k,TABLE,s) for k,s in guards().items()}|{('index','sqlite_autoindex_'+TABLE+'_'+str(i),TABLE,None) for i in (1,2)}
     if len(found)!=len(expected) or set(found)!=expected:raise ValueError('Migration disposition schema partial/conflicting')
     bound=c.execute('SELECT count(*),COALESCE(sum(length(CAST(payload AS BLOB))),0),COALESCE(max(length(CAST(payload AS BLOB))),0) FROM '+TABLE).fetchone()
-    if not 1<=bound[0]<=MAX or bound[1]>2*1024*1024 or bound[2]>1024*1024:raise ValueError('Migration disposition bounds')
+    if not 1<=bound[0]<=MAX or bound[1]>16*1024*1024 or bound[2]>1024*1024:raise ValueError('Migration disposition bounds')
     bad=c.execute('SELECT 1 FROM '+TABLE+" WHERE typeof(dispatch_id)!='text' OR length(CAST(dispatch_id AS BLOB))!=32 OR typeof(scan_id)!='text' OR length(CAST(scan_id AS BLOB))!=32 OR typeof(payload)!='text' OR typeof(payload_hash)!='text' OR length(CAST(payload_hash AS BLOB))!=64 LIMIT 1").fetchone()
     if bad:raise ValueError('Migration disposition scalar types')
     values=[]
@@ -267,7 +267,7 @@ def _make(store,c,cfg,producer,identity,scan,*,historical=False,backup=None,stop
         backup_hash=hashlib.sha256(p.read_bytes()).hexdigest()
     v={'version':1,'kind':'dispatcher_migration_no_entry_v1','association':'EXPLICIT_REVIEWED_LEGACY_SENTINEL' if historical else 'CAPTURED_UNSUPPORTED_QUOTE',
        'dispatch_id':identity,'scan_id':scan,'intent_hash':digest(intent),'hint':intent['hint'],'context':ctx,'config_hash':digest(cfg),
-       'source_hash':runtime.implementation_hash(),'producer_context':producer,'successor_context':successor,'journal_prefix':prefix,
+       'source_hash':runtime.implementation_hash(),'producer_context':producer,'successor_context':successor,'journal_prefix':prefix if historical else None,
        'parent_receipt_hash':parent_hash,**captured,'evaluated_at':now,'ledger_original_hash':original,'ledger_prefix_hash':initial_prefix,
        'ledger_backup_hash':backup_hash,'stopped_witness_hash':stopped,'runtime_receipts_hash':digest(receipt_history),
        'entry_authorized':False,'execution_status':'EXECUTION_UNVERIFIED','no_retry':True}
