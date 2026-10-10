@@ -61,6 +61,20 @@ class PreEntryAbandonmentTests(unittest.TestCase):
                 self.assertEqual(c.execute('SELECT type,name,sql FROM sqlite_master ORDER BY type,name').fetchall(),schema)
                 ledger=list(c.iterdump())
             actual=r.review_plan(producer,identity,scan,**kwargs);self.assertEqual(actual,proposed)
+            # Actual persisted mutations must refuse before publication; restore
+            # synthetic fixture records only (never production originals).
+            for column,value in (('attempts',1),('status','RETRYABLE_ERROR'),('coverage','{}')):
+                with closing(h.store.connect()) as c:
+                    original=c.execute('SELECT '+column+' FROM ownership_history WHERE id=?',(history,)).fetchone()[0]
+                    c.execute('UPDATE ownership_history SET '+column+'=? WHERE id=?',(value,history))
+                try:
+                    with self.assertRaises(ValueError):r.proof(h.store,actual)
+                finally:
+                    with closing(h.store.connect()) as c:c.execute('UPDATE ownership_history SET '+column+'=? WHERE id=?',(original,history))
+            changed=copy.deepcopy(actual);changed['parent_receipt_hash']='f'*64
+            with self.assertRaises(ValueError):r.proof(h.store,changed)
+            changed=copy.deepcopy(actual);changed['wire_attempt_refs']=['f'*64]
+            with self.assertRaises(ValueError):r.proof(h.store,changed)
             policy=runtime._parse(r.POLICY.read_text());policy['recoveries'].append(actual);r.POLICY.write_text(canonical(policy))
             journal=h.journal.read_bytes() if hasattr(h.journal,'read_bytes') else __import__('pathlib').Path(h.journal).read_bytes()
             self.assertEqual(r.review_plan(producer,identity,scan,apply=True,**kwargs)['status'],'RECORDED')
@@ -76,3 +90,39 @@ class PreEntryAbandonmentTests(unittest.TestCase):
                 self.assertNotIn(identity,values['results'])
             orphan=h.store.save({'kind':'paper_cycle_intent_v1','scan_id':scan})
             with self.assertRaisesRegex(ValueError,'candidate evidence'):r.proof(h.store,actual)
+
+
+class PrewireInventoryTests(unittest.TestCase):
+    def setUp(self):
+        import tempfile
+        from pathlib import Path
+        from desk.evidence import EvidenceStore
+        tmp=tempfile.TemporaryDirectory();self.addCleanup(tmp.cleanup)
+        self.store=EvidenceStore(Path(tmp.name)/'evidence.sqlite');self.scan='a'*32
+
+    def test_unrelated_transaction_string_is_not_generic_candidate_evidence(self):
+        self.store.save({'kind':'raw_rpc','nested':{'unrelated_string':self.scan}})
+        self.assertEqual(r._prewire_inventory(self.store,self.scan),digest([]))
+
+    def test_orphan_intents_rejected_without_pass_rows(self):
+        for kind,payload in (
+            ('paper_cycle_intent_v1',{'admissions':{self.scan:{}}}),
+            ('paper_observation_intent_v1',{'targets':[{'scan_id':self.scan}]}),
+            ('history_first_paper_preparation_v1',{'target':{'target':{'scan_id':self.scan}}}),
+        ):
+            key=self.store.save({'kind':kind,**payload})
+            with self.assertRaisesRegex(ValueError,'candidate evidence'):r._prewire_inventory(self.store,self.scan)
+            with closing(self.store.connect()) as c:c.execute('DELETE FROM pages WHERE hash=?',(key,))
+
+    def test_attempt_and_malformed_intent_refuse(self):
+        key=self.store.save({'kind':'paper_read_attempt_v1','scan_id':self.scan,'requests_used':5})
+        with self.assertRaises(ValueError):r._prewire_inventory(self.store,self.scan)
+        with closing(self.store.connect()) as c:c.execute('DELETE FROM pages WHERE hash=?',(key,))
+        self.store.save({'kind':'paper_cycle_intent_v1','targets':'malformed'})
+        with self.assertRaises(ValueError):r._prewire_inventory(self.store,self.scan)
+
+    def test_scalar_bound_before_unbounded_page_materialization(self):
+        key=self.store.save({'kind':'unrelated'})
+        with closing(self.store.connect()) as c:c.execute('UPDATE pages SET raw_bytes=? WHERE hash=?',(2**40,key))
+        with patch.object(terminal,'_load',side_effect=AssertionError('must preflight before load')):
+            with self.assertRaises(ValueError):r._prewire_inventory(self.store,self.scan)

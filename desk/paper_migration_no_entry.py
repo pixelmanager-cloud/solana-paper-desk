@@ -58,10 +58,10 @@ def approved(v):
     with POLICY.open('rb') as f:raw=f.read(2*1024*1024+1)
     if len(raw)>2*1024*1024:raise ValueError('Migration policy bound')
     p=runtime._parse(raw.decode())
-    if type(p) is not dict or set(p)!={'version','recoveries'} or type(p['version']) is not int or p['version']!=1 or type(p['recoveries']) is not list or len(p['recoveries'])>MAX:raise ValueError('Bounded reviewed context continuations only')
+    if type(p) is not dict or set(p)!={'version','recoveries'} or type(p['version']) is not int or p['version']!=1 or type(p['recoveries']) is not list or len(p['recoveries'])>3:raise ValueError('Bounded reviewed context continuations only')
     for pin in p['recoveries']:
         if not shape(pin):raise ValueError('Historical recovery pin required')
-    fixed=[pin['association'] for pin in p['recoveries'] if pin['association']!=PREWIRE]
+    fixed=[pin['association'] for pin in p['recoveries']]
     if len(set(fixed))!=len(fixed):raise ValueError('Ambiguous reviewed association')
     if v not in p['recoveries']:raise ValueError('Historical association not reviewed')
 
@@ -216,37 +216,46 @@ def _decode_parent(store,producer,key=None):
 
 def _prewire_receipts(c):
     from . import runtime_extensions as extensions
-    return {'first_and_continuation':_receipt_history(c),'extensions':extensions._bounded_rows(c)[:3]}
+    values=extensions._bounded_rows(c)
+    if len(values) not in (3,4) or [r[0] for r in values[:3]]!=[1,2,3]:raise ValueError('Original three extensions required')
+    return {'first_and_continuation':_receipt_history(c),'extensions':values[:3]}
 
 
 def _prewire_parent(store,producer,key=None):
     with closing(store.connect()) as c:
         values=rows(c)
     matches=[v for v in values if v['successor_context']==producer and
-             (v['association']==REVIEWED_DECODE_GAP or (v['association']==PREWIRE and v['producer_context']!=v['successor_context']))
+             v['association']==REVIEWED_DECODE_GAP
              and (key is None or digest(v)==key)]
     if len(matches)!=1:raise ValueError('Exact installed pre-entry lineage parent required')
     return matches[0]
 
 
 def _prewire_inventory(store,scan):
-    # Original compressed pages are bounded/hash checked; no orphan preparation
-    # or observation is silently waived just because it lacks a pass row.
-    base._attempts(store,scan)
+    # Reuse the bounded, current-byte-checked classification inventory. Only
+    # explicit observation/preparation intent grammars need full materialization.
+    # Never walk unrelated raw transaction trees looking for arbitrary strings.
+    if base._attempts(store,scan):raise ValueError('Candidate transport already attempted')
     with closing(store.connect()) as c:
-        keys=[r[0] for r in c.execute('SELECT hash FROM pages ORDER BY hash')]
+        c.execute('BEGIN')
         certs=[v for v in rows(c) if v['association']==PREWIRE and v['scan_id']==scan]
-    markers=[{'kind':'migration_disposition_publication_v1','dispatch_id':v['dispatch_id'],'scan_id':scan,'receipt_hash':digest(v)} for v in certs]
-    for key in keys:
-        value=terminal._load(store,key)
-        if value in markers:continue
-        pending=[value];count=0
-        while pending:
-            x=pending.pop();count+=1
-            if count>1000000:raise ValueError('Pre-entry evidence traversal bound')
-            if type(x) is str and x==scan:raise ValueError('Retained candidate evidence forbids pre-entry abandonment')
-            if type(x) is dict:pending.extend(x.keys());pending.extend(x.values())
-            elif type(x) is list:pending.extend(x)
+        markers={digest({'kind':'migration_disposition_publication_v1','dispatch_id':v['dispatch_id'],'scan_id':scan,'receipt_hash':digest(v)}) for v in certs}
+        for (key,) in c.execute('SELECT hash FROM pages ORDER BY hash'):
+            kind,identity,_=terminal._classification(store,key)
+            if key in markers:continue
+            if identity==scan:raise ValueError('Retained candidate evidence forbids pre-entry abandonment')
+            if kind not in ('paper_cycle_intent_v1','paper_observation_intent_v1','history_first_paper_preparation_v1'):continue
+            value=terminal._load(store,key)
+            admissions=value.get('admissions',{})
+            targets=value.get('targets',[])
+            target=value.get('target',{})
+            if type(admissions) is not dict or type(targets) is not list or len(targets)>64 or type(target) is not dict:raise ValueError('Candidate intent grammar')
+            if scan in admissions:raise ValueError('Retained candidate evidence forbids pre-entry abandonment')
+            for item in [target,*targets]:
+                if type(item) is not dict:raise ValueError('Candidate intent target grammar')
+                nested=item.get('target',{})
+                if type(nested) is not dict:raise ValueError('Candidate nested target grammar')
+                if item.get('scan_id')==scan or nested.get('scan_id')==scan:raise ValueError('Retained candidate evidence forbids pre-entry abandonment')
     return digest([])
 
 
@@ -614,6 +623,7 @@ def lineage(c,expected,original,*,ledger_locked=None):
     store=EvidenceStore(expected['paths']['evidence_db']['path'],read_only=True)
     with closing(store.connect()) as ec:prewire=[v for v in rows(ec) if v['association']==PREWIRE and v['producer_context']['journal']==expected['journal']]
     if prewire:
+        if len(prewire)!=1:raise ValueError('One explicit abandonment only')
         if any(v['successor_context']!=expected for v in prewire):raise ValueError('Exact reviewed pre-entry successor required')
         bindings={};retired={};contexts={}
         for v in prewire:
