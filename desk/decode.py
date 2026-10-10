@@ -173,8 +173,21 @@ def decode(payload):
                 'direction':'mint' if kind.startswith('mintTo') else 'burn'})
         elif program in TOKENS and kind=='closeAccount':
             from .programs import address
-            result['token_account_closures'].append({**event,'account':address(info['account']),
-                'destination':address(info['destination']),'owner':address(info['owner'])})
+            row={**event,'account':address(info['account']),
+                 'destination':address(info['destination'])}
+            if set(info)=={'account','destination','owner'}:
+                row['owner']=address(info['owner'])
+            elif set(info)=={'account','destination','multisigOwner','signers'}:
+                signers=info['signers']
+                if type(signers) is not list or not 1<=len(signers)<=256:
+                    raise ValueError('Invalid parsed close-account multisig signers')
+                # RPC parser operands, not account ownership or threshold proof.
+                # Preserve order/duplicates and authority==signer without inference.
+                row.update(owner=None,multisig_owner=address(info['multisigOwner']),
+                           signers=[address(signer) for signer in signers])
+            else:
+                raise ValueError('Invalid parsed close-account authority shape')
+            result['token_account_closures'].append(row)
         elif program in TOKENS and kind in ('initializeAccount', 'initializeAccount2', 'initializeAccount3'):
             from .programs import address
             result['token_account_initializations'].append({**event,'account':address(info['account']),
