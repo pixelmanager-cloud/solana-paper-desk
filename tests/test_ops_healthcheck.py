@@ -9,6 +9,7 @@ import tempfile
 import time
 import unittest
 from contextlib import closing, redirect_stdout
+from unittest import mock
 from pathlib import Path
 from types import SimpleNamespace
 
@@ -171,6 +172,26 @@ class HealthcheckTests(Fixture):
         self.systemd.set('desk-dashboard.service', NRestarts='12')
         self.assertEqual(self.severities(self.report()[1])['restarts:desk-dashboard.service'], 'CRITICAL')
 
+    def test_clean_exit_zero_restarts_do_not_alert(self):
+        # discovery restarts cleanly (exit 0) once a day; NRestarts accumulates but must stay OK
+        for restarts in ('1', '4', '12', '40'):
+            self.systemd.set('desk-continuous-discovery.service', NRestarts=restarts, Result='success',
+                             ExecMainStatus='0', SubState='running')
+            code, rep = self.report()
+            self.assertEqual((code, rep['status']), (0, 'OK'), restarts)
+            self.assertTrue(all(c['severity'] == 'OK' for c in self.find(rep, 'restarts:desk-continuous-discovery.service')))
+
+    def test_non_zero_exit_restarts_still_alert(self):
+        unit = 'desk-continuous-discovery.service'
+        for kwargs in ({'Result': 'exit-code', 'ExecMainStatus': '1'}, {'Result': 'success', 'ExecMainStatus': '137'},
+                       {'Result': 'signal', 'ExecMainStatus': '0'}, {'Result': 'success', 'SubState': 'auto-restart', 'ExecMainStatus': '1'},
+                       {'Result': 'success', 'ExecMainStatus': 'garbage'}):
+            self.systemd.set(unit, NRestarts='4', SubState='running')
+            self.systemd.set(unit, **kwargs)
+            self.assertEqual(self.severities(self.report()[1])['restarts:' + unit], 'WARN', kwargs)
+            self.systemd.set(unit, NRestarts='12')
+            self.assertEqual(self.severities(self.report()[1])['restarts:' + unit], 'CRITICAL', kwargs)
+
     def test_unit_missing_from_systemd_is_critical(self):
         del self.systemd.units['desk-dashboard.service']
         self.assertEqual(self.severities(self.report()[1])['unit:desk-dashboard.service'], 'CRITICAL')
@@ -306,6 +327,22 @@ class HealthcheckTests(Fixture):
         code, rep = self.report()
         self.assertEqual(code, 2)
         self.assertIn('probe failed', self.find(rep, 'evidence')[0]['detail'])
+
+    def test_sqlite_error_escaping_a_probe_yields_critical_report_not_a_crash(self):
+        args = SimpleNamespace(root=str(self.root), discovery_db=str(self.discovery), pacing_db=str(self.pacing),
+                               backup_root=None, config=None, out=None, no_systemd=True, threshold=[])
+        boom = sqlite3.DatabaseError('database disk image is malformed')
+        with mock.patch.object(healthcheck, 'escalate_held_failure', side_effect=boom):
+            rep = healthcheck.build_report(args, self.systemd, lambda: NOW)
+            self.assertEqual(rep['status'], 'CRITICAL')
+            self.assertEqual(rep['ts'], NOW)
+            self.assertEqual(rep['checks'][0]['severity'], 'CRITICAL')
+            out = io.StringIO()
+            with redirect_stdout(out):
+                code = healthcheck.main(['--root', str(self.root), '--discovery-db', str(self.discovery),
+                                         '--pacing-db', str(self.pacing), '--no-systemd'], clock=lambda: NOW)
+        self.assertEqual(code, 2)
+        self.assertEqual(json.loads(out.getvalue())['status'], 'CRITICAL')
 
     def test_symlinked_database_is_refused(self):
         target = self.base / 'real.sqlite'
@@ -461,7 +498,7 @@ class NotifyTests(Fixture):
         tg = notify.load_telegram(self.credentials(), opener)
         tg.log = logs.append
         report = base = self.base / 'state' / 'r.json'
-        report.write_text(json.dumps({'kind': 'desk_healthcheck_v1', 'status': 'CRITICAL', 'checks': [
+        report.write_text(json.dumps({'kind': 'desk_healthcheck_v1', 'ts': NOW, 'status': 'CRITICAL', 'checks': [
             self.finding(detail='boom key=SUPERSECRET123 Authorization: Bearer abcdefghijklmnop %s' % TOKEN)]}))
         out = io.StringIO()
         err = io.StringIO()
@@ -490,7 +527,7 @@ class NotifyTests(Fixture):
             return Resp()
         out = io.StringIO()
         report = self.base / 'state' / 'r.json'
-        report.write_text(json.dumps({'kind': 'desk_healthcheck_v1', 'status': 'CRITICAL', 'checks': [self.finding()]}))
+        report.write_text(json.dumps({'kind': 'desk_healthcheck_v1', 'ts': NOW, 'status': 'CRITICAL', 'checks': [self.finding()]}))
         notify.main(['alert', '--report', str(report), '--state', str(self.base / 'state' / 'n.json'),
                      '--credentials-dir', str(self.credentials())], clock=lambda: NOW, opener=opener, stream=out)
         self.assertEqual(len(bodies), 1)
@@ -498,6 +535,90 @@ class NotifyTests(Fixture):
         self.assertIn('CRITICAL', bodies[0])
         self.assertNotIn(TOKEN, (self.base / 'state' / 'n.json').read_text() + out.getvalue())
         self.assertIn('unit%3Adesk-dashboard.service', bodies[0])
+
+    def write_report(self, ts, checks=None, name='r.json'):
+        path = self.base / 'state' / name
+        report = {'kind': 'desk_healthcheck_v1', 'status': 'OK', 'checks': checks or []}
+        if ts is not None:
+            report['ts'] = ts
+        path.write_text(json.dumps(report))
+        return path
+
+    def run_main(self, report, *extra, now=NOW, creds=None):
+        out = io.StringIO()
+        argv = ['alert', '--report', str(report), '--state', str(self.base / 'state' / 'n.json'), *extra]
+        if creds:
+            argv += ['--credentials-dir', str(creds)]
+        notify.main(argv, clock=lambda: now, stream=out)
+        return out.getvalue()
+
+    def test_stale_report_raises_critical_healthcheck_not_running(self):
+        report = self.write_report(NOW - 601)   # > 2 * 300
+        text = self.run_main(report)
+        self.assertIn('healthcheck not running', text)
+        self.assertIn('CRITICAL', text)
+        self.assertEqual(self.state['alerts'], {})
+        saved = json.loads((self.base / 'state' / 'n.json').read_text())['alerts']
+        self.assertEqual(saved['healthcheck']['severity'], 'CRITICAL')
+
+    def test_fresh_report_boundary_and_configurable_interval(self):
+        for offset, age, interval, stale in ((0, 600, '300', False), (7200, 601, '300', True),
+                                             (14400, 1000, '600', False), (21600, 1300, '600', True)):
+            now = NOW + offset
+            text = self.run_main(self.write_report(now - age), '--interval', interval, now=now)
+            self.assertEqual('healthcheck not running' in text, stale, (age, interval))
+
+    def test_stale_ok_report_does_not_hide_behind_old_ok_data(self):
+        report = self.write_report(NOW - 100000, checks=[self.finding(severity='OK')])
+        self.assertIn('healthcheck not running', self.run_main(report))
+
+    def test_report_without_usable_timestamp_is_treated_as_stale(self):
+        for ts in (None, 'yesterday', True, [1], float('nan')):
+            path = self.base / 'state' / 'bad.json'
+            body = {'kind': 'desk_healthcheck_v1', 'status': 'OK', 'checks': []}
+            if ts is not None:
+                body['ts'] = ts
+            path.write_text(json.dumps(body))
+            (self.base / 'state' / 'n.json').unlink(missing_ok=True)
+            self.assertIn('healthcheck not running', self.run_main(path), ts)
+
+    def test_stale_report_also_applies_to_daily_summary_blockers(self):
+        report = self.write_report(NOW - 5000, checks=[])
+        out = io.StringIO()
+        notify.main(['daily', '--root', str(self.root), '--report', str(report), '--state', str(self.base / 'state' / 'd.json')],
+                    clock=lambda: NOW, stream=out)
+        self.assertIn('healthcheck not running', out.getvalue())
+
+    def test_malformed_telegram_json_warns_without_secrets_and_falls_back_to_journal(self):
+        d = self.base / 'creds'
+        d.mkdir(exist_ok=True)
+        cases = {'not json {' + TOKEN: 'x', json.dumps({'token': TOKEN}): 'x', json.dumps({'token': TOKEN, 'chat_id': 'abc'}): 'x',
+                 json.dumps({'token': 'SECRETSHORT', 'chat_id': '1'}): 'x', json.dumps([TOKEN]): 'x'}
+        for content in cases:
+            (d / 'telegram.json').write_text(content)
+            with self.assertLogs('tools.ops.notify', level='WARNING') as logs:
+                self.assertIsNone(notify.load_telegram(d))
+            blob = '\n'.join(logs.output)
+            self.assertIn('telegram.json', blob)
+            for secret in (TOKEN, TOKEN.split(':')[1], 'SECRETSHORT'):
+                self.assertNotIn(secret, blob)
+        (d / 'telegram.json').write_bytes(b'\xff\xfe' + TOKEN.encode())
+        with self.assertLogs('tools.ops.notify', level='WARNING') as logs:
+            self.assertIsNone(notify.load_telegram(d))
+        self.assertNotIn(TOKEN, '\n'.join(logs.output))
+        # end to end: default journal notifier still delivers
+        (d / 'telegram.json').write_text('{broken')
+        report = self.write_report(NOW, checks=[self.finding()])
+        with self.assertLogs('tools.ops.notify', level='WARNING'):
+            text = self.run_main(report, creds=d)
+        self.assertIn('unit:desk-dashboard.service', text)
+        self.assertIn('"telegram": false', text)
+
+    def test_absent_telegram_json_is_silent(self):
+        d = self.base / 'creds-empty'
+        d.mkdir()
+        with self.assertNoLogs('tools.ops.notify', level='WARNING'):
+            self.assertIsNone(notify.load_telegram(d))
 
     def test_redact_patterns(self):
         for text in ('token=abc123', 'api_key: zzz', 'Bearer ' + 'a' * 20, '?key=SECRET&x=1', TOKEN):
@@ -526,7 +647,7 @@ class NotifyTests(Fixture):
 
     def test_cli_round_trip_persists_state(self):
         report = self.base / 'state' / 'r.json'
-        report.write_text(json.dumps({'kind': 'desk_healthcheck_v1', 'status': 'CRITICAL', 'checks': [self.finding()]}))
+        report.write_text(json.dumps({'kind': 'desk_healthcheck_v1', 'ts': NOW, 'status': 'CRITICAL', 'checks': [self.finding()]}))
         argv = ['alert', '--report', str(report), '--state', str(self.base / 'state' / 'n.json')]
         out1, out2 = io.StringIO(), io.StringIO()
         notify.main(argv, clock=lambda: NOW, stream=out1)
@@ -542,7 +663,8 @@ class UnitTemplateTests(unittest.TestCase):
            'PACING_DB': '/var/lib/solana-desk/provider-pacing.sqlite', 'PACING_DIR': '/var/lib/solana-desk',
            'DISCOVERY_DB': '/var/lib/solana-desk/discovery/continuous.sqlite',
            'DISCOVERY_DIR': '/var/lib/solana-desk/discovery', 'TAKER': '6E2G75Z3uJEnPo9EvzmLTxp8KB78m3RDsFBjoCTVHZD2',
-           'AMOUNT_RAW': '100000000', 'BACKUP_ROOT': '/var/backups/solana-desk/fresh', 'STATE_DIR': '/var/lib/solana-desk-health'}
+           'AMOUNT_RAW': '100000000', 'POOL_FEE_BPS': '25', 'BACKUP_ROOT': '/var/backups/solana-desk/fresh-2026-10-11.paper-quote-kraken.fresh.1', 'STATE_DIR': '/var/lib/solana-desk-health',
+           'ARCHIVED_ROOT': '/var/lib/solana-desk'}
     MANUAL_TIMERS = {'desk-paper-entry-dispatcher.timer', 'desk-paper-monitor.timer'}
     SCHEDULER_UNITS = ['desk-paper-entry-dispatcher.service', 'desk-paper-held-cycle.service',
                        'desk-paper-monitor.service', 'desk-decisions.service']
@@ -569,7 +691,10 @@ class UnitTemplateTests(unittest.TestCase):
                     'desk-paper-entry-dispatcher.service', 'desk-paper-entry-dispatcher.timer', 'desk-paper-held-cycle.service',
                     'desk-paper-held-cycle.timer', 'desk-paper-monitor.service', 'desk-paper-monitor.timer',
                     'desk-decisions.service', 'desk-decisions.timer', 'desk-healthcheck.service', 'desk-healthcheck.timer',
-                    'desk-notify-daily.service', 'desk-notify-daily.timer'}
+                    'desk-notify-daily.service', 'desk-notify-daily.timer',
+                    'desk-held-watcher.service',   # T28 adds the held watcher
+                    'desk-counterfactual.service', 'desk-counterfactual.timer',   # T26 research sampler
+                    'desk-notify-watchdog.service', 'desk-notify-watchdog.timer'}   # T32F item 9
         self.assertEqual(set(self.units), expected)
         self.assertEqual(set(healthcheck.UNITS) - set(self.units), set())
 
@@ -580,6 +705,34 @@ class UnitTemplateTests(unittest.TestCase):
         self.assertLessEqual(used, set(self.MAP))
         for name, text in self.units.items():
             self.assertNotRegex(re.sub(r'(?m)^#.*$', '', text), r'<[A-Z_]+>', name)
+
+    def test_watchdog_is_a_separate_timer_that_detects_a_dead_healthcheck_within_fifteen_minutes(self):
+        """T32F item 9: the healthcheck notifies only from its own ExecStopPost, so a dead timer needs its own watchdog."""
+        timer, service = self.units['desk-notify-watchdog.timer'], self.units['desk-notify-watchdog.service']
+        self.assertNotIn('desk-healthcheck', timer)                       # independent of the unit it watches
+        period = int(re.search(r'OnUnitInactiveSec=(\d+)', timer).group(1))
+        from tools.ops import notify
+        stale_after = 2 * notify.DEFAULT_INTERVAL                         # check_freshness: older than 2 x interval is CRITICAL
+        self.assertLessEqual(stale_after + period, 15 * 60)
+        self.assertIn('tools.ops.notify alert', service)
+        self.assertIn('health.json', service)
+        self.assertIn('watchdog-state.json', service)                     # its own de-duplication state
+        self.assertNotIn('notify-state.json', service.replace('watchdog-state.json', ''))
+        self.assertIn('WantedBy=timers.target', timer)
+
+    def test_health_and_notify_units_see_the_archived_root_read_only(self):
+        """T32F item 8."""
+        for name in ('desk-healthcheck.service', 'desk-notify-daily.service', 'desk-notify-watchdog.service'):
+            read_only = ' '.join(self.directives(name, 'ReadOnlyPaths')).split()
+            writable = ' '.join(self.directives(name, 'ReadWritePaths')).split()
+            self.assertIn('/var/lib/solana-desk', read_only, name)
+            self.assertNotIn('/var/lib/solana-desk', writable, name)          # the old root is never writable here
+
+    def test_dashboard_uses_the_shared_pacing_database(self):
+        """T32F item 6 (T09 F11): dashboard scans go through the shared 2 s pacing."""
+        text = self.units['desk-dashboard.service']
+        self.assertIn('Environment=DESK_PROVIDER_PACING_DB=/var/lib/solana-desk/provider-pacing.sqlite', text)
+        self.assertIn('/var/lib/solana-desk', ' '.join(self.directives('desk-dashboard.service', 'ReadWritePaths')).split())
 
     def test_unit_names_match_the_cutover_tool_pattern(self):
         # Same pattern as tools.ops.cutover.UNIT_RE (T11, a separate branch; duplicated to stay independent).
@@ -700,7 +853,7 @@ class UnitTemplateTests(unittest.TestCase):
         self.assertIn('tools.ops.backup', text)
         self.assertNotIn('desk.backup', re.sub(r'(?m)^#.*$', '', text))
         self.assertRegex(text, r'--destination \S+/daily-\$\$\(date -u \+%%Y%%m%%dT%%H%%M%%SZ\)')
-        self.assertIn('ExecStartPost=/usr/bin/find /var/backups/solana-desk/fresh -maxdepth 1 -type d -name daily-*', text)
+        self.assertIn('ExecStartPost=/usr/bin/find %s -maxdepth 1 -type d -name daily-*' % self.MAP['BACKUP_ROOT'], text)
         self.assertNotIn('ExecStopPost', text)
 
     def test_healthcheck_runs_notify_after_both_outcomes_and_is_read_only_mounted_where_possible(self):

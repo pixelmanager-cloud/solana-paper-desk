@@ -10,6 +10,7 @@ provider credentials and never performs provider I/O, signing or broadcasting.
     python -m tools.ops.fresh_start apply  --root R ... --execute --approved-plan-hash H
     python -m tools.ops.fresh_start rotate --from OLD --to R ... --execute --approved-plan-hash H
     python -m tools.ops.fresh_start render-dropins --root R --out DIR
+    python -m tools.ops.fresh_start render-units   --root R --out DIR --release-dir REL
 
 `apply`/`rotate` are dry runs (they print the plan) without --execute. A real `apply`/`rotate` runs as the
 service user (`--service-user`, default solana-desk) or as root with `--chown <service user>`.
@@ -82,6 +83,11 @@ CONDITION_STORE = {
     'desk-paper-monitor': 'ledger_db',
     'desk-decisions': 'research_db',
 }
+# Wall timeouts the base units must carry (T09 F8/F11): entry worst case ~282 s plus pacing waits, held pass
+# `--wall-seconds 64` (8 legs x 7.8 s) plus the 40 s lease wait and export, inside 120 s.
+# A drop-in that resets ExecStart must not silently fall back to a stock 180 s.
+TIMEOUT_START = {'desk-paper-entry-dispatcher': 600, 'desk-paper-held-cycle': 120, 'desk-paper-monitor': 60,
+                 'desk-decisions': 60, 'desk-backup': 300}
 # The only systemd specifier a rendered command line may contain (the credentials directory).
 SPECIFIER_ARGS = frozenset({'%d/provider-keys.json'})
 
@@ -207,7 +213,7 @@ def unit_arguments(p, *, scheduler_identity):
     common = ['--config', p['config'], '--research-db', s['research_db'], '--evidence-db', s['evidence_db'],
               '--ledger-db', s['ledger_db']]
     held = ['-m', 'tools.paper_scheduler', '--research-db', s['research_db'], '--mode', 'held', '--',
-            *common, '--pool-fee-bps', p['pool_fee_bps'], '--systemd-credentials']
+            *common, '--pool-fee-bps', p['pool_fee_bps'], '--systemd-credentials', '--wall-seconds', '64']
     if not p.get('enable_held'):
         held += ['--dependency-blocker', HELD_BLOCKER]
     roots = Path(s['manifest']).parent
@@ -221,7 +227,7 @@ def unit_arguments(p, *, scheduler_identity):
             'argv': ['-m', 'tools.paper_scheduler', '--research-db', s['research_db'], '--mode', 'entry', '--',
                      *common, '--discovery-db', p['shared']['discovery_db'], '--pacing-db', p['shared']['pacing_db'],
                      '--journal', s['journal'], '--taker', p['taker'], '--amount-raw', str(p['amount_raw']),
-                     '--pool-fee-bps', p['pool_fee_bps']]},
+                     '--pool-fee-bps', p['pool_fee_bps'], '--execute', '--systemd-credentials']},
         'desk-paper-held-cycle': {'environment': [pacing_env, sched_env], 'argv': held},
         'desk-paper-monitor': {
             'environment': [sched_env],
@@ -234,8 +240,9 @@ def unit_arguments(p, *, scheduler_identity):
         'desk-dashboard': {
             # Jobs.once() leases the scheduler lock only when DESK_PAPER_SCHEDULER_LOCK is set and then
             # requires the reviewed inode identity; /api/paper reads the selected ledger from the data dir.
+            # DESK_PROVIDER_PACING_DB puts dashboard scans on the shared 2 s pacing (T09 F11).
             'environment': [f"DESK_PAPER_SCHEDULER_LOCK={s['scheduler_lock']}", sched_env,
-                            f"DESK_PAPER_LEDGER_DB={s['ledger_db']}"],
+                            f"DESK_PAPER_LEDGER_DB={s['ledger_db']}", pacing_env],
             'argv': ['-m', 'desk', '--secrets-file', '%d/provider-keys.json', 'serve', '--db', s['research_db'],
                      '--port', '8765']},
         # desk.backup needs launches/raw/active-paper stores the fresh set does not have; tools.ops.backup
@@ -253,12 +260,16 @@ def unit_sections(p):
     for unit in ('desk-paper-entry-dispatcher', 'desk-paper-held-cycle', 'desk-paper-monitor',
                  'desk-decisions', 'desk-dashboard', 'desk-backup'):
         writable = [root]
-        if unit in ('desk-paper-entry-dispatcher', 'desk-paper-held-cycle'):
-            writable.append(pacing_dir)          # the shared pacing database is written by entry and held reads
+        if unit in ('desk-paper-entry-dispatcher', 'desk-paper-held-cycle', 'desk-dashboard'):
+            # The shared pacing database uses a rollback journal (<db>-journal is created and removed per write),
+            # so SQLite needs its DIRECTORY writable; a single-file ReadWritePaths would break the 2 s pacing.
+            # The archived stores in that directory are protected by chmod 0400 (RUNBOOK step 4) and by the cutover
+            # archived-store guard, not by this setting.
+            writable.append(pacing_dir)
         if unit == 'desk-backup':
             writable.append(p['backup_dir'])
         result[unit] = {'condition_path_exists': s[CONDITION_STORE[unit]] if unit in CONDITION_STORE else None,
-                        'read_write_paths': writable}
+                        'read_write_paths': writable, 'timeout_start_sec': TIMEOUT_START.get(unit)}
     return result
 
 
@@ -310,6 +321,8 @@ def render_dropin(unit, manifest, *, marker=DROPIN_MARKER):
     for item in spec['environment']:
         lines.append('Environment=' + _word(_assignment(*item.split('=', 1)), command=False))
     lines.append('ReadWritePaths=' + ' '.join(_path_word(x) for x in sections['read_write_paths']))
+    if sections.get('timeout_start_sec') is not None:
+        lines.append('TimeoutStartSec=%d' % sections['timeout_start_sec'])
     lines += ['ExecStart=', 'ExecStart=' + exec_line(spec['argv'])]
     return '\n'.join(lines) + '\n'
 
@@ -340,6 +353,74 @@ def render_dropins(root, out, *, marker=DROPIN_MARKER):
             os.fsync(stream.fileno())
         written[unit] = str(out / f'{unit}.conf')
     return {'out': str(out), 'dropins': written, 'install_name': DROPIN_NAME, 'plan_hash': manifest['plan_hash']}
+
+
+TEMPLATE_DIR = Path(__file__).resolve().parents[2] / 'deploy' / 'fresh'
+DEFAULT_STATE_DIR = '/var/lib/solana-desk-health'
+LATCH_TEMPLATE = 'dropins/70-entry-latch.conf'
+LATCH_OUT = 'desk-paper-entry-dispatcher.service.d/70-entry-latch.conf'
+SAFE_VALUE = re.compile(r'[A-Za-z0-9_@%:,./=+-]+')
+
+
+DEFAULT_ARCHIVED_ROOT = '/var/lib/solana-desk'
+
+
+def render_units(root, out, *, release_dir, state_dir=DEFAULT_STATE_DIR, templates=TEMPLATE_DIR,
+                 archived_root=DEFAULT_ARCHIVED_ROOT):
+    """Substitute the deploy/fresh placeholders from an applied root's manifest into a NEW directory `out`.
+
+    Writes every unit/timer template plus the entry-latch drop-in (marker first line, so cutover rollback removes
+    it). Nothing is installed or enabled; the operator copies the files (RUNBOOK step 7). Refuses any placeholder
+    it cannot fill and any value a unit file would need quoting for."""
+    root = _absolute(root, 'root')
+    _no_symlink_chain(root, 'root')
+    manifest = read_manifest(root)
+    info = (root / SCHEDULER_LOCK).stat()
+    if manifest['scheduler_identity'] != '%d:%d' % (info.st_dev, info.st_ino):
+        raise FreshStartError('Scheduler lock identity differs from the manifest; refuse to render')
+    release_dir = _absolute(release_dir, 'release-dir')
+    state_dir = _absolute(state_dir, 'state-dir')
+    archived_root = _absolute(archived_root, 'archived-root')
+    pacing, discovery = Path(manifest['shared']['pacing_db']), Path(manifest['shared']['discovery_db'])
+    values = {
+        'FRESH_ROOT': str(root), 'RELEASE_DIR': str(release_dir), 'CONFIG': manifest['config'],
+        'SCHEDULER_IDENTITY': manifest['scheduler_identity'], 'PACING_DB': str(pacing),
+        'PACING_DIR': str(pacing.parent), 'DISCOVERY_DB': str(discovery), 'DISCOVERY_DIR': str(discovery.parent),
+        'TAKER': manifest['taker'], 'AMOUNT_RAW': str(manifest['amount_raw']),
+        'POOL_FEE_BPS': manifest['pool_fee_bps'], 'BACKUP_ROOT': manifest['backup_dir'], 'STATE_DIR': str(state_dir),
+        'ARCHIVED_ROOT': str(archived_root),
+    }
+    for key, value in values.items():
+        if not SAFE_VALUE.fullmatch(value):
+            raise FreshStartError(f'{key} needs systemd quoting; refuse to render')
+    templates = Path(templates)
+    sources = sorted(p for p in templates.iterdir() if p.suffix in ('.service', '.timer'))
+    sources.append(templates / LATCH_TEMPLATE)
+    rendered = {}
+    for source in sources:
+        text = source.read_text()
+        for key, value in values.items():
+            text = text.replace(f'<{key}>', value)
+        left = sorted(set(re.findall(r'<[A-Z_]+>', text)))
+        if left:
+            raise FreshStartError(f'{source.name}: unfilled placeholders {left}')
+        rendered[LATCH_OUT if source.name == '70-entry-latch.conf' else source.name] = text
+    out = _absolute(out, 'out')
+    _no_symlink_chain(out, 'out')
+    if os.path.lexists(out):
+        raise FreshStartError('out must not exist yet')
+    if not out.parent.is_dir() or out.parent.resolve() != out.parent:
+        raise FreshStartError('out parent must be an existing canonical directory')
+    out.mkdir(mode=0o755)
+    for name, text in rendered.items():
+        target = out / name
+        target.parent.mkdir(mode=0o755, exist_ok=True)
+        fd = os.open(target, os.O_CREAT | os.O_EXCL | os.O_WRONLY | os.O_NOFOLLOW, 0o644)
+        with os.fdopen(fd, 'w') as stream:
+            stream.write(text)
+            stream.flush()
+            os.fsync(stream.fileno())
+    return {'out': str(out), 'files': sorted(rendered), 'plan_hash': manifest['plan_hash']}
 
 
 def read_manifest(root):
@@ -401,10 +482,33 @@ def _finalize(root, entry, must_chown):
             raise FreshStartError(f'Ownership/mode verification failed for {path}')
 
 
+def _check_backup_dir(value):
+    """Fail BEFORE anything is created: the backup unit and the healthcheck both need this exact directory."""
+    path = _absolute(value, 'backup-dir')
+    _no_symlink_chain(path, 'backup-dir')
+    if not path.parent.is_dir() or path.parent.resolve() != path.parent:
+        raise FreshStartError(f'backup-dir parent {path.parent} must exist (canonical directory) before apply')
+    if os.path.lexists(path) and not path.is_dir():
+        raise FreshStartError('backup-dir exists and is not a directory')
+    return path
+
+
+def _make_backup_dir(path, entry, must_chown):
+    """0700 directory owned by the service user (created if missing, never recursively, never emptied)."""
+    if not path.exists():
+        path.mkdir(mode=0o700)
+    if must_chown:
+        os.lchown(path, entry.pw_uid, entry.pw_gid)
+    info = path.lstat()
+    if stat.S_ISLNK(info.st_mode) or info.st_uid != entry.pw_uid or stat.S_IMODE(info.st_mode) & 0o077:
+        raise FreshStartError('backup-dir must be a real directory owned by the service user with mode 0700')
+
+
 def apply(plan_value, *, now=None, service_user=SERVICE_USER, chown=None):
     """Create the new root and every store. Fails closed; a failed root is retained, never reused."""
     owner, must_chown = _owner(service_user, chown)
     root = _new_root(plan_value['root'])
+    backup_dir = _check_backup_dir(plan_value['backup_dir'])
     pacing_db = Path(plan_value['shared']['pacing_db'])
     _check_pacing_environment(pacing_db)
     config = Path(plan_value['config'])
@@ -459,6 +563,7 @@ def apply(plan_value, *, now=None, service_user=SERVICE_USER, chown=None):
     with os.fdopen(fd, 'w') as stream:
         stream.write(canonical(manifest))
     _finalize(root, owner, must_chown)
+    _make_backup_dir(backup_dir, owner, must_chown)
     return manifest
 
 
@@ -663,6 +768,14 @@ def _parser():
             p.add_argument('--old-ledger')
             p.add_argument('--old-evidence')
             p.add_argument('--old-journal')
+    p = sub.add_parser('render-units', allow_abbrev=False,
+                       help='fill the deploy/fresh unit templates from an applied root manifest (nothing is installed)')
+    p.add_argument('--root', required=True)
+    p.add_argument('--out', required=True)
+    p.add_argument('--release-dir', required=True)
+    p.add_argument('--state-dir', default=DEFAULT_STATE_DIR)
+    p.add_argument('--archived-root', default=DEFAULT_ARCHIVED_ROOT,
+                   help='the archived (old) store root; health/notify units get it as ReadOnlyPaths')
     p = sub.add_parser('render-dropins', allow_abbrev=False,
                        help='write one complete systemd drop-in per unit from an applied root manifest')
     p.add_argument('--root', required=True)
@@ -674,6 +787,11 @@ def _parser():
 def main(argv=None):
     a = _parser().parse_args(argv)
     try:
+        if a.command == 'render-units':
+            print(canonical({'status': 'RENDERED', **render_units(a.root, a.out, release_dir=a.release_dir,
+                                                                  state_dir=a.state_dir,
+                                                                  archived_root=a.archived_root)}))
+            return 0
         if a.command == 'render-dropins':
             print(canonical({'status': 'RENDERED', **render_dropins(a.root, a.out, marker=a.marker)}))
             return 0

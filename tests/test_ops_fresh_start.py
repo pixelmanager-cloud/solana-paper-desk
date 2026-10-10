@@ -52,6 +52,9 @@ class FreshStartBase(unittest.TestCase):
         return [__import__('hashlib').sha256(p.read_bytes()).hexdigest() for p in (self.pacer, self.discovery)]
 
     def args(self, root, **extra):
+        # T32: apply creates the backup directory, whose parent must already exist (never /var/backups here).
+        (self.base / 'backups').mkdir(exist_ok=True)
+        extra.setdefault('backup_dir', str(self.base / 'backups' / ('fresh-' + Path(root).name)))
         return dict(root=str(self.base / root), config=str(self.config), pacing_db=str(self.pacer),
                     discovery_db=str(self.discovery), **extra)
 
@@ -59,8 +62,14 @@ class FreshStartBase(unittest.TestCase):
         return fs.apply(fs.plan(**self.args(name)), service_user=self.user)
 
     def cli(self, *argv):
+        argv = list(argv)
+        if argv[0] in ('plan', 'apply', 'rotate') and '--backup-dir' not in argv:
+            # same default directory as args(), so CLI and API plans hash identically (T32: apply creates it)
+            root = argv[argv.index('--root' if argv[0] != 'rotate' else '--to') + 1]
+            (self.base / 'backups').mkdir(exist_ok=True)
+            argv += ['--backup-dir', str(self.base / 'backups' / ('fresh-' + Path(root).name))]
         with patch('builtins.print') as out:
-            code = fs.main(list(argv))
+            code = fs.main(argv)
         return code, json.loads(out.call_args[0][0])
 
 
@@ -93,8 +102,10 @@ class FreshStartTests(FreshStartBase):
         lock = root / fs.SCHEDULER_LOCK
         env = {'DESK_PAPER_SCHEDULER_IDENTITY': manifest['scheduler_identity']}
         argv = manifest['units']['desk-paper-entry-dispatcher']['argv']
+        # T32: the production argv ends with --execute --systemd-credentials; --plan is the dry form of the same call.
+        self.assertEqual(argv[-2:], ['--execute', '--systemd-credentials'])
         with patch.dict(os.environ, env), patch('builtins.print') as out:
-            self.assertEqual(scheduler.main(argv[2:] + ['--plan']), 0)
+            self.assertEqual(scheduler.main(argv[2:-2] + ['--plan']), 0)
         self.assertEqual(json.loads(out.call_args[0][0])['status'], 'PLAN')
         # Dispatcher preflight and terminal gate directly.
         ctx = dispatcher.plan(config=str(self.config), research_db=str(s['research_db']),

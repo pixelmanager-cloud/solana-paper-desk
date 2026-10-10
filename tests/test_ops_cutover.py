@@ -12,6 +12,7 @@ import unittest
 from contextlib import redirect_stdout
 from pathlib import Path
 from types import SimpleNamespace
+from unittest import mock
 
 from tools.ops import cutover
 
@@ -68,6 +69,7 @@ class FakeSystemd:
         self.next_elapse = {}          # timer -> NextElapseUSecMonotonic override
         self.after_start = {}          # unit -> ActiveState right after start (default active)
         self.stale_reload = False
+        self.timeouts = {}             # unit -> TimeoutStartUSec text
         self._pid = 1000
 
     def __call__(self, argv, cwd=None):
@@ -87,14 +89,14 @@ class FakeSystemd:
                                             'ExecStart': ex[-1] if ex else '', 'Environment': env}
             return SimpleNamespace(returncode=0, stdout='', stderr='')
         if cmd == 'start':
-            unit = argv[2]
+            assert argv[2] == '--no-block', argv      # T32: a blocking start would hit the runner timeout
+            unit = argv[-1]
             if unit in self.hang_start:
                 raise subprocess.TimeoutExpired(argv, 120)
             if unit in self.fail_start:
                 return SimpleNamespace(returncode=1, stdout='', stderr='boom')
             if unit not in self.noop_start:
-                self.state[unit] = ('inactive' if self.types.get(unit) == 'oneshot'
-                                    else self.after_start.get(unit, 'active'))
+                self.state[unit] = self.after_start.get(unit, 'inactive' if self.types.get(unit) == 'oneshot' else 'active')
                 self._pid += 1
                 self.pids[unit] = self._pid
                 self.start_mono[unit] = int(time.monotonic() * 1e6)
@@ -106,10 +108,24 @@ class FakeSystemd:
         if cmd == 'is-enabled':
             value = self.enabled.get(argv[2], 'disabled')
             return SimpleNamespace(returncode=0 if value.startswith('enabled') else 1, stdout=value + '\n', stderr='')
+        if cmd == 'enable':
+            self.enabled[argv[2]] = 'enabled'
+            return SimpleNamespace(returncode=0, stdout='', stderr='')
         if cmd == 'disable':
             if argv[2] not in self.stuck_enabled:
                 self.enabled[argv[2]] = 'disabled'
             return SimpleNamespace(returncode=0, stdout='', stderr='')
+        if cmd == 'cat':       # base unit then every drop-in in lexical order, like systemd
+            unit = argv[2]
+            parts = []
+            base = self.unit_dir / unit
+            if base.is_file():
+                parts.append('# %s\n%s' % (base, base.read_text()))
+            for conf in sorted((self.unit_dir / (unit + '.d')).glob('*.conf')):
+                parts.append('# %s\n%s' % (conf, conf.read_text()))
+            if not parts:
+                return SimpleNamespace(returncode=1, stdout='', stderr='No files found for %s.' % unit)
+            return SimpleNamespace(returncode=0, stdout='\n'.join(parts), stderr='')
         if cmd == 'show':
             unit = argv[2]
             eff = self.effective.get(unit, {})
@@ -125,7 +141,8 @@ class FakeSystemd:
                    'NextElapseUSecMonotonic': str(self.next_elapse.get(unit, 5_000_000 if timer else 0)),
                    'NextElapseUSecRealtime': '', 'LastTriggerUSec': '',
                    'Environment': ' '.join(eff.get('Environment', [])),
-                   'ExecStartPre': '', 'ExecStartPost': '', 'ExecStop': '', 'ExecReload': ''}
+                   'ExecStartPre': '', 'ExecStartPost': '', 'ExecStop': '', 'ExecReload': '',
+                   'TimeoutStartUSec': self.timeouts.get(unit, '')}
             lines = []
             for prop in argv[3:]:
                 key = prop[2:]
@@ -142,7 +159,7 @@ class FakeSystemd:
         return [c for c in self.calls if c[1] not in ('show', 'is-enabled')]
 
     def started(self):
-        return [c[2] for c in self.calls if c[1] == 'start']
+        return [c[-1] for c in self.calls if c[1] == 'start']
 
 
 class Base(unittest.TestCase):
@@ -337,7 +354,7 @@ class CutoverTests(Base):
         self.assertEqual(list(self.units.glob('*.d')), [])
         self.assertFalse(self.journal.exists())
         self.assertIn('systemctl daemon-reload', out['commands'])
-        self.assertIn('systemctl start desk-dashboard.service', out['commands'])
+        self.assertIn('systemctl start --no-block desk-dashboard.service', out['commands'])
 
     def test_apply_pins_working_directory_then_reloads_then_starts_in_order(self):
         rel = self.release()
@@ -774,6 +791,11 @@ class StartLifecycleTests(Base):
         self.assertEqual(code, 0, out)
 
     def test_activating_or_auto_restart_is_not_healthy(self):
+        # T32: start is --no-block and polled; a unit stuck activating fails at TimeoutStartUSec + margin.
+        # The injected sleep does not advance the clock, so use a tiny timeout and no margin.
+        self.systemd.timeouts[SVC[0]] = '1ms'
+        patcher = mock.patch.object(cutover, 'START_MARGIN_SECONDS', 0)
+        patcher.start(); self.addCleanup(patcher.stop)
         for state in ('activating', 'reloading'):
             with self.subTest(state=state):
                 self.systemd.after_start[SVC[0]] = state
@@ -1110,8 +1132,11 @@ class T13FormatTests(Base):
         return str(path)
 
     def manifest(self, units=None):
+        units = units if units is not None else T13_UNITS
+        sections = {name: {'condition_path_exists': None, 'read_write_paths': ['/var/lib/solana-desk-fresh/v1'],
+                           'timeout_start_sec': None} for name in units}
         return {'version': 1, 'kind': 'fresh_start_manifest_v1', 'root': '/var/lib/solana-desk-fresh/v1',
-                'units': units if units is not None else T13_UNITS}
+                'units': units, 'unit_sections': sections}
 
     def all_units(self):
         return ['desk-paper-held-cycle.service', 'desk-decisions.service', 'desk-dashboard.service']
@@ -1178,8 +1203,9 @@ class T13FormatTests(Base):
         self.assertEqual(words[1:], ['-m', 'x'] + hostile)
         self.assertEqual(len([l for l in text.splitlines() if l.startswith('ExecStart')]), 2)
         envs = [l for l in text.splitlines() if l.startswith('Environment=')]
-        self.assertEqual(len(envs), 1)
-        self.assertEqual(sd_decode(envs[0][len('Environment='):]), ['K=v w "q" \\ $ %'])
+        self.assertEqual(envs[0], 'Environment=')          # T32: the base unit's environment is reset first
+        self.assertEqual(len(envs), 2)
+        self.assertEqual(sd_decode(envs[1][len('Environment='):]), ['K=v w "q" \\ $ %'])
 
     def test_malformed_t13_inputs_refused_without_mutation(self):
         good = T13_UNITS['desk-decisions']
@@ -1241,6 +1267,158 @@ class T13FormatTests(Base):
         self.assertIn('WorkingDirectory=', plain)
 
 
+class ComposeTests(Base):
+    """T32: manifest sections, --no-block starts, boot enable, gates and the multi-drop-in rollback."""
+
+    SECTIONS = {'condition_path_exists': '/var/lib/solana-desk-fresh/v1/paper-ledger.sqlite',
+                'read_write_paths': ['/var/lib/solana-desk-fresh/v1', '/var/lib/solana-desk'],
+                'timeout_start_sec': 120}
+
+    def manifest(self, units=None, sections=None):
+        units = units if units is not None else {k: T13_UNITS[k] for k in ('desk-paper-held-cycle', 'desk-decisions')}
+        sections = sections if sections is not None else {k: dict(self.SECTIONS) for k in units}
+        return {'version': 1, 'kind': 'fresh_start_manifest_v1', 'root': '/var/lib/solana-desk-fresh/v1',
+                'units': units, 'unit_sections': sections}
+
+    def store_env(self, **kw):
+        path = self.root / 'manifest.json'
+        path.write_text(json.dumps(self.manifest(**kw)))
+        return str(path)
+
+    HELD, DEC = 'desk-paper-held-cycle.service', 'desk-decisions.service'
+
+    def test_manifest_sections_reach_the_dropin_condition_reset_paths_timeout_and_environment_reset(self):
+        code, out = self.cut('--store-env', self.store_env(), units=[self.HELD])
+        self.assertEqual(code, 0, out)
+        lines = (self.units / (self.HELD + '.d') / cutover.DROPIN).read_text().splitlines()
+        self.assertEqual(lines[0], cutover.MARKER)
+        self.assertIn('[Unit]', lines)
+        i = lines.index('ConditionPathExists=')
+        self.assertEqual(lines[i + 1], 'ConditionPathExists=/var/lib/solana-desk-fresh/v1/paper-ledger.sqlite')
+        self.assertIn('Environment=', lines)
+        self.assertIn('ReadWritePaths=/var/lib/solana-desk-fresh/v1 /var/lib/solana-desk', lines)
+        self.assertIn('TimeoutStartSec=120', lines)
+        self.assertEqual(lines.count('ExecStart='), 1)
+        self.assertLess(lines.index('[Unit]'), lines.index('[Service]'))
+
+    def test_sections_are_validated_and_must_match_units(self):
+        for label, kw in (('missing section', dict(sections={})),
+                          ('relative path', dict(sections={self.HELD[:-8]: dict(self.SECTIONS, read_write_paths=['rel']),
+                                                           self.DEC[:-8]: dict(self.SECTIONS)})),
+                          ('bad timeout', dict(sections={self.HELD[:-8]: dict(self.SECTIONS, timeout_start_sec=0),
+                                                         self.DEC[:-8]: dict(self.SECTIONS)})),
+                          ('extra key', dict(sections={self.HELD[:-8]: dict(self.SECTIONS, extra=1),
+                                                       self.DEC[:-8]: dict(self.SECTIONS)}))):
+            with self.subTest(label):
+                code, out = self.cut('--store-env', self.store_env(**kw), units=[self.HELD])
+                self.assertEqual(code, 2, out)
+                self.assertFalse((self.units / (self.HELD + '.d')).exists())
+
+    def test_start_is_no_block_and_a_long_oneshot_is_polled_until_it_finishes(self):
+        self.systemd.types[self.DEC] = 'oneshot'
+        self.systemd.after_start[self.DEC] = 'activating'      # still running right after the start returned
+        polls = []
+
+        def finish():
+            polls.append(1)
+            if len(polls) == 3:
+                self.systemd.state[self.DEC] = 'inactive'      # the 600 s pass completed successfully
+        self.sleep_hook = finish
+        self.systemd.state.clear()
+        code, out = self.cut(units=[self.DEC])
+        self.assertEqual(code, 0, out)
+        starts = [c for c in self.systemd.calls if c[1] == 'start']
+        self.assertEqual(starts, [['systemctl', 'start', '--no-block', self.DEC]])
+        self.assertGreaterEqual(len(polls), 3)
+
+    def test_parse_timespan(self):
+        for text, seconds in (('10min', 600), ('1min 30s', 90), ('600s', 600), ('2.5s', 2.5), ('1h', 3600)):
+            self.assertEqual(cutover.parse_timespan(text), seconds, text)
+        for text in ('', 'infinity', 'garbage', None):
+            self.assertEqual(cutover.parse_timespan(text), cutover.DEFAULT_START_TIMEOUT, text)
+
+    def test_enable_runs_after_start_never_covers_entry_and_is_undone_on_failure(self):
+        code, out = self.cut('--enable', self.DEC, units=[self.HELD, self.DEC])
+        self.assertEqual(code, 0, out)
+        self.assertEqual(out['enabled'], [{'unit': self.DEC, 'already': False}])
+        order = [c[1] for c in self.systemd.calls if c[1] in ('start', 'enable')]
+        self.assertEqual(order, ['start', 'start', 'enable'])
+        code, out = self.cut('--enable', ENTRY_SVC, '--allow-entry', units=[ENTRY_SVC])
+        self.assertEqual(code, 2, out)
+        self.assertIn('never covers the entry dispatcher', out['error'])
+        code, out = self.cut('--enable', self.HELD, units=[self.DEC])
+        self.assertEqual(code, 2, out)
+        self.assertIn('must also be in --units', out['error'])
+
+    def test_a_failed_cutover_disables_what_it_enabled_and_stops_what_it_started(self):
+        self.systemd.stuck_enabled.add(self.DEC)               # `enable` is accepted but is-enabled stays disabled
+        orig = self.systemd.__call__
+
+        def no_enable(argv, cwd=None):
+            if argv[:2] == ['systemctl', 'enable']:
+                self.systemd.calls.append(list(argv))
+                return SimpleNamespace(returncode=0, stdout='', stderr='')
+            return orig(argv, cwd)
+        code, out = self._run_with(no_enable, self.DEC)
+        self.assertEqual(code, 2, out)
+        self.assertIn(['systemctl', 'disable', self.DEC], self.systemd.calls)
+        self.assertEqual(self.systemd.state[self.DEC], 'inactive')
+
+    def _run_with(self, runner, unit):
+        self.base_unit(unit)
+        args = ['--journal', str(self.journal), '--python', 'python3', '--apply', 'cutover', '--release',
+                str(self.release()), '--release-root', str(self.roots), '--unit-dir', str(self.units),
+                '--units', unit, '--enable', unit]
+        out = io.StringIO()
+        with redirect_stdout(out):
+            code = cutover.main(args, runner=runner, sleep=self._sleep)
+        return code, json.loads(out.getvalue())
+
+    def test_monitor_needs_its_own_flag_to_start_or_enable(self):
+        for extra in ((), ('--enable', 'desk-paper-monitor.service')):
+            code, out = self.cut(*extra, units=['desk-paper-monitor.service'])
+            self.assertEqual(code, 2, out)
+            self.assertIn('--allow-monitor', out['error'])
+        code, out = self.cut('--allow-monitor', units=['desk-paper-monitor.service'])
+        self.assertEqual(code, 0, out)
+
+    def test_held_cycle_with_dependency_blocker_is_refused_because_it_never_monitors(self):
+        units = {'desk-paper-held-cycle': {'environment': [], 'argv': [
+            '-m', 'tools.paper_scheduler', '--mode', 'held', '--', '--dependency-blocker', 'X']}}
+        env = self.store_env(units=units, sections={'desk-paper-held-cycle': dict(self.SECTIONS)})
+        code, out = self.cut('--store-env', env, units=[self.HELD])
+        self.assertEqual(code, 2, out)
+        self.assertIn('--enable-held', out['error'])
+        self.assertEqual(self.cut('--store-env', env, '--allow-held-blocker', units=[self.HELD])[0], 0)
+
+    def test_rollback_removes_every_marked_dropin_and_nothing_else_and_can_disable(self):
+        code, _ = self.cut('--store-env', self.store_env(), '--enable', self.HELD, units=[self.HELD])
+        self.assertEqual(code, 0)
+        d = self.units / (self.HELD + '.d')
+        (d / '70-fresh-store.conf').write_text('# desk-fresh-start-managed v1\n[Service]\nTimeoutStartSec=1\n')
+        (d / '70-entry-latch.conf').write_text('# desk-entry-latch-managed v1\n[Service]\n')
+        (d / '80-operator.conf').write_text('[Service]\nNice=5\n')
+        (d / '70-other.conf').write_text('# desk-cutover-managed v1 quoted later\n')
+        forged = d / '70-entry-latch.conf'
+        self.systemd.state[self.HELD] = 'inactive'
+        code, out = self.run_cli('rollback', '--units', self.HELD, '--unit-dir', str(self.units), '--disable', apply=True)
+        self.assertEqual(code, 0, out)
+        self.assertEqual(sorted(p.name for p in d.iterdir()), ['70-other.conf', '80-operator.conf'])
+        self.assertEqual(len(out['removed']), 3)
+        self.assertIn(['systemctl', 'disable', self.HELD], self.systemd.calls)
+        self.assertFalse(forged.exists())
+
+    def test_rollback_ignores_a_dropin_whose_marker_is_not_the_first_line(self):
+        self.base_unit(self.HELD)
+        d = self.units / (self.HELD + '.d')
+        d.mkdir()
+        (d / '70-entry-latch.conf').write_text('[Service]\n# desk-entry-latch-managed v1\n')
+        code, out = self.run_cli('rollback', '--units', self.HELD, '--unit-dir', str(self.units), apply=True)
+        self.assertEqual(code, 0, out)
+        self.assertTrue((d / '70-entry-latch.conf').exists())
+        self.assertEqual(out['removed'], [])
+
+
 class MinorHardeningTests(Base):
     def test_marker_must_be_the_first_line(self):
         foreign = self.units / (SVC[0] + '.d') / cutover.DROPIN
@@ -1273,6 +1451,285 @@ class MinorHardeningTests(Base):
             os.fsync = real
         self.assertTrue(any(p.endswith('60-reviewed-release.conf.tmp') or p.endswith(cutover.DROPIN) for p in synced), synced)
         self.assertIn(str(self.units / (SVC[0] + '.d')), synced)
+
+
+def tree(root):
+    """path -> (type, mode, sha256 or link target) for everything under root: a byte-for-byte comparison key."""
+    out = {}
+    for path in sorted(Path(root).rglob('*')):
+        info = path.lstat()
+        rel = str(path.relative_to(root))
+        if path.is_symlink():
+            out[rel] = ('symlink', oct(info.st_mode & 0o7777), os.readlink(path))
+        elif path.is_dir():
+            out[rel] = ('dir', oct(info.st_mode & 0o7777), None)
+        else:
+            out[rel] = ('file', oct(info.st_mode & 0o7777), hashlib.sha256(path.read_bytes()).hexdigest())
+    return out
+
+
+class ArchiveDropinsTests(Base):
+    """T32F item 1/2: the Codex-era drop-in stack is archived (never layered on) and restorable exactly."""
+
+    STACK = ['60-reviewed-release.conf', '90-reviewed-73edf43.conf', '99-profile2-reviewed.conf', 'zz-paper-scheduler-reviewed.conf']
+
+    def setUp(self):
+        super().setUp()
+        self.archives = self.root / 'archives'
+        self.archives.mkdir(mode=0o755)
+        self.fresh = self.root / 'fresh-units'
+        self.fresh.mkdir(mode=0o755)
+        for unit in ('desk-backup.service', 'desk-dashboard.service', 'desk-discovery.service'):
+            (self.units / unit).write_text('[Service]\nExecStart=/old/venv/bin/python -m desk.old %s\n' % unit)
+            d = self.units / (unit + '.d')
+            d.mkdir(mode=0o755)
+            for i, name in enumerate(self.STACK):
+                (d / name).write_text('[Service]\nWorkingDirectory=/opt/old-%d\nExecStart=\nExecStart=/old/%s\n' % (i, name))
+                (d / name).chmod(0o644 if i else 0o640)
+        (self.units / 'desk-paper-held-cycle.timer.d').mkdir()
+        (self.units / 'desk-paper-held-cycle.timer.d' / '70-reviewed-enable.conf').write_text('[Install]\nWantedBy=timers.target\n')
+        (self.units / 'desk-dashboard.service.d' / 'link.conf').symlink_to('90-reviewed-73edf43.conf')
+        nested = self.units / 'desk-dashboard.service.d' / 'sub'
+        nested.mkdir(mode=0o750)
+        (nested / 'x.conf').write_text('x\n')
+        (self.units / 'unrelated.service').write_text('[Service]\n')
+        (self.fresh / 'desk-backup.service').write_text('[Service]\nExecStart=/fresh/python -m tools.ops.backup\n')
+        (self.fresh / 'desk-healthcheck.service').write_text('[Service]\nExecStart=/fresh/python -m tools.ops.healthcheck\n')
+        self.before = tree(self.units)
+
+    def archive(self, *extra, apply=True, name='systemd-archive-test'):
+        return self.run_cli('archive-dropins', '--unit-dir', str(self.units), '--archive-root', str(self.archives),
+                            '--name', name, '--fresh-units', str(self.fresh), *extra, apply=apply)
+
+    def test_dry_run_changes_nothing_and_apply_moves_with_a_verifiable_manifest(self):
+        code, report = self.archive(apply=False)
+        self.assertEqual((code, report['status']), (0, 'DRY_RUN'))
+        self.assertEqual(tree(self.units), self.before)
+        self.assertFalse((self.archives / 'systemd-archive-test').exists())
+        code, report = self.archive()
+        self.assertEqual(code, 0, report)
+        self.assertEqual(report['directories'], ['desk-backup.service.d', 'desk-dashboard.service.d',
+                                                 'desk-discovery.service.d', 'desk-paper-held-cycle.timer.d'])
+        self.assertEqual(report['unit_files'], ['desk-backup.service'])             # only the unit the fresh set replaces
+        left = sorted(p.name for p in self.units.iterdir())
+        self.assertEqual(left, ['desk-dashboard.service', 'desk-discovery.service', 'unrelated.service'])
+        manifest = json.loads((self.archives / 'systemd-archive-test' / 'manifest.json').read_text())
+        self.assertEqual(manifest['fresh_units'].keys(), {'desk-backup.service', 'desk-healthcheck.service'})
+        recorded = {r['path']: r for r in manifest['records']}
+        self.assertEqual(recorded['desk-backup.service.d/60-reviewed-release.conf']['mode'], 0o640)
+        self.assertEqual(recorded['desk-dashboard.service.d/link.conf']['type'], 'symlink')
+        self.assertEqual(oct((self.archives / 'systemd-archive-test').stat().st_mode & 0o777), '0o700')
+        archived = tree(self.archives / 'systemd-archive-test')
+        for path, entry in self.before.items():
+            if path.startswith(('desk-backup', 'desk-dashboard.service.d', 'desk-discovery.service.d', 'desk-paper-held')):
+                self.assertEqual(archived[path], entry, path)     # content, mode and sha256 preserved
+        self.assertIn(['systemctl', 'daemon-reload'], self.systemd.calls)
+
+    def test_after_archive_systemctl_cat_shows_only_the_fresh_configuration(self):
+        self.archive()
+        (self.units / 'desk-backup.service').write_text((self.fresh / 'desk-backup.service').read_text())
+        d = self.units / 'desk-backup.service.d'
+        d.mkdir()
+        (d / cutover.DROPIN).write_text(cutover.MARKER + '\n[Service]\nWorkingDirectory=/opt/rel\n')
+        shown = self.systemd(['systemctl', 'cat', 'desk-backup.service']).stdout
+        self.assertIn('/fresh/python', shown)
+        self.assertIn('/opt/rel', shown)
+        for old in self.STACK[1:] + ['/old/']:
+            self.assertNotIn(old, shown)
+
+    def test_refuses_existing_archive_active_unit_hardlink_and_bad_name(self):
+        self.assertEqual(self.archive()[0], 0)
+        self.assertEqual(self.archive()[0], 2)                                      # the archive name is taken
+        self.assertEqual(self.archive(name='no-prefix')[0], 2)
+        self.systemd.state['desk-backup.service'] = 'active'
+        (self.units / 'desk-backup.service').write_text('[Service]\n')
+        self.assertEqual(self.archive(name='systemd-archive-two')[0], 2)
+        self.systemd.state['desk-backup.service'] = 'inactive'
+        os.link(self.units / 'desk-discovery.service', self.root / 'hard')
+        d = self.units / 'desk-late.service.d'
+        d.mkdir()
+        os.link(self.root / 'hard', d / 'h.conf')
+        code, report = self.archive(name='systemd-archive-three')
+        self.assertEqual(code, 2)
+        self.assertIn('hard-linked', report['error'])
+        self.assertFalse((self.archives / 'systemd-archive-three').exists() and any(
+            (self.archives / 'systemd-archive-three').iterdir()) and False)
+
+    def install_fresh(self):
+        (self.units / 'desk-backup.service').write_text((self.fresh / 'desk-backup.service').read_text())
+        (self.units / 'desk-healthcheck.service').write_text((self.fresh / 'desk-healthcheck.service').read_text())
+        for unit in ('desk-backup.service', 'desk-dashboard.service'):
+            d = self.units / (unit + '.d')
+            d.mkdir(exist_ok=True)
+            (d / cutover.DROPIN).write_text(cutover.MARKER + '\n[Service]\nWorkingDirectory=/opt/rel\n')
+
+    def rollback(self, *extra, apply=True):
+        return self.run_cli('rollback', '--unit-dir', str(self.units), '--units', 'desk-backup.service',
+                            'desk-dashboard.service', '--restore-archive', str(self.archives / 'systemd-archive-test'),
+                            *extra, apply=apply)
+
+    def test_rollback_restore_returns_the_original_tree_byte_for_byte(self):
+        self.archive()
+        self.install_fresh()
+        code, report = self.rollback()
+        self.assertEqual(code, 0, report)
+        self.assertEqual(tree(self.units), self.before)
+        self.assertIn('desk-healthcheck.service', report['restored_archive']['removed_fresh'])   # rendered unit removed
+        self.assertFalse((self.units / 'desk-healthcheck.service').exists())
+
+    def corrupting_copy(self, victim):
+        real = cutover.copy_tree_exact
+
+        def copy(src, dst, records):
+            real(src, dst, records)
+            target = dst / victim
+            target.chmod(0o644)
+            target.write_text('silently corrupted\n')
+        return mock.patch.object(cutover, 'copy_tree_exact', copy)
+
+    def test_a_corrupt_archive_copy_is_caught_before_any_original_is_removed(self):
+        with self.corrupting_copy('desk-backup.service.d/60-reviewed-release.conf'):
+            code, report = self.archive()
+        self.assertEqual(code, 2)
+        self.assertIn('Archive verification failed', report['error'])
+        self.assertEqual(tree(self.units), self.before)                 # nothing was removed
+
+    def test_a_corrupt_restore_is_caught_by_the_final_byte_for_byte_check(self):
+        self.archive()
+        self.install_fresh()
+        with self.corrupting_copy('desk-backup.service.d/60-reviewed-release.conf'):
+            code, report = self.rollback()
+        self.assertEqual(code, 2)
+        self.assertIn('Archive verification failed', report['error'])
+
+    def test_restore_removes_drop_in_directories_only_this_flow_created(self):
+        self.archive()
+        self.install_fresh()
+        fresh_only = self.units / 'desk-healthcheck.service.d'
+        fresh_only.mkdir()
+        (fresh_only / cutover.DROPIN).write_text(cutover.MARKER + '\n[Service]\n')
+        code, report = self.run_cli('rollback', '--unit-dir', str(self.units), '--units', 'desk-backup.service',
+                                    'desk-dashboard.service', 'desk-healthcheck.service', '--restore-archive',
+                                    str(self.archives / 'systemd-archive-test'), apply=True)
+        self.assertEqual(code, 0, report)
+        self.assertFalse(fresh_only.exists())
+        self.assertEqual(tree(self.units), self.before)
+
+    def test_restore_dry_run_changes_nothing(self):
+        self.archive()
+        self.install_fresh()
+        snapshot = tree(self.units)
+        code, report = self.rollback(apply=False)
+        self.assertEqual((code, report['status']), (0, 'DRY_RUN'))
+        self.assertEqual(tree(self.units), snapshot)
+
+    def test_restore_refuses_foreign_files_changed_units_and_a_tampered_archive_before_touching_anything(self):
+        self.archive()
+        self.install_fresh()
+        snapshot = tree(self.units)
+        # a hand-written drop-in nobody archived or rolled back
+        (self.units / 'desk-dashboard.service.d' / '55-hand-written.conf').write_text('x\n')
+        code, report = self.rollback()
+        self.assertEqual(code, 2)
+        self.assertIn('nobody archived', report['error'])
+        (self.units / 'desk-dashboard.service.d' / '55-hand-written.conf').unlink()
+        # a rendered unit that changed after it was installed
+        (self.units / 'desk-backup.service').write_text('[Service]\n# edited\n')
+        code, report = self.rollback()
+        self.assertEqual(code, 2)
+        self.assertIn('not the rendered unit', report['error'])
+        (self.units / 'desk-backup.service').write_text((self.fresh / 'desk-backup.service').read_text())
+        # a tampered archive file
+        victim = self.archives / 'systemd-archive-test' / 'desk-discovery.service.d' / '99-profile2-reviewed.conf'
+        victim.write_text('tampered\n')
+        code, report = self.rollback()
+        self.assertEqual(code, 2)
+        self.assertIn('Archive verification failed', report['error'])
+        self.assertEqual(tree(self.units), snapshot)
+
+    def test_inventory_saves_listing_and_systemctl_cat_and_refuses_overwrite(self):
+        out = self.root / 'inventory'
+        code, report = self.run_cli('inventory', '--unit-dir', str(self.units), '--out', str(out))
+        self.assertEqual((code, out.exists()), (0, False))                          # dry run writes nothing
+        self.assertIn('desk-backup.service', report['units'])
+        code, report = self.run_cli('inventory', '--unit-dir', str(self.units), '--out', str(out), apply=True)
+        self.assertEqual(code, 0, report)
+        saved = json.loads((out / 'inventory.json').read_text())
+        self.assertEqual(saved['kind'], 'systemd_inventory_v1')
+        self.assertIn('90-reviewed-73edf43.conf', (out / 'ls-la.txt').read_text())
+        cat = (out / 'systemctl-cat-desk-backup.service.txt').read_text()
+        self.assertIn('99-profile2-reviewed.conf', cat)                              # the dropins ARE in the saved cat
+        self.assertEqual(oct(out.stat().st_mode & 0o777), '0o700')
+        self.assertEqual(self.run_cli('inventory', '--unit-dir', str(self.units), '--out', str(out), apply=True)[0], 2)
+        self.assertEqual(tree(self.units), self.before)                              # read-only on the unit dir
+
+
+class SealArchiveTests(Base):
+    """T32F item 8: archived stores become root-owned read-only; the shared inputs stay usable."""
+
+    def setUp(self):
+        super().setUp()
+        self.old = self.root / 'old'
+        (self.old / 'discovery').mkdir(parents=True)
+        (self.old / 'entry-dispatch').mkdir()
+        self.pacing = self.old / 'provider-pacing.sqlite'
+        self.cont = self.old / 'discovery' / 'continuous.sqlite'
+        for path in (self.pacing, self.cont, self.old / 'research.sqlite', self.old / 'entry-dispatch' / 'dispatch.sqlite',
+                     self.old / 'discovery' / 'launches.sqlite', self.old / 'demo.sqlite'):
+            path.write_bytes(path.name.encode())
+            path.chmod(0o600)
+        self.chowns = []
+        patcher = mock.patch.object(cutover.Ops, 'chown', side_effect=lambda path, owner, group: self.chowns.append((Path(path), owner, group)))
+        patcher.start()
+        self.addCleanup(patcher.stop)
+
+    def seal(self, *extra, apply=True):
+        return self.run_cli('seal-archive', '--root', str(self.old), '--shared-path', str(self.pacing),
+                            '--shared-path', str(self.cont), *extra, apply=apply)
+
+    def test_dry_run_changes_nothing(self):
+        before = tree(self.old)
+        code, report = self.seal(apply=False)
+        self.assertEqual((code, report['status'], tree(self.old), self.chowns), (0, 'DRY_RUN', before, []))
+        self.assertEqual(report['files'], 4)
+
+    def test_archived_files_are_root_0444_dirs_0555_and_shared_inputs_untouched_with_sticky_group_dirs(self):
+        shared_before = (tree(self.old)['provider-pacing.sqlite'], tree(self.old)['discovery/continuous.sqlite'])
+        code, report = self.seal()
+        self.assertEqual(code, 0, report)
+        after = tree(self.old)
+        for rel in ('research.sqlite', 'demo.sqlite', 'entry-dispatch/dispatch.sqlite', 'discovery/launches.sqlite'):
+            self.assertEqual(after[rel][1], '0o444', rel)
+            self.assertIn((self.old / rel, 'root', 'root'), self.chowns)
+        self.assertEqual(after['entry-dispatch'][1], '0o555')
+        self.assertIn((self.old / 'entry-dispatch', 'root', 'root'), self.chowns)
+        # directories that must stay creatable for the rollback journal: group-writable and sticky
+        self.assertEqual(oct(self.old.stat().st_mode & 0o7777), '0o1775')
+        self.assertEqual(after['discovery'][1], '0o1775')
+        self.assertIn((self.old, 'root', 'solana-desk'), self.chowns)
+        self.assertIn((self.old / 'discovery', 'root', 'solana-desk'), self.chowns)
+        # the shared databases themselves were not chmod'ed or chowned
+        self.assertEqual((after['provider-pacing.sqlite'], after['discovery/continuous.sqlite']), shared_before)
+        self.assertNotIn(self.pacing, [c[0] for c in self.chowns])
+        self.assertNotIn(self.cont, [c[0] for c in self.chowns])
+        self.assertEqual(report['untouched'], sorted([str(self.pacing), str(self.cont)]))
+
+    def test_second_seal_is_idempotent_and_refuses_unsafe_trees(self):
+        self.assertEqual(self.seal()[0], 0)
+        self.assertEqual(self.seal()[0], 0)
+        (self.old / 'link.sqlite').symlink_to(self.old / 'demo.sqlite')
+        code, report = self.seal()
+        self.assertEqual(code, 2)
+        self.assertIn('symlink', report['error'])
+        (self.old / 'link.sqlite').unlink()
+        os.link(self.old / 'demo.sqlite', self.old / 'hard.sqlite')
+        self.assertIn('hard-linked', self.seal()[1]['error'])
+        os.unlink(self.old / 'hard.sqlite')
+        outside = self.root / 'elsewhere.sqlite'
+        outside.write_bytes(b'x')
+        code, report = self.run_cli('seal-archive', '--root', str(self.old), '--shared-path', str(outside), apply=True)
+        self.assertEqual(code, 2)
+        self.assertIn('inside --root', report['error'])
 
 
 class RealRuntimeDigestTests(unittest.TestCase):

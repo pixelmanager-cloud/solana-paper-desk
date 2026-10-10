@@ -1,0 +1,34 @@
+{
+  "version": "shadow-grid-1",
+  "name": "exit-grid",
+  "base_config": "config/paper.json",
+  "assumptions": {
+    "sol_usd": "150",
+    "token_decimals": 6,
+    "token_supply_tokens": "1000000000",
+    "pool_fee_bps": "25",
+    "excursion_fraction": "0.30",
+    "max_intra_marks": 3
+  },
+  "variants": [
+    {
+      "name": "live",
+      "overrides": {}
+    }
+  ],
+  "grid": {
+    "stop_fraction": [
+      "0.12",
+      "0.18",
+      "0.25"
+    ],
+    "trailing_fraction": [
+      "0.20",
+      "0.30"
+    ],
+    "time_stop_seconds": [
+      1800,
+      2700
+    ]
+  }
+}

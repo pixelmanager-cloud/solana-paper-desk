@@ -12,6 +12,7 @@ PrivateTmp=true
 ProtectSystem=strict
 ProtectHome=true
 ReadWritePaths=<STATE_DIR> <FRESH_ROOT>
+ReadOnlyPaths=<ARCHIVED_ROOT>
 RestrictAddressFamilies=AF_INET AF_INET6 AF_UNIX
 TimeoutStartSec=60
 MemoryMax=128M
