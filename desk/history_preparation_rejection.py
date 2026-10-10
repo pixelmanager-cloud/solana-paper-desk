@@ -19,7 +19,7 @@ TABLE='paper_history_preparation_rejections'
 MAX_REJECTIONS=512
 REASONS={'HISTORY_FEATURE_RECORD_BYTES_EXCEEDED','HISTORY_FEATURE_RECORD_COUNT_EXCEEDED',
          'HISTORY_FEATURE_AGGREGATE_BYTES_EXCEEDED','HISTORY_FRESH_ENTRY_REQUESTS_UNAVAILABLE',
-         'HISTORY_FEATURE_MOMENTUM_STALE'}
+         'HISTORY_FEATURE_MOMENTUM_STALE','HISTORY_FEATURE_EMPTY_WINDOW','HISTORY_REQUIRED_MEASUREMENTS_UNAVAILABLE'}
 SQL=f'CREATE TABLE {TABLE}(pass_id TEXT PRIMARY KEY,scan_id TEXT NOT NULL UNIQUE,intent_hash TEXT NOT NULL,outcome_hash TEXT NOT NULL)'
 GUARDS={TABLE+'_insert':f"CREATE TRIGGER {TABLE}_insert BEFORE INSERT ON {TABLE} WHEN EXISTS(SELECT 1 FROM {TABLE} WHERE pass_id=NEW.pass_id OR scan_id=NEW.scan_id OR rowid=NEW.rowid) OR (SELECT count(*) FROM {TABLE})>={MAX_REJECTIONS} BEGIN SELECT RAISE(ABORT,'Preparation rejection immutable'); END"}
 GUARDS|={TABLE+'_'+a.lower():f"CREATE TRIGGER {TABLE}_{a.lower()} BEFORE {a} ON {TABLE} BEGIN SELECT RAISE(ABORT,'Preparation rejection immutable'); END" for a in ('UPDATE','DELETE')}
@@ -38,17 +38,18 @@ def intent(store,ledger,cfg,item,admission,context):
     with closing(sqlite3.connect(Path(ledger).as_uri()+'?mode=ro',uri=True)) as c:
         c.execute('BEGIN');anchors,_=terminal._ledger(c,cfg,initial=True)
         originals=historical._ledger_originals(c);prefix=historical._ledger_originals(c,prefix=True)
-    return {'kind':'history_first_paper_preparation_v3','feature_semantics_version':2,'config_hash':digest(cfg),'target':asdict(item),
+    return {'kind':'history_first_paper_preparation_v4','feature_semantics_version':2,'config_hash':digest(cfg),'target':asdict(item),
         'admission':admission,'context':context,'source_hash':runtime.implementation_hash(),
         'ledger_anchors':anchors,'ledger_original_hash':originals,'ledger_prefix_hash':prefix,
         'pass_cutoff':rows[-1][0] if rows else 0,'passes_hash':digest(rows),'preparation_seconds':18,
         'fresh_requests_reserved':7 if cfg.get('paper_usd_valuation_version',0)==1 else 9}
 
 
-def bounds(store,coverage,*,cfg=None,as_of=None,semantics_version=1):
+def bounds(store,coverage,*,cfg=None,as_of=None,semantics_version=1,required_measurements=False):
     if coverage is None:return {'records':0,'record_bytes':0,'max_record_bytes':0,'page_pair_bytes':0,'momentum_at':None}
     if type(semantics_version) is not int or semantics_version not in (1,2):raise ValueError('Preparation semantics version')
     result={'records':0,'record_bytes':0,'max_record_bytes':0,'page_pair_bytes':0,'momentum_at':None}
+    if required_measurements:result['missing_measurements']=None
     raw_rows=[];pairs=[]
     if semantics_version==2:
         from .streaming_history import RetainedHistoryPages
@@ -72,13 +73,20 @@ def bounds(store,coverage,*,cfg=None,as_of=None,semantics_version=1):
         measured=calculate(raw_rows,pool=coverage['address'],as_of=as_of,
             provenance='PUBLIC_MAINNET_CAPTURE_NOT_TRADING_EVIDENCE',history_pages=pairs,
             token_profile_version=cfg.get('paper_token_profile_version',0),semantics_version=semantics_version)
+        if required_measurements and measured['window']['coverage_complete']:
+            from .model import OBSERVABLE_FORMULAS,BOOST_VOLUME_FEATURE
+            volume=BOOST_VOLUME_FEATURE if cfg.get('paper_token_profile_version',0)==2 else 'volume_vs_liq'
+            names=set(OBSERVABLE_FORMULAS)|{'net_buy_ratio','unique_buyers_5m',volume,'drawdown_from_high'}
+            result['missing_measurements']=sorted(name for name in names if measured['fields'][name]['status']!='MEASURED_WINDOW')
         row=measured['fields']['momentum_at']
         if row['status']=='MEASURED_WINDOW' and type(row['observed_at']) is int:
             result['momentum_at']=row['observed_at']
     return result
 
 
-def reason_for(measured,remaining,reserve,*,now=None,momentum_ttl=None,exhausted=False,semantics_version=1):
+def reason_for(measured,remaining,reserve,*,now=None,momentum_ttl=None,exhausted=False,semantics_version=1,empty_window=False):
+    if empty_window and exhausted and measured['records']==0:return 'HISTORY_FEATURE_EMPTY_WINDOW'
+    if empty_window and exhausted and measured.get('missing_measurements'):return 'HISTORY_REQUIRED_MEASUREMENTS_UNAVAILABLE'
     if measured['max_record_bytes']>MAX_RECORD_BYTES:return 'HISTORY_FEATURE_RECORD_BYTES_EXCEEDED'
     if measured['records']>MAX_RECORDS:return 'HISTORY_FEATURE_RECORD_COUNT_EXCEEDED'
     if semantics_version==1 and max(measured['record_bytes'],measured['page_pair_bytes'])>MAX_TOTAL_BYTES:return 'HISTORY_FEATURE_AGGREGATE_BYTES_EXCEEDED'
@@ -120,10 +128,10 @@ def _proof(store,progress,value,*,publishing=False,cfg=None,review_source=None):
     original=terminal._load(store,value['intent_hash'])
     fields={'kind','config_hash','target','admission','context','source_hash','ledger_anchors','ledger_original_hash','ledger_prefix_hash','pass_cutoff','passes_hash','preparation_seconds','fresh_requests_reserved'}
     semantics=1
-    if type(original) is dict and original.get('kind')=='history_first_paper_preparation_v3':
+    if type(original) is dict and original.get('kind') in ('history_first_paper_preparation_v3','history_first_paper_preparation_v4'):
         fields=fields|{'feature_semantics_version'};semantics=2
         if type(original.get('feature_semantics_version')) is not int or original['feature_semantics_version']!=2:raise ValueError('Streaming preparation semantics')
-    if type(original) is not dict or set(original)!=fields or original['kind'] not in ('history_first_paper_preparation_v2','history_first_paper_preparation_v3') or not runtime._hash(original['source_hash']) or original['preparation_seconds']!=18 or type(original['pass_cutoff']) is not int or not 0<=original['pass_cutoff']<=10000:raise ValueError('Original preparation intent malformed')
+    if type(original) is not dict or set(original)!=fields or original['kind'] not in ('history_first_paper_preparation_v2','history_first_paper_preparation_v3','history_first_paper_preparation_v4') or not runtime._hash(original['source_hash']) or original['preparation_seconds']!=18 or type(original['pass_cutoff']) is not int or not 0<=original['pass_cutoff']<=10000:raise ValueError('Original preparation intent malformed')
     ctx=original['context'];scan=value['scan_id'];item=original['target'];before=original['admission'];after=value['admission_after']
     with closing(sqlite3.connect(Path(ctx['ledger_db']).as_uri()+'?mode=ro',uri=True)) as c:
         saved_cfg=runtime._parse(c.execute("SELECT value FROM metadata WHERE key='config'").fetchone()[0])
@@ -136,10 +144,12 @@ def _proof(store,progress,value,*,publishing=False,cfg=None,review_source=None):
     state=progress.snapshot(value['history_id'])
     query={'address':item['target']['pool'],'start':item['history_as_of']-300,'end':item['history_as_of']+1,'token_accounts_filter':'none'}
     if state['query'].get('page_size',100)!=50 or {k:v for k,v in state['query'].items() if k!='page_size'}!=query or digest({'budget':scan,'query':state['query']})!=value['history_id'] or state['status'] not in ('PENDING','DONE') or state['coverage'] is None or state['coverage']['evidence_hash']!=value['coverage_hash']:raise ValueError('Preparation coverage binding')
-    measured=bounds(store,state['coverage'],cfg=saved_cfg,as_of=item['history_as_of'],semantics_version=semantics)
+    measured=bounds(store,state['coverage'],cfg=saved_cfg,as_of=item['history_as_of'],semantics_version=semantics,required_measurements=original['kind']=='history_first_paper_preparation_v4')
     if measured!=value['bounds'] or reason_for(measured,18-after['requests_used'],reserve,
             now=value['rejected_at'],momentum_ttl=saved_cfg['momentum_ttl_seconds'],
-            exhausted=state['coverage']['query_range_exhausted'],semantics_version=semantics)!=value['reason']:raise ValueError('Preparation deterministic reason conflict')
+            exhausted=state['coverage']['query_range_exhausted'],semantics_version=semantics,empty_window=original['kind']=='history_first_paper_preparation_v4')!=value['reason']:raise ValueError('Preparation deterministic reason conflict')
+    if value['reason'] in ('HISTORY_FEATURE_EMPTY_WINDOW','HISTORY_REQUIRED_MEASUREMENTS_UNAVAILABLE') and state['coverage']['query_coverage_verified'] is not True:
+        raise ValueError('Verified exhausted empty history required')
     attempts=_attempts(store,scan,before['requests_used'],after['requests_used'],
         intent_hash=value['intent_hash'],allowed_outcome=digest(value))
     if [key for key,_ in attempts]!=value['attempt_refs'] or len(attempts)!=state['attempts'] or len(attempts)!=len(state['coverage']['pages']):raise ValueError('Preparation reservation inventory mismatch')
@@ -201,7 +211,7 @@ def publish(store,progress,ledger,cfg,*,pass_id,intent_hash,history_id,reason):
     value={'kind':'history_preparation_no_entry_v1','status':'NO_ENTRY','execution_status':'EXECUTION_UNVERIFIED','live_readiness':False,'entry_authorized':False,
         'pass_id':pass_id,'scan_id':scan,'intent_hash':intent_hash,'reason':reason,'history_id':history_id,
         'coverage_hash':state['coverage']['evidence_hash'],'attempt_refs':[key for key,_ in attempts],
-        'admission_after':after,'bounds':bounds(store,state['coverage'],cfg=cfg,as_of=original['target']['history_as_of'],semantics_version=2 if original['kind']=='history_first_paper_preparation_v3' else 1),
+        'admission_after':after,'bounds':bounds(store,state['coverage'],cfg=cfg,as_of=original['target']['history_as_of'],semantics_version=2 if original['kind'] in ('history_first_paper_preparation_v3','history_first_paper_preparation_v4') else 1,required_measurements=original['kind']=='history_first_paper_preparation_v4'),
         'rejected_at':time.time_ns()//10**9}
     _proof(store,progress,value,publishing=True,cfg=cfg)
     key=store.save(value)

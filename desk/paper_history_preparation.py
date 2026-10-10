@@ -35,10 +35,10 @@ class _PreparationBudget(cycle._Budget):
 
     def check_bounds(self):
         state = self.progress.snapshot(self.history_id)
-        measured = rejection.bounds(self.progress.store,state['coverage'],cfg=self.cfg,as_of=self.item.history_as_of,semantics_version=2)
+        measured = rejection.bounds(self.progress.store,state['coverage'],cfg=self.cfg,as_of=self.item.history_as_of,semantics_version=2,required_measurements=True)
         reason = rejection.reason_for(measured,18,self.fresh_requests,now=self.now(),
             momentum_ttl=self.cfg['momentum_ttl_seconds'],
-            exhausted=bool(state['coverage'] and state['coverage']['query_range_exhausted']),semantics_version=2)
+            exhausted=bool(state['coverage'] and state['coverage']['query_range_exhausted'] and state['coverage']['query_coverage_verified']),semantics_version=2,empty_window=True)
         if reason:raise PreparationRejected(reason)
 
     def call(self, scan, invoke):

@@ -49,6 +49,9 @@ def _guards():
 
 
 def _shape(v):
+    if type(v) is dict and v.get('association')=='EXPLICIT_REVIEWED_EMPTY_HISTORY':
+        from .paper_empty_history_reconciliation import shape
+        return shape(v)
     return (type(v) is dict and set(v)==FIELDS and type(v['version']) is int and v['version']==1
         and v['association'] in ('EXPLICIT_REVIEWED_LEGACY','INTRINSIC') and _id(v['pass_id'])
         and type(v['scan_id']) is str and 1<=len(v['scan_id'])<=256
@@ -99,6 +102,9 @@ def _rows(c):
         v=runtime._parse(payload)
         if not _shape(v) or v['pass_id']!=identity or v['scan_id']!=scan or digest(v)!=key:raise ValueError('Terminal receipt identity/hash malformed')
         if v['association']=='EXPLICIT_REVIEWED_LEGACY':_approved(v)
+        elif v['association']=='EXPLICIT_REVIEWED_EMPTY_HISTORY':
+            from .paper_empty_history_reconciliation import approved
+            approved(v)
         rows.append(v)
     return rows
 
@@ -239,7 +245,10 @@ def _wire(encoded,limit):
     return runtime._parse(raw.decode())
 
 
-def _proof(store,progress,v,cfg,*,current_budget):
+def _proof(store,progress,v,cfg,*,current_budget,review_source=None):
+    if v.get('association')=='EXPLICIT_REVIEWED_EMPTY_HISTORY':
+        from .paper_empty_history_reconciliation import proof
+        return proof(store,progress,v,cfg,current_budget=current_budget,review_source=review_source)
     with closing(store.connect()) as c:
         _passes(c)
         row=c.execute('SELECT intent_hash,outcome_hash FROM paper_observation_passes WHERE id=?',(v['pass_id'],)).fetchone()
@@ -567,7 +576,7 @@ def _gate(store,research,scan_ids,*,ledger_locked=None,review_source=None):
             elif v['association']=='EXPLICIT_REVIEWED_DISPATCH_PREPARATION_UNCAPTURED':
                 from .paper_dispatch_preparation_retirement import proof as dispatch_proof
                 dispatch_proof(store,progress,v,cfg,current_budget=False)
-            else:_proof(store,progress,v,cfg,current_budget=False)
+            else:_proof(store,progress,v,cfg,current_budget=False,review_source=historical_source)
         _pacing(v['context']['pacing_db'])
         certified[v['pass_id']]=v['intent_hash']
     if any(v['scan_id'] in scan_ids for v in rows):return 'REJECTED_SCAN_RETIRED'

@@ -47,6 +47,9 @@ class LockedHistoryTests(unittest.TestCase):
                 return result
         with patch.object(fixture.tool.cli,'_credentials'),patch.dict('os.environ',{'HELIUS_API_KEY':'SYNTHETIC_TEST_ONLY','JUPITER_API_KEY':'SYNTHETIC_TEST_ONLY'}),patch.object(transport,'build_opener',return_value=HTTP()),patch.object(terminal,'gate',side_effect=slow_gate):
             result=h.invoke(live=True,systemd_credentials=True)
+            # Surface the original short-circuit diagnosis before timestamp arithmetic.
+            self.assertEqual(result['status'],'COMPLETE',result)
+            self.assertIsNotNone(latest[0],{'result':result,'order':order})
             entry_order=list(order);entry_age=int(time.time())-latest[0]
             if held and not stale:
                 from desk.monitoring_budget import MonitoringBudget
