@@ -2,9 +2,8 @@
 
 Local coordinator authority only. No counters, journals or original receipts change.
 """
-from contextlib import closing
+from contextlib import closing,contextmanager
 from pathlib import Path
-import hashlib
 import sqlite3
 from . import runtime_compatibility as runtime,runtime_extensions as extensions
 from .model import canonical,digest
@@ -14,7 +13,7 @@ POLICY=Path(__file__).resolve().parents[1]/'config/runtime-performance-continuat
 PREDECESSOR='6dd1ec3f12fe74c3fe94fab5c4be5736e94ba062b6766b9bba3cab3daf319b83'
 HASHES={'first_receipt_hash','continuation_receipt_hash','extension_prefix_hash','parent_receipt_hash',
         'predecessor','successor','config_hash','metadata_hash','checkpoint_hash','events_hash','outcomes_hash'}
-PINS=HASHES|{'context','events_count','outcomes_count','dispatch_predecessor','dispatch_successor'}
+PINS=HASHES|{'context','events_count','outcomes_count','dispatch_predecessor','dispatch_successor','dispatch_journal_prefix'}
 FIELDS=PINS|{'version','kind','original_metadata','original_checkpoint'}
 KIND='PERFORMANCE_ONLY_FOUR_EDGE_SUCCESSOR_V1'
 
@@ -34,11 +33,18 @@ def _pin_shape(pin):
     old,new=pin['dispatch_predecessor'],pin['dispatch_successor']
     if (type(old) is not dict or type(new) is not dict or set(old)!=set(new)
             or old.get('source_hash')!=pin['predecessor'] or new.get('source_hash')!=pin['successor']
+            or type(old.get('paths')) is not dict
+            or any(type(old['paths'].get(k)) is not dict for k in pin['context'])
             or old.get('config_hash')!=pin['config_hash'] or new.get('config_hash')!=pin['config_hash']
             or any(not runtime._hash(x.get(k)) for x in (old,new) for k in ('source_hash','tool_hash','entry_tool_hash'))
             or new!={**old,**{k:new[k] for k in ('source_hash','tool_hash','entry_tool_hash')}}
             or any(old.get('paths',{}).get(k,{}).get('path')!=v for k,v in pin['context'].items())):
         raise ValueError('Only exact source/tool dispatcher rollover permitted')
+    prefix=pin['dispatch_journal_prefix']
+    if (type(prefix) is not dict or set(prefix)!={'context','intents','results'}
+            or any(type(prefix[k]) is not list for k in prefix) or len(prefix['context'])!=1
+            or any(len(prefix[k])>4096 for k in ('intents','results'))):
+        raise ValueError('Bounded complete dispatcher prefix required')
     return pin
 
 
@@ -104,6 +110,7 @@ def require(c,*,implementation=None):
         if v[table+'_count']<previous[table+'_count'] or runtime._prefix(c,table,v[table+'_count'])!=v[table+'_hash']:
             raise ValueError('Performance journal prefix changed')
     runtime._baseline(c,v)
+    _verify_journal(v)
     current=runtime.implementation_hash() if implementation is None else implementation
     # Historical proof closures may request the original tail; they still replay
     # this installed pinned receipt and every original edge before returning it.
@@ -111,13 +118,62 @@ def require(c,*,implementation=None):
     return current
 
 
-def dispatch_predecessor(c,expected):
+def dispatch_binding(c,expected,journal):
     record=read(c)
-    if record is None:return expected
-    v,_=record;require(c,implementation=v['successor'])
-    if expected==v['dispatch_predecessor']:return expected
-    if expected!=v['dispatch_successor']:raise ValueError('Unreviewed performance dispatcher context')
-    return v['dispatch_predecessor']
+    if record is None:return expected,{},{}
+    v,_=record;require(c,implementation=v['successor']);_verify_journal(v,c=journal)
+    if expected not in (v['dispatch_predecessor'],v['dispatch_successor']):
+        raise ValueError('Unreviewed performance dispatcher context')
+    from . import paper_migration_no_entry as migration
+    bindings={row[1]:runtime._parse(row[-2])['context_hash'] for row in v['dispatch_journal_prefix']['intents']}
+    old=v['dispatch_predecessor']
+    return old,bindings,{digest(old):old}
+
+
+def _verify_journal(v,*,c=None,initial=False):
+    from . import paper_migration_no_entry as migration
+    if c is None:
+        from tools.paper_entry_dispatcher import _path
+        path=_path(v['dispatch_predecessor']['journal'],private=True)
+        with closing(sqlite3.connect(path.as_uri()+'?mode=ro',uri=True)) as journal:
+            journal.execute('BEGIN')
+            return _verify_journal(v,c=journal,initial=initial)
+    _,actual=migration._journal(c)
+    for table,old in v['dispatch_journal_prefix'].items():
+        if actual[table][:len(old)]!=old or (initial and actual[table]!=old):
+            raise ValueError('Reviewed dispatcher journal prefix changed')
+    return actual
+
+
+def _validate_predecessor_journal(c,expected):
+    # Read-only planning while the new binary is not yet authorized for this
+    # ledger. Reuse the existing exact predecessor proof selector, never replace
+    # the running implementation hash or let an entry caller supply authority.
+    from tools import paper_entry_dispatcher as dispatcher
+    from . import paper_migration_no_entry as migration
+    from .evidence import EvidenceStore
+    if expected['source_hash']!=PREDECESSOR:raise ValueError('Exact deployed predecessor required')
+    values,_=migration._journal(c)
+    if values['context']=={1:expected}:
+        return dispatcher._check_records(c,expected,values,{}, {})
+    if set(values['context'])!={1}:raise ValueError('Original dispatcher context missing')
+    store=EvidenceStore(expected['paths']['evidence_db']['path'],read_only=True)
+    with closing(store.connect()) as evidence:
+        matches=[v for v in migration.rows(evidence) if v['association']==migration.PREWIRE and v['successor_context']==expected]
+    if len(matches)!=1:raise ValueError('Exact installed predecessor dispatcher certificate required')
+    bindings,retired,contexts=migration._prewire_lineage(c,matches[0],values['context'][1],review_source=PREDECESSOR)
+    return dispatcher._check_records(c,expected,values,bindings,retired,historical_contexts=contexts)
+
+
+@contextmanager
+def _journal_lock(ctx):
+    from tools import paper_entry_dispatcher as dispatcher
+    from .paper_cycle import _lock
+    path=dispatcher._path(ctx['journal'],private=True)
+    with _lock(str(path)+'.dispatcher.lock') as locked:
+        if not locked:raise ValueError('Dispatcher busy')
+        with closing(sqlite3.connect(path.as_uri()+'?mode=ro',uri=True)) as c:
+            c.execute('BEGIN');yield c
 
 
 def append(research_db,evidence_db,ledger_db,cfg,*,pin):
@@ -131,31 +187,34 @@ def append(research_db,evidence_db,ledger_db,cfg,*,pin):
     actual={'research_db':str(research),'evidence_db':str(evidence),'ledger_db':str(ledger)}
     if type(cfg) is not dict or actual!=pin['context'] or digest(cfg)!=pin['config_hash'] or runtime.implementation_hash()!=pin['successor']:
         raise ValueError('Exact performance source/config/context required')
-    with _worker_lock(research) as locked:
-        if locked is None:raise ValueError('Research busy')
-        with _lock(str(evidence)+'.ownership-invocation.lock') as locked:
-            if not locked:raise ValueError('Evidence busy')
-            with _lock(str(ledger)+'.paper-cycle.lock') as locked:
-                if not locked:raise ValueError('Ledger busy')
-                runtime.require_transition_context(research,evidence,ledger,reviewed_context=pin['context'])
-                with closing(sqlite3.connect(ledger.as_uri()+'?mode=rw',uri=True,isolation_level=None)) as c:
-                    c.execute('BEGIN IMMEDIATE')
-                    try:
-                        existing=read(c)
-                        if existing is not None:
-                            require(c)
-                            if {k:existing[0][k] for k in PINS}!=pin:raise ValueError('Conflicting performance replay')
-                            c.commit();return {'status':'ALREADY_RECORDED','receipt_hash':existing[1],'effective_runtime_hash':pin['successor']}
-                        _prefix(c,pin);snapshot=extensions._snapshot(c,cfg)
-                        if any(pin[k]!=snapshot[k] for k in snapshot if k in PINS):raise ValueError('Reviewed performance snapshot changed')
-                        v=pin|snapshot|{'version':1,'kind':KIND};raw=canonical(v)
-                        if len(raw.encode())>runtime.MAX_BYTES:raise ValueError('Performance publication bound')
-                        c.execute(schema())
-                        for sql in guards().values():c.execute(sql)
-                        c.execute('INSERT INTO '+TABLE+' VALUES(1,?,?)',(raw,digest(v)))
-                        require(c);c.commit()
-                        return {'status':'RECORDED','receipt_hash':digest(v),'effective_runtime_hash':pin['successor']}
-                    except BaseException:c.rollback();raise
+    with _journal_lock(pin['dispatch_predecessor']) as journal:
+        _verify_journal(pin,c=journal)
+        with _worker_lock(research) as locked:
+            if locked is None:raise ValueError('Research busy')
+            with _lock(str(evidence)+'.ownership-invocation.lock') as locked:
+                if not locked:raise ValueError('Evidence busy')
+                with _lock(str(ledger)+'.paper-cycle.lock') as locked:
+                    if not locked:raise ValueError('Ledger busy')
+                    runtime.require_transition_context(research,evidence,ledger,reviewed_context=pin['context'])
+                    with closing(sqlite3.connect(ledger.as_uri()+'?mode=rw',uri=True,isolation_level=None)) as c:
+                        c.execute('BEGIN IMMEDIATE')
+                        try:
+                            existing=read(c)
+                            if existing is not None:
+                                require(c)
+                                if {k:existing[0][k] for k in PINS}!=pin:raise ValueError('Conflicting performance replay')
+                                c.commit();return {'status':'ALREADY_RECORDED','receipt_hash':existing[1],'effective_runtime_hash':pin['successor']}
+                            _verify_journal(pin,c=journal,initial=True)
+                            _prefix(c,pin);snapshot=extensions._snapshot(c,cfg)
+                            if any(pin[k]!=snapshot[k] for k in snapshot if k in PINS):raise ValueError('Reviewed performance snapshot changed')
+                            v=pin|snapshot|{'version':1,'kind':KIND};raw=canonical(v)
+                            if len(raw.encode())>runtime.MAX_BYTES:raise ValueError('Performance publication bound')
+                            c.execute(schema())
+                            for sql in guards().values():c.execute(sql)
+                            c.execute('INSERT INTO '+TABLE+' VALUES(1,?,?)',(raw,digest(v)))
+                            require(c);c.commit()
+                            return {'status':'RECORDED','receipt_hash':digest(v),'effective_runtime_hash':pin['successor']}
+                        except BaseException:c.rollback();raise
 
 
 def plan(research_db,evidence_db,ledger_db,cfg,*,dispatch_predecessor,dispatch_successor):
@@ -167,24 +226,29 @@ def plan(research_db,evidence_db,ledger_db,cfg,*,dispatch_predecessor,dispatch_s
     research=canonical_job_path(research_db);evidence=canonical_ownership_path(evidence_db);ledger=canonical_job_path(ledger_db)
     context={'research_db':str(research),'evidence_db':str(evidence),'ledger_db':str(ledger)}
     if type(cfg) is not dict:raise ValueError('Performance config object required')
-    with _worker_lock(research) as locked:
-        if locked is None:raise ValueError('Research busy')
-        with _lock(str(evidence)+'.ownership-invocation.lock') as locked:
-            if not locked:raise ValueError('Evidence busy')
-            with _lock(str(ledger)+'.paper-cycle.lock') as locked:
-                if not locked:raise ValueError('Ledger busy')
-                runtime.require_transition_context(research,evidence,ledger,reviewed_context=context)
-                with closing(sqlite3.connect(ledger.as_uri()+'?mode=ro',uri=True)) as c:
-                    c.execute('BEGIN')
-                    if read(c) is not None:raise ValueError('One performance successor already installed')
-                    rows=extensions._bounded_rows(c)
-                    if len(rows)!=4:raise ValueError('Four original edges required')
-                    first,fh,base,bh=extensions._base(c,extended=True)
-                    snapshot=extensions._snapshot(c,cfg)
-                    pin={k:snapshot[k] for k in PINS if k in snapshot}
-                    pin.update(first_receipt_hash=fh,continuation_receipt_hash=bh,extension_prefix_hash=digest(rows),
-                               parent_receipt_hash=rows[-1][2],predecessor=PREDECESSOR,successor=runtime.implementation_hash(),
-                               config_hash=digest(cfg),context=context,dispatch_predecessor=dispatch_predecessor,
-                               dispatch_successor=dispatch_successor)
-                    _pin_shape(pin);_prefix(c,pin)
-                    return pin
+    with _journal_lock(dispatch_predecessor) as journal:
+        from tools import paper_entry_dispatcher as dispatcher
+        from .paper_migration_no_entry import _journal
+        _validate_predecessor_journal(journal,dispatch_predecessor)
+        _,dispatch_prefix=_journal(journal)
+        with _worker_lock(research) as locked:
+            if locked is None:raise ValueError('Research busy')
+            with _lock(str(evidence)+'.ownership-invocation.lock') as locked:
+                if not locked:raise ValueError('Evidence busy')
+                with _lock(str(ledger)+'.paper-cycle.lock') as locked:
+                    if not locked:raise ValueError('Ledger busy')
+                    runtime.require_transition_context(research,evidence,ledger,reviewed_context=context)
+                    with closing(sqlite3.connect(ledger.as_uri()+'?mode=ro',uri=True)) as c:
+                        c.execute('BEGIN')
+                        if read(c) is not None:raise ValueError('One performance successor already installed')
+                        rows=extensions._bounded_rows(c)
+                        if len(rows)!=4:raise ValueError('Four original edges required')
+                        first,fh,base,bh=extensions._base(c,extended=True)
+                        snapshot=extensions._snapshot(c,cfg)
+                        pin={k:snapshot[k] for k in PINS if k in snapshot}
+                        pin.update(first_receipt_hash=fh,continuation_receipt_hash=bh,extension_prefix_hash=digest(rows),
+                                   parent_receipt_hash=rows[-1][2],predecessor=PREDECESSOR,successor=runtime.implementation_hash(),
+                                   config_hash=digest(cfg),context=context,dispatch_predecessor=dispatch_predecessor,
+                                   dispatch_successor=dispatch_successor,dispatch_journal_prefix=dispatch_prefix)
+                        _pin_shape(pin);_prefix(c,pin)
+                        return pin

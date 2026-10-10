@@ -131,6 +131,11 @@ def _ledger_originals(c,*,prefix=False):
     native={'metadata','events','outcomes','state','raw_events','health','sqlite_sequence'}
     from . import runtime_continuation, runtime_extensions
     extras={runtime.TABLE,runtime_continuation.TABLE,runtime_extensions.TABLE}
+    from . import runtime_performance_continuation as performance
+    receipt=performance.read(c)
+    if receipt is not None:
+        performance.require(c,implementation=receipt[0]['successor'])
+        extras.add(performance.TABLE)
     _schema_bounds(c)
     bounds=c.execute('SELECT count(*),COALESCE(sum(length(CAST(name AS BLOB))+length(CAST(tbl_name AS BLOB))+COALESCE(length(CAST(sql AS BLOB)),0)),0) FROM sqlite_master').fetchone()
     if bounds[0]>256 or bounds[1]>1024*1024:raise ValueError('Preparation ledger schema bound')
