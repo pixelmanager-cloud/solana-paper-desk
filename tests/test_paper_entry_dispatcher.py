@@ -258,17 +258,25 @@ class DispatcherTests(unittest.TestCase):
         with patch.object(tool.cli,'_credentials'),patch('desk.providers.helius_rpc',side_effect=rpc),patch.object(tool.migration,'intake',side_effect=AssertionError('rejected mint intake')):
             return self.invoke(execute=True,systemd_credentials=True)
 
-    def append_distinct_migration(self, *, no_op=False, null_time=False, depth=2):
+    def append_distinct_migration(self, *, no_op=False, null_time=False, depth=2, non_sol=False, malformed=False):
         from solders.pubkey import Pubkey
         from desk import graduation_witness as g
         raw=copy.deepcopy(self.raw)
+        if non_sol:
+            raw,_,_=migration_fixture('migrate_v2')
+            raw['blockTime']=self.raw['blockTime']
+            event=raw['meta']['innerInstructions'][0]['instructions'][0]
+            data=bytearray(unbase58(event['data']));data[136:144]=raw['blockTime'].to_bytes(8,'little',signed=True)
+            event['data']=base58(data)
         mint=str(Pubkey.from_bytes(bytes([17])*32))
         authority=g._pda([b'pool-authority',unbase58(mint)],g.PUMP)
         curve=g._pda([b'bonding-curve',unbase58(mint)],g.PUMP)
-        pool=g._pda([b'pool',b'\0\0',unbase58(authority),unbase58(mint),unbase58(g.SOL)],g.AMM)
+        quote=str(Pubkey.from_bytes(bytes([18])*32)) if non_sol else g.SOL
+        pool=g._pda([b'pool',b'\0\0',unbase58(authority),unbase58(mint),unbase58(quote)],g.AMM)
         old_authority=g._pda([b'pool-authority',unbase58(self.mint)],g.PUMP)
         old_curve=g._pda([b'bonding-curve',unbase58(self.mint)],g.PUMP)
         replacements={self.mint:mint,self.pool:pool,old_authority:authority,old_curve:curve}
+        if non_sol:replacements[g.SOL]=quote
         for ix in raw['transaction']['message']['instructions']:
             ix['accounts']=[replacements.get(x,x) for x in ix['accounts']]
         ix=raw['meta']['innerInstructions'][0]['instructions'][0]
@@ -278,6 +286,7 @@ class DispatcherTests(unittest.TestCase):
         ix['stackHeight']=depth
         if no_op:raw['meta']['innerInstructions']=[]
         if null_time:raw['blockTime']=None
+        if malformed:del raw['transaction']['message']
         signature=base58(bytes([10])*64);raw['transaction']['signatures']=[signature]
         wire=canonical({'method':'transactionNotification','params':{'result':{
             'signature':signature,'slot':raw['slot'],'blockTime':raw['blockTime'],
@@ -309,6 +318,35 @@ class DispatcherTests(unittest.TestCase):
         with patch.object(tool.time,'time',return_value=self.f.at+6650):
             self.assertEqual(self.invoke()['status'],'NO_CANDIDATE')
         self.assertEqual(self.count('intents'),0)
+
+    def test_newest_completed_non_sol_migration_skipped_for_older_sol(self):
+        unsupported=self.append_distinct_migration(non_sol=True,null_time=True)
+        with sqlite3.connect(self.discovery) as c:
+            raw=json.loads(c.execute('SELECT payload FROM raw_events ORDER BY seq DESC LIMIT 1').fetchone()[0])
+        observations=tool.decode(raw)['program_observations']
+        parent=next(o for o in observations if o.get('name')=='migrate_v2')
+        event=next(o for o in observations if o.get('name')=='CompletePumpAmmMigrationEvent')
+        self.assertEqual(parent['status'],'IDENTIFIED')
+        self.assertEqual(event['status'],'EVENT_DECODED');self.assertIs(event['schema_complete'],True)
+        self.assertEqual(event['fields']['mint'],parent['mint']);self.assertEqual(event['fields']['pool'],parent['pool'])
+        with self.assertRaisesRegex(tool.migration.IntakeBlocked,'OBSERVED_POOL_BINDING_INVALID'):
+            tool.migration._hints('preselection-probe',parent['mint'],parent['pool'],
+                raw['params']['result']['signature'],raw['params']['result']['slot'],tool.PROVENANCE)
+        result=self.invoke()
+        self.assertEqual(result['status'],'DRY_RUN');self.assertEqual(result['hint']['mint'],self.mint)
+        self.assertNotEqual(result['hint']['mint'],unsupported)
+        self.assertEqual(self.count('intents'),0)
+        with self.f.jobs.connect() as c:self.assertEqual(c.execute('SELECT COUNT(*) FROM scans').fetchone()[0],0)
+
+    def test_newest_retained_undecodable_notification_skips_without_integrity_waiver(self):
+        self.append_distinct_migration(malformed=True)
+        self.assertEqual(self.invoke()['hint']['mint'],self.mint)
+        with sqlite3.connect(self.discovery) as c:
+            c.execute('DROP TRIGGER raw_events_update')
+            c.execute("UPDATE raw_events SET payload_hash=? WHERE seq=(SELECT MAX(seq) FROM raw_events)",('0'*64,))
+            c.execute("CREATE TRIGGER raw_events_update BEFORE UPDATE ON raw_events BEGIN SELECT RAISE(ABORT,'Original discovery record is immutable'); END")
+        with self.assertRaisesRegex(ValueError,'receipt invalid'):self.invoke()
+        self.assertEqual(self.count('intents'),0);self.assertEqual(self.calls,[])
 
     def test_rejection_restart_replays_and_considers_only_distinct_unadmitted_mint(self):
         self.assertEqual(self.rejection()['status'],'TOKEN_REJECTED')

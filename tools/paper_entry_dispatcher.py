@@ -483,17 +483,29 @@ def _select(ctx, c, now):
             frame = d.execute('SELECT payload FROM frames WHERE sha256=?', (raw_hash,)).fetchone()[0]
             if frame != payload.encode():
                 raise ValueError('Original discovery bytes conflict')
-            decoded = decode(raw)
+            # Integrity above is mandatory even for unsupported notification shapes.
+            envelope = raw.get('params',{}).get('result') if type(raw) is dict and type(raw.get('params')) is dict else None
+            if type(envelope) is not dict:
+                continue
+            if envelope.get('signature') != source.removeprefix('confirmed:') or envelope.get('slot') != slot:
+                raise ValueError('Discovery metadata conflict')
+            try:
+                decoded = decode(raw)
+            except (ValueError,KeyError,TypeError,IndexError,AttributeError,OverflowError):
+                continue  # Local undecodable hint, never an integrity exemption.
             if decoded['signature'] != source.removeprefix('confirmed:') or decoded['slot'] != slot:
                 raise ValueError('Discovery metadata conflict')
             if decoded['status'] != 'OBSERVED':
                 continue
             hints = []
             for o in decoded['program_observations']:
-                if o.get('name') not in ('migrate','migrate_v2'):
+                if o.get('name') not in ('migrate','migrate_v2') or o.get('status') != 'IDENTIFIED':
                     continue
                 mint, pool = o.get('mint'), o.get('pool')
-                migration._hints('selection-only',mint,pool,decoded['signature'],slot,PROVENANCE)
+                try:
+                    migration._hints('selection-only',mint,pool,decoded['signature'],slot,PROVENANCE)
+                except migration.IntakeBlocked:
+                    continue  # Unsupported hint/pool, not a global receipt failure.
                 if not _migration_event_hint(raw,decoded,o):
                     continue  # No-op calls are not migration selection witnesses.
                 hints.append({'seq':seq,'payload_hash':h,'raw_hash':raw_hash,'received_at':received,
