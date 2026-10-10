@@ -7,6 +7,7 @@ requests precede investigations that have not already received a slot.
 """
 import argparse
 from contextlib import closing
+import fcntl
 from email.utils import parsedate_to_datetime
 import math
 import os
@@ -21,6 +22,19 @@ MAX_WAIT = 5.0
 MAX_WAITERS = 32
 MAX_DB_BYTES = 2 * 1024 * 1024
 ENV = 'DESK_PROVIDER_PACING_DB'
+# A granted slot whose owner process is gone is released only after BOTH this much time has
+# passed since the grant AND the owner's kernel-held holder lock is provably free.
+RECLAIM_INTERVALS = 30
+RECLAIM_MIN_SECONDS = 60.0
+RECLAIM_TABLE = 'pacing_reclaims'
+RECLAIM_SQL = ('CREATE TABLE pacing_reclaims(id INTEGER PRIMARY KEY AUTOINCREMENT,provider TEXT NOT NULL,'
+               'ticket TEXT NOT NULL UNIQUE,granted_at REAL NOT NULL,reclaimed_at REAL NOT NULL,'
+               'backoff_until REAL NOT NULL,reason TEXT NOT NULL)')
+RECLAIM_GUARDS = {
+    f'pacing_reclaims_no_{op.lower()}': (f'CREATE TRIGGER pacing_reclaims_no_{op.lower()} BEFORE {op} ON pacing_reclaims '
+                                         "BEGIN SELECT RAISE(ABORT,'Immutable pacing reclaim record'); END")
+    for op in ('UPDATE', 'DELETE')}
+MAX_RECLAIMS = 10000
 
 
 class PacingError(ValueError):
@@ -77,6 +91,7 @@ class Pacer:
             raise PacingError('PACING_PRIORITY_INVALID')
         self.path, self.identity = _path(path)
         self.priority, self.clock, self.monotonic, self.sleep = priority, clock, monotonic, sleep
+        self._held = {}
         self._validate()
 
     def _connect(self):
@@ -95,7 +110,10 @@ class Pacer:
                 from .kraken_pacing_migration import read as migration
                 receipt=migration(c,self.path)
                 self.providers=PROVIDERS+('kraken',) if receipt else PROVIDERS
-                if tables != {'policy','state','waiters'}|({'kraken_pacing_migration'} if receipt else set()): raise ValueError()
+                reclaims = tables & {RECLAIM_TABLE, 'sqlite_sequence'}   # AUTOINCREMENT owns sqlite_sequence
+                if ('sqlite_sequence' in tables) != (RECLAIM_TABLE in tables): raise ValueError()
+                if tables - reclaims != {'policy','state','waiters'}|({'kraken_pacing_migration'} if receipt else set()): raise ValueError()
+                if RECLAIM_TABLE in tables: self._validate_reclaims(c)
                 rows = c.execute('SELECT provider,version,cadence,backoff FROM policy').fetchall()
                 if len(rows) != len(self.providers) or {r[0] for r in rows} != set(self.providers): raise ValueError()
                 for provider, version, cadence, backoff in rows:
@@ -114,6 +132,74 @@ class Pacer:
                             or not _number(expires) or not 0 < expires-created <= MAX_WAIT): raise ValueError()
         except (sqlite3.Error, ValueError, TypeError):
             raise PacingError('PACING_DATABASE_INVALID') from None
+
+    @staticmethod
+    def _validate_reclaims(c):
+        if (dict(c.execute("SELECT name,sql FROM sqlite_master WHERE tbl_name=? AND type='table'", (RECLAIM_TABLE,))) != {RECLAIM_TABLE: RECLAIM_SQL}
+                or dict(c.execute("SELECT name,sql FROM sqlite_master WHERE tbl_name=? AND type='trigger'", (RECLAIM_TABLE,))) != RECLAIM_GUARDS):
+            raise ValueError()
+        count, bad = c.execute("SELECT COUNT(*),COALESCE(SUM(typeof(provider)!='text' OR typeof(ticket)!='text' OR length(ticket)!=32 "
+                               "OR typeof(granted_at)!='real' OR typeof(reclaimed_at)!='real' OR typeof(backoff_until)!='real' "
+                               "OR reason!='OWNER_GONE'),0) FROM pacing_reclaims").fetchone()
+        if count > MAX_RECLAIMS or bad: raise ValueError()
+
+    def __del__(self):
+        # A discarded Pacer no longer owns an unfinished grant: closing the lock is the owner-gone proof.
+        for provider in list(getattr(self, '_held', ())):
+            self._release(provider)
+
+    def _lock_path(self, provider):
+        return str(self.path) + '.holder-' + provider + '.lock'
+
+    def _hold(self, provider, ticket):
+        """Keep a kernel lock for as long as this process owns the granted slot.
+
+        flock is released by the kernel on any process death (including SIGKILL), which is the
+        only owner-gone proof available without extra state. Failure to lock just means the slot
+        can never be reclaimed (the previous fail-closed behavior).
+        """
+        try:
+            fd = os.open(self._lock_path(provider), os.O_RDWR | os.O_CREAT | os.O_NOFOLLOW | os.O_CLOEXEC, 0o600)
+        except OSError: return
+        try: fcntl.flock(fd, fcntl.LOCK_EX | fcntl.LOCK_NB)
+        except OSError: os.close(fd); return
+        self._release(provider)
+        self._held[provider] = (ticket, fd)
+
+    def _release(self, provider, ticket=None):
+        held = self._held.get(provider)
+        if held and (ticket is None or held[0] == ticket):
+            del self._held[provider]
+            try: os.close(held[1])
+            except OSError: pass
+
+    def _reclaim(self, c, provider, ticket, next_at, now):
+        """Release an orphaned grant inside the caller's write transaction; True when released.
+
+        Cadence, next_at and the provider embargo are never lowered. The unknown outcome is treated
+        like a throttle without Retry-After at grant time, and an append-only row records the release.
+        """
+        cadence, backoff = c.execute('SELECT cadence,backoff FROM policy WHERE provider=?', (provider,)).fetchone()
+        granted = next_at - cadence
+        if now - granted < max(RECLAIM_MIN_SECONDS, RECLAIM_INTERVALS * cadence): return False
+        try:
+            fd = os.open(self._lock_path(provider), os.O_RDWR | os.O_CREAT | os.O_NOFOLLOW | os.O_CLOEXEC, 0o600)
+        except OSError: return False
+        try:
+            try: fcntl.flock(fd, fcntl.LOCK_EX | fcntl.LOCK_NB)
+            except OSError: return False        # owner alive (or unprovable): never reclaim
+            until = granted + backoff
+            if not (_number(until) and _number(granted)): return False
+            if not c.execute("SELECT 1 FROM sqlite_master WHERE type='table' AND name=?", (RECLAIM_TABLE,)).fetchone():
+                c.execute(RECLAIM_SQL)
+                for sql in RECLAIM_GUARDS.values(): c.execute(sql)
+            c.execute('INSERT INTO pacing_reclaims(provider,ticket,granted_at,reclaimed_at,backoff_until,reason) VALUES(?,?,?,?,?,?)',
+                      (provider, ticket, float(granted), float(now), float(until), 'OWNER_GONE'))
+            c.execute('UPDATE state SET pending=NULL,blocked_until=MAX(blocked_until,?),high_water=? WHERE provider=? AND pending=?',
+                      (until, now, provider, ticket))
+            return True
+        finally:
+            os.close(fd)
 
     def _now(self, c):
         now = self.clock()
@@ -149,7 +235,9 @@ class Pacer:
                         c.execute('INSERT INTO waiters VALUES(?,?,?,?,?)',(ticket,provider,self.priority,now,now+duration))
                         registered = True
                     row = c.execute('SELECT next_at,blocked_until,pending FROM state WHERE provider=?',(provider,)).fetchone()
-                    if row[2] is not None: raise PacingError('PACING_OUTCOME_PENDING')
+                    if row[2] is not None:
+                        if self._reclaim(c, provider, row[2], row[0], now): c.commit(); continue
+                        raise PacingError('PACING_OUTCOME_PENDING')
                     first = c.execute("SELECT ticket FROM waiters WHERE provider=? ORDER BY CASE priority WHEN 'held' THEN 0 ELSE 1 END,created,ticket LIMIT 1",(provider,)).fetchone()
                     due = max(row[:2])
                     c.execute('UPDATE state SET high_water=? WHERE provider=?',(now,provider))
@@ -157,6 +245,7 @@ class Pacer:
                         cadence = c.execute('SELECT cadence FROM policy WHERE provider=?',(provider,)).fetchone()[0]
                         c.execute('UPDATE state SET next_at=?,pending=? WHERE provider=?',(math.nextafter(now+cadence, math.inf),ticket,provider))
                         c.execute('DELETE FROM waiters WHERE ticket=?',(ticket,));c.commit()
+                        self._hold(provider, ticket)
                         return ticket
                     c.commit()
                 self.sleep(min(.05, max(0,deadline-tick)))
@@ -175,6 +264,7 @@ class Pacer:
                 c.execute('BEGIN IMMEDIATE');now=self._now(c)
                 self._pending(c,provider,ticket)
                 c.execute('UPDATE state SET pending=NULL,high_water=? WHERE provider=?',(now,provider));c.commit()
+                self._release(provider, ticket)
         except sqlite3.Error:
             raise PacingError('PACING_DATABASE_BUSY') from None
 
@@ -214,6 +304,7 @@ class Pacer:
                     except (ValueError,TypeError,OverflowError): pass
                 elif values: until=2**53-1  # Ambiguous/oversize instructions cannot permit an early retry.
                 c.execute('UPDATE state SET blocked_until=MAX(blocked_until,?),high_water=?,pending=NULL WHERE provider=?',(until,now,provider));c.commit()
+                self._release(provider, ticket)
         except sqlite3.Error:
             raise PacingError('PACING_DATABASE_BUSY') from None
 
