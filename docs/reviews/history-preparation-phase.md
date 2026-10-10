@@ -1,0 +1,11 @@
+# Bounded historical preparation and deterministic no-entry draft
+
+Base: a1f72add852e7afa1cfb74bb87f8aaeb4ed40c42. Synthetic fixtures only; no provider calls or production data copied.
+
+Historical preparation gets a separate 18-second aggregate deadline, with each request capped at min(15, remaining). Fresh entry retains its existing 10-second deadline, two-second handoff, original captured window, 30-second history freshness and 15-second momentum TTL. Reserve seven fresh requests for Kraken (six minimum plus replacement BUY); legacy valuation reserves nine. Check allowance before reservation; lifetime 18 and all response/feature bounds remain unchanged.
+
+Deterministic record-size, record-count, aggregate-size, remaining-request and positively measured stale-momentum bounds can produce NO_ENTRY only after independent retained-history and complete charged-attempt replay, unchanged initial ledger proof, and pacing/monitoring checks. Immutable rejection identity and original pass outcome are bound together. Dispatcher publication occurs before preparation locks release. Missing attempts, corruption, ambiguous timeout, persistence failure or partial publication remain unresolved; no generic exception waiver. Exact completed replay does not charge or retry the candidate.
+
+Focused validation: 50 tests passed in 72.340 seconds before the final bounded artifact-inventory hardening; final focused rerun pending. Six dedicated synthetic tests passed in 18.490 seconds, including native-clock preparation beyond ten seconds, three full 50-row pages crossing the unchanged aggregate bound, fresh-call reservation, missing/duplicate attempts and corrupt evidence. Further restart/publication adversarial checks are ongoing. Full suite has not been run for this draft; publication intentionally enables overlapping independent review.
+
+Integration dependency: worker06 must connect the supplied rejection gate to the global terminal validator. Its separate PR188 owns context lineage and unresolved-intent handling. No readiness or activation claim. Legacy zero-page insufficient-budget disposition remains a draft edge to resolve; it currently fails closed rather than publishing NO_ENTRY.
