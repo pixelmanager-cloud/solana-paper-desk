@@ -10,6 +10,7 @@ import json
 import shutil
 import sqlite3
 import tempfile
+import time
 import unittest
 from pathlib import Path
 from types import SimpleNamespace
@@ -22,6 +23,8 @@ from tests import test_ops_fresh_start_lifecycle as lifecycle
 from tests import test_paper_entry_dispatcher as base
 from tools import paper_entry_dispatcher as tool
 from tools.ops import verify_cycle
+
+REAL_TIME = time.time    # captured before any patch: the allowance was provisioned on the real clock
 
 
 class ConcurrentPipeline(lifecycle.FreshFixture):
@@ -39,6 +42,8 @@ class ConcurrentPipeline(lifecycle.FreshFixture):
             super().setUp()
         self.assertEqual(pc.selected(self.cfg), 1)
         self.second_raw = None
+        self.entered = {}
+        self.preflight_at = None      # the tick starts (and preflights) before preparation and quotes elapse
 
     # -- the second candidate: same dispatcher, a distinct migration notification ---------------------------
     def second_protocol(self, mint):
@@ -106,6 +111,7 @@ class ConcurrentPipeline(lifecycle.FreshFixture):
                 return base.Response(canonical({'jsonrpc': '2.0', 'id': 'paper-read-v1',
                                                 'result': {'data': rows, 'paginationToken': None}}).encode())
         original = cycle.run_once
+        budget = tool.monitor.MonitoringBudget      # the dispatcher's own allowance reads use the modelled clock too
 
         def entry_cycle(research, evidence, ledger, cfg, **kw):
             item = kw['candidates'][0]
@@ -117,28 +123,63 @@ class ConcurrentPipeline(lifecycle.FreshFixture):
                 return original(research, evidence, ledger, cfg, wall_clock=lambda: outer.f.at,
                                 monotonic=lambda: outer.f.tick, dependency_blockers=(), **args)
             h.run_cycle = run
-            return base.actual_cycle(h, candidates=(item,))
+            result = base.actual_cycle(h, candidates=(item,))
+            outer.entered[item.target.mint] = (item, proto)
+            return result
         with (patch.object(tool.cli, '_credentials'), patch('desk.providers.helius_rpc', side_effect=setup_rpc),
               patch.object(transport, 'build_opener', return_value=Opener()),
               patch.dict('os.environ', {'HELIUS_API_KEY': 'SYNTHETIC', 'JUPITER_API_KEY': 'SYNTHETIC'}),
               patch.object(cycle, 'run_once', side_effect=entry_cycle), patch.object(tool.entry.time, 'sleep'),
               patch.object(tool.time, 'time', side_effect=lambda: self.f.at),
-              patch.object(tool.concurrency, 'clock', side_effect=lambda: self.f.at)):
+              patch.object(tool.monitor, 'MonitoringBudget',
+                           side_effect=lambda store, ledger, cfg: budget(store, ledger, cfg, clock=lambda: max(self.f.at, REAL_TIME()))),
+              patch.object(tool.concurrency, 'clock',
+                           side_effect=lambda: self.f.at if self.preflight_at is None else self.preflight_at)):
             return self.invoke(execute=True, systemd_credentials=True)
 
     def first_entry(self):
-        with patch.object(tool.concurrency, 'clock', side_effect=lambda: self.f.at):
-            result = self.live()
+        result = self.dispatch(intents=1, raw=self.raw, protocol=self.f.protocol)
         self.assertEqual((result['status'], result['paper_status']), ('DISPATCHED', 'COMPLETE'), result)
         state = cycle._state(self.ledger, self.cfg)
         self.assertEqual(len(state['positions']), 1)
         return result, state
 
-    def elapse_one_real_tick(self):
-        """Held-first legs + preparation + quotes between the two decisions: 31..90 s, always crossing a minute."""
-        delta = (60 - self.f.at % 60) + 30
-        self.f.at += delta
-        return delta
+    def real_tick_before_entry(self):
+        """Idle time, then the held-first legs of a real tick (every open position, oldest mark first), then the
+        preparation and bounded cycle that precede the engine decision. Returns the marks the legs wrote."""
+        self.f.at += (60 - self.f.at % 60) + 5                      # idle: the marks go stale and a new minute starts
+        marks = {}
+        for mint in pc.held_order(cycle._state(self.ledger, self.cfg)['positions']):
+            self.f.at += 8                                          # one leg is ~7.8 s
+            leg = self.held_leg(mint)
+            self.assertEqual((leg['status'], leg['monitoring_attempted_requests']), ('COMPLETE', 5), leg)
+            marks[mint] = cycle._state(self.ledger, self.cfg)['positions'][mint]['mark_at']
+        self.preflight_at = self.f.at                               # the dispatcher (and its pre-I/O estimate) starts here
+        self.f.at += 30                                             # preparation (<= 18 s) + bounded cycle before the decision
+        return marks
+
+    def monitoring_rows(self):
+        with sqlite3.connect(self.exp / 'evidence.sqlite') as c:
+            return (c.execute('SELECT COUNT(*) FROM paper_monitoring_reservations').fetchone()[0],
+                    c.execute('SELECT COUNT(*) FROM paper_monitoring_outcomes').fetchone()[0])
+
+    def held_leg(self, mint, *, sell_output=82_000_000):
+        """One REAL held leg (monitoring cycle, charged to the monitoring allowance) for one open position."""
+        from dataclasses import replace
+        from desk import quote_execution as qe
+        item, proto = self.entered[mint]
+        position = cycle._state(self.ledger, self.cfg)['positions'][mint]
+        target = replace(item.target, amount_raw=qe.raw_quantity(position['qty'], 6))
+        leg_item = replace(item, target=target)
+        outer = self
+        original = cycle.run_once
+        view = SimpleNamespace(at=self.f.at, tick=self.f.tick, protocol=proto)
+        h = SimpleNamespace(f=view, target=target, item=leg_item, path=self.ledger, cfg=self.cfg, http_calls=[],
+                            sell_output=sell_output, buy_output_raw=10_000_000)
+        h.run_cycle = lambda **a: original(self.f.jobs.path, self.f.progress.store.path, self.ledger, self.cfg,
+                                           wall_clock=lambda: outer.f.at, monotonic=lambda: outer.f.tick,
+                                           dependency_blockers=(), **a)
+        return base.actual_cycle(h, positions=(leg_item,), candidates=(), usd_refs=(), monitoring=True)
 
     def charges(self):
         with self.f.jobs.connect() as c:
@@ -150,18 +191,20 @@ class ConcurrentPipeline(lifecycle.FreshFixture):
 
 
 class ConcurrentEntryFills(ConcurrentPipeline):
-    def test_second_entry_fills_while_holding_with_the_marks_as_old_as_a_real_tick_makes_them(self):
-        first, state = self.first_entry()
-        mark = next(iter(state['positions'].values()))['mark_at']
+    def test_second_entry_fills_after_a_real_held_leg_with_the_mark_as_old_as_the_tick_makes_it(self):
+        self.first_entry()
         self.append_second_candidate()
-        delta = self.elapse_one_real_tick()
+        marks = self.real_tick_before_entry()            # no mark is refreshed by hand: the leg is a real monitoring cycle
+        (held_mint, leg_mark), = marks.items()
         second = self.dispatch(intents=2, raw=self.second_raw)
         self.assertEqual((second['status'], second['paper_status']), ('DISPATCHED', 'COMPLETE'), second)
         state = cycle._state(self.ledger, self.cfg)
         self.assertEqual(len(state['positions']), 2, 'a concurrent position was entered, not rejected')
         decision_ts = max(p['opened_at'] for p in state['positions'].values())
-        self.assertGreater(decision_ts - mark, self.cfg['price_ttl_seconds'], 'the held mark was older than the 10 s price TTL')
-        self.assertLessEqual(decision_ts - mark, self.ttl)
+        age = decision_ts - leg_mark
+        self.assertGreater(age, self.cfg['price_ttl_seconds'], 'the freshly refreshed mark was still older than 10 s')
+        self.assertLessEqual(age, self.ttl)
+        self.assertEqual(self.monitoring_rows(), (5, 5))  # the one leg's five requests, charged and answered
         self.assertEqual(self.null_passes(), [])
         self.assertFalse(self.gate())
         self.assertEqual(len(self.charges()), 2)
@@ -190,26 +233,32 @@ class ConcurrentEntryFills(ConcurrentPipeline):
             target.chmod(0o600)
         return verify_cycle.snapshot(str(self.exp), self.ledger.name, str(self.config))
 
-    def test_cold_restart_between_the_two_entries_changes_no_charge_reservation_or_fill(self):
+    def test_cold_restart_keeps_every_fill_charge_and_monitoring_reservation(self):
         self.first_entry()
         self.append_second_candidate()
-        before = self.snap()
-        self.assertEqual(before['status'], 'OPEN_POSITION')
-        self.assertEqual(before['fill_count'], 1)
-        # Cold restart: every connection is new and nothing is replayed through the engine or the provider.
-        again = self.snap()
-        self.assertEqual(verify_cycle.compare(before, again)['status'], 'PASS')
-        self.elapse_one_real_tick()
+        entry_only = self.snap()
+        self.assertEqual((entry_only['status'], entry_only['fill_count']), ('OPEN_POSITION', 1))
+        self.real_tick_before_entry()                          # real leg: 5 monitoring reservations
+        after_leg = self.snap()
+        self.assertEqual(self.monitoring_rows(), (5, 5))
+        self.assertEqual(verify_cycle.compare(entry_only, after_leg, allow_progress=True)['status'], 'PASS')
+        self.assertEqual(verify_cycle.compare(entry_only, after_leg)['status'], 'FAIL')    # the charges are visible
+        # Cold restart: every connection is new; nothing is replayed through the engine or a provider.
+        self.assertEqual(verify_cycle.compare(after_leg, self.snap())['status'], 'PASS')
         second = self.dispatch(intents=2, raw=self.second_raw)
         self.assertEqual(second['paper_status'], 'COMPLETE')
-        after = self.snap()
-        self.assertEqual(after['fill_count'], 2)
-        progress = verify_cycle.compare(again, after, allow_progress=True)
-        self.assertEqual((progress['status'], progress['mode']), ('PASS', 'allow_progress'), progress)
-        # Strict comparison must notice that something DID change (the second fill and its charges).
-        self.assertEqual(verify_cycle.compare(again, after)['status'], 'FAIL')
-        # Restart again after the second entry: no duplicate fill or charge appears.
-        self.assertEqual(verify_cycle.compare(after, self.snap())['status'], 'PASS')
+        two_open = self.snap()
+        self.assertEqual(two_open['fill_count'], 2)
+        self.assertEqual(self.monitoring_rows(), (5, 5), 'an entry spends investigation requests, never monitoring')
+        self.assertEqual(verify_cycle.compare(after_leg, two_open, allow_progress=True)['status'], 'PASS')
+        self.assertEqual(verify_cycle.compare(two_open, self.snap())['status'], 'PASS')    # restart with two open positions
+        # Next tick: one leg per open position, each charged exactly once.
+        self.real_tick_before_entry()
+        self.assertEqual(self.monitoring_rows(), (15, 15))
+        later = self.snap()
+        self.assertEqual(later['fill_count'], 2)
+        self.assertEqual(verify_cycle.compare(two_open, later, allow_progress=True)['status'], 'PASS')
+        self.assertEqual(verify_cycle.compare(later, self.snap())['status'], 'PASS')        # and a last restart
 
 
 class ConcurrentEntryRefusedBeforeAnyCharge(ConcurrentPipeline):
@@ -219,7 +268,8 @@ class ConcurrentEntryRefusedBeforeAnyCharge(ConcurrentPipeline):
         self.first_entry()
         self.append_second_candidate()
         before = (self.charges(), self.count('intents'), self.count('results'))
-        self.elapse_one_real_tick()
+        self.real_tick_before_entry()      # a REAL leg refreshed the mark moments ago: the old 8 s estimate would pass
+        before = (before[0], before[1], before[2])
         with self.assertRaisesRegex(ValueError, 'PORTFOLIO_MARKS_TOO_OLD_FOR_ENTRY'):
             self.dispatch(intents=2, raw=self.second_raw)
         self.assertEqual((self.charges(), self.count('intents'), self.count('results')), before)
