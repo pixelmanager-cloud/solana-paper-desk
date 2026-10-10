@@ -572,6 +572,13 @@ class IncrementalIngestTests(Fixture):
         self.assertEqual(ft.read_cursors(self.store), {})
         self.assertEqual(self.ingest(now=NOW + 1)['inserted'], 2)
 
+    def test_a_failing_cursor_write_rolls_the_pages_rows_back(self):
+        """The cursor is written after the rows inside the same transaction: if it cannot be stored, no row of the page stays."""
+        sql(self.store, "CREATE TRIGGER refuse_cursor BEFORE INSERT ON ingest_cursors BEGIN SELECT RAISE(ABORT,'no cursor'); END")
+        with self.assertRaises(sqlite3.DatabaseError):
+            self.ingest()
+        self.assertEqual(sql(self.store, 'SELECT COUNT(*) FROM feature_rows')[0][0], 0)
+
     def test_cursor_records_are_append_only(self):
         self.ingest()
         for statement in ('UPDATE ingest_cursors SET position=0', 'DELETE FROM ingest_cursors'):
