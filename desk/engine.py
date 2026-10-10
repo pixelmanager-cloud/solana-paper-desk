@@ -32,6 +32,8 @@ PORTFOLIO_KEY = "paper_portfolio_risk_version"
 PORTFOLIO_PARAMS = ("portfolio_max_open_risk_fraction", "portfolio_loss_streak_cooldown_after",
                     "portfolio_cooldown_minutes", "portfolio_max_entries_per_10m")
 PORTFOLIO_WINDOW_SECONDS = 600
+# ENTRY_THROTTLE allows one entry per minute, so more than 10 per 10 minutes could never bind: refuse a gate that cannot act.
+PORTFOLIO_MAX_ENTRIES = PORTFOLIO_WINDOW_SECONDS // 60
 
 
 def _portfolio_risk(cfg):
@@ -50,7 +52,8 @@ def _portfolio_risk(cfg):
     except (KeyError, ValueError, TypeError):
         raise ValueError("Portfolio risk parameters incomplete or invalid") from None
     if (not ZERO < fraction < ONE or any(type(v) is not int for v in (after, minutes, entries))
-            or not 1 <= after <= 100 or not 1 <= minutes <= 1440 or not 1 <= entries <= 100):
+            or not 1 <= after <= 100 or not 1 <= minutes <= 1440
+            or not 1 <= entries <= PORTFOLIO_MAX_ENTRIES):
         raise ValueError("Portfolio risk parameters out of range")
     return {"fraction": fraction, "after": after, "seconds": minutes * 60, "entries": entries}
 
@@ -520,7 +523,8 @@ def transition(state, e, cfg, *, _quote_book=None):
     if pr is not None:
         cap_amount = _portfolio_amount_cap(state, cfg, pr)
         if cap_amount < dec(cfg["min_order_sol"]):
-            return state, output + [{"type": "reject", "reason": "PORTFOLIO_RISK_CAP", "mint": mint,
+            return state, output + [{"type": "reject", "reason": "PORTFOLIO_RISK_CAP", "reasons": ["PORTFOLIO_RISK_CAP"],
+                                     "mint": mint, "scores": evidence, "bundle_audit": bundle_audit, **policy_record,
                                      "size_sol": str(cap_amount), "open_risk": str(portfolio_open_risk(state)),
                                      "limit": str(pr["fraction"] * equity(state))}]
         amount = min(amount, cap_amount)
@@ -529,7 +533,11 @@ def transition(state, e, cfg, *, _quote_book=None):
     if quote_mode:
         amount=qe.units(int((amount*10**9).to_integral_value(rounding='ROUND_DOWN')),9)
     if amount < dec(cfg["min_order_sol"]):
-        return state, output + [{"type": "reject", "reason": "BELOW_MINIMUM", "mint": mint,
+        # Audit fields only under the portfolio flag: historical journals are replayed by the checkpoint
+        # reader, so the default-off record must stay byte-identical.
+        reject_audit = ({"reasons": ["BELOW_MINIMUM"], "scores": evidence, "bundle_audit": bundle_audit, **policy_record}
+                 if pr is not None else {})
+        return state, output + [{"type": "reject", "reason": "BELOW_MINIMUM", "mint": mint, **reject_audit,
                                  "size_sol": str(amount), "limits": {k: str(v) for k, v in limits.items()}}]
     if quote_mode:
         demands=[{'direction':'buy','maximum_input_raw':qe.raw_quantity(amount,9),

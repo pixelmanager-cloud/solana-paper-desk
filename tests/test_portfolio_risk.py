@@ -181,7 +181,10 @@ class AggregateOpenRiskTests(unittest.TestCase):
         self.assertGreater(portfolio_open_risk(run.state), limit - D('0.0000001'))             # budget used up (to rounding)
         third = run.enter('C', T + 120)
         self.assertEqual((third['type'], third['reason']), ('reject', 'PORTFOLIO_RISK_CAP'))
-        self.assertEqual(set(third), {'type', 'reason', 'mint', 'size_sol', 'open_risk', 'limit'})
+        # T31F: the reject now carries the audit fields every other entry reject has (reasons/scores/bundle_audit);
+        # this assertion used to pin the narrower T31 key set, which is exactly what the review asked to change.
+        self.assertEqual(set(third), {'type', 'reason', 'reasons', 'mint', 'scores', 'bundle_audit',
+                                      'size_sol', 'open_risk', 'limit'})
         self.assertEqual(sorted(run.state['positions']), ['A', 'B'])
 
     def test_room_between_zero_and_the_minimum_order_is_refused_as_a_risk_cap_not_a_size_error(self):
@@ -600,7 +603,10 @@ class CheckpointValidationTests(unittest.TestCase):
         bad = {'none': None, 'string': 'x', 'dict': {}, 'bool item': [True], 'string item': ['1'], 'float item': [1.5],
                'negative': [-1], 'after the last event': [T + 10**6], 'unsorted': [T + 60, T], 'duplicate': [T + 60, T + 60],
                'longer than K': [T, T + 60, T + 120], 'last entry is not the ledger last entry': [T, T + 3600],
-               'empty after an entry': []}
+               'empty after an entry': [],
+               # each of these is rejected by exactly one rule (the others above are also caught by neighbouring rules)
+               'longer than K, otherwise consistent': [T - 60, T, T + 60],
+               'last entry minute differs from last_entry_minute, otherwise consistent': [T, T + 30]}
         for label, value in bad.items():
             with self.subTest(label):
                 self.build()
