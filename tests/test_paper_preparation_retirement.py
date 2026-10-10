@@ -236,3 +236,11 @@ class PreparationRetirementTests(unittest.TestCase):
                 finally:
                     with self.f.f.progress.store.connect() as c:
                         for rowid,old in saved:c.execute('UPDATE ownership_history SET '+field+'=? WHERE rowid=?',(old,rowid))
+
+    def test_oversized_schema_sql_refused_before_inventory_fetch(self):
+        with self.f.f.progress.store.connect() as c:
+            c.execute('PRAGMA writable_schema=ON')
+            original=c.execute("SELECT sql FROM sqlite_master WHERE name='ownership_history'").fetchone()[0]
+            c.execute("UPDATE sqlite_master SET sql=? WHERE name='ownership_history'",(original+' /*'+'x'*(2*1024*1024)+'*/',))
+        with self.assertRaisesRegex(ValueError,'schema scalar bound'):
+            retire._histories(self.f.f.progress.store,self.scan)

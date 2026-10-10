@@ -62,7 +62,15 @@ def approved(v):
     if v not in p['retirements']:raise ValueError('Preparation association not independently reviewed')
 
 
+def _schema_bounds(c):
+    # Scalar-only inventory bounds before any schema SQL or column name fetch.
+    bad=c.execute("SELECT 1 FROM sqlite_master WHERE typeof(type)!='text' OR length(CAST(type AS BLOB)) NOT BETWEEN 1 AND 16 OR typeof(name)!='text' OR length(CAST(name AS BLOB)) NOT BETWEEN 1 AND 256 OR typeof(tbl_name)!='text' OR length(CAST(tbl_name AS BLOB)) NOT BETWEEN 1 AND 256 OR (typeof(sql)!='null' AND typeof(sql)!='text') LIMIT 1").fetchone()
+    bounds=c.execute('SELECT count(*),COALESCE(sum(length(CAST(type AS BLOB))+length(CAST(name AS BLOB))+length(CAST(tbl_name AS BLOB))+COALESCE(length(CAST(sql AS BLOB)),0)),0) FROM sqlite_master').fetchone()
+    if bad or bounds[0]>256 or bounds[1]>1024*1024:raise ValueError('Preparation schema scalar bound')
+
+
 def rows(c):
+    _schema_bounds(c)
     objects=c.execute("SELECT type,name,tbl_name,sql FROM sqlite_master WHERE name=? OR substr(name,1,?)=? OR tbl_name=?",(TABLE,len(TABLE)+1,TABLE+'_',TABLE)).fetchall()
     if not objects:return []
     expected={('table',TABLE,TABLE,_schema())}|{('trigger',k,TABLE,s) for k,s in _guards().items()}
@@ -83,6 +91,7 @@ def rows(c):
 def _histories(store,scan):
     with closing(store.connect()) as c:
         c.execute('BEGIN')
+        _schema_bounds(c)
         expected='CREATE TABLE ownership_history(id TEXT PRIMARY KEY,budget TEXT NOT NULL,query TEXT NOT NULL,coverage TEXT,status TEXT NOT NULL,attempts INTEGER NOT NULL DEFAULT 0)'
         if c.execute("SELECT sql FROM sqlite_master WHERE type='table' AND name='ownership_history'").fetchone()!=(expected,):raise ValueError('Preparation history schema')
         # Includes original row identity and canonical strings, not lossy summaries.
@@ -121,6 +130,7 @@ def _ledger_originals(c,*,prefix=False):
     native={'metadata','events','outcomes','state','raw_events','health','sqlite_sequence'}
     from . import runtime_continuation, runtime_extensions
     extras={runtime.TABLE,runtime_continuation.TABLE,runtime_extensions.TABLE}
+    _schema_bounds(c)
     bounds=c.execute('SELECT count(*),COALESCE(sum(length(CAST(name AS BLOB))+length(CAST(tbl_name AS BLOB))+COALESCE(length(CAST(sql AS BLOB)),0)),0) FROM sqlite_master').fetchone()
     if bounds[0]>256 or bounds[1]>1024*1024:raise ValueError('Preparation ledger schema bound')
     schema=c.execute('SELECT type,name,tbl_name,sql FROM sqlite_master ORDER BY type,name').fetchall()
