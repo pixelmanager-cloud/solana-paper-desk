@@ -5546,7 +5546,7 @@
     },
     "production_commit": "5746912cd88b9527e2b196a2edefc66b72c257a0",
     "kraken_usd_integration": {
-      "status": "SENSITIVE_REVIEW_PASS_FULL_LINUX_AND_NATIVE_TIMING_PENDING",
+      "status": "FULL_LINUX_PENDING_DEPLOYMENT_PREPARATION",
       "base_head": "c1c613b696755c53912feb45639191045b831554",
       "author_thread": "01a118fd-0f1c-749c-b85b-5e730937d0a8",
       "reviewer_thread": "01a118fd-3f90-77d9-9549-c4497f5b10a6",
@@ -5664,8 +5664,35 @@
       },
       "preservation_verifier": {
         "worker": "06",
-        "status": "IMPLEMENTATION_REQUESTED",
-        "turn": "01a12330-81c5-76a4-b7b1-1f378c912fa9"
+        "status": "FINAL_EXACT_HEAD_REVIEW_PASS_CI_PENDING",
+        "turn": "01a12330-81c5-76a4-b7b1-1f378c912fa9",
+        "pr": 184,
+        "head": "f0b88394b283164984773656b0ae1db1bbe0f804",
+        "reviewer": "03",
+        "review_turn": "01a1233b-70a2-7621-9696-1bb186c07338",
+        "finding": "Extra NULL-provider pacing rows hidden by SQL != filter; require NULL-safe filter/exact count and tests",
+        "fix_turn": "01a12336-2bf7-741e-9f11-eada3b37e0c4",
+        "tests": {
+          "count": 31,
+          "seconds": 16.178
+        },
+        "ci_runs": [
+          38009562774,
+          38009559315
+        ],
+        "independent_tests": {
+          "count": 31,
+          "seconds": 30.962,
+          "umask": "022"
+        },
+        "local_tests": {
+          "count": 16,
+          "seconds": 12.46,
+          "result": "PASS_WITH_CANONICAL_TMPDIR_UMASK077",
+          "setup_failures": "Default Mac TMPDIR symlink then normal umask022 copied pacing file0644; explicit fixturechmod assigned"
+        },
+        "fixture_fix_turn": "01a12339-eea2-7027-9de5-0df7de8c02d6",
+        "tree": "df0da6deecc5ba5dbe8c359144ceb9f77d03343a"
       },
       "candidate_hints": {
         "path": "work/kraken-predeployment-candidate-hints.json",
@@ -5678,6 +5705,57 @@
         "reviewer": "03",
         "review_turn": "01a12333-4267-7626-9275-65ba9ec2e713",
         "sha256": "3269545b3e137cd93dca7998f01a770ed6e5fe6f73fcc2a7bc0e0521e0e63e4e"
+      },
+      "backup_wrapper": {
+        "path": "work/backup-kraken-transition.py",
+        "status": "PASS_NOT_EXECUTED",
+        "prior_hold_turn": "01a12336-52f9-74b2-90c8-bf8c0036c361",
+        "sha256": "1d9b3591e04e62af2e1978610fe8f3e0a6b58e14b9438cb2ce497a6b3234a290",
+        "review_turn": "01a12338-9cda-769b-88ec-a728df222f91",
+        "fixture_validation": {
+          "worker": "06",
+          "turn": "01a1233b-e827-7735-a6a8-6db546245b36",
+          "tests": 8,
+          "seconds": 0.029,
+          "result": "PASS_WAL_COPY_PRESERVATION_AND_REJECTIONS"
+        }
+      },
+      "service_cutover_wrapper": {
+        "worker": "07",
+        "status": "PASS_NOT_EXECUTED",
+        "scope": "Coordinator wrapper only, no production access",
+        "path": "work/start-kraken-reviewed.py",
+        "author_draft_turn": "01a12339-03ee-70b6-bc9c-20a1ed9fff83",
+        "note": "Generic draft not used; root narrowed to actual unit bindings",
+        "prior_hold_turn": "01a1233c-d696-71eb-a590-57fc8c26abbf",
+        "review_turn": "01a1233d-9e11-771a-b91a-3e8c43921a0d",
+        "sha256": "f73107a5551fb459cb30904cecb5c74f0ca31369c290f685d4f3bd014ec6ebab"
+      },
+      "ci_results": {
+        "38008364274": {
+          "status": "PASS",
+          "tests": 2700,
+          "seconds": 881.058
+        },
+        "38008331516": {
+          "status": "PASS",
+          "tests": 2700,
+          "seconds": 859.25
+        }
+      },
+      "inactive_stage": {
+        "path": "/opt/solana-desk-releases/kraken-stage-2d507b8",
+        "source": "77de75a248fd087e62bcc2bac4a581c667905dfcb709e28ed8e80a58afcd4d54",
+        "active": false,
+        "config": "/etc/solana-paper/paper-kraken-reviewed.json",
+        "config_hash": "3dc3108e1c23ebbad97b88338e37f4012d3dd6b259f5a911624d799da1c11dff"
+      },
+      "active_context_wrapper": {
+        "path": "work/verify-kraken-active-context.py",
+        "worker": "09",
+        "status": "PASS_NOT_EXECUTED",
+        "review_turn": "01a1233b-0cc5-73bd-b279-7007eec58bc4",
+        "sha256": "5f10592e7c572588c0b52f5701b4d0eebffc9e7fc3f15b5dc8494a8a4a2c8292"
       }
     },
     "quote_alternative": {
