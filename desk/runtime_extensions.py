@@ -40,7 +40,7 @@ def _approved(key):
     policy=runtime._parse(raw.decode())
     if (type(policy) is not dict or set(policy)!={'version','extensions'}
             or type(policy['version']) is not int or policy['version']!=1
-            or type(policy['extensions']) is not list or len(policy['extensions'])>MAX_EDGES):
+            or type(policy['extensions']) is not list or len(policy['extensions'])>5):
         raise ValueError('Invalid extension policy')
     seen=set();matches=[]
     for pin in policy['extensions']:
