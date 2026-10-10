@@ -616,3 +616,122 @@ The desk must run unattended 24/7. Today continuous discovery runs with `--secon
    - Add a test that renders every unit and checks these invariants.
 4. **Tests:** fake systemctl, fixture stores, staleness thresholds, rate limiting, and the notifier never logging secrets.
 5. **`docs/ops/OPERATIONS_24x7.md`:** the alert meanings and the operator response for each.
+
+---
+
+## T25 — Monitoring latch classification follow-up (from the T08 review)
+STATUS: OPEN
+DEPENDS: none
+BASE: integration/r1 (T08 is merged there)
+OWNS: desk/monitoring_budget.py, desk/paper_read_sources.py (error classification only), related tests
+AVOID: T01/T22 files, desk/engine.py
+
+T08 stopped `SOURCE_FAILURE` latching for some transient errors. Remaining work:
+1. **Common transient held-read failures still latch.** Treat these as transient (non-latching, still charged):
+   - JSON-RPC errors from Helius (`RPC_ERROR`, e.g. "block not available", internal errors);
+   - pacing contention (`PACING_DEADLINE_EXCEEDED`, `PACING_DATABASE_BUSY`, `PACING_QUEUE_FULL`);
+   - `HTTP_REJECTED` with a None status from `CoordinatorRPCError`;
+   - `KRAKEN_PROVIDER_ERROR`.
+
+   Keep 401/403, `RESPONSE_*` integrity codes and persistence failures latching.
+2. **Catch-all is now silent.** T08 put the `except Exception` catch-all (paper_read_sources.py ~:234/:267/:330/:95) into the non-latching bucket. Narrow it again: only known network exceptions are transient (timeouts, connection reset/refused, DNS, 5xx, 429). TLS certificate failures, ValueError, AttributeError and other programming errors must LATCH, so a bug or a MITM symptom cannot silently burn the allowance.
+3. **`MONITORING_OUTCOME_PENDING` after a kill.** It stays forever. Add a deterministic, bounded, append-only resolution: a pending reservation older than its deadline whose owner lease/PID is gone is resolved as `ABANDONED_CHARGED`. It stays charged and is never refunded.
+
+Fail-first tests for every code path. Un-mark the T09 test `test_process_killed_after_reservation_must_not_block_forever`.
+
+---
+
+## T26 — Counterfactual candidate tracking (learn selection without trading)
+STATUS: OPEN
+DEPENDS: none
+BASE: integration/r1
+OWNS: tools/research/counterfactual.py, tests/test_counterfactual.py, deploy/fresh/desk-counterfactual.service (template), docs/research/COUNTERFACTUAL.md
+AVOID: desk/** (import only)
+
+Goal: know whether the filters pick winners. Record the forward price path of EVERY candidate (admitted, rejected, not dispatched) for learning, not trading.
+- **Its own store**, `counterfactual.sqlite` (append-only), under the fresh root. For each migration hint in `discovery/continuous.sqlite` (read-only), record the candidate identity (mint, pool, migration slot/time) and, when available, its dispatcher/decision outcome and rejection codes (read-only joins on the journal and decision stores).
+- **Price path.** Sample the pool's reserves (PumpSwap constant product, so the price comes from the vault balances) at +5m, +15m, +30m, +1h, +2h, +6h after migration. Use batched `getMultipleAccounts` against the vault accounts (one request covers many candidates).
+  - Give it its OWN request allowance (default 300 requests/hour, configurable, recorded) and honour the shared provider pacing.
+  - It must NEVER consume the entry or monitoring budgets. Failures are recorded and charged.
+- **Derived metrics:** max gain, max drawdown, return at each horizon, liquidity at each horizon, and whether the pool died.
+- **Report** (read-only CLI): for each rejection code, the forward-return distribution of the tokens rejected for that reason vs the admitted ones. In plain terms: "does this filter reject winners?"
+- **Constraints:** paper/research only, no keys in the repo (systemd credentials like the others), fail closed on a malformed provider response, and no use of these prices for ledger fills.
+- **Tests:** fixtures for the sampling schedule, batching, allowance enforcement, the PumpSwap price math against known reserves, the report's known answers, and a cold restart resuming the schedule without duplicate samples.
+
+---
+
+## T27 — Shadow strategy variants (parallel virtual A/B)
+STATUS: OPEN
+DEPENDS: branch `cloud/T26` has a `DONE T26:` commit
+BASE: origin/cloud/T26
+OWNS: tools/research/shadow_strategies.py, tests/test_shadow_strategies.py, config/experiments/shadow/*.json, docs/research/SHADOW.md
+AVOID: desk/** (import only)
+
+Evaluate many entry/exit parameter sets at once on the same candidate stream without extra requests.
+- **Inputs:** T26 counterfactual price paths and candidate features, plus the real decision/observation evidence where available (read-only).
+- **Simulation:** for each variant config (a versioned JSON grid: stop fraction, trailing, time-stop, max hold, take-profit ladder, mcap/liquidity/age windows), simulate entries and exits by calling the REAL `desk.engine` decision functions (`transition`/`manage_position`) on synthesized events. Do not reimplement the logic. Apply realistic costs: the fee, 50 bps slippage, and optionally T14 latency drift if present.
+- **Coarse paths.** The price path is coarse (horizon samples), so state clearly which exits can be resolved (path-dependent stops are approximated with min/max between samples; mark the uncertainty) and report intervals, not point estimates, when ordering inside a window is ambiguous.
+- **Output:** a leaderboard per variant (trades, net PnL after costs, win rate, max drawdown, bootstrap CI), a train/holdout split by time, and multiple-comparison caution: show how many variants were tried and apply a simple correction or holdout-only ranking. Label everything SIMULATED_SHADOW, never trading evidence.
+- **Tests:** known-answer paths, an engine-call parity check (a variant equal to the live config reproduces the live engine decisions on the same events), and no look-ahead (no variant decision uses samples after its decision time).
+
+---
+
+## T28 — Event-driven held-position watcher (fast exits)
+STATUS: OPEN
+DEPENDS: none
+BASE: integration/r1
+OWNS: tools/ops/held_watcher.py, tests/test_held_watcher.py, deploy/fresh/desk-held-watcher.service (template), docs/ops/HELD_WATCHER.md
+AVOID: desk/** (import only), the engine's exit logic
+
+Memecoins move -30% in seconds; timer-polled held passes react too late. Build a watcher that keeps the engine authoritative:
+- **Subscription.** For each open position in the fresh ledger (read-only), subscribe to its pool vault accounts over the Helius websocket (`accountSubscribe`), with an HTTP polling fallback of 1–2s via `getMultipleAccounts` within its own allowance.
+- **Trigger.** Compute the implied mark from the vault reserves. When it crosses any engine exit threshold (read thresholds from the frozen config and the position state: stop, trailing, take-profit rung, time-stop/max-hold timers), immediately trigger the normal held pass: `systemctl start desk-paper-held-cycle.service`, via an injectable runner and a polkit/sudo-free method — document the unit setup. The watcher NEVER writes the ledger and NEVER fills. The held pass fetches the executable quote and decides.
+- **Rate limits.** Debounce, a max trigger rate per position, and its own request allowance and pacing. Reconnect with backoff. On losing the stream, fall back to polling and raise a health warning.
+- **Measurement.** Record trigger latency (event slot time → trigger → held-pass fill time) for T14-style analysis.
+- **Tests:** a fake websocket feed; threshold crossings for stop, trailing and take-profit; debounce; reconnect; the fallback; and no ledger writes (byte-identical ledger).
+
+---
+
+## T29 — Funnel report (where candidates die)
+STATUS: OPEN
+DEPENDS: none
+BASE: integration/r1
+OWNS: tools/research/funnel_report.py, tests/test_funnel_report.py
+AVOID: desk/**
+
+A read-only CLI plus a static HTML output (a single file, no external assets). Per hour and day, show the counts at each stage: migrations discovered → selectable (age window) → dispatched → investigation admitted → history ok → observations ok → engine eligible → BUY. Break down the rejection codes at each stage, with budget usage per stage and median time per stage. Read from the discovery, journal, research, evidence, decision and ledger stores (`mode=ro`; immutable only for WAL with no sidecars, per the T02F rules). If T26 data exists, add each rejection code's forward-return summary. Tests use known-count fixtures.
+
+---
+
+## T30 — Market regime filter
+STATUS: OPEN
+DEPENDS: branch `cloud/T23` has a `DONE T23:` commit
+BASE: origin/cloud/T23
+OWNS: a new desk/regime.py, desk/engine.py (one additional entry gate only), tests/test_regime*.py
+AVOID: T01/T22 files
+
+Memecoins move together. Add a versioned, opt-in entry gate `paper_regime_version: 1` that reduces or blocks NEW entries in bad regimes, never exits.
+- **Metrics from data already collected:**
+  - graduation rate per hour (discovery store);
+  - the median forward return of recent graduations, if T26 data exists;
+  - the SOL/USD trend from the existing Kraken observations (no new provider).
+- **States:** NORMAL / CAUTION (halve the size, or require a stricter score) / OFF (no entries), with hysteresis.
+- **Determinism.** It must be computed from evidence recorded in the event (replay-deterministic), never from wall-clock reads inside the engine. When absent, behaviour stays identical.
+- **Tests:** state transitions, hysteresis, a replay-determinism check, and absent-flag parity.
+
+---
+
+## T31 — Portfolio-level risk for concurrent positions
+STATUS: OPEN
+DEPENDS: branch `cloud/T16` has a `DONE T16:` commit AND branch `cloud/T23` has a `DONE T23:` commit
+BASE: origin/cloud/T16 (merge in origin/cloud/T23 first; resolve conflicts carefully)
+OWNS: desk/engine.py (portfolio gates only), tests/test_portfolio_risk.py, docs/PORTFOLIO_RISK.md
+AVOID: T01/T22 files
+
+Versioned and opt-in (`paper_portfolio_risk_version: 1`). With several positions open:
+- **Aggregate open risk:** the sum of (position size × stop distance) ≤ X% of equity.
+- **Loss streak:** after N consecutive losing exits, cool down for M minutes.
+- **Entry spacing:** at most K new entries per rolling 10 minutes, so correlated pump bursts don't fill the book at once.
+- **Daily caps:** the existing daily pause/liquidation still applies at the portfolio level.
+
+Engine-authoritative and replay-deterministic. When absent, behaviour stays identical. Tests cover each gate, their interaction with max_positions/exposure, and a cold restart preserving streak and spacing state.
