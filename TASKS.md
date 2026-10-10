@@ -1610,3 +1610,29 @@ AVOID: desk/**, tools/research/funnel_report.py (import only)
 ---
 
 ## NOTE (coordinator, 2026-10-11): T24R and T37F were claimed on top of T22G before its review found H1/H2. When they finish, they must merge `origin/cloud/T22H` (once it is DONE) before the coordinator integrates them. Workers on T24R/T37F: if T22H is DONE before you finish, merge it now.
+
+---
+
+## T16I — Concurrency leftovers (from the T16H review) + merge with the T22 line
+STATUS: OPEN
+DEPENDS: branch `cloud/T35F` has a `DONE T35F:` commit AND branch `cloud/T22H` has a `DONE T22H:` commit
+BASE: origin/cloud/T35F, then merge origin/cloud/T22H (expect conflicts in desk/paper_cycle.py ~150 lines and tools/paper_entry_dispatcher.py `_dispatch` ~250 lines)
+OWNS: the T16/T35 files, tools/paper_entry_dispatcher.py, desk/watchlist.py (classifier only), tools/research/counterfactual.py and tools/research/funnel_report.py (classifier only), docs/MULTI_POSITION.md
+AVOID: desk/provider_pacing.py
+
+1. **Load-bearing merge resolution.** Keep T16H's `phase.finish()` check AHEAD of T22G's post-acquire raise, and keep `phase.check()` OUTSIDE T22G/T22H's `rpc_state` capture. Otherwise a `_PhaseCut` is classified as non-transient and becomes an unresolved intent or an INTEGRITY_HOLD. Add a test that proves a phase cut stays a terminal no-entry after the merge.
+2. **Remaining post-intent raises.** Each of these must end with a typed terminal no-entry for the intent (charges kept), never an orphaned intent:
+   - `_HeldCadence.gate` (`monitor._context` non-blocking locks: "Research worker busy", "Evidence invocation busy", "Cycle ledger busy");
+   - `_preflight(expected, scan)` after a mode change made by another process (~:936, ~:962);
+   - `overrun()` (~:911);
+   - the no_entry size bound.
+
+   Add a test for each.
+3. **Classifiers.** Teach the three classifiers the new kind `dispatcher_checkpoint_no_entry_v1`:
+   - watchlist → NOT_YET (a held-side cut, so retry is fine);
+   - counterfactual → REJECTED:CHECKPOINT;
+   - funnel → its own stage (not UNRESOLVED).
+
+   Test each.
+4. **Phase caps.** Enforce the caps, not just detect them: bound each in-flight request's timeout by the remaining phase budget, and treat a pacing backoff longer than the remaining budget as a cut before waiting.
+5. **Docs.** Remove the stale TTL and 30s statements from docs/MULTI_POSITION.md (~:146-148, :158, :170, :172, :237). The rollover rule is T35F's unified rule; document exactly one.
