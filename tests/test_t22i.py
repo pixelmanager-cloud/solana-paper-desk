@@ -67,11 +67,43 @@ class PreTransportTransient(unittest.TestCase):
                 self.assertNotEqual(after['status'], 'RETRYABLE_ERROR')
                 self.assertEqual((after['coverage'], after['requests_used']), (before['coverage'], before['requests_used'] + 1))
 
-    def test_the_transient_vocabulary_is_the_monitoring_one(self):
+    def test_only_the_sources_own_deadline_code_qualifies(self):
         for code in ('TRANSPORT_ERROR', 'RPC_ERROR', 'PACING_DEADLINE_EXCEEDED', 'PACING_QUEUE_FULL'):
             with self.subTest(code):
                 self.setUp()
-                self.assertEqual(self.advance(PaperReadError(code))[1]['status'], 'RETRYABLE_ERROR')
+                key = self.t.seed()
+
+                def fail(*args, code=code):
+                    raise PaperReadError(code)
+                with self.assertRaises(PaperReadError):
+                    self.t.progress.advance(key, fail)
+                self.assertNotEqual(self.t.progress.snapshot(key)['status'], 'RETRYABLE_ERROR')
+
+    def test_a_retained_latching_original_keeps_the_checkpoint_state_but_is_never_closable(self):
+        """The historical production state certified by the retirement receipts: RETRYABLE_ERROR + a retained failed original."""
+        key = self.t.seed()
+        tls = self.t.store.save({'kind': 'paper_read_attempt_v1', 'scan_id': 's', 'failure_code': 'RESPONSE_OVERSIZED', 'requests_used': 1})
+
+        def fail(*args):
+            raise PaperReadError('RESPONSE_OVERSIZED', tls)
+        with self.assertRaises(PaperReadError):
+            self.t.progress.advance(key, fail)
+        self.assertEqual(self.t.progress.snapshot(key)['status'], 'RETRYABLE_ERROR')
+        from desk import paper_pass_closure as closure
+        error = PaperReadError('RESPONSE_OVERSIZED', tls)
+        self.assertFalse(closure.classify(error, self.t.store)[1])
+
+    def test_an_original_that_is_not_a_failed_attempt_does_not_mark_the_state(self):
+        key = self.t.seed()
+        ok = self.t.store.save({'kind': 'paper_read_attempt_v1', 'scan_id': 's', 'failure_code': None, 'requests_used': 1})
+        other = self.t.store.save({'kind': 'something_else', 'failure_code': 'X'})
+        for evidence in (ok, other, 'f' * 64):
+            with self.subTest(evidence=evidence):
+                def fail(*args, evidence=evidence):
+                    raise PaperReadError('RESPONSE_OVERSIZED', evidence)
+                with self.assertRaises(PaperReadError):
+                    self.t.progress.advance(key, fail)
+                self.assertNotEqual(self.t.progress.snapshot(key)['status'], 'RETRYABLE_ERROR')
 
 
 class HoldWriteFallbacks(holds.DispatcherBase):
