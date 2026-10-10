@@ -267,3 +267,45 @@ OWNS: reports/T12.md, tests/test_review_t01_*.py
 AVOID: every non-test source file
 
 Review T01 as an adversary. Can a category-(b) integrity condition be mislabelled as a normal rejection? Can a receipt be forged or replayed for a different pass? Do existing production receipt kinds still verify? Is anything ever reset or rewritten? Is a charged request ever refunded? Write RED tests for each real defect (mark them `expectedFailure`) and rank them. Run `test_empty_history_successor_lifecycle` and the T01-touched modules.
+
+---
+
+## T14 — Execution-realism measurement (latency-adjusted paper fills)
+STATUS: OPEN
+DEPENDS: branch `cloud/T01` has a `DONE T01:` commit (this task touches the fill path near T01's files; rebase onto it)
+BASE: origin/cloud/T01
+OWNS: desk/quote_execution.py, a new desk/fill_realism.py, the related tests, and tools/research/fill_realism_report.py
+AVOID: desk/paper_terminal_reconciliation.py and T13's files
+
+The developer intends to move to real-money execution later, gated on paper evidence. The paper results must therefore predict live results. A past project died because a ~4s decision→fill latency cost 5–8% per round trip, which paper results never showed.
+
+Implement an explicit, versioned, opt-in measurement (a config flag, off by default, with a new version key):
+- For every simulated BUY and SELL fill, record re-quotes of the same route at +2s, +5s and +10s (bounded; each attempt is charged to the existing budgets, and a failure is charged too). Never change the recorded paper fill itself.
+- Persist the drift: price, out-amount and implied slippage vs the decision quote, append-only, bound to the fill identity.
+- `python -m tools.research.fill_realism_report --ledger ...` (read-only) reports the per-trade and aggregate drift distribution, plus the paper PnL re-computed under the +2s/+5s/+10s fills ("what a live bot with N seconds of latency would have got").
+
+Tests: fixtures with a scripted quote source, budget charging including failures, the default-off path producing byte-identical behaviour, and the report's math checked against known answers.
+
+---
+
+## T15 — Live-execution design document (NO executable trading code)
+STATUS: OPEN
+DEPENDS: none
+BASE: r1-base
+OWNS: docs/live/LIVE_EXECUTION_DESIGN.md (documentation only)
+AVOID: all code
+
+The developer wants a future path from paper to real money. Write the design only. **Do not add signing, broadcasting, wallet or key-handling code in this task.** The doc must cover:
+1. **Executor abstraction.** Define a single `Executor` interface (quote → build → sign → send → confirm → reconcile) with `PaperExecutor` (current behaviour) and a future `LiveExecutor`, and show exactly where it plugs into the current flow (`engine.transition` → `fulfill_quotes` → `ledger.apply`). Live fills must be recorded from on-chain confirmation, not from the quote.
+2. **Latency and MEV realities** for pump.fun/PumpSwap via Jupiter: priority fees, Jito bundles, slippage tolerance, failed or dropped txs, partial fills, and RPC choice. How to measure them in shadow mode before any funds move.
+3. **Key and fund safety:** a dedicated hot wallet with a hard SOL cap, keys in systemd credentials or a hardware/remote signer, never in Git or logs. A per-trade cap, a daily loss cap, a global kill switch (a file plus a CLI), and an auto-halt on N consecutive failed sends or any reconciliation mismatch.
+4. **Go-live gate (proposed, for the developer to approve):**
+   - ≥ N forward paper round trips on one frozen config version;
+   - positive net PnL after T14's latency-adjusted fills (not just the instantaneous quote);
+   - the bootstrap CI lower bound above 0, or an explicit risk acceptance;
+   - a shadow-mode period (build and sign-simulate, never send) with zero reconciliation errors;
+   - then a tiny-size live phase.
+5. **Staged rollout plan, failure handling and reconciliation.**
+6. **What in the current codebase would block live use**, ranked.
+
+Be concrete, with file:line references. Be harsh about the risks.
