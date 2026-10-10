@@ -137,6 +137,10 @@ class Pacer:
                 if tick >= deadline: raise PacingError('PACING_DEADLINE_EXCEEDED')
                 with closing(self._connect()) as c:
                     c.execute('BEGIN IMMEDIATE')
+                    if provider=='kraken':
+                        from .kraken_pacing_migration import read as migration
+                        if migration(c,self.path) is None or c.execute("SELECT version,cadence,backoff FROM policy WHERE provider='kraken'").fetchone()!=(2,2.0,30.0):
+                            raise PacingError('PACING_DATABASE_INVALID')
                     now = self._now(c)
                     c.execute('DELETE FROM waiters WHERE expires<=?', (now,))
                     if not registered:
