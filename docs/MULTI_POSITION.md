@@ -4,58 +4,102 @@ Paper only. No signing, broadcasting or real funds. Fills stay `EXECUTION_UNVERI
 
 ## What it is
 
-An explicit, versioned config option. With the key **absent** every path behaves exactly as before:
-any open position, or any mode other than `RUNNING`, refuses new entries (`HELD_POSITION_PRIORITY`).
-With `"paper_concurrent_entries_version": 1` and `max_positions` an integer in 2..8, entries may start
-while positions are open, subject to the gates below. Any other value, or the key with `max_positions`
-outside 2..8, raises `ValueError` (fail closed). It changes the config hash, so it is a **new
-ledger/config version** (fresh-start policy); never flip it on an existing ledger.
+An explicit, versioned experiment config. With the key **absent** every path behaves exactly as before:
+any open position, or any mode other than `RUNNING`, refuses new entries (`HELD_POSITION_PRIORITY`), and the
+engine's price TTL (10 s) governs everything.
 
-Code: `desk/paper_concurrency.py` (pure rules), `tools/paper_scheduler.py` (held-first tick),
-`tools/paper_entry_dispatcher.py` and `tools/history_first_paper_entry.py` (gate call sites),
-`desk/paper_monitor_service.py` (per-position legs), `desk/paper_cycle.py` (one gate, below).
+With `"paper_concurrent_entries_version": 1`, `max_positions` an integer in 2..8 **and**
+`"paper_portfolio_mark_ttl_seconds"` (an integer from `price_ttl_seconds` to 120), entries may start while
+positions are open, subject to the gates below. Any other value, the flag without the TTL key, or the TTL key
+without the flag raises `ValueError` (fail closed). The flag changes the config hash, so it is a **new
+ledger/config version** (fresh-start policy): never flip it on an existing ledger.
+
+Code: `desk/paper_concurrency.py` (pure rules), `desk/engine.py::portfolio_ttl` (the one engine change),
+`tools/paper_scheduler.py` (held-first tick, bounded lease wait), `tools/paper_entry_dispatcher.py` and
+`tools/history_first_paper_entry.py` (gate call sites), `desk/paper_monitor_service.py` (per-position legs),
+`desk/paper_cycle.py` (one gate, below).
+
+## Why a portfolio mark TTL exists (read this before activating)
+
+`engine.transition` rejects an entry when **any held mark is older than the TTL at the entry decision**
+(`STALE_PORTFOLIO`), and `DAY_ROLLOVER` is deferred unless every mark is within the TTL. With the price TTL
+of 10 s this can never be satisfied with real provider pacing:
+
+* An entry is history preparation (up to 18 s) + a bounded cycle (10 s deadline plus a 2 s sleep) before the
+  engine decides: `ENTRY_SECONDS = 30`. Even a mark refreshed a moment ago is ~30 s old at the decision.
+* N held positions need N sequential legs of ~7.8 s each (5 requests per leg at 2 s provider pacing), so the
+  oldest of N marks is another `(N-1) x 7.8 s` older.
+* The candidate's own quote and history must stay fresh for the same decision, so inserting the leg refreshes
+  *between* the candidate's reads and the decision (the "refresh everything last" reorder) ages the candidate's
+  evidence instead: with two legs the quote is 15.6 s old against its 10 s TTL.
+
+`tests/test_paper_concurrency.py::test_timeline_arithmetic_for_every_book_size` asserts the numbers for every
+book size: the oldest mark at an entry decision is 38 s (1 held) to 85 s (7 held), always above 10 s and below 120 s.
+
+Fix (versioned and opt-in): `paper_portfolio_mark_ttl_seconds` replaces `price_ttl_seconds` in exactly two
+engine checks, the entry-time `STALE_PORTFOLIO` gate and the day-rollover "all marks current" test.
+Everything else keeps the 10 s price TTL: the candidate's own price/quote/mint evidence, exit decisions,
+quote-exit validation and the stale-mark watchdog. Held legs still refresh every mark each tick.
+
+Risk of the relaxed rule (stated, not hidden): at an entry the engine computes equity and drawdown from marks up
+to 120 s old. Each position is at most 2 % of equity (`max_position_fraction`) and total exposure is capped at 8 %
+(`max_exposure_fraction`), so even if every held token went to zero inside the window equity is overstated by at
+most 8 % of equity at that one decision; the daily pause/liquidation then trips on the next fresh mark. Exits are
+unaffected. The coordinator decides whether that is acceptable for the experiment; the default is off.
 
 ## Scheduling model
 
-1. **Held first, always.** In entry mode with the flag on, the scheduler tick (under the existing
-   lease, so nothing can interleave) runs the held pass for every open position *before* any entry
-   work. Its stdout is captured, not mixed into the tick output. If the held pass fails the tick
-   ends as `HELD_MONITORING_DEGRADED` with 0 requests and no entry.
+1. **Held first, always.** In entry mode with the flag on, the scheduler tick (under the existing lease)
+   runs the held legs for **every** open position before any entry work, oldest mark first. Its stdout is
+   captured. If the held pass fails the tick ends as `HELD_MONITORING_DEGRADED` with 0 requests and no entry.
 2. **Ledger gates** (`state_blockers`, no I/O): mode must be `RUNNING`; fewer than `max_positions`
-   positions; no position with `exit_blocked` or `mark_status == UNVERIFIED_EXIT`. Failing any of
-   them ends the tick as `CONCURRENT_ENTRY_BLOCKED` with the reasons. The held pass already ran, so
-   an unresolved exit keeps being retried while it freezes entries.
-3. **Dispatcher preflight** (before the irreversible intent latch and before any provider I/O) adds
-   the monitoring-reserve and mark-freshness checks below, then the unchanged terminal/observation,
-   pacing and budget gates.
-4. **Engine gates stay authoritative.** Nothing bypasses `engine.transition`: `max_positions`,
-   exposure 0.08, position fraction 0.02, per-mint duplicate, cooldowns, entry throttle, daily
-   pause/liquidation and `STALE_PORTFOLIO` still apply inside the ledger transaction.
-5. **`paper_cycle` per-item held-mint gate.** The cycle used to require a target for *every* open
-   position in every pass (`ALL_OPEN_POSITION_TARGETS_REQUIRED`). With the flag, supplied position
-   targets need only be a duplicate-free subset of the open positions (so one leg monitors one
-   position); with the flag off the old equality rule is unchanged. An entry candidate whose mint is
-   already held is still skipped (`ENTRY_CONTROL_OR_EXISTING_POSITION`). This is the only edit to
-   `desk/paper_cycle.py`.
-6. **Held legs.** `desk.paper_monitor_service` with the flag runs one ordinary positions-only
-   monitoring cycle per position (unresolved exits first, then least recently marked, ties by
-   entry time and mint; deterministic from the ledger so a cold restart resumes the same order).
-   `--wall-seconds` (default 12) chooses how many legs run (`floor(wall / 7.8)`, at least 1); the
-   rest are deferred, never dropped, and a failed leg does not hide the others (exit code is the
-   worst leg).
+   positions; no position with `exit_blocked` or `mark_status == UNVERIFIED_EXIT`. Failing any ends the
+   tick as `CONCURRENT_ENTRY_BLOCKED`; the held pass already ran, so an unresolved exit keeps being retried.
+3. **Dispatcher preflight, before the irreversible intent only** (no intent, admission or request yet) adds the
+   monitoring-reserve and mark-freshness estimate below. Later preflights (after the intent, when charges exist)
+   skip the estimate on purpose: a refusal there would leave an unresolved dispatch intent (a permanent latch),
+   and the engine remains the authority.
+4. **Engine gates stay authoritative.** Nothing bypasses `engine.transition`: `max_positions`, exposure 0.08,
+   position fraction 0.02, per-mint duplicate, cooldowns, entry throttle, daily pause/liquidation and
+   `STALE_PORTFOLIO` (now against the portfolio TTL) still apply inside the ledger transaction. If the pre-I/O
+   estimate is wrong, the entry becomes an ordinary terminal engine rejection, never a latch (tested).
+5. **`paper_cycle` per-item held-mint gate.** With the flag, supplied position targets need only be a
+   duplicate-free subset of the open positions; flag off keeps the old equality rule. An entry candidate whose
+   mint is already held is still skipped. This is the only edit to `desk/paper_cycle.py`.
+6. **Held legs** (`desk.paper_monitor_service`, flag on): one ordinary positions-only monitoring cycle per
+   position (unresolved exits first, then least recently marked, ties by entry time and mint; deterministic from
+   the ledger, so a cold restart resumes the same order). **By default every open position runs in the pass**;
+   `--wall-seconds N` caps the legs to `floor(N / 7.8)` (at least 1) and defers the rest, never drops them.
+   The fresh held unit passes `--wall-seconds 64` (8 legs = 62.4 s) inside `TimeoutStartSec=120`.
+
+## Do entries delay exits? (corrected)
+
+They can, by design, and the earlier claim "exits are never starved by entries" was false. An entry holds the
+scheduler lease and the research/evidence/ledger locks for its whole duration (typically 35 to 60 s of
+preparation and cycle, code worst case ~282 s). A held pass cannot run inside an entry, and splitting the
+scheduler lease would not help because `run_once` itself takes the worker, evidence and ledger locks without waiting.
+
+What is guaranteed instead:
+
+* The entry tick always runs the held legs **first**, so entering never starts from older marks than a held
+  tick would have produced.
+* A held tick that arrives while an entry runs **waits up to 40 s for the lease** (polling every 0.5 s) and runs
+  immediately when the entry finishes, instead of being skipped to the next timer tick
+  (`HeldLeaseWaitTests`: real flock, real wrapper, latency measured: starts within one poll of the release). The
+  wait applies only to a valid concurrent-entries config; flag off is byte-identical (`SCHEDULER_BUSY`, no wait).
+* So the worst-case gap between two refreshes of a position is the held cadence plus the remaining entry
+  duration (a 40 s wait covers a typical entry; an entry that runs longer makes the tick report `SCHEDULER_BUSY`
+  as before and the next tick follows one cadence later). Budget: 40 s wait + 62.4 s legs fits `TimeoutStartSec=120`.
 
 ## Budget math
 
-Monitoring allowance (`paper_monitoring_budget`, window 3600 s) is spent only by held legs, 5
-requests per position per leg (the figure `paper_monitor_operator.preflight` already uses).
-Investigation requests (admission ceiling 18, shared pacing) are separate stores, so entries cannot
-drain monitoring and monitoring cannot drain investigations; they only share the pacing clock,
-which the lease serialises.
+Monitoring allowance (`paper_monitoring_budget`, window 3600 s) is spent only by held legs, 5 requests per
+position per leg. Investigation requests (admission ceiling 18, shared pacing) are separate stores, so entries
+cannot drain monitoring and monitoring cannot drain investigations; they share the pacing clock, which the lease
+serialises.
 
-An entry is refused unless the remaining window allowance covers one hour of five-minute held
-passes for every position **including the new one**:
-
-    required = LEG_REQUESTS * (open + 1) * RESERVE_PASSES = 5 * (open + 1) * 12
+An entry is refused unless the remaining window allowance covers one hour of five-minute held passes for every
+position **including the new one**: `required = 5 * (open + 1) * 12`.
 
 | open before entry | required remaining |
 |---|---|
@@ -63,45 +107,28 @@ passes for every position **including the new one**:
 | 3 | 240 |
 | 7 | 480 |
 
-The legacy cap is **60 per hour**, which cannot carry a second position (and one position at 5-minute
-passes already consumes 60). The reviewed 3600/hour allowance is a prerequisite. At 4 positions held
-every 60 s: 5 x 4 x 60 = 1200/hour, inside 3600 with the reserve intact.
+The legacy cap is 60 per hour (cannot carry a second position); the reviewed 3600/hour allowance (which
+`tools.ops.fresh_start` provisions) is a prerequisite.
 
-## Wall time (measured fixture timings, not live)
+## Wall time (fixture timings, not live)
 
-Native-clock Kraken fixture (`docs/readiness.md`): BUY 7.006 s, SELL 7.807 s, so a held leg is
-budgeted at 7.8 s and an entry at 8.0 s.
+BUY 7.006 s and SELL 7.807 s on the native-clock Kraken fixture: a held leg is budgeted at 7.8 s, an entry at 30 s
+(18 s preparation, asserted equal to `PREPARATION_SECONDS`, plus 12 s cycle).
 
-* Held pass for 4 positions = 31.2 s. Inside the **entry** unit (`TimeoutStartSec=180` in this
-  repository's `deploy/desk-paper-entry-dispatcher.service`; the task text said 600 s) with 31.2 + 8
-  = 39.2 s: fits (asserted in `test_wall_time_*`).
-* The **held** unit has `TimeoutStartSec=20` (task text said 120 s). 4 x 7.8 s does not fit, so the
-  work is split into legs; at the default 12 s budget one leg runs per pass. To service N positions per
-  pass the coordinator must raise `TimeoutStartSec` and `--wall-seconds` together, e.g.
-  `TimeoutStartSec=60`, `--wall-seconds 48` (6 legs) and shorten the timer to 60 s. The unit files are
-  not changed here (outside this task's files).
+| unit (`deploy/fresh`) | budget |
+|---|---|
+| held (`TimeoutStartSec=120`) | lease wait 40 s + `--wall-seconds 64` (8 legs) + margin |
+| entry (`TimeoutStartSec=600`) | held legs for the whole book (62 s) + entry (30 s typical, ~282 s worst case) |
 
-## The binding constraint: `STALE_PORTFOLIO` (read this before activating)
+## Day rollover (corrected)
 
-`engine.transition` rejects an entry when **any held mark is older than `price_ttl_seconds` (10 s)**
-at the entry event time (`test_engine_rejects_entry_when_a_held_mark_is_stale` shows it). A held leg
-takes ~7.8 s and the entry decision ~8 s after it starts, so the marks must be refreshed immediately
-before the entry and the whole batch decided within 10 s:
-
-    oldest-mark age at decision ~ (time since its leg) + ENTRY_SECONDS(8) <= 10
-
-* 1 open position, held pass just finished: ~0 + 8 = 8 s, allowed (marginal).
-* 2 open positions: the older mark is one leg (7.8 s) older, 15.8 s, refused.
-* 3-4 open positions: refused.
-
-`entry_blockers` applies this arithmetic *before* any investigation request, so a doomed entry costs
-0 requests (`PORTFOLIO_MARKS_TOO_OLD_FOR_ENTRY`) instead of ~9 followed by an engine reject. The engine
-gate is not weakened. Consequently, **with today's timings the useful setting is `max_positions: 2`
-(one held + one new)**. Reaching 4 needs either legs of ~2 s each (fewer or parallel reads per held
-leg, which touches the cycle/transport code), or an explicit developer decision to raise
-`price_ttl_seconds` (weakening an evidence-freshness gate, deliberately not done here), or an in-cycle
-reorder that collects the candidate first and refreshes all marks last. These are listed for the
-coordinator; none was implemented.
+Rollover needs every mark current at the evaluating event. During pure held passes it is deferred for any book
+size (each leg's own mark is one cadence old when its event is evaluated; this already held with one position).
+It fires at the **first entry decision after midnight** because the held-first legs have just refreshed every mark
+and the portfolio TTL covers them; the entry gates run after the rollover, so the daily counters are correct
+exactly when they are used (`RolloverTests`, three positions across UTC midnight; without the TTL the same book
+stays on yesterday and the entry is rejected `STALE_PORTFOLIO`). If no entry is attempted for days while
+positions are held, the counters stay stale, which affects only entry gates, never exits.
 
 ## Failure modes (all fail closed)
 
@@ -109,30 +136,32 @@ coordinator; none was implemented.
 |---|---|
 | held pass nonzero / monitoring blocked | `HELD_MONITORING_DEGRADED`, 0 requests |
 | unresolved exit, `EXIT_ONLY`/paused mode, full book | `CONCURRENT_ENTRY_BLOCKED` + reasons, still monitoring |
-| monitoring allowance below reserve | preflight `MONITORING_RESERVE_INSUFFICIENT` |
-| marks too old for the engine TTL | preflight `PORTFOLIO_MARKS_TOO_OLD_FOR_ENTRY` |
+| monitoring allowance below reserve | preflight `MONITORING_RESERVE_INSUFFICIENT`, before the intent |
+| marks too old for the portfolio TTL (incl. 30 s of entry work) | preflight `PORTFOLIO_MARKS_TOO_OLD_FOR_ENTRY`, before the intent, 0 requests, no latch |
+| estimate wrong, engine sees stale marks | terminal engine reject `STALE_PORTFOLIO` (charges kept, store not latched) |
 | exported targets differ from checkpoint positions | held service `UNAVAILABLE`, no leg |
-| invalid flag value / `max_positions` outside 2..8 | `ValueError` |
-| held pass overruns the lease | the next tick sees `SCHEDULER_BUSY`; exits are never starved by entries |
+| invalid flag / `max_positions` / TTL | `ValueError` |
+| entry still running when the held wait expires | `SCHEDULER_BUSY`; the next tick follows |
 
-Restart: ledger events are idempotent by `event_id`; re-delivering every event after a cold restart
-with three open positions yields no new fills (tested). Monitoring reservations are durable and
-immutable in their own store; the T06 verifier (`tools.ops.verify_cycle`) compares fills and budgets
-across a restart.
+Restart: ledger events are idempotent by `event_id`. `tests/test_paper_concurrency_pipeline.py` runs two real
+dispatcher entries on `fresh_start` stores and uses `tools.ops.verify_cycle` snapshots: a cold restart between and
+after the entries changes no fill, charge, reservation or journal row; the second entry is append-only progress.
 
 ## Recommended activation
 
 1. Verify the first single-position cycle (entry, hold, exit, accounting, restart) with the flag off.
-2. New ledger/config version with `"paper_concurrent_entries_version": 1` and `"max_positions": 2`.
-3. Monitoring allowance 3600/hour provisioned; raise the held unit timeout/timer as above.
-4. Observe forward results; only then consider 4, after the freshness constraint is addressed.
+2. New ledger/config version with the flag, `"max_positions": 2` and `"paper_portfolio_mark_ttl_seconds": 120`
+   (timeline arithmetic admits up to 8, so raise to 4 after one forward observation period).
+3. Monitoring allowance 3600/hour (provisioned by `fresh_start`); install the `deploy/fresh` held unit as shipped.
+4. Keep `desk-paper-monitor.timer` off: the stale-mark watchdog uses the 10 s price TTL and would put the book in
+   `EXIT_ONLY` (T09 F5/T23).
 
 ## Not done / limitations
 
-* The read-only dashboard/ledger-reader per-position view was not changed (those files were outside
-  the task's files). `desk.paper_concurrency.attribution(connection, cfg)` provides the read-only
-  per-position fill attribution and the portfolio cash identity (`cash = initial + realized - cost
-  held`) and is tested after an interleaved buy/buy/sell/buy/sell/sell sequence.
-* All timings are the documented fixture figures; no live measurement was possible (no provider
-  access from cloud workers).
+* No live measurement; all timings are fixture figures and the "elapsed tick" in the pipeline tests is modelled by
+  advancing the fixture clock (the stores, dispatcher, pre-I/O estimate, cycles and engine are real).
+* The read-only dashboard/ledger-reader per-position view was not changed; `desk.paper_concurrency.attribution`
+  provides the read-only per-position fill attribution and the portfolio cash identity (tested after an interleaved
+  buy/buy/sell/buy/sell/sell sequence).
+* The relaxed portfolio TTL is a risk decision; see the bound above.
 * `desk/` changed, so the runtime implementation hash changes; the coordinator rotates the ledger.

@@ -11,6 +11,8 @@ import io
 import json
 import os
 import tempfile
+import threading
+import time
 import unittest
 from pathlib import Path
 from unittest.mock import patch
@@ -294,6 +296,61 @@ class EngineInterleavingTests(unittest.TestCase):
         self.assertEqual(pc.attribution(self.ledger.db, self.cfg)['cash_sol'], before[1]['state']['cash'])
 
 
+class RolloverTests(unittest.TestCase):
+    """Three positions across UTC midnight, held legs 8 s apart, then the next entry decision."""
+
+    def setUp(self):
+        self.tmp = tempfile.TemporaryDirectory()
+        self.addCleanup(self.tmp.cleanup)
+        self.path = Path(self.tmp.name) / 'l.sqlite'
+
+    @staticmethod
+    def ev(ts, mint, **changes):
+        return event(ts, mint=mint, graduated_at=ts - 600, **changes)    # the fixture's fixed token age spans only hours
+
+    def book(self, **changes):
+        cfg = cfg_on(**changes)
+        ledger = Ledger(self.path)
+        self.addCleanup(ledger.close)
+        apply = lambda e: ledger.apply(e, cfg, transition, initial_state)
+        base = T - 600                                        # 23:50 UTC on the previous day
+        for i, mint in enumerate('ABC'):
+            for held in 'ABC'[:i]:
+                apply(self.ev(base + 60 * i - 1, held))
+            self.assertEqual(apply(self.ev(base + 60 * i, mint))[0]['type'], 'fill')
+        state = lambda: json.loads(ledger.db.execute('SELECT payload FROM state').fetchone()[0])
+        return apply, state
+
+    def legs_after_midnight(self, apply):
+        out = []
+        for i, mint in enumerate('ABC'):                      # real legs: 7.8 s each, oldest mark first
+            out += apply(self.ev(T + 10 + 8 * i, mint))
+        return out
+
+    def test_rollover_fires_at_the_first_entry_after_all_legs_with_the_portfolio_ttl(self):
+        apply, state = self.book()
+        before = state()
+        legs = self.legs_after_midnight(apply)
+        # Pure held legs cannot roll the day over (each leg's own mark is old when it is evaluated):
+        # the pre-existing behaviour with one position too. The counters only matter at an entry.
+        self.assertEqual(state()['day'], before['day'])
+        self.assertTrue(any(o.get('reason') == 'DAY_ROLLOVER_DEFERRED_UNVERIFIED_MARKS' for o in legs))
+        entry = apply(self.ev(T + 57, 'D'))                   # held-first legs (31 s) + preparation + quotes
+        self.assertEqual([o['type'] for o in entry][-1], 'fill', entry)
+        after = state()
+        self.assertNotEqual(after['day'], before['day'])
+        self.assertEqual(after['day_gross_losses'], '0')
+        self.assertEqual(len(after['positions']), 4)
+
+    def test_without_the_portfolio_ttl_the_same_book_stays_stuck_on_yesterday_and_rejects(self):
+        apply, state = self.book(**{TTL: config()['price_ttl_seconds']})
+        before = state()
+        self.legs_after_midnight(apply)
+        entry = apply(self.ev(T + 57, 'D'))
+        self.assertEqual((entry[-1]['type'], entry[-1]['reason']), ('reject', 'STALE_PORTFOLIO'))
+        self.assertEqual(state()['day'], before['day'])        # the daily counters stay stale while 3 positions are held
+
+
 class SchedulerTickTests(unittest.TestCase):
     """Entry mode with the lease, real wrapper, synthetic protected files; commands are probes."""
 
@@ -401,6 +458,84 @@ class SchedulerTickTests(unittest.TestCase):
         out = json.loads(self.run_entry(cfg_on()))
         self.assertEqual(out['blockers'], ['LEDGER_MODE_NOT_RUNNING', 'MAX_POSITIONS_REACHED'])
         self.assertEqual([c[0] for c in self.calls], ['held'])
+
+
+class HeldLeaseWaitTests(SchedulerTickTests):
+    """A held tick arriving while an entry holds the lease: bounded wait instead of a skipped pass.
+
+    The entry is a real thread holding the real flock for a scaled duration; the held pass is the real
+    wrapper. Time constants are scaled down (seconds -> fractions of a second) but the mechanism is real.
+    """
+
+    def run_held(self, cfg):
+        self.cfg_path.write_text(canonical(cfg))
+        args = ['--research-db', str(self.research), '--mode', 'held', '--',
+                '--config', str(self.cfg_path), '--research-db', str(self.research),
+                '--evidence-db', str(self.root / 'e.sqlite'), '--ledger-db', str(self.ledger), '--pool-fee-bps', '25']
+        started = []
+
+        def held(argv):
+            started.append(time.monotonic())
+            return 0
+        out = io.StringIO()
+        with contextlib.redirect_stdout(out), patch('desk.paper_monitor_service.main', side_effect=held):
+            self.assertEqual(self.wrapper.main(args), 0)
+        return started, out.getvalue()
+
+    def entry_holds_lease(self, seconds):
+        from desk.paper_scheduler import lease
+        ready, finished = threading.Event(), []
+
+        def entry():
+            with lease(self.research) as fd:
+                self.assertIsNotNone(fd)
+                ready.set()
+                time.sleep(seconds)
+                finished.append(time.monotonic())
+        thread = threading.Thread(target=entry)
+        thread.start()
+        self.assertTrue(ready.wait(5))
+        self.addCleanup(thread.join)
+        return thread, finished
+
+    def test_held_pass_starts_right_after_a_running_entry_instead_of_skipping_the_tick(self):
+        with patch.object(self.wrapper, 'HELD_LEASE_WAIT_SECONDS', 5.0):
+            thread, finished = self.entry_holds_lease(1.0)
+            started, out = self.run_held(cfg_on())
+            thread.join()
+        self.assertEqual(len(started), 1, out)
+        latency = started[0] - finished[0]
+        self.assertGreaterEqual(latency, 0)                                  # strictly after the entry released the lease
+        self.assertLess(latency, self.wrapper.LEASE_POLL_SECONDS + 0.5)      # within one poll of the release
+        self.assertNotIn('SCHEDULER_BUSY', out)
+
+    def test_wait_is_bounded_by_the_budget_and_reports_busy_like_before(self):
+        with patch.object(self.wrapper, 'HELD_LEASE_WAIT_SECONDS', 0.6):
+            thread, finished = self.entry_holds_lease(2.0)
+            t0 = time.monotonic()
+            started, out = self.run_held(cfg_on())
+            waited = time.monotonic() - t0
+            thread.join()
+        self.assertEqual(started, [])
+        self.assertIn('SCHEDULER_BUSY', out)
+        self.assertGreaterEqual(waited, 0.6)
+        self.assertLess(waited, 1.6)
+
+    def test_default_off_never_waits_and_is_byte_identical(self):
+        with patch.object(self.wrapper, 'HELD_LEASE_WAIT_SECONDS', 5.0):
+            thread, finished = self.entry_holds_lease(0.8)
+            t0 = time.monotonic()
+            started, out = self.run_held(config())
+            waited = time.monotonic() - t0
+            thread.join()
+        self.assertEqual(started, [])
+        self.assertLess(waited, 0.5)
+        self.assertEqual(out, '{"status": "SCHEDULER_BUSY", "attempted_requests": 0, "entry_authorized": false}\n')
+
+    def test_unreadable_config_never_waits(self):
+        self.cfg_path.write_text('not json')
+        self.assertEqual(self.wrapper._held_wait(lambda name: str(self.cfg_path)), 0.0)
+        self.assertEqual(self.wrapper._held_wait(lambda name: (_ for _ in ()).throw(ValueError('missing'))), 0.0)
 
 
 class MonitorLegTests(unittest.TestCase):
@@ -566,6 +701,21 @@ class DispatcherPreflightTests(unittest.TestCase):
                 patch.object(tool.concurrency, 'clock', return_value=fresh):
             with self.assertRaisesRegex(ValueError, 'MONITORING_RESERVE_INSUFFICIENT'):
                 tool._preflight(ctx)
+
+    def test_pre_io_estimate_applies_only_before_the_irreversible_dispatch_intent(self):
+        """A refusal raised after charges would leave an unresolved intent (permanent latch): later calls skip it."""
+        f = self.fixture()
+        tool = self.module.tool
+        ctx = tool.plan(**f.args)
+        with f.f.jobs.connect() as c:
+            scan = c.execute('SELECT id FROM scans').fetchone()[0]
+        starved = {'status': 'AVAILABLE', 'blockers': [], 'remaining': 60}
+        with patch.object(tool.monitor.MonitoringBudget, 'snapshot', return_value=starved), \
+                patch.object(tool.concurrency, 'clock', return_value=f.f.at + 10_000):
+            with self.assertRaisesRegex(ValueError, 'Concurrent entry refused'):
+                tool._preflight(ctx)                      # before the intent: refused with zero requests
+            with patch.object(tool.concurrency, 'entry_blockers', side_effect=AssertionError('estimate re-run after charges')):
+                tool._preflight(ctx, scan)                # after the intent: the engine alone decides
 
 
 if __name__ == '__main__':
