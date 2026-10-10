@@ -1440,3 +1440,51 @@ The T24 review found that every unit is `Type=oneshot`, so an in-process cache g
 2. **F14 incremental accounting.** Keep running totals per window in an append-only, hash-chained table that is updated in the same transaction as each reservation/outcome. Verification covers new rows plus a chained digest; no unauthenticated sidecar file. Add a property test that the incremental result equals a full recompute after random sequences, including forced corruption of an already-verified row being detected by the chain. No flaky tests: everything deterministic.
 3. **F9 deadline.** The default stays 10s. With T36's paced cadences (helius 0.1s, jupiter 0.25s), compute the real worst case per pass type from the code and choose a range accordingly. Validate at config load. Keep it consistent with the unit `TimeoutStartSec` values (held 120, entry 600, decisions as rendered); add a test that checks the rendered units. An overrun yields T22G's FAILED_CHARGED (allow-listed), never a latch.
 4. **Benchmarks.** Commit the 7-day fixture generator and benchmark harness, with before/after numbers in the report, reproducible by `python -m tools.research.bench_...`.
+
+---
+
+## T40 — Candidate feature store (as-of features for selection/entry research)
+STATUS: OPEN
+DEPENDS: none
+BASE: origin/integration/r1
+OWNS: tools/research/features.py, tests/test_features.py, docs/research/FEATURES.md, deploy/fresh/desk-features.service + .timer (research unit with T39-style limits)
+AVOID: desk/** (import only)
+
+GOAL (CK): collect as much paper data as possible to build selection, entry and exit strategies fast. The shadow strategies (T27) currently use neutral features. Build an append-only `features.sqlite` (its own store) that records, for EVERY candidate, the features as they were KNOWN AT EACH TIME (`as_of`), derived ONLY from evidence the desk already retains, so it costs no extra provider requests:
+- **Sources (read-only):** discovery hints, investigation/history pages, observation evidence, decision journal, dispatcher results, ledger, counterfactual samples.
+- **Features:**
+  - age since migration;
+  - market cap and liquidity at hint/decision time;
+  - holder count and top-N concentration if measured;
+  - net buy ratio, flow and momentum windows (the ones the engine computes);
+  - Token-2022 profile flags;
+  - bundle/sniper flags if present;
+  - dev/creator facts if present;
+  - the rejection reasons;
+  - regime metrics (if T33 evidence exists).
+- **Layout:** one row per (mint, as_of, feature_set_version), with provenance (the source row ids or hashes) per feature. A strict no-look-ahead guarantee: a feature's as_of is never later than the source evidence's time.
+- **Interfaces:**
+  - an export to CSV/Parquet-free JSONL for offline analysis (stdlib only);
+  - the T27 `--features` input format, so shadow strategies use REAL features.
+- **Tests:** known-answer extraction from fixture stores built with the real writers; no look-ahead (the as_of property); idempotent re-runs; bounded reads (`mode=ro`; immutable only for a quiet WAL).
+
+---
+
+## T41 — Daily strategy research report (one HTML for CK each morning)
+STATUS: OPEN
+DEPENDS: none
+BASE: origin/integration/r1
+OWNS: tools/research/daily_report.py, tests/test_daily_report.py, deploy/fresh/desk-daily-report.service + .timer (research limits)
+AVOID: desk/**, the other research tools (import only)
+
+One read-only command builds a single self-contained HTML file (no external assets, everything escaped) and a JSON summary, combining:
+- the T29 funnel (where candidates die, including the UNRESOLVED latch banner);
+- the T26 counterfactual (does each filter reject winners);
+- the T27 shadow leaderboard (holdout, CI, ambiguous share), using T40 features when present;
+- T10 forward eval of real paper trades;
+- T14 fill realism, if present;
+- health and budget usage.
+
+It starts with a 10-line "what changed since yesterday / what to try next" section computed from the data (no LLM). Label everything paper-only and EXECUTION_UNVERIFIED, and show sample sizes, with explicit "insufficient sample" flags.
+
+The timer runs daily at 23:30 UTC (08:30 KST), writing to `<STATE_DIR>/reports/YYYY-MM-DD.html`. Tests use fixture stores with known numbers, cover HTML escaping, and cover empty/young data.
