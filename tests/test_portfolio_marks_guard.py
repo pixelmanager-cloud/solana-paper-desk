@@ -191,3 +191,57 @@ class FlagAbsentIdentityTests(unittest.TestCase):
 
 if __name__ == '__main__':
     unittest.main()
+
+
+class MarksReadDeadlineTests(unittest.TestCase):
+    """T35F item 3: the marks read lives INSIDE the 10 s cycle budget; it never extends it."""
+    def setUp(self):
+        from types import SimpleNamespace
+        from unittest.mock import MagicMock
+        self.SimpleNamespace, self.MagicMock = SimpleNamespace, MagicMock
+        self.cfg = cfg_marks()
+        self.chain = Chain(7)
+        self.positions = {str(self.chain.mint): self.chain.position()}
+
+    def run_refresh(self, remaining, read_ok=True):
+        from unittest.mock import patch
+        from desk import paper_cycle as cycle
+        budget = self.SimpleNamespace(start=100.0, monitoring_attempted=0, remaining=lambda: remaining,
+                                      now=lambda: T + 5, calls=[])
+        source = self.MagicMock()
+        keys = pm.request_keys(self.positions)
+        reply_value = reply([self.chain], {str(self.chain.mint): (10 ** 12, 10 ** 12)})
+        source.rpc_with_evidence.side_effect = lambda m, p, timeout_seconds: (reply_value, 'a' * 64)
+        class Allowance:
+            used = 0
+            def __init__(self, *a, **k):
+                pass
+            def snapshot(self):
+                return {'blockers': [], 'total_used': Allowance.used}
+        store = self.MagicMock()
+        store.load.return_value = {'observed_at': T + 3}
+        delivered, result = [], {'diagnostics': []}
+
+        def charge(*a, **k):
+            Allowance.used += 1
+            return reply_value, 'a' * 64
+        source.rpc_with_evidence.side_effect = charge
+        with patch.object(cycle, '_state', return_value={'positions': self.positions}), \
+                patch.object(cycle, 'MonitoringBudget', Allowance), patch.object(cycle, '_entry_scan_id', return_value='s'):
+            cycle._refresh_portfolio_marks("p", self.cfg, store, self.MagicMock(), lambda *a, **k: source, budget,
+                                           delivered.append, lambda: T + 5, result)
+        return budget, source, delivered, result, keys
+
+    def test_too_little_time_left_skips_the_read_without_charging_or_touching_the_deadline(self):
+        budget, source, delivered, result, _ = self.run_refresh(remaining=2.0)
+        self.assertEqual(result['diagnostics'], [{'portfolio_marks': 'UNAVAILABLE', 'code': 'PORTFOLIO_MARKS_DEADLINE'}])
+        source.rpc_with_evidence.assert_not_called()
+        self.assertEqual((budget.start, budget.monitoring_attempted, delivered), (100.0, 0, []))
+
+    def test_the_read_is_bounded_by_the_remaining_budget_and_never_extends_it(self):
+        for remaining, expected in ((9.0, 5.0), (4.0, 4.0), (3.0, 3.0)):
+            budget, source, delivered, result, _ = self.run_refresh(remaining=remaining)
+            self.assertEqual(source.rpc_with_evidence.call_args.kwargs['timeout_seconds'], expected, remaining)
+            self.assertEqual(budget.start, 100.0, 'the 10 s cycle deadline is not moved by the read')
+            self.assertEqual((budget.monitoring_attempted, len(delivered)), (1, 1))
+            self.assertEqual(result['diagnostics'][-1]['portfolio_marks'], 'APPLIED')
