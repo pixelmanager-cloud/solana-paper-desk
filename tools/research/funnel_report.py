@@ -21,7 +21,14 @@ rejection) -> buy (ledger BUY fill).
 Safety: every database is opened read-only (``mode=ro``; ``immutable=1`` only for a WAL-mode file with
 no ``-wal``, never for a rollback-journal store), symlinked / multi-link stores are refused, nothing is
 written except an optional HTML file created exclusively, and there is no network or provider access.
-Discovery frames whose stored hash does not match are counted and never used. All figures are
+Discovery frames whose stored hash does not match are counted and never used.
+
+Latches: a BLOCKED cycle result is a normal rejection (``OBSERVATIONS:<code>``) only when the
+evidence store proves it terminal: its ``paper_observation_passes`` row has an outcome (T01's
+``paper_cycle_no_entry`` receipt fills it). A pass still NULL with no no-entry row is a latch that
+blocks the global terminal gate: it is reported as ``UNRESOLVED:<code>`` and listed first. Without
+``--evidence-db`` this cannot be verified: such deaths keep ``OBSERVATIONS:`` but are flagged
+``LATCH_UNVERIFIED`` and the report says the latch check was not provided. All figures are
 research descriptions of EXECUTION_UNVERIFIED paper activity, not trading evidence.
 """
 import sys
@@ -107,6 +114,7 @@ def discovery_hints(discovery_db, *, since, until, limit=MAX_FRAMES):
     from desk.decode import decode
     from desk.model import digest
     from tools import paper_entry_dispatcher as dispatcher
+    from desk import migration_slot_intake as migration
     stats = {'frames': 0, 'altered': 0, 'undecodable': 0, 'not_migration': 0, 'ambiguous': 0, 'truncated': False}
     hints = []
     with closing(connect_ro(discovery_db)) as d:
@@ -139,8 +147,13 @@ def discovery_hints(discovery_db, *, since, until, limit=MAX_FRAMES):
             elif len(found) > 1:
                 stats['ambiguous'] += 1
             else:
-                hints.append({'seq': seq, 'mint': found[0]['mint'], 'pool': found[0]['pool'],
-                              'signature': decoded['signature'], 'slot': slot, 'migrated_at': float(received)})
+                hint = {'seq': seq, 'mint': found[0]['mint'], 'pool': found[0]['pool'],
+                        'signature': decoded['signature'], 'slot': slot, 'migrated_at': float(received)}
+                try:        # the dispatcher's own selection filter (imported, not copied)
+                    migration._hints('selection-only', hint['mint'], hint['pool'], hint['signature'], slot, dispatcher.PROVENANCE)
+                except migration.IntakeBlocked as error:
+                    hint['unselectable'] = (str(error) or 'UNSUPPORTED_HINT')[:96]
+                hints.append(hint)
     return hints, stats
 
 
@@ -167,7 +180,8 @@ def read_journal(journal_db):
                 continue
             res = results.get(ident)
             body = res.get('result') if isinstance(res, dict) else None
-            out[mint] = {'intent_at': at, 'result': body if isinstance(body, dict) else None,
+            out[mint] = {'intent_at': at, 'scan_id': res.get('scan_id') if isinstance(res, dict) and isinstance(res.get('scan_id'), str) else None,
+                         'result': body if isinstance(body, dict) else None,
                          'result_at': float(res['at']) if isinstance(res, dict) and isinstance(res.get('at'), (int, float)) else None,
                          'unreadable': ident in results and res is None, 'has_result_row': ident in results}
     return out, bad
@@ -178,10 +192,11 @@ def read_scans(research_db):
         r.execute('BEGIN')
         if not _has_table(r, 'scans'):
             raise FunnelError('SCANS_TABLE_MISSING')
-        rows = r.execute('SELECT mint,created,status FROM scans ORDER BY created LIMIT ?', (MAX_SCANS,)).fetchall()
+        rows = r.execute('SELECT mint,created,status,id FROM scans ORDER BY created LIMIT ?', (MAX_SCANS,)).fetchall()
     scans = {}
-    for mint, created, status in rows:
-        scans.setdefault(mint, {'created': float(created) if isinstance(created, (int, float)) else None, 'status': status})
+    for mint, created, status, ident in rows:
+        scans.setdefault(mint, {'created': float(created) if isinstance(created, (int, float)) else None, 'status': status,
+                                'id': ident if isinstance(ident, str) else None})
     return scans
 
 
@@ -204,6 +219,36 @@ def read_ledger(ledger_db):
             elif fill.get('side') == 'sell':
                 sells += 1
     return buys, sells
+
+
+def read_passes(evidence_db):
+    """Latch evidence: pass id -> resolved?, plus T01 no-entry receipts (by pass and by scan). Read-only."""
+    with closing(connect_ro(evidence_db)) as e:
+        e.execute('BEGIN')
+        if not _has_table(e, 'paper_observation_passes'):
+            return {'passes': {}, 'null': 0, 'no_entry_passes': set(), 'no_entry_scans': set()}
+        passes = {i: o is not None for i, o in e.execute('SELECT id,outcome_hash FROM paper_observation_passes LIMIT 20000')}
+        receipts = ([] if not _has_table(e, 'paper_cycle_no_entry')
+                    else e.execute('SELECT pass_id,scan_id FROM paper_cycle_no_entry LIMIT 20000').fetchall())
+    return {'passes': passes, 'null': sum(1 for v in passes.values() if not v),
+            'no_entry_passes': {r[0] for r in receipts}, 'no_entry_scans': {r[1] for r in receipts}}
+
+
+def latch_verdict(body, scan_id, passes):
+    """'RESOLVED' | 'UNRESOLVED' | 'UNVERIFIED' for a non-COMPLETE cycle result."""
+    if passes is None:
+        return 'UNVERIFIED'
+    pass_id = body.get('pass_id')
+    if isinstance(pass_id, str):
+        state = passes['passes'].get(pass_id)
+        if state is True or (state is False and (pass_id in passes['no_entry_passes'] or scan_id in passes['no_entry_scans'])):
+            return 'RESOLVED'
+        return 'UNRESOLVED'                      # NULL with no receipt, or the pass row is missing
+    if scan_id in passes['no_entry_scans']:
+        return 'RESOLVED'
+    # No pass id in the stored result: the global gate is latched by ANY NULL pass, so a charged
+    # blocked result cannot be called normal while one exists.
+    return 'UNRESOLVED' if passes['null'] and (body.get('attempted_requests') or 0) > 0 else 'RESOLVED'
 
 
 def read_budgets(evidence_db):
@@ -253,8 +298,11 @@ def _reason(value, default):
     return default
 
 
-def classify_result(body):
-    """Typed dispatcher result -> (furthest stage passed, death reason or None, extra reasons, requests, used)."""
+def classify_result(body, mint=None, latch='UNVERIFIED'):
+    """Typed dispatcher result -> (furthest stage passed, death reason or None, extra reasons, requests, used).
+
+    Fills and rejects are attributed to ``mint`` only (held-position outcomes never belong to a candidate);
+    ``latch`` is the evidence-store verdict for a non-COMPLETE cycle result (see ``latch_verdict``)."""
     if not isinstance(body, dict):
         return 'admitted', 'UNRESOLVED:RESULT_UNREADABLE', [], None, None
     kind = body.get('kind')
@@ -272,9 +320,11 @@ def classify_result(body):
         return 'admitted', 'MIGRATION:' + _reason(body.get('reason'), 'NO_ENTRY'), [], requests, used
     if kind == 'history_preparation_no_entry_v1':
         return 'admitted', 'HISTORY:' + _reason(body.get('reason'), 'NO_ENTRY'), [], requests, used
+    if kind == 'paper_cycle_no_entry_v1':
+        return 'history_ok', 'OBSERVATIONS:' + _reason(body.get('blocker'), 'NO_ENTRY'), [], requests, used
     if kind == 'paper_cycle_v1':
         status = body.get('status')
-        outcomes = [o for o in body.get('outcomes', []) if isinstance(o, dict)]
+        outcomes = [o for o in body.get('outcomes', []) if isinstance(o, dict) and (mint is None or o.get('mint') == mint)]
         if any(o.get('type') == 'fill' and o.get('side') == 'buy' for o in outcomes):
             return 'buy', None, [], requests, used
         if status == 'COMPLETE':
@@ -286,13 +336,13 @@ def classify_result(body):
                 return 'observations_ok', 'ENGINE:' + primary, ['ENGINE:' + r for r in extra], requests, used
             return 'observations_ok', 'ENGINE:NO_FILL_NO_REJECT', [], requests, used
         blockers = [b for b in body.get('blockers', []) if isinstance(b, str)]
-        prefix = 'UNRESOLVED:' if status == 'RECOVERY_REQUIRED' else 'OBSERVATIONS:'
+        prefix = 'UNRESOLVED:' if status == 'RECOVERY_REQUIRED' or latch == 'UNRESOLVED' else 'OBSERVATIONS:'
         return 'history_ok', prefix + (blockers[0] if blockers else str(status or 'BLOCKED'))[:96], \
             [prefix + b for b in blockers[1:]], requests, used
     return 'admitted', 'UNRESOLVED:UNKNOWN_RESULT_KIND', [], requests, used
 
 
-def classify(hint, journal, scans, ledger_buys, now, window=(WINDOW_MIN, WINDOW_MAX)):
+def classify(hint, journal, scans, ledger_buys, now, window=(WINDOW_MIN, WINDOW_MAX), passes=None):
     """One candidate -> reached stage names, death/pending info and stage timestamps."""
     wmin, wmax = window
     mint, received = hint['mint'], hint['migrated_at']
@@ -305,7 +355,9 @@ def classify(hint, journal, scans, ledger_buys, now, window=(WINDOW_MIN, WINDOW_
         out['death'] = (before, reason)
 
     if entry is None:
-        if scan is not None:
+        if hint.get('unselectable'):
+            die('selectable', 'UNSELECTABLE:' + hint['unselectable'])      # never offered by the dispatcher's filter
+        elif scan is not None:
             die('selectable', 'ALREADY_SCANNED_NO_INTENT')
         elif now < received + wmin:
             out['pending'] = ('selectable', 'WINDOW_NOT_OPEN')
@@ -337,7 +389,12 @@ def classify(hint, journal, scans, ledger_buys, now, window=(WINDOW_MIN, WINDOW_
         else:
             die('history_ok', 'UNRESOLVED:NO_RESULT' if not entry.get('unreadable') else 'UNRESOLVED:RESULT_UNREADABLE')
         return out
-    furthest, reason, extra, requests, used = classify_result(body)
+    verdict = None
+    if isinstance(body, dict) and body.get('kind') == 'paper_cycle_v1' and body.get('status') != 'COMPLETE':
+        verdict = latch_verdict(body, entry.get('scan_id') or scan.get('id'), passes)
+        if verdict == 'UNVERIFIED':
+            out['flags'].append('LATCH_UNVERIFIED')
+    furthest, reason, extra, requests, used = classify_result(body, mint, verdict or 'UNVERIFIED')
     out['extra'], out['requests'], out['used'] = extra, requests, used
     if entry.get('result_at') is not None and scan.get('created') is not None:
         out['times']['admission_to_result'] = entry['result_at'] - scan['created']
@@ -422,8 +479,10 @@ def _finish(bucket):
 def forward_returns(store, assignments, horizon):
     """Optional T26 counterfactual store: forward return per death/reason group (read-only).
 
-    Same definition as the counterfactual tool: baseline = first priced sample (status OK), return at
-    ``horizon`` seconds; pools that died count as -100%.
+    Baseline = first priced sample (status OK), return at ``horizon`` seconds. A candidate whose pool died
+    (any ``POOL_DEAD`` sample) is a SEPARATE bucket: it is counted in ``candidates`` and ``pool_died`` and in
+    ``share_pool_died``, and is NOT folded into the median/share-positive (those use priced horizons only),
+    so an excluded loss is always visible instead of silently dropped or rewritten as -100%.
     """
     from decimal import Decimal
     groups = {}
@@ -448,6 +507,7 @@ def forward_returns(store, assignments, horizon):
     for group, g in sorted(groups.items()):
         r = sorted(g['returns'])
         result[group] = {'candidates': g['candidates'], 'with_return': g['with_return'], 'pool_died': g['pool_died'],
+                         'share_pool_died': str(Decimal(g['pool_died']) / g['candidates']) if g['candidates'] else None,
                          'median_return': str(statistics.median(r)) if r else None,
                          'share_positive': str(Decimal(sum(1 for x in r if x > 0)) / len(r)) if r else None}
     return {'status': 'READ', 'horizon_seconds': horizon, 'baseline': 'first priced sample', 'groups': result}
@@ -465,13 +525,14 @@ def build(*, discovery_db=None, journal, research_db, ledger, evidence_db=None, 
     journal_map, journal_unreadable = read_journal(journal)
     scans = read_scans(research_db)
     ledger_buys, ledger_sells = read_ledger(ledger)
+    passes = read_passes(evidence_db) if evidence_db else None
     seen, candidates, duplicates = set(), [], 0
     for h in sorted(hints, key=lambda x: x['migrated_at']):
         if h['mint'] in seen:
             duplicates += 1
             continue
         seen.add(h['mint'])
-        candidates.append(classify(h, journal_map, scans, ledger_buys, now, window))
+        candidates.append(classify(h, journal_map, scans, ledger_buys, now, window, passes))
     total, hours, days = _new_bucket(), {}, {}
     assignments = {}
     for c in candidates:
@@ -480,7 +541,16 @@ def build(*, discovery_db=None, journal, research_db, ledger, evidence_db=None, 
         _add(days.setdefault(int(c['received'] // DAY) * DAY, _new_bucket()), c)
         group = ('DIED:' + c['death'][1]) if c['death'] else ('PENDING:' + c['pending'][1] if c['pending'] else 'BUY')
         assignments[c['mint']] = group
-    report = {'kind': 'funnel_report_v1', 'label': LABEL, 'paper_only': True, 'live_readiness': False,
+    unresolved = {}
+    for stage_reasons in total['died_before'].values():
+        for reason, n in stage_reasons.items():
+            if reason.startswith('UNRESOLVED:'):
+                unresolved[reason] = unresolved.get(reason, 0) + n
+    report = {'kind': 'funnel_report_v1',
+              'unresolved': {'count': sum(unresolved.values()), 'by_code': dict(sorted(unresolved.items()))},
+              'latch_check': ({'status': 'NOT_PROVIDED', 'note': 'pass the evidence DB to separate latches from normal rejections'}
+                              if passes is None else {'status': 'READ', 'null_passes': passes['null'],
+                                                       'no_entry_receipts': len(passes['no_entry_passes'])}), 'label': LABEL, 'paper_only': True, 'live_readiness': False,
               'generated_at': _iso(now), 'now': now, 'window_seconds': list(window), 'stages': list(STAGES),
               'candidates': len(candidates), 'duplicate_hints_ignored': duplicates,
               'frames': frame_stats, 'journal_unreadable_intents': journal_unreadable,
@@ -537,6 +607,17 @@ def _reason_table(mapping, title):
             + ''.join(rows) + '</tbody></table>')
 
 
+def _unresolved_banner(report):
+    u, check = report['unresolved'], report['latch_check']
+    note = ('<p class="note warn">Latch check NOT provided: pass --evidence-db to separate latches from normal rejections.</p>'
+            if check['status'] != 'READ' else '')
+    if u['count']:
+        rows = ''.join(f'<tr><td class="warn">{_e(code)}</td><td class="n">{n}</td></tr>' for code, n in u['by_code'].items())
+        return ('<h2 class="warn">UNRESOLVED (latches and unreadable results, not normal rejections)</h2><div class="card">'
+                f'<table><thead><tr><th>code</th><th class="n">candidates</th></tr></thead><tbody>{rows}</tbody></table></div>{note}')
+    return f'<p class="note">UNRESOLVED: none.</p>{note}'
+
+
 def render_html(report):
     t = report['total']
     parts = [f'<!doctype html><html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">'
@@ -544,6 +625,7 @@ def render_html(report):
              '<h1>Candidate funnel: where do migrations die?</h1>',
              f'<p class="note">{_e(report["label"])} · generated {_e(report["generated_at"])} · {report["candidates"]} candidates · '
              'research description only, no trading evidence, no live readiness.</p>',
+             _unresolved_banner(report),
              '<h2>All candidates</h2><div class="card">', _funnel_table(t), '</div>',
              '<div class="card">', _reason_table(t['died_before'], 'died'), '</div>',
              '<div class="card">', _reason_table(t['pending'], 'pending'), '</div>',

@@ -92,6 +92,9 @@ class FunnelFixture(unittest.TestCase):
                  ('buy-' + mint, canonical({'type': 'fill', 'side': 'buy', 'mint': mint})))
 
     def add_candidate(self, name, received, delay, scan_delay, body, result_delay):
+        if isinstance(body, dict) and 'outcomes' in body:
+            # T29F: outcomes are attributed by mint, so fixtures must carry the candidate's own mint.
+            body = {**body, 'outcomes': [{**o, 'mint': name} for o in body['outcomes']]}
         self.hints.append(hint(name, received))
         at = received + delay
         self.sql(self.journal, 'INSERT INTO intents VALUES(?,?,?,?,?)', ('id-' + name, name, 'S-' + name,
@@ -122,7 +125,9 @@ class KnownCountTests(FunnelFixture):
             'engine_eligible': {'ENGINE:COST_BUDGET': 1}})
         self.assertEqual(t['pending'], {'selectable': {'WINDOW_NOT_OPEN': 1}, 'dispatched': {'AWAITING_DISPATCH': 1}})
         self.assertEqual(t['extra_reasons'], {'ENGINE:MAX_POSITIONS': 1})
-        self.assertEqual(t['flags'], {'RESULT_BUY_NOT_IN_LEDGER': 1})
+        # M03 is a BLOCKED cycle result and no evidence DB is given: its latch state is unverifiable (T29F).
+        self.assertEqual(t['flags'], {'RESULT_BUY_NOT_IN_LEDGER': 1, 'LATCH_UNVERIFIED': 1})
+        self.assertEqual(self.build()['latch_check']['status'], 'NOT_PROVIDED')
         deaths = sum(n for r in t['died_before'].values() for n in r.values())
         pending = sum(n for r in t['pending'].values() for n in r.values())
         self.assertEqual(t['reached']['buy'] + deaths + pending, t['candidates'], 'every candidate ends exactly once')
@@ -201,6 +206,167 @@ class KnownCountTests(FunnelFixture):
         token = groups['DIED:TOKEN:ACTIVE_MINT_AUTHORITY']
         self.assertEqual((token['pool_died'], token['with_return']), (1, 0))
         self.assertEqual(self.build()['counterfactual'], {'status': 'NOT_PROVIDED'})
+
+
+class LatchClassificationTests(FunnelFixture):
+    """T29F item 1: a charged BLOCKED result is a normal rejection only if its pass is terminal."""
+
+    def evidence(self, passes, receipts=()):
+        path = self.dir / 'evidence.sqlite'
+        if path.exists():
+            path.unlink()
+        with contextlib.closing(sqlite3.connect(path)) as c, c:
+            c.execute('CREATE TABLE paper_observation_passes(id TEXT PRIMARY KEY,intent_hash TEXT NOT NULL,outcome_hash TEXT)')
+            c.executemany('INSERT INTO paper_observation_passes VALUES(?,?,?)', passes)
+            if receipts:
+                c.execute('CREATE TABLE paper_cycle_no_entry(pass_id TEXT PRIMARY KEY,scan_id TEXT NOT NULL UNIQUE,intent_hash TEXT NOT NULL,outcome_hash TEXT NOT NULL)')
+                c.executemany('INSERT INTO paper_cycle_no_entry VALUES(?,?,?,?)', receipts)
+        return path
+
+    def set_m03(self, blockers=('MARKET_PRODUCER_BLOCKED',), pass_id='p' * 32, attempted=3):
+        row = json.loads(self.query(self.journal, "SELECT payload FROM results WHERE id='id-M03'"))
+        row['result'].update(blockers=list(blockers), attempted_requests=attempted)
+        if pass_id is None:
+            row['result'].pop('pass_id', None)
+        else:
+            row['result']['pass_id'] = pass_id
+        self.sql(self.journal, "UPDATE results SET payload=? WHERE id='id-M03'", (canonical(row),))
+
+    def query(self, path, statement):
+        with contextlib.closing(sqlite3.connect(path)) as c:
+            return c.execute(statement).fetchone()[0]
+
+    def death(self, report, stage='observations_ok'):
+        return report['total']['died_before'].get(stage, {})
+
+    def test_null_pass_without_receipt_is_a_latch_and_listed_first(self):
+        self.set_m03()
+        r = self.build(evidence_db=self.evidence([('p' * 32, 'i' * 64, None)]))
+        self.assertEqual(self.death(r).get('UNRESOLVED:MARKET_PRODUCER_BLOCKED'), 1)
+        self.assertNotIn('OBSERVATIONS:MARKET_PRODUCER_BLOCKED', self.death(r))
+        self.assertEqual(r['unresolved']['by_code']['UNRESOLVED:MARKET_PRODUCER_BLOCKED'], 1)
+        self.assertEqual(r['latch_check']['status'], 'READ')
+        text = fr.render_html(r)
+        self.assertLess(text.index('UNRESOLVED'), text.index('All candidates'), 'banner comes before the funnel')
+
+    def test_category_b_code_with_null_pass_is_a_latch(self):
+        self.set_m03(blockers=('USD_ORIGINAL_BINDING_INVALID',))
+        r = self.build(evidence_db=self.evidence([('p' * 32, 'i' * 64, None)]))
+        self.assertEqual(r['unresolved']['by_code'], {'UNRESOLVED:USD_ORIGINAL_BINDING_INVALID': 1, 'UNRESOLVED:NO_RESULT': 1,
+                                                      'UNRESOLVED:DISPATCHED_NOT_ADMITTED': 1})
+
+    def test_terminal_pass_or_receipt_is_a_normal_rejection(self):
+        self.set_m03()
+        for label, ev in (('outcome set', self.evidence([('p' * 32, 'i' * 64, 'o' * 64)])),
+                          ('null but receipted', self.evidence([('p' * 32, 'i' * 64, None)], [('p' * 32, 'scan-M03', 'i' * 64, 'o' * 64)]))):
+            with self.subTest(label):
+                r = self.build(evidence_db=ev)
+                self.assertEqual(self.death(r).get('OBSERVATIONS:MARKET_PRODUCER_BLOCKED'), 1)
+                self.assertNotIn('UNRESOLVED:MARKET_PRODUCER_BLOCKED', self.death(r))
+
+    def test_missing_pass_row_and_missing_pass_id_cases(self):
+        self.set_m03(pass_id='q' * 32)                                  # result names a pass the store does not have
+        r = self.build(evidence_db=self.evidence([('p' * 32, 'i' * 64, 'o' * 64)]))
+        self.assertEqual(self.death(r).get('UNRESOLVED:MARKET_PRODUCER_BLOCKED'), 1)
+        self.set_m03(pass_id=None)                                      # no pass id: any NULL pass latches the global gate
+        r = self.build(evidence_db=self.evidence([('z' * 32, 'i' * 64, None)]))
+        self.assertEqual(self.death(r).get('UNRESOLVED:MARKET_PRODUCER_BLOCKED'), 1)
+        r = self.build(evidence_db=self.evidence([('z' * 32, 'i' * 64, 'o' * 64)]))                 # nothing NULL: normal
+        self.assertEqual(self.death(r).get('OBSERVATIONS:MARKET_PRODUCER_BLOCKED'), 1)
+        r = self.build(evidence_db=self.evidence([('z' * 32, 'i' * 64, None)], [('y' * 32, 'scan-M03', 'i' * 64, 'o' * 64)]))
+        self.assertEqual(self.death(r).get('OBSERVATIONS:MARKET_PRODUCER_BLOCKED'), 1)             # scan has its own receipt
+        self.set_m03(pass_id=None, attempted=0)                         # nothing charged: no pass, no latch
+        r = self.build(evidence_db=self.evidence([('z' * 32, 'i' * 64, None)]))
+        self.assertEqual(self.death(r).get('OBSERVATIONS:MARKET_PRODUCER_BLOCKED'), 1)
+
+    def test_without_evidence_db_the_latch_is_flagged_not_hidden(self):
+        r = self.build()
+        self.assertEqual(r['latch_check']['status'], 'NOT_PROVIDED')
+        self.assertEqual(r['total']['flags']['LATCH_UNVERIFIED'], 1)
+        self.assertIn('Latch check NOT provided', fr.render_html(r))
+
+
+class AttributionAndSelectionTests(FunnelFixture):
+    def test_other_mints_fills_and_rejects_are_never_attributed_to_a_candidate(self):
+        other_buy = {'type': 'fill', 'side': 'buy', 'mint': 'HELD-POSITION'}
+        other_reject = {'type': 'reject', 'reason': 'EXIT_ONLY', 'mint': 'HELD-POSITION'}
+        for name, body in (('M20', cycle(outcomes=[other_buy])), ('M21', cycle(outcomes=[other_reject])),
+                           ('M22', cycle(outcomes=[other_reject, {'type': 'reject', 'reason': 'COST_BUDGET', 'mint': 'M22'}]))):
+            self.add_candidate(name, H0 + 100, 400, 5, body, 15)
+        # add_candidate retags outcomes with the candidate mint; rewrite to the foreign mints under test
+        for name, body in (('M20', cycle(outcomes=[other_buy])), ('M21', cycle(outcomes=[other_reject])),
+                           ('M22', cycle(outcomes=[other_reject, {'type': 'reject', 'reason': 'COST_BUDGET', 'mint': 'M22'}]))):
+            row = json.loads(self.query_result(name))
+            row['result'] = body
+            self.sql(self.journal, 'UPDATE results SET payload=? WHERE id=?', (canonical(row), 'id-' + name))
+        died = self.build()['total']['died_before']['engine_eligible']
+        self.assertEqual(died.get('ENGINE:COST_BUDGET'), 2)                # M02 and M22 (own reject only)
+        self.assertEqual(died.get('ENGINE:NO_FILL_NO_REJECT'), 2)          # M20, M21: nothing of their own
+        self.assertEqual(self.build()['total']['reached']['buy'], 2, 'a held position\'s BUY is not the candidate\'s')
+
+    def query_result(self, name):
+        with contextlib.closing(sqlite3.connect(self.journal)) as c:
+            return c.execute('SELECT payload FROM results WHERE id=?', ('id-' + name,)).fetchone()[0]
+
+    def test_dispatcher_selection_filter_reclassifies_expired_unselectable_hints(self):
+        unselectable = dict(hint('M30', H0 + 5), unselectable='UNSUPPORTED_POOL')
+        self.hints.append(unselectable)                                # old enough to be EXPIRED_NOT_DISPATCHED otherwise
+        died = self.build()['total']['died_before']
+        self.assertEqual(died['selectable'].get('UNSELECTABLE:UNSUPPORTED_POOL'), 1)
+        self.assertEqual(died['dispatched'], {'EXPIRED_NOT_DISPATCHED': 1}, 'only M07 remains expired')
+
+    def test_published_cycle_no_entry_receipt_kind_is_a_normal_rejection(self):
+        body = {'kind': 'paper_cycle_no_entry_v1', 'blocker': 'MARKET_PRODUCER_BLOCKED', 'charged': 5}
+        self.assertEqual(fr.classify_result(body, 'M')[:3], ('history_ok', 'OBSERVATIONS:MARKET_PRODUCER_BLOCKED', []))
+
+    def test_dead_pool_is_a_separate_counted_bucket(self):
+        cf = self.dir / 'cf.sqlite'
+        with contextlib.closing(sqlite3.connect(cf)) as c, c:
+            c.execute('CREATE TABLE samples(mint TEXT NOT NULL,horizon INTEGER NOT NULL,status TEXT NOT NULL,price TEXT,PRIMARY KEY(mint,horizon))')
+            c.executemany('INSERT INTO samples VALUES(?,?,?,?)', [('M01', 300, 'OK', '1.0'), ('M01', 3600, 'OK', '2.0'),
+                                                                   ('M14', 300, 'OK', '1.0'), ('M14', 3600, 'POOL_DEAD', None)])
+        g = self.build(counterfactual_store=cf)['counterfactual']['groups']['BUY']
+        self.assertEqual((g['candidates'], g['with_return'], g['pool_died'], Decimal(g['share_pool_died'])), (2, 1, 1, Decimal('0.5')))
+        self.assertEqual(Decimal(g['median_return']), Decimal(1), 'the dead pool is not rewritten into the median')
+
+
+class RealStoreLatchTests(unittest.TestCase):
+    """T29F items 1 and 5: real evidence/research/ledger stores from the T01 cycle no-entry fixtures
+    (actual run_once, actual pass table and paper_cycle_no_entry receipts); only the journal is built here."""
+
+    def build(self, t, *, blockers=None):
+        self.addCleanup(t.doCleanups)
+        tmp = tempfile.TemporaryDirectory(); self.addCleanup(tmp.cleanup)
+        journal = Path(tmp.name) / 'dispatch.sqlite'
+        mint, scan = t.h.f.target.mint, t.h.f.target.scan_id
+        result = dict(t.result)
+        if blockers:                       # label substitution on a REAL charged NULL pass (category b code names)
+            result['blockers'] = list(blockers)
+        with contextlib.closing(sqlite3.connect(journal)) as c, c:
+            for ddl in dispatcher.SCHEMAS.values():
+                c.execute(ddl)
+            c.execute('INSERT INTO intents VALUES(?,?,?,?,?)', ('id', mint, 'sig', canonical({'version': 1, 'at': 99_500}), 'h'))
+            c.execute('INSERT INTO results VALUES(?,?,?)', ('id', canonical({'version': 1, 'at': 100_010, 'scan_id': scan, 'result': result}), 'h'))
+        return fr.build(hints=[hint(mint, 99_000)], journal=journal, research_db=t.ctx['research_db'], ledger=t.ctx['ledger_db'],
+                        evidence_db=t.ctx['evidence_db'], now=100_100)
+
+    def test_published_normal_rejection_is_not_a_latch(self):
+        from tests.test_cycle_no_entry import fixture
+        r = self.build(fixture())
+        self.assertEqual(r['total']['died_before']['observations_ok'], {'OBSERVATIONS:MARKET_PRODUCER_BLOCKED': 1})
+        self.assertEqual((r['unresolved']['count'], r['latch_check']['status'], r['latch_check']['null_passes']), (0, 'READ', 0))
+        self.assertEqual(r['latch_check']['no_entry_receipts'], 1)
+
+    def test_real_null_pass_is_unresolved_whatever_the_blocker_code(self):
+        from tests.test_cycle_no_entry import fixture
+        for blockers in (None, ['USD_ORIGINAL_BINDING_INVALID']):
+            with self.subTest(blockers=blockers):
+                r = self.build(fixture(legacy=True), blockers=blockers)
+                code = (blockers or ['MARKET_PRODUCER_BLOCKED'])[0]
+                self.assertEqual(r['total']['died_before']['observations_ok'], {'UNRESOLVED:' + code: 1})
+                self.assertEqual(r['unresolved'], {'count': 1, 'by_code': {'UNRESOLVED:' + code: 1}})
+                self.assertEqual(r['latch_check']['null_passes'], 1)
+                self.assertIn('UNRESOLVED:' + code, fr.render_html(r))
 
 
 class ReadOnlyTests(FunnelFixture):
@@ -327,6 +493,14 @@ class RealFlowTests(unittest.TestCase):
             for (name,) in c.execute("SELECT name FROM sqlite_master WHERE type='trigger'").fetchall():
                 c.execute(f'DROP TRIGGER "{name}"')
             c.execute('UPDATE raw_events SET payload_hash=?', ('0' * 64,))
+        # The dispatcher's own selection filter (imported) marks unsupported hints; the real frame passes it.
+        hints, _ = fr.discovery_hints(d.discovery, since=0, until=now + 1)
+        self.assertEqual([h.get('unselectable') for h in hints], [None])
+        from desk import migration_slot_intake as migration
+        with patch.object(migration, '_hints', side_effect=migration.IntakeBlocked('UNSUPPORTED_POOL')) as called:
+            hints, _ = fr.discovery_hints(d.discovery, since=0, until=now + 1)
+        self.assertEqual(called.call_args.args[0], 'selection-only')
+        self.assertEqual([h['unselectable'] for h in hints], ['UNSUPPORTED_POOL'])
         r2 = fr.build(discovery_db=altered, journal=d.journal, research_db=d.f.jobs.path, ledger=d.ledger, now=now)
         self.assertEqual((r2['candidates'], r2['frames']['altered']), (0, r['frames']['frames']))
 
