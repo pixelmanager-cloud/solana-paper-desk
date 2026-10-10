@@ -288,8 +288,8 @@ def _held_guard(ctx):
     Used by acquisition's budget-reserved RPC and intake's existing before-I/O
     callback. No new provider function, budget charge or credential lookup.
     """
-    ledger = ctx['paths']['ledger_db']['path']
-    with cycle._lock(ledger+'.paper-cycle.lock') as acquired:
+    ledger = Path(ctx['paths']['ledger_db']['path'])
+    with cycle._lock(str(ledger)+'.paper-cycle.lock') as acquired:
         if not acquired:
             raise ValueError('Held cycle or ledger busy')
         cfg = cli._config(ctx['paths']['config']['path'])
