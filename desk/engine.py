@@ -60,9 +60,19 @@ def rollover_after_mark(cfg):
     return True
 
 
+def valuation(p):
+    """(value, at) used for PORTFOLIO valuation only. A reserve-implied portfolio mark (portfolio_marks, opt-in) wins
+    when it is newer than the executable-quote mark; those keys exist only after a flagged marks event. Exit-side
+    checks (watchdog, stop/trailing/take-profit, fills) keep reading mark_at / mark_value directly."""
+    at = p.get("portfolio_mark_at")
+    if at is not None and at > p["mark_at"]:
+        return dec(p["portfolio_mark_value"]), at
+    return dec(p["mark_value"]), p["mark_at"]
+
+
 def _marks_current(state, cfg, ts):
     return all(not p.get("exit_blocked") and p.get("mark_status") == "MODEL_ESTIMATE"
-               and 0 <= ts - p["mark_at"] <= portfolio_ttl(cfg) for p in state["positions"].values())
+               and 0 <= ts - valuation(p)[1] <= portfolio_ttl(cfg) for p in state["positions"].values())
 
 
 def exposure(state):
@@ -70,7 +80,7 @@ def exposure(state):
 
 
 def equity(state):
-    return dec(state["cash"]) + sum((dec(p["mark_value"]) for p in state["positions"].values()), ZERO)
+    return dec(state["cash"]) + sum((valuation(p)[0] for p in state["positions"].values()), ZERO)
 
 
 PORTFOLIO_KEY = "paper_portfolio_risk_version"
@@ -331,6 +341,8 @@ def _quote_sell(state,e,cfg,fraction,reason,output,book):
             cost=dec(p['cost_left'])*D(raw)/D(current)
             pnl=proceeds-cost
             p['qty']=str(qe.units(current-raw,book.decimals))
+            for stale in ('portfolio_mark_value','portfolio_mark_at','portfolio_mark_source'):
+                p.pop(stale,None)   # a reserve-implied value of the larger remainder must not outlive the partial sale
             p['cost_left']=str(dec(p['cost_left'])-cost)
             p['trade_pnl']=str(dec(p['trade_pnl'])+pnl)
             state['cash']=str(dec(state['cash'])+proceeds)
@@ -430,7 +442,44 @@ def manage_position(state, e, cfg, output, quote_book=None):
             p["stop_ratio"] = str(stop)
 
 
+def _portfolio_marks(state, e, cfg):
+    """Apply a batched reserve-implied marks event: valuation only. Never touches stage, stop/peak, mark_status,
+    exit_blocked, mark_at or mark_value, so it cannot cure a blocked exit or hide a stale executable mark."""
+    from . import portfolio_marks as pm
+    if not pm.selected(cfg):
+        raise ValueError("unknown event kind")
+    pm.validate_event(e)
+    output = []
+    if e["ts"] < state["last_ts"]:
+        return state, [{"type": "reject", "reason": "OUT_OF_ORDER"}]
+    state["last_ts"] = e["ts"]
+    applied = []
+    for mint, mark in sorted(e["marks"].items()):
+        p = state["positions"].get(mint)
+        if p is None or p["pool"] != mark["pool"]:
+            output.append({"type": "reject", "reason": "PORTFOLIO_MARK_POSITION_MISMATCH", "mint": mint})
+            continue
+        if p.get("portfolio_mark_at") is not None and e["observed_at"] <= p["portfolio_mark_at"]:
+            continue                                   # never move a valuation mark backwards or sideways
+        p["portfolio_mark_value"] = str(dec(mark["value_sol"]))
+        p["portfolio_mark_at"] = e["observed_at"]
+        p["portfolio_mark_source"] = pm.SOURCE
+        applied.append(mint)
+    day = datetime.fromtimestamp(e["ts"], timezone.utc).date().isoformat()
+    if state["day"] != day:
+        if _marks_current(state, cfg, e["ts"]):
+            state["day"] = day
+            state["day_start_equity"] = str(equity(state))
+            state["day_gross_losses"] = "0"
+        else:
+            output.append({"type": "control", "reason": "DAY_ROLLOVER_DEFERRED_UNVERIFIED_MARKS"})
+    risk(state, cfg, output)
+    return state, output + [{"type": "portfolio_marks", "source": pm.SOURCE, "slot": e["slot"], "applied": applied}]
+
+
 def transition(state, e, cfg, *, _quote_book=None):
+    if e.get("kind") == "portfolio_marks":
+        return _portfolio_marks(state, e, cfg)
     # Config is fingerprinted by Ledger: selecting this experimental strategy
     # requires a new experiment, never an event-provided permission flag.
     quote_mode=qe.config(cfg)
@@ -559,7 +608,7 @@ def transition(state, e, cfg, *, _quote_book=None):
         reasons.append("COOLDOWN")
     if state["last_entry_minute"] == e["ts"] // 60:
         reasons.append("ENTRY_THROTTLE")
-    if any(e["ts"] - p["mark_at"] > portfolio_ttl(cfg) for p in state["positions"].values()):
+    if any(e["ts"] - valuation(p)[1] > portfolio_ttl(cfg) for p in state["positions"].values()):
         reasons.append("STALE_PORTFOLIO")
     if pr is not None:
         reasons.extend(_portfolio_reasons(state, e["ts"], pr))

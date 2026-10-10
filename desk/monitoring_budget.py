@@ -166,6 +166,9 @@ class MonitoringBudget:
             raise MonitoringBlocked('MONITORING_CONFIGURATION_INVALID')
         from .kraken_usd_observation import selected as usd_selected
         self.usd_valuation_version=usd_selected(cfg)
+        from .portfolio_marks import selected as marks_selected
+        try:self.portfolio_marks_version=marks_selected(cfg)
+        except ValueError:raise MonitoringBlocked('MONITORING_CONFIGURATION_INVALID') from None
         self.config_hash = digest(cfg)
         self.code_hash = _implementation()
         self.clock = clock
@@ -416,7 +419,13 @@ class MonitoringBudget:
             fields = parse_pool(pools[0]['discovery']['value'])
             expected = [fields['pool_base_token_account'],fields['pool_quote_token_account'],fields['lp_mint'],
                         position['pool'],config_address(),str(fee_address()[0]),mint]
-            if type(params) is not list or len(params) != 2 or params[0] != expected:
+            if type(params) is list and len(params) == 2 and params[0] != expected and self.portfolio_marks_version:
+                # Opt-in batched portfolio marks: ONE request for the pool and both vaults of every open position.
+                from . import portfolio_marks as marks
+                try:batched=marks.request_params(self._checkpoint()[0]['positions'])
+                except marks.MarkError:batched=None
+                if params != batched:raise MonitoringBlocked('MONITORING_POSITION_REQUEST_REQUIRED')
+            elif type(params) is not list or len(params) != 2 or params[0] != expected:
                 raise MonitoringBlocked('MONITORING_POSITION_REQUEST_REQUIRED')
         elif method == 'getSlot':
             if params != [{'commitment':'finalized'}]:

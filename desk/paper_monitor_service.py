@@ -25,6 +25,14 @@ def _legs(args,cfg,output,invocation):
     if set(exported)!=set(positions):raise ValueError('Exported targets differ from checkpoint positions')
     run,deferred=concurrency.plan_legs(positions,args.wall_seconds)
     code=0
+    from . import portfolio_marks
+    if portfolio_marks.selected(cfg):
+        # Start of the pass: ONE batched marks refresh for all positions (a positions-less monitoring cycle). A failed
+        # refresh is charged and leaves the marks stale; it never stops the exit legs below.
+        refresh=output.with_name('targets-marks.json')
+        refresh.write_text(json.dumps({**payload,'position_targets':[]}))
+        invocation[invocation.index('--targets')+1]=str(refresh)
+        cli.main(invocation)
     for mint in run:
         leg=output.with_name('targets-'+mint[:8]+'.json')
         leg.write_text(json.dumps({**payload,'position_targets':[exported[mint]]}))

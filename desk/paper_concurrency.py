@@ -9,7 +9,7 @@ positions, exposure, cooldowns, STALE_PORTFOLIO, daily pause) stay authoritative
 import time
 from decimal import Decimal
 
-from . import engine
+from . import engine, portfolio_marks
 from .model import decimal
 
 VERSION = 1
@@ -61,6 +61,7 @@ def selected(cfg):
         raise ValueError('Concurrent entries require paper_portfolio_mark_ttl_seconds')
     engine.portfolio_ttl(cfg)  # type and range validation
     engine.rollover_after_mark(cfg)
+    portfolio_marks.selected(cfg)   # validated whenever the concurrent experiment is
     return VERSION
 
 

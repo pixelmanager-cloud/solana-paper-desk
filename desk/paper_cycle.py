@@ -18,7 +18,7 @@ import sqlite3
 import time
 import uuid
 
-from . import engine, quote_execution as qe, paper_concurrency as concurrency, fill_realism, regime
+from . import engine, quote_execution as qe, paper_concurrency as concurrency, fill_realism, regime, portfolio_marks
 from .graduation_witness import extract_graduation
 from .ledger import Ledger
 from .model import canonical, digest, validate_event
@@ -71,6 +71,7 @@ def _config(cfg):
             or cfg['paper_signal_policy_version'] != 3
             or 'experimental_policy_version' in cfg or not qe.config(cfg)):
         raise ValueError('Explicit signal profile3 and quote execution1 required; no legacy policy field')
+    portfolio_marks.selected(cfg)  # invalid mark-source flag refused at load
     if regime.enabled(cfg):regime.policy(cfg)  # invalid flag/policy refused at load, not at first entry
 
 
@@ -302,6 +303,68 @@ def _history(progress, item, budget, source_factory):
     return as_of, pairs.records(), pairs
 
 
+MARKS_READ_SECONDS = 5.0
+
+
+def _entry_scan_id(path, mint, position):
+    """Scan id of the position's original buy (the id monitoring charges are bound to), from the ledger journal."""
+    entry_id = position.get('entry_event_id')
+    with closing(sqlite3.connect(Path(path).resolve().as_uri()+'?mode=ro', uri=True, timeout=5)) as c:
+        rows = c.execute("SELECT e.payload FROM outcomes o JOIN events e ON e.event_id=o.event_id "
+                         "WHERE json_extract(o.payload,'$.type')='fill' AND json_extract(o.payload,'$.side')='buy' "
+                         "AND json_extract(o.payload,'$.mint')=? AND e.ts=? AND (? IS NULL OR o.event_id=?)",
+                         (mint, position['opened_at'], entry_id, entry_id)).fetchall()
+    if len(rows) != 1:
+        raise CycleBlocked('PORTFOLIO_MARK_ENTRY_IDENTITY_INVALID')
+    scan = json.loads(rows[0][0]).get('paper_source_evidence', {}).get('scan_id')
+    if type(scan) is not str:
+        raise CycleBlocked('PORTFOLIO_MARK_ENTRY_IDENTITY_INVALID')
+    return scan
+
+
+def _refresh_portfolio_marks(path, cfg, store, progress, source_factory, budget, deliver, wall_clock, result):
+    """One batched, charged getMultipleAccounts over the pool and both vaults of EVERY open position, applied as a
+    ledger `portfolio_marks` event. Never raises for provider/evidence problems: a failed read stays charged and
+    leaves the marks stale, which the engine turns into an ordinary STALE_PORTFOLIO reject (no latch)."""
+    from . import portfolio_marks as pm
+    note = {'portfolio_marks': 'NOT_ATTEMPTED'}
+    try:
+        positions = _state(path, cfg)['positions']
+        if not positions:
+            return
+        allowance = MonitoringBudget(store, path, cfg, clock=wall_clock)
+        allowance.snapshot()                                   # never provisions on a read path
+        oldest = min(positions, key=lambda mint: (positions[mint]['mark_at'], mint))
+        scan = _entry_scan_id(path, oldest, positions[oldest])
+        params = pm.request_params(positions)
+        source = source_factory(progress, scan, monitoring_budget=allowance)
+        before = allowance.snapshot()
+        if before['blockers']:
+            raise CycleBlocked(before['blockers'][0])
+        budget.monitoring_attempted += 1
+        started = budget.monotonic()
+        try:
+            reply, evidence_hash = source.rpc_with_evidence('getMultipleAccounts', params, timeout_seconds=MARKS_READ_SECONDS)
+        except PaperReadError as error:
+            raise CycleBlocked(error.code) from error
+        finally:
+            # The 10 s cycle deadline is for the entry's own reads; each marks read has its own bound and its time is
+            # excluded so a refresh cannot starve the quote reads that follow it.
+            budget.start += max(0.0, budget.monotonic()-started)
+        after = allowance.snapshot()
+        if after['total_used'] != before['total_used']+1:
+            raise CycleBlocked('MONITORING_CHARGE_OR_ADMISSION_MISMATCH')
+        observed = store.load(evidence_hash)['observed_at']
+        marks, slot, errors = pm.marks_from_result(positions, params[0], reply, cfg, pool_fee_bps=pm.pool_fee_bps(cfg))
+        note = {'portfolio_marks': 'APPLIED' if marks else 'NO_VALID_MARK', 'rejected': sorted(errors),
+                'evidence_hash': evidence_hash}
+        if marks:
+            deliver(pm.build_event(max(budget.now(), observed), observed, slot, evidence_hash, marks))
+    except (CycleBlocked, MonitoringBlocked, PaperReadError, pm.MarkError, ValueError, KeyError, TypeError, sqlite3.Error) as error:
+        note = {'portfolio_marks': 'UNAVAILABLE', 'code': getattr(error, 'code', type(error).__name__)}
+    result['diagnostics'].append(note)
+
+
 def _usd(progress, source, scan, budget, refs=(), *, valuation_version=0):
     if valuation_version==1:
         from .kraken_usd_observation import from_attempt
@@ -371,15 +434,16 @@ def _retained_usd(progress, source, scan, refs):
             slot['observed_at'],low,height,((witness,at),),refs)
 
 
-def fulfill_quotes(state, cfg, event_builder, collected, source, budget):
+def fulfill_quotes(state, cfg, event_builder, collected, source, budget, pre_decision=None):
     """Plan exact demands; one charged quote-only read per missing demand.
 
     event_builder rebinds actual decision time after reads, preserving original
     history/mint/pool/USD acquisition times. No quantity-scaled quote reuse.
     Returns the final original-bound event, typed book and detached diagnostics.
     """
-    quotes = (); available = collected.quote
-    for _ in range(qe.MAX_QUOTES+1):
+    quotes = (); available = collected.quote; refreshed_after_quotes = False
+    if pre_decision is not None: state = pre_decision()   # opt-in batched portfolio marks (portfolio_marks)
+    for _ in range(qe.MAX_QUOTES+2 if pre_decision is not None else qe.MAX_QUOTES+1):
         event = event_builder()
         if event is None:
             raise CycleBlocked('MARKET_PRODUCER_BLOCKED')
@@ -388,6 +452,9 @@ def fulfill_quotes(state, cfg, event_builder, collected, source, budget):
         planned = qe.plan(state, event, cfg, quotes)
         demands = planned['quote_demands']
         if not demands:
+            if pre_decision is not None and quotes and not refreshed_after_quotes:
+                # The quote reads took seconds: refresh the marks again right before the final decision event.
+                refreshed_after_quotes = True; state = pre_decision(); continue
             return event, quotes, planned
         demand = demands[0]; direction = demand['direction']
         raw = demand.get('input_raw', demand.get('maximum_input_raw'))
@@ -558,6 +625,9 @@ def run_once(research_db, evidence_db, ledger_db, cfg, *, position_targets=(), c
                         result['outcomes'].extend(ledger.apply(event,cfg,checked,engine.initial_state))
                         result['events'].append(event['event_id'])
                     for control in controls:deliver(control)
+                    if monitoring and not items and state['positions'] and portfolio_marks.selected(cfg):
+                        # Start of a held pass: one batched refresh of every position's portfolio mark.
+                        _refresh_portfolio_marks(path,cfg,store,progress,source_factory,budget,deliver,wall_clock,result)
                     usd = None
                     for item in items:
                         state = _state(path,cfg)
@@ -652,7 +722,12 @@ def run_once(research_db, evidence_db, ledger_db, cfg, *, position_targets=(), c
                             if diagnostic['event'] is None:
                                 result['diagnostics'].append({'scan_id':target.scan_id,'blockers':diagnostic['blockers']})
                             return diagnostic['event']
-                        event, quotes, planned = fulfill_quotes(state,cfg,event_builder,collected,source,action_budget)
+                        pre_decision=None
+                        if not is_position and state['positions'] and portfolio_marks.selected(cfg):
+                            def pre_decision():
+                                _refresh_portfolio_marks(path,cfg,store,progress,source_factory,budget,deliver,wall_clock,result)
+                                return _state(path,cfg)
+                        event, quotes, planned = fulfill_quotes(state,cfg,event_builder,collected,source,action_budget,pre_decision)
                         result['diagnostics'].append({'scan_id':target.scan_id,'blockers':diagnostic['blockers'],
                                                       'planned_outcomes':planned['outcomes']})
                         before_outcomes=len(result['outcomes'])
