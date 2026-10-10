@@ -1,0 +1,39 @@
+[Unit]
+Description=Candidate feature store: as-of features from retained evidence (research only, offline, no provider calls)
+# INACTIVE TEMPLATE: no [Install]. The coordinator enables desk-features.timer on the fresh store set only.
+# Create the store directory and the store once, as the service user (nothing else of the experiment is writable):
+#   install -d -m 0700 -o solana-desk -g solana-desk <FRESH_ROOT>/features
+#   python -m tools.research.features init --store <FRESH_ROOT>/features/features.sqlite
+After=local-fs.target
+ConditionPathExists=<FRESH_ROOT>/features/features.sqlite
+ConditionPathExists=<FRESH_ROOT>/paper-ledger.sqlite
+[Service]
+Type=oneshot
+User=solana-desk
+Group=solana-desk
+WorkingDirectory=<RELEASE_DIR>
+# Reads the ledger, dispatcher journal, research scans, decision journal, discovery frames and (when present) the counterfactual
+# samples, all mode=ro (immutable=1 only for a quiet WAL file). It never writes them and calls no provider: no credentials.
+ExecStart=/opt/solana-desk/.venv/bin/python -m tools.research.features ingest --store <FRESH_ROOT>/features/features.sqlite --ledger <FRESH_ROOT>/paper-ledger.sqlite --journal <FRESH_ROOT>/entry-dispatch/dispatch.sqlite --research-db <FRESH_ROOT>/research.sqlite --decisions-db <FRESH_ROOT>/paper-decisions.sqlite --discovery-db <DISCOVERY_DB>
+UMask=0077
+NoNewPrivileges=true
+PrivateTmp=true
+ProtectSystem=strict
+ProtectHome=true
+# Mount-namespace rules make the deeper path win: the experiment root is read-only, only its features subdirectory is writable.
+# (Not executable-verified without systemd; check with `systemd-run --property=...` on the VPS.)
+ReadOnlyPaths=<FRESH_ROOT> <DISCOVERY_DIR>
+ReadWritePaths=<FRESH_ROOT>/features
+RestrictAddressFamilies=AF_UNIX
+PrivateNetwork=true
+TimeoutStartSec=300
+MemoryMax=384M
+TasksMax=16
+# Research must never slow trading (T39): one core at most, lowest weights, idle IO class, niced.
+CPUQuota=100%
+CPUWeight=20
+IOWeight=20
+Nice=10
+IOSchedulingClass=idle
+# Add `--counterfactual-store <FRESH_ROOT>/counterfactual/counterfactual.sqlite` to ExecStart once the counterfactual store exists
+# (a missing optional source fails the run before anything is written, so it is not listed by default).
