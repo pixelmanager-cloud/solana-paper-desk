@@ -1,0 +1,7 @@
+# Invocation-local terminal evidence byte reuse
+
+Base6b977d9. Coordinator reports repeated gate-local evidence validation is a live CPU bottleneck; no production data/provider calls used here. One terminal.gate invocation may retain at most512 pages/8MiB combined compressed+uncompressed bytes after full scalar/decompression/JSON/checksum validation. A hit still reads scalar shape and exact current compressed bytes from a new SQL snapshot and compares both payload and declared length. Changed bytes are revalidated and corrupt inputs fail. Overflow falls back to original validation, never acceptance.
+
+Only immutable bytes are cached. Each result is freshly decoded with the existing strict duplicate/nonfinite parser, preventing mutation sharing. ContextVar scope is reset in finally; nested gates get distinct caches and restore their caller's scope. No cross-invocation retention, source/mtime cache, TTL/deadline change, duplicate proof removal or intake overlap. Private predecessor planner retains existing uncached behavior.
+
+Four synthetic focused tests PASS0.019s: checksum reuse/equivalence/mutation isolation, same-gate raw-size and compressed-payload corruption, strict budget fallback, nested call and exception cleanup. Existing retirement regression run pending. This specifically avoids repeated decompression and canonical checksum serialization; current SQL reads and JSON parsing remain. No claimed production timing improvement or readiness.
