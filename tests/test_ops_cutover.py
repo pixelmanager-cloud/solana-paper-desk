@@ -1001,6 +1001,24 @@ class ArchivedStoreGuardTests(Base):
         self.assertEqual(self.cut('--store-env', env, '--archived-root', '/srv/old',
                                   '--shared-path', '/srv/old/research.sqlite')[0], 0)
 
+    def test_multiple_archived_roots_for_a_rotation(self):
+        env = self.env_file({SVC[0]: {'ExecStart': '/opt/x/python --db /var/lib/solana-desk-fresh/v1/research.sqlite'}})
+        self.assertEqual(self.cut('--store-env', env)[0], 0)             # the previous fresh root is not archived yet
+        self.systemd.state.clear()
+        code, out = self.cut('--store-env', env, '--archived-root', '/var/lib/solana-desk',
+                             '--archived-root', '/var/lib/solana-desk-fresh/v1')
+        self.assertEqual(code, 2, out)
+        self.assertIn('/var/lib/solana-desk-fresh/v1', out['error'])
+        env = self.env_file({SVC[0]: {'ExecStart': '/opt/x/python --db /var/lib/solana-desk-fresh/v2/research.sqlite '
+                                                   '--pacing-db /var/lib/solana-desk/provider-pacing.sqlite'}}, 'e2.json')
+        self.assertEqual(self.cut('--store-env', env, '--archived-root', '/var/lib/solana-desk',
+                                  '--archived-root', '/var/lib/solana-desk-fresh/v1')[0], 0)
+
+    def test_relative_or_root_archived_root_refused(self):
+        for root in ('var/lib/x', '/', ' '):
+            with self.subTest(root=root):
+                self.assertEqual(self.cut('--archived-root', root)[0], 2)
+
     def test_effective_exec_start_after_reload_into_archived_root_stops_before_start(self):
         orig = self.systemd.__call__
 
@@ -1120,6 +1138,17 @@ class T13FormatTests(Base):
         self.assertEqual(self.cut('--store-env', self.write(self.manifest()), units=self.all_units())[0], 0)
         text = (self.units / 'desk-decisions.service.d' / cutover.DROPIN).read_text()
         self.assertIn('\nExecStart=/opt/solana-desk/.venv/bin/python -m tools.paper_scheduler ', text)
+
+    def test_version1_wrapper_may_mix_t13_specs_with_hand_written_units(self):
+        # jq '{version:1, units: (.units + {...})}' manifest.json  -> one file for T13 units plus e.g. the backup unit
+        units = dict(T13_UNITS)
+        units['desk-backup.service'] = {'ExecStart': '/opt/solana-desk/.venv/bin/python -m desk.backup '
+                                                     '--data /var/lib/solana-desk-fresh/v1 --root /var/backups/x --keep 7'}
+        path = self.write({'version': 1, 'units': units})
+        code, out = self.cut('--store-env', path, units=['desk-decisions.service', 'desk-backup.service'])
+        self.assertEqual(code, 0, out)
+        self.assertIn('--root /var/backups/x', (self.units / 'desk-backup.service.d' / cutover.DROPIN).read_text())
+        self.assertIn('-m tools.paper_scheduler', (self.units / 'desk-decisions.service.d' / cutover.DROPIN).read_text())
 
     def test_bare_map_is_accepted_too(self):
         self.assertEqual(self.cut('--store-env', self.write(T13_UNITS), units=self.all_units())[0], 0)

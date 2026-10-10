@@ -617,21 +617,21 @@ def verify_started(unit, state, before, t0_usec, release):
         raise CutoverError('%s MainPID unchanged by start (%s): the old process is still running' % (unit, pid))
 
 
-def shared_paths(root, extra):
-    root = root.rstrip('/')
-    base = [root + '/' + rel for rel in SHARED_RELATIVE] + list(extra)
+def shared_paths(roots, extra):
+    base = [root.rstrip('/') + '/' + rel for root in roots for rel in SHARED_RELATIVE] + list(extra)
     return {path + suffix for path in base for suffix in SHARED_SUFFIXES}
 
 
-def archived_refs(text, root, shared):
-    """Paths under the archived store root that are not an explicitly shared input."""
-    root = root.rstrip('/')
-    pattern = re.compile(r'(?<![A-Za-z0-9_.\-/])' + re.escape(root) + r'(?![A-Za-z0-9_.\-])([^\s"\';,]*)')
+def archived_refs(text, roots, shared):
+    """Paths under any archived store root that are not an explicitly shared input."""
     found = []
-    for m in pattern.finditer(text):
-        token = root + m.group(1)
-        if token not in shared:
-            found.append(token)
+    for root in roots:
+        root = root.rstrip('/')
+        pattern = re.compile(r'(?<![A-Za-z0-9_.\-/])' + re.escape(root) + r'(?![A-Za-z0-9_.\-])([^\s"\';,]*)')
+        for m in pattern.finditer(text):
+            token = root + m.group(1)
+            if token not in shared:
+                found.append(token)
     return found
 
 
@@ -639,11 +639,11 @@ def check_archived(unit, texts, args, shared):
     if unit in args.allow_archived:
         return
     for text in texts:
-        refs = archived_refs(text, args.archived_root, shared)
+        refs = archived_refs(text, args.archived_roots, shared)
         if refs:
-            raise CutoverError('Refusing %s: it references the archived store root %s (%s); the old stores must '
+            raise CutoverError('Refusing %s: it references an archived store root %s (%s); the old stores must '
                                'never be written by the new experiment (use --allow-archived only for a deliberate '
-                               'exception)' % (unit, args.archived_root, ', '.join(sorted(set(refs))[:3])))
+                               'exception)' % (unit, ', '.join(args.archived_roots), ', '.join(sorted(set(refs))[:3])))
 
 
 def partner_unit(unit):
@@ -662,8 +662,10 @@ def cutover(args, ops):
         raise CutoverError('No units to cut over')
     if not (0 <= args.settle_seconds <= 600):
         raise CutoverError('--settle-seconds must be between 0 and 600')
-    if not os.path.isabs(args.archived_root):
-        raise CutoverError('--archived-root must be an absolute path')
+    args.archived_roots = list(args.archived_root or [DEFAULT_ARCHIVED_ROOT])
+    for root in args.archived_roots:
+        if not os.path.isabs(root) or root.rstrip('/') in ('', '/'):
+            raise CutoverError('--archived-root must be an absolute path other than /')
     for extra in args.shared_path:
         if not os.path.isabs(extra):
             raise CutoverError('--shared-path must be absolute')
@@ -691,7 +693,7 @@ def cutover(args, ops):
             if service not in everything:
                 raise CutoverError('Timer %s needs its service %s in the cutover (else it would run an unpinned release)'
                                    % (unit, service))
-    shared = shared_paths(args.archived_root, args.shared_path)
+    shared = shared_paths(args.archived_roots, args.shared_path)
     for unit in services:
         spec = store_env.get(unit) or {}
         base_exec, base_env = existing_unit_lines(unit_dir, template_dir, unit)
@@ -885,12 +887,13 @@ def build_parser():
     c.add_argument('--store-env', help='cutover-store-env v1 JSON, or the units of fresh-start-manifest.json')
     c.add_argument('--interpreter', default=DEFAULT_INTERPRETER,
                    help='absolute python path prepended to T13 "argv" when rendering ExecStart')
-    c.add_argument('--archived-root', default=DEFAULT_ARCHIVED_ROOT,
-                   help='old store root; no unit may reference it except the shared inputs')
+    c.add_argument('--archived-root', action='append', default=None,
+                   help='old store root (repeatable; default %s); no unit may reference it except the shared '
+                        'inputs. Pass every archived root when rotating a fresh store set' % DEFAULT_ARCHIVED_ROOT)
     c.add_argument('--allow-archived', nargs='*', default=[], help='units explicitly allowed to reference the archived root')
     c.add_argument('--shared-path', action='append', default=[],
                    help='extra absolute path under the archived root that is a shared input (repeatable); '
-                        'provider-pacing.sqlite and discovery/continuous.sqlite are always allowed')
+                        'provider-pacing.sqlite and discovery/continuous.sqlite under each archived root are always allowed')
     c.add_argument('--settle-seconds', type=float, default=10.0, help='wait before the second health check')
     c.add_argument('--unit-dir', default='/etc/systemd/system')
     c.add_argument('--template-dir', default=None, help='fallback dir for base unit files when reading ExecStart')
