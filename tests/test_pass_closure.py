@@ -648,6 +648,37 @@ class DispatcherClosureTests(unittest.TestCase):
                 self.h.invoke(execute=True, systemd_credentials=True)
         self.assertEqual((self.h.count('intents'), self.h.count('results')), (1, 0))
 
+    def test_a_later_successful_provider_call_clears_the_transient_attribution(self):
+        # T22G: the ambiguous status is attributed to the LAST provider call only. An earlier transient error that
+        # was followed by a successful call cannot explain it, so the intent stays unresolved.
+        def acquire(research, evidence, rpc, **kwargs):
+            try:
+                rpc('getSlot', [])
+            except TimeoutError:
+                pass
+            rpc('getSlot', [])
+            return {'status': 'ACQUISITION_RETRY_OR_EVIDENCE_BLOCKED', 'scan_id': None}
+        with patch.object(self.tool.cli, '_credentials'), patch('desk.providers.helius_rpc', side_effect=[TimeoutError('x'), 1]), \
+                patch.object(self.tool.acquisition, 'acquire', side_effect=acquire):
+            with self.assertRaises(ValueError):
+                self.h.invoke(execute=True, systemd_credentials=True)
+        self.assertEqual((self.h.count('intents'), self.h.count('results')), (1, 0))
+
+    def test_the_last_provider_call_failing_transiently_explains_the_ambiguous_status(self):
+        def acquire(research, evidence, rpc, **kwargs):
+            rpc('getSlot', [])
+            try:
+                rpc('getSlot', [])
+            except TimeoutError:
+                pass
+            return {'status': 'ACQUISITION_RETRY_OR_EVIDENCE_BLOCKED', 'scan_id': None}
+        with patch.object(self.tool.cli, '_credentials'), patch('desk.providers.helius_rpc', side_effect=[1, TimeoutError('x')]), \
+                patch.object(self.tool.acquisition, 'acquire', side_effect=acquire):
+            with self.assertRaises(ValueError):
+                self.h.invoke(execute=True, systemd_credentials=True)
+        self.assertEqual((self.h.count('intents'), self.h.count('results')), (1, 1))
+        self.assertEqual(self.results()[0]['result']['cause'], 'TRANSPORT_ERROR')
+
     def test_blocked_evidence_status_after_the_intent_stays_unresolved(self):
         # T22G allow-list: only the acquisition's ordinary retry statuses close; a status that may mean blocked
         # evidence leaves the intent unresolved and the dispatcher latched.
