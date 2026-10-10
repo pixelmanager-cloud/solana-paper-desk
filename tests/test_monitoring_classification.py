@@ -509,7 +509,7 @@ class Abandonment(_Fixture):
         real_open = open
 
         def deny(path, *a, **k):
-            if str(path) == '/proc/locks':
+            if str(path) == str(mb.LOCK_TABLE):
                 raise PermissionError('denied')
             return real_open(path, *a, **k)
         with patch('builtins.open', deny), self.assertRaises(PaperReadError) as caught:

@@ -1,5 +1,7 @@
 """Audit B: monitoring-budget latches and O(N) re-verification. Fixture only."""
 import unittest
+import sys
+import os
 from unittest.mock import patch
 
 from desk.evidence import EvidenceStore
@@ -44,6 +46,14 @@ class MonitoringLatchTests(_Fixture):
             with open(path, 'a'):
                 pass
         self.budget.clock = lambda: base.T + 7 * 86400
+        if not sys.platform.startswith('linux'):   # no /proc: inject empty owner evidence ("nothing holds anything")
+            import desk.monitoring_budget as _mb, tempfile as _tf
+            tmp = _tf.mkdtemp()
+            open(os.path.join(tmp, 'locks'), 'w').close()
+            os.mkdir(os.path.join(tmp, 'proc'))
+            with patch.object(_mb, 'LOCK_TABLE', os.path.join(tmp, 'locks')), patch.object(_mb, 'PROC_ROOT', os.path.join(tmp, 'proc')):
+                self.assertEqual(self.budget.snapshot()['blockers'], [])
+            return
         self.assertEqual(self.budget.snapshot()['blockers'], [])
 
 
