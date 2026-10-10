@@ -767,3 +767,36 @@ Versioned and opt-in (`paper_portfolio_risk_version: 1`). With several positions
 - **Daily caps:** the existing daily pause/liquidation still applies at the portfolio level.
 
 Engine-authoritative and replay-deterministic. When absent, behaviour stays identical. Tests cover each gate, their interaction with max_positions/exposure, and a cold restart preserving streak and spacing state.
+
+---
+
+## T14F — Fill-realism redesign: measure OUTSIDE the trading pass
+STATUS: OPEN
+DEPENDS: none
+BASE: origin/cloud/T14
+OWNS: desk/fill_realism.py, tools/research/fill_realism_report.py, a new tools/ops/fill_realism_worker.py, tests/test_fill_realism*.py, and the minimal hook in desk/paper_cycle.py
+AVOID: every other line of desk/paper_cycle.py (T01/T22 are editing it); desk/paper_terminal_reconciliation.py
+
+The coordinator review found the T14 design unsafe: it re-quotes with real sleeps inside the pass's `finally`, after the NULL pass row and before the outcome is saved.
+- A kill in that window of 10s or more latches the store (T09 F1).
+- Uncaught `sqlite3.Error`/`OSError` escape.
+- The 10s pass deadline is bypassed by a fresh `_Budget` per sample.
+- Locks are held for 20s or more.
+- Sequential scheduling drops the +2s and +5s samples of later fills.
+- Stale or cached quotes can be stored as "+10s" samples with ~0 drift, biasing toward "latency is free".
+
+**Redesign:**
+1. **The pass only enqueues.** The trading pass only ENQUEUES measurement jobs (append-only rows: fill identity, route, decision quote, `decision_at` with sub-second precision), *after* the outcome is persisted, in the same place `store.save` succeeds. It must never sleep, re-quote or run anything that can raise inside the pass. The hook into paper_cycle.py is at most a few lines; list them exactly.
+2. **A separate worker runs the jobs.** `tools/ops/fill_realism_worker.py` runs as its own short-lived timer or long-running service with its own request allowance and the shared pacing. It schedules all samples by absolute due time across jobs (a priority queue), so several fills don't starve each other. It records LATE explicitly with the actual lag.
+3. **Freshness.** A sample is valid only if the provider quote's own `observed_at >= decision_at + delay` and it is within a small tolerance. Otherwise record `REALISM_STALE_QUOTE` (excluded from stats, counted).
+4. **Error handling.** The worker catches everything per sample (recorded, charged), and its failures can never touch the trading stores' NULL/outcome state. A worker crash leaves jobs pending; a restart resumes, without double-sampling and without double-charging.
+5. **Byte-identical when off.** Prove it with a byte-for-byte ledger/events comparison against an r1-base run.
+6. **Coverage.** If the allowance is missing or exhausted, report coverage explicitly per side (entry/exit) so latency-adjusted PnL is never silently computed from partial data.
+
+Tests:
+- a kill/exception during measurement leaves the trading store unaffected;
+- a stale-quote rejection;
+- concurrent fills keep their +2s and +5s samples;
+- restart idempotency;
+- the off-path byte identity;
+- the report's known answers.
