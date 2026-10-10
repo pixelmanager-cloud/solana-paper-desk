@@ -12,6 +12,8 @@ Notification only: this tool cannot trade, sign, or touch any store but its own 
 """
 import argparse
 import json
+import logging
+import math
 import os
 import re
 import sqlite3
@@ -22,6 +24,8 @@ import urllib.request
 from contextlib import closing
 from pathlib import Path
 
+log = logging.getLogger(__name__)
+DEFAULT_INTERVAL = 300
 REPEAT_SECONDS = {'CRITICAL': 3600, 'WARN': 6 * 3600}
 MAX_MESSAGES_PER_HOUR = 12
 RING = 20
@@ -80,16 +84,33 @@ def load_telegram(directory, opener=urllib.request.urlopen):
     if not directory:
         return None
     path = Path(directory) / 'telegram.json'
-    if path.is_symlink() or not path.is_file():
+    if path.is_symlink():
+        log.warning('telegram.json ignored: symlink refused; using default notifier')
+        return None
+    if not path.is_file():
         return None
     try:
         data = json.loads(path.read_text())
         token, chat = data['token'], data['chat_id']
         if type(token) is not str or not re.fullmatch(r'\d{6,}:[A-Za-z0-9_-]{30,}', token) or not str(chat).lstrip('-').isdigit():
+            log.warning('telegram.json ignored: token or chat_id has an invalid format; using default notifier')
             return None
-    except (OSError, ValueError, KeyError, TypeError):
+    except (OSError, ValueError, KeyError, TypeError) as exc:
+        # only the exception type: messages from json/KeyError can quote file contents
+        log.warning('telegram.json ignored: unreadable or malformed (%s); using default notifier', type(exc).__name__)
         return None
     return TelegramNotifier(token, chat, opener)
+
+
+def check_freshness(report, now, interval):
+    """Never trust old OK data: a report older than 2x the healthcheck interval means the check is not running."""
+    ts = report.get('ts')
+    if type(ts) in (int, float) and math.isfinite(ts) and now - ts <= 2 * interval:
+        return report
+    age = 'has no usable timestamp' if type(ts) not in (int, float) or not math.isfinite(ts) else 'is %ds old' % (now - ts)
+    return {'kind': 'desk_healthcheck_v1', 'status': 'CRITICAL', 'checks': [
+        {'check': 'healthcheck', 'severity': 'CRITICAL',
+         'detail': 'healthcheck not running: report %s (limit %ds = 2x interval)' % (age, 2 * interval)}]}
 
 
 def load_state(path):
@@ -198,6 +219,7 @@ def main(argv=None, clock=time.time, opener=urllib.request.urlopen, stream=None)
         s.add_argument('--report', required=True)
         s.add_argument('--state', required=True)
         s.add_argument('--credentials-dir', default=os.environ.get('CREDENTIALS_DIRECTORY'))
+        s.add_argument('--interval', type=int, default=DEFAULT_INTERVAL, help='healthcheck interval seconds; reports older than 2x are stale')
         s.add_argument('--max-per-hour', type=int, default=MAX_MESSAGES_PER_HOUR)
     sub.choices['daily'].add_argument('--root', required=True)
     sub.choices['daily'].add_argument('--force', action='store_true')
@@ -209,8 +231,11 @@ def main(argv=None, clock=time.time, opener=urllib.request.urlopen, stream=None)
         notifiers.append(telegram)
     try:
         report = json.loads(Path(args.report).read_text())
+        if not isinstance(report, dict):
+            raise ValueError('not an object')
         if report.get('kind') != 'desk_healthcheck_v1':
             raise ValueError('not a healthcheck report')
+        report = check_freshness(report, now, args.interval)
     except (OSError, ValueError) as exc:
         report = {'kind': 'desk_healthcheck_v1', 'status': 'CRITICAL', 'checks': [
             {'check': 'notify_input', 'severity': 'CRITICAL', 'detail': 'healthcheck report unreadable: %s' % type(exc).__name__}]}

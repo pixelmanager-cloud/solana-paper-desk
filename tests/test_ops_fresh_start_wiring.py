@@ -130,6 +130,125 @@ class DashboardWiringTests(WiringBase):
             self.assertEqual(mode, 0o700 if path.is_dir() else 0o600, path)
 
 
+class RenderUnitsTests(WiringBase):
+    """T32: the deploy/fresh templates, the manifest argv and the drop-ins must say the same thing."""
+
+    def rendered(self, name='exp-1', **extra):
+        manifest, root = self.applied(name, enable_held=True, **extra)
+        out = self.base / f'units-{name}'
+        fs.render_units(root, out, release_dir='/opt/solana-desk-releases/abc1234', state_dir='/var/lib/solana-desk-health')
+        return manifest, root, out
+
+    def test_template_exec_start_equals_the_manifest_argv_for_every_scheduler_unit(self):
+        manifest, root, out = self.rendered()
+        for unit in ('desk-paper-entry-dispatcher', 'desk-paper-held-cycle', 'desk-paper-monitor', 'desk-decisions',
+                     'desk-dashboard'):
+            text = (out / f'{unit}.service').read_text()
+            (line,) = [l for l in text.splitlines() if l.startswith('ExecStart=')]
+            self.assertEqual(exec_words(line[len('ExecStart='):]), [fs.PYTHON, *manifest['units'][unit]['argv']], unit)
+            envs = [w for l in text.splitlines() if l.startswith('Environment=') for w in env_words(l[len('Environment='):])]
+            self.assertEqual(sorted(envs), sorted(manifest['units'][unit]['environment']), unit)
+
+    def test_backup_template_and_manifest_use_the_same_tool_root_and_single_destination(self):
+        manifest, root, out = self.rendered()
+        template = (out / 'desk-backup.service').read_text()
+        spec = ' '.join(manifest['units']['desk-backup']['argv'])
+        self.assertIn('tools.ops.backup', template)
+        self.assertIn('from tools.ops import backup', spec)          # same tool, imported by the -c form
+        for text in (template, spec):
+            self.assertIn(str(root), text)
+            self.assertIn(manifest['backup_dir'], text)
+        self.assertIn(f'ReadWritePaths={manifest["backup_dir"]} {root}', template)
+
+    def test_entry_unit_runs_execute_with_credentials_and_a_600s_timeout_everywhere(self):
+        manifest, root, out = self.rendered()
+        argv = manifest['units']['desk-paper-entry-dispatcher']['argv']
+        self.assertEqual(argv[-2:], ['--execute', '--systemd-credentials'])
+        self.assertIn('TimeoutStartSec=600', (out / 'desk-paper-entry-dispatcher.service').read_text())
+        self.assertIn('TimeoutStartSec=120', (out / 'desk-paper-held-cycle.service').read_text())
+        sections = manifest['unit_sections']
+        self.assertEqual({u: s['timeout_start_sec'] for u, s in sections.items()},
+                         {'desk-paper-entry-dispatcher': 600, 'desk-paper-held-cycle': 120, 'desk-paper-monitor': 60,
+                          'desk-decisions': 60, 'desk-dashboard': None, 'desk-backup': 300})
+        # the drop-in resets ExecStart AND carries the timeout, so a stock base unit (180 s) cannot win
+        entry = fs.render_dropin('desk-paper-entry-dispatcher', manifest)
+        self.assertIn('TimeoutStartSec=600', entry)
+        self.assertNotIn('TimeoutStartSec', fs.render_dropin('desk-dashboard', manifest))
+
+    def test_dashboard_template_has_scheduler_identity_and_ledger_selection(self):
+        manifest, root, out = self.rendered()
+        text = (out / 'desk-dashboard.service').read_text()
+        self.assertIn('Environment=DESK_PAPER_SCHEDULER_IDENTITY=' + manifest['scheduler_identity'], text)
+        self.assertIn(f'Environment=DESK_PAPER_LEDGER_DB={root}/paper-ledger.sqlite', text)
+        self.assertIn(f'Environment=DESK_PAPER_SCHEDULER_LOCK={root}/paper-scheduler.lock', text)
+
+    def test_latch_dropin_is_rendered_with_its_marker_first_and_the_fresh_paths(self):
+        manifest, root, out = self.rendered()
+        latch = (out / fs.LATCH_OUT).read_text().splitlines()
+        self.assertEqual(latch[0], '# desk-entry-latch-managed v1')
+        body = '\n'.join(latch)
+        self.assertIn(f'--ledger {root}/paper-ledger.sqlite', body)
+        self.assertIn(f'--config {self.config}', body)
+        self.assertNotIn('<', re.sub(r'(?m)^#.*$', '', body))
+
+    def test_every_unit_and_timer_template_is_filled_and_no_archived_path_appears(self):
+        manifest, root, out = self.rendered()
+        names = sorted(p.name for p in out.iterdir())
+        self.assertIn('desk-healthcheck.timer', names)
+        for path in out.rglob('*'):
+            if path.is_file():
+                self.assertNotRegex(re.sub(r'(?m)^#.*$', '', path.read_text()), r'<[A-Z_]+>', path.name)
+        self.assertEqual(manifest['backup_dir'].rsplit('/', 1)[1], 'fresh-exp-1')
+
+    def test_render_units_refuses_existing_out_unknown_placeholder_unsafe_value_and_identity_drift(self):
+        manifest, root, out = self.rendered()
+        kwargs = dict(release_dir='/opt/solana-desk-releases/abc1234')
+        with self.assertRaisesRegex(fs.FreshStartError, 'must not exist'):
+            fs.render_units(root, out, **kwargs)
+        with self.assertRaisesRegex(fs.FreshStartError, 'quoting'):
+            fs.render_units(root, self.base / 'o2', release_dir='/opt/has space/rel')
+        templates = self.base / 'tpl'
+        shutil.copytree(REPO / 'deploy' / 'fresh', templates)
+        (templates / 'desk-dashboard.service').write_text('[Service]\nExecStart=<NOT_A_PLACEHOLDER_WE_KNOW>\n')
+        with self.assertRaisesRegex(fs.FreshStartError, 'unfilled'):
+            fs.render_units(root, self.base / 'o3', templates=templates, **kwargs)
+        self.assertFalse((self.base / 'o3').exists())
+        lock = root / fs.SCHEDULER_LOCK
+        keep = root / 'inode-keeper'
+        os.link(lock, keep)                                  # hold the old inode so the replacement cannot reuse it
+        lock.unlink(); lock.write_text('')
+        with self.assertRaisesRegex(fs.FreshStartError, 'identity'):
+            fs.render_units(root, self.base / 'o4', **kwargs)
+
+    def test_apply_creates_the_backup_dir_owned_0700_and_refuses_a_missing_parent_before_creating_anything(self):
+        manifest, root = self.applied('exp-1')
+        backup = Path(manifest['backup_dir'])
+        self.assertEqual(stat.S_IMODE(backup.stat().st_mode), 0o700)
+        self.assertEqual(backup.stat().st_uid, os.geteuid())
+        missing = self.base / 'no-such-parent' / 'fresh-x'
+        with self.assertRaisesRegex(fs.FreshStartError, 'must exist'):
+            fs.apply(fs.plan(**self.args('exp-2', backup_dir=str(missing))), service_user=self.user)
+        self.assertFalse((self.base / 'exp-2').exists())
+        self.assertFalse(missing.exists())
+
+    def test_existing_backup_dir_with_loose_mode_is_refused(self):
+        loose = self.base / 'backups' / 'fresh-exp-3'
+        (self.base / 'backups').mkdir(exist_ok=True)
+        loose.mkdir(mode=0o755); os.chmod(loose, 0o755)
+        with self.assertRaisesRegex(fs.FreshStartError, '0700'):
+            fs.apply(fs.plan(**self.args('exp-3', backup_dir=str(loose))), service_user=self.user)
+
+    def test_cli_render_units(self):
+        manifest, root = self.applied('exp-1', enable_held=True)
+        code, out = self.cli('render-units', '--root', str(root), '--out', str(self.base / 'cli-units'),
+                             '--release-dir', '/opt/solana-desk-releases/abc1234')
+        self.assertEqual((code, out['status']), (0, 'RENDERED'))
+        self.assertIn(fs.LATCH_OUT, out['files'])
+        code, out = self.cli('render-units', '--root', str(root), '--out', str(self.base / 'cli-units'),
+                             '--release-dir', '/opt/solana-desk-releases/abc1234')
+        self.assertEqual(code, 2)
+
+
 class DropinTests(WiringBase):
     def render(self, name='exp-1', **extra):
         manifest, root = self.applied(name, **extra)

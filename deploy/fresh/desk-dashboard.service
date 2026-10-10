@@ -11,6 +11,8 @@ User=solana-desk
 Group=solana-desk
 WorkingDirectory=<RELEASE_DIR>
 Environment=DESK_PAPER_SCHEDULER_LOCK=<FRESH_ROOT>/paper-scheduler.lock
+Environment=DESK_PAPER_SCHEDULER_IDENTITY=<SCHEDULER_IDENTITY>
+Environment=DESK_PAPER_LEDGER_DB=<FRESH_ROOT>/paper-ledger.sqlite
 LoadCredential=provider-keys.json:/etc/solana-desk/provider-keys.json
 ExecStart=/opt/solana-desk/.venv/bin/python -m desk --secrets-file %d/provider-keys.json serve --db <FRESH_ROOT>/research.sqlite --port 8765
 Restart=on-failure

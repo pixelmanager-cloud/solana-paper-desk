@@ -57,7 +57,7 @@ DEFAULTS = {
     'backup_age_warn': 30 * 3600, 'backup_age_critical': 54 * 3600,
     'max_hold_seconds': 21600,
 }
-SYSTEMCTL_PROPS = ('ActiveState', 'SubState', 'Result', 'NRestarts', 'UnitFileState', 'LastTriggerUSec', 'ActiveEnterTimestamp')
+SYSTEMCTL_PROPS = ('ActiveState', 'SubState', 'Result', 'ExecMainStatus', 'NRestarts', 'UnitFileState', 'LastTriggerUSec', 'ActiveEnterTimestamp')
 
 
 def check(name, severity, detail, **extra):
@@ -135,8 +135,23 @@ def check_units(runner, now, t, units=None):
             out.append(check(name, severity, 'ActiveState=%s Result=%s' % (active, result), failed=failed))
         restarts = int(s.get('NRestarts') or 0)
         if restarts:
-            out.append(graded('restarts:' + unit, restarts, t['restarts_warn'], t['restarts_critical'], 'NRestarts=%d' % restarts))
+            if clean_exit(s):
+                out.append(check('restarts:' + unit, OK, 'NRestarts=%d, last run exited cleanly (exit 0): not counted' % restarts, value=restarts))
+            else:
+                out.append(graded('restarts:' + unit, restarts, t['restarts_warn'], t['restarts_critical'],
+                                  'NRestarts=%d after non-zero exit (Result=%s ExecMainStatus=%s)' % (restarts, result, s.get('ExecMainStatus'))))
     return out
+
+
+def clean_exit(s):
+    """True only when systemd positively reports the last run ended with exit 0.
+
+    Restart=always units (discovery's daily --seconds 86400 exit) accumulate NRestarts
+    with exit 0; those are expected. Anything unknown or non-zero counts as a failure.
+    """
+    status = (s.get('ExecMainStatus') or '').strip()
+    return (status == '0' and (s.get('Result') or '') in ('', 'success')
+            and s.get('SubState') not in ('auto-restart', 'failed'))
 
 
 def tick_recency(label, show_result, now, t):
@@ -288,6 +303,15 @@ def check_backup(root, now, t):
 
 
 def build_report(args, runner=default_runner, clock=time.time, usage=shutil.disk_usage):
+    try:
+        return _build_report(args, runner, clock, usage)
+    except sqlite3.Error as exc:
+        return {'kind': 'desk_healthcheck_v1', 'ts': int(clock()), 'status': CRITICAL, 'read_only': True,
+                'execution_status': 'EXECUTION_UNVERIFIED',
+                'checks': [check('healthcheck', CRITICAL, 'database error: %s: %s' % (type(exc).__name__, str(exc)[:160]))]}
+
+
+def _build_report(args, runner, clock, usage):
     now = clock()
     t = dict(DEFAULTS)
     for item in args.threshold:
@@ -337,7 +361,7 @@ def main(argv=None, runner=default_runner, clock=time.time, usage=shutil.disk_us
     args = p.parse_args(argv)
     try:
         report = build_report(args, runner, clock, usage)
-    except (OSError, ValueError) as exc:
+    except (OSError, ValueError, sqlite3.Error) as exc:
         report = {'kind': 'desk_healthcheck_v1', 'ts': int(clock()), 'status': CRITICAL,
                   'checks': [check('healthcheck', CRITICAL, 'could not run: %s' % str(exc)[:200])]}
     line = json.dumps(report, sort_keys=True, separators=(',', ':'))

@@ -82,9 +82,10 @@ class FreshFixture(unittest.TestCase):
         finally: d.close()
         # --- the store set under test: created only by fresh_start.apply
         self.exp = self.root / 'exp'
+        (self.root / 'backups').mkdir()
         manifest = fs.apply(fs.plan(root=str(self.exp), config=str(self.config), pacing_db=str(self.pacer),
                                     discovery_db=str(self.discovery), taker=self.f.taker, amount_raw=100_000_000,
-                                    pool_fee_bps='25'),
+                                    pool_fee_bps='25', backup_dir=str(self.root / 'backups' / 'fresh-exp')),
                              service_user=pwd.getpwuid(os.geteuid()).pw_name)
         self.manifest = manifest
         s = {k: Path(v['path']) for k, v in manifest['stores'].items()}
