@@ -145,9 +145,36 @@ def _graduation(store, item, now):
     return {**observed,'request_evidence_refs':list(refs)}
 
 
+PASS_DEADLINE_KEY = 'paper_pass_deadline_seconds'
+PASS_DEADLINE_VERSION_KEY = 'paper_pass_deadline_version'
+DEFAULT_PASS_DEADLINE = 10
+MAX_PASS_DEADLINE = 30
+MAX_REQUEST_TIMEOUT = 15  # transport hard cap per request (paper_read_sources._attempt)
+
+
+def _capped(call):
+    """Per-request transport timeouts never exceed MAX_REQUEST_TIMEOUT, whatever the pass deadline."""
+    def bounded(*args, timeout_seconds, **kwargs):
+        return call(*args, timeout_seconds=min(timeout_seconds, MAX_REQUEST_TIMEOUT), **kwargs)
+    return bounded
+
+
+def pass_deadline(cfg):
+    """Whole-pass monotonic deadline. Absent keys keep the strict 10 s; a longer one is an
+    explicit versioned opt-in (flag 1, whole seconds, 10..30). Quote/price TTLs are separate
+    and unchanged, so a longer pass never makes a stale price acceptable."""
+    if PASS_DEADLINE_KEY not in cfg and PASS_DEADLINE_VERSION_KEY not in cfg:return DEFAULT_PASS_DEADLINE
+    flag, seconds = cfg.get(PASS_DEADLINE_VERSION_KEY), cfg.get(PASS_DEADLINE_KEY)
+    if (type(flag) is not int or flag != 1 or type(seconds) is not int
+            or not DEFAULT_PASS_DEADLINE <= seconds <= MAX_PASS_DEADLINE):
+        raise ValueError('Invalid pass deadline')
+    return seconds
+
+
 class _Budget:
-    def __init__(self, progress, wall_clock, monotonic):
+    def __init__(self, progress, wall_clock, monotonic, deadline=DEFAULT_PASS_DEADLINE):
         self.progress, self.wall_clock, self.monotonic = progress, wall_clock, monotonic
+        self.deadline = deadline
         self.start = self.last = monotonic()
         self.attempted = 0
         self.monitoring_attempted = 0
@@ -163,10 +190,10 @@ class _Budget:
         value = self.monotonic()
         if (type(value) not in (int, float) or type(self.start) not in (int, float)
                 or not math.isfinite(value) or not math.isfinite(self.start)
-                or value < self.last or value >= self.start+10):
+                or value < self.last or value >= self.start+self.deadline):
             raise CycleBlocked('CYCLE_DEADLINE_UNAVAILABLE')
         self.last = value
-        return self.start+10-value
+        return self.start+self.deadline-value
 
     def call(self, scan, invoke):
         before = self.progress.admission(scan)
@@ -176,7 +203,7 @@ class _Budget:
             raise CycleBlocked('INVESTIGATION_REQUEST_BUDGET_EXHAUSTED')
         if self.attempted >= 18:
             raise CycleBlocked('CYCLE_REQUEST_BUDGET_EXHAUSTED')
-        timeout = self.remaining()
+        timeout = min(self.remaining(), MAX_REQUEST_TIMEOUT)
         self.attempted += 1
         try:
             result = invoke(timeout)
@@ -201,7 +228,7 @@ class _HeldBudget:
         admission = self.parent.progress.admission(scan)
         before = self.monitoring.snapshot()
         if before['blockers']: raise CycleBlocked(before['blockers'][0])
-        timeout = self.remaining()
+        timeout = min(self.remaining(), MAX_REQUEST_TIMEOUT)
         self.parent.monitoring_attempted += 1
         try:
             result = invoke(timeout)
@@ -547,7 +574,7 @@ def run_once(research_db, evidence_db, ledger_db, cfg, *, position_targets=(), c
                     if pacer is None or (pacer.path,pacer.identity)!=pacing_identity:
                         raise ValueError('Pacer identity changed')
                     pacer._validate()
-                budget = _Budget(progress,wall_clock,monotonic)
+                budget = _Budget(progress,wall_clock,monotonic,pass_deadline(cfg))
                 for control in controls:
                     validate_event(control)
                     if control['kind']!='control' or control['ts']!=budget.now():
@@ -617,7 +644,7 @@ def run_once(research_db, evidence_db, ledger_db, cfg, *, position_targets=(), c
                                     raise CycleBlocked('CYCLE_REQUEST_BUDGET_EXHAUSTED')
                                 source = source_factory(progress,target.scan_id)
                                 collector = collect_observations(jobs=jobs,progress=progress,
-                                    sources={target.scan_id:BoundedSource(source.rpc_source_id,source.quote_source_id,source.rpc,source.quote)},
+                                    sources={target.scan_id:BoundedSource(source.rpc_source_id,source.quote_source_id,_capped(source.rpc),_capped(source.quote))},
                                     open_positions=(target,) if is_position else (), candidates=() if is_position else (target,),
                                     request_ceiling=18-budget.attempted,deadline_seconds=budget.remaining(),max_age_seconds=10,
                                     wall_clock=wall_clock,monotonic=monotonic,token_profile_version=selected(cfg))

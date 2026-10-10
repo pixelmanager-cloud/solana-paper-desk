@@ -5,7 +5,9 @@ Dispatcher and global-gate integration are separate reviewed consumers.
 """
 from contextlib import closing, ExitStack
 from pathlib import Path
+import logging
 import sqlite3
+import threading
 import time
 from desk import paper_terminal_reconciliation as terminal, runtime_compatibility as runtime
 from desk import paper_preparation_retirement as historical
@@ -97,22 +99,55 @@ def reason_for(measured,remaining,reserve,*,now=None,momentum_ttl=None,exhausted
     return None
 
 
-def _attempts(store,scan,before,after,*,intent_hash=None,allowed_outcome=None):
-    # Scalar inventory preflight is shared with the historical bounded proof.
-    with closing(store.connect()) as c:
-        bad=c.execute("SELECT 1 FROM pages WHERE typeof(hash)!='text' OR length(CAST(hash AS BLOB))!=64 OR typeof(payload)!='blob' OR length(payload) NOT BETWEEN 1 AND ? OR typeof(raw_bytes)!='integer' OR CASE WHEN typeof(raw_bytes)='integer' THEN raw_bytes NOT BETWEEN 1 AND ? ELSE 1 END LIMIT 1",(terminal.MAX_PROOF_COMPRESSED_BYTES,terminal.MAX_PROOF_RAW_BYTES)).fetchone()
-        count,total,compressed=c.execute('SELECT count(*),COALESCE(sum(raw_bytes),0),COALESCE(sum(length(payload)),0) FROM pages').fetchone()
-        if bad or count>4096 or total>256*1024*1024 or compressed>256*1024*1024:raise ValueError('Preparation attempt inventory bound')
-        keys=[r[0] for r in c.execute('SELECT hash FROM pages ORDER BY hash')]
-    found={}
-    for key in keys:
+# Incremental page index (T24/F7). The evidence `pages` table is append-only and
+# content-addressed, so a retained rejection only needs the pages added since the
+# last scan. The index keeps 64-hex keys only (never record bodies) and is rebuilt
+# from scratch whenever the cached prefix no longer matches the table.
+MAX_INDEXED_PAGES=100000
+WARN_INDEXED_PAGES=MAX_INDEXED_PAGES*8//10
+_INDEX={};_INDEX_LOCK=threading.Lock()
+_PREFLIGHT="typeof(hash)!='text' OR length(CAST(hash AS BLOB))!=64 OR typeof(payload)!='blob' OR length(payload) NOT BETWEEN 1 AND ? OR typeof(raw_bytes)!='integer' OR CASE WHEN typeof(raw_bytes)='integer' THEN raw_bytes NOT BETWEEN 1 AND ? ELSE 1 END"
+
+
+def _index(store):
+    """Return (attempt keys by scan, outcome keys by intent) for every retained page."""
+    path=store.path.resolve();stat=path.stat();identity=(str(path),stat.st_dev,stat.st_ino)
+    with _INDEX_LOCK,closing(store.connect()) as c:
+        c.execute('BEGIN')
+        state=_INDEX.get(identity)
+        if state is not None:
+            count,top=c.execute('SELECT count(*),COALESCE(max(rowid),0) FROM pages WHERE rowid<=?',(state['rowid'],)).fetchone()
+            tail=c.execute('SELECT hash FROM pages WHERE rowid=?',(state['rowid'],)).fetchone()
+            if state['rowid'] and (count!=state['count'] or top!=state['rowid'] or tail is None or tail[0]!=state['tail']):state=None
+        if state is None:state={'rowid':0,'count':0,'tail':None,'attempts':{},'outcomes':{}}
+        bad=c.execute('SELECT 1 FROM pages WHERE rowid>? AND ('+_PREFLIGHT+') LIMIT 1',(state['rowid'],terminal.MAX_PROOF_COMPRESSED_BYTES,terminal.MAX_PROOF_RAW_BYTES)).fetchone()
+        total=c.execute('SELECT count(*),COALESCE(sum(length(payload)),0) FROM pages').fetchone()
+        if bad or total[0]>MAX_INDEXED_PAGES or total[1]>256*1024*1024:raise ValueError('Preparation attempt inventory bound')
+        if total[0]>=WARN_INDEXED_PAGES:
+            logging.getLogger(__name__).warning('Evidence page inventory at %d of %d: rotate the evidence store',total[0],MAX_INDEXED_PAGES)
+        fresh=c.execute('SELECT rowid,hash FROM pages WHERE rowid>? ORDER BY rowid',(state['rowid'],)).fetchall()
+    # Work on a copy so a corrupt page leaves the published index untouched (fail closed, retried next call).
+    attempts={k:dict(v) for k,v in state['attempts'].items()};outcomes={k:dict(v) for k,v in state['outcomes'].items()}
+    for rowid,key in fresh:
         record=terminal._load(store,key)
-        if (intent_hash is not None and type(record) is dict
-                and record.get('intent_hash')==intent_hash
-                and record.get('kind') in ('history_first_paper_preparation_outcome_v1','history_preparation_no_entry_v1')
-                and key!=allowed_outcome):
-            raise ValueError('Preparation partial or conflicting outcome retained')
-        if type(record) is not dict or record.get('kind')!='paper_read_attempt_v1' or record.get('scan_id')!=scan:continue
+        if type(record) is not dict:continue
+        if record.get('kind')=='paper_read_attempt_v1' and type(record.get('scan_id')) is str:attempts.setdefault(record['scan_id'],{})[key]=None
+        if record.get('kind') in ('history_first_paper_preparation_outcome_v1','history_preparation_no_entry_v1') and type(record.get('intent_hash')) is str:
+            outcomes.setdefault(record['intent_hash'],{})[key]=None
+    if fresh:
+        state={'rowid':fresh[-1][0],'count':state['count']+len(fresh),'tail':fresh[-1][1],'attempts':attempts,'outcomes':outcomes}
+        with _INDEX_LOCK:_INDEX[identity]=state
+    return state['attempts'],state['outcomes']
+
+
+def _attempts(store,scan,before,after,*,intent_hash=None,allowed_outcome=None):
+    by_scan,by_intent=_index(store)
+    if intent_hash is not None and any(key!=allowed_outcome for key in by_intent.get(intent_hash,())):
+        raise ValueError('Preparation partial or conflicting outcome retained')
+    found={}
+    for key in sorted(by_scan.get(scan,())):
+        record=terminal._load(store,key)  # re-verifies current stored bytes of every used page
+        if type(record) is not dict or record.get('kind')!='paper_read_attempt_v1' or record.get('scan_id')!=scan:raise ValueError('Preparation attempt page changed')
         used=record.get('requests_used')
         if type(used) is not int or not 1<=used<=18:raise ValueError('Preparation attempt charge malformed')
         if before<used<=after:

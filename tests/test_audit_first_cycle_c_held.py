@@ -156,7 +156,6 @@ class FreshStoreBootstrapTests(unittest.TestCase):
 
 
 class LiveLatencyDeadlineTests(_Base):
-    @unittest.expectedFailure
     def test_entry_survives_realistic_provider_latency(self):
         """Pass deadline is a hard 10s (_Budget.remaining). The reviewed native-clock VPS
         fixtures already need 7.0s (BUY) / 7.8s (SELL) with ZERO network latency. Here each
@@ -170,6 +169,10 @@ class LiveLatencyDeadlineTests(_Base):
                 super().append(item)
         outer.http_calls = Slow()
         outer.f.tick = 1
+        # T24/F9: a longer whole-pass deadline is an explicit versioned opt-in (default stays 10s).
+        outer.cfg = outer.cfg | {'paper_pass_deadline_version': 1, 'paper_pass_deadline_seconds': 30}
+        outer.path = Path(outer.f.tmp.name) / 'deadline-experiment.sqlite'
+        cycle.initialize(outer.path, outer.cfg)
         result = actual_cycle(self.h)
         self.assertEqual(result['status'], 'COMPLETE', result['blockers'])
 

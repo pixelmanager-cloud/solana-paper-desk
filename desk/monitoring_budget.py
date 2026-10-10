@@ -6,11 +6,14 @@ authority; caller target claims alone never authorize a reservation. Clock rollb
 and corrupted accounting require recovery, never a new window/counter.
 """
 from contextlib import closing
+import hashlib
 import json
+import os
 import math
 from pathlib import Path
 import sqlite3
 import time
+import zlib
 
 from .evidence import EvidenceStore
 from .history_progress import canonical_ownership_path
@@ -30,6 +33,7 @@ VERSION = 1
 LATCHING_FAILURE_CODES = frozenset({'CLOCK_INVALID', 'OUTCOME_PERSISTENCE_FAILED'})
 ABANDONED_KIND = 'paper_monitoring_abandoned_v1'
 MAX_ABANDONED = 64
+AUDIT_SLICE = 4
 
 
 class MonitoringBlocked(ValueError):
@@ -176,6 +180,31 @@ class MonitoringBudget:
                 c.rollback()
                 raise
 
+    def _verified_path(self):
+        return self.path.with_name(self.path.name+'.monitoring-verified.json')
+
+    def _verified_load(self, binding):
+        """Untrusted optimisation hint; any anomaly means verify everything."""
+        try:
+            data=json.loads(self._verified_path().read_text())
+            if (type(data) is dict and set(data)=={'binding','through','digest'} and data['binding']==binding
+                    and type(data['through']) is int and data['through']>0
+                    and type(data['digest']) is str and len(data['digest'])==64):
+                int(data['digest'],16)
+                return data['through'],data['digest']
+        except (OSError,ValueError,TypeError):
+            pass
+        return None
+
+    def _verified_store(self, binding, through, digest_value):
+        path=self._verified_path();temp=path.with_name(path.name+'.%d.tmp'%os.getpid())
+        try:
+            temp.write_text(canonical({'binding':binding,'through':through,'digest':digest_value}))
+            os.replace(temp,path)
+        except OSError:
+            try:temp.unlink()
+            except OSError:pass
+
     def _accounting(self, c, *, checkpoint=False):
         row = c.execute('SELECT version,ledger,config_hash,code_hash,cap,window_seconds,high_water,total,blocked FROM paper_monitoring_budget WHERE id=1').fetchone()
         from .monitoring_handoff import validate_active
@@ -226,12 +255,35 @@ class MonitoringBudget:
         # subsequent I/O, so they cannot silently become replacement allowances.
         from .monitoring_successor import rows as successor_rows
         history=successor_rows(c,handoff) if handoff else []
-        for identity, at, scan, mint, checkpoint, method, params_hash, evidence_hash in c.execute(
-                'SELECT r.id,r.at,r.scan_id,r.mint,r.checkpoint_hash,r.method,r.params_hash,o.evidence_hash FROM paper_monitoring_reservations r JOIN paper_monitoring_outcomes o ON o.reservation_id=r.id'):
+        # T24/F14: rows are append-only and immutable (triggers), and every blob is content
+        # addressed, so a contiguous prefix that was fully verified under the same context is
+        # not decoded again. The prefix is bound by a digest over its SQL tuples (recomputed
+        # every call, no blob I/O); any mismatch, or a different binding context, falls back to
+        # the full verification below. A rotating slice of the trusted prefix is re-verified on
+        # every call so long-lived rows keep being re-checked.
+        binding=digest([list(expected),key if upgraded else None,handoff[1] if handoff else None,
+                        [[v,k] for v,k in history],upgraded and [grant['reservation_cutoff'],grant['at']]])
+        rows=c.execute('SELECT r.id,r.at,r.scan_id,r.mint,r.checkpoint_hash,r.method,r.params_hash,o.evidence_hash FROM paper_monitoring_reservations r JOIN paper_monitoring_outcomes o ON o.reservation_id=r.id ORDER BY r.id').fetchall()
+        cached=self._verified_load(binding)
+        trusted=0
+        running=hashlib.sha256();contiguous=0;prefix=None
+        for position,record in enumerate(rows,1):
+            if record[0]!=position:break
+            running.update(repr(record).encode()+b'\n');contiguous=position
+            if cached and position==cached[0]:
+                prefix=running.hexdigest()
+                if prefix==cached[1]:trusted=position
+        audit=set()
+        if trusted:
+            seed=int(cached[1][:8],16)
+            audit={(seed+i*7919)%trusted+1 for i in range(min(AUDIT_SLICE,trusted))}
+        digests=None
+        for identity, at, scan, mint, checkpoint_hash, method, params_hash, evidence_hash in rows:
+            if identity<=trusted and identity not in audit:continue
             try:
                 original = self.store.load(evidence_hash)
                 receipt = original.get('monitoring_reservation', {})
-            except (ValueError, TypeError, AttributeError):
+            except (ValueError, TypeError, AttributeError, zlib.error):
                 raise MonitoringBlocked('MONITORING_ACCOUNTING_INVALID') from None
             if handoff and identity>handoff[0]['reservation_cutoff'] and receipt.get('context_hash')!=handoff[1]:
                 raise MonitoringBlocked('MONITORING_CONTEXT_BINDING_INVALID')
@@ -246,7 +298,7 @@ class MonitoringBudget:
                     or receipt.get('cap') != cap
                     or (new_receipt and receipt.get('policy_hash')!=key) or receipt.get('window_seconds') != WINDOW_SECONDS
                     or receipt.get('id') != identity or receipt.get('total_used') != identity
-                    or receipt.get('reserved_at') != at or receipt.get('checkpoint_hash') != checkpoint
+                    or receipt.get('reserved_at') != at or receipt.get('checkpoint_hash') != checkpoint_hash
                     or receipt.get('mint') != mint
                     or original.get('scan_id') != scan or original.get('method') != method
                     or (original.get('params_hash') != params_hash or original.get('failure_code') != 'ABANDONED'
@@ -254,6 +306,10 @@ class MonitoringBudget:
                         if original.get('kind') == ABANDONED_KIND
                         else digest(original.get('params')) != params_hash)):
                 raise MonitoringBlocked('MONITORING_ACCOUNTING_INVALID')
+        if contiguous>trusted:
+            running=hashlib.sha256()
+            for record in rows[:contiguous]:running.update(repr(record).encode()+b'\n')
+            self._verified_store(binding,contiguous,running.hexdigest())
         return row
 
     def _held(self, progress, scan_id):
