@@ -170,6 +170,18 @@ class ProofDefenseTests(Probe):
         self.assertNotEqual(state, 'NO_ENTRY', self.last)          # the proof refused to retire it as a normal rejection
         self.assertEqual(state, 'FAILED_CHARGED', self.last)       # (without the diagnostic the closure alone cannot hold it)
 
+    def test_the_proof_refuses_a_malformed_answer_that_was_not_a_failed_attempt(self):
+        import sys
+        real = uv.faulted_scans
+
+        def only_the_proof(load, refs):
+            if sys._getframe(1).f_code.co_filename.endswith('paper_cycle.py'):
+                return []
+            return real(load, refs)
+        with patch.object(uv, 'faulted_scans', only_the_proof):
+            state = self.end_state('entry', wire=MALFORMED['extra mints'], kraken=ConnectionResetError)
+        self.assertNotEqual(state, 'NO_ENTRY', self.last)
+
     def test_the_proof_still_accepts_a_transient_failure(self):
         self.assertEqual(self.end_state('entry', jupiter=ConnectionResetError, kraken=ConnectionResetError), 'NO_ENTRY', self.last)
 
@@ -210,6 +222,14 @@ class AttemptUnitTests(unittest.TestCase):
         body = ('{"error":[],"result":{"SOLUSD":[["100.00000","1.00000",%d.25,"s","l","",123]],"last":"123000000000"}}' % (1000 - 40)).encode()
         quiet['response_bytes_base64'] = base64.b64encode(body).decode()
         self.assertIsNone(uv.attempt_fault(quiet))
+
+    def test_a_kraken_answer_that_is_not_valid_never_counts_as_measured(self):
+        import base64
+        stale = self.kraken()
+        body = ('{"error":[],"result":{"SOLUSD":[["100.00000","1.00000",%d.25,"s","l","",123]],"last":"123000000000"}}' % (1000 - 4000)).encode()
+        stale['response_bytes_base64'] = base64.b64encode(body).decode()
+        self.assertFalse(uv.fallback_measured([stale]))
+        self.assertTrue(uv.fallback_measured([self.kraken()]))
 
     def test_verdicts_are_per_scan_so_one_scans_kraken_never_excuses_anothers_rejection(self):
         records = {
