@@ -122,9 +122,11 @@ def verify(backup, live, *, source, successor_pin, pacing_pin, config):
                 if [list(r) for r in old.execute('SELECT * FROM policy ORDER BY provider')] != pacing_pin['old_policy'] or [list(r) for r in old.execute('SELECT * FROM state ORDER BY provider')] != pacing_pin['old_state']:
                     raise ValueError('Pacing original snapshot differs from pin')
                 if old.execute('SELECT 1 FROM state WHERE pending IS NOT NULL').fetchone() or old.execute('SELECT 1 FROM waiters').fetchone():raise ValueError('Original pacing not quiescent')
+                if any(new.execute('SELECT count(*) FROM '+t).fetchone()!=(3,) for t in ('policy','state')):
+                    raise ValueError('Exact post-migration pacing row counts required')
                 for table, row in (('policy',pacing_pin['kraken_policy']),('state',['kraken',0,0,max(r[3] for r in pacing_pin['old_state']),None])):
                     if new.execute('SELECT * FROM '+table+" WHERE provider='kraken'").fetchall() != [tuple(row)]:raise ValueError('Exact Kraken initial row required')
-                    filters[table]=("provider!='kraken'",())
+                    filters[table]=("provider IS NOT 'kraken'",())
             if {k:v for k,v in current.items() if k not in previous} != expected:
                 raise ValueError('Unexpected schema additions: '+name)
             for kind,table in previous:

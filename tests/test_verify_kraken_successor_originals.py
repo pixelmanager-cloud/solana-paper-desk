@@ -103,3 +103,11 @@ class OriginalsTests(unittest.TestCase):
         self.verify()
         self.sql('raw.sqlite',"UPDATE wr SET v=x'0012'")
         with self.assertRaisesRegex(ValueError,'Original rows changed'):self.verify()
+
+    def test_null_provider_policy_row_refused(self):
+        self.sql('provider-pacing.sqlite','INSERT INTO policy VALUES(NULL,2,2.0,30.0)')
+        with self.assertRaises(ValueError):self.verify()
+
+    def test_null_provider_state_row_refused(self):
+        self.sql('provider-pacing.sqlite','INSERT INTO state VALUES(NULL,0,0,0,NULL)')
+        with self.assertRaises(ValueError):self.verify()
