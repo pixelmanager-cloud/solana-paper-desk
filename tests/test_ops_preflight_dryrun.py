@@ -434,7 +434,8 @@ class PreflightDryrunTests(unittest.TestCase):
         self.addCleanup(shutil.rmtree, directory, True)
         fd = os.open(directory, os.O_RDONLY)
         self.addCleanup(os.close, fd)
-        self.assertEqual(Path(fd_path(fd, platform='linux')).resolve(), directory)
+        if sys.platform.startswith('linux'):   # /proc/self/fd only exists on Linux
+            self.assertEqual(Path(fd_path(fd, platform='linux')).resolve(), directory)
         calls = []
         fake = types.SimpleNamespace(F_GETPATH=50, fcntl=lambda f, cmd, buf: (calls.append((f, cmd)), b'/private/tmp/x\x00' + b'\x00' * 9)[1])
         self.assertEqual(fd_path(7, platform='darwin', fcntl_module=fake), '/private/tmp/x')
