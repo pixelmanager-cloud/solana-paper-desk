@@ -33,6 +33,13 @@ RestrictAddressFamilies=AF_INET AF_INET6 AF_UNIX
 TimeoutStartSec=120
 MemoryMax=256M
 TasksMax=32
+# Research must never slow trading (T39): at most one core, the lowest CPU and IO weights, idle IO class, niced.
+# Trading units (entry, held, monitor, decisions, dashboard, discovery, held watcher) carry none of these.
+CPUQuota=100%
+CPUWeight=20
+IOWeight=20
+Nice=10
+IOSchedulingClass=idle
 # Initialise once, as the service user, in its own subdirectory:
 #   install -d -m 0700 /var/lib/solana-desk/exp-FRESH/counterfactual
 #   python -m tools.research.counterfactual init --store /var/lib/solana-desk/exp-FRESH/counterfactual/counterfactual.sqlite --allowance-per-hour 300
