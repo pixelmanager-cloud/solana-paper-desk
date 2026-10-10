@@ -1,0 +1,11 @@
+# Starts the NORMAL held pass when the watcher atomically replaces its request file. No sudo, no polkit: the
+# watcher only writes a file in its own state directory; systemd (PID 1) starts the unit. The held service keeps
+# its own scheduler lease, so a request that arrives while a pass is running is a harmless no-op.
+# No TriggerLimit* on purpose: hitting a path-unit trigger limit would stop the unit and silently disable fast exits.
+[Unit]
+Description=Run one held-position pass when the held watcher asks for it
+[Path]
+PathChanged=<STATE_DIR>/held-watcher/trigger/request
+Unit=desk-paper-held-cycle.service
+[Install]
+WantedBy=multi-user.target
