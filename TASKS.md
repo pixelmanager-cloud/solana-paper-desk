@@ -1636,3 +1636,24 @@ AVOID: desk/provider_pacing.py
    Test each.
 4. **Phase caps.** Enforce the caps, not just detect them: bound each in-flight request's timeout by the remaining phase budget, and treat a pacing backoff longer than the remaining budget as a cut before waiting.
 5. **Docs.** Remove the stale TTL and 30s statements from docs/MULTI_POSITION.md (~:146-148, :158, :170, :172, :237). The rollover rule is T35F's unified rule; document exactly one.
+
+---
+
+## T37G — USD failures: transient-only closure (from the T37F review)
+STATUS: OPEN
+DEPENDS: branch `cloud/T22H` has a `DONE T22H:` commit
+BASE: origin/cloud/T37F, then merge origin/cloud/T22H
+OWNS: desk/paper_cycle_no_entry.py (`_cited_usd_failure`, `producer_blocker_is_normal` USD handling only), desk/regime_producer.py, tests/test_usd_valuation*.py
+AVOID: desk/paper_pass_closure.py (consume its allow-list; don't change it)
+
+T37F made every failed SOL/USD attempt end terminal, including integrity-class causes. That is a new laundering path, the same class as T22H H1. Coordinator probes through `run_once` showed these causes ending NO_ENTRY or FAILED_CHARGED when they should be INTEGRITY_HOLD:
+- Jupiter TLS_ERROR, UNCLASSIFIED_ERROR, 401, 403, malformed responses and extra mints;
+- Kraken TLS and 403;
+- in held passes, Jupiter TLS/401 and Kraken TLS/UNCLASSIFIED.
+
+1. **Transient only.** Accept a failed USD attempt ONLY when its cause is transient (timeout/reset/408/429/5xx/pacing contention, reusing T22G/T22H's transient vocabulary, e.g. `failed_reads_transient`/`_latching_failure`). Everything else HOLDs.
+   - Exception: a Jupiter 401/403 may end terminal ONLY IF the Kraken fallback was MEASURED (fresh and valid) in the same pass, since the T37F health WARNING covers it.
+   - In held passes, `SOL_USD_UNAVAILABLE` must go through the same evidence check. Do not mark it "normal" without checking `failed_reads_transient`.
+   - Commit the coordinator probe table as tests: each cause × {entry, held} × {Kraken up, Kraken down}.
+2. **(LOW) Regime source.** When the valuation used the Kraken fallback, the regime must use THAT observation, not a Jupiter price up to 900s old (`regime_producer.py` ~:94-101).
+3. **Out of OWNS.** T37F edited paper_cycle.py, engine.py and tools/ops/healthcheck.py. List those edits in the report and keep them minimal.
