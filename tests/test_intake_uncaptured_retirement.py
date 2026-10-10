@@ -1,6 +1,8 @@
 """Synthetic archived-producer guard expiry; all runtime/pin validators are real."""
 from contextlib import closing
 import copy
+import hashlib
+import types
 import sqlite3
 import unittest
 from unittest.mock import patch
@@ -42,10 +44,16 @@ class IntakeRetirementTests(unittest.TestCase):
             values=dispatch._read_journal(c);hint=copy.deepcopy(next(iter(values['intents'].values()))['hint']);at=next(iter(values['intents'].values()))['at']
             hint.update(mint=self.mint,pool=self.pool,signature=self.raw['transaction']['signatures'][0],slot=self.raw['slot'],seq=4)
             self.intent={'version':1,'context_hash':digest(self.producer),'at':at,'hint':hint};dispatch._write(c,'intents',self.identity,self.intent,hint)
+        # Reproduce the archived producer, never the repaired current intake.
+        raw_producer=(Path(__file__).parent/'fixtures/migration_slot_intake_6b977d9.py.txt').read_bytes()
+        self.assertEqual(hashlib.sha256(raw_producer).hexdigest(),
+                         '74398834b486a45b039d55adecad179654082d20de4123e6f4102670dcd70c37')
+        producer=types.ModuleType('desk._historical_intake_fixture');producer.__package__='desk'
+        exec(compile(raw_producer,'migration_slot_intake_6b977d9.py.txt','exec'),producer.__dict__)
         clock=[100.0]
         def guard():clock[0]+=11
-        with patch.object(intake.time,'monotonic',side_effect=lambda:clock[0]),patch.object(transport,'build_opener',side_effect=AssertionError('no provider')):
-            result=intake.intake(self.ctx['research_db'],self.ctx['evidence_db'],scan_id=self.scan,mint=self.mint,pool=self.pool,signature=hint['signature'],slot=hint['slot'],provenance=dispatch.PROVENANCE,credentials_loader=guard)
+        with patch.object(producer.time,'monotonic',side_effect=lambda:clock[0]),patch.object(transport,'build_opener',side_effect=AssertionError('no provider')):
+            result=producer.intake(self.ctx['research_db'],self.ctx['evidence_db'],scan_id=self.scan,mint=self.mint,pool=self.pool,signature=hint['signature'],slot=hint['slot'],provenance=dispatch.PROVENANCE,credentials_loader=guard)
         self.assertEqual(result['requests_used'],5);self.assertEqual(result['transport_evidence_refs'],[])
         self.backup=self.root/'intake-before.sqlite'
         with closing(sqlite3.connect(self.ctx['ledger_db'])) as a,closing(sqlite3.connect(self.backup)) as b:a.backup(b)
