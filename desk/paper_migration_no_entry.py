@@ -35,11 +35,13 @@ def guards():
 
 def shape(v):
     if type(v) is not dict or set(v)!=FIELDS or type(v['version']) is not int or v['version']!=1 or v['kind']!='dispatcher_migration_no_entry_v1':raise ValueError('Migration disposition shape')
-    if v['association'] not in ('CAPTURED_UNSUPPORTED_QUOTE','EXPLICIT_REVIEWED_LEGACY_SENTINEL') or v['entry_authorized'] is not False or v['execution_status']!='EXECUTION_UNVERIFIED' or v['no_retry'] is not True:raise ValueError('Migration disposition semantics')
+    if v['association'] not in ('CAPTURED_UNSUPPORTED_QUOTE','CAPTURED_INTAKE_LOCAL_DEADLINE','EXPLICIT_REVIEWED_LEGACY_SENTINEL') or v['entry_authorized'] is not False or v['execution_status']!='EXECUTION_UNVERIFIED' or v['no_retry'] is not True:raise ValueError('Migration disposition semantics')
     if not all(terminal._id(v[k]) for k in ('dispatch_id','scan_id')) or not all(runtime._hash(v[k]) for k in ('intent_hash','config_hash','source_hash','history_id','history_inventory_hash','ledger_original_hash','ledger_prefix_hash','runtime_receipts_hash')):raise ValueError('Migration disposition identities')
     if type(v['evaluated_at']) is not int or not 0<=v['evaluated_at']<2**63 or type(v['context']) is not dict or set(v['context'])!={'research_db','evidence_db','ledger_db','pacing_db'}:raise ValueError('Migration disposition context')
     terminal._context(**dict(zip(('research','evidence','ledger','pacing'),(v['context'][k] for k in ('research_db','evidence_db','ledger_db','pacing_db')))))
     if not isinstance(v['wire_attempt_refs'],list) or not 1<=len(v['wire_attempt_refs'])<=2 or len(set(v['wire_attempt_refs']))!=len(v['wire_attempt_refs']) or not all(runtime._hash(x) for x in v['wire_attempt_refs']):raise ValueError('Migration wire inventory')
+    expected_reason={'CAPTURED_UNSUPPORTED_QUOTE':'UNSUPPORTED_MIGRATION_EVENT_QUOTE','CAPTURED_INTAKE_LOCAL_DEADLINE':'INTAKE_DEADLINE_BEFORE_TRANSPORT','EXPLICIT_REVIEWED_LEGACY_SENTINEL':'HISTORICAL_LEGACY_SENTINEL_DECLINED'}
+    if v['reason']!=expected_reason[v['association']]:raise ValueError('Exact disposition evidence class required')
     historical=v['association']=='EXPLICIT_REVIEWED_LEGACY_SENTINEL'
     if historical:
         if not all(runtime._hash(v[k]) for k in ('ledger_backup_hash','stopped_witness_hash','parent_receipt_hash')) or type(v['successor_context']) is not dict:raise ValueError('Historical certificate required')
@@ -161,8 +163,12 @@ def _capture(store,progress,ctx,scan,hint,now,historical):
     if _policy(state,mint=hint['mint'],token_profile_version=descriptor.get('paper_token_profile_version',0))['decision']!='PASS_TOKEN_POLICY' or hint['slot']>state['cutoff']:raise ValueError('Canonical mint/cutoff rejection')
     query={'address':hint['pool'],'start':0,'end':1,'token_accounts_filter':'none','slot_range':{'gte':hint['slot'],'lt':hint['slot']+1}}
     identity=digest({'budget':scan,'query':query});snapshot=progress.snapshot(identity);coverage=snapshot['coverage']
-    if snapshot['query']!=query or snapshot['status']!='DONE' or not coverage or not coverage['query_coverage_verified'] or not coverage['query_range_exhausted'] or not 1<=snapshot['attempts']<=2 or snapshot['attempts']!=len(coverage['pages']) or admission['requests_used']!=4+snapshot['attempts']:raise ValueError('Complete finalized slot coverage required')
-    replay_history(coverage,store)
+    local_deadline=not historical and snapshot['status']=='RETRYABLE_ERROR'
+    if not local_deadline and (snapshot['query']!=query or snapshot['status']!='DONE' or not coverage or not coverage['query_coverage_verified'] or not coverage['query_range_exhausted'] or not 1<=snapshot['attempts']<=2 or snapshot['attempts']!=len(coverage['pages']) or admission['requests_used']!=4+snapshot['attempts']):raise ValueError('Complete finalized slot coverage required')
+    if local_deadline:
+        pages=coverage['pages'] if coverage else []
+        if (snapshot['query']!=query or not 1<=snapshot['attempts']<=2 or snapshot['attempts']!=len(pages)+1 or admission['requests_used']!=4+snapshot['attempts'] or (coverage and coverage['query_range_exhausted'])):raise ValueError('Exact local deadline reservation required')
+    if coverage:replay_history(coverage,store)
     histories=base._histories(store,scan)
     if len(histories)!=1 or histories[0][1]!=identity:raise ValueError('Only exact intake reservation query permitted')
     seeds=report.get('history_queries')
@@ -171,7 +177,7 @@ def _capture(store,progress,ctx,scan,hint,now,historical):
     attempts=base._attempts(store,scan)
     if [n for n,_,_ in attempts]!=list(range(5,admission['requests_used']+1)):raise ValueError('Complete raw intake attempt inventory required')
     raw=[]
-    for (_,key,r),page in zip(attempts,coverage['pages']):
+    for (_,key,r),page in zip(attempts,coverage['pages'] if coverage else []):
         req=terminal._load(store,page['request_evidence_hash']);response=terminal._load(store,page['payload_hash'])
         wire=terminal._wire(r['request_bytes_base64'],128*1024);captured=terminal._wire(r['response_bytes_base64'],2*1024*1024)
         options={'transactionDetails':'full','sortOrder':'asc','limit':100,'commitment':'finalized','encoding':'jsonParsed','maxSupportedTransactionVersion':1,'filters':{'slot':query['slot_range'],'status':'any','tokenAccounts':'none'}}
@@ -179,7 +185,18 @@ def _capture(store,progress,ctx,scan,hint,now,historical):
         expected=[hint['pool'],options]
         if (r['method']!='getTransactionsForAddress' or r['params']!=expected or req['params']!=expected or r['failure_code'] is not None or type(r['observed_at']) is not int or not 0<=r['observed_at']<=now or type(r['http_status']) is not int or r['http_status']!=200 or r['source_id']!='helius-mainnet-paper-confirmed-v1' or wire!={'jsonrpc':'2.0','id':'paper-read-v1','method':r['method'],'params':expected} or captured!={'jsonrpc':'2.0','id':'paper-read-v1','result':response}):raise ValueError('Successful original finalized wire required')
         raw.extend(response['data'])
-    measured,reason=_decline(raw,hint,now,historical)
+    if local_deadline:
+        r=attempts[-1][2]
+        options={'transactionDetails':'full','sortOrder':'asc','limit':100,'commitment':'finalized','encoding':'jsonParsed','maxSupportedTransactionVersion':1,'filters':{'slot':query['slot_range'],'status':'any','tokenAccounts':'none'}}
+        if coverage and coverage['next_cursor']:options['paginationToken']=coverage['next_cursor']
+        expected=[hint['pool'],options]
+        body=canonical({'jsonrpc':'2.0','id':'paper-read-v1','method':'getTransactionsForAddress','params':expected}).encode()
+        import base64
+        if (set(r)!={'kind','scan_id','requests_used','source_id','method','params','request_bytes_base64','response_bytes_base64','observed_at','http_status','failure_code'} or r['kind']!='paper_read_attempt_v1' or r['scan_id']!=scan or r['requests_used']!=admission['requests_used'] or r['method']!='getTransactionsForAddress' or r['params']!=expected or r['request_bytes_base64']!=base64.b64encode(body).decode() or r['source_id']!='helius-mainnet-paper-confirmed-v1' or r['failure_code']!='INTAKE_DEADLINE_BEFORE_TRANSPORT' or r['response_bytes_base64'] is not None or r['http_status'] is not None or type(r['observed_at']) is not int or not 0<=r['observed_at']<=now):raise ValueError('Exact captured local deadline required; uncaptured stays unknown')
+        measured={'status':'NOT_EVALUATED','witnesses':[],'blockers':['INTAKE_DEADLINE_BEFORE_TRANSPORT']}
+        reason='INTAKE_DEADLINE_BEFORE_TRANSPORT'
+    else:
+        measured,reason=_decline(raw,hint,now,historical)
     canonical_acquisition={'evidence_class':'CANONICAL_METHOD_PARAMS_RESULTS_NOT_ORIGINAL_WIRE','descriptor_hash':digest(descriptor),'source_hash':digest(source),'setup_hash':digest(state),'prepared_source_hash':admission['completed_source_hash']}
     return {'history_id':identity,'history_inventory_hash':digest(base._histories(store,scan)),'admission':admission,'canonical_acquisition':canonical_acquisition,'wire_attempt_refs':[key for _,key,_ in attempts],'migration':measured,'reason':reason}
 
@@ -269,7 +286,7 @@ def _make(store,c,cfg,producer,identity,scan,*,historical=False,backup=None,stop
             saved.execute('BEGIN')
             if base._ledger_originals(saved)!=original or _receipt_history(saved)!=receipt_history:raise ValueError('Ledger originals/first/continuation differ from pre-attempt backup')
         backup_hash=hashlib.sha256(p.read_bytes()).hexdigest()
-    v={'version':1,'kind':'dispatcher_migration_no_entry_v1','association':'EXPLICIT_REVIEWED_LEGACY_SENTINEL' if historical else 'CAPTURED_UNSUPPORTED_QUOTE',
+    v={'version':1,'kind':'dispatcher_migration_no_entry_v1','association':'EXPLICIT_REVIEWED_LEGACY_SENTINEL' if historical else ('CAPTURED_INTAKE_LOCAL_DEADLINE' if captured['reason']=='INTAKE_DEADLINE_BEFORE_TRANSPORT' else 'CAPTURED_UNSUPPORTED_QUOTE'),
        'dispatch_id':identity,'scan_id':scan,'intent_hash':digest(intent),'hint':intent['hint'],'context':ctx,'config_hash':digest(cfg),
        'source_hash':runtime.implementation_hash(),'producer_context':producer,'successor_context':successor,'journal_prefix':prefix if historical else None,
        'parent_receipt_hash':parent_hash,**captured,'evaluated_at':now,'ledger_original_hash':original,'ledger_prefix_hash':initial_prefix,
