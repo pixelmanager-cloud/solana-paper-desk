@@ -5,6 +5,7 @@ ledger, admission/schema creation, provider primitive or source rewrite. Existin
 b84 exporter/cycle can consume the ordinary history_request_v1 manifests.
 """
 import argparse
+import base64
 from contextlib import closing
 import json
 import math
@@ -93,8 +94,22 @@ class _SlotSource(PaperHistorySource):
         body=canonical({'jsonrpc':'2.0','id':RPC_ID,'method':method,'params':params}).encode()
         if len(body)>MAX_REQUEST_BYTES:raise PaperReadError('REQUEST_INVALID')
         now=time.monotonic()
-        if not math.isfinite(now) or now<self.started or now>=self.deadline:
+        if not math.isfinite(now) or now<self.started:
             raise PaperReadError('DEADLINE_EXCEEDED')
+        if now>=self.deadline:
+            # This is a local, known pre-transport outcome, NOT a wire response.
+            # Advance already owns the charge. Preserve it and do not retry.
+            observed=int(time.time())
+            if not 0<=observed<2**63:raise PaperReadError('DEADLINE_EXCEEDED')
+            record={'kind':'paper_read_attempt_v1','scan_id':self.scan_id,
+                    'requests_used':expected['requests_used'],
+                    'source_id':adapter.rpc_source_id,'method':method,'params':params,
+                    'request_bytes_base64':base64.b64encode(body).decode(),
+                    'response_bytes_base64':None,'observed_at':observed,
+                    'http_status':None,'failure_code':'INTAKE_DEADLINE_BEFORE_TRANSPORT'}
+            self.evidence_hash=self.progress.store.save(record)
+            if self.evidence_hash!=digest(record):raise PaperReadError('OUTCOME_PERSISTENCE_FAILED')
+            raise PaperReadError('INTAKE_DEADLINE_BEFORE_TRANSPORT',evidence_hash=self.evidence_hash)
         try:
             result,self.evidence_hash=adapter._attempt(method,params,body,self.deadline-now)
             return result
@@ -173,7 +188,7 @@ def intake(research_db,evidence_db,*,scan_id,mint,pool,signature,slot,provenance
                     raise IntakeBlocked('HISTORY_QUERY_BOUND_EXCEEDED')
             store.read_only=False
             key=progress.create(scan_id,pool,0,1,{'gte':slot,'lt':slot+1})
-            started=time.monotonic()
+            started=None
             while True:
                 adapter=_SlotSource(progress,scan_id,key,slot=slot,pool=pool,timeout_seconds=10)
                 current=adapter.before;coverage=current['coverage']
@@ -188,12 +203,16 @@ def intake(research_db,evidence_db,*,scan_id,mint,pool,signature,slot,provenance
                 if current['status']=='DONE':break
                 if current['attempts']>=MAX_ATTEMPTS:
                     result['blockers']=['MIGRATION_SLOT_PAGE_LIMIT'];break
+                if started is None:
+                    # Local authorization/recovery replay precedes the bounded
+                    # provider phase; it cannot consume the I/O deadline.
+                    if credentials_loader is not None:
+                        credentials_loader();credentials_loader=None
+                    started=time.monotonic()
                 remaining=10-(time.monotonic()-started)
                 if not 0<remaining<=10:
                     result['blockers']=['INTAKE_DEADLINE_EXCEEDED'];break
                 adapter=_SlotSource(progress,scan_id,key,slot=slot,pool=pool,timeout_seconds=remaining)
-                if credentials_loader is not None:
-                    credentials_loader();credentials_loader=None
                 before=current['requests_used'];current=progress.advance(key,adapter)
                 result['provider_calls']+=current['requests_used']-before
                 if adapter.evidence_hash:result['transport_evidence_refs'].append(adapter.evidence_hash)
