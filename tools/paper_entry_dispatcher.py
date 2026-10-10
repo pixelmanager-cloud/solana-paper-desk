@@ -164,8 +164,11 @@ def plan(*, config, research_db, evidence_db, ledger_db, discovery_db,
             'entry_tool_hash': hashlib.sha256(Path(entry.__file__).read_bytes()).hexdigest(),
             'discovery': discovery, 'taker': taker, 'amount_raw': amount_raw,
             'pool_fee_bps': pool_fee_bps, 'minimum_age': 300,
-            'maximum_age': watchlist.settings(cfg)['max_age_seconds'] if versioned else 7200,
-            **({'journal_schema': 2} if versioned else {})}
+            # Fresh selection keeps the configured dispatch window (7200 s) in both schemas; only a watchlist
+            # re-evaluation may use the longer engine age window (T20F item 5).
+            'maximum_age': 7200,
+            **({'journal_schema': 2, 'watchlist_maximum_age': watchlist.settings(cfg)['max_age_seconds'],
+                'preparation_margin': watchlist.PREPARATION_MARGIN_SECONDS} if versioned else {})}
 
 
 def _parse(payload, h):
@@ -233,7 +236,7 @@ def _check_records(c,expected,values,bindings,retired,*,historical_contexts=None
         if (set(hint) != {'seq','payload_hash','raw_hash','received_at','mint','pool','signature','slot'}
                 or type(hint['seq']) is not int or hint['seq'] <= 0
                 or type(hint['received_at']) not in (int,float) or not math.isfinite(hint['received_at'])
-                or not 300 <= value['at']-hint['received_at'] <= (expected['maximum_age'] if v2 else 7200)
+                or not 300 <= value['at']-hint['received_at'] <= ((expected['watchlist_maximum_age'] if value['evaluation'] > 1 else expected['maximum_age']) if v2 else 7200)
                 or not all(runtime._hash(hint[k]) for k in ('payload_hash','raw_hash'))):
             raise ValueError('Dispatch hint grammar invalid')
         migration._hints('dispatch-check', mint, hint['pool'], signature, hint['slot'], PROVENANCE)
@@ -547,6 +550,38 @@ def _migration_event_hint(raw, decoded, parent):
         events.append(event)
     return len(events) == 1
 
+WINDOW_PAGE = 500
+WINDOW_SKEW_GRACE = 600        # rows may arrive slightly out of received_at order; keep walking this far past the window
+WINDOW_MAX_ROWS = 400_000      # memory/time bound of one walk; far above a 6 h window at any realistic discovery rate
+
+
+def _window_rows(d, now, oldest_age, youngest_age, columns):
+    """Rows with youngest_age <= now-received_at <= oldest_age, newest first, without scanning the table.
+
+    `received_at` has no index and the discovery table grows without bound, so a `WHERE received_at BETWEEN`
+    reads every page (7 s per tick at 600k rows). raw_events is append-only in receipt order, so walk seq DESC in
+    pages and stop at the first row older than the window plus a skew grace. Non-numeric `received_at` rows are
+    yielded so the caller's integrity check rejects them exactly as before.
+    """
+    lo, hi = now - oldest_age, now - youngest_age
+    floor = lo - WINDOW_SKEW_GRACE
+    cursor, walked = None, 0
+    while walked < WINDOW_MAX_ROWS:
+        page = d.execute(f'SELECT {columns} FROM raw_events WHERE seq < ? ORDER BY seq DESC LIMIT ?',
+                         (2**62 if cursor is None else cursor, WINDOW_PAGE)).fetchall()
+        if not page:
+            return
+        for row in page:
+            walked += 1
+            cursor = row[0]
+            received = row[2]
+            numeric = type(received) in (int, float) and math.isfinite(received)
+            if numeric and received < floor:
+                return
+            if not numeric or lo <= received <= hi:
+                yield row
+
+
 def _select(ctx, c, now):
     discovery = Path(ctx['paths']['discovery_db']['path'])
     research = Path(ctx['paths']['research_db']['path'])
@@ -555,11 +590,14 @@ def _select(ctx, c, now):
         if _discovery(d) != ctx['discovery']:
             raise ValueError('Discovery identity changed')
         columns = 'seq,source_id,received_at,slot,payload_hash,typeof(payload),length(CAST(payload AS BLOB))'
+        # A candidate must keep `preparation_margin` seconds of its age window when it is picked (v2 only), otherwise
+        # preparation can outlive it and strand an unresolved intent ("expired during preparation").
+        margin = ctx.get('preparation_margin', 0)
+        newest_age_limit = ctx['maximum_age'] - margin
         if ctx.get('journal_schema', 1) == 2:
-            # Window-based by age (not "newest 500"): every notification inside the eligible age
-            # window is considered; the row bound only protects memory under extreme volume.
-            rows = d.execute(f'SELECT {columns} FROM raw_events WHERE received_at BETWEEN ? AND ? ORDER BY seq DESC LIMIT 20000',
-                             (now-ctx['maximum_age'], now-300)).fetchall()
+            # Window-based by age (not "newest 500"): every notification inside the eligible age window is
+            # considered, walking seq DESC and stopping at the window's end. Never a scan of the whole table.
+            rows = _window_rows(d, now, newest_age_limit, 300, columns)
         else:
             rows = d.execute(f'SELECT {columns} FROM raw_events ORDER BY seq DESC LIMIT 500').fetchall()
         for seq, source, received, slot, h, kind, length in rows:
@@ -567,7 +605,7 @@ def _select(ctx, c, now):
                     or type(seq) is not int or seq <= 0 or type(slot) is not int or not 0 <= slot < 2**63
                     or kind != 'text' or not 0 < length <= 200000):
                 raise ValueError('Malformed discovery row')
-            if not 300 <= now-received <= ctx['maximum_age']:
+            if not 300 <= now-received <= newest_age_limit:
                 continue
             payload = d.execute('SELECT payload FROM raw_events WHERE seq=?', (seq,)).fetchone()[0]
             raw = json.loads(payload, object_pairs_hook=cli._object,
@@ -622,6 +660,8 @@ def _select(ctx, c, now):
 def _due(ctx, c, r, now):
     """Fresh hints are exhausted: the oldest due watchlist re-evaluation, as a NEW evaluation."""
     cfg = cli._config(ctx['paths']['config']['path'])
+    if _watchlist_pressure(ctx):
+        return None   # bounded no-entry tables are >= 80% full: fresh hints keep the room, re-evaluations pause
     with closing(watchlist.Watchlist(ctx['paths']['watchlist_db']['path'], read_only=True)) as wl:
         for item in wl.due(now, cfg):
             hint, evaluation = item['hint'], item['evaluation']
@@ -629,10 +669,17 @@ def _due(ctx, c, r, now):
             scans = r.execute('SELECT COUNT(*) FROM scans WHERE mint=?', (hint['mint'],)).fetchone()[0]
             if prior != list(range(1, evaluation)) or scans != evaluation - 1:
                 continue  # any ambiguity between journal, scans and watchlist: never re-evaluate
-            if not 300 <= now - hint['received_at'] <= ctx['maximum_age']:
+            if not 300 <= now - hint['received_at'] <= ctx['watchlist_maximum_age'] - ctx['preparation_margin']:
                 continue
             return {**hint, 'evaluation': evaluation}
     return None
+
+
+def _watchlist_pressure(ctx):
+    """[{'table','rows','cap'}] of bounded no-entry tables at >= 80%; [] when the watchlist is not versioned."""
+    if ctx.get('journal_schema', 1) != 2:
+        return []
+    return watchlist.capacity_pressure(ctx['paths']['evidence_db']['path'])
 
 
 def _reconcile_watchlist(ctx, journal, now):
@@ -649,7 +696,7 @@ def _reconcile_watchlist(ctx, journal, now):
             if wl.db.execute('SELECT 1 FROM watchlist_events WHERE mint=? AND evaluation=?', (mint, evaluation)).fetchone():
                 continue
             intent, result = json.loads(intent_text), json.loads(result_text)
-            codes, accepted = watchlist.reason_codes(result['result'])
+            codes, accepted = watchlist.reason_codes(result['result'], mint=mint, scan_id=result['scan_id'])
             wl.record(mint=mint, evaluation=evaluation, scan_id=result['scan_id'], codes=codes, at=result['at'],
                       hint=intent['hint'], cfg=cfg, accepted=accepted)
         wl.expire(now, cfg)
@@ -690,10 +737,11 @@ def _dispatch(expected, *, execute=False, systemd_credentials=False):
         if last and now < json.loads(last[0])['at']:
             raise ValueError('Dispatcher clock rollback')
         hint = _select(expected, journal, now)
+        paused = {'watchlist_paused_table_capacity': _watchlist_pressure(expected)} if v2 and _watchlist_pressure(expected) else {}
         if hint is None:
-            return {'status':'NO_CANDIDATE','attempted_requests':0}
+            return {'status':'NO_CANDIDATE','attempted_requests':0, **paused}
         if not execute:
-            return {'status':'DRY_RUN','hint':hint,'attempted_requests':0,'entry_authorized':False}
+            return {'status':'DRY_RUN','hint':hint,'attempted_requests':0,'entry_authorized':False, **paused}
         evaluation = hint.pop('evaluation') if v2 else None
         if not systemd_credentials:
             raise ValueError('Explicit managed credentials required')
@@ -753,7 +801,8 @@ def _dispatch(expected, *, execute=False, systemd_credentials=False):
             return {'status':'DISPATCHED','dispatch_id':identity,'scan_id':scan,'paper_status':'NO_ENTRY',
                     'entry_authorized':False,'execution_status':'EXECUTION_UNVERIFIED','live_readiness':False}
         _preflight(expected,scan)
-        if not 300 <= _now()-hint['received_at'] <= expected['maximum_age']:
+        window = expected['watchlist_maximum_age'] if v2 and evaluation > 1 else expected['maximum_age']
+        if not 300 <= _now()-hint['received_at'] <= window:
             raise ValueError('Candidate expired during preparation')
         row = {'scan_id':scan,'mint':hint['mint'],'pool':hint['pool'],'taker':expected['taker'],
                'amount_raw':expected['amount_raw'],'provenance':PROVENANCE,

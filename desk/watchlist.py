@@ -20,11 +20,18 @@ from contextlib import closing
 import json
 import os
 from pathlib import Path
+import re
 import sqlite3
 
 from .model import canonical, digest
 
 VERSION = 1
+# An evaluation that starts closer to its age-window end than this cannot finish preparation (the dispatcher refuses
+# `Candidate expired during preparation` AFTER the intent is written, which strands an unresolved intent). The
+# margin applies when SCHEDULING a re-evaluation and when SELECTING any candidate for a versioned journal.
+PREPARATION_MARGIN_SECONDS = 900
+# Share of a bounded no-entry table at which re-evaluations stop being scheduled (fresh hints still run).
+CAPACITY_PAUSE_FRACTION = 0.8
 KEY = 'paper_watchlist_version'
 BACKOFF_KEYS = (('paper_watchlist_backoff_first_seconds', 600),
                 ('paper_watchlist_backoff_second_seconds', 1800),
@@ -51,6 +58,10 @@ NOT_YET = {
     'HISTORY_REQUIRED_MEASUREMENTS_UNAVAILABLE': 'insufficient history for required measurements',
     'HISTORY_FEATURE_MOMENTUM_STALE': 'latest captured momentum too old; fresh scan re-captures',
 }
+# Inner producer blockers (paper_market_adapter) for a window that is empty or stale RIGHT NOW. Every other producer
+# blocker (binding/integrity/identity codes) is deliberately absent => PERMANENT.
+NOT_YET_PREFIXES = ('MISSING_WINDOW_MEASUREMENT:', 'STALE_WINDOW_MEASUREMENT:')
+_MEASUREMENT = re.compile(r'[a-z][a-z0-9_]{0,63}')
 # Documented examples only; the rule is "not in NOT_YET => PERMANENT".
 PERMANENT_EXAMPLES = (
     'DANGER', 'UNVERIFIED_SAFETY', 'UNSUPPORTED_POOL', 'KNOWN_OWNERSHIP_HAZARD', 'SAFETY', 'REPEAT_DEPLOYER',
@@ -115,7 +126,16 @@ def classify(codes):
     """'NOT_YET' only when there is at least one code and every code is listed; else PERMANENT."""
     if type(codes) not in (list, tuple) or not codes or any(type(c) is not str or not c for c in codes):
         return 'PERMANENT'
-    return 'NOT_YET' if all(c in NOT_YET for c in codes) else 'PERMANENT'
+    return 'NOT_YET' if all(_not_yet(c) for c in codes) else 'PERMANENT'
+
+
+def _not_yet(code):
+    if code in NOT_YET:
+        return True
+    for prefix in NOT_YET_PREFIXES:
+        if code.startswith(prefix) and _MEASUREMENT.fullmatch(code[len(prefix):]):
+            return True
+    return False
 
 
 def delay_after(evaluation, cfg):
@@ -199,7 +219,7 @@ class Watchlist:
         due = []
         for row in rows:
             hint = json.loads(row['hint'])
-            if now > expires_at(hint, cfg):
+            if now > expires_at(hint, cfg) - PREPARATION_MARGIN_SECONDS:
                 continue
             due.append({'mint': row['mint'], 'evaluation': row['evaluation'] + 1, 'hint': hint,
                         'next_eval_at': row['next_eval_at']})
@@ -225,8 +245,8 @@ class Watchlist:
                 delay = delay_after(evaluation, cfg)
                 if evaluation - 1 >= cfg_settings['max_reevaluations']:
                     kind, nxt = 'EXHAUSTED', None
-                elif at + delay > expires_at(hint, cfg):
-                    kind, nxt = 'EXPIRED', None
+                elif at + delay > expires_at(hint, cfg) - PREPARATION_MARGIN_SECONDS:
+                    kind, nxt = 'EXPIRED', None      # the next evaluation could not finish preparation in time
                 else:
                     kind, nxt = 'ENROLLED', at + delay
         body = {'mint': mint, 'evaluation': evaluation, 'kind': kind, 'at': at, 'scan_id': scan_id, 'codes': codes,
@@ -274,12 +294,37 @@ class Watchlist:
         return expired
 
 
-def reason_codes(result):
+def capacity_pressure(evidence_db):
+    """Bounded no-entry tables that are >= 80% full: [{'table','rows','cap'}]. Read-only; raises on an unreadable store.
+
+    Every re-evaluation is a new scan and consumes a row of these append-only, hard-capped tables when it ends
+    in a no-entry. Scheduling re-evaluations stops while any is at/over the threshold so fresh candidates keep
+    their room; the caller reports the pressure as a health warning. Nothing is deleted or reset.
+    """
+    from . import history_preparation_rejection as preparation, paper_cycle_no_entry as cycle_no_entry
+    caps = ((preparation.TABLE, preparation.MAX_REJECTIONS), (cycle_no_entry.TABLE, cycle_no_entry.MAX_ROWS))
+    pressure = []
+    path = Path(evidence_db)
+    with closing(sqlite3.connect(path.as_uri() + '?mode=ro', uri=True, timeout=5)) as c:
+        for table, cap in caps:
+            if not c.execute("SELECT 1 FROM sqlite_master WHERE type='table' AND name=?", (table,)).fetchone():
+                continue
+            rows = c.execute(f'SELECT COUNT(*) FROM {table}').fetchone()[0]
+            if rows >= CAPACITY_PAUSE_FRACTION * cap:
+                pressure.append({'table': table, 'rows': rows, 'cap': cap})
+    return pressure
+
+
+def reason_codes(result, mint=None, scan_id=None):
     """Rejection codes carried by a dispatch result; ([], accepted) when nothing is rejected.
 
     Understands the typed results the dispatcher already publishes: engine rejects and
     blockers of a completed cycle, history-preparation no-entry, token-policy rejection
     and migration dispositions. Unknown shapes yield no codes, which classifies PERMANENT.
+
+    With `mint`/`scan_id` (the dispatcher always passes both) only evidence about THIS candidate counts: an
+    outcome carrying a different mint (a held position's reject) and a diagnostic of another scan are ignored.
+    An outcome or diagnostic that names no mint/scan stays in (its code is then unclassified => PERMANENT).
     """
     codes, accepted = [], False
     if type(result) is not dict:
@@ -295,6 +340,8 @@ def reason_codes(result):
     for outcome in result.get('outcomes', []) if type(result.get('outcomes')) is list else []:
         if type(outcome) is not dict:
             continue
+        if mint is not None and 'mint' in outcome and outcome['mint'] != mint:
+            continue
         if outcome.get('type') == 'fill' and outcome.get('side') == 'buy':
             accepted = True
         elif outcome.get('type') == 'reject':
@@ -303,6 +350,8 @@ def reason_codes(result):
     if type(result.get('blockers')) is list:
         codes.extend(b for b in result['blockers'] if type(b) is str)
     for diagnostic in result.get('diagnostics', []) if type(result.get('diagnostics')) is list else []:
+        if scan_id is not None and type(diagnostic) is dict and 'scan_id' in diagnostic and diagnostic['scan_id'] != scan_id:
+            continue
         if type(diagnostic) is dict and type(diagnostic.get('blockers')) is list:
             codes.extend(b for b in diagnostic['blockers'] if type(b) is str)
     return sorted(set(codes)), accepted

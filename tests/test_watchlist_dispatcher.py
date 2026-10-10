@@ -39,6 +39,7 @@ actual_cycle_with_reserves = _NAMESPACE['actual_cycle']
 
 class Base(unittest.TestCase):
     extra = {}
+    ctx_override = {}      # applied to every planned context from the start, so the journal's pinned context agrees
 
     def setUp(self):
         self.wdir = Path(os.path.realpath(tempfile.mkdtemp()))
@@ -50,7 +51,7 @@ class Base(unittest.TestCase):
 
         def plan(**kw):
             kw.setdefault('watchlist_db', str(self.watch))
-            return original(**kw)
+            return {**original(**kw), **self.ctx_override}
         for p in (patch.object(fixture, 'config', lambda: {**config(), watchlist.KEY: 1, **self.extra}),
                   patch.object(tool, 'plan', side_effect=plan)):
             p.start()
@@ -66,9 +67,10 @@ class Base(unittest.TestCase):
         self.f.f.at += seconds
         self.f.clock[0] = float(self.f.f.at)
 
-    def run_dispatch(self, reserves=GOOD, execute=True):
+    def run_dispatch(self, reserves=GOOD, execute=True, window='trades'):
         f = self.f
         outer = f
+        empty = window == 'empty'    # no trades in the five-minute window (a real, still-changing condition)
 
         class Opener:
             def open(self, request, *, timeout):
@@ -76,7 +78,7 @@ class Base(unittest.TestCase):
                 rows = [outer.raw]
                 if call['params'][1]['filters'].get('slot') != {'gte': 10, 'lt': 11}:
                     rows = []
-                    for i in range(40):
+                    for i in range(0 if empty else 40):
                         raw = transaction('dispatch-flow-' + str(i), 10 + i, outer.f.at - 1, quote=200, base=100,
                                           wallet=base58((i + 1).to_bytes(32, 'big')))
                         ix = raw['transaction']['message']['instructions'][0]
@@ -265,7 +267,9 @@ class SelectionAndContextTests(Base):
         with self.assertRaisesRegex(ValueError, 'Watchlist path'):
             self.real_plan(**args)
         ctx = self.real_plan(**args, watchlist_db=str(self.watch))
-        self.assertEqual((ctx['journal_schema'], ctx['maximum_age']), (2, 21600))
+        # T20F: fresh selection keeps the 7200 s dispatch window; only a re-evaluation may use the 21600 s engine window
+        self.assertEqual((ctx['journal_schema'], ctx['maximum_age'], ctx['watchlist_maximum_age'], ctx['preparation_margin']),
+                         (2, 7200, 21600, 900))
         self.assertIn('watchlist_db', ctx['paths'])
         self.assertEqual(ctx, self.ctx)
 
@@ -296,7 +300,7 @@ class JournalIntegrityTests(Base):
             intent_id, intent_text = c.execute('SELECT id,payload FROM intents').fetchone()
             result_text = c.execute('SELECT payload FROM results WHERE id=?', (intent_id,)).fetchone()[0]
         intent, result = json.loads(intent_text), json.loads(result_text)
-        intent['at'] = intent['hint']['received_at'] + 21600 + 1
+        intent['at'] = intent['hint']['received_at'] + 7200 + 1   # T20F: an evaluation-1 hint keeps the 7200 s dispatch window
         result.update(intent_hash=digest(intent), at=intent['at'] + 1)
         self.tamper('UPDATE intents SET payload=' + repr(canonical(intent)) + ',hash=' + repr(digest(intent)))
         self.tamper('UPDATE results SET payload=' + repr(canonical(result)) + ',hash=' + repr(digest(result)))
@@ -304,11 +308,207 @@ class JournalIntegrityTests(Base):
             self.run_dispatch(GOOD, execute=False)
         # The same record one second inside the window is valid (the clock must not precede it).
         self.advance(25000)
-        intent['at'] = intent['hint']['received_at'] + 21600
+        intent['at'] = intent['hint']['received_at'] + 7200
         result.update(intent_hash=digest(intent), at=intent['at'] + 1)
         self.tamper('UPDATE intents SET payload=' + repr(canonical(intent)) + ',hash=' + repr(digest(intent)))
         self.tamper('UPDATE results SET payload=' + repr(canonical(result)) + ',hash=' + repr(digest(result)))
         self.run_dispatch(GOOD, execute=False)
+
+
+class T20FTests(Base):
+    """T20F items 3, 5 and 6 at dispatcher level: preparation margin, windows, table pressure, fresh-over-due."""
+
+    def hint_age(self):
+        dry = self.run_dispatch(GOOD, execute=False)
+        self.assertEqual(dry['status'], 'DRY_RUN', dry)
+        return self.f.f.at - dry['hint']['received_at'], dry
+
+    def to_age(self, age):
+        current, _ = self.hint_age()
+        self.advance(age - current)
+        return age
+
+    def reconcile_first_rejection(self, window='trades'):
+        self.run_dispatch(THIN)
+        self.advance(300)
+        self.assertEqual(self.run_dispatch(GOOD)['status'], 'NO_CANDIDATE')       # reconciles evaluation 1
+        self.assertEqual([e['kind'] for e in self.events()], ['ENROLLED'])
+
+    def test_a_fresh_candidate_is_selectable_only_while_it_keeps_the_preparation_margin(self):
+        # fresh window 7200 - margin 900 = 6300
+        self.assertEqual(self.to_age(6300), 6300)
+        self.assertEqual(self.run_dispatch(GOOD, execute=False)['status'], 'DRY_RUN')
+        self.advance(1)
+        self.assertEqual(self.run_dispatch(GOOD, execute=False)['status'], 'NO_CANDIDATE')
+        self.assertEqual(len(self.journal('intents')), 0)                       # nothing stranded
+
+    def test_fresh_selection_no_longer_admits_hints_up_to_21600_seconds_old(self):
+        self.to_age(7000)                                                       # old v2 behaviour selected this
+        self.assertEqual(self.run_dispatch(GOOD, execute=False)['status'], 'NO_CANDIDATE')
+
+    def test_a_reevaluation_may_use_the_long_window_but_keeps_the_margin(self):
+        self.reconcile_first_rejection()
+        age = self.hint_age_of_enrolled()
+        self.advance(20700 - age)                                               # engine window 21600 - margin 900
+        dry = self.run_dispatch(GOOD, execute=False)
+        self.assertEqual((dry['status'], dry['hint']['evaluation']), ('DRY_RUN', 2))
+        self.advance(1)
+        self.assertEqual(self.run_dispatch(GOOD, execute=False)['status'], 'NO_CANDIDATE')
+
+    def hint_age_of_enrolled(self):
+        (row,) = self.events()
+        return self.f.f.at - json.loads(row['hint'])['received_at']
+
+    def test_preparation_that_consumes_the_margin_does_not_strand_an_intent(self):
+        """Selected with exactly the margin left, 800 s of preparation still fits; without the margin it would not."""
+        delay = 800
+        real = tool._preflight
+
+        def slow(ctx, scan=None):
+            real(ctx, scan)
+            if scan is not None and not self.slowed:
+                self.slowed = True
+                self.advance(delay)                                              # preparation took 800 s
+        self.slowed = False
+        self.to_age(6300)
+        with patch.object(tool, '_preflight', side_effect=slow):
+            result = self.run_dispatch(THIN)
+        # past the 'expired during preparation' check; the fixture's data cannot survive the 800 s jump afterwards,
+        # so the cycle may block, which is irrelevant here: the intent was written, dispatched and resolved.
+        self.assertEqual(result['status'], 'DISPATCHED', result)
+        self.assertEqual((len(self.journal('intents')), len(self.journal('results'))), (1, 1))
+        self.assertTrue(self.slowed)
+        # Control: the old behaviour (no margin) picks the same candidate at 7199 s and strands the intent.
+        self.assertGreater(6300 + delay, 7000)
+
+    def test_a_fresh_hint_is_chosen_over_a_due_reevaluation(self):
+        self.reconcile_first_rejection()
+        self.advance(600)                                                       # evaluation 2 is due
+        self.assertEqual(self.run_dispatch(GOOD, execute=False)['hint']['evaluation'], 2)
+        fresh = self.f.append_distinct_migration()
+        dry = self.run_dispatch(GOOD, execute=False)
+        self.assertEqual((dry['hint']['mint'], dry['hint']['evaluation']), (fresh, 1))
+
+    def test_reevaluations_pause_when_a_bounded_table_is_at_eighty_percent_but_fresh_hints_still_run(self):
+        self.reconcile_first_rejection()
+        self.advance(600)
+        pressure = [{'table': 'paper_cycle_no_entry', 'rows': 6554, 'cap': 8192}]
+        with patch.object(watchlist, 'capacity_pressure', return_value=pressure):
+            paused = self.run_dispatch(GOOD, execute=False)
+            self.assertEqual(paused['status'], 'NO_CANDIDATE')
+            self.assertEqual(paused['watchlist_paused_table_capacity'], pressure)   # the health warning payload
+            fresh = self.f.append_distinct_migration()
+            dry = self.run_dispatch(GOOD, execute=False)
+            self.assertEqual((dry['hint']['mint'], dry['hint']['evaluation']), (fresh, 1))
+            self.assertEqual(dry['watchlist_paused_table_capacity'], pressure)
+        self.assertEqual(len(self.events()), 1)                                  # nothing was written or deleted
+        with patch.object(watchlist, 'capacity_pressure', return_value=[]):
+            self.assertEqual(self.run_dispatch(GOOD, execute=False)['hint']['mint'], fresh)   # fresh still first
+
+
+class ShrunkFreshWindowTests(Base):
+    """The fixture's provider data cannot survive a two-hour gap (HISTORY_RECOVERY_REQUIRED), so the fresh window is
+    shrunk to 1200 s (margin 100 s) for the whole test (journal context included). The logic under test, fresh window vs the
+    watchlist's engine window, is identical to 7200 vs 21600."""
+    ctx_override = {'maximum_age': 1200, 'preparation_margin': 100}
+
+    def test_a_reevaluation_older_than_the_fresh_window_is_dispatched_end_to_end(self):
+        self.run_dispatch(THIN)
+        self.advance(300)
+        self.assertEqual(self.run_dispatch(GOOD)['status'], 'NO_CANDIDATE')       # reconciles evaluation 1
+        self.advance(600)
+        (row,) = [e for e in watchlist.Watchlist(self.watch, read_only=True).events()]
+        age = self.f.f.at - json.loads(row['hint'])['received_at']
+        self.assertGreater(age, 1200)                                             # too old for a fresh candidate
+        second = self.run_dispatch(GOOD)
+        self.assertEqual((second['status'], second['paper_status']), ('DISPATCHED', 'COMPLETE'), second)
+        self.assertEqual([i[3] for i in self.journal('intents')], [1, 2])
+        self.assertEqual(list(cycle._state(self.f.ledger, self.cfg)['positions']), [self.f.mint])
+        with tool._journal(self.f.journal) as c:                                   # an aged evaluation-2 intent validates
+            tool._validate(c, tool.plan(**self.f.args))
+
+
+class NoMarginTests(Base):
+    """Control: the pre-T20F behaviour (no preparation margin) strands the candidate this way."""
+
+    def setUp(self):
+        p = patch.object(watchlist, 'PREPARATION_MARGIN_SECONDS', 0)
+        p.start(); self.addCleanup(p.stop)
+        super().setUp()
+
+    def test_without_the_margin_the_same_preparation_expires_the_candidate_after_the_intent_is_written(self):
+        real = tool._preflight
+        state = {'slowed': False}
+
+        def slow(ctx, scan=None):
+            real(ctx, scan)
+            if scan is not None and not state['slowed']:
+                state['slowed'] = True
+                self.advance(800)                                                  # preparation took 800 s
+        _, dry = None, self.run_dispatch(GOOD, execute=False)
+        self.advance(7190 - (self.f.f.at - dry['hint']['received_at']))
+        self.assertEqual(self.ctx['preparation_margin'], 0)
+        with patch.object(tool, '_preflight', side_effect=slow):
+            with self.assertRaisesRegex(ValueError, 'expired during preparation'):
+                self.run_dispatch(THIN)
+        self.assertEqual((len(self.journal('intents')), len(self.journal('results'))), (1, 0))   # the stranded intent
+
+
+class ReconcileRealShapeTests(unittest.TestCase):
+    """T20F item 1 at the dispatcher boundary: the journal result is the real T01 empty-window cycle result."""
+
+    def setUp(self):
+        from tests.test_cycle_no_entry import fixture
+        self.t = fixture(); self.addCleanup(self.t.doCleanups)
+        self.tmp = tempfile.TemporaryDirectory(); self.addCleanup(self.tmp.cleanup)
+        d = Path(os.path.realpath(self.tmp.name))
+        os.chmod(d, 0o700)
+        self.watch = d / 'watchlist.sqlite'
+        watchlist.initialize(self.watch)
+        self.cfgfile = d / 'config.json'
+        self.cfgfile.write_text(json.dumps({**config(), watchlist.KEY: 1}))
+        self.ctx = {'paths': {'config': {'path': str(self.cfgfile)}, 'watchlist_db': {'path': str(self.watch)}}}
+        self.scan = self.t.h.f.target.scan_id
+        self.mint = self.t.h.f.target.mint
+
+    def journal(self, result, evaluation=1, at=5000.0):
+        c = sqlite3.connect(':memory:')
+        c.execute('CREATE TABLE intents(id TEXT,mint TEXT,signature TEXT,evaluation INTEGER,payload TEXT,hash TEXT)')
+        c.execute('CREATE TABLE results(id TEXT,payload TEXT,hash TEXT)')
+        hint = {'seq': 1, 'payload_hash': 'a' * 64, 'raw_hash': 'b' * 64, 'received_at': 4000.0, 'mint': self.mint,
+                'pool': 'POOL', 'signature': 'SIG', 'slot': 5}
+        c.execute('INSERT INTO intents VALUES(?,?,?,?,?,?)', ('i1', self.mint, 'SIG', evaluation, canonical({'hint': hint}), ''))
+        c.execute('INSERT INTO results VALUES(?,?,?)', ('i1', canonical({'scan_id': self.scan, 'at': at, 'result': result}), ''))
+        self.addCleanup(c.close)
+        return c
+
+    def events(self):
+        with closing(watchlist.Watchlist(self.watch, read_only=True)) as w:
+            return w.events(), w.due(5600.0, {**config(), watchlist.KEY: 1})
+
+    def test_empty_window_pass_is_enrolled_and_due_ten_minutes_later_as_evaluation_2(self):
+        tool._reconcile_watchlist(self.ctx, self.journal(self.t.result), 5001.0)
+        (row,), due = self.events()
+        self.assertEqual((row['kind'], row['classification'], row['next_eval_at']), ('ENROLLED', 'NOT_YET', 5600.0))
+        self.assertIn('MARKET_PRODUCER_BLOCKED', json.loads(row['codes']))
+        self.assertTrue(any(c.startswith('MISSING_WINDOW_MEASUREMENT:') for c in json.loads(row['codes'])))
+        self.assertEqual([(d['mint'], d['evaluation']) for d in due], [(self.mint, 2)])
+
+    def test_an_integrity_blocker_in_the_same_result_makes_it_permanent(self):
+        bad = copy.deepcopy(self.t.result)
+        next(d for d in bad['diagnostics'] if 'blockers' in d)['blockers'].append('COLLECTOR_SOURCE_BINDING_OR_CONTENT_INVALID')
+        tool._reconcile_watchlist(self.ctx, self.journal(bad), 5001.0)
+        (row,), due = self.events()
+        self.assertEqual((row['kind'], row['classification']), ('PERMANENT', 'PERMANENT'))
+        self.assertEqual(due, [])
+
+    def test_a_held_positions_reject_in_the_same_pass_does_not_taint_the_classification(self):
+        mixed = copy.deepcopy(self.t.result)
+        mixed['outcomes'] = [{'type': 'reject', 'reason': 'DANGER', 'reasons': ['DANGER'], 'mint': 'SOME_HELD_MINT'}]
+        mixed['diagnostics'].append({'scan_id': 'another-scan', 'blockers': ['COLLECTOR_SOURCE_BINDING_OR_CONTENT_INVALID']})
+        tool._reconcile_watchlist(self.ctx, self.journal(mixed), 5001.0)
+        (row,), _ = self.events()
+        self.assertEqual((row['kind'], row['classification']), ('ENROLLED', 'NOT_YET'))
 
 
 class DefaultOffTests(unittest.TestCase):
