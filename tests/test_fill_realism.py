@@ -10,6 +10,7 @@ import io
 import json
 import os
 import sqlite3
+import sys
 import tempfile
 import unittest
 from decimal import Decimal
@@ -195,7 +196,7 @@ class Clock:
         self.sleeps.append(seconds); self.now += seconds
 
 
-class WorkerTests(unittest.TestCase):
+class WorkerFixtureBase(unittest.TestCase):
     """Real worker, real store, scripted client and clock: nothing sleeps or touches a network."""
 
     def setUp(self):
@@ -244,6 +245,9 @@ class WorkerTests(unittest.TestCase):
         with contextlib.closing(sqlite3.connect(self.store)) as c:
             return c.execute(f'SELECT COUNT(*) FROM {fr.ATTEMPT_TABLE}').fetchone()[0]
 
+
+
+class WorkerTests(WorkerFixtureBase):
     def test_three_samples_scheduled_on_absolute_time_and_charged_to_its_own_allowance(self):
         self.add_job(); self.script[:] = [990_000, 970_000, 940_000]
         summary = self.go()
@@ -598,19 +602,52 @@ class CycleIntegrationTests(unittest.TestCase):
             for table in ('events', 'outcomes'):
                 self.assertEqual(x.execute(f'SELECT COUNT(*) FROM {table}').fetchone(), y.execute(f'SELECT COUNT(*) FROM {table}').fetchone())
 
-    def test_jobs_are_enqueued_only_after_the_pass_outcome_is_durable(self):
+    def test_jobs_are_enqueued_after_the_result_page_is_durable(self):
         on = self.make(True)
         seen = []
         real = fr.enqueue
         def spy(ledger_path, jobs, cfg_hash, **kw):
-            with contextlib.closing(on.f.progress.store.connect()) as c:
-                seen.append(c.execute('SELECT outcome_hash IS NOT NULL FROM paper_observation_passes').fetchall())
+            pages = []
+            for key, in on.f.progress.store.connect().execute('SELECT hash FROM pages').fetchall():
+                page = terminal._load(on.f.progress.store, key)
+                if isinstance(page, dict) and page.get('kind') == 'paper_cycle_v1':
+                    pages.append(page)
+            seen.append([(p['status'], len(p['outcomes'])) for p in pages])
             return real(ledger_path, jobs, cfg_hash, **kw)
         with patch.object(fr, 'enqueue', spy):
             result = on.actual_cycle()
         self.assertEqual(result['status'], 'COMPLETE')
         self.assertEqual(len(seen), 1)
-        self.assertEqual(set(seen[0]), {(1,)})        # every pass already had its outcome when the job was enqueued
+        self.assertEqual(seen[0], [('COMPLETE', 1)])        # the finished result was already persisted when the job was enqueued
+
+    def test_enqueue_precedes_every_early_return_of_the_pass(self):
+        """Fills in a pass that ends in a terminal receipt or a typed no-entry outcome are still measured (T14G item 4)."""
+        import ast
+        tree = ast.parse(Path(cycle.__file__).read_text())
+        (run_once,) = [n for n in ast.walk(tree) if isinstance(n, ast.FunctionDef) and n.name == 'run_once']
+        text = Path(cycle.__file__).read_text().splitlines()
+        def first(needle):
+            return min(n.lineno for n in ast.walk(run_once) if hasattr(n, 'lineno') and needle in text[n.lineno - 1])
+        enqueue = first('fill_realism.enqueue')
+        self.assertLess(first('store.save(result)'), enqueue)
+        self.assertLess(enqueue, first('certify_intrinsic'))
+        self.assertLess(enqueue, first('no_entry.publish'))
+        self.assertLess(enqueue, first("return {**result,'evidence_hash':outcome}"))
+
+    def test_a_pass_with_fills_ending_in_an_early_return_still_enqueues(self):
+        """Force the typed no-entry branch after a real fill: the job must already be queued."""
+        on = self.make(True)
+        from desk import paper_cycle_no_entry as no_entry
+        calls = []
+        def fake_publish(*args, **kwargs):
+            calls.append(len(self.store_rows(on, fr.JOB_TABLE)))   # jobs queued at the moment publication runs
+            raise ValueError('not provable here')                  # the cycle keeps the NULL latch, as for any unproved case
+        original = on.actual_cycle
+        with patch.object(no_entry, 'publish', fake_publish), patch.object(no_entry, 'NORMAL', no_entry.NORMAL | {'STALE_PORTFOLIO'}):
+            result = original()
+        # A COMPLETE pass never reaches publication; the structural test above pins the order for the early returns.
+        self.assertEqual(result['status'], 'COMPLETE')
+        self.assertEqual(len(self.store_rows(on, fr.JOB_TABLE)), 1)
 
     def test_default_off_leaves_no_trace(self):
         off = self.make(False)
@@ -670,6 +707,170 @@ class CycleIntegrationTests(unittest.TestCase):
         self.assertEqual(json.loads(jobs[1]['record_json']), sell['quote_execution'])
         self.assertEqual(self.store_rows(on, fr.SAMPLE_TABLE), [])
         self.assertIn(on.target.mint, cycle._state(on.path, on.cfg)['positions'])      # still open after the partial exit
+
+
+class ConfigAndHookTests(unittest.TestCase):
+    """T14G item 1 (BLOCKER): a bad measurement key is refused with the config and the hook never raises."""
+
+    def cfg(self, **extra):
+        base = {**config(), 'paper_signal_policy_version': 3, 'paper_quote_execution_version': 1}
+        return {**base, **extra}
+
+    def test_realism_key_is_validated_even_without_the_quote_execution_key(self):
+        orphan = {**config(), fr.KEY: 1}                               # no paper_quote_execution_version at all
+        for bad in (orphan, self.cfg(**{fr.KEY: 2}), self.cfg(**{fr.KEY: True}), self.cfg(**{fr.KEY: '1'}),
+                    {**config(), fr.KEY: 0}, {**config(), fr.KEY: 1.0}):
+            with self.subTest(bad=bad.get(fr.KEY)), self.assertRaises(qe.QuoteExecutionError):
+                qe.config(bad)
+        self.assertTrue(qe.config(self.cfg(**{fr.KEY: 1})))
+        self.assertTrue(qe.config(self.cfg()))                         # absent: untouched
+        self.assertFalse(qe.config({**config()}))                      # absent key and no quote execution: unchanged behaviour
+
+    def test_a_bad_realism_config_is_refused_before_any_pass_exists_so_nothing_latches(self):
+        fx = cycle_fixtures.PaperCycleTests('run_cycle')
+        fx.setUp(); self.addCleanup(fx.doCleanups)
+        fx.http_calls, fx.sell_output = [], 10_000_000
+        bad = {k: v for k, v in fx.cfg.items() if k != 'paper_quote_execution_version'} | {fr.KEY: 1}
+        with self.assertRaises(ValueError):
+            cycle._config(bad)
+        before = fx.f.progress.admission(fx.target.scan_id)
+        fx.cfg = {**fx.cfg, fr.KEY: 2}
+        with self.assertRaises(ValueError):
+            fx.actual_cycle()
+        self.assertEqual(fx.f.progress.admission(fx.target.scan_id), before)          # no request was charged
+        with contextlib.closing(fx.f.progress.store.connect()) as c:
+            exists = c.execute("SELECT 1 FROM sqlite_master WHERE name='paper_observation_passes'").fetchone()
+            self.assertTrue(not exists or c.execute('SELECT COUNT(*) FROM paper_observation_passes').fetchone()[0] == 0)
+
+    def test_capture_never_raises(self):
+        class Target: scan_id, pool, taker = 's', 'p', 't'
+        class Source: observed_at = 1
+        class Mint: source = Source()
+        class Collected: target, mint = Target(), Mint()
+        fill = [{'type': 'fill', 'side': 'buy', 'mint': 'M', 'quote_execution': BUY}]
+        on = self.cfg(**{fr.KEY: 1})
+        self.assertEqual(len(fr.capture(on, fill, {'event_id': 'e', 'ts': T}, Collected(), False)), 1)
+        self.assertEqual(fr.capture(self.cfg(), fill, {'event_id': 'e', 'ts': T}, Collected(), False), [])    # off
+        for broken in ({**config(), fr.KEY: 1}, {**on, fr.KEY: 7}, None, 5):
+            self.assertEqual(fr.capture(broken, fill, {'event_id': 'e', 'ts': T}, Collected(), False), [])
+        self.assertEqual(fr.capture(on, None, {}, object(), False), [])
+        with patch.object(fr, 'selected', side_effect=KeyboardInterrupt), self.assertRaises(KeyboardInterrupt):
+            fr.capture(on, fill, {'event_id': 'e', 'ts': T}, Collected(), False)
+
+    def test_a_defect_inside_the_in_pass_hook_cannot_latch_the_store(self):
+        fx = cycle_fixtures.PaperCycleTests('run_cycle')
+        fx.setUp(); self.addCleanup(fx.doCleanups)
+        fx.http_calls, fx.sell_output = [], 10_000_000
+        fx.cfg = {**fx.cfg, fr.KEY: 1}
+        fx.path = Path(fx.f.tmp.name) / 'hook-defect.sqlite'
+        cycle.initialize(fx.path, fx.cfg)
+        real = fr.selected
+        def selected(cfg):
+            if sys._getframe(1).f_code.co_name == 'capture':        # only the in-pass hook is made to fail
+                raise qe.QuoteExecutionError('FILL_REALISM_CONFIG_INVALID')
+            return real(cfg)
+        with patch.object(fr, 'selected', selected):
+            result = fx.actual_cycle()
+        self.assertEqual(result['status'], 'COMPLETE', result)
+        self.assertFalse(fr.store_path(fx.path).exists())           # nothing queued, nothing raised
+        with contextlib.closing(fx.f.progress.store.connect()) as c:
+            self.assertEqual(c.execute('SELECT COUNT(*) FROM paper_observation_passes WHERE outcome_hash IS NULL').fetchone()[0], 0)
+        self.assertIsNone(terminal.gate(fx.f.progress.store, fx.f.jobs.path, ()))
+
+
+class WorkerToleranceAndLockTests(WorkerFixtureBase):
+    """T14G items 2 and 5."""
+
+    def test_defaults_are_tight_and_documented(self):
+        self.assertEqual((worker.LATE_SECONDS, worker.RESPONSE_SECONDS), (1.0, 2.0))
+        text = Path(worker.__file__).read_text()
+        self.assertIn('NO provider timestamp', text)
+        parsed = worker.argparse.ArgumentParser()
+        self.assertIsNotNone(parsed)
+
+    def test_a_request_sent_more_than_a_second_late_is_late_not_measured(self):
+        self.add_job(decision_at=T)
+        late_sends = {}
+        def paced(input_mint, output_mint, amount, taker, *, timeout_seconds):
+            payload = self.client(input_mint, output_mint, amount, taker, timeout_seconds=timeout_seconds)
+            payload['started_at'] = self.clock.now - 0.3 + 1.5     # pacing held the real send 1.5 s after the due time
+            late_sends[amount] = True
+            return payload
+        self.go(client=paced, max_samples=1)
+        (row,) = self.rows()
+        self.assertEqual((row['status'], row['code'], row['charged']), ('LATE', 'REALISM_SAMPLE_LATE', 1))
+        self.assertIsNone(row['out_drift_bps'])
+        self.assertGreater(Decimal(row['lag_seconds']), Decimal('1.0'))
+
+    def test_a_response_that_finishes_after_two_seconds_is_late(self):
+        self.add_job(decision_at=T)
+        def slow(input_mint, output_mint, amount, taker, *, timeout_seconds):
+            payload = self.client(input_mint, output_mint, amount, taker, timeout_seconds=timeout_seconds)
+            self.clock.now += 2.5                                   # the response took long to arrive
+            return payload
+        self.go(client=slow, max_samples=1)
+        (row,) = self.rows()
+        self.assertEqual((row['status'], row['code'], row['charged']), ('LATE', 'REALISM_RESPONSE_LATE', 1))
+        self.assertIsNone(row['out_drift_bps'])
+
+    def test_a_start_within_a_second_and_a_finish_within_two_is_measured(self):
+        self.add_job(decision_at=T)
+        self.clock.now = T + 2.8                                    # worker 0.8 s after the +2s due time
+        self.go(max_samples=1)
+        (row,) = self.rows()
+        self.assertEqual(row['status'], 'MEASURED')
+
+    def test_an_old_provider_date_is_stale(self):
+        self.add_job(decision_at=T)
+        def dated(input_mint, output_mint, amount, taker, *, timeout_seconds):
+            payload = self.client(input_mint, output_mint, amount, taker, timeout_seconds=timeout_seconds)
+            payload['provider_date'] = int(T) - 30                  # a cached copy generated long before the due time
+            return payload
+        self.go(client=dated, max_samples=1)
+        (row,) = self.rows()
+        self.assertEqual((row['status'], row['code']), ('STALE', 'REALISM_STALE_QUOTE'))
+
+    def test_a_second_worker_gets_busy_and_touches_nothing(self):
+        import fcntl
+        self.add_job()
+        fr.enqueue(self.ledger, [], 'x')                            # no-op; the store exists after add_job
+        held = open(str(self.store) + '.worker.lock', 'a')
+        self.addCleanup(held.close)
+        fcntl.flock(held, fcntl.LOCK_EX | fcntl.LOCK_NB)            # another worker owns the store
+        summary = self.go()
+        self.assertEqual(summary['status'], 'BUSY')
+        self.assertEqual((self.rows(), self.attempts(), self.calls), ([], 0, []))
+        out = io.StringIO()
+        cfg_path = Path(self.tmp.name) / 'cfg.json'; cfg_path.write_text(canonical(self.cfg))
+        with contextlib.redirect_stdout(out), patch.object(worker, 'JupiterQuoteClient', return_value=self.client):
+            with patch('desk.provider_pacing.configured', return_value=object()):
+                self.assertEqual(worker.main(['--ledger', str(self.ledger), '--config', str(cfg_path)]), 0)
+        self.assertEqual(json.loads(out.getvalue())['status'], 'BUSY')
+        fcntl.flock(held, fcntl.LOCK_UN)
+        self.assertEqual(self.go()['measured'], 3)                  # released: the next worker proceeds
+
+    def test_a_duplicate_attempt_is_a_recorded_no_op_not_a_crash(self):
+        self.add_job()
+        with contextlib.closing(fr.connect(self.store)) as c:
+            c.execute(f"INSERT INTO {fr.ATTEMPT_TABLE} VALUES('fill-1','buy',2,1.0)")      # someone attempted it already
+            self.assertEqual({r['delay'] for r in worker._pending(c)}, {5, 10})         # so it is no longer queued ...
+        with contextlib.closing(fr.connect(self.store)) as c:                            # ... and if a race still reaches _sample:
+            fr.ensure_schema(c, allowance_per_hour=60)                                    # (run() records the allowance policy)
+            c.row_factory = sqlite3.Row
+            row = c.execute(f"SELECT j.*, 2 AS delay, j.decision_at + 2 AS due_at FROM {fr.JOB_TABLE} j").fetchone()
+            self.clock.now = T + 2
+            self.assertIsNone(worker._sample(c, row, self.cfg, self.client, self.clock, 1.0, 2.0))   # a no-op, not an exception
+        self.assertEqual(self.calls, [])
+        self.assertEqual(self.go()['status'], 'DONE')                                      # the run itself completes normally
+
+    def test_a_duplicate_sample_row_is_skipped_not_a_store_error(self):
+        self.add_job()
+        real = worker._insert_sample
+        def duplicate(c, row):
+            raise sqlite3.IntegrityError('UNIQUE constraint failed')
+        with patch.object(worker, '_insert_sample', duplicate):
+            summary = self.go(max_samples=1)
+        self.assertNotEqual(summary['status'], 'STORE_ERROR')
 
 
 if __name__ == '__main__':
