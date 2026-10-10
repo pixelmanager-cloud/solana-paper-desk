@@ -1,6 +1,7 @@
 """Read-only paper round-trip snapshot and cold-restart comparison.
 
     python -m tools.ops.verify_cycle snapshot --data DIR --ledger NAME --config PATH --out snap.json
+        [--anchor-from earlier.json]
     python -m tools.ops.verify_cycle compare snapA.json snapB.json [--allow-progress]
 
 Nothing here opens a store for writing, calls a provider, signs or broadcasts.
@@ -61,34 +62,61 @@ def _quiesced(path):
     return not shm.exists() and (not wal.exists() or wal.stat().st_size == 0)
 
 
+def _is_wal(path):
+    """SQLite header bytes 18/19 (file-format write/read versions) are 2 only for WAL."""
+    with open(path, 'rb') as stream:
+        head = stream.read(100)
+    return len(head) == 100 and head[:16] == b'SQLite format 3\x00' and head[18] == 2 and head[19] == 2
+
+
 def _connect(path, what):
     """Open without write access and without creating sidecar files.
 
     A reader of a WAL database normally creates -shm/-wal; run as root that would
-    leave files the service user cannot open. A quiesced database is therefore
-    opened immutable (no locking, no sidecars; cold-restart snapshots expect no
-    writer). With live sidecars present, ordinary mode=ro uses them as they are.
+    leave files the service user cannot open. Only a quiesced WAL database (header
+    says WAL, no sidecar content) is therefore opened immutable. Everything else,
+    including the live rollback-journal stores (provider-pacing.sqlite, dispatcher
+    journals, evidence.sqlite), uses plain mode=ro so locks and any hot journal are
+    honoured: immutable=1 on a store that another process can write may read a torn
+    or stale view.
     """
     path = _regular(path, what)
-    mode = 'immutable=1' if _quiesced(path) else 'mode=ro'
+    mode = 'immutable=1' if _is_wal(path) and _quiesced(path) else 'mode=ro'
     c = sqlite3.connect(f'file:{quote(str(path))}?{mode}', uri=True, timeout=5)
     c.execute('PRAGMA query_only=ON')
     return c
 
 
-def _rolling(c, sql, stride=None):
-    """Count, cumulative row digests (prefix proof) and the final digest."""
+def _rolling(c, sql, stride=None, anchors=()):
+    """Count, cumulative row digests (prefix proof) and the final digest.
+
+    Marks are kept at every ``stride`` rows (bounded by MAX_ROLLING), at the final
+    row, and at each anchor count: an anchor is the exact row count of an earlier
+    snapshot, so a later snapshot can prove that exact old prefix is unchanged.
+    """
     count = c.execute(f'SELECT count(*) FROM ({sql})').fetchone()[0]
     stride = stride or max(1, -(-count // MAX_ROLLING))
+    anchors = set(anchors)
     h = hashlib.sha256()
     marks = {}
     n = 0
     for row in c.execute(sql):
         h.update(json.dumps(list(row), separators=(',', ':'), allow_nan=False).encode() + b'\n')
         n += 1
-        if n % stride == 0 or n == count:
+        if n % stride == 0 or n == count or n in anchors:
             marks[str(n)] = h.hexdigest()[:16]
     return {'count': n, 'stride': stride, 'final': h.hexdigest(), 'rolling': marks}
+
+
+def _anchor_counts(anchor, *path):
+    """Row count recorded for the same table in an earlier snapshot, if any."""
+    for key in path:
+        if type(anchor) is not dict or key not in anchor:
+            return ()
+        anchor = anchor[key]
+    if type(anchor) is dict and type(anchor.get('count')) is int and anchor['count'] > 0:
+        return (anchor['count'],)
+    return ()
 
 
 def _tables(c):
@@ -148,7 +176,7 @@ def _fills(c, state):
                       'utc': datetime.fromtimestamp(row[0], timezone.utc).isoformat(),
                       'event_pool': event.get('pool'), 'event_taker': event.get('taker'),
                       'event_source_hash': digest(event), 'fill_hash': digest(v), **v})
-    ids = [f['event_id'] + f['side'] + f['mint'] for f in fills]
+    ids = [(f['event_id'], f['side'], f['mint']) for f in fills]  # a tuple: no string-concatenation collisions
     if len(ids) != len(set(ids)) or len({f['seq'] for f in fills}) != len(fills):
         raise VerifyError('duplicate fill identity')
     return fills
@@ -194,6 +222,17 @@ def _attribute(fills, cfg, state):
             p['raw_sold'] += raw
             if p['raw_sold'] > p['raw']:
                 raise VerifyError(f'sell {f["seq"]} exceeds the exact raw inventory')
+        held = p['qty'] - p['sold']
+        if held <= 0:
+            raise VerifyError(f'sell {f["seq"]} exceeds the entry quantity')
+        with localcontext() as ctx:
+            ctx.prec = 100
+            # The engine releases cost_left * qty / qty_held with each sell (engine.sell);
+            # aggregate checks alone would let PnL be shifted between two sells of one position.
+            expected_basis = (p['cost'] - p['basis_used']) * qty / held
+        if not _near(proceeds - pnl, expected_basis):
+            raise VerifyError(f'sell {f["seq"]} cost basis differs from the proportional cost basis '
+                              f'of the remaining position')
         p['sold'] += qty
         p['proceeds'] += proceeds
         p['pnl'] += pnl
@@ -251,7 +290,7 @@ def _position_view(p, state=None):
             'realized_pnl_sol': str(p['pnl'])}
 
 
-def _ledger(path, cfg):
+def _ledger(path, cfg, anchor=None):
     with closing(_connect(path, 'ledger')) as c:
         c.execute('BEGIN')
         meta = dict(c.execute("SELECT key,value FROM metadata WHERE key IN "
@@ -277,8 +316,10 @@ def _ledger(path, cfg):
         _check_state(state, open_, initial, cash, realized)
         seqs = {t: c.execute(f'SELECT COALESCE(MAX(seq),0),count(*) FROM {t}').fetchone()
                 for t in ('events', 'outcomes')}
-        tables = {'events': _rolling(c, 'SELECT seq,event_id,ts,payload_hash FROM events ORDER BY seq'),
-                  'outcomes': _rolling(c, 'SELECT seq,event_id,payload FROM outcomes ORDER BY seq')}
+        tables = {'events': _rolling(c, 'SELECT seq,event_id,ts,payload_hash FROM events ORDER BY seq',
+                                     anchors=_anchor_counts(anchor, 'tables', 'events')),
+                  'outcomes': _rolling(c, 'SELECT seq,event_id,payload FROM outcomes ORDER BY seq',
+                                       anchors=_anchor_counts(anchor, 'tables', 'outcomes'))}
     status = 'OPEN_POSITION' if open_ else ('VALIDATED_LIVE_DATA_PAPER_ROUND_TRIP' if closed else 'NO_FILLS')
     provenance = sorted({f.get('provenance') for f in fills if f.get('provenance')})
     return {
@@ -309,7 +350,7 @@ def _optional(path, reader, what):
         return {'present': True, **reader(c)}
 
 
-def _monitoring(c):
+def _monitoring(c, anchor=None):
     have = _tables(c)
     if 'paper_monitoring_budget' not in have:
         return {'provisioned': False}
@@ -324,9 +365,11 @@ def _monitoring(c):
             'used_total': total, 'blocked': blocked, 'reserved_pending': pending,
             'duplicate_reservation_groups': dup,
             'reservations': _rolling(c, 'SELECT id,at,scan_id,mint,checkpoint_hash,method,params_hash '
-                                        'FROM paper_monitoring_reservations ORDER BY id'),
+                                        'FROM paper_monitoring_reservations ORDER BY id',
+                                     anchors=_anchor_counts(anchor, 'reservations')),
             'outcomes': _rolling(c, 'SELECT reservation_id,evidence_hash FROM paper_monitoring_outcomes '
-                                    'ORDER BY reservation_id')}
+                                    'ORDER BY reservation_id',
+                                 anchors=_anchor_counts(anchor, 'outcomes'))}
 
 
 def _ownership(c):
@@ -337,13 +380,20 @@ def _ownership(c):
 
 
 def _pacing(c):
-    rows = c.execute('SELECT provider,next_at,blocked_until,high_water,pending IS NOT NULL '
+    """Stable part only: high_water must never decrease. Cadence state is volatile."""
+    rows = c.execute('SELECT provider,high_water FROM state ORDER BY provider').fetchall()
+    return {'providers': [list(r) for r in rows]}
+
+
+def _pacing_volatile(c):
+    """next_at/blocked_until/pending/waiters change with every provider call: report only."""
+    rows = c.execute('SELECT provider,next_at,blocked_until,pending IS NOT NULL '
                      'FROM state ORDER BY provider').fetchall()
     waiters = c.execute('SELECT count(*) FROM waiters').fetchone()[0]
     return {'providers': [list(r) for r in rows], 'waiters': waiters}
 
 
-def _journal(directory):
+def _journal(directory, anchor=None):
     out = {}
     if not os.path.lexists(directory):
         return {'present': False}
@@ -354,35 +404,50 @@ def _journal(directory):
         with closing(_connect(path, 'dispatcher journal')) as c:
             c.execute('BEGIN')
             have = _tables(c)
-            out[path.name] = {t: _rolling(c, f'SELECT id,hash FROM {t} ORDER BY rowid')
+            out[path.name] = {t: _rolling(c, f'SELECT id,hash FROM {t} ORDER BY rowid',
+                                          anchors=_anchor_counts(anchor, 'journals', path.name, t))
                               for t in ('context', 'intents', 'results') if t in have}
     return {'present': True, 'journals': out}
 
 
-def snapshot(data, ledger, config, *, research='research.sqlite', evidence='evidence.sqlite',
-             pacing='provider-pacing.sqlite', journal='entry-dispatch'):
+def snapshot(data, ledger, config, *, evidence='evidence.sqlite', pacing='provider-pacing.sqlite',
+             journal='entry-dispatch', anchor=None):
+    """Read-only snapshot. ``anchor`` is an earlier snapshot of the same stores: the new
+    snapshot then records its row digests at the exact old row counts, which is what lets
+    ``compare --allow-progress`` prove the old prefix beyond the rolling-mark bound."""
     data = Path(data)
     if data.resolve() != data.absolute() or not data.is_dir():
         raise VerifyError('data directory must be a canonical directory')
-    for name in (ledger, research, evidence, pacing, journal):
+    for name in (ledger, evidence, pacing, journal):
         if Path(name).name != name or name in ('', '.', '..'):
             raise VerifyError('store names are plain names inside --data')
+    if anchor is not None and (type(anchor) is not dict or anchor.get('kind') != KIND):
+        raise VerifyError('anchor must be a paper_cycle_snapshot_v1 document')
+    anchor = anchor or {}
     cfg = _config(config)
-    result = _ledger(data / ledger, cfg)
+    result = _ledger(data / ledger, cfg, anchor)
+    # paper_monitoring_* and ownership_budgets both live in the EvidenceStore.
     result.update({
         'kind': KIND, 'ledger': ledger,
-        'monitoring': _optional(data / research, _monitoring, 'research store'),
+        'monitoring': _optional(data / evidence, lambda c: _monitoring(c, anchor.get('monitoring')),
+                                'evidence store'),
         'ownership': _optional(data / evidence, _ownership, 'evidence store'),
         'pacing': _optional(data / pacing, _pacing, 'pacing store'),
-        'dispatcher': _journal(data / journal),
+        'pacing_volatile': _optional(data / pacing, _pacing_volatile, 'pacing store'),
+        'dispatcher': _journal(data / journal, anchor.get('dispatcher')),
         'taken_at': datetime.now(timezone.utc).isoformat()})
     return result
 
 
 # ----------------------------------------------------------------- compare
 
+# Not part of the strict equality: wall-clock, and pacing cadence state that changes with every
+# provider call. The shared pacing high_water is checked separately (it may rise, never fall).
+NOT_STRICT = ('taken_at', 'pacing', 'pacing_volatile')
+
+
 def _comparable(s):
-    return {k: v for k, v in s.items() if k != 'taken_at'}
+    return {k: v for k, v in s.items() if k not in NOT_STRICT}
 
 
 def _check_snapshot(s, label, failures):
@@ -397,20 +462,31 @@ def _check_snapshot(s, label, failures):
 
 
 def _prefix(old, new, name, failures):
-    """Old rolling digests must reappear unchanged in the new snapshot."""
+    """The exact old prefix must reappear unchanged: the new snapshot must hold the digest
+    at the old row count (snapshot --anchor-from), never a nearby stride mark."""
     if new['count'] < old['count']:
         failures.append(f'{name}: rows were removed')
+        return
+    if old['count'] == 0:
         return
     if new['count'] == old['count']:
         if new['final'] != old['final']:
             failures.append(f'{name}: original rows changed')
         return
-    shared = [n for n in old['rolling'] if n in new['rolling']]
-    if not shared:
-        failures.append(f'{name}: old prefix cannot be verified (incompatible stride)')
-    for n in shared:
-        if old['rolling'][n] != new['rolling'][n]:
-            failures.append(f'{name}: original rows changed within the first {n}')
+    mark = new['rolling'].get(str(old['count']))
+    if mark is None:
+        failures.append(f'{name}: old prefix cannot be verified at its exact row count '
+                        f'{old["count"]}; retake the later snapshot with --anchor-from')
+    elif mark != old['final'][:16]:
+        failures.append(f'{name}: original rows changed within the first {old["count"]}')
+
+
+def _pacing_checks(a, b, failures):
+    pa = {r[0]: r for r in a['pacing'].get('providers', [])} if a['pacing'].get('present') else {}
+    pb = {r[0]: r for r in b['pacing'].get('providers', [])} if b['pacing'].get('present') else {}
+    for k, r in pa.items():
+        if k not in pb or pb[k][1] < r[1]:
+            failures.append('pacing high-water regressed')
             break
 
 
@@ -450,12 +526,6 @@ def compare(a, b, *, allow_progress=False):
             if k not in new or new[k][1] != r[1] or new[k][3] != r[3] or new[k][2] < r[2]:
                 failures.append('ownership budget regressed or rewritten')
                 break
-        pa = {r[0]: r for r in a['pacing'].get('providers', [])} if a['pacing'].get('present') else {}
-        pb = {r[0]: r for r in b['pacing'].get('providers', [])} if b['pacing'].get('present') else {}
-        for k, r in pa.items():
-            if k not in pb or pb[k][3] < r[3]:
-                failures.append('pacing high-water regressed')
-                break
         ja, jb = a['dispatcher'], b['dispatcher']
         if ja.get('present'):
             if not jb.get('present'):
@@ -467,12 +537,15 @@ def compare(a, b, *, allow_progress=False):
                             failures.append(f'dispatcher {name}.{t} removed')
                         else:
                             _prefix(old_t, jb['journals'][name][t], f'dispatcher {name}.{t}', failures)
+    _pacing_checks(a, b, failures)
+    volatile = [k for k in ('pacing_volatile',) if a.get(k) != b.get(k)]
     da = a['monitoring'].get('duplicate_reservation_groups', 0)
     db = b['monitoring'].get('duplicate_reservation_groups', 0)
     if db > da:
         failures.append('duplicate monitoring charge appeared')
     return {'status': 'FAIL' if failures else 'PASS', 'mode': 'allow_progress' if allow_progress else 'strict',
-            'failures': failures, 'a_digest': digest(_comparable(a)), 'b_digest': digest(_comparable(b))}
+            'failures': failures, 'volatile': volatile,
+            'a_digest': digest(_comparable(a)), 'b_digest': digest(_comparable(b))}
 
 
 # --------------------------------------------------------------------- CLI
@@ -499,9 +572,11 @@ def main(argv=None):
     s.add_argument('--ledger', required=True)
     s.add_argument('--config', required=True)
     s.add_argument('--out', required=True)
-    for name, default in (('research', 'research.sqlite'), ('evidence', 'evidence.sqlite'),
+    for name, default in (('evidence', 'evidence.sqlite'),
                           ('pacing', 'provider-pacing.sqlite'), ('journal', 'entry-dispatch')):
         s.add_argument(f'--{name}', default=default)
+    s.add_argument('--anchor-from', help='earlier snapshot: record digests at its exact row counts '
+                                         'so compare --allow-progress can prove the old prefix')
     c = sub.add_parser('compare')
     c.add_argument('a')
     c.add_argument('b')
@@ -509,8 +584,8 @@ def main(argv=None):
     a = p.parse_args(argv)
     try:
         if a.command == 'snapshot':
-            result = snapshot(a.data, a.ledger, a.config, research=a.research, evidence=a.evidence,
-                              pacing=a.pacing, journal=a.journal)
+            result = snapshot(a.data, a.ledger, a.config, evidence=a.evidence, pacing=a.pacing,
+                              journal=a.journal, anchor=_load(a.anchor_from) if a.anchor_from else None)
             _write_new(a.out, result)
             print(json.dumps({'status': result['status'], 'fill_count': result['fill_count'],
                               'open_positions': len(result['open_positions']),

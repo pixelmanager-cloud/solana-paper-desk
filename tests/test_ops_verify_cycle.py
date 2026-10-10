@@ -297,7 +297,10 @@ class StoresAndReadOnlyTests(StoreBase):
         self.stores()
         s = self.snap()
         m = s['monitoring']
-        self.assertEqual((m['used_total'], m['cap'], m['reserved_pending'], m['high_water']), (2, 3600, 1, 100.5))
+        self.assertEqual((m['used_total'], m['cap'], m['reserved_pending'], m['high_water']), (2, 60, 1, 100.5))
+        # cap 60 / window 3600 s is the real MonitoringBudget.provision() default (the old
+        # hand-written fixture assumed a cap of 3600); the tool reports whatever the store holds.
+        self.assertEqual(m['window_seconds'], 3600)
         self.assertEqual(m['reservations']['count'], 2)
         self.assertEqual(s['ownership']['used_total'], 4)
         self.assertEqual(dict((p[0], p[1]) for p in s['pacing']['providers'])['helius'], 9.5)
@@ -742,6 +745,23 @@ class CliTests(Base):
         Path(b).write_text(json.dumps(doc))
         code, out, _ = self.run_cli('compare', a, b)
         self.assertEqual((code, json.loads(out)['status']), (1, 'FAIL'))
+
+    def test_anchor_from_option_records_exact_old_counts(self):
+        self.round_trip()
+        self.label()
+        a, b = str(self.data.parent / 'a.json'), str(self.data.parent / 'b.json')
+        base = ['snapshot', '--data', str(self.data), '--ledger', 'paper.sqlite', '--config', str(self.config_path)]
+        self.assertEqual(self.run_cli(*base, '--out', a)[0], 0)
+        old = json.loads(Path(a).read_text())
+        self.apply(event(T + 500, mint='SYNTHETIC_Z'))
+        self.label()
+        self.assertEqual(self.run_cli(*base, '--out', b, '--anchor-from', a)[0], 0)
+        new = json.loads(Path(b).read_text())
+        self.assertIn(str(old['tables']['events']['count']), new['tables']['events']['rolling'])
+        code, out, _ = self.run_cli('compare', a, b, '--allow-progress')
+        self.assertEqual((code, json.loads(out)['status']), (0, 'PASS'))
+        self.assertEqual(self.run_cli(*base, '--out', str(self.data.parent / 'c.json'),
+                                      '--anchor-from', str(self.data.parent / 'missing.json'))[0], 2)
 
     def test_corrupt_ledger_is_exit_two_not_a_pass(self):
         self.round_trip()
