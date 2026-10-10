@@ -308,6 +308,7 @@ AVOID: desk/**
 4. **(MED) Seal the evidence files.** Seal the ~40 non-sqlite evidence files in `$OLD` (`acquisition-*.json`, `paper-target-*.json`, `*intake*.json`, `*.jsonl`) as well: default seal patterns include `*.json` and `*.jsonl`. Still NEVER seal lock files.
 5. **(LOW) Rotate manifest.** The rotate step uses a NEW seal manifest path (an existing one is refused).
 6. **(LOW) Rotate seal mode.** A rotate seal of `$NEW` gives 0550 (not 1770); `shared_dirs` must not always include `--root`.
+6b. **Reports directory.** RUNBOOK: create `<STATE_DIR>/reports` (owner solana-desk) before enabling the daily-report timer (T41/T42).
 7. **(LOW) Test portability.** `SealArchiveTests` must compare gid against the parent directory's gid, not `os.getegid()`: on macOS, files under `/private/tmp` get gid 0.
 
 Run all `tests/test_ops_*.py` in ONE process (real exit code), with `TMPDIR` both under `/private/var/folders` and under `/private/tmp`.
@@ -1560,3 +1561,16 @@ AVOID: desk/**
 The worker on T32G went silent for more than 2 hours just before finishing. Read `reports/T32G.md` on `origin/cloud/T32G`, verify each T32G item against the spec in this file (items 1-8), finish anything missing, and make the RUNBOOK commands match the merged tools. T34 added `--pacing-db`/`--discovery-db`/`--ledger` to status, preflight and verify_cycle: steps 6 and 8 and the verify_cycle snapshots must pass them. Also add the T36 pacing-policy step with the correct ordering: apply ONLY after the new release is on every unit, run as solana-desk, and treat the policy JSON as append-only.
 
 Run every `tests/test_ops_*.py` module plus the e2e test with the real exit code, then commit `DONE T32H:`. If `cloud/T32G` gets a DONE commit meanwhile, stop and say so in your report.
+
+---
+
+## T43 — Features: discovery cursor + small fixes (from the T42 review)
+STATUS: OPEN
+DEPENDS: none
+BASE: origin/cloud/T42
+OWNS: tools/research/features.py, tests/test_features.py
+AVOID: desk/**, tools/research/funnel_report.py (import only)
+
+1. **(MED) Discovery.** Discovery is still a capped full rescan from `since=0` (oldest 50k frames first; `features.py` ~:553-556, ~:707), and `stats['truncated']` is ignored, so once there are more than 50k frames, newer hints are silently never ingested. Use a persisted discovery cursor (seq/received_at), the same as the other sources, with an anchor check. If any bound is hit, record `DISCOVERY_TRUNCATED`. Test with more than 60k frames, where the newest hints must be ingested.
+2. **(LOW) False page bound.** `exhausted()` must not count `PAGE_BOUND_HIT` when the last full page drained the source exactly.
+3. **(LOW) Dispatch journal.** Read the dispatch journal incrementally with a cursor, not whole on every run.
