@@ -2,7 +2,14 @@
 
 The coordinator (the Mac session) maintains this file; workers only read it. Follow `WORKER_PROMPT.md` on this branch.
 
-## Global facts for every task
+## DECISION 2026-10-10 (CK): FRESH-START EXPERIMENT — read first
+
+The old production store set (all files under `/var/lib/solana-desk/` today) will be **archived read-only, never modified**, and the next experiment starts on a **fresh, empty store set** with a new config version. Consequences for every task:
+- **No retrospective reconciliation.** Retained NULL passes, old receipts and runtime successor/continuation chains for the OLD stores are out of scope. Do not write migrations for old stores.
+- **No runtime successor pins.** A fresh ledger records its own implementation hash. Policy from now on: when code under `desk/` changes and the ledger is flat (no open position), the coordinator rotates to a new ledger/store set instead of pinning a successor. Successor machinery is used only if a position is open.
+- **Within the new stores, all integrity rules still hold:** append-only records, charged requests stay charged, no counter, budget or reservation resets, and fail-closed evidence gates.
+- **Shared across old and new:** `provider-pacing.sqlite` (the two-second Kraken pacing must stay shared and must never be reset), the discovery input `discovery/continuous.sqlite` (read as the candidate source), and the provider keys file.
+
 
 - **BASE** for every round-1 task is tag `r1-base`, which equals `integration/empty-history-ready` at `c1e22c289780a0b068190d4938847c0858d0a465` (PR #209, the reviewed but undeployed candidate). The deployed production baseline is `integration/cloud-wave1` at `0dcc2117`.
 - **Hash domain.** `desk/runtime_compatibility.implementation_hash()` hashes every `.py` and `.json` file under `desk/`. Editing anything in `desk/` changes the runtime identity and forces a coordinator-made runtime successor pin at deploy time.
@@ -28,20 +35,37 @@ Note: a separate cloud session may already be working on this from the handoff p
 
 **Problem.** `paper_observation_passes.outcome_hash` is inserted as NULL and filled only on COMPLETE (`desk/paper_cycle.py` ~:531/:678). Every charged non-COMPLETE pass stays NULL. That covers each `CycleBlocked` (e.g. `MARKET_PRODUCER_BLOCKED` from `fulfill_quotes` when `event_builder` returns None, `OBSERVATIONS_INCOMPLETE`, `USD_ORIGINAL_BINDING_INVALID`, budget exhaustion), plus `ObservationError` and `RecoveryRequired`. The global gate `paper_terminal_reconciliation._gate` (~:544-583) then returns `OBSERVATION_RECOVERY_REQUIRED` forever. `terminal.certify_intrinsic` only fires for mint/pool policy hazards, so hazard-less typed blockers can never self-clear. Each occurrence so far needed a bespoke reconciliation module, policy pin, migration and deploy. The same latch exists in `paper_history_preparation.prepare` (~:71-82) and `paper_observe_cli.observe` (~:266-270).
 
-**Do:**
+**Do (fresh-start scope — see the DECISION at the top):**
 1. **Prospective fix.** A normal, typed, *verified* no-entry rejection must write a terminal, replay-verifiable outcome in the same transaction that records the result. Template: `history_preparation_rejection.publish/verify/gate` (typed outcome kind with a two-way inventory, re-proved on each gate). Classify blockers into:
    - (a) verified normal rejections (no entry, charges retained) → terminal outcome;
    - (b) integrity/recovery-required conditions → stay NULL and fail closed, as today.
 
    Charged requests stay charged. No retry of the same scan/candidate.
-2. **Retrospective fix.** One *generic* append-only receipt kind that `_gate` accepts for already-retained NULL passes whose recorded result proves a category-(a) rejection. Its proof is parameterised by the pass shape (blocker codes, attempts, journal binding), not a per-incident module. It must be immutable (trigger-guarded, like the existing receipt tables), bounded, and unique per pass. It must reject anything that does not prove a normal rejection.
+2. **Retrospective fix — NOT REQUIRED (fresh start).** Skip it. Only if it falls out trivially from (1), you may add one *generic* append-only receipt kind that `_gate` accepts for already-retained NULL passes whose recorded result proves a category-(a) rejection. Its proof is parameterised by the pass shape (blocker codes, attempts, journal binding), not a per-incident module. It must be immutable (trigger-guarded, like the existing receipt tables), bounded, and unique per pass. It must reject anything that does not prove a normal rejection.
 3. Keep every existing receipt kind and its proofs working unchanged; existing production rows must still verify.
 4. **Tests (fail-first):**
    - The installed-lifecycle scenario: an empty-window `MARKET_PRODUCER_BLOCKED` pass on a fresh store must not block the next candidate.
    - Adversarial: a forged receipt, a mismatched intent hash, a category-(b) blocker presented as (a), a duplicate receipt, an updated or deleted original row.
    - The existing modules `test_paper_terminal_reconciliation`, `test_empty_history_no_entry`, `test_history_preparation_phase` and `test_paper_entry_dispatcher` must still pass.
    - Run `test_empty_history_successor_lifecycle` once at the end.
-5. In the report, list every `CycleBlocked`/exception code and which category it falls into, and the exact migration step the coordinator must run to append retrospective receipts for production's retained NULL pass(es).
+5. In the report, list every `CycleBlocked`/exception code and which category it falls into, and confirm that a fresh empty store set never needs any reconciliation receipt to pass the gate after a normal rejection.
+
+---
+
+## T13 — Fresh-start store bootstrap + ledger rotation
+STATUS: OPEN
+DEPENDS: none
+BASE: r1-base
+OWNS: tools/ops/fresh_start.py, tests/test_ops_fresh_start.py, config/experiments/ (new example config only)
+AVOID: desk/** (if a desk change is truly required, describe it for the coordinator and route it via T01's branch owner)
+
+This is the critical path alongside T01. Build `python -m tools.ops.fresh_start`, with `--dry-run` as the default:
+- `plan --root /var/lib/solana-desk/exp-<version> --config <new config> --pacing-db <shared provider-pacing.sqlite> --discovery-db <shared continuous.sqlite>`. Prints exactly which stores would be created, with which repo initialisers, and the ExecStart/drop-in arguments every `desk-*` unit needs to point at them (entry dispatcher, held cycle, monitor, decisions, dashboard).
+- `apply` (same args). Creates a canonical root (0700, no symlinks, must not exist yet) and initialises EVERY store the entry/held path needs, using the repo's own schema creators and activation APIs only. That includes: research, evidence (with fresh monitoring/ownership budgets set to the approved ceilings: monitoring 3600 requests/rolling hour, investigations 1000 admissions/day, queue 25, lifetime 18 requests/investigation), ledger, decisions journal, dispatcher journal + its activated context, and anything else the gates require. No retained-history successor/extension rows for a fresh ledger. Writes a `fresh-start-manifest.json` (config digest, implementation hash, store list, created UTC).
+- `rotate --from <root> --to <new root> ...`: allowed only when the old ledger is flat (no positions, mode RUNNING or ENTRY_PAUSED, no unresolved exit). It leaves the old root untouched and bootstraps a new one.
+- Write `config/experiments/paper-kraken-fresh.example.json`: a copy of the production experiment parameters (initial 5 SOL, fee reserve 0.3, max position 0.02, exposure 0.08, max positions 4, stop 0.18, time-stop 2700s, max hold 21600s, trailing 0.30, cooldowns 1800/7200, mcap 50k–2M USD, min liquidity 8000 USD, round-trip cost cap 0.08, fee 0.00005 SOL, slippage 50 bps, TTLs price10/holder120/flow30/momentum15, signal policy v3, quote execution v1, token profile v2, usd valuation v1) with a NEW version string `2026-10-11.paper-quote-kraken.fresh.1`. Read the real config schema in `config/` and `desk/model.py` (and the existing paper-kraken config fields referenced by tests) so the file is valid; do not invent keys.
+
+**Key acceptance test (fail-first where applicable):** on a temp dir, `apply`, then run the real dispatcher `--plan`/`_preflight`, the terminal gate and the scheduler entry pre-check against the new stores (shared pacing DB = a fixture copy). All must PASS with no reconciliation receipts and no successor pins. Then simulate one normal rejection followed by a second candidate using fixtures. If the second candidate is blocked, mark the test `expectedFailure` and state that it depends on T01. Also test: refuse an existing root, refuse a symlinked root, refuse rotation with an open position, and the old root byte-identical after rotation.
 
 ---
 
@@ -89,7 +113,7 @@ Tests use temp dirs and fixture DBs. Cover: an alias/symlink/hardlink refused, a
 ---
 
 ## T04 — Generic original-preservation verifier
-STATUS: OPEN
+STATUS: DEFERRED (fresh start makes it non-critical; do not claim)
 DEPENDS: none
 BASE: r1-base
 OWNS: tools/ops/verify_preservation.py, tests/test_ops_preservation.py
@@ -184,14 +208,14 @@ For each case, decide whether the system recovers on its own or wedges permanent
 
 ---
 
-## T09 — Harsh first-cycle readiness audit of PR #209
+## T09 — Harsh first-cycle readiness audit (fresh-start deployment)
 STATUS: OPEN
 DEPENDS: none
 BASE: r1-base
 OWNS: reports/T09.md, tests/test_audit_first_cycle_*.py (new tests only)
 AVOID: every non-test source file
 
-Act as a harsh critic. Assume the coordinator deploys `r1-base` plus the T01 fix and starts entries. Find every way the next 48 hours fail *without* a code bug in the classic sense: another one-off reconciliation needed, a gate latch, budget exhaustion, a pacing deadlock, a service wall timeout (entry 600s, held 120s, MemoryMax ~384MiB), retained-history replay cost growth, a lock left behind after SIGKILL, a timer cadence overlap, or a checkpoint/config pin mismatch after a config change.
+Act as a harsh critic. Assume the coordinator deploys `r1-base` plus the T01 fix on a FRESH empty store set (T13) and starts entries. Find every way the next 48 hours fail *without* a code bug in the classic sense: another one-off reconciliation needed, a gate latch, budget exhaustion, a pacing deadlock, a service wall timeout (entry 600s, held 120s, MemoryMax ~384MiB), retained-history replay cost growth, a lock left behind after SIGKILL, a timer cadence overlap, or a checkpoint/config pin mismatch after a config change.
 
 For each finding, give severity, a concrete scenario, the evidence (file:line), and ideally a small test that demonstrates it (RED is fine, mark it `expectedFailure`). Rank them. No source edits. Be specific, not balanced; the coordinator wants the real risks.
 
@@ -225,11 +249,11 @@ AVOID: desk/**, deploy/*.service, deploy/*.timer
 
 Replace the per-release `deploy-*`/`start-*` helpers (handoff support) with one parameterised tool. Every mutation goes through an injectable runner, and the default mode is `--dry-run`, which prints the exact commands.
 - `stage --tar X --sha256 H --release-root /opt/solana-desk-releases`: verify the sha, extract to `<root>/<commit>` safely (no absolute paths, no `..`, no symlinks escaping), then compute and print the runtime digest.
-- `cutover --release <dir> --units u1 u2 ... --keep-off desk-paper-entry-dispatcher.timer`: write the `60-reviewed-release.conf` drop-ins (WorkingDirectory=<release>), run `daemon-reload`, start only the listed units, and never start `--keep-off` units. Then verify each unit's effective WorkingDirectory and ActiveState. On any failure, stop every unit the tool started and leave drop-ins recorded for rollback.
+- `cutover --release <dir> --units u1 u2 ... --keep-off desk-paper-entry-dispatcher.timer [--store-env <file>]`: write the `60-reviewed-release.conf` drop-ins (WorkingDirectory=<release>, plus, for fresh start, the new store/config paths the units' ExecStart needs — coordinate the format with T13's output), run `daemon-reload`, start only the listed units, and never start `--keep-off` units. Then verify each unit's effective WorkingDirectory and ActiveState. On any failure, stop every unit the tool started and leave drop-ins recorded for rollback.
 - `rollback --units ...`: remove the drop-ins the tool wrote (only those, identified by a marker comment), then daemon-reload.
 - Refuse any unit whose rendered ExecStart would bind the dashboard to a non-loopback address.
 
-Also write `docs/ops/RUNBOOK.md`: the full reviewed flow (stage → stop writers → T03 backup → migration → T04 preservation verify → T05 preflight dry-run → post-migration backup → cutover with entry timer OFF → T02 status → enable entries → T07 latch → T06 snapshot/compare across restart), with exact example commands.
+Also write `docs/ops/RUNBOOK.md`: the full reviewed flow for the FRESH-START deployment (stage → stop writers → T03 archive backup of the old stores → mark the old stores read-only → T13 bootstrap of the new store set → T05 preflight dry-run on the new set → cutover with the entry timer OFF and units pointed at the new paths → T02 status → enable entries → T07 latch → T06 snapshot/compare across restart), plus the 'rotate ledger when flat' procedure, with exact example commands.
 
 Tests use a fake systemctl and a temp filesystem. Cover: path traversal in the tar refused, a sha mismatch refused, a keep-off unit never started, rollback removing only its own drop-ins, and a failure mid-cutover stopping the started units.
 
