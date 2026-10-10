@@ -278,14 +278,23 @@ def _make(store,c,cfg,producer,identity,scan,*,historical=False,backup=None,stop
     proof(store,v,initial=True,cfg=cfg,review_source=review_source)
     # Validate every completed old record using the normal dispatcher verifier;
     # this exact target is the only newly proved unresolved exception.
-    retired={}
+    retired={};bindings={};historical_contexts={}
     if values['context']!={1:producer}:
-        old=matches[0]
-        if digest(values['context'][1])!=old['dispatch_context_hash']:raise ValueError('Original parent context changed')
-        # Full parent replay happens in the gate below with the already-held
-        # ledger declared, avoiding an accidental non-reentrant lock request.
-        retired={old['dispatch_id']:old['dispatch_context_hash']}
-    dispatcher._check_records(c,producer,values,retired|{identity:intent['context_hash']},retired|{identity:intent['context_hash']})
+        edge=None if historical else lineage(c,producer,values['context'][1],ledger_locked=ctx['ledger_db'])
+        if edge is not None:
+            bindings,retired,historical_contexts=edge
+        else:
+            from . import paper_dispatch_preparation_retirement as parent
+            with closing(store.connect()) as evidence:
+                parents=parent.rows(evidence)
+            matches=[p for p in parents if p['successor_context']==producer and p['journal_path']==producer['journal']]
+            if len(matches)!=1:raise ValueError('Exact original retirement parent')
+            old=matches[0]
+            if digest(values['context'][1])!=old['dispatch_context_hash']:raise ValueError('Original parent context changed')
+            # Full parent replay happens in the gate below with the already-held
+            # ledger declared, avoiding a non-reentrant lock request.
+            retired={old['dispatch_id']:old['dispatch_context_hash']}
+    dispatcher._check_records(c,producer,values,bindings|retired|{identity:intent['context_hash']},retired|{identity:intent['context_hash']},historical_contexts=historical_contexts)
     if terminal._gate(store,Path(ctx['research_db']),(),ledger_locked=ctx['ledger_db'],review_source=review_source) is not None:raise ValueError('Other observation work unresolved')
     return v
 
@@ -400,7 +409,7 @@ def gate(store,research,scan_ids,*,ledger_locked=None):
     return None
 
 
-def lineage(c,expected,original):
+def lineage(c,expected,original,*,ledger_locked=None):
     store=EvidenceStore(expected['paths']['evidence_db']['path'],read_only=True)
     with closing(store.connect()) as evidence:certs=[v for v in rows(evidence) if v['association']=='EXPLICIT_REVIEWED_LEGACY_SENTINEL' and v['producer_context']['journal']==expected['journal']]
     if not certs:return None
@@ -410,8 +419,15 @@ def lineage(c,expected,original):
     proof(store,v)
     values=_prefix(c,v)
     if original!=runtime._parse(v['journal_prefix']['context'][0][2]):raise ValueError('Original context prefix conflict')
-    from .paper_dispatch_preparation_retirement import lineage as parent_lineage
-    retired=parent_lineage(v['producer_context'],original)
+    from . import paper_dispatch_preparation_retirement as parent
+    with closing(store.connect()) as evidence:
+        parents=[p for p in parent.rows(evidence) if digest(p)==v['parent_receipt_hash']]
+    if len(parents)!=1 or parents[0]['successor_context']!=v['producer_context'] or digest(original)!=parents[0]['dispatch_context_hash']:
+        raise ValueError('Original lineage parent conflict')
+    old=parents[0]
+    if terminal.gate(store,Path(old['context']['research_db']),(old['scan_id'],),ledger_locked=ledger_locked)!='REJECTED_SCAN_RETIRED':
+        raise ValueError('Original dispatcher intent not retired')
+    retired={old['dispatch_id']:old['dispatch_context_hash']}
     binding={r[1]:runtime._parse(r[-2])['context_hash'] for r in v['journal_prefix']['intents']}
     permitted=set(retired.values())|{digest(v['producer_context'])}
     if any(value not in permitted for value in binding.values()):raise ValueError('Unknown historical intent context')

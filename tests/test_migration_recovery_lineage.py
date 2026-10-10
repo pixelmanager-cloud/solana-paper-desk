@@ -148,6 +148,42 @@ class MigrationRecoveryLineageTests(unittest.TestCase):
             selected=dispatcher._select(actual['successor_context'],c,f.f.f.at)
             self.assertEqual(selected['mint'],mint4)
             with self.assertRaises(sqlite3.Error):dispatcher._write(c,'intents',identity,intent,intent['hint'])
+        current_context=actual['successor_context'];current_id='4'*32
+        current_intent={'version':1,'context_hash':digest(current_context),'at':f.f.f.at,'hint':selected}
+        with dispatcher._journal(f.journal) as c:dispatcher._write(c,'intents',current_id,current_intent,selected)
+        seed[0]=0
+        following=acquisition.acquire(f.f.f.jobs.path,f.f.f.progress.store.path,rpc,mint=mint4)
+        next_scan=following['scan_id'];following_reads=[0]
+        fresh_event=fresh['meta']['innerInstructions'][0]['instructions'][0]
+        fresh_event['data']=base58(unbase58(fresh_event['data'])[:-32]+bytes([33])*32)
+        class FollowingOpener:
+            def open(self,request,*,timeout):
+                following_reads[0]+=1
+                body={'data':[fresh] if following_reads[0]==1 else [],'paginationToken':'last' if following_reads[0]==1 else None}
+                return Response(canonical({'jsonrpc':'2.0','id':transport.RPC_ID,'result':body}).encode())
+        with patch.object(transport,'build_opener',return_value=FollowingOpener()),patch.dict('os.environ',{'HELIUS_API_KEY':'SYNTHETIC_ONLY'}):
+            declined=intake.intake(f.f.f.jobs.path,f.f.f.progress.store.path,scan_id=next_scan,mint=mint4,pool=pool4,signature=fresh['transaction']['signatures'][0],slot=fresh['slot'],provenance=dispatcher.PROVENANCE)
+        self.assertNotEqual(declined['status'],'RETAINED_MIGRATION_WITNESS')
+        with dispatcher._journal(f.journal) as c:
+            ordinary=recovery.publish(c,current_context,current_id,next_scan)
+            result={'version':1,'intent_hash':digest(current_intent),'at':f.f.f.at,'scan_id':next_scan,'result':ordinary}
+            dispatcher._write(c,'results',current_id,result)
+            verified=dispatcher._validate(c,current_context)
+            self.assertEqual(len(verified['intents']),4);self.assertEqual(len(verified['results']),2)
+        self.assertEqual(f.f.f.progress.admission(next_scan)['requests_used'],6)
+        self.assertEqual(following_reads[0],2)
+        # The next unclaimed candidate still remains selectable after a genuine
+        # ordinary rejection on this same continued journal.
+        next_raw,next_mint,next_pool=mint_fixture(21)
+        next_event=next_raw['meta']['innerInstructions'][0]['instructions'][0]
+        next_event['data']=base58(unbase58(next_event['data'])[:-32]+unbase58(graduation.SOL))
+        notification['params']['result'].update(signature=next_raw['transaction']['signatures'][0],slot=next_raw['slot'],transaction={'transaction':next_raw['transaction'],'meta':next_raw['meta']})
+        source=discovery.Store(producer['paths']['discovery_db']['path'],clock=lambda:f.f.f.at-600)
+        try:source.complete(source.reserve('RECEIVE'),payload=canonical(notification).encode())
+        finally:source.close()
+        with closing(sqlite3.connect(f.journal)) as c:
+            selected=dispatcher._select(current_context,c,f.f.f.at)
+            self.assertEqual(selected['mint'],next_mint)
         with closing(sqlite3.connect(f.journal)) as c:
             c.execute('DROP TRIGGER no_intents_update')
             c.execute('UPDATE intents SET rowid=99 WHERE id=?',(bad_id,))
@@ -159,6 +195,6 @@ class MigrationRecoveryLineageTests(unittest.TestCase):
             c.execute('UPDATE intents SET rowid=2 WHERE id=?',(bad_id,))
             c.execute(dispatcher._guards()['no_intents_update']);c.commit()
             future={'version':1,'context_hash':digest(actual['successor_context']),'at':f.f.f.at,'hint':selected}
-            dispatcher._write(c,'intents','4'*32,future,selected)
+            dispatcher._write(c,'intents','5'*32,future,selected)
         with closing(sqlite3.connect(f.journal)) as c:
             with self.assertRaisesRegex(ValueError,'Unresolved dispatch'):dispatcher._validate(c,actual['successor_context'])
