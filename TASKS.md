@@ -220,6 +220,37 @@ AVOID: everything else
 
 ---
 
+## T32G — Final runbook fixes from the T32F review vs the real VPS — CRITICAL PATH
+STATUS: OPEN
+DEPENDS: none
+BASE: origin/integration/r1 (T32F is merged)
+OWNS: tools/ops/cutover.py, tools/ops/fresh_start.py, deploy/fresh/**, docs/ops/RUNBOOK.md, tests/test_ops_e2e_deploy.py, tests/test_ops_cutover.py, tests/test_ops_healthcheck.py
+AVOID: desk/**
+
+VPS facts (read-only, 2026-10-11):
+- Ubuntu 24.04.4, systemd 255, Python 3.12.3; solana-desk is uid 999 / gid 988.
+- `/var/backups/solana-desk` is root:root 0755.
+- `/etc/solana-paper` is root:solana-desk 0750.
+- `desk-paper-entry-dispatcher.service` and `desk-decisions.service` are currently `failed`.
+- Most old units are `static`.
+- Both shared DBs are in rollback-journal mode.
+- The shared pacing DB MUST stay at `/var/lib/solana-desk/provider-pacing.sqlite`: the Kraken pacing migration receipt and its pin are bound to that exact path and mode 0600, so moving it breaks pacing everywhere. Keep that design.
+
+1. **(BLOCKER) Seal and live lock files.** Seal makes `discovery/continuous.sqlite.discovery.lock` (solana-desk 0600, opened read-write by `discovery/continuous.py:61`) root 0444 with the sticky bit, which kills continuous discovery and the 7b cutover. Never touch live lock files (`*.discovery.lock`, `provider-pacing.sqlite.holder-*.lock`, `*.paper-cycle.lock`, ...); use an explicit allow-list of what seal may change. Seed these lock files in the e2e and assert discovery still opens its lock after seal.
+2. **(MED) Seal permissions.** Use `root:solana-desk` with files 0440, dirs 0550, and shared dirs 1770, not world-readable 0444/1775/0555. Root-only 0600 files stay 0600 root. Before changing anything, write a seal manifest (path, uid, gid, mode, sha256), and add `unseal` to restore it exactly. Rollback after step 4 uses unseal.
+3. **(11b, not done) Research units.**
+   - Render `desk-counterfactual.*` and `desk-held-watcher.service` with the fresh-root layout.
+   - Render and install `desk-paper-held-cycle.path` (render-units currently skips `.path`).
+   - Make all research units OPTIONAL: not installed or enabled by default; an explicit RUNBOOK step enables them later.
+   - Their write paths are their own state dirs plus the shared pacing DB directory requirement, documented.
+4. **(Step 0)** `/var/backups/solana-desk` stays root-owned. Never chown it.
+5. **(Step 2)** After the stops, run `systemctl reset-failed 'desk-*'`. The expectation is "disabled|static", not only "disabled".
+6. **Watchdog grace.** Avoid the false CRITICAL at cutover before `health.json` exists (a grace period after cutover, or the first healthcheck run first).
+7. **Archive verification.** `verify_records` also compares uid/gid. A crash part-way through archive removal must be resumable: re-run completes or restores; restore must not refuse a half-removed state that the manifest fully describes.
+8. **RUNBOOK note.** Every tool invocation runs with cwd = `$REL` (a stale `desk` package in venv site-packages would otherwise shadow it). Optionally run `pip uninstall -y solana-desk` in the venv as a documented step.
+
+---
+
 ## T22 — Extend T01: no store-wide latch from ANY charged failure (from T09 audit F1, F3) — CRITICAL PATH
 STATUS: OPEN
 DEPENDS: branch `cloud/T01` has a `DONE T01:` commit
