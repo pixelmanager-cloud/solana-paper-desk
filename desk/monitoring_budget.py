@@ -109,6 +109,23 @@ def _lock_holders(path):
     return holders
 
 
+def locks_free(paths):
+    """Owner proof shared by monitoring abandonment and pass closure (T22G).
+
+    True only when, for every lock file, no process OTHER than this one holds a flock on the inode the path names
+    and none holds a flock on a DELETED lock inode (the delete-and-recreate hazard). A missing lock file, an
+    unreadable lock table or an unreadable process table is "owner unknown", never "owner gone".
+    """
+    for path in paths:
+        holders = _lock_holders(path)
+        if holders is None or not holders <= {os.getpid()}:
+            return False
+        unlinked = _deleted_lock_holders(path)
+        if unlinked is None or unlinked:
+            return False
+    return True
+
+
 def _deleted_lock_holders(path):
     """PIDs other than ours holding an open descriptor on a DELETED lock file at ``path``.
 
@@ -513,14 +530,7 @@ class MonitoringBudget:
         whose lease nobody holds belongs to a dead process. This process's own PID is fine: the
         reader that is about to reserve is the new owner. An unreadable lock table is not proof.
         """
-        for path in (str(self.path) + '.ownership-invocation.lock', str(self.ledger) + '.paper-cycle.lock'):
-            holders = _lock_holders(path)
-            if holders is None or not holders <= {os.getpid()}:
-                return False
-            unlinked = _deleted_lock_holders(path)
-            if unlinked is None or unlinked:
-                return False
-        return True
+        return locks_free((str(self.path) + '.ownership-invocation.lock', str(self.ledger) + '.paper-cycle.lock'))
 
     def abandon_pending(self, *, cause='LEASE_GONE'):
         """Resolve every orphan reservation with an ABANDONED_CHARGED outcome (T22 pass closure entry point).

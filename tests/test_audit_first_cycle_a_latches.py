@@ -36,7 +36,9 @@ class DispatcherTransientFault(unittest.TestCase):
         no-entry rejections) does not touch this path. Needed: a transient pre-charge/charged
         provider fault must not make a later dry run or a different hint unusable."""
         h = self.h
-        with patch.object(tool.cli, '_credentials'), patch('desk.providers.helius_rpc', side_effect=OSError('timeout')):
+        # T22G: the injected fault is a TimeoutError (classified transient). A bare OSError is UNCLASSIFIED and now
+        # stays latched on purpose (test_bare_oserror_acquisition_failure_stays_unresolved).
+        with patch.object(tool.cli, '_credentials'), patch('desk.providers.helius_rpc', side_effect=TimeoutError('timeout')):
             with self.assertRaises((ValueError, OSError)):
                 h.invoke(execute=True, systemd_credentials=True)
         self.assertEqual(h.count('intents'), 1)
@@ -44,6 +46,29 @@ class DispatcherTransientFault(unittest.TestCase):
         self.assertEqual(h.count('results'), 1)
         # A healthy provider is back; the timer's next tick must at least be able to run.
         self.assertIn(h.invoke()['status'], ('NO_CANDIDATE', 'DRY_RUN'))
+
+    def test_http_429_and_5xx_close_but_401_403_and_bare_oserror_stay_unresolved(self):
+        from urllib.error import HTTPError
+        cases = {429: True, 503: True, 408: True, 401: False, 403: False}
+        for status, closes in cases.items():
+            with self.subTest(status):
+                h = dispatch_fixture.DispatcherTests('test_dry_run_no_admission_credentials_or_io_and_context_activation')
+                h.setUp()
+                self.addCleanup(h.doCleanups)
+                error = HTTPError('https://mainnet.helius-rpc.com/', status, 'SYNTHETIC_TEST_ONLY', {}, None)
+                with patch.object(tool.cli, '_credentials'), patch('desk.providers.helius_rpc', side_effect=error):
+                    with self.assertRaises((ValueError, OSError)):
+                        h.invoke(execute=True, systemd_credentials=True)
+                self.assertEqual((h.count('intents'), h.count('results')), (1, 1 if closes else 0))
+
+    def test_bare_oserror_acquisition_failure_stays_unresolved(self):
+        h = self.h
+        with patch.object(tool.cli, '_credentials'), patch('desk.providers.helius_rpc', side_effect=OSError('SYNTHETIC_TEST_ONLY')):
+            with self.assertRaises((ValueError, OSError)):
+                h.invoke(execute=True, systemd_credentials=True)
+        self.assertEqual((h.count('intents'), h.count('results')), (1, 0))
+        with self.assertRaisesRegex(ValueError, 'Unresolved dispatch'):
+            h.invoke()
 
 
 class HistoryFirstTransientFault(unittest.TestCase):
@@ -64,9 +89,13 @@ class HistoryFirstTransientFault(unittest.TestCase):
         h.row['provenance'] = 'PUBLIC_MAINNET_CAPTURE_NOT_TRADING_EVIDENCE'
         h.save()
 
+        # T22G: what a Helius HTTP 429 really becomes: CycleBlocked('HTTP_REJECTED') carrying the retained attempt
+        # original (status 429). The invented code SOURCE_HTTP_429 is not on the allow-list.
         def transient(progress, item, *args):
             progress.reserve(item.target.scan_id)
-            raise cycle.CycleBlocked('SOURCE_HTTP_429')
+            key = progress.store.save({'kind': 'paper_read_attempt_v1', 'scan_id': item.target.scan_id, 'requests_used': 1,
+                                       'failure_code': 'HTTP_REJECTED', 'http_status': 429})
+            raise cycle.CycleBlocked('HTTP_REJECTED', key)
         with patch.object(history_first_fixture.tool.cli, '_credentials'), \
                 patch.object(history_first_fixture.tool.cycle, '_history', side_effect=transient):
             with self.assertRaises(cycle.CycleBlocked):
@@ -75,6 +104,23 @@ class HistoryFirstTransientFault(unittest.TestCase):
             null_passes = c.execute('SELECT count(*) FROM paper_observation_passes WHERE outcome_hash IS NULL').fetchone()[0]
         # RED: the transient fault must not leave a permanent unresolved pass.
         self.assertEqual(null_passes, 0)
+
+    def test_http_401_in_preparation_holds_the_pass(self):
+        h = self.h
+        h.row['provenance'] = 'PUBLIC_MAINNET_CAPTURE_NOT_TRADING_EVIDENCE'
+        h.save()
+
+        def rejected(progress, item, *args):
+            progress.reserve(item.target.scan_id)
+            key = progress.store.save({'kind': 'paper_read_attempt_v1', 'scan_id': item.target.scan_id, 'requests_used': 1,
+                                       'failure_code': 'HTTP_REJECTED', 'http_status': 401})
+            raise cycle.CycleBlocked('HTTP_REJECTED', key)
+        with patch.object(history_first_fixture.tool.cli, '_credentials'), \
+                patch.object(history_first_fixture.tool.cycle, '_history', side_effect=rejected):
+            with self.assertRaises(cycle.CycleBlocked):
+                h.invoke(live=True, systemd_credentials=True)
+        with closing(h.f.f.progress.store.connect()) as c:
+            self.assertEqual([r[0] for r in c.execute('SELECT status FROM paper_pass_closures')], ['INTEGRITY_HOLD'])
 
 
     def normal_blocker(self, code, charges):

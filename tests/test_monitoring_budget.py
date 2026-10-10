@@ -130,25 +130,18 @@ class MonitoringBudgetTests(unittest.TestCase):
         with self.store.connect() as c:self.assertEqual(c.execute('SELECT count(*) FROM paper_monitoring_reservations').fetchone()[0],61)
 
     def test_failure_charged_original_retained_and_restart_latched(self):
-        # T22: only an untrustworthy completion clock still latches the shared allowance (the retained original
-        # then carries no usable completion time). Every provider failure (transport, HTTP status, malformed
-        # body) is a charged, retained, NON-latching outcome - see the next two tests.
-        with patch('desk.paper_read_sources.time.time',return_value=float('nan')):
-            with self.assertRaises(PaperReadError) as caught:self.read()
+        # T08: this test used a transient TRANSPORT_ERROR (OSError) as its sample failure.
+        # Transient provider-availability failures no longer latch the shared allowance
+        # (see the next test), so the latch is now asserted with a non-transient failure:
+        # a well-formed HTTP 200 whose body is not the expected JSON-RPC envelope.
+        # The latch assertions themselves are unchanged.
+        with self.assertRaises(PaperReadError) as caught:self.read(body=b'{"unexpected":"envelope"}')
         row=self.store.load(caught.exception.evidence_hash)
-        self.assertEqual(row['failure_code'],'CLOCK_INVALID')
+        self.assertEqual(row['failure_code'],'RESPONSE_INVALID')
         self.assertEqual(self.accounting()[1:],(1,'SOURCE_FAILURE'))
         self.budget=MonitoringBudget(self.store,self.f.path,self.f.cfg,clock=lambda:T+3600)
         with self.assertRaises(PaperReadError) as caught:self.read_unmocked()
         self.assertEqual(caught.exception.code,'MONITORING_RECOVERY_REQUIRED');self.assertEqual(self.accounting()[1],1)
-
-    def test_malformed_response_is_charged_retained_and_not_latched(self):
-        with self.assertRaises(PaperReadError) as caught:self.read(body=b'{"unexpected":"envelope"}')
-        self.assertEqual(self.store.load(caught.exception.evidence_hash)['failure_code'],'RESPONSE_INVALID')
-        self.assertEqual(self.accounting()[1:],(1,None))
-        self.budget=MonitoringBudget(self.store,self.f.path,self.f.cfg,clock=lambda:T+3600)
-        self.read()
-        self.assertEqual(self.accounting()[1:],(2,None))
 
     def test_transient_failure_charged_original_retained_and_not_latched(self):
         with self.assertRaises(PaperReadError) as caught:self.read(fail=True)

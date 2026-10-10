@@ -33,7 +33,8 @@ KIND = 'paper_pass_closure_v1'
 STATUSES = ('FAILED_CHARGED', 'ABANDONED_CHARGED')
 HOLD = 'INTEGRITY_HOLD'
 ABANDONED_CAUSE = 'LEASE_GONE'
-MAX_ROWS = 8192            # below the 10000 original-pass ceiling
+PASS_CEILING = 10000       # the original-pass ceiling terminal.* already enforces: closure rows cannot exceed passes
+ROTATION_WARN_FRACTION = 0.8   # T22G: warn at 80% of the existing ceiling; no separate hard cap of its own
 MAX_REFS = 64
 MAX_RECOVER = 16
 INTENT_KINDS = ('paper_cycle_intent_v1', 'history_first_paper_preparation_v4')
@@ -54,17 +55,148 @@ HOLD_FIELDS = {'kind', 'version', 'status', 'cause', 'pass_id', 'intent_hash', '
                'live_readiness', 'entry_authorized'}
 SQL = (f'CREATE TABLE {TABLE}(pass_id TEXT PRIMARY KEY,intent_hash TEXT NOT NULL,closure_hash TEXT NOT NULL,'
        'status TEXT NOT NULL,retired_scan TEXT UNIQUE)')
-GUARDS = {TABLE+'_insert': f"CREATE TRIGGER {TABLE}_insert BEFORE INSERT ON {TABLE} WHEN EXISTS(SELECT 1 FROM {TABLE} WHERE pass_id=NEW.pass_id OR rowid=NEW.rowid) OR (SELECT count(*) FROM {TABLE})>={MAX_ROWS} BEGIN SELECT RAISE(ABORT,'Pass closure immutable'); END"}
+GUARDS = {TABLE+'_insert': f"CREATE TRIGGER {TABLE}_insert BEFORE INSERT ON {TABLE} WHEN EXISTS(SELECT 1 FROM {TABLE} WHERE pass_id=NEW.pass_id OR rowid=NEW.rowid) BEGIN SELECT RAISE(ABORT,'Pass closure immutable'); END"}
 GUARDS |= {TABLE+'_'+a.lower(): f"CREATE TRIGGER {TABLE}_{a.lower()} BEFORE {a} ON {TABLE} BEGIN SELECT RAISE(ABORT,'Pass closure immutable'); END" for a in ('UPDATE', 'DELETE')}
+
+# T22G: FAILED_CHARGED is an ALLOW-list. Only a cause named here may retire a pass; everything else (including every
+# free-text ValueError and any code not listed) stays latched as INTEGRITY_HOLD. The denial markers above remain as a
+# second, independent check.
+TRANSIENT_CAUSES = frozenset({
+    # transport / provider / pacing contention (the monitoring allowance's non-latching vocabulary)
+    'TRANSPORT_ERROR', 'DEADLINE_EXCEEDED', 'RPC_ERROR', 'KRAKEN_PROVIDER_ERROR', 'PACING_DEADLINE_EXCEEDED',
+    'PACING_DATABASE_BUSY', 'PACING_QUEUE_FULL',
+    'HTTP_TRANSIENT',            # HTTP 408/429/5xx, established from the retained attempt original
+    'PROCESS_INTERRUPTED',       # KeyboardInterrupt / SystemExit: the process was stopped, no data was judged
+    # typed, deterministic outcomes of completed charged reads
+    'MARKET_PRODUCER_BLOCKED', 'RETAINED_MIGRATION_WITNESS_REQUIRED', 'FEATURE_HISTORY_PAGE_LIMIT',
+    'INVESTIGATION_REQUEST_BUDGET_EXHAUSTED', 'CYCLE_REQUEST_BUDGET_EXHAUSTED', 'SHARED_REQUEST_BUDGET_EXHAUSTED',
+    'MONITORING_REQUEST_BUDGET_EXHAUSTED', 'UNRESOLVED_QUOTE_DEMAND', 'UNRESOLVED_POSITION_EXIT',
+    'SOURCE_RESPONSE_STALE', 'HELD_OBSERVATION_CONTENT_REJECTED', 'CYCLE_DEADLINE_UNAVAILABLE',
+    'HISTORY_PREPARATION_DEADLINE_UNAVAILABLE', 'HISTORY_RECOVERY_REQUIRED',     # the pager's own RETRYABLE_ERROR state
+    # dispatcher typed outcomes after the intent was written
+    'CANDIDATE_EXPIRED_DURING_PREPARATION', 'ACQUISITION_INCOMPLETE',
+    'SOURCE_REQUEST_FAILED', 'HTTP_REJECTED'})        # these two additionally need transient attempt evidence
+# Causes that say only THAT a read failed, not why. They may retire a pass only when the retained attempt original(s)
+# prove every failed read was transient (network error, 408/429/5xx); TLS, auth, malformed and unclassified failures,
+# or the absence of an original, keep the pass latched.
+EVIDENCE_CAUSES = frozenset({'SOURCE_REQUEST_FAILED', 'HTTP_REJECTED'})
+# Diagnostic blockers that are not producer vocabulary but are ordinary control facts.
+CONTROL_DIAGNOSTICS = frozenset({'ENTRY_CONTROL_OR_EXISTING_POSITION'})
+HOLD_SENTINEL = '.hold-pending.'
 
 
 class ClosureRefused(ValueError):
     """The pass cannot be proved safe to close; the NULL latch stays (fail closed)."""
 
 
+class HoldRequired(ClosureRefused):
+    """The pass ended with a cause that is NOT provably transient: the caller must record an INTEGRITY_HOLD.
+
+    Other refusals (a monitoring reservation still pending, an ambiguous duplicate) leave the pass NULL so the
+    bounded recovery can still abandon it when its owner is provably gone; this one must never be abandoned.
+    """
+
+
 def is_integrity(cause):
     text = str(cause).upper()
     return any(marker in text for marker in INTEGRITY_MARKERS)
+
+
+def is_transient(cause):
+    return cause in TRANSIENT_CAUSES
+
+
+def classify(error, store=None):
+    """(cause, transient) of the exception that ended a pass or dispatch. ALLOW-list only.
+
+    Transient = a typed code in TRANSIENT_CAUSES, an HTTP 408/429/5xx whose retained attempt original says so, a
+    process interrupt, or a network exception that the transport itself classifies as TRANSPORT_ERROR. A bare
+    OSError, a free-text ValueError, TLS and unclassified errors are never transient.
+    """
+    if isinstance(error, (KeyboardInterrupt, SystemExit)):      # before `.code`: SystemExit carries its exit argument there
+        return 'PROCESS_INTERRUPTED', True
+    code = getattr(error, 'code', None)
+    if type(code) is str and 1 <= len(code) <= 128:
+        if code == 'HTTP_REJECTED' and _transient_http(store, getattr(error, 'evidence_hash', None)):
+            return 'HTTP_TRANSIENT', True
+        return code, code in TRANSIENT_CAUSES and code not in EVIDENCE_CAUSES
+    from urllib.error import HTTPError
+    if isinstance(error, HTTPError):
+        from .monitoring_budget import TRANSIENT_HTTP_STATUSES
+        return ('HTTP_TRANSIENT', True) if error.code in TRANSIENT_HTTP_STATUSES else ('HTTP_REJECTED', False)
+    if isinstance(error, OSError):
+        from .paper_read_sources import classify_exception
+        if classify_exception(error) == 'TRANSPORT_ERROR':
+            return 'TRANSPORT_ERROR', True
+    return cause_of(error), False
+
+
+def _transient_http(store, evidence_hash):
+    if store is None or type(evidence_hash) is not str:
+        return False
+    from .monitoring_budget import TRANSIENT_HTTP_STATUSES
+    try:
+        record = terminal._load(store, evidence_hash)
+    except (ValueError, OSError, sqlite3.Error):
+        return False
+    return (type(record) is dict and record.get('kind') == 'paper_read_attempt_v1'
+            and record.get('failure_code') == 'HTTP_REJECTED' and type(record.get('http_status')) is int
+            and record['http_status'] in TRANSIENT_HTTP_STATUSES)
+
+
+def failed_reads_transient(store, refs):
+    """True iff the refs hold at least one failed read attempt and EVERY failed attempt is non-latching."""
+    from .monitoring_budget import _latching_failure
+    failed = 0
+    for key in refs:
+        try:
+            record = terminal._load(store, key)
+        except (ValueError, OSError, sqlite3.Error):
+            return False
+        if type(record) is dict and record.get('kind') == 'paper_read_attempt_v1' and record.get('failure_code') is not None:
+            failed += 1
+            if _latching_failure(record):
+                return False
+    return failed > 0
+
+
+def nested_blockers_clear(result, hazards=()):
+    """False when a retained result carries a blocker that is not ordinary: the pass must be held, not closed.
+
+    Every top-level blocker must be an allow-listed cause. Every blocker nested in the diagnostics must be producer
+    vocabulary (window measurements, declared hazards) or a control fact; the migration-witness blocker needs the
+    plain MIGRATION_WITNESS_ABSENT disposition. A MARKET_PRODUCER_BLOCKED whose R1 publication was refused would
+    otherwise be closed here and silently undo the R1 allow-list.
+    """
+    from .paper_cycle_no_entry import producer_blocker_is_normal
+    if type(result) is not dict:
+        return False
+    blockers = result.get('blockers', [])
+    if type(blockers) is not list or not all(b in TRANSIENT_CAUSES for b in blockers):
+        return False
+    diagnostics = result.get('diagnostics', [])
+    if type(diagnostics) is not list:
+        return False
+    for diagnostic in diagnostics:
+        if type(diagnostic) is not dict:
+            return False
+        if 'blockers' in diagnostic and (type(diagnostic['blockers']) is not list or not all(
+                x in CONTROL_DIAGNOSTICS or producer_blocker_is_normal(x, tuple(hazards)) for x in diagnostic['blockers'])):
+            return False
+        graduation = diagnostic.get('graduation')
+        if (graduation is not None and 'RETAINED_MIGRATION_WITNESS_REQUIRED' in blockers
+                and type(graduation) is dict and graduation.get('status') != 'OBSERVED_MIGRATION'
+                and graduation.get('blockers') != ['MIGRATION_WITNESS_ABSENT']):
+            return False
+    return True
+
+
+def declared_hazards(intent):
+    out = []
+    for item in intent.get('targets', []) if type(intent) is dict and type(intent.get('targets')) is list else []:
+        if type(item) is dict and type(item.get('known_hazards')) in (list, tuple):
+            out.extend(x for x in item['known_hazards'] if type(x) is str)
+    return tuple(out)
 
 
 def cause_of(error):
@@ -128,7 +260,7 @@ def _table_rows(c):
     if set(objects) != expected or len(objects) != len(expected):
         raise ValueError('Pass closure schema malformed')
     count = c.execute(f'SELECT count(*) FROM {TABLE}').fetchone()[0]
-    if not 0 <= count <= MAX_ROWS:
+    if not 0 <= count <= PASS_CEILING:
         raise ValueError('Pass closure count invalid')
     if c.execute(f"SELECT 1 FROM {TABLE} WHERE typeof(pass_id)!='text' OR length(CAST(pass_id AS BLOB))!=32 OR typeof(intent_hash)!='text' OR length(CAST(intent_hash AS BLOB))!=64 OR typeof(closure_hash)!='text' OR length(CAST(closure_hash AS BLOB))!=64 OR status NOT IN ('FAILED_CHARGED','ABANDONED_CHARGED','INTEGRITY_HOLD') OR (retired_scan IS NOT NULL AND (typeof(retired_scan)!='text' OR length(CAST(retired_scan AS BLOB)) NOT BETWEEN 1 AND 256)) LIMIT 1").fetchone():
         raise ValueError('Pass closure scalar malformed')
@@ -188,6 +320,7 @@ def _verify(store, progress, rec, *, row=None, ledger=True):
             or rec['role'] not in ('ENTRY', 'HELD') or not terminal._id(rec['pass_id'])
             or not runtime._hash(rec['intent_hash']) or type(rec['cause']) is not str or not 1 <= len(rec['cause']) <= 128
             or is_integrity(rec['cause']) or type(rec['attempt_refs']) is not list or len(rec['attempt_refs']) > MAX_REFS
+            or (rec['status'] == 'FAILED_CHARGED' and rec['cause'] not in TRANSIENT_CAUSES)
             or not all(runtime._hash(k) for k in rec['attempt_refs'])):
         raise ValueError('Pass closure shape')
     if rec['status'] == 'ABANDONED_CHARGED' and (rec['cause'] != ABANDONED_CAUSE or rec['result_hash'] is not None):
@@ -203,6 +336,8 @@ def _verify(store, progress, rec, *, row=None, ledger=True):
     before, positions, ledger_path = _baselines(intent)
     if rec['role'] != ('HELD' if positions else 'ENTRY') or set(rec['scans']) != set(before):
         raise ValueError('Pass closure role/scan binding')
+    if rec['result_hash'] is not None and not nested_blockers_clear(terminal._load(store, rec['result_hash']), declared_hazards(intent)):
+        raise ValueError('Pass closure result carries blockers outside the normal vocabulary')
     refs_by_scan = {}
     for scan, window in rec['scans'].items():
         current = progress.admission(scan)
@@ -221,6 +356,8 @@ def _verify(store, progress, rec, *, row=None, ledger=True):
                 or used in refs_by_scan[scan]):
             raise ValueError('Pass closure attempt reference')
         refs_by_scan[scan][used] = key
+    if rec['status'] == 'FAILED_CHARGED' and rec['cause'] in EVIDENCE_CAUSES and not failed_reads_transient(store, rec['attempt_refs']):
+        raise ValueError('Pass closure failed read is not proven transient')
     monitoring = rec['monitoring']
     if monitoring is not None:
         first = intent.get('monitoring_total')
@@ -253,7 +390,9 @@ def close(store, progress, *, pass_id, status, cause, result_hash=None, attempt_
     if status not in STATUSES:
         raise ClosureRefused('Unknown closure status')
     if is_integrity(cause):
-        raise ClosureRefused('Integrity cause stays latched')
+        raise HoldRequired('Integrity cause stays latched')
+    if status == 'FAILED_CHARGED' and cause not in TRANSIENT_CAUSES:
+        raise HoldRequired('Cause is not on the transient allow-list; the pass stays latched')
     with closing(store.connect()) as c:
         row = c.execute('SELECT intent_hash,outcome_hash FROM paper_observation_passes WHERE id=?', (pass_id,)).fetchone()
         if row is None or row[1] is not None:
@@ -263,6 +402,9 @@ def close(store, progress, *, pass_id, status, cause, result_hash=None, attempt_
             raise ClosureRefused('Pass is certified by a reviewed receipt; its NULL outcome is load-bearing')
         intent = terminal._load(store, intent_hash)
         before, positions, ledger_path = _baselines(intent)
+        if status == 'FAILED_CHARGED' and result_hash is not None and not nested_blockers_clear(
+                terminal._load(store, result_hash), declared_hazards(intent)):
+            raise HoldRequired('Result carries blockers outside the normal vocabulary; the pass stays latched')
         monitoring = _monitoring_window(c, intent) if positions else None
         others = c.execute('SELECT count(*) FROM paper_observation_passes WHERE outcome_hash IS NULL AND id!=? AND intent_hash=?',
                            (pass_id, intent_hash)).fetchone()[0]
@@ -286,6 +428,8 @@ def close(store, progress, *, pass_id, status, cause, result_hash=None, attempt_
         if (type(attempt) is dict and attempt.get('kind') == 'paper_read_attempt_v1' and scan in scans
                 and type(used) is int and scans[scan]['before'] < used <= scans[scan]['after']):
             refs.append(key)
+    if status == 'FAILED_CHARGED' and cause in EVIDENCE_CAUSES and not failed_reads_transient(store, refs):
+        raise HoldRequired('Failed read is not proven transient by a retained attempt original; the pass stays latched')
     retired = None
     if (status == 'FAILED_CHARGED' and not positions and len(scans) == 1 and ledger_before is not None
             and all(w['after'] > w['before'] for w in scans.values())
@@ -314,12 +458,19 @@ def close(store, progress, *, pass_id, status, cause, result_hash=None, attempt_
             if c.execute('UPDATE paper_observation_passes SET outcome_hash=? WHERE id=? AND intent_hash=? AND outcome_hash IS NULL',
                          (key, pass_id, intent_hash)).rowcount != 1:
                 raise ClosureRefused('Pass publication changed')
-            _table_rows(c)
+            total = len(_table_rows(c))
             c.commit()
         except BaseException:
             c.rollback()
             raise
+    _warn_capacity(store, total)
     return key
+
+
+def _warn_capacity(store, total):
+    if total >= int(PASS_CEILING * ROTATION_WARN_FRACTION):
+        from .paper_cycle_no_entry import warn_rotation
+        warn_rotation(store, total, limit=PASS_CEILING, label=TABLE)
 
 
 def hold(store, *, pass_id, cause, result_hash=None):
@@ -344,15 +495,51 @@ def hold(store, *, pass_id, cause, result_hash=None):
                 for sql in GUARDS.values():
                     c.execute(sql)
             c.execute(f'INSERT INTO {TABLE} VALUES(?,?,?,?,NULL)', (pass_id, row[0], key, HOLD))
-            _table_rows(c)
+            total = len(_table_rows(c))
             c.commit()
         except BaseException:
             c.rollback()
             raise
+    _warn_capacity(store, total)
     return key
 
 
-def recover_abandoned(store, progress, *, ledger_db, cfg, clock):
+def hold_durably(store, *, pass_id, cause, result_hash=None, attempts=3):
+    """Record an INTEGRITY_HOLD, or at least make sure no recovery can ever abandon this pass.
+
+    The pass ended with an integrity cause in a live process. If the hold row cannot be written (a transient
+    SQLite fault), retry on fresh connections; if that still fails, leave a fsynced sentinel file beside the store
+    that recover_abandoned honours. Never raises: the original failure is propagating.
+    """
+    import time
+    for attempt in range(attempts):
+        try:
+            hold(store, pass_id=pass_id, cause=cause, result_hash=result_hash)
+            return True
+        except ClosureRefused:
+            return False                       # already bound or not an unresolved pass: nothing to protect
+        except (ValueError, OSError, sqlite3.Error):
+            time.sleep(0.05 * (attempt + 1))
+    try:
+        import os
+        fd = os.open(sentinel_path(store, pass_id), os.O_WRONLY | os.O_CREAT | os.O_EXCL, 0o640)
+        try:
+            os.write(fd, canonical({'pass_id': pass_id, 'cause': str(cause)[:128]}).encode())
+            os.fsync(fd)
+        finally:
+            os.close(fd)
+    except FileExistsError:
+        pass
+    except OSError:
+        return False
+    return True
+
+
+def sentinel_path(store, pass_id):
+    return str(store.path) + HOLD_SENTINEL + pass_id
+
+
+def recover_abandoned(store, progress, *, ledger_db, cfg, clock, research_db):
     """Close every unresolved pass left by a dead process. Caller owns research -> evidence -> ledger locks.
 
     Only passes created by this code (intent closure_v1) that are neither integrity-held nor certified by a reviewed
@@ -364,6 +551,9 @@ def recover_abandoned(store, progress, *, ledger_db, cfg, clock):
         if not c.execute("SELECT 1 FROM sqlite_master WHERE type='table' AND name='paper_observation_passes'").fetchone():
             return outcome
         skip = {r[0] for r in _table_rows(c) if r[3] == HOLD} | certified_ids(c)
+        import os
+        skip |= {r[0] for r in c.execute('SELECT id FROM paper_observation_passes WHERE outcome_hash IS NULL LIMIT 1024')
+                 if os.path.exists(sentinel_path(store, r[0]))}      # a hold that could not be written stays a hold
         pending = [r[0] for r in c.execute('SELECT id FROM paper_observation_passes WHERE outcome_hash IS NULL ORDER BY rowid LIMIT 1024')
                    if r[0] not in skip]
         has_monitoring = bool(c.execute("SELECT 1 FROM sqlite_master WHERE type='table' AND name='paper_monitoring_outcomes'").fetchone())
@@ -381,6 +571,17 @@ def recover_abandoned(store, progress, *, ledger_db, cfg, clock):
     if len(eligible) > MAX_RECOVER:
         outcome['refused'].append((None, 'Too many unresolved passes for bounded recovery'))
         return outcome
+    if eligible:
+        # The caller holds the research, evidence-invocation and paper-cycle locks, but that alone is not proof: a
+        # lock file that was deleted and recreated hides a live owner on the unlinked inode. Use the same owner proof
+        # as monitoring abandonment (kernel lock table + deleted-inode scan); anything unprovable closes nothing.
+        from .monitoring_budget import locks_free
+        from .paper_cycle import canonical_job_path
+        locks = (str(canonical_job_path(research_db)) + '.jobs-worker.lock', str(store.path) + '.ownership-invocation.lock',
+                 str(canonical_job_path(ledger_db)) + '.paper-cycle.lock')
+        if not locks_free(locks):
+            outcome['refused'].append((None, 'Lock owner not provably gone; nothing is closed'))
+            return outcome
     if dangling and eligible:
         from .monitoring_budget import MonitoringBudget, MonitoringBlocked
         try:

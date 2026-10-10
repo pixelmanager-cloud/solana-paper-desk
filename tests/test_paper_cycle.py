@@ -21,6 +21,7 @@ from desk.model import digest, canonical
 from desk.providers import SOL
 from desk.ledger import Ledger
 from tests.test_paper_read_sources import Response
+from tests import lock_sources
 from tests.test_live_strategy_features import transaction, POOL as TRADE_POOL
 from contextlib import ExitStack
 from desk.paper_observation_collector import ObservationTarget, TargetObservation
@@ -326,6 +327,7 @@ class PaperCycleTests(unittest.TestCase):
         self.assertEqual(self.f.progress.admission(self.target.scan_id),before)
         # T25F: an orphan reservation is abandoned only once it is older than ABANDON_AFTER_SECONDS and its owner is
         # provably gone, so the restart happens after that age (the old test restarted at the same instant).
+        lock_sources.free(self)   # portable owner evidence: the failed process is gone and holds nothing
         self.f.at+=monitoring_budget.ABANDON_AFTER_SECONDS+30
         restart=self.actual_cycle(positions=(item,),candidates=(),monitoring=True)
         self.assertEqual(restart['status'],'COMPLETE',restart)
@@ -391,6 +393,7 @@ class PaperCycleTests(unittest.TestCase):
         self.assertIn('MONITORING_OUTCOME_PENDING',allowance.snapshot()['blockers'])
         # T25F: abandonment needs an orphan older than ABANDON_AFTER_SECONDS with every lock free (the cycle ran, so the
         # lock files exist); the restart therefore happens after that age.
+        lock_sources.free(self)   # portable owner evidence: the interrupted process is gone and holds nothing
         self.f.at+=monitoring_budget.ABANDON_AFTER_SECONDS+30
         restart=self.actual_cycle(positions=(item,),candidates=(),monitoring=True)
         # T22: all three locks are free again, so the dead pass is closed ABANDONED_CHARGED and its dangling
@@ -527,10 +530,13 @@ class PaperCycleTests(unittest.TestCase):
     def test_failed_positionless_pass_is_closed_and_its_scan_retired_across_restart(self):
         # T22: was ..._stays_latched_across_restart (the NULL pass refused EVERY later pass). The failed lone
         # candidate is closed FAILED_CHARGED and its scan retired: no read, no refund, original result retained.
-        self.f.fail='getAccountInfo'
-        first=self.run_cycle()
+        # T22G: the failure goes through the real transport (a connection reset) so the failed attempt original is
+        # retained; SOURCE_REQUEST_FAILED alone is not proof of a transient cause (see test_pass_closure).
+        def failure(*args,**kwargs):raise ConnectionResetError('SYNTHETIC_TEST_ONLY')
+        with patch.object(transport,'build_opener',side_effect=failure),patch.object(transport.os.environ,'get',return_value='SYNTHETIC_TEST_ONLY'),patch.object(transport.time,'time',return_value=self.f.at):
+            first=self.run_cycle(source_factory=transport.PaperReadSources)
         self.assertEqual(first['attempted_requests'],1);self.assertIn('SOURCE_REQUEST_FAILED',first['blockers'])
-        self.f.fail=None;self.f.calls.clear()
+        self.f.calls.clear()
         second=self.run_cycle()
         self.assertEqual(second['status'],'RECOVERY_REQUIRED')
         self.assertEqual(second['blockers'],['REJECTED_SCAN_RETIRED'])

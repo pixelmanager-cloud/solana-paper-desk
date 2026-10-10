@@ -364,12 +364,13 @@ def publish(store, progress, *, pass_id, intent_hash, result, ledger):
     return key
 
 
-def warn_rotation(store, total):
+def warn_rotation(store, total, *, limit=None, label='no_entry'):
     """Typed, visible 80% capacity warning (log + the refusal log file the healthcheck reads)."""
-    LOG.warning('rotation_warning no_entry rows=%d of %d; rotate the store set while flat (RUNBOOK "Rotate when flat")',
-                total, MAX_ROWS)
+    limit = MAX_ROWS if limit is None else limit
+    LOG.warning('rotation_warning %s rows=%d of %d; rotate the store set while flat (RUNBOOK "Rotate when flat")',
+                label, total, limit)
     try:
-        line = (canonical({'kind': WARNING_KIND, 'rows': total, 'limit': MAX_ROWS}) + '\n').encode()
+        line = (canonical({'kind': WARNING_KIND, 'table': label, 'rows': total, 'limit': limit}) + '\n').encode()
         fd = os.open(refusal_path(store), os.O_WRONLY | os.O_APPEND | os.O_CREAT, 0o640)
         try:
             if os.fstat(fd).st_size + len(line) <= MAX_REFUSAL_BYTES:

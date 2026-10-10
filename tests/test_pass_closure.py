@@ -14,7 +14,8 @@ import unittest
 from unittest.mock import patch
 
 from desk import monitoring_budget as monitoring, paper_cycle as cycle, paper_pass_closure as closure
-from desk import paper_terminal_reconciliation as terminal, quote_execution as qe
+from desk import paper_read_sources as transport, paper_terminal_reconciliation as terminal, quote_execution as qe
+from tests import lock_sources
 from desk.evidence import EvidenceStore
 from desk.model import digest
 from tests.test_paper_cycle import PaperCycleTests
@@ -32,6 +33,10 @@ class Base(unittest.TestCase):
         self.scan = self.h.target.scan_id
         self.h.http_calls = []
         self.h.sell_output = 10_000_000
+        # T22G: owner evidence is injected ("nothing holds any lock": every pass/process under test is dead or is
+        # this process), so lock-ownership logic behaves identically on Linux and macOS. Tests that need a live
+        # holder inject their own table (tests/test_pass_closure_allowlist.py).
+        lock_sources.free(self)
 
     # -- helpers ---------------------------------------------------------
     def rows(self):
@@ -53,10 +58,19 @@ class Base(unittest.TestCase):
     def gate(self, scans=()):
         return terminal.gate(self.store, self.h.f.jobs.path, scans, ledger_locked=str(self.h.path))
 
-    def fail_entry(self):
-        self.h.f.fail = 'getAccountInfo'
-        first = self.h.run_cycle()
-        self.h.f.fail = None
+    def fail_entry(self, error=None):
+        """A charged entry read that fails through the REAL transport, so the failed attempt original is retained.
+
+        T22G: SOURCE_REQUEST_FAILED only says that a read failed. The closure classifies it from the retained
+        attempt original, so the fixture's injected failure (no original) is replaced by a transport-level error.
+        Default: a connection reset (transient). Pass another exception to exercise the latching classes.
+        """
+        def failure(*args, **kwargs):
+            raise error or ConnectionResetError('SYNTHETIC_TEST_ONLY')
+        with patch.object(transport, 'build_opener', side_effect=failure), \
+                patch.object(transport.os.environ, 'get', return_value='SYNTHETIC_TEST_ONLY'), \
+                patch.object(transport.time, 'time', return_value=self.h.f.at):
+            first = self.h.run_cycle(source_factory=transport.PaperReadSources)
         self.h.f.calls.clear()
         return first
 
@@ -197,7 +211,8 @@ class FailedEntryClosureTests(Base):
         for pass_id in ('d' * 32, 'e' * 32):
             with self.subTest(pass_id=pass_id), self.assertRaises(closure.ClosureRefused):
                 closure.close(self.store, self.progress, pass_id=pass_id, status='ABANDONED_CHARGED', cause=closure.ABANDONED_CAUSE)
-        result = closure.recover_abandoned(self.store, self.progress, ledger_db=self.h.path, cfg=self.h.cfg, clock=lambda: self.h.f.at)
+        result = closure.recover_abandoned(self.store, self.progress, ledger_db=self.h.path, cfg=self.h.cfg, clock=lambda: self.h.f.at,
+                                         research_db=self.h.f.jobs.path)
         self.assertEqual(result['closed'], [])
         self.assertEqual(len(result['refused']), 1)          # the pre-closure intent is never even attempted
         self.assertEqual(self.gate(), 'OBSERVATION_RECOVERY_REQUIRED')   # still latched: unknown shapes fail closed
@@ -224,7 +239,8 @@ class IntegrityHoldTests(Base):
         again = self.h.run_cycle()
         self.assertEqual((again['status'], again['blockers']), ('RECOVERY_REQUIRED', ['OBSERVATION_RECOVERY_REQUIRED']))
         self.assertEqual(len(self.h.f.calls), calls)
-        recovered = closure.recover_abandoned(self.store, self.progress, ledger_db=self.h.path, cfg=self.h.cfg, clock=lambda: self.h.f.at)
+        recovered = closure.recover_abandoned(self.store, self.progress, ledger_db=self.h.path, cfg=self.h.cfg, clock=lambda: self.h.f.at,
+                                         research_db=self.h.f.jobs.path)
         self.assertEqual((recovered['closed'], recovered['refused']), ([], []))
         with self.assertRaises(closure.ClosureRefused):
             closure.close(self.store, self.progress, pass_id=self.null_passes()[0][0], status='ABANDONED_CHARGED', cause=closure.ABANDONED_CAUSE)
@@ -237,7 +253,8 @@ class IntegrityHoldTests(Base):
             c.execute('INSERT INTO paper_observation_passes VALUES(?,?,NULL)', ('a1' * 16, self.passes()[0][1] if False else self.store.save(
                 {'kind': 'paper_cycle_intent_v1', 'closure_v1': True, 'config_hash': digest(self.h.cfg), 'ledger': str(self.h.path), 'targets': [],
                  'admissions': {self.scan: self.progress.admission(self.scan)}})))
-        result = closure.recover_abandoned(self.store, self.progress, ledger_db=self.h.path, cfg=self.h.cfg, clock=lambda: self.h.f.at)
+        result = closure.recover_abandoned(self.store, self.progress, ledger_db=self.h.path, cfg=self.h.cfg, clock=lambda: self.h.f.at,
+                                         research_db=self.h.f.jobs.path)
         self.assertEqual(result['closed'], ['a1' * 16])
         self.assertEqual(sorted(r[3] for r in self.rows()), ['ABANDONED_CHARGED', 'INTEGRITY_HOLD'])
         self.assertEqual([p[0] for p in self.null_passes()], [held])
@@ -254,7 +271,8 @@ class ReviewRegressionTests(Base):
             c.execute('INSERT INTO paper_observation_passes VALUES(?,?,NULL)', ('c1' * 16, intent))
             c.execute('INSERT INTO paper_observation_passes VALUES(?,?,NULL)', ('c2' * 16, legacy))
         with patch.object(closure, 'certified_ids', return_value={'c1' * 16}):
-            result = closure.recover_abandoned(self.store, self.progress, ledger_db=self.h.path, cfg=self.h.cfg, clock=lambda: self.h.f.at)
+            result = closure.recover_abandoned(self.store, self.progress, ledger_db=self.h.path, cfg=self.h.cfg, clock=lambda: self.h.f.at,
+                                         research_db=self.h.f.jobs.path)
         self.assertEqual((result['closed'], result['refused']), ([], []))
         self.assertEqual(sorted(p[0] for p in self.null_passes()), ['c1' * 16, 'c2' * 16])   # byte-for-byte untouched
         with patch.object(closure, 'certified_ids', return_value={'c1' * 16}), self.assertRaises(closure.ClosureRefused):
@@ -263,15 +281,20 @@ class ReviewRegressionTests(Base):
     def test_corrupt_evidence_and_unclassified_defects_hold_while_transport_errors_close(self):
         cases = {'corrupt': (ValueError('Evidence checksum mismatch'), True), 'defect': (RuntimeError('boom'), True),
                  'json': (json.JSONDecodeError('x', 'y', 0), True), 'sqlite': (sqlite3.DatabaseError('malformed'), True),
-                 'timeout': (OSError('timeout'), False), 'interrupt': (KeyboardInterrupt(), False)}
+                 'timeout': (TimeoutError('timeout'), False), 'interrupt': (KeyboardInterrupt(), False),
+                 'reset': (ConnectionResetError('x'), False), 'bare OSError': (OSError('x'), None)}
         for name, (error, held) in cases.items():
             with self.subTest(name):
-                self.assertEqual(closure.is_integrity(closure.cause_of(error)), held, closure.cause_of(error))
+                cause, transient = closure.classify(error)
+                if held is None:                        # T22G: unclassified is neither: it simply never closes
+                    self.assertFalse(transient, cause)
+                else:
+                    self.assertEqual((closure.is_integrity(cause), transient), (held, not held), cause)
 
     def test_zero_charge_failure_does_not_retire_the_scan(self):
         def defect(progress, scan):
-            raise OSError('SYNTHETIC source factory failure before any request')
-        with self.assertRaises(OSError):
+            raise TimeoutError('SYNTHETIC source factory failure before any request')    # transient (a bare OSError latches)
+        with self.assertRaises(TimeoutError):
             self.h.run_cycle(source_factory=defect)
         self.assertEqual(self.progress.admission(self.scan)['requests_used'], 0)
         self.assertEqual([r[3] for r in self.rows()], ['FAILED_CHARGED'])
@@ -393,7 +416,8 @@ class KilledProcessTests(Base):
         return self.in_child(work)
 
     def recover(self):
-        return closure.recover_abandoned(self.store, self.progress, ledger_db=self.h.path, cfg=self.h.cfg, clock=lambda: self.h.f.at)
+        return closure.recover_abandoned(self.store, self.progress, ledger_db=self.h.path, cfg=self.h.cfg, clock=lambda: self.h.f.at,
+                                         research_db=self.h.f.jobs.path)
 
     def assert_recovered_once(self, expect_charge_delta=None):
         admission = self.progress.admission(self.scan)
@@ -584,6 +608,9 @@ class DispatcherClosureTests(unittest.TestCase):
         bad_cases = {
             'abandoned too early': {**good, 'at': good['at'] - self.tool.ABANDON_AFTER_SECONDS},
             'integrity cause': {**good, 'result': {**good['result'], 'status': 'FAILED_CHARGED', 'cause': 'LEDGER_INTEGRITY_FAILURE'}},
+            # T22G allow-list: a FAILED_CHARGED disposition must name an allow-listed transient cause
+            'cause off the allow-list': {**good, 'result': {**good['result'], 'status': 'FAILED_CHARGED', 'cause': 'MINT_BINDING'}},
+            'latching provider class': {**good, 'result': {**good['result'], 'status': 'FAILED_CHARGED', 'cause': 'TLS_ERROR'}},
             'wrong abandon cause': {**good, 'result': {**good['result'], 'cause': 'SOMETHING_ELSE'}},
             'entry authorized': {**good, 'result': {**good['result'], 'entry_authorized': True}},
             'extra field': {**good, 'result': {**good['result'], 'surprise': 1}},
@@ -599,17 +626,38 @@ class DispatcherClosureTests(unittest.TestCase):
             self.assertEqual(self.h.invoke()['status'], 'NO_CANDIDATE')
 
     def test_in_process_failure_closes_failed_charged_and_a_new_candidate_proceeds(self):
-        with patch.object(self.tool.cli, '_credentials'), patch('desk.providers.helius_rpc', side_effect=OSError('timeout')):
-            with self.assertRaises((ValueError, OSError)):
+        # T22G: the acquisition's typed PROVIDER_RETRY_REQUIRED status is raised by the dispatcher as the allow-listed
+        # ACQUISITION_INCOMPLETE. (A raw provider OSError makes the acquisition return the ambiguous
+        # ACQUISITION_RETRY_OR_EVIDENCE_BLOCKED, which stays unresolved: see the next tests.)
+        with patch.object(self.tool.cli, '_credentials'), \
+                patch.object(self.tool.acquisition, 'acquire', return_value={'status': 'PROVIDER_RETRY_REQUIRED', 'scan_id': None}):
+            with self.assertRaises(ValueError):
                 self.h.invoke(execute=True, systemd_credentials=True)
         result = self.results()[0]['result']
-        self.assertEqual((result['kind'], result['status']), ('dispatcher_failed_charged_v1', 'FAILED_CHARGED'))
-        self.assertTrue(result['cause'].startswith('EXCEPTION_'), result)
+        self.assertEqual((result['kind'], result['status'], result['cause']), ('dispatcher_failed_charged_v1', 'FAILED_CHARGED', 'ACQUISITION_INCOMPLETE'))
         self.assertEqual(self.h.invoke()['status'], 'NO_CANDIDATE')
         self.h.append_distinct_migration()
         fresh = self.h.invoke()
         self.assertEqual(fresh['status'], 'DRY_RUN')                                  # another candidate is selectable
         self.assertNotEqual(fresh['hint']['mint'], self.h.mint)
+
+
+    def test_a_raw_provider_error_leaves_the_ambiguous_status_unresolved(self):
+        with patch.object(self.tool.cli, '_credentials'), patch('desk.providers.helius_rpc', side_effect=OSError('timeout')):
+            with self.assertRaises((ValueError, OSError)):
+                self.h.invoke(execute=True, systemd_credentials=True)
+        self.assertEqual((self.h.count('intents'), self.h.count('results')), (1, 0))
+
+    def test_blocked_evidence_status_after_the_intent_stays_unresolved(self):
+        # T22G allow-list: only the acquisition's ordinary retry statuses close; a status that may mean blocked
+        # evidence leaves the intent unresolved and the dispatcher latched.
+        with patch.object(self.tool.cli, '_credentials'), \
+                patch.object(self.tool.acquisition, 'acquire', return_value={'status': 'ACQUISITION_RETRY_OR_EVIDENCE_BLOCKED', 'scan_id': None}):
+            with self.assertRaises(ValueError):
+                self.h.invoke(execute=True, systemd_credentials=True)
+        self.assertEqual((self.h.count('intents'), self.h.count('results')), (1, 0))
+        with self.assertRaisesRegex(ValueError, 'Unresolved dispatch'):
+            self.h.invoke()
 
 
 class GateCostTests(Base):

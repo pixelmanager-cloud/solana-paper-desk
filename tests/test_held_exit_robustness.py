@@ -129,19 +129,21 @@ class HeldExitTests(unittest.TestCase):
         self.assertEqual(snapshot['status'], 'AVAILABLE', snapshot)
         self.assertEqual(snapshot['total_used'], requests)
 
-    def test_no_provider_status_latches_the_monitoring_budget(self):
-        # T22: T08 kept 401/403 latching; a provider rejection is a charged, retained outcome like any other and must
-        # not strand the position (the operator fixes the key, the next pass retries).
-        for status in (503, 429, 403, 401):
+    def test_provider_availability_statuses_are_transient_but_rejections_latch(self):
+        for status, latched in ((503, False), (429, False), (403, True), (401, True)):
             with self.subTest(status=status):
-                case = HeldExitTests('test_no_provider_status_latches_the_monitoring_budget')
+                case = HeldExitTests('test_provider_availability_statuses_are_transient_but_rejections_latch')
                 case.setUp()
                 self.addCleanup(case.doCleanups)
                 case.h.http_calls.failure = lambda r, s=status: http_error(s) if is_quote(r) else None
-                result, requests = case.held()
+                result, _ = case.held()
                 self.assertEqual(result['blockers'], ['HTTP_REJECTED'], result)
-                reserved, outcomes, blocked = case.reservations()
-                self.assertEqual((reserved, outcomes, blocked), (requests, requests, None))
+                self.assertEqual(case.reservations()[2] == 'SOURCE_FAILURE', latched)
+
+    # T22G: T22's test_no_provider_status_latches_the_monitoring_budget asserted that 401/403 do NOT latch the
+    # allowance. That contradicts integration's T25F rules (a provider rejection means the key or plan is wrong and
+    # must stop the reads until an operator looks), which test_provider_availability_statuses_are_transient_but_
+    # rejections_latch above pins. T25F's rules are kept; the T22 test is removed, not loosened.
 
     # -- W2 characterisation: a failed held pass must not wedge later passes
     def test_transient_quote_error_then_good_quote_completes_exit(self):

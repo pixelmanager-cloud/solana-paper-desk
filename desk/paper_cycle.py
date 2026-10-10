@@ -60,8 +60,9 @@ class CycleTarget:
 
 
 class CycleBlocked(ValueError):
-    def __init__(self, code):
+    def __init__(self, code, evidence_hash=None):
         self.code = code
+        self.evidence_hash = evidence_hash      # retained attempt original of a failed provider read, when there is one
         super().__init__(code)
 
 
@@ -182,7 +183,7 @@ class _Budget:
         try:
             result = invoke(timeout)
         except PaperReadError as error:
-            raise CycleBlocked(error.code) from error
+            raise CycleBlocked(error.code, getattr(error, 'evidence_hash', None)) from error
         after = self.progress.admission(scan)
         expected = {**before, 'requests_used': before['requests_used']+1}
         if after != expected:
@@ -207,7 +208,7 @@ class _HeldBudget:
         try:
             result = invoke(timeout)
         except PaperReadError as error:
-            raise CycleBlocked(error.code) from error
+            raise CycleBlocked(error.code, getattr(error, 'evidence_hash', None)) from error
         after = self.monitoring.snapshot()
         if (after['total_used'] != before['total_used']+1
                 or self.parent.progress.admission(scan) != admission):
@@ -411,34 +412,52 @@ def fulfill_quotes(state, cfg, event_builder, collected, source, budget):
 
 
 def _close_failed(store, progress, identity, error, attempt_refs, ledger_before):
-    """Best-effort FAILED_CHARGED for a pass that raised; an integrity cause is held; unprovable keeps the NULL latch."""
+    """FAILED_CHARGED for a pass that raised, ONLY for an allow-listed transient cause (T22G).
+
+    Everything else (an integrity cause, a free-text ValueError, an unclassified exception, RecoveryRequired) is
+    held: the hold is written durably (retry, then a sentinel) so recovery can never abandon it later.
+    """
     try:
         from . import paper_pass_closure as closure
-        cause = closure.cause_of(error)
-        if isinstance(error, RecoveryRequired) or closure.is_integrity(cause):
-            closure.hold(store, pass_id=identity, cause=cause)
+        cause, transient = closure.classify(error, store)
+        if isinstance(error, RecoveryRequired) or not transient:
+            closure.hold_durably(store, pass_id=identity, cause=cause)
             return
-        closure.close(store, progress, pass_id=identity, status='FAILED_CHARGED', cause=cause,
-                      attempt_refs=tuple(attempt_refs), ledger_before=ledger_before)
+        evidence = getattr(error, 'evidence_hash', None)      # the failed read's retained attempt original, if any
+        refs = tuple(attempt_refs) + ((evidence,) if type(evidence) is str and evidence not in attempt_refs else ())
+        try:
+            closure.close(store, progress, pass_id=identity, status='FAILED_CHARGED', cause=cause,
+                          attempt_refs=refs, ledger_before=ledger_before)
+        except closure.HoldRequired:
+            closure.hold_durably(store, pass_id=identity, cause=cause)
     except Exception:
         pass
 
 
 def _close_unfinished(store, progress, identity, result, outcome, attempt_refs, ledger_before):
-    """FAILED_CHARGED for a pass that ended BLOCKED with charges and no other terminal outcome."""
+    """FAILED_CHARGED for a pass that ended BLOCKED with charges and no other terminal outcome.
+
+    Allow-list: every top-level blocker must be an allow-listed cause and every blocker nested in the diagnostics
+    must be ordinary producer vocabulary, otherwise the pass is held (so a MARKET_PRODUCER_BLOCKED with integrity
+    codes nested inside, whose no-entry publication was refused, is NOT closed here).
+    """
     try:
         from . import paper_pass_closure as closure
         causes = list(result['blockers'])
         with closing(store.connect()) as c:
-            row = c.execute('SELECT outcome_hash FROM paper_observation_passes WHERE id=?', (identity,)).fetchone()
+            row = c.execute('SELECT outcome_hash,intent_hash FROM paper_observation_passes WHERE id=?', (identity,)).fetchone()
         if row is None or row[0] is not None:
             return
-        if result['status'] == 'RECOVERY_REQUIRED' or any(closure.is_integrity(x) for x in causes):
-            closure.hold(store, pass_id=identity, cause=causes[0] if causes else result['status'], result_hash=outcome)
+        hazards = closure.declared_hazards(terminal._load(store, row[1]))
+        if (result['status'] == 'RECOVERY_REQUIRED' or not causes or not closure.nested_blockers_clear(result, hazards)):
+            closure.hold_durably(store, pass_id=identity, cause=causes[0] if causes else result['status'], result_hash=outcome)
             return
-        closure.close(store, progress, pass_id=identity, status='FAILED_CHARGED', cause=causes[0] if causes else 'PASS_UNFINISHED',
-                      result_hash=outcome, attempt_refs=tuple(attempt_refs) + tuple(result.get('usd_evidence_refs', ())),
-                      ledger_before=ledger_before)
+        try:
+            closure.close(store, progress, pass_id=identity, status='FAILED_CHARGED', cause=causes[0],
+                          result_hash=outcome, attempt_refs=tuple(attempt_refs) + tuple(result.get('usd_evidence_refs', ())),
+                          ledger_before=ledger_before)
+        except closure.HoldRequired:
+            closure.hold_durably(store, pass_id=identity, cause=causes[0], result_hash=outcome)
     except Exception:
         pass
 
@@ -525,7 +544,7 @@ def run_once(research_db, evidence_db, ledger_db, cfg, *, position_targets=(), c
                 try:
                     # All three locks are held, so an unresolved pass belongs to a process that is gone.
                     from .paper_pass_closure import recover_abandoned
-                    recover_abandoned(store,progress,ledger_db=path,cfg=cfg,clock=wall_clock)
+                    recover_abandoned(store,progress,ledger_db=path,cfg=cfg,clock=wall_clock,research_db=research)
                 except (ValueError,OSError,sqlite3.Error,TypeError,KeyError,RecoveryRequired,MonitoringBlocked):
                     pass  # Unprovable recovery keeps the latch; the gate below decides.
                 try:
@@ -710,6 +729,8 @@ def run_once(research_db, evidence_db, ledger_db, cfg, *, position_targets=(), c
                         result['blockers'].append('HELD_OBSERVATION_CONTENT_REJECTED')
                     except (CycleBlocked, MonitoringBlocked) as error:
                         result['blockers'].append(error.code)
+                        if getattr(error,'evidence_hash',None) and error.evidence_hash not in attempt_refs:
+                            attempt_refs.append(error.evidence_hash)    # the failed read's original can classify the closure
                     except RecoveryRequired as error:
                         result['status']='RECOVERY_REQUIRED';result['blockers'].append(str(error))
                     except ValueError as error:
@@ -755,7 +776,7 @@ def run_once(research_db, evidence_db, ledger_db, cfg, *, position_targets=(), c
                                                         blocker=result['blockers'][0],error=refused,at=wall_clock())
                     if result['status']=='COMPLETE' or (budget.attempted==0 and budget.monitoring_attempted==0 and all(
                             progress.admission(scan)==admission for scan,admission in intent['admissions'].items())):
-                        with store.connect() as c:c.execute('UPDATE paper_observation_passes SET outcome_hash=? WHERE id=?',(outcome,identity))
+                        with store.connect() as c:c.execute('UPDATE paper_observation_passes SET outcome_hash=? WHERE id=? AND outcome_hash IS NULL',(outcome,identity))
                     if result['status']!='COMPLETE':
                         _close_unfinished(store,progress,identity,result,outcome,attempt_refs,ledger_before)
                     return {**result,'evidence_hash':outcome}

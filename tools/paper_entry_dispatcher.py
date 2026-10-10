@@ -284,11 +284,12 @@ def _check_records(c,expected,values,bindings,retired,*,historical_contexts=None
                     raise ValueError('Rejection disposition conflict')
                 continue
             if type(original_result) is dict and original_result.get('kind') == FAIL_KIND:
-                from desk.paper_pass_closure import is_integrity, ABANDONED_CAUSE
+                from desk.paper_pass_closure import is_integrity, is_transient, ABANDONED_CAUSE
                 if (set(original_result) != FAIL_FIELDS or original_result['version'] != 1
                         or original_result['status'] not in ('FAILED_CHARGED','ABANDONED_CHARGED')
                         or type(original_result['cause']) is not str or not 1 <= len(original_result['cause']) <= 128
                         or is_integrity(original_result['cause']) or original_result['entry_authorized'] is not False
+                        or (original_result['status'] == 'FAILED_CHARGED' and not is_transient(original_result['cause']))
                         or original_result['execution_status'] != 'EXECUTION_UNVERIFIED'
                         or original_result['live_readiness'] is not False
                         or (result['scan_id'] is not None and (type(result['scan_id']) is not str or not 1 <= len(result['scan_id']) <= 256))
@@ -749,6 +750,13 @@ def _scan_for(research_db, mint):
     return row[0] if row else None
 
 
+class DispatchFailure(ValueError):
+    """A typed, ordinary dispatch outcome after the intent was written (closable as FAILED_CHARGED)."""
+    def __init__(self, code, message):
+        super().__init__(message)
+        self.code = code
+
+
 def _close_dispatch(expected, journal, identity, intent, scan, cause, status):
     """Terminal FAILED_CHARGED/ABANDONED_CHARGED result for an unresolved intent.
 
@@ -756,16 +764,18 @@ def _close_dispatch(expected, journal, identity, intent, scan, cause, status):
     the global gate is clear. The intent stays charged and its mint is never dispatched again. Raises, leaving
     the intent unresolved, on any doubt (integrity causes, remaining latches).
     """
-    from desk.paper_pass_closure import recover_abandoned, is_integrity
-    if is_integrity(cause):
-        raise ValueError('Integrity cause stays unresolved')
+    from desk.paper_pass_closure import recover_abandoned, is_integrity, is_transient, ABANDONED_CAUSE
+    if is_integrity(cause) or (status == 'FAILED_CHARGED' and not is_transient(cause)):
+        raise ValueError('Cause is not on the transient allow-list; the intent stays unresolved')
+    if status == 'ABANDONED_CHARGED' and cause != ABANDONED_CAUSE:
+        raise ValueError('Abandoned dispatch must name the lease')
     paths = {k: v['path'] for k, v in expected['paths'].items()}
     cfg = cli._config(paths['config'])
     with monitor._context(paths['research_db'], paths['evidence_db'], paths['ledger_db'], cfg) as (store, ledger, state):
         progress = HistoryProgress.__new__(HistoryProgress); progress.store = store
         if intent['hint']['mint'] in state['positions']:
             raise ValueError('Candidate already has an open paper position; not a failed dispatch')
-        recover_abandoned(store, progress, ledger_db=ledger, cfg=cfg, clock=_now)
+        recover_abandoned(store, progress, ledger_db=ledger, cfg=cfg, clock=_now, research_db=paths['research_db'])
         if terminal.gate(store, Path(paths['research_db']), (), ledger_locked=str(ledger)):
             raise ValueError('Store still latched after dispatch failure')
         snapshot = monitor.MonitoringBudget(store, ledger, cfg).snapshot()
@@ -782,8 +792,13 @@ def _close_dispatch(expected, journal, identity, intent, scan, cause, status):
 def _recover_unresolved(expected, journal, ids):
     """Execute path: close stale unresolved intents of a dead dispatcher (this process holds its lock)."""
     from desk.paper_pass_closure import ABANDONED_CAUSE
+    from desk.monitoring_budget import locks_free
     paths = {k: v['path'] for k, v in expected['paths'].items()}
     now = _now()
+    # The flock alone is not proof (a deleted and recreated lock file hides a live dispatcher on the unlinked inode),
+    # and wall-clock age alone is not either: use the kernel lock table plus the deleted-inode scan.
+    if not locks_free((str(_path(expected['journal'], private=True)) + '.dispatcher.lock',)):
+        return
     for identity in ids[:8]:
         intent = json.loads(journal.execute('SELECT payload FROM intents WHERE id=?', (identity,)).fetchone()[0])
         if now - intent['at'] < ABANDON_AFTER_SECONDS:
@@ -855,9 +870,16 @@ def _dispatch(expected, *, execute=False, systemd_credentials=False):
                 scan = jobs.admit(hint['mint'],kind=BIRTH_ACQUISITION_V1,evidence_db=store.path,
                                   paper_token_profile_version=cfg.get('paper_token_profile_version',0))
                 known_scan.append(scan)
+            rpc_state = {'error': None}
             def guarded_rpc(method,params):
                 with _held_guard(expected,scan):
-                    return helius_rpc(method,params)
+                    try:
+                        value = helius_rpc(method,params)
+                    except BaseException as failure:
+                        rpc_state['error'] = failure         # the acquisition swallows it into an ambiguous status
+                        raise
+                    rpc_state['error'] = None
+                    return value
             acquired = acquisition.acquire(paths['research_db'],paths['evidence_db'],guarded_rpc,
                                           scan_id=scan,paper_token_profile_version=cfg.get('paper_token_profile_version',0))
             scan = acquired.get('scan_id')
@@ -869,6 +891,18 @@ def _dispatch(expected, *, execute=False, systemd_credentials=False):
                 return {'status':'TOKEN_REJECTED','dispatch_id':identity,'scan_id':scan,
                         'entry_authorized':False,'execution_status':'EXECUTION_UNVERIFIED','live_readiness':False}
             if not scan or acquired.get('status') not in ('SEED_HISTORY_PARTIAL','SEED_HISTORY_ACQUIRED','LAUNCH_OR_INVENTORY_UNVERIFIED'):
+                # Only the acquisition's own ordinary retry statuses are a typed, closable outcome; anything else
+                # (e.g. ACQUISITION_RETRY_OR_EVIDENCE_BLOCKED) may mean blocked evidence and stays unresolved.
+                if acquired.get('status') in ('PROVIDER_RETRY_REQUIRED', 'BUSY', 'ACQUISITION_REQUEST_LIMIT_REACHED'):
+                    raise DispatchFailure('ACQUISITION_INCOMPLETE', 'Acquisition incomplete; dispatcher recovery required')
+                if acquired.get('status') == 'ACQUISITION_RETRY_OR_EVIDENCE_BLOCKED' and rpc_state['error'] is not None:
+                    # The acquisition swallows every exception into this one ambiguous status. The last provider call
+                    # failing is the cause only if that failure is itself a classified transient one (timeout, reset,
+                    # HTTP 408/429/5xx, pacing contention); a later success clears it. Otherwise it stays unresolved.
+                    from desk.paper_pass_closure import classify
+                    cause, transient = classify(rpc_state['error'])
+                    if transient:
+                        raise DispatchFailure(cause, 'Acquisition provider call failed transiently; dispatcher recovery required')
                 raise ValueError('Acquisition incomplete; dispatcher recovery required')
             _preflight(expected,scan)
             retained = migration.intake(paths['research_db'],paths['evidence_db'],scan_id=scan,
@@ -887,7 +921,7 @@ def _dispatch(expected, *, execute=False, systemd_credentials=False):
             _preflight(expected,scan)
             window = expected['watchlist_maximum_age'] if v2 and evaluation > 1 else expected['maximum_age']
             if not 300 <= _now()-hint['received_at'] <= window:
-                raise ValueError('Candidate expired during preparation')
+                raise DispatchFailure('CANDIDATE_EXPIRED_DURING_PREPARATION', 'Candidate expired during preparation')
             row = {'scan_id':scan,'mint':hint['mint'],'pool':hint['pool'],'taker':expected['taker'],
                    'amount_raw':expected['amount_raw'],'provenance':PROVENANCE,
                    'pool_fee_bps':expected['pool_fee_bps'],'known_hazards':[],
@@ -927,9 +961,11 @@ def _dispatch(expected, *, execute=False, systemd_credentials=False):
             # same candidate is never dispatched again (its mint is unique in the journal).
             if written:
                 try:
-                    from desk.paper_pass_closure import cause_of
-                    _close_dispatch(expected, journal, identity, intent, known_scan[0] if known_scan else None,
-                                    cause_of(error), 'FAILED_CHARGED')
+                    from desk.paper_pass_closure import classify
+                    cause, transient = classify(error)
+                    if transient:                 # allow-list only: everything else stays unresolved (latched)
+                        _close_dispatch(expected, journal, identity, intent, known_scan[0] if known_scan else None,
+                                        cause, 'FAILED_CHARGED')
                 except Exception:
                     pass
             raise

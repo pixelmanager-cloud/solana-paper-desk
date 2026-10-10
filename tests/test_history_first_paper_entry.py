@@ -83,9 +83,11 @@ class HistoryFirstTests(unittest.TestCase):
         self.row['provenance']='PUBLIC_MAINNET_CAPTURE_NOT_TRADING_EVIDENCE';self.save()
         def failed(progress,item,*args):
             progress.reserve(item.target.scan_id)
-            raise ValueError('ambiguous synthetic failure')
+            # T22G: a classified transient fault. The earlier free-text ValueError is not on the allow-list and now
+            # holds the pass (tests/test_pass_closure_allowlist.py pins that).
+            raise TimeoutError('ambiguous synthetic failure')
         with patch.object(tool.cli,'_credentials'),patch.object(tool.cycle,'_history',side_effect=failed):
-            with self.assertRaises(ValueError):self.invoke(live=True,systemd_credentials=True)
+            with self.assertRaises(TimeoutError):self.invoke(live=True,systemd_credentials=True)
         self.assertEqual(self.f.f.progress.admission(self.f.target.scan_id)['requests_used'],1)
         with patch.object(tool.cli,'_credentials',side_effect=AssertionError('secret')),patch.object(tool.cycle,'_history',side_effect=AssertionError('retry')):
             with self.assertRaises(ValueError):self.invoke(live=True,systemd_credentials=True)

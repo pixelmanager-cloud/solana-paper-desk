@@ -76,8 +76,15 @@ def prepare(store,progress,ledger_db,cfg,item,*,research_db,pacing_path):
     try:
         as_of, _, _ = cycle._history(progress, item, budget, PaperHistorySource)
     except PreparationRejected as error:
-        result = rejection.publish(store,progress,ledger_db,cfg,pass_id=identity,
-            intent_hash=intent,history_id=budget.history_id,reason=error.code)
+        try:
+            result = rejection.publish(store,progress,ledger_db,cfg,pass_id=identity,
+                intent_hash=intent,history_id=budget.history_id,reason=error.code)
+        except BaseException as failure:
+            # T22G: a failure while publishing the typed rejection is not a transient provider fault. It must
+            # never fall through to a later ABANDONED_CHARGED recovery: hold the pass (fail closed), then re-raise.
+            from . import paper_pass_closure as closure
+            closure.hold_durably(store, pass_id=identity, cause='PREPARATION_REJECTION_PUBLICATION_FAILED')
+            raise failure
         return result
     except BaseException as error:
         # A transient/typed failure after a charge must not latch the store: retire the pass as
