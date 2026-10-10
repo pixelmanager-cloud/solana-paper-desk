@@ -67,7 +67,21 @@ class FreshPacingTests(unittest.TestCase):
         exactly when a provider is slow, i.e. during the HTTP call). pending
         has no TTL and no clear path: 24h later every acquire() still raises
         PACING_OUTCOME_PENDING and dispatcher _preflight() refuses forever."""
-        self.make().acquire('helius', timeout_seconds=1)   # never finished
+        # T23F: "killed" now means the PROCESS is gone (a discarded Pacer object no longer counts), and the
+        # reclaim table exists only after the explicit upgrade.
+        p.upgrade(self.path)
+        code = textwrap.dedent(f'''
+            import time
+            from desk import provider_pacing as p
+            c = type("C", (), {{"time": lambda s: {self.clock.wall}, "sleep": lambda s, d: None}})()
+            p.Pacer({str(self.path)!r}, clock=c.time, monotonic=c.time, sleep=c.sleep).acquire("helius", timeout_seconds=1)
+            print("HELD", flush=True); time.sleep(600)
+            ''')
+        proc = subprocess.Popen([sys.executable, '-c', code], cwd=ROOT, stdout=subprocess.PIPE, text=True,
+                                env={**os.environ, 'PYTHONPATH': str(ROOT)})
+        self.addCleanup(proc.stdout.close)
+        self.assertEqual(proc.stdout.readline().strip(), 'HELD')
+        proc.send_signal(signal.SIGKILL); proc.wait()                  # never finished
         self.clock.wall += 86400
         pacer = self.make()
         with self.assertRaisesRegex(p.PacingError, 'DEADLINE_EXCEEDED'):   # T23: reclaim embargoes the fixed backoff

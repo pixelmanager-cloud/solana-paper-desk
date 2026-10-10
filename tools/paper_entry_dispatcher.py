@@ -329,6 +329,7 @@ def _preflight(ctx, scan=None):
         pacer = pacing.configured(priority='investigation')
         if pacer is None or str(pacer.path) != paths['pacing_db']:
             raise ValueError('Pacer context mismatch')
+        pacer.reclaim_orphans()      # T23F: an orphan whose owner process is gone must not block entry forever
         with closing(pacer._connect()) as c:
             if (c.execute('SELECT 1 FROM state WHERE pending IS NOT NULL LIMIT 1').fetchone()
                     or c.execute('SELECT 1 FROM waiters LIMIT 1').fetchone()):
@@ -405,6 +406,7 @@ def _rejection(ctx, intent, scan, publish=None):
         pacer = pacing.configured(priority='investigation')
         if pacer is None or str(pacer.path) != paths['pacing_db']:
             raise ValueError('Pacer context mismatch')
+        pacer.reclaim_orphans()      # T23F: see _preflight
         with closing(pacer._connect()) as pc:
             if (pc.execute('SELECT 1 FROM state WHERE pending IS NOT NULL LIMIT 1').fetchone()
                     or pc.execute('SELECT 1 FROM waiters LIMIT 1').fetchone()):

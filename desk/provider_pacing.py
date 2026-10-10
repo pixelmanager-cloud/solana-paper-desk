@@ -4,6 +4,12 @@ Provision one protected DB and DESK_PROVIDER_PACING_DB in every participating
 process. Wall clock is a trusted host input; rollback refuses. A granted slot is
 never refunded after process death. Waiters expire within five seconds; held
 requests precede investigations that have not already received a slot.
+
+An unfinished grant whose owning PROCESS is gone (kernel holder lock free) is reclaimed after
+max(60 s, 30 x cadence) by Pacer.reclaim_orphans()/acquire(), recorded append-only in `pacing_reclaims`.
+That table is added only by the explicit, idempotent `upgrade()` (`--upgrade DB`); every process using the
+shared database must run the new code first (old code rejects the extra table). Without the upgrade nothing is
+ever reclaimed.
 """
 import argparse
 from contextlib import closing
@@ -16,7 +22,6 @@ import sqlite3
 import stat
 import time
 import uuid
-import weakref
 
 PROVIDERS = ('helius', 'jupiter')
 MAX_WAIT = 5.0
@@ -36,7 +41,11 @@ RECLAIM_GUARDS = {
                                          "BEGIN SELECT RAISE(ABORT,'Immutable pacing reclaim record'); END")
     for op in ('UPDATE', 'DELETE')}
 MAX_RECLAIMS = 10000
-_INSTANCES = weakref.WeakSet()   # live Pacers in this process: any of them may acknowledge a grant
+# Holder locks of grants this PROCESS owns: (database path, provider) -> (ticket, fd). Only process exit (any
+# death, including SIGKILL) or finish()/throttle() releases them. Never a Pacer object's lifetime: a caller may
+# deliberately keep a ticket pending (pacing_release=False) while its Pacer is garbage-collected, and that owner is
+# still alive. Any Pacer in the process may acknowledge a ticket another Pacer in the process took.
+_HELD = {}
 
 
 class PacingError(ValueError):
@@ -93,8 +102,6 @@ class Pacer:
             raise PacingError('PACING_PRIORITY_INVALID')
         self.path, self.identity = _path(path)
         self.priority, self.clock, self.monotonic, self.sleep = priority, clock, monotonic, sleep
-        self._held = {}
-        _INSTANCES.add(self)
         self._validate()
 
     def _connect(self):
@@ -146,21 +153,21 @@ class Pacer:
                                "OR reason!='OWNER_GONE'),0) FROM pacing_reclaims").fetchone()
         if count > MAX_RECLAIMS or bad: raise ValueError()
 
-    def __del__(self):
-        # A discarded Pacer no longer owns an unfinished grant: closing the lock is the owner-gone proof.
-        for provider in list(getattr(self, '_held', ())):
-            self._release_own(provider)
+    @property
+    def _held(self):
+        """provider -> (ticket, fd) for the grants this process holds on this database."""
+        key = str(self.path)
+        return {provider: held for (path, provider), held in _HELD.items() if path == key}
 
     def _lock_path(self, provider):
         return str(self.path) + '.holder-' + provider + '.lock'
 
     def _hold(self, provider, ticket):
-        """Keep a kernel lock for as long as this process owns the granted slot.
+        """Take the kernel lock that proves this process owns the slot; call BEFORE committing the grant.
 
-        flock is released by the kernel on any process death (including SIGKILL), which is the
-        only owner-gone proof available without extra state. Failure to lock just means the slot
-        cannot be taken is fail-closed: the unused grant is acknowledged (no request was made, so no
-        unknown outcome exists) and the caller gets an error instead of an unprotected ticket.
+        flock is released by the kernel on any process death (including SIGKILL), which is the only
+        owner-gone proof available without extra state. If it cannot be taken nothing has been committed
+        yet (the caller's transaction is rolled back), so no unprotected ticket can ever exist.
         """
         fd = None
         try:
@@ -168,24 +175,43 @@ class Pacer:
             fcntl.flock(fd, fcntl.LOCK_EX | fcntl.LOCK_NB)
         except OSError:
             if fd is not None: os.close(fd)
-            try: self.finish(provider, ticket)
-            except PacingError: pass
             raise PacingError('PACING_HOLDER_LOCK_UNAVAILABLE') from None
-        self._held[provider] = (ticket, fd)
+        previous = _HELD.pop((str(self.path), provider), None)
+        if previous is not None:
+            try: os.close(previous[1])
+            except OSError: pass
+        _HELD[(str(self.path), provider)] = (ticket, fd)
 
     def _release(self, provider, ticket=None):
         """Close this process's holder lock for (provider, ticket), whichever Pacer instance took it."""
-        if ticket is not None:
-            for other in list(_INSTANCES):
-                if other is not self: other._release_own(provider, ticket)
-        self._release_own(provider, ticket)
-
-    def _release_own(self, provider, ticket=None):
-        held = self._held.get(provider)
+        key = (str(self.path), provider)
+        held = _HELD.get(key)
         if held and (ticket is None or held[0] == ticket):
-            del self._held[provider]
+            del _HELD[key]
             try: os.close(held[1])
             except OSError: pass
+
+    def reclaim_orphans(self):
+        """Reclaim every provider's orphaned grant whose owner PROCESS is provably gone; returns the providers.
+
+        Same proofs and the same append-only record as acquire() (age >= max(60 s, 30 x cadence), holder lock
+        free, row cap, table present). Called by the entry gates before they test `pending`, because those
+        gates refuse on a pending grant without ever calling acquire(). A live owner is never reclaimed;
+        `blocked_until` is only ever raised.
+        """
+        done = []
+        try:
+            with closing(self._connect()) as c:
+                c.execute('BEGIN IMMEDIATE')
+                now = self._now(c)
+                for provider in self.providers:
+                    row = c.execute('SELECT next_at,pending FROM state WHERE provider=?', (provider,)).fetchone()
+                    if row and row[1] is not None and self._reclaim(c, provider, row[1], row[0], now):
+                        done.append(provider)
+                c.commit()
+        except sqlite3.Error:
+            raise PacingError('PACING_DATABASE_BUSY') from None
+        return done
 
     def _reclaim(self, c, provider, ticket, next_at, now):
         """Release an orphaned grant inside the caller's write transaction; True when released.
@@ -194,11 +220,12 @@ class Pacer:
         like a throttle without Retry-After starting now (fixed backoff), and an append-only row
         records the release. At MAX_RECLAIMS rows nothing is reclaimed (fail closed).
         """
+        if not c.execute("SELECT 1 FROM sqlite_master WHERE type='table' AND name=?", (RECLAIM_TABLE,)).fetchone():
+            return False                        # not upgraded: the schema change is never a side effect of a reclaim
         cadence, backoff = c.execute('SELECT cadence,backoff FROM policy WHERE provider=?', (provider,)).fetchone()
         granted = next_at - cadence
         if now - granted < max(RECLAIM_MIN_SECONDS, RECLAIM_INTERVALS * cadence): return False
-        if c.execute('SELECT COUNT(*) FROM sqlite_master WHERE name=?', (RECLAIM_TABLE,)).fetchone()[0] and \
-                c.execute('SELECT COUNT(*) FROM pacing_reclaims').fetchone()[0] >= MAX_RECLAIMS: return False
+        if c.execute('SELECT COUNT(*) FROM pacing_reclaims').fetchone()[0] >= MAX_RECLAIMS: return False
         try:
             fd = os.open(self._lock_path(provider), os.O_RDWR | os.O_CREAT | os.O_NOFOLLOW | os.O_CLOEXEC, 0o600)
         except OSError: return False
@@ -207,9 +234,6 @@ class Pacer:
             except OSError: return False        # owner alive (or unprovable): never reclaim
             until = now + backoff
             if not (_number(until) and _number(granted)): return False
-            if not c.execute("SELECT 1 FROM sqlite_master WHERE type='table' AND name=?", (RECLAIM_TABLE,)).fetchone():
-                c.execute(RECLAIM_SQL)
-                for sql in RECLAIM_GUARDS.values(): c.execute(sql)
             c.execute('INSERT INTO pacing_reclaims(provider,ticket,granted_at,reclaimed_at,backoff_until,reason) VALUES(?,?,?,?,?,?)',
                       (provider, ticket, float(granted), float(now), float(until), 'OWNER_GONE'))
             c.execute('UPDATE state SET pending=NULL,blocked_until=MAX(blocked_until,?),high_water=? WHERE provider=? AND pending=?',
@@ -261,8 +285,11 @@ class Pacer:
                     if first and first[0] == ticket and now >= due:
                         cadence = c.execute('SELECT cadence FROM policy WHERE provider=?',(provider,)).fetchone()[0]
                         c.execute('UPDATE state SET next_at=?,pending=? WHERE provider=?',(math.nextafter(now+cadence, math.inf),ticket,provider))
-                        c.execute('DELETE FROM waiters WHERE ticket=?',(ticket,));c.commit()
-                        self._hold(provider, ticket)
+                        c.execute('DELETE FROM waiters WHERE ticket=?',(ticket,))
+                        self._hold(provider, ticket)       # owner proof BEFORE the grant becomes visible
+                        try: c.commit()
+                        except BaseException:
+                            self._release(provider, ticket); raise
                         return ticket
                     c.commit()
                 self.sleep(min(.05, max(0,deadline-tick)))
@@ -328,6 +355,31 @@ class Pacer:
             raise PacingError('PACING_DATABASE_BUSY') from None
 
 
+def upgrade(path):
+    """Explicitly add the append-only `pacing_reclaims` table (and its guards) to an existing pacing database.
+
+    Idempotent: returns 'UPGRADED' the first time and 'ALREADY_UPGRADED' afterwards. It validates the whole
+    database first (so a tampered or unexpected schema is refused), touches no existing row, resets no counter or
+    cadence, and is the only thing that ever creates the table. Run it only after every process that uses the
+    shared database runs this code: older code raises PACING_DATABASE_INVALID on the extra table (and
+    tools/verify_*_originals.py compare the schema strictly).
+    """
+    pacer = Pacer(path)
+    try:
+        with closing(pacer._connect()) as c:
+            c.execute('BEGIN IMMEDIATE')
+            if c.execute("SELECT 1 FROM sqlite_master WHERE type='table' AND name=?", (RECLAIM_TABLE,)).fetchone():
+                c.rollback()
+                return 'ALREADY_UPGRADED'
+            c.execute(RECLAIM_SQL)
+            for sql in RECLAIM_GUARDS.values(): c.execute(sql)
+            c.commit()
+    except sqlite3.Error:
+        raise PacingError('PACING_DATABASE_BUSY') from None
+    Pacer(path)                                   # the result must validate under the strict schema check
+    return 'UPGRADED'
+
+
 def configured(*, priority='investigation'):
     # Presence is explicit activation. Empty/invalid/missing configured DB refuses;
     # no constructor initializes/replaces policy or resets existing cadence.
@@ -345,11 +397,17 @@ def should_throttle(status, headers):
 
 def main(argv=None):
     p=argparse.ArgumentParser(description=__doc__)
-    p.add_argument('--initialize',required=True)
+    g=p.add_mutually_exclusive_group(required=True)
+    g.add_argument('--initialize')
+    g.add_argument('--upgrade',help='add the append-only pacing_reclaims table to an existing database (idempotent)')
     p.add_argument('--helius-seconds',type=float,default=2)
     p.add_argument('--jupiter-seconds',type=float,default=2)
     p.add_argument('--backoff-seconds',type=float,default=30)
     a=p.parse_args(argv)
+    if a.upgrade:
+        try:print('PACING_'+upgrade(a.upgrade));return 0
+        except (PacingError,OSError,sqlite3.Error):
+            print('PACING_UPGRADE_FAILED');return 2
     try:initialize(a.initialize,helius_seconds=a.helius_seconds,jupiter_seconds=a.jupiter_seconds,backoff_seconds=a.backoff_seconds)
     except (PacingError,OSError,sqlite3.Error):
         print('PACING_INITIALIZATION_FAILED');return 2
