@@ -251,7 +251,8 @@ VPS facts (read-only, 2026-10-11):
 
 ---
 
-## T23H — integration/r1 CI is RED: restore a green full suite on Linux — CRITICAL PATH, DO FIRST
+## T38 — integration/r1 CI is RED: restore a green full suite on Linux — CRITICAL PATH, DO FIRST
+(Note: a worker is already on `cloud/T23H`, the narrower lifecycle `PACING_CLOCK_INVALID` fix. If `cloud/T23H` has a DONE commit, merge it in first and build on it.)
 STATUS: OPEN
 DEPENDS: none
 BASE: origin/integration/r1
