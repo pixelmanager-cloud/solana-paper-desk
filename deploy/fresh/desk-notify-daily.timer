@@ -1,0 +1,8 @@
+[Unit]
+Description=Daily paper desk summary
+[Timer]
+OnCalendar=*-*-* 08:05:00 UTC
+Persistent=true
+Unit=desk-notify-daily.service
+[Install]
+WantedBy=timers.target
