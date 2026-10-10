@@ -80,7 +80,9 @@ def read(c):
 
 def namespace(c,expected):
     """Only a scalar-bounded, exactly pinned receipt permits the extra table."""
-    if read(c) is not None:return expected|{TABLE}
+    if read(c) is not None:
+        from . import runtime_empty_history_successor as empty
+        return expected|{TABLE}|({empty.TABLE} if empty.read(c) is not None else set())
     return expected
 
 
@@ -114,11 +116,15 @@ def require(c,*,implementation=None):
     current=runtime.implementation_hash() if implementation is None else implementation
     # Historical proof closures may request the original tail; they still replay
     # this installed pinned receipt and every original edge before returning it.
+    from . import runtime_empty_history_successor as empty
+    if empty.read(c) is not None:return empty.effective(c,v,current)
     if current not in (v['predecessor'],v['successor']):raise ValueError('Performance runtime is not reviewed')
     return current
 
 
 def dispatch_binding(c,expected,journal):
+    from . import runtime_empty_history_successor as empty
+    expected,extra_bindings,extra_contexts=empty.dispatch_binding(c,expected,journal)
     record=read(c)
     if record is None:return expected,{},{}
     v,_=record;require(c,implementation=v['successor']);_verify_journal(v,c=journal)
@@ -127,7 +133,7 @@ def dispatch_binding(c,expected,journal):
     from . import paper_migration_no_entry as migration
     bindings={row[1]:runtime._parse(row[-2])['context_hash'] for row in v['dispatch_journal_prefix']['intents']}
     old=v['dispatch_predecessor']
-    return old,bindings,{digest(old):old}
+    return old,{**bindings,**extra_bindings},{digest(old):old,**extra_contexts}
 
 
 def _verify_journal(v,*,c=None,initial=False):
