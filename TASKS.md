@@ -251,6 +251,51 @@ VPS facts (read-only, 2026-10-11):
 
 ---
 
+## T23H — REGRESSION on integration/r1: the successor lifecycle test fails with PACING_CLOCK_INVALID — CRITICAL PATH
+STATUS: OPEN
+DEPENDS: none
+BASE: origin/integration/r1
+OWNS: desk/provider_pacing.py (reclaim_orphans clock handling only), tests/test_empty_history_successor_lifecycle.py (only if the fixture clock itself is wrong), tests/test_pacing_reclaim*.py
+AVOID: everything else
+
+`python -m unittest tests.test_empty_history_successor_lifecycle` FAILS on integration/r1 with `PACING_CLOCK_INVALID` raised from `Pacer.reclaim_orphans()`, a T23F/T23G regression (the coordinator review of T22 found it on plain integration).
+- Reproduce it.
+- Find why `reclaim_orphans` sees an invalid clock in this lifecycle; likely a fixture or frozen clock behind `high_water`, or `reclaim_orphans` comparing against wall time where `acquire` uses the injected clock.
+- Fix it at the root. `reclaim_orphans` must use the same clock source as `acquire`. A clock problem in reclaim must never raise on the read-first path: it returns `[]` and leaves the existing `acquire` fail-closed check to decide.
+- Run the full lifecycle test and every pacing/reclaim/latch module green (real exit code).
+
+---
+
+## T22G — Fix the coordinator review of T22 (MUST be reconciled with T25F and T22F) — CRITICAL PATH
+STATUS: OPEN
+DEPENDS: branch `cloud/T22F` has a `DONE T22F:` commit
+BASE: origin/cloud/T22F, then merge origin/integration/r1. Expect conflicts in desk/monitoring_budget.py, desk/paper_cycle.py, tools/paper_entry_dispatcher.py and the audit tests. A reference resolution of T22 onto integration is at the coordinator's scratchpad and is described below.
+OWNS: the T22/T22F files, desk/monitoring_budget.py (reconciliation only), desk/paper_pass_closure.py
+AVOID: tools/ops/**, T37 files
+
+The coordinator review of T22 (with T22F not yet visible) found:
+1. **Reconcile with T25F (already on integration).** KEEP T25F's monitoring latch rules: 401/403, RESPONSE_*/malformed, TLS_ERROR and UNCLASSIFIED_ERROR still latch, and only the known network exceptions are transient.
+   - Keep T25F's `paper_monitoring_abandoned_v1` schema and `_abandonable`/`_resolve_abandoned` owner proof (`/proc/locks` plus deleted-inode check, injectable lock table).
+   - Drop T22's competing abandon schema and expose an adapter if T22 needs one.
+   - Rewrite T22's monitoring tests (held_exit_robustness 401/403, monitoring_budget malformed, the two paper_cycle monitoring tests, and the F1 monitoring test using a bare OSError → `TimeoutError`) to match T25F's rules, and inject the lock table so they run on macOS.
+2. **(HIGH) Allow-list, not deny-list.** `cause_of` (`paper_pass_closure.py` ~:70-80) closes any ValueError as FAILED_CHARGED unless it contains a deny marker, so integrity failures get closed and silently un-latched. Verified examples: `quote envelope binding`, `mint binding`, `pool envelope binding`, `retained evidence unavailable`, `History page digest conflict`, `Captured history changed`, `TLS_ERROR`, `UNCLASSIFIED_ERROR`, `COLLECTOR_SOURCE_BINDING_OR_CONTENT_INVALID`. Invert it: only an explicit ALLOW-list of transient/normal causes (network timeouts and resets, 429/5xx, pacing contention, typed normal blockers) may close as FAILED_CHARGED. Everything else stays latched (INTEGRITY_HOLD). Add a test for every example above.
+3. **(HIGH) Nested blockers.** `_close_unfinished` (`paper_cycle.py` ~:431) checks only top-level blockers, so a `MARKET_PRODUCER_BLOCKED` with integrity codes nested in its diagnostics, whose no-entry publish was refused by the R1 allow-list, is closed FAILED_CHARGED. That undoes R1. Include diagnostics in the check: any non-allow-listed nested code means INTEGRITY_HOLD.
+4. **(MED) Owner proof.**
+   - `_lock` opens with `'a'` (O_CREAT), so a deleted-and-recreated lock file lets `recover_abandoned` close a live pass. Use T25F's owner proof (`/proc/locks` plus the deleted-inode check); a missing or recreated lock file means owner unknown, so nothing is closed.
+   - The dispatcher's `.dispatcher.lock` plus 900s wall clock has the same issue; fix it the same way.
+   - Add an `outcome_hash IS NULL` guard to the COMPLETE update (~:756).
+5. **(MED) Hold write.** If the INTEGRITY_HOLD write fails, the pass must not later be closed ABANDONED. Persist the hold first, in the same transaction as any charge record, or treat "no hold record + integrity cause unknowable" as a hold.
+6. **(MED) No new hard caps.** The new 8192-row hard stop (`paper_pass_closure.py:36`) must become a rotation warning at 80%, like R4.
+7. **History-first handler.** An exception inside the `PreparationRejected` handler (`paper_history_preparation.py` ~:78-81) must not fall through to ABANDONED; treat it as a hold.
+8. **T22F items.** If they are still not done after T22F, finish them: R1 allow-list, R2 per-scan page index (no global 4096/256MB bound), R3 visible `publish_refused`, R4 rotation warning, R5, and the addendum page cap.
+
+**Acceptance:**
+- All T09/T12 audit modules, every module listed in T22, `test_empty_history_successor_lifecycle`, and all monitoring modules are green with the real exit code on macOS AND Linux semantics (inject lock tables).
+- These `expectedFailure` flips hold: F1 dispatcher, history_first, held monitoring, dust/zero quote, T12 R1/R2.
+- Report precisely which audit tests remain expected failures and why.
+
+---
+
 ## T22 — Extend T01: no store-wide latch from ANY charged failure (from T09 audit F1, F3) — CRITICAL PATH
 STATUS: OPEN
 DEPENDS: branch `cloud/T01` has a `DONE T01:` commit
