@@ -155,13 +155,22 @@ class InstalledHistoricalClosureTests(unittest.TestCase):
                 prep.item=cycle.CycleTarget(prep.target,provenance='SYNTHETIC_TEST_ONLY',graduated_at=None,holder_at=None,pool_fee_bps='25',history_as_of=prep.as_of)
                 for _ in range(2):self.assertTrue(prep.progress.reserve(prep.target.scan_id))
                 prep.budget=entry._PreparationBudget(prep.progress,prep.item,h.cfg);prep.identity='%032x'%(200+n)
-                prep.intent=h.store.save(rejection.intent(h.store,prep.ledger,h.cfg,prep.item,prep.progress.admission(prep.target.scan_id),h.ctx))
+                historical_intent=rejection.intent(h.store,prep.ledger,h.cfg,prep.item,prep.progress.admission(prep.target.scan_id),h.ctx)
+                historical_intent.pop('feature_semantics_version')
+                historical_intent['kind']='history_first_paper_preparation_v2'
+                prep.intent=h.store.save(historical_intent)
                 with h.store.connect() as c:c.execute('INSERT INTO paper_observation_passes VALUES(?,?,NULL)',(prep.identity,prep.intent))
-                prep.advance({'data':prep.rows(50,padding=13000),'paginationToken':'p2'})
-                prep.advance({'data':prep.rows(50,start=50,padding=13000),'paginationToken':'p3'})
-                with self.assertRaisesRegex(entry.PreparationRejected,'HISTORY_FEATURE_AGGREGATE_BYTES_EXCEEDED'):
-                    prep.advance({'data':prep.rows(50,start=100,padding=13000),'paginationToken':'p4'})
-                result=prep.publish('HISTORY_FEATURE_AGGREGATE_BYTES_EXCEEDED')
+                # Reproduce the historical producer only. Replay below and
+                # after installation uses unpatched current validators.
+                bounds,reason=rejection.bounds,rejection.reason_for
+                def old_bounds(*args,**kwargs):return bounds(*args,**{**kwargs,'semantics_version':1})
+                def old_reason(*args,**kwargs):return reason(*args,**{**kwargs,'semantics_version':1})
+                with patch.object(rejection,'bounds',side_effect=old_bounds),patch.object(rejection,'reason_for',side_effect=old_reason):
+                    prep.advance({'data':prep.rows(50,padding=13000),'paginationToken':'p2'})
+                    prep.advance({'data':prep.rows(50,start=50,padding=13000),'paginationToken':'p3'})
+                    with self.assertRaisesRegex(entry.PreparationRejected,'HISTORY_FEATURE_AGGREGATE_BYTES_EXCEEDED'):
+                        prep.advance({'data':prep.rows(50,start=100,padding=13000),'paginationToken':'p4'})
+                    result=prep.publish('HISTORY_FEATURE_AGGREGATE_BYTES_EXCEEDED')
                 self.assertEqual(result['admission_after']['requests_used'],9)
                 with dispatcher._journal(h.journal) as journal:
                     dispatcher._write(journal,'results',identity,{'version':1,'intent_hash':digest(intent),'at':h.intent['at'],'scan_id':acquired['scan_id'],'result':result})
