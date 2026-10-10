@@ -6787,12 +6787,21 @@
         3047910,
         3900870
       ],
-      "existing_history_2MiB_cap_exceeded_after_page": 3
+      "existing_history_2MiB_cap_exceeded_after_page": 3,
+      "stopped_witness": {
+        "hash": "e2889997276a24794b3def0ea3d0e47d6fc21af9079058f0ffc74ab7c1d9316d",
+        "observed_at": 1791599567,
+        "reviewer": "07",
+        "review_turn": "01a123a7-4595-710b-ac21-0855fcc2071a",
+        "captured_under_quiescence": true,
+        "original_intents_and_charge_unchanged": true,
+        "proves_transport_outcome": false
+      }
     },
     "next_claims": {
       "HISTORY-REPLAY-PERF-1": {
         "worker": "03",
-        "status": "implementing18secondhistoricalphase+typedknown-boundNO_ENTRY",
+        "status": "09re-review finalglobalhook/locks",
         "design_review_worker": "07",
         "design_review_turn": "01a1239f-ac2a-74ed-ac9b-eb5a9b4efc30",
         "fresh_cycle_seconds": 10,
@@ -6800,18 +6809,26 @@
         "per_request_max_seconds": 15,
         "reserve_fresh_requests": 7,
         "momentum_ttl_seconds": 15,
-        "turn": "01a1239b-cde6-731c-82b2-1b40dbb05e0b"
+        "turn": "01a123ab-a120-7525-ac3b-2f33e2ded391",
+        "pr": 189,
+        "head": "6b067927aef78bc283e20f341d51822963a181b7",
+        "review_turn": "01a123aa-7125-76a6-b0b6-1135b6d44fa0",
+        "review_status": "HOLD09 confirms extra-charge and missingtable; canonicalledgerlock forwardingrequired",
+        "scoped_tests": "55 Linux PASS89.417s frozenhead"
       },
       "DISPATCH-PREPARATION-RETIREMENT-2": {
         "worker": "06",
-        "status": "independent07review_requested",
+        "status": "07 scoped PASS; finalcombined andCIpending",
         "design_review_worker": "07",
         "design_review_turn": "01a1239c-a8c8-742a-b668-79edd4647c6a",
         "no_reset_or_replacement": true,
         "pr": 188,
-        "head": "ee43abf80db95544ee1bc20de640f2e3a048b393",
+        "head": "7d8af35cbfd76e71aca3c004ab2f684a38f16444",
         "turn": "01a12397-4d9f-759e-9746-d7c01df90cbd",
-        "review_turn": "01a123a3-5045-7102-8071-cd29a12e886d"
+        "review_turn": "01a123aa-617d-7521-ab49-e672acdc2575",
+        "finding": "HTTP403/no response mutation atcharge5 wrongly allowed retirement; require both intake witnesses binding",
+        "source": "9462742d0af52c7408cd0cd6a81334219567e7b9165d12f65089be736ac4cc84",
+        "review_tests": "21 PASS23.098s plus403mutationreject"
       },
       "CALL-ENVELOPE-1": {
         "worker": "09",
@@ -6830,12 +6847,44 @@
     "next_activation_review": {
       "worker": "09",
       "turn": "01a123a4-fcf7-711c-bbb8-e85efa01749d",
-      "status": "reviewing_not_executed",
+      "status": "HOLD ordering and receipt-bearing backup identity; author repair active",
       "scripts": [
         "work/activate-dispatch-recovery-reviewed.py",
         "work/verify-dispatch-recovery-originals.py"
       ],
-      "backup_databases": 12
+      "backup_databases": 12,
+      "backup_and_active_validator_review": "07 PASS turn01a123a8-3ae8-746b-b93e-356d11b6e327 underexternalquiescence; pacingENV required; bothoutputs+exit0",
+      "runtime_order_probe": "09 PASS reproduction turn01a123a6-ef75-77e2-9037-70e49fc07a37; firstcontinuation thenrecovery;backupandlivebindingfixrequired",
+      "cutover_review": "09 conditionalPASS turn01a123a8-be3e-71cd-9508-f940e75117e4; addedfinaldispatcher service/timer inactivitycheck",
+      "activation_review": "07 scopedPASS turn01a123ac-6ad3-7572-bde9-a8b12ae06170; addedexactfirstreceiptpincheck",
+      "scripts_sha256": {
+        "work/activate-dispatch-recovery-reviewed.py": "880715262585f4da5a5c90617ebfa6101863c2456a1d1854e67128235b76f878",
+        "work/verify-dispatch-recovery-originals.py": "0ece9c98305525f523cca425be699378836f8c767b028f53b52305134d3ed76a",
+        "work/backup-dispatch-recovery.py": "9d5dfd9d79736bd62b82beee9bf935ce5d7cc5b3597cd40142012ced19e0599b",
+        "work/verify-dispatch-recovery-active-context.py": "f0e4f7110ed8eaebff54276c4161140404029061168ddc19896995fc3f9d5522",
+        "work/start-dispatch-recovery-reviewed.py": "0022ce51654e1e02719087875a99b4f55271af3f7c7b92c550be6c2475b364ac",
+        "work/capture-dispatch-ended-witness.py": "4bcf548637f7a4d9b166f4e7c7640013cdeec9c2db5129c4ad4c290dc955106b"
+      }
+    },
+    "next_combined": {
+      "heads": {
+        "188": "7d8af35cbfd76e71aca3c004ab2f684a38f16444",
+        "189": "6b067927aef78bc283e20f341d51822963a181b7"
+      },
+      "merge_tree": "463d35ee68f97f65327053dda5e44a93acc342b4",
+      "with_continuation_policy_tree": "9bc7852eb48048fcd1333be97078bdab29ffb88a",
+      "source": "916dd80f82d13157fd961427450f754baf0b78b7988daee810de02816adc9432",
+      "status": "09 scopedreview thenfullLinuxpending",
+      "review_turn": "01a123ae-1983-7310-ac60-8b171901bf8d",
+      "continuation_policy_review": "07 scopedPASS suppliedidentities turn01a123ae-9e09-7347-b6d9-af35390a3dbb",
+      "mixed_journal_fixture_worker": "06",
+      "mixed_journal_fixture_turn": "01a123af-1a1c-742e-b6cc-84062e78c699"
+    },
+    "existing_preparation_outcomes_readonly": {
+      "passes": 10,
+      "nonnull_preparation_outcomes": 4,
+      "invalid_references": 0,
+      "requests": 0
     }
   }
 }
