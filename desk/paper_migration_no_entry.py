@@ -620,6 +620,10 @@ def _prewire_lineage(c,v,original,*,review_source=None):
 
 
 def lineage(c,expected,original,*,ledger_locked=None):
+    from .runtime_performance_continuation import dispatch_predecessor
+    ledger=Path(expected['paths']['ledger_db']['path'])
+    with closing(sqlite3.connect(ledger.as_uri()+'?mode=ro',uri=True)) as lc:
+        lc.execute('BEGIN');expected=dispatch_predecessor(lc,expected)
     store=EvidenceStore(expected['paths']['evidence_db']['path'],read_only=True)
     with closing(store.connect()) as ec:prewire=[v for v in rows(ec) if v['association']==PREWIRE and v['producer_context']['journal']==expected['journal']]
     if prewire:
