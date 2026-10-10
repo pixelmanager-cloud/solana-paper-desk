@@ -155,7 +155,10 @@ class ConcurrentPipeline(lifecycle.FreshFixture):
             self.assertEqual((leg['status'], leg['monitoring_attempted_requests']), ('COMPLETE', 5), leg)
             marks[mint] = cycle._state(self.ledger, self.cfg)['positions'][mint]['mark_at']
         self.preflight_at = self.f.at                               # the dispatcher (and its pre-I/O estimate) starts here
-        self.f.at += pc.ENTRY_SECONDS                               # acquisition + intake + preparation + cycle before the decision (T16G item 4: was 30)
+        # preparation (<= 18 s) + bounded cycle before the decision. NOT pc.ENTRY_SECONDS (52): the synthetic wire fixtures'
+        # history/graduation windows break when the data clock jumps 52 s (HISTORY_RECOVERY_REQUIRED); the acquisition and
+        # intake share is exercised on the separate wall clock in test_paper_concurrency_held_latency.py.
+        self.f.at += 30
         return marks
 
     def monitoring_rows(self):
