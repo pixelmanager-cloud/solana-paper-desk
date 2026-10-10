@@ -27,7 +27,9 @@ ANCHOR_EVENTS = 256  # bounded immutable ledger prefix; counts must never shrink
 NORMAL = frozenset({
     'MARKET_PRODUCER_BLOCKED', 'RETAINED_MIGRATION_WITNESS_REQUIRED',
     'INVESTIGATION_REQUEST_BUDGET_EXHAUSTED', 'CYCLE_REQUEST_BUDGET_EXHAUSTED',
-    'FEATURE_HISTORY_PAGE_LIMIT', 'EVENT_READER_SIZE_LIMIT', 'QUOTE_DEMAND_LIMIT'})
+    'FEATURE_HISTORY_PAGE_LIMIT'})
+# Codes whose cause is not recoverable from retained originals stay category (b):
+# EVENT_READER_SIZE_LIMIT and QUOTE_DEMAND_LIMIT (the oversized event/demand plan is not retained).
 RESULT_FIELDS = {'kind', 'status', 'execution_status', 'live_readiness', 'attempted_requests', 'outcomes',
                  'events', 'blockers', 'budget', 'diagnostics', 'usd_evidence_refs', 'pass_id',
                  'intent_hash', 'attempt_refs', 'investigation_attempted_requests',
@@ -111,6 +113,16 @@ def _check_result(result, blocker, scan, before, after):
         raise ValueError('Producer blockers must be retained')
 
 
+def _consistent(blocker, before, after, records):
+    """Necessary conditions of the blocker that the retained charged originals must show."""
+    if blocker == 'INVESTIGATION_REQUEST_BUDGET_EXHAUSTED' and after != 18:
+        raise ValueError('Investigation budget exhaustion requires the full ceiling charged')
+    if blocker == 'CYCLE_REQUEST_BUDGET_EXHAUSTED' and after-before != 18:
+        raise ValueError('Cycle budget exhaustion requires eighteen charged requests')
+    if blocker == 'FEATURE_HISTORY_PAGE_LIMIT' and sum(r.get('method') == 'getTransactionsForAddress' for r in records) < 8:
+        raise ValueError('History page limit requires eight retained history pages')
+
+
 def _proof(store, progress, rec, index, *, publishing=False):
     if (type(rec) is not dict or set(rec) != FIELDS or rec['kind'] != KIND or type(rec['version']) is not int
             or rec['version'] != 1 or rec['status'] != 'NO_ENTRY' or rec['execution_status'] != 'EXECUTION_UNVERIFIED'
@@ -147,6 +159,8 @@ def _proof(store, progress, rec, index, *, publishing=False):
         refs.append(key)
     if refs != rec['attempt_refs'] or not set(result['attempt_refs']+result['usd_evidence_refs']) <= set(refs):
         raise ValueError('Cycle no-entry attempt inventory mismatch')
+    _consistent(rec['blocker'], before['requests_used'], after['requests_used'],
+                [index[scan][n][1] for n in range(before['requests_used']+1, after['requests_used']+1)])
     if progress.admission(scan) != after:
         raise ValueError('Cycle no-entry live charge changed')
     ledger = rec['ledger']
