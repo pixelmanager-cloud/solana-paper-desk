@@ -139,7 +139,9 @@ class HandlerFailuresAreHolds(holds.DispatcherBase):
     def test_an_exception_inside_classify_writes_a_hold(self):
         with patch('desk.paper_pass_closure.classify', side_effect=RuntimeError('SYNTHETIC_TEST_ONLY')):
             self.refuse(lambda *a, **k: {'status': 'ACQUISITION_RETRY_OR_EVIDENCE_BLOCKED', 'scan_id': None})
-        self.assertEqual(len(self.holds()), 1)
+        (name,) = self.holds()
+        self.assertIn('DISPATCH_CLASSIFY_FAILED:RuntimeError',
+                      open(os.path.join(os.path.dirname(str(self.h.journal)), name)).read())
         self.assertStillUnresolved()
 
     def test_an_exception_inside_close_dispatch_writes_a_hold(self):
