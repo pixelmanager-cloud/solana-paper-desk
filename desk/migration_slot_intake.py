@@ -210,9 +210,13 @@ def intake(research_db,evidence_db,*,scan_id,mint,pool,signature,slot,provenance
                         credentials_loader();credentials_loader=None
                     started=time.monotonic()
                 remaining=10-(time.monotonic()-started)
-                if not 0<remaining<=10:
+                if not math.isfinite(remaining) or remaining>10:
                     result['blockers']=['INTAKE_DEADLINE_EXCEEDED'];break
-                adapter=_SlotSource(progress,scan_id,key,slot=slot,pool=pool,timeout_seconds=remaining)
+                adapter=_SlotSource(progress,scan_id,key,slot=slot,pool=pool,timeout_seconds=remaining if remaining>0 else 10)
+                if remaining<=0:
+                    # Conservative owning reservation remains charged. This
+                    # adapter records local expiry and never opens transport.
+                    adapter.deadline=adapter.started
                 before=current['requests_used'];current=progress.advance(key,adapter)
                 result['provider_calls']+=current['requests_used']-before
                 if adapter.evidence_hash:result['transport_evidence_refs'].append(adapter.evidence_hash)
