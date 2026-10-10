@@ -250,6 +250,10 @@ def _check_records(c,expected,values,bindings,retired,*,historical_contexts=None
                     or result['at'] < value['at']):
                 raise ValueError('Dispatch result binding invalid')
             original_result = result['result']
+            if type(original_result) is dict and original_result.get('kind') == CHECKPOINT_KIND:
+                if not _checkpoint_record_valid(original_result, i, result['scan_id'], digest(value)):
+                    raise ValueError('Checkpoint disposition conflict')
+                continue
             if type(original_result) is dict and original_result.get('kind') == 'dispatcher_migration_no_entry_v1':
                 from desk import paper_migration_no_entry
                 store=EvidenceStore(expected['paths']['evidence_db']['path'],read_only=True)
@@ -412,27 +416,101 @@ def _held_pass(ctx):
         return 2
 
 
+CHECKPOINT_KIND = 'dispatcher_checkpoint_no_entry_v1'
+CHECKPOINT_REASONS = frozenset({'HELD_PASS_NONZERO', 'LEDGER_MODE_NOT_RUNNING', 'HELD_EXIT_UNRESOLVED',
+                                'MAX_POSITIONS_REACHED', 'MONITORING_BLOCKED', 'PHASE_CAP_EXCEEDED'})
+CHECKPOINT_PHASES = ('acquisition', 'intake', 'preparation')
+CHECKPOINT_FIELDS = {'version', 'kind', 'dispatch_id', 'scan_id', 'intent_hash', 'phase', 'reasons', 'held_pass',
+                     'mode', 'entry_authorized', 'execution_status', 'no_retry'}
+
+
+def checkpoint_record(identity, intent, scan, phase, halt):
+    """Typed terminal NO_ENTRY for an intent whose post-intent checkpoint changed the held state or gate, or whose
+    phase overran its cap. The charges already made stay charged; nothing is retried."""
+    return {'version': 1, 'kind': CHECKPOINT_KIND, 'dispatch_id': identity, 'scan_id': scan,
+            'intent_hash': digest(intent), 'phase': phase, 'reasons': sorted(halt['reasons']),
+            'held_pass': {'ran': halt['ran'], 'exit_code': halt['exit_code']}, 'mode': halt['mode'],
+            'entry_authorized': False, 'execution_status': 'EXECUTION_UNVERIFIED', 'no_retry': True}
+
+
+def _checkpoint_record_valid(record, dispatch_id, scan_id, intent_digest):
+    return (type(record) is dict and set(record) == CHECKPOINT_FIELDS and record['version'] == 1
+            and record['kind'] == CHECKPOINT_KIND and record['dispatch_id'] == dispatch_id
+            and record['scan_id'] == scan_id and record['intent_hash'] == intent_digest
+            and record['phase'] in CHECKPOINT_PHASES and type(record['reasons']) is list
+            and 1 <= len(record['reasons']) <= len(CHECKPOINT_REASONS)
+            and record['reasons'] == sorted(set(record['reasons'])) and set(record['reasons']) <= CHECKPOINT_REASONS
+            and type(record['held_pass']) is dict and set(record['held_pass']) == {'ran', 'exit_code'}
+            and type(record['held_pass']['ran']) is bool
+            and (record['held_pass']['exit_code'] is None or type(record['held_pass']['exit_code']) is int)
+            and type(record['mode']) is str and record['entry_authorized'] is False
+            and record['execution_status'] == 'EXECUTION_UNVERIFIED' and record['no_retry'] is True)
+
+
+class _PhaseCut(ValueError):
+    """The phase passed its wall cap: no further request of that phase may start."""
+
+
+class _Phase:
+    def __init__(self, name, cap, clock):
+        self.name, self.cap, self.clock = name, cap, clock
+        self.started, self.cut = clock(), False
+
+    def check(self):
+        if self.clock() - self.started > self.cap:
+            self.cut = True
+            raise _PhaseCut(self.name)
+
+    def finish(self):
+        """True when the phase overran its cap (also when it finished, late)."""
+        if self.clock() - self.started > self.cap:
+            self.cut = True
+        return self.cut
+
+
 class _HeldCadence:
-    """Keeps the gap between held legs inside HELD_MAX_GAP_SECONDS while an entry runs (concurrent experiment only)."""
-    def __init__(self, ctx, clock=None):
+    """Keeps the gap between held legs inside HELD_MAX_GAP_SECONDS while an entry runs (concurrent experiment only)
+    and enforces the per-phase wall caps."""
+    def __init__(self, ctx, clock=None, monotonic=None):
         self.ctx = ctx
         self.clock = clock or _now
+        self.monotonic = monotonic or clock or time.monotonic
         self.last = self.clock()          # the scheduler tick ran the held legs immediately before dispatch
         self.passes = []
 
+    def phase(self, name):
+        return _Phase(name, concurrency.PHASE_CAPS[name], self.monotonic)
+
     def checkpoint(self, next_phase_seconds):
+        """None when entry may continue, else the halt record: the held pass changed the state or gate (or failed)."""
         ctx = self.ctx
         cfg = cli._config(ctx['paths']['config']['path'])
         if not concurrency.selected(cfg):
-            return False
-        positions = cycle._state(Path(ctx['paths']['ledger_db']['path']), cfg)['positions']
+            return None
+        ledger = Path(ctx['paths']['ledger_db']['path'])
+        positions = cycle._state(ledger, cfg)['positions']
         now = self.clock()
         if not concurrency.checkpoint_due(now - self.last, next_phase_seconds, positions):
-            return False
+            return None
         code = _held_pass(ctx)
         self.last = self.clock()
         self.passes.append((now, code))
-        return True
+        return self.gate(cfg, code)
+
+    def gate(self, cfg, code):
+        paths = {k: v['path'] for k, v in self.ctx['paths'].items()}
+        reasons = []
+        if code != 0:
+            reasons.append('HELD_PASS_NONZERO')
+        with monitor._context(paths['research_db'], paths['evidence_db'], paths['ledger_db'], cfg) as (store, ledger, state):
+            reasons += [{'LEDGER_MODE_NOT_RUNNING': 'LEDGER_MODE_NOT_RUNNING', 'MAX_POSITIONS_REACHED': 'MAX_POSITIONS_REACHED',
+                         'HELD_EXIT_UNRESOLVED': 'HELD_EXIT_UNRESOLVED'}[b] for b in concurrency.state_blockers(state, cfg)]
+            snapshot = monitor.MonitoringBudget(store, ledger, cfg).snapshot()
+            if snapshot['status'] != 'AVAILABLE' or snapshot.get('blockers'):
+                reasons.append('MONITORING_BLOCKED')
+        if not reasons:
+            return None
+        return {'reasons': reasons, 'ran': True, 'exit_code': code, 'mode': state['mode']}
 
 
 def _intake_guard(ctx, scan):
@@ -818,11 +896,28 @@ def _dispatch(expected, *, execute=False, systemd_credentials=False):
             # erase an intent merely because acquisition has not yet spent.
             scan = jobs.admit(hint['mint'],kind=BIRTH_ACQUISITION_V1,evidence_db=store.path,
                               paper_token_profile_version=cfg.get('paper_token_profile_version',0))
+        cadence = _HeldCadence(expected)
+        phase = None
+
+        def no_entry(phase_name, halt):
+            record = checkpoint_record(identity, intent, scan, phase_name, halt)
+            outcome = {'version':1,'intent_hash':digest(intent),'at':_now(),'scan_id':scan,'result':record}
+            if len(canonical(outcome).encode()) > MAX_PAYLOAD:raise ValueError('Checkpoint outcome exceeds bound')
+            _write(journal,'results',identity,outcome)
+            return {'status':'DISPATCHED','dispatch_id':identity,'scan_id':scan,'paper_status':'NO_ENTRY',
+                    'checkpoint_no_entry':{'phase':phase_name,'reasons':record['reasons'],'held_pass':record['held_pass']},
+                    'entry_authorized':False,'execution_status':'EXECUTION_UNVERIFIED','live_readiness':False}
+
+        def overrun():
+            return {'reasons':['PHASE_CAP_EXCEEDED'],'ran':False,'exit_code':None,'mode':cycle._state(Path(paths['ledger_db']),cfg)['mode']}
+
         def guarded_rpc(method,params):
+            if phase is not None:phase.check()      # no request of an over-cap phase starts
             with _held_guard(expected,scan):
                 return helius_rpc(method,params)
-        cadence = _HeldCadence(expected)
-        cadence.checkpoint(concurrency.ACQUISITION_SECONDS)
+        halt = cadence.checkpoint(concurrency.PHASE_CAPS['acquisition'])
+        if halt:return no_entry('acquisition',halt)
+        phase = cadence.phase('acquisition')
         acquired = acquisition.acquire(paths['research_db'],paths['evidence_db'],guarded_rpc,
                                       scan_id=scan,paper_token_profile_version=cfg.get('paper_token_profile_version',0))
         scan = acquired.get('scan_id')
@@ -833,13 +928,25 @@ def _dispatch(expected, *, execute=False, systemd_credentials=False):
             _rejection(expected,intent,scan,publish_rejection)
             return {'status':'TOKEN_REJECTED','dispatch_id':identity,'scan_id':scan,
                     'entry_authorized':False,'execution_status':'EXECUTION_UNVERIFIED','live_readiness':False}
+        if phase.finish():return no_entry('acquisition',overrun())   # cut or late: terminal, charges retained
         if not scan or acquired.get('status') not in ('SEED_HISTORY_PARTIAL','SEED_HISTORY_ACQUIRED','LAUNCH_OR_INVENTORY_UNVERIFIED'):
             raise ValueError('Acquisition incomplete; dispatcher recovery required')
-        cadence.checkpoint(concurrency.INTAKE_SECONDS)
+        halt = cadence.checkpoint(concurrency.PHASE_CAPS['intake'])
+        if halt:return no_entry('intake',halt)
         _preflight(expected,scan)
-        retained = migration.intake(paths['research_db'],paths['evidence_db'],scan_id=scan,
+        phase = cadence.phase('intake')
+
+        def intake_guard():
+            phase.check()
+            _intake_guard(expected,scan)
+        try:
+            retained = migration.intake(paths['research_db'],paths['evidence_db'],scan_id=scan,
             mint=hint['mint'],pool=hint['pool'],signature=hint['signature'],slot=hint['slot'],
-            provenance=PROVENANCE,credentials_loader=lambda:_intake_guard(expected,scan),paper_token_profile_version=cli._config(paths['config']).get('paper_token_profile_version',0))
+            provenance=PROVENANCE,credentials_loader=intake_guard,paper_token_profile_version=cli._config(paths['config']).get('paper_token_profile_version',0))
+        except Exception:
+            if not phase.cut:raise
+            return no_entry('intake',overrun())
+        if phase.finish():return no_entry('intake',overrun())
         if retained['status'] != 'RETAINED_MIGRATION_WITNESS':
             from desk import paper_migration_no_entry
             # Only a narrow replay-proved unsupported quote can publish. Every
@@ -850,7 +957,8 @@ def _dispatch(expected, *, execute=False, systemd_credentials=False):
             _write(journal,'results',identity,outcome)
             return {'status':'DISPATCHED','dispatch_id':identity,'scan_id':scan,'paper_status':'NO_ENTRY',
                     'entry_authorized':False,'execution_status':'EXECUTION_UNVERIFIED','live_readiness':False}
-        cadence.checkpoint(concurrency.PREPARATION_SECONDS + concurrency.CYCLE_SECONDS)
+        halt = cadence.checkpoint(concurrency.PREPARATION_SECONDS + concurrency.CYCLE_SECONDS)
+        if halt:return no_entry('preparation',halt)
         _preflight(expected,scan)
         window = expected['watchlist_maximum_age'] if v2 and evaluation > 1 else expected['maximum_age']
         if not 300 <= _now()-hint['received_at'] <= window:

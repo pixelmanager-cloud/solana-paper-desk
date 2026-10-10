@@ -118,8 +118,9 @@ class ConfigAndGateTests(unittest.TestCase):
     def test_portfolio_ttl_is_only_valid_with_the_flag_and_inside_its_bounds(self):
         with self.assertRaises(ValueError):                     # key without the experiment
             pc.selected({**config(), TTL: 60})
-        with self.assertRaises(ValueError):                     # flag without the key
-            pc.selected({**config(), KEY: 1})
+        # T16H item 3, loosened on purpose: the coordinator rejected the relaxed TTL, so the experiment flag no longer
+        # requires the key (the 10 s price TTL applies; batched portfolio marks meet it). Previously this raised.
+        self.assertEqual(pc.selected({**config(), KEY: 1}), 1)
         base = config()
         for bad in (base['price_ttl_seconds'] - 1, 121, 600, '60', 60.0, True, None, 0, -5):
             with self.assertRaises(ValueError, msg=repr(bad)):

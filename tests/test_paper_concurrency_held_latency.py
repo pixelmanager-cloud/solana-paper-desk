@@ -4,6 +4,7 @@ budgets (acquisition 12 s, intake 10 s, preparation 18 s, cycle 12 s), plus 3-po
 The simulated clock advances only by those budgets (the wrappers below add each phase's duration after the real
 phase function ran); `time.time` is never frozen for a phase. No network, credentials or provider.
 """
+import contextlib
 import json
 import sqlite3
 import unittest
@@ -16,6 +17,7 @@ from tools import paper_entry_dispatcher as tool
 
 ACQ, INTAKE = pc.ACQUISITION_SECONDS, pc.INTAKE_SECONDS
 PREP_CYCLE = pc.PREPARATION_SECONDS + pc.CYCLE_SECONDS
+SLOW_CAPS = {'acquisition': 80.0, 'intake': 50.0}   # operator-raised caps: the T16G stress scenario predates the enforced caps
 
 
 class Latency(pipe.ConcurrentPipeline):
@@ -56,7 +58,8 @@ class Latency(pipe.ConcurrentPipeline):
             self.held_leg(mint)                                      # a REAL monitoring cycle, charged and answered
         return 0
 
-    def timed_dispatch(self, *, intents=2, raw=None, acquisition=ACQ, intake=INTAKE, prep_cycle=PREP_CYCLE, checkpoints=True):
+    def timed_dispatch(self, *, intents=2, raw=None, acquisition=ACQ, intake=INTAKE, prep_cycle=PREP_CYCLE, checkpoints=True,
+                       caps=None, real_held=False):
         outer = self
         acquire, intake_fn, execute = tool.acquisition.acquire, tool.migration.intake, tool.entry.execute
         cadence = tool._HeldCadence
@@ -72,11 +75,15 @@ class Latency(pipe.ConcurrentPipeline):
             outer.sim += prep_cycle        # preparation + cycle elapse BEFORE the engine decides
             outer.decision = outer.sim
             return execute(*a, **k)
-        held = patch.object(tool, '_held_pass', side_effect=self.checkpoint_pass if checkpoints else (lambda ctx: 0))
+        if real_held:                                   # the REAL _held_pass -> paper_monitor_service.main, in process
+            held = contextlib.nullcontext()
+        else:
+            held = patch.object(tool, '_held_pass', side_effect=self.checkpoint_pass if checkpoints else (lambda ctx: 0))
         with (held, patch.object(tool.acquisition, 'acquire', slow(acquire, acquisition)),
               patch.object(tool.migration, 'intake', slow(intake_fn, intake)),
               patch.object(tool.entry, 'execute', slow_execute),
               patch.object(tool, '_HeldCadence', side_effect=lambda ctx: cadence(ctx, clock=lambda: outer.sim)),
+              patch.dict(pc.PHASE_CAPS, caps or {}),
               patch.object(tool.concurrency, 'clock', side_effect=lambda: self.f.at)):
             return self.dispatch(intents=intents, raw=raw or self.second_raw)
 
@@ -105,7 +112,7 @@ class RealisticPhases(Latency):
         checkpoint before the cycle bounds it by running a real leg between phases."""
         self.start_book()
         legs_before = len(self.held_log)
-        second = self.timed_dispatch(acquisition=70, intake=40)
+        second = self.timed_dispatch(acquisition=70, intake=40, caps=SLOW_CAPS)
         self.assertEqual((second['status'], second['paper_status']), ('DISPATCHED', 'COMPLETE'), second)
         self.assertEqual(len(cycle._state(self.ledger, self.cfg)['positions']), 2)
         self.assertEqual(len(self.held_log), legs_before + 1, 'exactly one checkpoint leg, before the cycle')
@@ -114,7 +121,7 @@ class RealisticPhases(Latency):
 
     def test_without_the_checkpoint_the_same_entry_leaves_a_gap_over_the_cadence(self):
         self.start_book()
-        self.timed_dispatch(acquisition=70, intake=40, checkpoints=False)
+        self.timed_dispatch(acquisition=70, intake=40, checkpoints=False, caps=SLOW_CAPS)
         self.assertGreater(self.max_gap(), pc.HELD_MAX_GAP_SECONDS)
 
     def test_pure_rule(self):
@@ -123,6 +130,138 @@ class RealisticPhases(Latency):
         self.assertFalse(pc.checkpoint_due(10, 30, {'A': 1}))
         self.assertTrue(pc.checkpoint_due(80, 30, {'A': 1, 'B': 1, 'C': 1}))   # legs are part of the gap: 80+30+23.4 > 120
         self.assertFalse(pc.checkpoint_due(60, 30, {'A': 1, 'B': 1, 'C': 1}))
+
+
+class CheckpointTerminalResult(Latency):
+    """T16H: a post-intent checkpoint (or an overrunning phase) ends the intent as a typed terminal NO_ENTRY."""
+    def book(self):
+        self.first_entry()
+        self.append_second_candidate()
+        self.tick()
+
+    def journal_results(self):
+        with sqlite3.connect(self.journal) as c:
+            return [json.loads(p) for (p,) in c.execute('SELECT payload FROM results ORDER BY rowid')]
+
+    def assert_not_orphaned(self, refused=None):
+        """The dispatcher's own journal validation (no 'Unresolved dispatch') accepts the stores."""
+        budget = tool.monitor.MonitoringBudget
+        with patch.object(tool.time, 'time', side_effect=lambda: self.f.at), \
+                patch.object(tool.monitor, 'MonitoringBudget',
+                             side_effect=lambda store, ledger, cfg: budget(store, ledger, cfg, clock=lambda: max(self.f.at, pipe.REAL_TIME()))), \
+                patch.object(tool.concurrency, 'clock', side_effect=lambda: self.f.at):
+            if refused:      # journal validation (which raises 'Unresolved dispatch') runs BEFORE the gates that refuse here
+                with self.assertRaisesRegex(ValueError, refused):
+                    self.invoke()
+            else:
+                self.assertEqual(self.invoke()['status'], 'NO_CANDIDATE')
+
+    def real_pass_with(self, side_effect=None, code=2):
+        """paper_monitor_service.main runs for real (export, leg planning); only each leg's cycle CLI is replaced."""
+        from desk import paper_monitor_service as service
+        return patch.object(service.cli, 'main', side_effect=side_effect or (lambda argv: code))
+
+    def test_blocked_leg_in_the_real_held_pass_ends_as_terminal_no_entry_with_the_code_surfaced(self):
+        self.book()
+        before = (self.charges(), self.fills() if hasattr(self, 'fills') else None)
+        with self.real_pass_with(code=2):
+            result = self.timed_dispatch(acquisition=70, intake=40, caps=SLOW_CAPS, real_held=True)
+        self.assertEqual((result['status'], result['paper_status']), ('DISPATCHED', 'NO_ENTRY'), result)
+        self.assertEqual(result['checkpoint_no_entry']['reasons'], ['HELD_PASS_NONZERO'])
+        self.assertEqual(result['checkpoint_no_entry']['held_pass'], {'ran': True, 'exit_code': 2})
+        self.assertEqual(result['checkpoint_no_entry']['phase'], 'intake')     # 70 s of acquisition + legs would break the gap
+        rows = self.journal_results()
+        self.assertEqual(rows[-1]['result']['kind'], tool.CHECKPOINT_KIND)
+        self.assertEqual(rows[-1]['result']['held_pass']['exit_code'], 2)
+        self.assertEqual(len(cycle._state(self.ledger, self.cfg)['positions']), 1)
+        self.assert_not_orphaned()
+        self.assertGreater(self.charges()[self.entry_scan()], 0, 'the acquisition and intake charges stay charged')
+        # not a latch: with the held pass healthy the next candidate enters normally
+        self.append_second_candidate(seed=44)
+        self.tick()
+        again = self.timed_dispatch(intents=3, raw=self.second_raw)
+        self.assertEqual((again['status'], again['paper_status']), ('DISPATCHED', 'COMPLETE'), again)
+
+    def entry_scan(self):
+        return list(self.charges())[-1]
+
+    def test_a_leg_that_moves_the_mode_ends_as_terminal_no_entry(self):
+        self.book()
+        from desk.engine import initial_state, transition
+        from desk.ledger import Ledger
+        from tests.helpers import control
+
+        def pause(argv):
+            ledger = Ledger(self.ledger, must_exist=True)
+            try:
+                ledger.apply(control(int(self.f.at) + 7, 'EXIT_ONLY'), self.cfg, transition, initial_state)
+            finally:
+                ledger.close()
+            return 0
+        with self.real_pass_with(side_effect=pause):
+            result = self.timed_dispatch(acquisition=70, intake=40, caps=SLOW_CAPS, real_held=True)
+        self.assertEqual(result['paper_status'], 'NO_ENTRY', result)
+        self.assertEqual(result['checkpoint_no_entry']['reasons'], ['LEDGER_MODE_NOT_RUNNING'])
+        self.assertEqual(self.journal_results()[-1]['result']['mode'], 'EXIT_ONLY')
+        self.assert_not_orphaned(refused='paused ledger')
+
+    def test_gate_reasons_for_unresolved_exit_and_blocked_monitoring(self):
+        from contextlib import contextmanager
+        cadence = tool._HeldCadence(self.expected_context() if hasattr(self, 'expected_context') else tool.plan(**self.args))
+        blocked = {'mode': 'RUNNING', 'positions': {'A': {'exit_blocked': 'EXACT_FRESH_SELL_QUOTE_REQUIRED', 'mark_status': 'UNVERIFIED_EXIT'}}}
+
+        @contextmanager
+        def context(*args):
+            yield object(), object(), blocked
+        class Budget:
+            def __init__(self, *a):
+                pass
+            def snapshot(self):
+                return {'status': 'AVAILABLE', 'blockers': ['MONITORING_OUTCOME_PENDING']}
+        with patch.object(tool.monitor, '_context', context), patch.object(tool.monitor, 'MonitoringBudget', Budget):
+            halt = cadence.gate(self.cfg, 0)
+        self.assertEqual(sorted(halt['reasons']), ['HELD_EXIT_UNRESOLVED', 'MONITORING_BLOCKED'])
+        self.assertEqual(halt['exit_code'], 0)
+
+    def test_acquisition_overrun_is_cut_with_a_terminal_no_entry(self):
+        self.book()
+        result = self.timed_dispatch(acquisition=70)                    # default cap 30 s
+        self.assertEqual((result['paper_status'], result['checkpoint_no_entry']['reasons'], result['checkpoint_no_entry']['phase']),
+                         ('NO_ENTRY', ['PHASE_CAP_EXCEEDED'], 'acquisition'))
+        self.assertEqual(len(cycle._state(self.ledger, self.cfg)['positions']), 1)
+        self.assert_not_orphaned()
+
+    def test_intake_overrun_is_cut_with_a_terminal_no_entry(self):
+        self.book()
+        result = self.timed_dispatch(intake=40)                          # default cap 25 s
+        self.assertEqual((result['paper_status'], result['checkpoint_no_entry']['reasons'], result['checkpoint_no_entry']['phase']),
+                         ('NO_ENTRY', ['PHASE_CAP_EXCEEDED'], 'intake'))
+        self.assert_not_orphaned()
+
+    def test_no_request_starts_once_the_acquisition_cap_has_passed(self):
+        self.book()
+        calls = []
+        real_guard = tool._held_guard
+
+        @contextlib.contextmanager
+        def slow_guard(ctx, scan=None):
+            self.sim += 20                                               # every setup request takes 20 s
+            calls.append(len(self.calls))
+            with real_guard(ctx, scan):
+                yield
+        with patch.object(tool, '_held_guard', slow_guard):
+            result = self.timed_dispatch(acquisition=0, intake=0, prep_cycle=0)
+        self.assertEqual(result['checkpoint_no_entry']['reasons'], ['PHASE_CAP_EXCEEDED'])
+        self.assertEqual(result['checkpoint_no_entry']['phase'], 'acquisition')
+        self.assertLessEqual(len(calls), 3, 'the second request after the 30 s cap never started')
+        self.assert_not_orphaned()
+
+    def test_caps_are_enforced_not_just_estimated(self):
+        self.assertEqual(pc.PHASE_CAPS, {'acquisition': 30.0, 'intake': 25.0})
+        self.assertGreater(pc.PHASE_CAPS['acquisition'], pc.ACQUISITION_SECONDS)
+        self.assertGreater(pc.PHASE_CAPS['intake'], pc.INTAKE_SECONDS)
+        # worst case before the cycle: both caps + legs for a full book must fit the held gap with the cycle phase
+        self.assertLessEqual(pc.PHASE_CAPS['acquisition'] + pc.held_wall_seconds(4), pc.HELD_MAX_GAP_SECONDS)
 
 
 class ThreePositionRestart(Latency):
@@ -189,7 +328,7 @@ class ThreePositionRestart(Latency):
         self.assertEqual(len(cycle._state(self.ledger, self.cfg)['positions']), 2)
 
 
-for _cls in (RealisticPhases, ThreePositionRestart):
+for _cls in (RealisticPhases, ThreePositionRestart, CheckpointTerminalResult):
     for _name in dir(pipe.ConcurrentPipeline):
         if _name.startswith('test_') and _name not in vars(_cls):
             setattr(_cls, _name, None)

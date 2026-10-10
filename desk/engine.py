@@ -28,11 +28,11 @@ MAX_PORTFOLIO_TTL = 120
 def portfolio_ttl(cfg):
     """Max age of a HELD mark when an ENTRY is decided or the day rolls over.
 
-    Absent key: the price TTL, so behaviour is unchanged. Concurrent-entries experiments
-    (paper_concurrent_entries_version 1) set `paper_portfolio_mark_ttl_seconds`: N sequential
-    held legs under 2 s provider pacing cannot all be 10 s old at an entry decision for N >= 2.
-    Exits, candidate evidence and the stale-mark watchdog keep using `price_ttl_seconds`.
-    The key is honoured only with the experiment flag and within [price_ttl_seconds, 120].
+    Absent key (the default and the recommended setting): the price TTL, so behaviour is unchanged. The coordinator
+    REJECTED relaxing it (T35 decision): with N positions the 10 s rule is met by the batched portfolio marks instead
+    (`paper_portfolio_mark_source_version`). The key remains only as a validated, non-recommended experiment knob; no
+    flag, rollover rule or example config depends on it. Exits, candidate evidence and the stale-mark watchdog always
+    use `price_ttl_seconds`. Honoured only with the experiment flag and within [price_ttl_seconds, 120].
     """
     price = cfg["price_ttl_seconds"]
     if PORTFOLIO_TTL_KEY not in cfg:
@@ -55,7 +55,7 @@ def rollover_after_mark(cfg):
     if ROLLOVER_KEY not in cfg:
         return False
     version, flag = cfg[ROLLOVER_KEY], cfg.get("paper_concurrent_entries_version")
-    if type(version) is not int or version != 1 or type(flag) is not int or flag != 1 or PORTFOLIO_TTL_KEY not in cfg:
+    if type(version) is not int or version != 1 or type(flag) is not int or flag != 1:
         raise ValueError("Invalid rollover-after-mark configuration")
     return True
 

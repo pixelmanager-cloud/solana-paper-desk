@@ -34,6 +34,9 @@ INTAKE_SECONDS = 10.0
 ENTRY_PHASES = (('acquisition', ACQUISITION_SECONDS), ('intake', INTAKE_SECONDS),
                 ('preparation', float(PREPARATION_SECONDS)), ('cycle', CYCLE_SECONDS))
 ENTRY_SECONDS = sum(seconds for _, seconds in ENTRY_PHASES)
+# Wall caps ENFORCED by the dispatcher (T16H): no request of an over-cap phase starts, and an overrun ends the intent as a
+# typed terminal NO_ENTRY. Preparation and the cycle are already capped in code (18 s history preparation, 10 s cycle deadline).
+PHASE_CAPS = {'acquisition': 2.5 * ACQUISITION_SECONDS, 'intake': 2.5 * INTAKE_SECONDS}
 LEG_SECONDS = 7.8
 # Longest wall time a held position may go without a monitoring leg while an entry runs: the held cadence.
 HELD_MAX_GAP_SECONDS = 120.0
@@ -57,9 +60,6 @@ def selected(cfg):
     cap = cfg.get('max_positions')
     if cfg.get('mode') != 'paper' or type(cap) is not int or not 2 <= cap <= MAX_CONCURRENT:
         raise ValueError('Concurrent entries require paper mode and 2..8 max_positions')
-    if TTL_KEY not in cfg and not cfg.get(portfolio_marks.KEY):
-        # Batched reserve-implied marks (portfolio_marks) keep the 10 s rule; otherwise the relaxed TTL is required.
-        raise ValueError('Concurrent entries require paper_portfolio_mark_ttl_seconds')
     engine.portfolio_ttl(cfg)  # type and range validation
     engine.rollover_after_mark(cfg)
     portfolio_marks.selected(cfg)   # validated whenever the concurrent experiment is
