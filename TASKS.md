@@ -199,6 +199,27 @@ T23's F5 (EXIT_ONLY auto-recovery) is correct and stays as it is. F6 does not fi
 
 ---
 
+## T23G — Last pacing/latch fixes (from the T23F review) — CRITICAL PATH
+STATUS: OPEN
+DEPENDS: none
+BASE: origin/cloud/T23F, then merge origin/integration/r1 (it merges cleanly)
+OWNS: desk/provider_pacing.py, desk/model.py or wherever config is loaded (validation only), tools/paper_scheduler.py (entry pre-check only), config/experiments/paper-kraken-fresh.example.json, tests/test_provider_pacing*.py, tests/test_pacing_reclaim*.py, tests/test_latch_exit_only_recovery.py
+AVOID: everything else
+
+1. **(HIGH) Release only after a successful commit.** `finish()` and `throttle()` call `_release()` BEFORE `commit()` (~:310, ~:352). In DELETE journal mode with a 0.05s busy timeout, a reader's shared lock makes the commit fail with PACING_DATABASE_BUSY after the flock is gone, so a live owner's slot gets reclaimed (and a `Retry-After: 600` is lost, leaving only a 30s embargo).
+   - Release the flock only after the commit succeeds. On commit failure keep holding it and retry the commit with bounded backoff; if it still fails, keep the lock until process exit.
+   - Add tests reproducing the coordinator probes: a live owner with a busy commit is never reclaimed, and the throttle's Retry-After is preserved.
+2. **(MED) Read before write.** `reclaim_orphans()` always opens a write transaction, which raises PACING_DATABASE_BUSY under contention. At the dispatcher (~:409), which runs after the intent is written, that adds a new unresolved-dispatch path (T09 F3).
+   - Read first (`mode=ro` or a deferred read). Take the write lock only when an old pending row exists.
+   - If the database is busy, return `[]` (no reclaim this time) and NEVER raise.
+   - Test it under writer contention.
+3. **(MED) Validate at load.** Validate `paper_exit_only_recovery_version` (and every versioned flag the engine reads lazily) at config load, so a bad value is refused before any cycle.
+4. **(MED) Latch on every entry path.** The scheduler's entry pre-check (`tools/paper_scheduler.py`) must also refuse entry when the ledger has ≥1 BUY and the latch policy is configured. Use the T07 entry_latch read-only check, so manual or other entry paths are covered too, not only the dispatcher's ExecStartPre drop-in. Test it.
+5. **Example config.** Set `paper_exit_only_recovery_version: 1` in `config/experiments/paper-kraken-fresh.example.json`, so auto-recovery is on in the fresh experiment. Validate it with the real config loader.
+6. **(LOW) Docs.** Document in the module docstring that deleting the holder lock file breaks the owner proof (never delete it), and that a forked child inherits the lock.
+
+---
+
 ## T22 — Extend T01: no store-wide latch from ANY charged failure (from T09 audit F1, F3) — CRITICAL PATH
 STATUS: OPEN
 DEPENDS: branch `cloud/T01` has a `DONE T01:` commit
