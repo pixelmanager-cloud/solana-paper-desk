@@ -239,8 +239,9 @@ def unit_arguments(p, *, scheduler_identity):
         'desk-dashboard': {
             # Jobs.once() leases the scheduler lock only when DESK_PAPER_SCHEDULER_LOCK is set and then
             # requires the reviewed inode identity; /api/paper reads the selected ledger from the data dir.
+            # DESK_PROVIDER_PACING_DB puts dashboard scans on the shared 2 s pacing (T09 F11).
             'environment': [f"DESK_PAPER_SCHEDULER_LOCK={s['scheduler_lock']}", sched_env,
-                            f"DESK_PAPER_LEDGER_DB={s['ledger_db']}"],
+                            f"DESK_PAPER_LEDGER_DB={s['ledger_db']}", pacing_env],
             'argv': ['-m', 'desk', '--secrets-file', '%d/provider-keys.json', 'serve', '--db', s['research_db'],
                      '--port', '8765']},
         # desk.backup needs launches/raw/active-paper stores the fresh set does not have; tools.ops.backup
@@ -258,7 +259,7 @@ def unit_sections(p):
     for unit in ('desk-paper-entry-dispatcher', 'desk-paper-held-cycle', 'desk-paper-monitor',
                  'desk-decisions', 'desk-dashboard', 'desk-backup'):
         writable = [root]
-        if unit in ('desk-paper-entry-dispatcher', 'desk-paper-held-cycle'):
+        if unit in ('desk-paper-entry-dispatcher', 'desk-paper-held-cycle', 'desk-dashboard'):
             # The shared pacing database uses a rollback journal (<db>-journal is created and removed per write),
             # so SQLite needs its DIRECTORY writable; a single-file ReadWritePaths would break the 2 s pacing.
             # The archived stores in that directory are protected by chmod 0400 (RUNBOOK step 4) and by the cutover
@@ -360,7 +361,11 @@ LATCH_OUT = 'desk-paper-entry-dispatcher.service.d/70-entry-latch.conf'
 SAFE_VALUE = re.compile(r'[A-Za-z0-9_@%:,./=+-]+')
 
 
-def render_units(root, out, *, release_dir, state_dir=DEFAULT_STATE_DIR, templates=TEMPLATE_DIR):
+DEFAULT_ARCHIVED_ROOT = '/var/lib/solana-desk'
+
+
+def render_units(root, out, *, release_dir, state_dir=DEFAULT_STATE_DIR, templates=TEMPLATE_DIR,
+                 archived_root=DEFAULT_ARCHIVED_ROOT):
     """Substitute the deploy/fresh placeholders from an applied root's manifest into a NEW directory `out`.
 
     Writes every unit/timer template plus the entry-latch drop-in (marker first line, so cutover rollback removes
@@ -374,6 +379,7 @@ def render_units(root, out, *, release_dir, state_dir=DEFAULT_STATE_DIR, templat
         raise FreshStartError('Scheduler lock identity differs from the manifest; refuse to render')
     release_dir = _absolute(release_dir, 'release-dir')
     state_dir = _absolute(state_dir, 'state-dir')
+    archived_root = _absolute(archived_root, 'archived-root')
     pacing, discovery = Path(manifest['shared']['pacing_db']), Path(manifest['shared']['discovery_db'])
     values = {
         'FRESH_ROOT': str(root), 'RELEASE_DIR': str(release_dir), 'CONFIG': manifest['config'],
@@ -381,6 +387,7 @@ def render_units(root, out, *, release_dir, state_dir=DEFAULT_STATE_DIR, templat
         'PACING_DIR': str(pacing.parent), 'DISCOVERY_DB': str(discovery), 'DISCOVERY_DIR': str(discovery.parent),
         'TAKER': manifest['taker'], 'AMOUNT_RAW': str(manifest['amount_raw']),
         'POOL_FEE_BPS': manifest['pool_fee_bps'], 'BACKUP_ROOT': manifest['backup_dir'], 'STATE_DIR': str(state_dir),
+        'ARCHIVED_ROOT': str(archived_root),
     }
     for key, value in values.items():
         if not SAFE_VALUE.fullmatch(value):
@@ -766,6 +773,8 @@ def _parser():
     p.add_argument('--out', required=True)
     p.add_argument('--release-dir', required=True)
     p.add_argument('--state-dir', default=DEFAULT_STATE_DIR)
+    p.add_argument('--archived-root', default=DEFAULT_ARCHIVED_ROOT,
+                   help='the archived (old) store root; health/notify units get it as ReadOnlyPaths')
     p = sub.add_parser('render-dropins', allow_abbrev=False,
                        help='write one complete systemd drop-in per unit from an applied root manifest')
     p.add_argument('--root', required=True)
@@ -779,7 +788,8 @@ def main(argv=None):
     try:
         if a.command == 'render-units':
             print(canonical({'status': 'RENDERED', **render_units(a.root, a.out, release_dir=a.release_dir,
-                                                                  state_dir=a.state_dir)}))
+                                                                  state_dir=a.state_dir,
+                                                                  archived_root=a.archived_root)}))
             return 0
         if a.command == 'render-dropins':
             print(canonical({'status': 'RENDERED', **render_dropins(a.root, a.out, marker=a.marker)}))

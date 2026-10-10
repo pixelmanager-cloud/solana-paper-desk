@@ -663,7 +663,8 @@ class UnitTemplateTests(unittest.TestCase):
            'PACING_DB': '/var/lib/solana-desk/provider-pacing.sqlite', 'PACING_DIR': '/var/lib/solana-desk',
            'DISCOVERY_DB': '/var/lib/solana-desk/discovery/continuous.sqlite',
            'DISCOVERY_DIR': '/var/lib/solana-desk/discovery', 'TAKER': '6E2G75Z3uJEnPo9EvzmLTxp8KB78m3RDsFBjoCTVHZD2',
-           'AMOUNT_RAW': '100000000', 'POOL_FEE_BPS': '25', 'BACKUP_ROOT': '/var/backups/solana-desk/fresh-2026-10-11.paper-quote-kraken.fresh.1', 'STATE_DIR': '/var/lib/solana-desk-health'}
+           'AMOUNT_RAW': '100000000', 'POOL_FEE_BPS': '25', 'BACKUP_ROOT': '/var/backups/solana-desk/fresh-2026-10-11.paper-quote-kraken.fresh.1', 'STATE_DIR': '/var/lib/solana-desk-health',
+           'ARCHIVED_ROOT': '/var/lib/solana-desk'}
     MANUAL_TIMERS = {'desk-paper-entry-dispatcher.timer', 'desk-paper-monitor.timer'}
     SCHEDULER_UNITS = ['desk-paper-entry-dispatcher.service', 'desk-paper-held-cycle.service',
                        'desk-paper-monitor.service', 'desk-decisions.service']
@@ -692,7 +693,8 @@ class UnitTemplateTests(unittest.TestCase):
                     'desk-decisions.service', 'desk-decisions.timer', 'desk-healthcheck.service', 'desk-healthcheck.timer',
                     'desk-notify-daily.service', 'desk-notify-daily.timer',
                     'desk-held-watcher.service',   # T28 adds the held watcher
-                    'desk-counterfactual.service', 'desk-counterfactual.timer'}   # T26 research sampler
+                    'desk-counterfactual.service', 'desk-counterfactual.timer',   # T26 research sampler
+                    'desk-notify-watchdog.service', 'desk-notify-watchdog.timer'}   # T32F item 9
         self.assertEqual(set(self.units), expected)
         self.assertEqual(set(healthcheck.UNITS) - set(self.units), set())
 
@@ -703,6 +705,34 @@ class UnitTemplateTests(unittest.TestCase):
         self.assertLessEqual(used, set(self.MAP))
         for name, text in self.units.items():
             self.assertNotRegex(re.sub(r'(?m)^#.*$', '', text), r'<[A-Z_]+>', name)
+
+    def test_watchdog_is_a_separate_timer_that_detects_a_dead_healthcheck_within_fifteen_minutes(self):
+        """T32F item 9: the healthcheck notifies only from its own ExecStopPost, so a dead timer needs its own watchdog."""
+        timer, service = self.units['desk-notify-watchdog.timer'], self.units['desk-notify-watchdog.service']
+        self.assertNotIn('desk-healthcheck', timer)                       # independent of the unit it watches
+        period = int(re.search(r'OnUnitInactiveSec=(\d+)', timer).group(1))
+        from tools.ops import notify
+        stale_after = 2 * notify.DEFAULT_INTERVAL                         # check_freshness: older than 2 x interval is CRITICAL
+        self.assertLessEqual(stale_after + period, 15 * 60)
+        self.assertIn('tools.ops.notify alert', service)
+        self.assertIn('health.json', service)
+        self.assertIn('watchdog-state.json', service)                     # its own de-duplication state
+        self.assertNotIn('notify-state.json', service.replace('watchdog-state.json', ''))
+        self.assertIn('WantedBy=timers.target', timer)
+
+    def test_health_and_notify_units_see_the_archived_root_read_only(self):
+        """T32F item 8."""
+        for name in ('desk-healthcheck.service', 'desk-notify-daily.service', 'desk-notify-watchdog.service'):
+            read_only = ' '.join(self.directives(name, 'ReadOnlyPaths')).split()
+            writable = ' '.join(self.directives(name, 'ReadWritePaths')).split()
+            self.assertIn('/var/lib/solana-desk', read_only, name)
+            self.assertNotIn('/var/lib/solana-desk', writable, name)          # the old root is never writable here
+
+    def test_dashboard_uses_the_shared_pacing_database(self):
+        """T32F item 6 (T09 F11): dashboard scans go through the shared 2 s pacing."""
+        text = self.units['desk-dashboard.service']
+        self.assertIn('Environment=DESK_PROVIDER_PACING_DB=/var/lib/solana-desk/provider-pacing.sqlite', text)
+        self.assertIn('/var/lib/solana-desk', ' '.join(self.directives('desk-dashboard.service', 'ReadWritePaths')).split())
 
     def test_unit_names_match_the_cutover_tool_pattern(self):
         # Same pattern as tools.ops.cutover.UNIT_RE (T11, a separate branch; duplicated to stay independent).

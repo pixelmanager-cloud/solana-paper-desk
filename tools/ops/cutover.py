@@ -156,6 +156,19 @@ class Ops:
             os.fsync(out.fileno())
         self.fsync_dir(Path(dst).parent)
 
+    @staticmethod
+    def chown(path, owner, group):
+        """Overridable in tests: only root can change ownership."""
+        shutil.chown(path, user=owner, group=group)
+
+    def do(self, description, function):
+        """Run a filesystem mutation only when applying; always list it in the plan."""
+        self.planned.append(description)
+        if not self.apply:
+            return None
+        self.record({'event': 'fs', 'what': description})
+        return function()
+
     def record(self, entry):
         if self.journal is None or not self.apply:
             return
@@ -916,6 +929,334 @@ def cutover(args, ops):
     return report
 
 
+
+# ------------------------------------------------- inventory and drop-in archive
+ARCHIVE_PREFIX = 'systemd-archive-'
+ARCHIVE_MANIFEST = 'manifest.json'
+INVENTORY_KIND = 'systemd_inventory_v1'
+ARCHIVE_KIND = 'systemd_archive_v1'
+
+
+def desk_entries(unit_dir):
+    """Every ``desk-*`` entry (unit file, drop-in directory, wants directory, symlink) directly under unit_dir."""
+    return sorted(p for p in Path(unit_dir).iterdir() if p.name.startswith('desk-'))
+
+
+def _walk(root):
+    """(relative path, absolute path) for ``root`` and everything below it, depth first, no symlink following."""
+    yield root, root
+    if root.is_dir() and not root.is_symlink():
+        for child in sorted(root.iterdir()):
+            yield from _walk(child)
+
+
+def entry_record(unit_dir, path):
+    info = path.lstat()
+    rel = str(path.relative_to(unit_dir))
+    base = {'path': rel, 'mode': stat.S_IMODE(info.st_mode), 'uid': info.st_uid, 'gid': info.st_gid}
+    if stat.S_ISLNK(info.st_mode):
+        return dict(base, type='symlink', target=os.readlink(path))
+    if stat.S_ISDIR(info.st_mode):
+        return dict(base, type='dir')
+    if stat.S_ISREG(info.st_mode):
+        if info.st_nlink != 1:
+            raise CutoverError('Refusing to archive a hard-linked file: %s' % path)
+        return dict(base, type='file', size=info.st_size, sha256=sha256_file(path))
+    raise CutoverError('Refusing to archive a special file: %s' % path)
+
+
+def tree_records(unit_dir, tops):
+    records = []
+    for top in tops:
+        for _, path in _walk(top):
+            records.append(entry_record(unit_dir, path))
+    return records
+
+
+def inventory(args, ops):
+    """Read-only listing of every desk unit entry plus ``systemctl cat`` of each unit, saved under --out."""
+    unit_dir = canonical_dir(args.unit_dir, '--unit-dir')
+    entries = desk_entries(unit_dir)
+    records = tree_records(unit_dir, entries)
+    listing = []
+    for r in records:
+        listing.append('%s %o %d:%d %s%s' % (r['type'], r['mode'], r['uid'], r['gid'], r['path'],
+                                              (' -> ' + r['target']) if r['type'] == 'symlink' else ''))
+    units = sorted(p.name for p in entries if UNIT_RE.fullmatch(p.name))
+    cats = {}
+    for unit in units:
+        result = ops.read(['systemctl', 'cat', unit])
+        cats[unit] = (result.stdout or '') if result.returncode == 0 else '# systemctl cat failed: %s\n' % (result.stderr or '').strip()[:200]
+    report = {'action': 'inventory', 'entries': len(records), 'units': units, 'applied': ops.apply,
+              'out': args.out, 'listing': listing}
+    if args.out:
+        out = Path(args.out)
+        if not out.is_absolute():
+            raise CutoverError('--out must be an absolute path')
+
+        def write():
+            out.mkdir(mode=0o700)
+            texts = {'ls-la.txt': '\n'.join(listing) + '\n'}
+            texts.update({'systemctl-cat-%s.txt' % u: t for u, t in cats.items()})
+            digests = {}
+            for name, text in texts.items():
+                fd = os.open(out / name, os.O_CREAT | os.O_EXCL | os.O_WRONLY | os.O_NOFOLLOW, 0o600)
+                with os.fdopen(fd, 'w') as stream:
+                    stream.write(text)
+                    stream.flush()
+                    os.fsync(stream.fileno())
+                digests[name] = hashlib.sha256(text.encode()).hexdigest()
+            fd = os.open(out / 'inventory.json', os.O_CREAT | os.O_EXCL | os.O_WRONLY | os.O_NOFOLLOW, 0o600)
+            with os.fdopen(fd, 'w') as stream:
+                json.dump({'kind': INVENTORY_KIND, 'unit_dir': str(unit_dir), 'records': records, 'files': digests},
+                          stream, sort_keys=True, indent=1)
+                stream.flush()
+                os.fsync(stream.fileno())
+            ops.fsync_dir(out)
+        if out.exists() or out.is_symlink():
+            raise CutoverError('--out already exists: %s' % out)
+        if not out.parent.is_dir() or out.parent.resolve() != out.parent:
+            raise CutoverError('--out parent must be an existing canonical directory')
+        ops.do('write inventory (ls -la listing, systemctl cat of %d units) to %s' % (len(units), out), write)
+    return report
+
+
+def _copy_entry(src, dst, record):
+    kind = record['type']
+    if kind == 'symlink':
+        os.symlink(record['target'], dst)
+    elif kind == 'dir':
+        os.mkdir(dst, 0o700)
+    else:
+        fd = os.open(dst, os.O_WRONLY | os.O_CREAT | os.O_EXCL | os.O_NOFOLLOW, 0o600)
+        with os.fdopen(fd, 'wb') as out, open(src, 'rb') as stream:
+            shutil.copyfileobj(stream, out)
+            out.flush()
+            os.fsync(out.fileno())
+
+
+def _finish_entry(dst, record):
+    """Ownership (best effort: only root can chown) and the exact recorded mode; dirs are finished last."""
+    if record['type'] == 'symlink':
+        return
+    try:
+        os.chown(dst, record['uid'], record['gid'])
+    except PermissionError:
+        pass
+    os.chmod(dst, record['mode'])
+
+
+def copy_tree_exact(src_root, dst_root, records):
+    """Recreate ``records`` (relative paths) from src_root under dst_root; directories get their mode last."""
+    for record in records:
+        src, dst = src_root / record['path'], dst_root / record['path']
+        dst.parent.mkdir(parents=True, exist_ok=True)
+        _copy_entry(src, dst, record)
+        if record['type'] != 'dir':
+            _finish_entry(dst, record)
+    for record in reversed([r for r in records if r['type'] == 'dir']):
+        _finish_entry(dst_root / record['path'], record)
+
+
+def verify_records(root, records):
+    """Raise unless ``root`` holds exactly these records (type, mode, target and sha256 of every file)."""
+    for record in records:
+        path = root / record['path']
+        try:
+            now = entry_record(root, path)
+        except (OSError, CutoverError) as exc:
+            raise CutoverError('Archive verification failed for %s: %s' % (record['path'], exc)) from exc
+        comparable = ('type', 'mode', 'target', 'sha256', 'size')
+        if any(now.get(k) != record.get(k) for k in comparable):
+            raise CutoverError('Archive verification failed for %s: content or mode differs' % record['path'])
+
+
+def remove_tree(path):
+    if path.is_symlink() or not path.is_dir():
+        path.unlink()
+    else:
+        for child in path.iterdir():
+            remove_tree(child)
+        path.rmdir()
+
+
+def archive_dropins(args, ops):
+    """MOVE every ``desk-*.d`` directory, and the desk unit files the fresh set replaces, into a new archive.
+
+    Nothing is layered on top of the Codex-era drop-in stack: after this step the unit directory holds only
+    what the fresh install writes. The archive keeps content, modes, owners and a sha256 manifest; the copy is
+    verified against the manifest BEFORE any original is removed, and ``rollback --restore-archive`` verifies
+    it again and puts the tree back exactly.
+    """
+    unit_dir = canonical_dir(args.unit_dir, '--unit-dir')
+    archive_root = canonical_dir(args.archive_root, '--archive-root')
+    name = args.name or ARCHIVE_PREFIX + time.strftime('%Y%m%dT%H%M%SZ', time.gmtime())
+    if not re.fullmatch(r'systemd-archive-[A-Za-z0-9._-]{1,64}', name):
+        raise CutoverError('--name must look like systemd-archive-<label>')
+    archive = archive_root / name
+    if archive.exists() or archive.is_symlink():
+        raise CutoverError('Archive already exists: %s' % archive)
+    fresh = {}
+    if args.fresh_units:
+        fresh_dir = canonical_dir(args.fresh_units, '--fresh-units')
+        for path in sorted(fresh_dir.iterdir()):
+            if UNIT_RE.fullmatch(path.name) and path.is_file():
+                fresh[path.name] = sha256_file(path)
+        if not fresh:
+            raise CutoverError('--fresh-units holds no desk-*.service/.timer files')
+    tops = []
+    for path in desk_entries(unit_dir):
+        if path.name.endswith('.d') and path.is_dir() and not path.is_symlink():
+            tops.append(path)
+        elif path.name in fresh:
+            tops.append(path)
+        elif path.is_symlink() and path.name in fresh:
+            tops.append(path)
+    for top in tops:
+        if UNIT_RE.fullmatch(top.name) and active_now(ops, top.name):
+            raise CutoverError('Unit %s is active; stop it before archiving its configuration' % top.name)
+    records = tree_records(unit_dir, tops)
+    manifest = {'kind': ARCHIVE_KIND, 'version': 1, 'unit_dir': str(unit_dir), 'created_utc': time.strftime(
+        '%Y-%m-%dT%H:%M:%SZ', time.gmtime()), 'records': records, 'fresh_units': fresh}
+    report = {'action': 'archive-dropins', 'archive': str(archive), 'applied': ops.apply,
+              'directories': sorted(t.name for t in tops if t.name.endswith('.d')),
+              'unit_files': sorted(t.name for t in tops if not t.name.endswith('.d')),
+              'files': sum(r['type'] == 'file' for r in records)}
+
+    def move():
+        archive.mkdir(mode=0o700)
+        copy_tree_exact(unit_dir, archive, records)
+        fd = os.open(archive / ARCHIVE_MANIFEST, os.O_CREAT | os.O_EXCL | os.O_WRONLY | os.O_NOFOLLOW, 0o600)
+        with os.fdopen(fd, 'w') as stream:
+            json.dump(manifest, stream, sort_keys=True, indent=1)
+            stream.flush()
+            os.fsync(stream.fileno())
+        ops.fsync_dir(archive)
+        ops.fsync_dir(archive_root)
+        verify_records(archive, records)            # the copy is proven before any original disappears
+        for top in tops:
+            remove_tree(top)
+        ops.fsync_dir(unit_dir)
+    ops.do('archive %d entries (%d files) from %s to %s, then remove the originals' % (
+        len(tops), report['files'], unit_dir, archive), move)
+    ops.mutate(['systemctl', 'daemon-reload'])
+    return report
+
+
+def plan_restore(args, unit_dir, will_remove):
+    """Validate a restore WITHOUT touching anything; ``will_remove`` are the managed files rollback deletes first."""
+    archive = canonical_dir(args.restore_archive, '--restore-archive')
+    manifest_path = archive / ARCHIVE_MANIFEST
+    if not manifest_path.is_file() or manifest_path.is_symlink():
+        raise CutoverError('Archive manifest missing: %s' % manifest_path)
+    manifest = json.loads(manifest_path.read_text())
+    if manifest.get('kind') != ARCHIVE_KIND or manifest.get('version') != 1 or manifest.get('unit_dir') != str(unit_dir):
+        raise CutoverError('Archive manifest does not match this unit directory')
+    records, fresh = manifest['records'], manifest['fresh_units']
+    verify_records(archive, records)                  # the archive itself is intact before anything is touched
+    archived_tops = {r['path'] for r in records if '/' not in r['path']}
+    pending = []                                      # (path, kind) removals needed so the archive can go back
+    for top in archived_tops:
+        current = unit_dir / top
+        if not (current.exists() or current.is_symlink()):
+            continue
+        if top.endswith('.d'):
+            leftover = [str(p.relative_to(unit_dir)) for _, p in _walk(current)
+                        if p != current and not p.is_dir() and p not in will_remove]
+            if leftover:
+                raise CutoverError('Refusing restore: %s holds files nobody archived or rolled back: %s'
+                                   % (top, ', '.join(sorted(leftover)[:5])))
+            pending.append(current)
+        elif current.is_file() and not current.is_symlink() and sha256_file(current) == fresh.get(top):
+            pending.append(current)                   # our rendered unit, replaced by the archived original
+        else:
+            raise CutoverError('Refusing restore: %s is not the rendered unit this flow installed' % top)
+    for name, digest in sorted(fresh.items()):
+        current = unit_dir / name
+        if name in archived_tops or not (current.exists() or current.is_symlink()):
+            continue
+        if current.is_file() and not current.is_symlink() and sha256_file(current) == digest:
+            pending.append(current)                   # a rendered unit that had no original: remove it
+        else:
+            raise CutoverError('Refusing restore: %s changed since it was installed' % name)
+    for path in unit_dir.glob('desk-*.d'):            # drop-in directories only this flow created, now empty
+        if path.is_dir() and not path.is_symlink() and path.name not in archived_tops and path not in pending \
+                and not any(not p.is_dir() and p not in will_remove for _, p in _walk(path) if p != path):
+            pending.append(path)
+
+    return {'archive': archive, 'records': records, 'archived_tops': archived_tops, 'pending': pending}
+
+
+def run_restore(plan, ops, unit_dir):
+    archive, records, pending = plan['archive'], plan['records'], plan['pending']
+
+    def restore():
+        for path in pending:
+            if path.exists() or path.is_symlink():
+                remove_tree(path)
+        copy_tree_exact(archive, unit_dir, records)
+        ops.fsync_dir(unit_dir)
+        verify_records(unit_dir, records)             # byte-for-byte: type, mode and sha256 of every file
+    ops.do('restore %d archived entries from %s (removing %d fresh entries first)' % (
+        len(plan['archived_tops']), archive, len(pending)), restore)
+    return {'archive': str(archive), 'restored': sorted(plan['archived_tops']),
+            'removed_fresh': sorted(p.name for p in pending)}
+
+
+# ------------------------------------------------------------- archived store permissions
+def seal_archive(args, ops):
+    """Make the archived (old) store root read-only to the service user, except the shared inputs.
+
+    Files: owner root:root, mode 0444. Directories: root:root 0555, EXCEPT the directories that hold a shared
+    database (the old root for provider-pacing.sqlite, discovery/ for continuous.sqlite): those are
+    root:<service group> 1775. The shared databases use a rollback journal, so SQLite must create and remove
+    ``<db>-journal`` next to them; group write on the directory allows that, and the sticky bit stops the service
+    user from deleting or renaming any root-owned (archived) file in it. The shared databases themselves are not
+    touched. Symlinks, hard links and special files abort the step.
+    """
+    root = Path(args.root)
+    if not root.is_absolute() or root.is_symlink() or not root.is_dir() or root.resolve() != root:
+        raise CutoverError('--root must be a canonical absolute directory')
+    shared = []
+    for item in args.shared_path:
+        path = Path(item)
+        if not path.is_absolute() or path.resolve() != path or root not in path.parents:
+            raise CutoverError('--shared-path must be a canonical absolute path inside --root: %s' % item)
+        shared.append(path)
+    shared_names = {p for base in shared for p in [base] + [Path(str(base) + sfx) for sfx in SHARED_SUFFIXES[1:]]}
+    shared_dirs = {root} | {p.parent for p in shared}
+    plan = {'files': [], 'sealed_dirs': [], 'shared_dirs': [], 'untouched': sorted(str(p) for p in shared)}
+    for path in sorted(root.rglob('*')) + [root]:
+        info = path.lstat()
+        if stat.S_ISLNK(info.st_mode):
+            raise CutoverError('Refusing to seal a symlink: %s' % path)
+        if stat.S_ISDIR(info.st_mode):
+            (plan['shared_dirs'] if path in shared_dirs else plan['sealed_dirs']).append(path)
+        elif stat.S_ISREG(info.st_mode):
+            if info.st_nlink != 1:
+                raise CutoverError('Refusing to seal a hard-linked file: %s' % path)
+            if path not in shared_names:
+                plan['files'].append(path)
+        else:
+            raise CutoverError('Refusing to seal a special file: %s' % path)
+
+    def seal():
+        for path in plan['files']:
+            ops.chown(path, 'root', 'root')
+            os.chmod(path, 0o444)
+        for path in sorted(plan['sealed_dirs'], key=lambda p: -len(p.parts)):
+            ops.chown(path, 'root', 'root')
+            os.chmod(path, 0o555)
+        for path in plan['shared_dirs']:
+            ops.chown(path, 'root', args.service_group)
+            os.chmod(path, 0o1775)
+    ops.do('seal %d files (root:root 0444), %d directories (root:root 0555), %d shared directories (root:%s 1775) under %s'
+           % (len(plan['files']), len(plan['sealed_dirs']), len(plan['shared_dirs']), args.service_group, root), seal)
+    return {'action': 'seal-archive', 'root': str(root), 'applied': ops.apply, 'files': len(plan['files']),
+            'sealed_dirs': len(plan['sealed_dirs']), 'shared_dirs': sorted(str(p) for p in plan['shared_dirs']),
+            'untouched': plan['untouched'], 'service_group': args.service_group}
+
+
 # ------------------------------------------------------------------ rollback
 
 def rollback(args, ops):
@@ -942,6 +1283,7 @@ def rollback(args, ops):
             skipped.append({'unit': unit, 'reason': 'no drop-in'})
     # Removing a drop-in under a running unit (or a timer that would fire the old release at the archived
     # stores) is never silent: related units must be idle, or --stop must stop them first.
+    restore_plan = plan_restore(args, unit_dir, {path for _, path, _ in candidates}) if args.restore_archive else None
     related = sorted({u for unit in managed for u in (unit, partner_unit(unit))}, key=lambda u: (u.endswith('.service'), u))
     live = [u for u in related if active_now(ops, u)]
     stopped = []
@@ -968,10 +1310,13 @@ def rollback(args, ops):
                 continue
             ops.mutate(['systemctl', 'disable', unit])
             disabled.append(unit)
+    restored = run_restore(restore_plan, ops, unit_dir) if restore_plan else None
     ops.mutate(['systemctl', 'daemon-reload'])
     return {'action': 'rollback', 'removed': removed, 'skipped': skipped, 'stopped': stopped, 'disabled': disabled,
-            'applied': ops.apply,
-            'note': 'Units are not restarted; restart deliberately after verifying the old release.'}
+            'applied': ops.apply, 'restored_archive': restored,
+            'note': 'Units are not restarted; restart deliberately after verifying the old release. Rendered unit files '
+                    'stay installed after a plain rollback; use --restore-archive to put the archived originals back '
+                    '(it removes the rendered units it installed).'}
 
 
 # ----------------------------------------------------------------------- cli
@@ -1019,10 +1364,23 @@ def build_parser():
                    help='units from --units to `systemctl enable` (boot persistence) AFTER they start and settle healthy; '
                         'never the entry dispatcher')
     c.add_argument('--replace-existing', action='store_true')
+    q = sub.add_parser('seal-archive', help='archived store root read-only to the service user (shared inputs excepted)')
+    q.add_argument('--root', required=True)
+    q.add_argument('--shared-path', action='append', default=[], help='shared database inside --root left untouched (repeatable)')
+    q.add_argument('--service-group', default='solana-desk')
+    i = sub.add_parser('inventory', help='save ls -la and systemctl cat of every desk unit before changing anything')
+    i.add_argument('--unit-dir', default='/etc/systemd/system')
+    i.add_argument('--out', help='new directory (0700) for the saved inventory; omit to print only')
+    a = sub.add_parser('archive-dropins', help='MOVE desk-*.d directories and replaced unit files into a verified archive')
+    a.add_argument('--unit-dir', default='/etc/systemd/system')
+    a.add_argument('--archive-root', default='/var/backups/solana-desk')
+    a.add_argument('--name', help='archive directory name (default systemd-archive-<UTC>)')
+    a.add_argument('--fresh-units', help='directory of rendered fresh unit files: same-named installed units are archived too')
     r = sub.add_parser('rollback')
     r.add_argument('--units', nargs='+', required=True)
     r.add_argument('--unit-dir', default='/etc/systemd/system')
     r.add_argument('--stop', action='store_true', help='stop active managed units (and their timers) first')
+    r.add_argument('--restore-archive', help='an archive-dropins directory: restore it exactly after the drop-ins are removed')
     r.add_argument('--disable', action='store_true',
                    help='also `systemctl disable` the units and their timer/service partners (undo --enable)')
     return p
@@ -1032,7 +1390,8 @@ def main(argv=None, runner=None, sleep=None):
     args = build_parser().parse_args(argv)
     ops = Ops(apply=args.apply, runner=runner, journal=Path(args.journal), sleep=sleep)
     try:
-        report = {'stage': stage, 'cutover': cutover, 'rollback': rollback}[args.command](args, ops)
+        report = {'stage': stage, 'cutover': cutover, 'rollback': rollback, 'inventory': inventory,
+                  'archive-dropins': archive_dropins, 'seal-archive': seal_archive}[args.command](args, ops)
     except CutoverError as exc:
         print(json.dumps({'status': 'REFUSED' if not ops.apply else 'FAILED', 'error': str(exc),
                           'commands': ops.planned}, indent=2))

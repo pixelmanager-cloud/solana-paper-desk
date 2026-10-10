@@ -22,7 +22,7 @@ import time
 from desk import kraken_pacing_migration as upgrade, provider_pacing as pace, runtime_compatibility as runtime
 from desk.model import canonical
 from discovery import continuous as discovery
-from tests.test_ops_cutover import FakeSystemd
+from tests.test_ops_cutover import FakeSystemd, tree
 from tests.test_ops_fresh_start import FreshStartBase
 from tests.test_ops_fresh_start_wiring import exec_words, env_words, settings
 from tools.ops import backup, cutover, entry_latch, fresh_start as fs, healthcheck, verify_backup
@@ -93,10 +93,55 @@ class E2E(FreshStartBase):
         shutil.copytree(REPO / 'deploy', self.rel / 'deploy')
         shutil.copytree(REPO / 'tools', self.rel / 'tools', ignore=shutil.ignore_patterns('__pycache__'))
         self.digest = runtime.implementation_hash()
+        self.seed_production_units()
+        self.prod_tree = tree(self.unit_dir)
+        self.chowns = []
+        patcher = mock.patch.object(cutover.Ops, 'chown', side_effect=lambda path, owner, group: self.chowns.append((Path(path), owner, group)))
+        patcher.start(); self.addCleanup(patcher.stop)
         self.systemd = FakeSystemd(self.unit_dir)
         self.plan_hash = None
         self.last_cutover = None
         self.results = []
+        self.runuser = []
+        self.shell_log = []
+
+    # -- the REAL production systemd state (read-only inventory by the coordinator, 2026-10-11) ---------------
+    CODEX_STACK = ['60-reviewed-release', '90-reviewed-73edf43', '95-reviewed-e4badab', '96-reviewed-b414dbd',
+                   '97-reviewed-continuation', '98-reviewed-extension', '99-profile2-reviewed']
+    PRODUCTION_DROPINS = {
+        'desk-backup.service': CODEX_STACK,
+        'desk-dashboard.service': CODEX_STACK + ['zz-paper-scheduler-reviewed'],
+        'desk-decisions.service': CODEX_STACK + ['zz-paper-scheduler-reviewed'],
+        'desk-discovery.service': ['60-reviewed-release', '70-migration-sampling'],
+        'desk-paper-entry-dispatcher.service': ['zz-paper-scheduler-reviewed', 'zzz-local-validation-deadline'],
+        'desk-paper-entry-dispatcher.timer': ['90-reviewed-cadence'],
+        'desk-paper-held-cycle.service': ['70-reviewed-runtime'] + CODEX_STACK[1:] + [
+            'zz-paper-scheduler-reviewed', 'zzz-local-validation-deadline', 'zzzz-full-cycle-wall-deadline'],
+        'desk-paper-held-cycle.timer': ['70-reviewed-enable', '90-reviewed-cadence'],
+        'desk-paper-monitor.service': CODEX_STACK + ['zz-paper-scheduler-reviewed'],
+    }
+    CODEX_MARK = 'codex-era-override'
+
+    def seed_production_units(self):
+        """Stock deploy/ units plus the exact Codex-era *.d stacks of the production VPS, with realistic overrides."""
+        for source in sorted((REPO / 'deploy').glob('desk-*.service')) + sorted((REPO / 'deploy').glob('desk-*.timer')):
+            shutil.copy(source, self.unit_dir / source.name)
+        for unit, names in self.PRODUCTION_DROPINS.items():
+            directory = self.unit_dir / (unit + '.d')
+            directory.mkdir(mode=0o755)
+            for i, name in enumerate(names):
+                if unit.endswith('.timer'):
+                    body = ('[Install]\nWantedBy=timers.target\n' if 'enable' in name else
+                            '[Timer]\nOnUnitInactiveSec=\nOnUnitInactiveSec=%ds\n' % (120 + i))
+                else:
+                    body = ('[Unit]\nConditionPathExists=\nConditionPathExists=/var/lib/solana-desk/active-paper.sqlite\n'
+                            '[Service]\nWorkingDirectory=/opt/solana-desk-releases/%s\n'
+                            'Environment=DESK_%s=%s\nExecStart=\nExecStart=/opt/solana-desk/.venv/bin/python -m desk.%s %s\n'
+                            % (name.split('-')[-1], self.CODEX_MARK.upper().replace('-', '_'), name, unit[5:-8].replace('-', '_'), name))
+                path = directory / (name + '.conf')
+                path.write_text(body)
+                path.chmod(0o644 if i % 3 else 0o640)
+        (self.unit_dir / 'desk-paper-entry-dispatcher.service.d' / 'zzz-local-validation-deadline.conf.bak').write_text('[Service]\nTimeoutStartSec=17\n')
 
     # -- RUNBOOK plumbing -------------------------------------------------------------------------------------
     def variables(self, text):
@@ -163,9 +208,11 @@ class E2E(FreshStartBase):
             argv += ['--no-systemd']
         if module == 'cutover':
             head = ['--journal', str(self.rootdir / 'cutover-journal.jsonl'), '--python', sys.executable]
-            sub = next(a for a in argv if a in ('stage', 'cutover', 'rollback'))
+            sub = next(a for a in argv if a in ('stage', 'cutover', 'rollback', 'inventory', 'archive-dropins', 'seal-archive'))
             i = argv.index(sub)
-            tail = ['--unit-dir', str(self.unit_dir)]
+            tail = ['--unit-dir', str(self.unit_dir)] if sub != 'seal-archive' else []
+            if sub == 'archive-dropins':
+                tail += ['--archive-root', str(self.vb)]
             if sub == 'cutover':
                 tail += ['--release-root', str(self.rels), '--settle-seconds', '0']
             argv = head + argv[:i + 1] + tail + argv[i + 1:]
@@ -174,6 +221,7 @@ class E2E(FreshStartBase):
     def shell(self, words, v):
         """Minimal effects of the few non-python commands the RUNBOOK uses (what they do on a real host)."""
         cmd = words[0]
+        self.shell_log.append(words)
         if cmd == 'systemctl' and words[1] == 'stop':
             for unit in words[2:]:
                 self.systemd.state[unit] = 'inactive'
@@ -185,6 +233,18 @@ class E2E(FreshStartBase):
                     self.systemd.state[unit] = 'active'
         elif cmd == 'systemctl' and words[1] == 'daemon-reload':
             self.systemd(['systemctl', 'daemon-reload'])
+        elif cmd == 'systemctl' and words[1] == 'disable':
+            for unit in words[2:]:
+                self.systemd(['systemctl', 'disable', unit])
+        elif cmd == 'systemctl' and words[1] == 'is-enabled':   # the RUNBOOK says "expect disabled": make it so
+            for unit in words[2:]:
+                self.assertEqual(self.systemd(['systemctl', 'is-enabled', unit]).stdout.strip(), 'disabled', unit)
+        elif cmd == 'systemctl' and words[1] == 'is-active':
+            for unit in words[2:]:
+                self.assertIn(self.systemd.state.get(unit, 'inactive'), ('inactive', 'failed'), unit)
+        elif cmd == 'systemd-analyze':          # not available in the sandbox: assert the units it would verify exist
+            self.assertEqual(words[1], 'verify')
+            self.assertTrue(any(self.unit_dir.glob('desk-*.service')) and any(self.unit_dir.glob('desk-*.timer')))
         elif cmd == 'install':
             args = [w for w in words[1:]]
             dash_d = '-D' in args
@@ -209,11 +269,7 @@ class E2E(FreshStartBase):
                     target = dest if dash_d or not dest.is_dir() else dest / m.name
                     target.parent.mkdir(parents=True, exist_ok=True)
                     shutil.copy(m, target)
-        elif cmd == 'find' and 'chmod' in words:
-            for p in self.old.rglob('*.sqlite'):
-                if p.name != 'provider-pacing.sqlite' and p.parent.name != 'discovery':
-                    p.chmod(0o400)
-        elif cmd in ('cd', 'export', 'sha256sum', 'ss', 'mkdir', 'cp', 'systemctl', 'ls'):
+        elif cmd in ('cd', 'export', 'sha256sum', 'ss'):    # no filesystem effect worth simulating (cwd, env, a missing tarball, a socket)
             pass
         else:
             raise AssertionError('RUNBOOK uses an unhandled command: %r' % words)
@@ -240,6 +296,9 @@ class E2E(FreshStartBase):
                 prefix = text_cmd[:-len('<same arguments>')]
                 text_cmd = prefix + self.last_cutover
             words = shlex.split(text_cmd)
+            if words[:4] == ['runuser', '-u', 'solana-desk', '--']:
+                self.runuser.append(' '.join(words[4:7]))      # the sandbox user is not solana-desk: run it directly
+                words = words[4:]
             if words[0] == v['PY'] or words[0] == sys.executable:
                 assert words[1] == '-m' and words[2].startswith('tools.ops.'), words
                 module = words[2].split('.')[-1]
@@ -289,7 +348,8 @@ class E2E(FreshStartBase):
         started = [c[-1] for c in calls if c[1] == 'start']
         self.assertEqual(sorted(started), sorted([
             'desk-continuous-discovery.service', 'desk-dashboard.service', 'desk-paper-held-cycle.timer',
-            'desk-decisions.timer', 'desk-backup.timer', 'desk-healthcheck.timer', 'desk-notify-daily.timer']))
+            'desk-decisions.timer', 'desk-backup.timer', 'desk-healthcheck.timer', 'desk-notify-daily.timer',
+            'desk-notify-watchdog.timer']))
         self.assertNotIn('desk-paper-entry-dispatcher.timer', started)
         self.assertNotIn('desk-paper-monitor.timer', started)
         enabled = [c[2] for c in calls if c[1] == 'enable']
@@ -298,6 +358,55 @@ class E2E(FreshStartBase):
         self.assertEqual(sorted(u for u in enabled if u != 'desk-paper-entry-dispatcher.timer'), sorted(started))
         self.assertLess(max(i for i, c in enumerate(calls) if c[1] == 'start'),
                         min(i for i, c in enumerate(calls) if c[1] == 'enable'))
+
+        # --- T32F: the Codex-era stack was MOVED, never layered on
+        archive = self.vb / f'systemd-archive-{self.sha}'
+        amanifest = json.loads((archive / 'manifest.json').read_text())
+        self.assertEqual({r['path'] for r in amanifest['records'] if r['type'] == 'file' and '.d/' in r['path']},
+                         {f'{unit}.d/{name}.conf' for unit, names in self.PRODUCTION_DROPINS.items() for name in names}
+                         | {'desk-paper-entry-dispatcher.service.d/zzz-local-validation-deadline.conf.bak'})
+        for path in self.unit_dir.rglob('*'):
+            if path.is_file() and path.parent.name.endswith('.d'):
+                first = path.read_text().splitlines()[0]
+                self.assertIn(first, (cutover.MARKER, cutover.FRESH_MARKER, cutover.LATCH_MARKER),
+                              f'{path.relative_to(self.unit_dir)} is not one of ours')
+        for unit in self.systemd_units():
+            shown = self.systemd(['systemctl', 'cat', unit]).stdout
+            self.assertNotIn(self.CODEX_MARK.upper().replace('-', '_'), shown, unit)       # no Codex-era Environment
+            for name in self.CODEX_STACK[1:] + ['zz-paper-scheduler-reviewed', 'zzz-local-validation-deadline']:
+                self.assertNotIn(name, shown, unit)
+            headers = re.findall(r'(?m)^# (/\S+\.conf)$', shown)           # every drop-in `systemctl cat` lists is ours
+            self.assertTrue(all(Path(h).read_text().splitlines()[0] in (cutover.MARKER, cutover.FRESH_MARKER, cutover.LATCH_MARKER)
+                                for h in headers), (unit, headers))
+        # old units not in the fresh set stay put but disabled (RUNBOOK step 2)
+        for unit in ('desk-discovery.timer', 'desk-discovery.service', 'desk-paper-monitor.timer'):
+            self.assertEqual(self.systemd.enabled.get(unit, 'disabled'), 'disabled', unit)
+        self.assertTrue((self.unit_dir / 'desk-discovery.service').is_file())            # not replaced: stays, disabled
+        self.assertFalse((self.unit_dir / 'desk-discovery.service.d').exists())          # its stack was archived too
+        self.assertTrue((archive / 'desk-discovery.service.d' / '70-migration-sampling.conf').is_file())
+        # the inventory was saved BEFORE anything changed and includes the drop-in directories
+        inventory = json.loads((self.vb / f'systemd-inventory-{self.sha}' / 'inventory.json').read_text())
+        self.assertTrue(any(r['path'] == 'desk-paper-held-cycle.service.d/zzzz-full-cycle-wall-deadline.conf'
+                            for r in inventory['records']))
+        self.assertIn('zzzz-full-cycle-wall-deadline', (self.vb / f'systemd-inventory-{self.sha}' /
+                      'systemctl-cat-desk-paper-held-cycle.service.txt').read_text())
+        # archived stores: root-owned read-only; shared inputs untouched (fake chown layer records the intended owner)
+        owners = {p: (o, g) for p, o, g in self.chowns}
+        self.assertEqual(owners[self.old / 'old-store-3.sqlite'], ('root', 'root'))
+        self.assertEqual(oct((self.old / 'old-store-3.sqlite').stat().st_mode & 0o777), '0o444')
+        self.assertNotIn(self.pacer, owners)
+        self.assertNotIn(self.discovery, owners)
+        self.assertEqual(owners[self.old], ('root', 'solana-desk'))
+        self.assertEqual(oct(self.old.stat().st_mode & 0o7777), '0o1775')
+        # read-only tools run as the service user
+        self.assertEqual([r.split()[-1] for r in self.runuser], ['tools.ops.healthcheck', 'tools.ops.entry_latch'])
+        # ...and so does every other read-only tool the RUNBOOK mentions (inline code spans are not executed here)
+        for line in RUNBOOK.read_text().splitlines():
+            for tool_name in ('tools.ops.status', 'tools.ops.verify_cycle', 'tools.ops.healthcheck', 'tools.ops.entry_latch'):
+                for hit in re.finditer(r'\$PY -m ' + re.escape(tool_name), line):
+                    if line.startswith('Read-only tools'):
+                        continue
+                    self.assertTrue(line[:hit.start()].rstrip().endswith('runuser -u solana-desk --'), line)
 
         # --- invariants over everything that is now installed
         self.check_units(manifest, new)
@@ -318,21 +427,49 @@ class E2E(FreshStartBase):
         self.assertEqual(latch.read_text().splitlines()[0], cutover.LATCH_MARKER)
         self.assertEqual(self.systemd.enabled.get('desk-paper-entry-dispatcher.timer'), 'enabled')
 
-        # --- rollback restores everything this flow wrote
+        # --- rollback restores everything this flow wrote AND puts the production tree back byte-for-byte
         units = ['desk-continuous-discovery.service', 'desk-dashboard.service', 'desk-paper-held-cycle.service',
                  'desk-decisions.service', 'desk-backup.service', 'desk-healthcheck.service',
-                 'desk-notify-daily.service', 'desk-paper-monitor.service', 'desk-paper-entry-dispatcher.service']
+                 'desk-notify-daily.service', 'desk-notify-watchdog.service', 'desk-paper-monitor.service',
+                 'desk-paper-entry-dispatcher.service']
         code, payload, raw = self.run_tool('cutover', self.adapt('cutover', ['--apply', 'rollback', '--stop', '--disable',
+                                                                            '--restore-archive', str(archive),
                                                                             '--units', *units], self.v))
         self.assertEqual(code, 0, raw[-600:])
-        leftovers = [str(p) for p in self.unit_dir.glob('*.service.d/*.conf')]
-        self.assertEqual(leftovers, [])
+        self.assertEqual(tree(self.unit_dir), self.prod_tree)
         for unit in started + ['desk-paper-entry-dispatcher.timer']:
             self.assertNotEqual(self.systemd.enabled.get(unit, 'disabled'), 'enabled', unit)
             self.assertIn(self.systemd.state.get(unit, 'inactive'), ('inactive', 'failed'), unit)
-        # a second rollback is a harmless no-op
+        # a second rollback is a harmless no-op and leaves the restored tree alone
         code, payload, raw = self.run_tool('cutover', self.adapt('cutover', ['--apply', 'rollback', '--units', *units], self.v))
         self.assertEqual((code, payload['removed']), (0, []))
+        self.assertEqual(tree(self.unit_dir), self.prod_tree)
+
+    def systemd_units(self):
+        return sorted(p.name for p in self.unit_dir.glob('desk-*') if p.is_file() and p.suffix in ('.service', '.timer'))
+
+    def test_backup_unit_execstart_is_systemd_quoted_and_runs(self):
+        """T32F item 11: the backup unit's lines survive systemd's own quoting rules (base unit and python -c override)."""
+        self.run_runbook(('2.', '3.', '4.', '5.', '7a.', '7b.'))
+        base = (self.unit_dir / 'desk-backup.service').read_text()
+        (base_line,) = [l for l in base.splitlines() if l.startswith('ExecStart=')]
+        self.assertNotIn('%', base_line.replace('%%', ''))                    # every `%` (a systemd specifier) is doubled
+        self.assertNotRegex(re.sub(r'\$\$', '', base_line), r'\$')           # `$` only as the intended `$$` for the shell
+        self.assertIn('%%Y%%m%%dT%%H%%M%%SZ', base_line)
+        drop = (self.unit_dir / 'desk-backup.service.d' / cutover.DROPIN).read_text()
+        override = [l for l in drop.splitlines() if l.startswith('ExecStart=') and l != 'ExecStart=']
+        self.assertEqual(len(override), 1)                                    # the reset line plus exactly one command
+        line = override[0]
+        self.assertIn('%%Y%%m%%dT%%H%%M%%SZ', line)
+        self.assertNotIn('%', line.replace('%%', ''))
+        self.assertNotRegex(line, r'\$[^$]')
+        words = exec_words(line.partition('=')[2])
+        self.assertEqual(words[1], '-c')
+        code = words[2]                                                       # what python receives after systemd unquoting
+        self.assertIn('%Y%m%dT%H%M%SZ', code)
+        compile(code, 'desk-backup-execstart', 'exec')                        # still valid Python after unquoting
+        manifest = json.loads((Path(self.v['NEW']) / fs.MANIFEST).read_text())
+        self.assertEqual(words[1:], manifest['units']['desk-backup']['argv'])
 
     def check_units(self, manifest, new):
         old = str(self.old)
@@ -378,5 +515,7 @@ class E2E(FreshStartBase):
         entry = manifest['units']['desk-paper-entry-dispatcher']['argv']
         self.assertEqual(entry[-2:], ['--execute', '--systemd-credentials'])
         dash = dict(i.split('=', 1) for i in manifest['units']['desk-dashboard']['environment'])
-        self.assertEqual(set(dash), {'DESK_PAPER_SCHEDULER_LOCK', 'DESK_PAPER_SCHEDULER_IDENTITY', 'DESK_PAPER_LEDGER_DB'})
+        self.assertEqual(set(dash), {'DESK_PAPER_SCHEDULER_LOCK', 'DESK_PAPER_SCHEDULER_IDENTITY', 'DESK_PAPER_LEDGER_DB',
+                                     'DESK_PROVIDER_PACING_DB'})          # T32F item 6: dashboard scans use the shared 2 s pacing
+        self.assertEqual(dash['DESK_PROVIDER_PACING_DB'], str(self.pacer))
         self.assertEqual(manifest['backup_dir'], self.v['BK'])
