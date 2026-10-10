@@ -100,6 +100,60 @@ The coordinator review found that the cutover/rollback lifecycle is not yet safe
 
 ---
 
+## T22 — Extend T01: no store-wide latch from ANY charged failure (from T09 audit F1, F3) — CRITICAL PATH
+STATUS: OPEN
+DEPENDS: branch `cloud/T01` has a `DONE T01:` commit
+BASE: origin/cloud/T01
+OWNS: the same files as T01, plus tools/paper_entry_dispatcher.py (post-intent failure handling only)
+AVOID: tools/ops/**
+
+First read `reports/T09.md` on branch `origin/cloud/T09`, and its tests `tests/test_audit_first_cycle_*.py`, which are already merged to `integration/r1`. T01 covers typed `CycleBlocked` entry rejections only. The T09 audit proved the store still latches globally (`OBSERVATION_RECOVERY_REQUIRED`) after:
+- **(F1)** `ObservationError` or `PaperReadError` (HTTP 429/5xx) escaping `run_once` after a charge; a timeout or SIGKILL mid-pass; history-preparation transient errors;
+- **(F1-held, worst)** held passes that charged requests and then failed (dust or zero sell quote, transient read). The open position can then NEVER be sold;
+- **(F3)** any dispatcher failure after `_write(intents)` (PROVIDER_RETRY_REQUIRED, SEED_HISTORY_UNAVAILABLE, BUSY, limits, kill). This leaves "Unresolved dispatch; no retry" forever.
+
+**Required design.** A failed pass must leave the store usable:
+- A pass that ends without a verified result gets a terminal `FAILED_CHARGED` outcome (typed, replay-verifiable, append-only, charges retained). This applies to a crash or kill too: on the next start, a stale NULL pass older than its deadline whose owning process/lease is gone is closed as `ABANDONED_CHARGED` by a deterministic, bounded recovery step. It must NOT be closed by a reconciliation receipt pinned per incident.
+- Only true integrity violations (corrupt evidence, contradictory records, identity mismatch) stay latched (category b).
+- The latch must be per-scan/per-position where possible, not global. A failed entry scan must not block held monitoring of open positions, and a failed held pass must not block the next held pass for the same position.
+- Dispatcher: an unresolved intent older than its deadline is closed as `FAILED_CHARGED`/`ABANDONED`. The SAME candidate is never retried, but new candidates proceed.
+
+Remove the `expectedFailure` decorators from the T09 tests that this fixes; they must pass. Keep every other T09 test as it is.
+
+**Tests:** each F1/F3 scenario in T09, plus SIGKILL at each stage (before the first charge, after a charge, after the result write), a cold restart, and no double charge. Run `test_empty_history_successor_lifecycle` and the T01 modules.
+
+---
+
+## T23 — EXIT_ONLY stickiness + orphaned pacing slot (from T09 audit F5, F6)
+STATUS: OPEN
+DEPENDS: branch `cloud/T08` has a `DONE T08:` commit
+BASE: origin/cloud/T08
+OWNS: desk/engine.py (the mode transition only), desk/provider_pacing.py, related tests
+AVOID: T01/T22 files
+
+Read `reports/T09.md` (branch `origin/cloud/T09`) first.
+- **F5.** After a stale-mark `exit_blocked`, the mode goes to `EXIT_ONLY` and never returns to `RUNNING`, so entries stop silently forever after the first trade. Make the mode return to `RUNNING` automatically once no position has an unresolved `exit_blocked`. This must be versioned if it changes engine semantics, and every risk/daily pause still holds. If T08 already fixed this, verify it and only add tests.
+- **F6.** A pacing slot `pending` orphaned by a killed process blocks every provider call forever. Add a bounded, deterministic reclaim: a pending ticket older than N×interval, whose owner PID/lease is gone, is released with a recorded, append-only reclaim row. Keep the shared two-second Kraken pacing exact, never reset the pacing state, and never let two holders hold a slot concurrently.
+
+Fail-first tests, including the T09 RED tests for F5 and F6. Remove their `expectedFailure` once they are fixed.
+
+---
+
+## T24 — Throughput/latency headroom (from T09 audit F7, F9, F14)
+STATUS: OPEN
+DEPENDS: branch `cloud/T22` has a `DONE T22:` commit
+BASE: origin/cloud/T22
+OWNS: desk/history_preparation_rejection.py, desk/monitoring_budget.py (accounting only), desk/paper_cycle.py (deadline only), related tests
+AVOID: tools/ops/**
+
+- **F7.** Gate/replay cost grows O(R×P) and hard-latches past 4096 pages. Make the gate incremental (verify each retained item once and cache the verified digest in an append-only table, or bound the work per call) so the per-call cost stays roughly constant over a month of 24/7 operation. Replace hard latches on counts with rotation guidance (alert at 80%).
+- **F9.** The whole-pass deadline of 10s vs real latency: measure what the budget actually needs (pacing 2s × requests + RTT). Make the deadline a versioned config value with a safe default, keeping the price TTL semantics intact. A deadline overrun must NOT latch (T22).
+- **F14.** Monitoring accounting cost grows with history. Make it incremental (running totals per window) so it stays constant over time.
+
+Benchmark before and after with fixtures sized for 7 days of 24/7 operation, and include the numbers in the report.
+
+---
+
 ## T02F — Fix coordinator review findings in T02 (status CLI)
 STATUS: OPEN
 DEPENDS: none
@@ -452,6 +506,7 @@ AVOID: T01's reconciliation files
 - **Fresh scans only.** Each re-evaluation is a NEW scan with a new intent id, and its requests are charged to the normal budgets. The original scan and its outcome are never retried, rewritten or un-charged.
 - **Selection order.** The dispatcher considers fresh migration hints first, then due watchlist entries, inside the existing budgets. Admission throughput must not starve held monitoring (respect T16's partitioning).
 - **Versioning.** A versioned config flag `paper_watchlist_version: 1`; when absent, behaviour stays identical.
+- **Candidate supply (T09 F15).** `_select` reads only the newest 500 `raw_events`; at high discovery volume the eligible window shrinks to about 60s. Make the selection window-based (by age), not count-based.
 - **Tests (fail-first):**
   - a NOT_YET token rejected at t0 and accepted at t0+30m with new fixture data;
   - a PERMANENT token never re-admitted;
@@ -490,5 +545,13 @@ The desk must run unattended 24/7. Today continuous discovery runs with `--secon
 
    It emits one JSON line and exits non-zero on CRITICAL.
 3. **Notify.** `tools/ops/notify.py` uses a pluggable notifier. The default writes to the journal plus a state file. An optional Telegram bot is supported when a token file exists in systemd credentials, with the token never in Git or logs; it is off unless configured. It rate-limits and de-duplicates alerts, and sends a daily summary (positions, realized PnL, trades, blockers).
+3b. **Fold in the T09 audit F8/F11** (read `reports/T09.md` on `origin/cloud/T09`):
+   - Wall timeouts must cover the code's worst-case budgets (entry ≥ 600s, held ≥ 120s, or the measured budget plus a margin).
+   - Every scheduler unit sets `DESK_PAPER_SCHEDULER_IDENTITY` and `DESK_PROVIDER_PACING_DB`.
+   - `paper-scheduler.lock` is pre-created (tmpfiles.d or ExecStartPre).
+   - The entry unit has `--execute` and systemd credentials.
+   - Held/entry/expire all use the SAME fresh config and ledger, with no `--dependency-blocker`.
+   - Every timer has an `[Install]` section.
+   - Add a test that renders every unit and checks these invariants.
 4. **Tests:** fake systemctl, fixture stores, staleness thresholds, rate limiting, and the notifier never logging secrets.
 5. **`docs/ops/OPERATIONS_24x7.md`:** the alert meanings and the operator response for each.
