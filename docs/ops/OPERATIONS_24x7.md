@@ -1,9 +1,11 @@
 # 24/7 unattended operation (fresh-start deployment, paper only)
 
 Nothing here trades, signs or spends. Units live in `deploy/fresh/` as templates (placeholders in
-`deploy/fresh/README.md`); the existing `deploy/*.service|*.timer` are not modified. Substitute placeholders,
-install under `/etc/systemd/system/`, then follow the enablement order. `tools.ops.cutover` (T11) pins
-`WorkingDirectory` per release without touching these files.
+`deploy/fresh/README.md`); the existing `deploy/*.service|*.timer` are not modified. `fresh_start render-units` fills the
+placeholders from the applied manifest, and `tools.ops.cutover` pins `WorkingDirectory` per release, writes the store drop-ins and
+enables the intended units at boot. There is exactly ONE install/start/enable sequence: `docs/ops/RUNBOOK.md` steps 5-9
+(exercised end to end by `tests/test_ops_e2e_deploy.py`). Do not `systemctl enable --now` units by hand: cutover refuses units that
+are already running, and starts, verifies and only then enables them.
 
 ## What starts at boot
 
@@ -17,21 +19,28 @@ install under `/etc/systemd/system/`, then follow the enablement order. `tools.o
 | `desk-healthcheck.timer` | yes | every 5 min; alerts through `tools.ops.notify` |
 | `desk-notify-daily.timer` | yes | 08:05 UTC summary |
 | `desk-paper-entry-dispatcher.timer` | **NO, coordinator only** | the first live-data BUY is a deliberate step (RUNBOOK step 9) |
-| `desk-paper-monitor.timer` | **NO, manual** | stale-mark watchdog; with a slow held cadence it flags every position stale and mode sticks at `EXIT_ONLY` until an operator `RESUME` (T09 F5). Enable only once that is resolved |
+| `desk-paper-monitor.timer` | **NO, manual** | stale-mark watchdog; with a slow held cadence it flags every position stale and mode sticks at `EXIT_ONLY` until an operator `RESUME` (T09 F5). `cutover` refuses to start or enable it without `--allow-monitor`; do not pass that before T23 (EXIT_ONLY stickiness) lands |
 
 The two manual timers still carry `[Install]` so they can be enabled with one command; nothing enables them.
+`cutover --enable` covers only the units in the boot table marked yes, and never the entry dispatcher.
 
 Discovery: `discovery.continuous listen` is capped at 86400 s by the code and exits 0 afterwards. `Restart=always` re-enters it
 immediately; its hourly byte/record budgets live in the shared database and are not reset by a restart.
 
 ## Install order
 
-1. `tools.ops.fresh_start apply` (creates `<FRESH_ROOT>`, the scheduler lock and the manifest with `scheduler_identity`).
-2. Copy the templates, substitute the placeholders (for example with `sed -e 's|<FRESH_ROOT>|/var/lib/solana-desk/exp-1|g' ...`),
-   `systemctl daemon-reload`.
-3. `mkdir -m 0700 <STATE_DIR> <BACKUP_ROOT>` owned by `solana-desk`.
-4. `systemctl enable --now desk-continuous-discovery.service desk-dashboard.service desk-paper-held-cycle.timer desk-decisions.timer desk-backup.timer desk-healthcheck.timer desk-notify-daily.timer`
-5. Run `tools.ops.healthcheck` once by hand (below) and expect `OK` before enabling the entry timer.
+Follow `docs/ops/RUNBOOK.md`; in short:
+
+1. `tools.ops.fresh_start apply ... --enable-held --service-user solana-desk --chown solana-desk` creates `<FRESH_ROOT>`, the scheduler
+   lock, the manifest (`scheduler_identity`, per-unit arguments and sections) and the one backup directory `<BACKUP_ROOT>`
+   (`/var/backups/solana-desk/fresh-<version>`, the destination of the backup unit and the `--backup-root` of the healthcheck).
+2. `tools.ops.fresh_start render-units --root <FRESH_ROOT> --out DIR --release-dir <RELEASE_DIR>` fills every placeholder (it refuses an
+   unfilled one); install the result under `/etc/systemd/system/` and `daemon-reload`. Create `<STATE_DIR>` (0700, `solana-desk`).
+3. `tools.ops.cutover cutover ... --store-env <FRESH_ROOT>/fresh-start-manifest.json --enable <boot units>` writes
+   the drop-ins, starts the listed units with `systemctl start --no-block` (polled until `TimeoutStartUSec` + 60 s), verifies them and
+   then runs `systemctl enable` on the boot units. The entry timer and the monitor timer stay off and disabled.
+4. Run `tools.ops.healthcheck` once by hand (below). Right after cutover the only legitimate CRITICALs are `discovery_frames` (no frame
+   yet) and `backup` (none yet); anything else is a stop. Then the entry timer is a separate, deliberate step (RUNBOOK step 9).
 
 Optional Telegram: install `deploy/fresh/telegram.conf.example` as a drop-in on `desk-healthcheck.service` and
 `desk-notify-daily.service` and create `/etc/solana-desk/telegram.json` (`{"token":..., "chat_id":...}`, root 0600). Without it,
@@ -63,7 +72,7 @@ original records stay original. When the ledger is flat the sanctioned recovery 
 | Check | Severity | Meaning | Response |
 |---|---|---|---|
 | `unit:<service>` | CRITICAL (WARN for decisions/monitor/backup oneshots) | long-running unit not active, or oneshot last run failed | `systemctl status`/`journalctl -u`; discovery/dashboard restart themselves, repeated failure hits the start limit |
-| `restarts:<unit>` | WARN ≥3, CRITICAL ≥10 | `NRestarts` is high | read the journal for the crash reason; do not mask it by raising limits |
+| `restarts:<unit>` | WARN ≥3, CRITICAL ≥10 | `NRestarts` is high AND the last run did not exit cleanly (`Result`/`ExecMainStatus` non-zero, or `auto-restart`/`failed`). Discovery's daily clean exit-0 restart stays OK, however high `NRestarts` gets | read the journal for the crash reason; do not mask it by raising limits |
 | `unit:*.timer` | CRITICAL | a required timer is not active (manual timers: only if enabled but inactive) | `systemctl enable --now` / inspect why it stopped |
 | `entry_tick` / `held_tick` / `decisions_tick` | WARN/CRITICAL | no trigger for 5/15 min (entry), 10/30 min (held), 3/10 min (decisions) | timer stuck or unit running far past its cadence; check `systemctl list-timers` |
 | `discovery_frames` | WARN 2 min, CRITICAL 5 min | listener has not completed a frame | check the discovery unit and provider reachability; the hourly budget may be exhausted (`python -m discovery.continuous status --db <DISCOVERY_DB>`) |
@@ -80,7 +89,7 @@ original records stay original. When the ledger is flat the sanctioned recovery 
 | `pacing:<provider>` | CRITICAL | provider blocked for N s, or a slot has been pending >5 min (orphaned by a kill, T09 F6) | blocked: wait it out, never reset the shared pacing store. Orphaned: coordinator only |
 | `disk` | WARN <20 %, CRITICAL <10 % or <1 GiB | filesystem under `<FRESH_ROOT>` | free space outside the stores (old backups, logs); never delete store files |
 | `backup` | WARN >30 h, CRITICAL >54 h or none | newest snapshot age | `journalctl -u desk-backup`; run `tools.ops.verify_backup` on the latest snapshot |
-| `healthcheck` / `notify_input` | CRITICAL | the check itself could not run or its report was unreadable | fix the path/permission named in the detail |
+| `healthcheck` / `notify_input` | CRITICAL | the check itself could not run, its report was unreadable, a database probe raised `sqlite3.Error`, or `notify` found the report older than 2x the interval (`healthcheck not running`) | fix the path/permission named in the detail; if the report is stale, `systemctl status desk-healthcheck.timer`. `notify alert|daily --interval N` must match the timer period (default 300 s) |
 
 Every probe failure (missing or symlinked database, bad schema) is reported as CRITICAL `probe failed`, never skipped.
 
@@ -105,8 +114,11 @@ shared pacing store. Entry runs `--execute --systemd-credentials`; held, entry a
 - `desk.backup` cannot back up the fresh set (it requires `launches.sqlite`, `raw.sqlite`, `active-paper.sqlite`), so
   `desk-backup.service` uses `tools.ops.backup` from T03. That tool must be present in the release. Shared pacing and discovery
   stores are not part of these snapshots.
-- `tools.ops.fresh_start plan` prints entry arguments without `--execute --systemd-credentials`; these templates add them, so use
-  the templates (not the plan's raw argv) for the entry unit.
+- The manifest argv and the rendered templates now agree (entry carries `--execute --systemd-credentials`, `TimeoutStartSec=600/120`);
+  `tests/test_ops_fresh_start_wiring.py::RenderUnitsTests` fails if they drift apart. The shared pacing database uses a rollback journal, so the
+  entry and held units must be able to write its DIRECTORY (the archived root); a single-file `ReadWritePaths` would break pacing.
+  The archived stores in that directory are protected by `chmod 0400` and by the cutover archived-store guard instead.
+- A malformed `telegram.json` logs a WARNING (never its contents) and falls back to the journal notifier.
 - Investigation daily/lifetime budget headroom is not probed (their tables are not a stable read-only interface); monitoring headroom is.
   The monitoring cap is a threshold (`monitoring_cap`, default 3600), because the stored `cap` column does not reflect the activated allowance.
 - Healthcheck cannot tell a quiet market from a broken filter (`discovery_events`); it alerts on frame liveness first.

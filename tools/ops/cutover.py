@@ -36,6 +36,14 @@ EXEC_PROPS = ('ExecStart', 'ExecStartPre', 'ExecStartPost', 'ExecStop', 'ExecRel
 CONTROL_RE = re.compile(r'[\x00-\x1f\x7f]')
 SD_SAFE_RE = re.compile(r'[A-Za-z0-9_@+=:,./%-]+\Z')
 DROPIN = '60-reviewed-release.conf'
+# Drop-ins the fresh-start flow writes. Rollback removes ONLY files whose first line is the matching marker.
+FRESH_MARKER = '# desk-fresh-start-managed v1'      # tools.ops.fresh_start render-dropins (70-fresh-store.conf)
+LATCH_MARKER = '# desk-entry-latch-managed v1'       # deploy/fresh/dropins/70-entry-latch.conf
+MANAGED_DROPINS = {DROPIN: MARKER, '70-fresh-store.conf': FRESH_MARKER, '70-entry-latch.conf': LATCH_MARKER}
+SECTION_KEYS = {'condition_path_exists', 'read_write_paths', 'timeout_start_sec'}
+START_MARGIN_SECONDS = 60          # polling deadline = the unit's TimeoutStartUSec + this
+POLL_SECONDS = 2.0
+DEFAULT_START_TIMEOUT = 600.0      # when systemctl reports no parsable TimeoutStartUSec
 UNIT_RE = re.compile(r'desk-[a-z0-9][a-z0-9-]{0,62}\.(service|timer)\Z')
 COMMIT_RE = re.compile(r'[0-9a-f]{7,40}\Z')
 SHA_RE = re.compile(r'[0-9a-f]{64}\Z')
@@ -266,6 +274,22 @@ def check_interpreter(path):
     return path
 
 
+def _sections(unit, sections):
+    """Validate the manifest's non-ExecStart settings (full-drop-in content) for one unit."""
+    if not isinstance(sections, dict) or set(sections) != SECTION_KEYS:
+        raise CutoverError('unit_sections %s must have exactly %s' % (unit, sorted(SECTION_KEYS)))
+    cond, rw, timeout = (sections['condition_path_exists'], sections['read_write_paths'],
+                         sections['timeout_start_sec'])
+    for path in ([] if cond is None else [cond]) + (rw if isinstance(rw, list) else [None]):
+        if type(path) is not str or not path.startswith('/') or CONTROL_RE.search(path) or '..' in path.split('/'):
+            raise CutoverError('unit_sections %s paths must be absolute strings without control characters' % unit)
+    if not rw:
+        raise CutoverError('unit_sections %s needs read_write_paths' % unit)
+    if timeout is not None and (type(timeout) is not int or not 1 <= timeout <= 3600):
+        raise CutoverError('unit_sections %s timeout_start_sec must be an int in 1..3600' % unit)
+    return {'condition_path_exists': cond, 'read_write_paths': list(rw), 'timeout_start_sec': timeout}
+
+
 def _t13_spec(unit, spec, interpreter):
     if set(spec) != {'environment', 'argv'}:
         raise CutoverError('unit_arguments %s must have exactly "environment" and "argv"' % unit)
@@ -299,9 +323,14 @@ def parse_store_env(path, interpreter=DEFAULT_INTERPRETER):
     kind = data.get('kind')
     if kind == 'fresh_start_plan_v1':
         raise CutoverError('store-env is a fresh_start plan (placeholder scheduler identity); use the manifest written by apply')
+    sections = {}
     if kind == 'fresh_start_manifest_v1':
         units = data.get('units')
         legacy = False
+        raw_sections = data.get('unit_sections')
+        if not isinstance(units, dict) or not isinstance(raw_sections, dict) or set(units) != set(raw_sections):
+            raise CutoverError('manifest units and unit_sections must name the same units')
+        sections = {(k if k.endswith('.service') else k + '.service'): v for k, v in raw_sections.items()}
     elif 'version' in data or set(data) == {'units'}:
         if data.get('version') != 1 or not isinstance(data.get('units'), dict) or set(data) - {'version', 'units'}:
             raise CutoverError('store-env must be {"version":1,"units":{...}}')
@@ -322,6 +351,8 @@ def parse_store_env(path, interpreter=DEFAULT_INTERPRETER):
             raise CutoverError('store-env unit %s must be an object' % name)
         if 'argv' in spec or 'environment' in spec:
             out[unit] = _t13_spec(unit, spec, interpreter)
+            if unit in sections:
+                out[unit]['Sections'] = _sections(unit, sections[unit])
             continue
         if not legacy and spec:
             raise CutoverError('store-env unit %s has unsupported keys' % name)
@@ -504,10 +535,20 @@ def render_dropin(release, digest, spec, backup):
     lines = [MARKER, '# release: %s' % release, '# runtime-digest: %s' % digest]
     if backup:
         lines.append('# replaced-backup: %s' % backup)
+    sections = (spec or {}).get('Sections')
+    if sections and sections['condition_path_exists'] is not None:
+        # Reset first: the base unit's ConditionPathExists= would otherwise stay in force (old store path).
+        lines += ['[Unit]', 'ConditionPathExists=', 'ConditionPathExists=' + sd_word(sections['condition_path_exists'])]
     lines.append('[Service]')
     lines.append('WorkingDirectory=%s' % release)
+    if sections:
+        lines.append('Environment=')           # reset: no base-unit environment may point at an old store
     for item in (spec or {}).get('Environment', []):
         lines.append('Environment=' + sd_word(item))
+    if sections:
+        lines.append('ReadWritePaths=' + ' '.join(sd_word(p) for p in sections['read_write_paths']))
+        if sections['timeout_start_sec'] is not None:
+            lines.append('TimeoutStartSec=%d' % sections['timeout_start_sec'])
     if (spec or {}).get('ExecStart'):
         lines += ['ExecStart=', 'ExecStart=' + spec['ExecStart']]
     return '\n'.join(lines) + '\n'
@@ -646,6 +687,33 @@ def check_archived(unit, texts, args, shared):
                                'exception)' % (unit, ', '.join(args.archived_roots), ', '.join(sorted(set(refs))[:3])))
 
 
+def parse_timespan(value, default=DEFAULT_START_TIMEOUT):
+    """systemd timespan ('10min', '1min 30s', '600s', '2.5s', 'infinity') -> seconds; default when unparsable."""
+    units = {'us': 1e-6, 'ms': 1e-3, 's': 1.0, 'sec': 1.0, 'min': 60.0, 'h': 3600.0, 'hr': 3600.0, 'd': 86400.0}
+    parts = re.findall(r'(\d+(?:\.\d+)?)\s*([a-z]+)', (value or '').strip().lower())
+    if not parts or any(unit not in units for _, unit in parts):
+        return default
+    return sum(float(n) * units[unit] for n, unit in parts)
+
+
+def start_unit(ops, unit):
+    """``systemctl start --no-block`` then poll until the unit leaves ``activating``.
+
+    A blocking ``start`` of a oneshot returns only when the job finishes (the entry pass may legitimately run 600 s),
+    which a fixed runner timeout would turn into a false failure while the unit keeps running. The deadline is the
+    unit's own TimeoutStartUSec plus a margin, so systemd's timeout fires first and is reported as the failure."""
+    ops.mutate(['systemctl', 'start', '--no-block', unit])
+    if not ops.apply:
+        return
+    limit = parse_timespan(show(ops, unit, ['TimeoutStartUSec']).get('TimeoutStartUSec')) + START_MARGIN_SECONDS
+    deadline = ops.monotonic() + limit
+    while show(ops, unit, ['ActiveState']).get('ActiveState') in PENDING_STATES:
+        if ops.monotonic() >= deadline:
+            raise CutoverError('%s still activating after %.0f s (TimeoutStartUSec + %d s)'
+                               % (unit, limit, START_MARGIN_SECONDS))
+        ops.pause(POLL_SECONDS)
+
+
 def partner_unit(unit):
     return unit[:-len('.service')] + '.timer' if unit.endswith('.service') else unit[:-len('.timer')] + '.service'
 
@@ -655,6 +723,7 @@ def cutover(args, ops):
     check_units(args.keep_off, 'keep-off')
     check_units(args.configure_only, 'configure-only')
     check_units(args.allow_archived, 'allow-archived')
+    check_units(args.enable, 'enable')
     groups = [set(args.units), set(args.keep_off), set(args.configure_only)]
     if any(a & b for i, a in enumerate(groups) for b in groups[i + 1:]):
         raise CutoverError('A unit appears in more than one of --units/--keep-off/--configure-only')
@@ -672,6 +741,15 @@ def cutover(args, ops):
     for unit in args.units:
         if 'entry-dispatcher' in unit and not args.allow_entry:
             raise CutoverError('Refusing to start %s without --allow-entry (entries stay a separate step)' % unit)
+    for unit in args.units + args.enable:
+        if 'paper-monitor' in unit and not args.allow_monitor:
+            raise CutoverError('Refusing %s without --allow-monitor: the stale-mark watchdog flags every position stale '
+                               'between slow held passes and EXIT_ONLY sticks (T09 F5) until T23 lands' % unit)
+    for unit in args.enable:
+        if 'entry-dispatcher' in unit:
+            raise CutoverError('--enable never covers the entry dispatcher: entries are enabled deliberately (RUNBOOK step 9)')
+        if unit not in args.units:
+            raise CutoverError('--enable %s must also be in --units' % unit)
     release_root = canonical_dir(args.release_root, '--release-root')
     release = canonical_dir(args.release, '--release')
     if release.parent != release_root or not (release / 'desk').is_dir():
@@ -702,6 +780,10 @@ def cutover(args, ops):
         if reason:
             raise CutoverError('Refusing %s: ExecStart may bind off loopback (%s)' % (unit, reason))
         check_archived(unit, [exec_text] + list(spec.get('Environment', [])) + base_env, args, shared)
+        if 'paper-held-cycle' in unit and '--dependency-blocker' in exec_text and not args.allow_held_blocker:
+            raise CutoverError('Refusing %s: its ExecStart carries --dependency-blocker, so the held pass exits BLOCKED '
+                               'and never monitors or exits a position; re-plan fresh_start with --enable-held '
+                               '(or pass --allow-held-blocker)' % unit)
     for unit in args.units:
         state = show(ops, unit, ['ActiveState']).get('ActiveState')
         if state not in IDLE_STATES:
@@ -735,10 +817,10 @@ def cutover(args, ops):
 
     report = {'action': 'cutover', 'release': str(release), 'runtime_digest': digest,
               'applied': ops.apply, 'started': [], 'dropins': [str(p[1]) for p in plans],
-              'keep_off': keep_off, 'store_env_ignored': ignored}
+              'keep_off': keep_off, 'store_env_ignored': ignored, 'enabled': []}
     ops.record({'event': 'cutover-begin', 'release': str(release), 'digest': digest,
                 'units': args.units, 'dropins': report['dropins']})
-    started = []
+    started, enabled = [], []
     try:
         for entry in keep_off:
             if entry['enabled_before'] in ENABLED_STATES:
@@ -773,7 +855,7 @@ def cutover(args, ops):
             if ops.apply:
                 before_start[unit] = show(ops, unit, ['MainPID'])
                 started.append(unit)             # recorded BEFORE start: a failed or hung start must be stopped too
-            ops.mutate(['systemctl', 'start', unit])
+            start_unit(ops, unit)
         if ops.apply:
             first = {}
             for unit in args.units:
@@ -801,8 +883,24 @@ def cutover(args, ops):
                     raise CutoverError('Keep-off unit %s became enabled' % entry['unit'])
         else:
             ops.pause(args.settle_seconds)
+        # Boot persistence is the LAST step: only units that started and stayed healthy are enabled.
+        for unit in args.enable:
+            if ops.apply and is_enabled(ops, unit) in ENABLED_STATES:
+                report['enabled'].append({'unit': unit, 'already': True})
+                continue
+            enabled.append(unit)
+            ops.mutate(['systemctl', 'enable', unit])
+            if ops.apply:
+                if is_enabled(ops, unit) not in ENABLED_STATES:
+                    raise CutoverError('%s is not enabled after systemctl enable' % unit)
+            report['enabled'].append({'unit': unit, 'already': False})
     except BaseException as exc:
         stopped = []
+        for unit in reversed(enabled):             # never leave a failed cutover enabled for the next boot
+            try:
+                ops.mutate(['systemctl', 'disable', unit])
+            except CutoverError:
+                pass
         for unit in reversed(started):
             try:
                 ops.mutate(['systemctl', 'stop', unit])
@@ -826,16 +924,22 @@ def rollback(args, ops):
     removed, skipped, managed = [], [], []
     candidates = []
     for unit in args.units:
-        path = dropin_path(unit_dir, unit)
-        if path.is_symlink() or not path.is_file():
+        found = False
+        for name, marker in MANAGED_DROPINS.items():
+            path = unit_dir / (unit + '.d') / name
+            if path.is_symlink() or not path.is_file():
+                continue
+            found = True
+            current = path.read_text(errors='replace')
+            lines = current.splitlines()
+            if not lines or lines[0] != marker:           # a marker quoted later proves nothing
+                skipped.append({'unit': unit, 'reason': 'not written by cutover', 'file': name})
+                continue
+            if unit not in managed:
+                managed.append(unit)
+            candidates.append((unit, path, current))
+        if not found:
             skipped.append({'unit': unit, 'reason': 'no drop-in'})
-            continue
-        current = path.read_text(errors='replace')
-        if not is_managed(current):
-            skipped.append({'unit': unit, 'reason': 'not written by cutover'})
-            continue
-        managed.append(unit)
-        candidates.append((unit, path, current))
     # Removing a drop-in under a running unit (or a timer that would fire the old release at the archived
     # stores) is never silent: related units must be idle, or --stop must stop them first.
     related = sorted({u for unit in managed for u in (unit, partner_unit(unit))}, key=lambda u: (u.endswith('.service'), u))
@@ -857,8 +961,16 @@ def rollback(args, ops):
         if m and Path(m.group(1)).is_file() and Path(m.group(1)).parent == path.parent:
             ops.copy_file(Path(m.group(1)), path)
         removed.append(str(path))
+    disabled = []
+    if args.disable:
+        for unit in related:
+            if ops.apply and is_enabled(ops, unit) not in ENABLED_STATES:
+                continue
+            ops.mutate(['systemctl', 'disable', unit])
+            disabled.append(unit)
     ops.mutate(['systemctl', 'daemon-reload'])
-    return {'action': 'rollback', 'removed': removed, 'skipped': skipped, 'stopped': stopped, 'applied': ops.apply,
+    return {'action': 'rollback', 'removed': removed, 'skipped': skipped, 'stopped': stopped, 'disabled': disabled,
+            'applied': ops.apply,
             'note': 'Units are not restarted; restart deliberately after verifying the old release.'}
 
 
@@ -899,11 +1011,20 @@ def build_parser():
     c.add_argument('--template-dir', default=None, help='fallback dir for base unit files when reading ExecStart')
     c.add_argument('--expect-digest')
     c.add_argument('--allow-entry', action='store_true')
+    c.add_argument('--allow-monitor', action='store_true',
+                   help='permit starting/enabling desk-paper-monitor (stale-mark watchdog); only after T23 lands')
+    c.add_argument('--allow-held-blocker', action='store_true',
+                   help='permit a held-cycle ExecStart that still carries --dependency-blocker (it never monitors)')
+    c.add_argument('--enable', nargs='*', default=[],
+                   help='units from --units to `systemctl enable` (boot persistence) AFTER they start and settle healthy; '
+                        'never the entry dispatcher')
     c.add_argument('--replace-existing', action='store_true')
     r = sub.add_parser('rollback')
     r.add_argument('--units', nargs='+', required=True)
     r.add_argument('--unit-dir', default='/etc/systemd/system')
     r.add_argument('--stop', action='store_true', help='stop active managed units (and their timers) first')
+    r.add_argument('--disable', action='store_true',
+                   help='also `systemctl disable` the units and their timer/service partners (undo --enable)')
     return p
 
 

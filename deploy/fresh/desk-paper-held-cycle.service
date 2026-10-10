@@ -14,7 +14,7 @@ WorkingDirectory=<RELEASE_DIR>
 Environment=DESK_PROVIDER_PACING_DB=<PACING_DB>
 Environment=DESK_PAPER_SCHEDULER_IDENTITY=<SCHEDULER_IDENTITY>
 LoadCredential=provider-keys.json:/etc/solana-desk/provider-keys.json
-ExecStart=/opt/solana-desk/.venv/bin/python -m tools.paper_scheduler --research-db <FRESH_ROOT>/research.sqlite --mode held -- --config <CONFIG> --research-db <FRESH_ROOT>/research.sqlite --evidence-db <FRESH_ROOT>/evidence.sqlite --ledger-db <FRESH_ROOT>/paper-ledger.sqlite --pool-fee-bps 25 --systemd-credentials
+ExecStart=/opt/solana-desk/.venv/bin/python -m tools.paper_scheduler --research-db <FRESH_ROOT>/research.sqlite --mode held -- --config <CONFIG> --research-db <FRESH_ROOT>/research.sqlite --evidence-db <FRESH_ROOT>/evidence.sqlite --ledger-db <FRESH_ROOT>/paper-ledger.sqlite --pool-fee-bps <POOL_FEE_BPS> --systemd-credentials
 UMask=0077
 NoNewPrivileges=true
 PrivateTmp=true
