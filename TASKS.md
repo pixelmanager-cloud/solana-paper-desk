@@ -251,18 +251,44 @@ VPS facts (read-only, 2026-10-11):
 
 ---
 
-## T23H — REGRESSION on integration/r1: the successor lifecycle test fails with PACING_CLOCK_INVALID — CRITICAL PATH
+## T23H — integration/r1 CI is RED: restore a green full suite on Linux — CRITICAL PATH, DO FIRST
 STATUS: OPEN
 DEPENDS: none
 BASE: origin/integration/r1
-OWNS: desk/provider_pacing.py (reclaim_orphans clock handling only), tests/test_empty_history_successor_lifecycle.py (only if the fixture clock itself is wrong), tests/test_pacing_reclaim*.py
-AVOID: everything else
+OWNS: desk/provider_pacing.py, plus the minimal test-fixture fixes needed in tests/ (no assertion loosening without a justification in the test and the commit)
+AVOID: desk/paper_cycle.py, desk/paper_pass_closure.py (T22G)
 
-`python -m unittest tests.test_empty_history_successor_lifecycle` FAILS on integration/r1 with `PACING_CLOCK_INVALID` raised from `Pacer.reclaim_orphans()`, a T23F/T23G regression (the coordinator review of T22 found it on plain integration).
-- Reproduce it.
-- Find why `reclaim_orphans` sees an invalid clock in this lifecycle; likely a fixture or frozen clock behind `high_water`, or `reclaim_orphans` comparing against wall time where `acquire` uses the injected clock.
-- Fix it at the root. `reclaim_orphans` must use the same clock source as `acquire`. A clock problem in reclaim must never raise on the read-first path: it returns `[]` and leaves the existing `acquire` fail-closed check to decide.
-- Run the full lifecycle test and every pacing/reclaim/latch module green (real exit code).
+CI (`.github/workflows/tests.yml`, full suite on Ubuntu) on `integration/r1` history:
+- green up to the T13 merge;
+- 1 failure from the T08 merge (`tests.test_allowance_upgrade.MonitoringUpgradeTests.test_failure_latch_and_clock_highwater_survive`; T08 changed the transient SOURCE_FAILURE latch semantics and this test still expects the old latch);
+- 20 failures from the T25F merge (18 errors in `tests.test_monitoring_classification` on Linux, plus `test_audit_first_cycle_b_monitoring`);
+- **~480 failures from the T23G merge.**
+
+Each module passes ALONE; the full suite in ONE process fails. That is cross-test state leakage, and the same pattern can hit production processes that open several pacing DBs.
+
+Top errors in run 38074623235 (`gh run view 38074623235 --log-failed`):
+
+| Count | Error |
+|---|---|
+| 87 | `PacingError: PACING_DATABASE_INVALID` |
+| 69 | `PaperReadError: PACING_DATABASE_INVALID` |
+| 64 | `PACING_CLOCK_INVALID` |
+| 71 | `AssertionError: synthetic sources only` |
+| 67 | asyncio `'_UnixSelectorEventLoop' object has no attribute '_ssock'` |
+| 49 | `'BLOCKED' != 'COMPLETE'` |
+| ~50 | expected-code mismatches where the actual is `PACING_DATABASE_INVALID` |
+
+The main suspect is T23G's module-level fd registry `_HELD` (process-lifetime holder locks): it leaks across tests, i.e. across pacing DBs and providers in one process. That gives a "live owner" to the wrong DB, inode reuse after tempdir cleanup, and validation mismatches.
+
+**Required:**
+1. **Fix the registry in production code.** Key it by (canonical db path, st_dev, st_ino, provider, ticket). Release entries when their own commit completes. Never let an entry for one DB affect another DB, and handle inode reuse after a file is deleted (validate the inode is still the same file before trusting a held entry). Add a production-relevant test: one process uses two different pacing DBs in sequence, and a DB is deleted and recreated at the same path.
+2. **Fix `reclaim_orphans`/`acquire` clock handling** so a fixture clock never triggers `PACING_CLOCK_INVALID` on the read-first path. `tests.test_empty_history_successor_lifecycle` must pass.
+3. **Fix every other failing test** in the CI logs at their root:
+   - `test_allowance_upgrade`: update it to T08's semantics, with justification;
+   - `test_monitoring_classification` on Linux: the lock-table injection must hold on Linux too;
+   - the asyncio `_ssock` errors: most likely an event loop closed or leaked by `test_held_watcher`, so close loops properly;
+   - "synthetic sources only".
+4. **Acceptance.** Run `python -m unittest discover -q` IN ONE PROCESS on Linux (the cloud VM is Linux) and get exit 0, with the expected-failure count reported. Also run a randomized order: `python -m unittest` with modules shuffled (seed recorded) twice. Push and confirm that the GitHub Actions run on your branch is green before writing DONE. Paste the run URL in the report.
 
 ---
 
