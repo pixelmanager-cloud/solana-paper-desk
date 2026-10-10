@@ -241,7 +241,7 @@ class RequestAndResponseTests(unittest.TestCase):
     def test_flag_validation_fails_closed(self):
         self.assertEqual(pm.selected(config()), 0)
         self.assertEqual(pm.selected(self.cfg), 1)
-        for bad in ({pm.KEY: 2}, {pm.KEY: True}, {pm.KEY: '1'}, {pm.FEE_KEY: 25}, {pm.FEE_KEY: 'NaN'}, {pm.FEE_KEY: '-1'},
+        for bad in ({pm.KEY: 3}, {pm.KEY: 0}, {pm.KEY: True}, {pm.KEY: '1'}, {pm.FEE_KEY: 25}, {pm.FEE_KEY: 'NaN'}, {pm.FEE_KEY: '-1'},
                     {pm.FEE_KEY: '10000'}, {'paper_concurrent_entries_version': None}, {'paper_quote_execution_version': 0},
                     {'mode': 'live'}):
             with self.subTest(bad=bad), self.assertRaises(ValueError):
@@ -338,6 +338,7 @@ class EngineTests(unittest.TestCase):
     def test_rollover_requires_every_valuation_mark_current(self):
         state = copy.deepcopy(self.state)
         state['day'] = '2000-01-01'
+        self.cfg = cfg_marks(paper_rollover_after_mark_version=1)     # one versioned rollover rule (T35F item 7)
         done, out = self.apply(self.event(), state=state)
         self.assertNotEqual(done['day'], '2000-01-01')
         self.assertEqual(done['day_gross_losses'], '0')

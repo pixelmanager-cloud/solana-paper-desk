@@ -26,7 +26,7 @@ from desk import paper_terminal_reconciliation as terminal
 from desk import runtime_compatibility as runtime
 from desk import ownership_acquisition as acquisition, migration_slot_intake as migration
 from desk import provider_pacing as pacing
-from desk import paper_concurrency as concurrency
+from desk import paper_concurrency as concurrency, portfolio_marks
 from desk import watchlist
 from desk.job_persistence import BIRTH_ACQUISITION_V1, JobPersistence
 from desk.history_progress import HistoryProgress
@@ -490,7 +490,8 @@ class _HeldCadence:
         ledger = Path(ctx['paths']['ledger_db']['path'])
         positions = cycle._state(ledger, cfg)['positions']
         now = self.clock()
-        if not concurrency.checkpoint_due(now - self.last, next_phase_seconds, positions):
+        refresh = concurrency.MARKS_REFRESH_SECONDS if portfolio_marks.selected(cfg) else 0.0
+        if not concurrency.checkpoint_due(now - self.last, next_phase_seconds, positions, refresh_seconds=refresh):
             return None
         code = _held_pass(ctx)
         self.last = self.clock()

@@ -22,6 +22,9 @@ from .model import digest
 KEY = 'paper_portfolio_mark_source_version'
 FEE_KEY = 'paper_portfolio_mark_pool_fee_bps'
 VERSION = 1
+GUARDED_VERSION = 2
+DIVERGENCE_KEY = 'paper_portfolio_mark_max_divergence'
+DEFAULT_DIVERGENCE = '0.03'
 SOURCE = 'reserve_implied_vault_marks_v1'
 KIND = 'portfolio_marks'
 MAX_POSITIONS = 8
@@ -40,11 +43,18 @@ class MarkError(ValueError):
 
 
 def selected(cfg):
-    """0 when absent; 1 when valid; otherwise fail closed. Requires the concurrent-entries experiment."""
+    """0 when absent; 1 or 2 when valid; otherwise fail closed. Requires the concurrent-entries experiment.
+
+    Version 1: the model marks feed every portfolio valuation (equity, peak, daily limits, sizing).
+    Version 2 (T35F): model marks feed exposure, position limits and the freshness gates, but `peak_equity`,
+    `day_start_equity` and the daily drawdown/liquidation use the executable mark unless the model mark is within
+    `paper_portfolio_mark_max_divergence` (default 3 %) of it."""
     if KEY not in cfg:
+        if DIVERGENCE_KEY in cfg:
+            raise ValueError('Mark divergence bound requires the guarded portfolio mark source')
         return 0
     value = cfg[KEY]
-    if type(value) is not int or value != VERSION:
+    if type(value) is not int or value not in (VERSION, GUARDED_VERSION):
         raise ValueError('Unsupported portfolio mark source version')
     flag = cfg.get('paper_concurrent_entries_version')
     quote = cfg.get('paper_quote_execution_version')
@@ -52,7 +62,26 @@ def selected(cfg):
             or type(quote) is not int or quote != 1):
         raise ValueError('Portfolio mark source requires paper mode, quote execution 1 and the concurrent entries experiment')
     pool_fee_bps(cfg)
-    return VERSION
+    if value == VERSION and DIVERGENCE_KEY in cfg:
+        raise ValueError('Mark divergence bound requires the guarded portfolio mark source')
+    max_divergence(cfg)
+    return value
+
+
+def max_divergence(cfg):
+    """The guard's bound as a Decimal fraction (version 2 only; None otherwise)."""
+    if cfg.get(KEY) != GUARDED_VERSION:
+        return None
+    raw = cfg.get(DIVERGENCE_KEY, DEFAULT_DIVERGENCE)
+    if type(raw) is not str or not 1 <= len(raw) <= 12:
+        raise ValueError('Mark divergence bound must be a decimal string')
+    try:
+        bound = Decimal(raw)
+    except ArithmeticError:
+        raise ValueError('Mark divergence bound invalid') from None
+    if not bound.is_finite() or not ZERO < bound < ONE:
+        raise ValueError('Mark divergence bound out of range')
+    return bound
 
 
 def pool_fee_bps(cfg):
@@ -203,6 +232,17 @@ def request_params(positions):
 
 # --------------------------------------------------------------------------- response
 
+CLOSED_REASONS = ('POOL_CLOSED', 'VAULT_CLOSED')
+
+
+def CLOSED_REASONS_BY_MISSING(pool_account, base_account, quote_account):
+    if pool_account is None:
+        return 'POOL_CLOSED'
+    if base_account is None or quote_account is None:
+        return 'VAULT_CLOSED'
+    return None
+
+
 def marks_from_result(positions, keys, result, cfg, *, pool_fee_bps):
     """``({mint: mark}, slot, {mint: error})`` from one ``getMultipleAccounts`` result.
 
@@ -225,6 +265,12 @@ def marks_from_result(positions, keys, result, cfg, *, pool_fee_bps):
         try:
             if keys[3 * index] != position['pool']:
                 raise MarkError('KEY_ORDER')
+            closed = CLOSED_REASONS_BY_MISSING(pool_account, base_account, quote_account)
+            if closed:
+                # A closed pool or vault holds nothing: worth zero, with an explicit reason, instead of a mark that
+                # stays stale for ever. Valuation only (exits still need executable quotes).
+                marks[mint] = {'value_sol': '0', 'pool': position['pool'], 'base_raw': '0', 'quote_raw': '0', 'reason': closed}
+                continue
             fields = parse_pool(pool_account)
             base_vault, quote_vault = keys[3 * index + 1], keys[3 * index + 2]
             if (fields['base_mint'] != mint or fields['quote_mint'] != WSOL
@@ -269,10 +315,12 @@ def validate_event(e):
     if type(marks) is not dict or not 1 <= len(marks) <= MAX_POSITIONS:
         raise ValueError('Portfolio marks mapping')
     for mint, mark in marks.items():
-        if (type(mint) is not str or type(mark) is not dict
-                or set(mark) != {'value_sol', 'pool', 'base_raw', 'quote_raw'}
+        base_keys = {'value_sol', 'pool', 'base_raw', 'quote_raw'}
+        if (type(mint) is not str or type(mark) is not dict or set(mark) not in (base_keys, base_keys | {'reason'})
                 or any(type(v) is not str or not 1 <= len(v) <= 64 for v in mark.values())):
             raise ValueError('Portfolio mark entry')
+        if 'reason' in mark and (mark['reason'] not in CLOSED_REASONS or mark['value_sol'] != '0'):
+            raise ValueError('Portfolio mark reason')
         try:
             value = Decimal(mark['value_sol'])
         except ArithmeticError:

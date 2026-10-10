@@ -60,14 +60,40 @@ def rollover_after_mark(cfg):
     return True
 
 
-def valuation(p):
+def mark_guard(cfg):
+    """Max model/executable divergence for the RISK equity (portfolio mark source version 2), else None."""
+    from . import portfolio_marks as pm
+    return pm.max_divergence(cfg) if cfg.get(pm.KEY) == pm.GUARDED_VERSION else None
+
+
+def valuation(p, guard=None):
     """(value, at) used for PORTFOLIO valuation only. A reserve-implied portfolio mark (portfolio_marks, opt-in) wins
     when it is newer than the executable-quote mark; those keys exist only after a flagged marks event. Exit-side
-    checks (watchdog, stop/trailing/take-profit, fills) keep reading mark_at / mark_value directly."""
+    checks (watchdog, stop/trailing/take-profit, fills) keep reading mark_at / mark_value directly.
+
+    ``guard`` (a Decimal fraction, portfolio mark source version 2) is for the RISK equity: the model mark counts only
+    while it is within ``guard`` of the latest executable mark, otherwise the executable mark does (the timestamp,
+    used by the freshness gates, is unchanged)."""
     at = p.get("portfolio_mark_at")
     if at is not None and at > p["mark_at"]:
-        return dec(p["portfolio_mark_value"]), at
+        model, executable = dec(p["portfolio_mark_value"]), dec(p["mark_value"])
+        if guard is not None and (executable <= ZERO or abs(model - executable) / executable > guard):
+            return executable, at
+        return model, at
     return dec(p["mark_value"]), p["mark_at"]
+
+
+def _roll_day(state, cfg, day, output, reason=None):
+    """THE rollover rule: the UTC day rolls over only when every position's valuation mark is current. The
+    day-start equity and the daily loss counter are re-based on the guarded risk equity."""
+    if _marks_current(state, cfg, state["last_ts"]):
+        state["day"] = day
+        state["day_start_equity"] = str(equity(state, guard=mark_guard(cfg)))
+        state["day_gross_losses"] = "0"
+        if reason:
+            output.append({"type": "control", "reason": reason})
+        return True
+    return False
 
 
 def _marks_current(state, cfg, ts):
@@ -79,8 +105,8 @@ def exposure(state):
     return sum((dec(p["cost_left"]) for p in state["positions"].values()), ZERO)
 
 
-def equity(state):
-    return dec(state["cash"]) + sum((valuation(p)[0] for p in state["positions"].values()), ZERO)
+def equity(state, guard=None):
+    return dec(state["cash"]) + sum((valuation(p, guard)[0] for p in state["positions"].values()), ZERO)
 
 
 PORTFOLIO_KEY = "paper_portfolio_risk_version"
@@ -181,7 +207,7 @@ def risk(state, cfg, output):
             state.pop("exit_only_cause")
             state["mode"] = "RUNNING"
             output.append({"type": "control", "reason": "UNRESOLVED_EXIT_CLEARED"})
-    eq = equity(state)
+    eq = equity(state, guard=mark_guard(cfg))
     peak = max(dec(state["peak_equity"]), eq)
     state["peak_equity"] = str(peak)
     state["max_drawdown"] = str(max(dec(state["max_drawdown"]), (peak - eq) / peak))
@@ -341,7 +367,7 @@ def _quote_sell(state,e,cfg,fraction,reason,output,book):
             cost=dec(p['cost_left'])*D(raw)/D(current)
             pnl=proceeds-cost
             p['qty']=str(qe.units(current-raw,book.decimals))
-            for stale in ('portfolio_mark_value','portfolio_mark_at','portfolio_mark_source'):
+            for stale in ('portfolio_mark_value','portfolio_mark_at','portfolio_mark_source','portfolio_mark_reason'):
                 p.pop(stale,None)   # a reserve-implied value of the larger remainder must not outlive the partial sale
             p['cost_left']=str(dec(p['cost_left'])-cost)
             p['trade_pnl']=str(dec(p['trade_pnl'])+pnl)
@@ -464,14 +490,14 @@ def _portfolio_marks(state, e, cfg):
         p["portfolio_mark_value"] = str(dec(mark["value_sol"]))
         p["portfolio_mark_at"] = e["observed_at"]
         p["portfolio_mark_source"] = pm.SOURCE
+        if "reason" in mark:
+            p["portfolio_mark_reason"] = mark["reason"]          # closed pool/vault: worth zero, say why
+        else:
+            p.pop("portfolio_mark_reason", None)
         applied.append(mint)
     day = datetime.fromtimestamp(e["ts"], timezone.utc).date().isoformat()
-    if state["day"] != day:
-        if _marks_current(state, cfg, e["ts"]):
-            state["day"] = day
-            state["day_start_equity"] = str(equity(state))
-            state["day_gross_losses"] = "0"
-        else:
+    if state["day"] != day and rollover_after_mark(cfg):
+        if not _roll_day(state, cfg, day, output):
             output.append({"type": "control", "reason": "DAY_ROLLOVER_DEFERRED_UNVERIFIED_MARKS"})
     risk(state, cfg, output)
     return state, output + [{"type": "portfolio_marks", "source": pm.SOURCE, "slot": e["slot"], "applied": applied}]
@@ -546,11 +572,7 @@ def transition(state, e, cfg, *, _quote_book=None):
         return state,output
     day = datetime.fromtimestamp(e["ts"], timezone.utc).date().isoformat()
     if state["day"] != day:
-        if _marks_current(state, cfg, e["ts"]):
-            state["day"] = day
-            state["day_start_equity"] = str(equity(state))
-            state["day_gross_losses"] = "0"
-        else:
+        if not _roll_day(state, cfg, day, output):
             output.append({"type":"control","reason":"DAY_ROLLOVER_DEFERRED_UNVERIFIED_MARKS"})
     if e["kind"] == "control":
         mapping = {"PAUSE_ENTRY": "ENTRY_PAUSED", "EXIT_ONLY": "EXIT_ONLY",
@@ -563,12 +585,9 @@ def transition(state, e, cfg, *, _quote_book=None):
     was_open = mint in state["positions"]
     if was_open:
         manage_position(state, e, cfg, output,_quote_book)
-        if state["day"] != day and rollover_after_mark(cfg) and _marks_current(state, cfg, e["ts"]):
+        if state["day"] != day and rollover_after_mark(cfg):
             # This event just refreshed its own mark (or exited); every other mark is within the portfolio TTL.
-            state["day"] = day
-            state["day_start_equity"] = str(equity(state))
-            state["day_gross_losses"] = "0"
-            output.append({"type": "control", "reason": "DAY_ROLLOVER_AFTER_FRESH_MARKS"})
+            _roll_day(state, cfg, day, output, "DAY_ROLLOVER_AFTER_FRESH_MARKS")
     risk(state, cfg, output)
     if state["mode"] == "LIQUIDATING" and not state["positions"]:
         state["mode"] = "STOPPED"

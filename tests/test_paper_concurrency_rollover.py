@@ -17,7 +17,7 @@ OLD_DAY = '2000-01-01'
 
 class RolloverWithoutTtl(unittest.TestCase):
     def setUp(self):
-        self.cfg = cfg_marks(max_positions=3)
+        self.cfg = cfg_marks(max_positions=3, paper_rollover_after_mark_version=1)   # the ONE rollover flag (T35F item 7)
         self.assertNotIn(engine.PORTFOLIO_TTL_KEY, self.cfg)
         self.assertEqual(engine.portfolio_ttl(self.cfg), self.cfg['price_ttl_seconds'])
         self.state = initial_state(self.cfg)
@@ -39,7 +39,7 @@ class RolloverWithoutTtl(unittest.TestCase):
 
     def test_the_flag_validates_without_the_ttl_key(self):
         self.assertEqual(pc.selected(self.cfg), 1)
-        self.assertEqual(pc.selected({**self.cfg, 'paper_rollover_after_mark_version': 1}), 1)
+        self.assertEqual(pc.selected({k: v for k, v in self.cfg.items() if k != 'paper_rollover_after_mark_version'}), 1)
 
     def test_book_full_with_no_candidate(self):
         self.assertEqual(len(self.state['positions']), self.cfg['max_positions'])      # no room for a new entry

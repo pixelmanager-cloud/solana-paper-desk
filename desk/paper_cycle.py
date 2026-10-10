@@ -304,6 +304,7 @@ def _history(progress, item, budget, source_factory):
 
 
 MARKS_READ_SECONDS = 5.0
+MARKS_MIN_REMAINING_SECONDS = 3.0      # below this the cycle keeps its remaining time for the quote reads
 
 
 def _entry_scan_id(path, mint, position):
@@ -341,16 +342,17 @@ def _refresh_portfolio_marks(path, cfg, store, progress, source_factory, budget,
         before = allowance.snapshot()
         if before['blockers']:
             raise CycleBlocked(before['blockers'][0])
+        # Inside the 10 s cycle budget (T35F): the read is bounded by what the cycle has left and never extends it.
+        remaining = budget.remaining()
+        if remaining < MARKS_MIN_REMAINING_SECONDS:
+            raise CycleBlocked('PORTFOLIO_MARKS_DEADLINE')
         budget.monitoring_attempted += 1
-        started = budget.monotonic()
         try:
-            reply, evidence_hash = source.rpc_with_evidence('getMultipleAccounts', params, timeout_seconds=MARKS_READ_SECONDS)
+            reply, evidence_hash = source.rpc_with_evidence('getMultipleAccounts', params,
+                                                            timeout_seconds=min(MARKS_READ_SECONDS, remaining))
         except PaperReadError as error:
             raise CycleBlocked(error.code) from error
-        finally:
-            # The 10 s cycle deadline is for the entry's own reads; each marks read has its own bound and its time is
-            # excluded so a refresh cannot starve the quote reads that follow it.
-            budget.start += max(0.0, budget.monotonic()-started)
+        budget.remaining()
         after = allowance.snapshot()
         if after['total_used'] != before['total_used']+1:
             raise CycleBlocked('MONITORING_CHARGE_OR_ADMISSION_MISMATCH')

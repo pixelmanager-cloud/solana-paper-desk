@@ -82,16 +82,38 @@ class ConfigAndGateTests(unittest.TestCase):
             self.assertIn('LEDGER_MODE_NOT_RUNNING', pc.entry_blockers(state({'A': position()}, mode), cfg))
 
     def test_monitoring_reserve_math_boundaries(self):
+        # T35F item 4, retuned on purpose (previous expectations: 12 five-minute passes, 60 per position): the held timer
+        # is OnUnitInactiveSec=120, so up to ceil(3600 / (120 + 7.8)) = 29 passes per hour are reserved per position.
+        self.assertEqual(pc.RESERVE_PASSES, 29)
         cfg = cfg_on()
         one = state({'A': position()})
         need = pc.LEG_REQUESTS * 2 * pc.RESERVE_PASSES  # two positions once the new one is added
-        self.assertEqual(need, 120)
-        self.assertEqual(pc.monitoring_required(1), 60)
+        self.assertEqual(need, 290)
+        self.assertEqual(pc.monitoring_required(1), 145)
         self.assertEqual(pc.entry_blockers(one, cfg, monitoring_remaining=need - 1), ['MONITORING_RESERVE_INSUFFICIENT'])
         self.assertEqual(pc.entry_blockers(one, cfg, monitoring_remaining=need), [])
         # The legacy 60/hour allowance cannot carry a second concurrent position; 3600 carries eight.
         self.assertGreater(pc.monitoring_required(2), 60)
         self.assertLessEqual(pc.monitoring_required(8), 3600)
+
+    def test_batched_marks_add_one_request_per_pass_and_two_per_entry(self):
+        self.assertEqual(pc.monitoring_required(4, marks=True), 29 * (5 * 4 + 1) + 2)        # 611
+        self.assertEqual(pc.monitoring_required(8, marks=True), 29 * (5 * 8 + 1) + 2)        # 1191, well inside 3600
+        self.assertEqual(pc.monitoring_required(4, marks=True) - pc.monitoring_required(4), 29 * 1 + 2)
+        marks_cfg = {**cfg_on(), 'paper_quote_execution_version': 1, 'paper_portfolio_mark_source_version': 1,
+                     'paper_portfolio_mark_pool_fee_bps': '25'}
+        one = state({'A': position()})
+        need = pc.monitoring_required(2, marks=True)
+        self.assertEqual(pc.entry_blockers(one, marks_cfg, monitoring_remaining=need - 1), ['MONITORING_RESERVE_INSUFFICIENT'])
+        self.assertEqual(pc.entry_blockers(one, marks_cfg, monitoring_remaining=need), [])
+        # the planning time grows by the two refreshes; the held pass spends its refresh before the first leg
+        self.assertEqual(pc.entry_seconds(marks_cfg), pc.ENTRY_SECONDS + 2 * pc.MARKS_REFRESH_SECONDS)
+        self.assertEqual(pc.entry_seconds(cfg_on()), pc.ENTRY_SECONDS)
+        positions = {m: position(mark_at=i) for i, m in enumerate('ABCD')}
+        self.assertEqual(len(pc.plan_legs(positions, 32)[0]), 4)                              # 4 x 7.8 = 31.2 fits 32 s
+        self.assertEqual(len(pc.plan_legs(positions, 32, refresh_seconds=pc.MARKS_REFRESH_SECONDS)[0]), 3)  # 29.5 s left: 3 legs
+        self.assertFalse(pc.checkpoint_due(50, 30, positions))                  # 50 + 30 + 31.2 = 111.2 <= 120
+        self.assertTrue(pc.checkpoint_due(50, 30, positions, refresh_seconds=pc.MARKS_REFRESH_SECONDS * 4))   # + 10 s of refreshes
 
     def test_portfolio_freshness_matches_the_portfolio_ttl_and_includes_preparation(self):
         cfg = cfg_on()
@@ -754,6 +776,11 @@ class CycleGateTests(unittest.TestCase):
 
 class DispatcherPreflightTests(unittest.TestCase):
     """_preflight with one open position: budget reserve and mark freshness are checked before any I/O."""
+    def setUp(self):
+        # These dispatcher fixtures provision the legacy 60/hour allowance, calibrated to the pre-T35F reserve of 12 passes.
+        patcher = patch.object(pc, 'RESERVE_PASSES', 12)
+        patcher.start()
+        self.addCleanup(patcher.stop)
 
     def fixture(self):
         from tests import test_paper_entry_dispatcher as module

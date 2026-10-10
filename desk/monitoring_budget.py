@@ -442,6 +442,17 @@ class MonitoringBudget:
         else:
             raise MonitoringBlocked('MONITORING_METHOD_NOT_ALLOWED')
 
+    def _valuation_only(self, record):
+        """The batched portfolio-marks read (pool + both vaults per position, 3N keys) only feeds valuation. Its failure
+        is charged and retained (typed failure_code) but NEVER latches monitoring: a latch would block the held exit
+        quotes that protect the book. The 7-key pool snapshot of the held legs is a different shape and still latches."""
+        if not self.portfolio_marks_version:
+            return False
+        from . import portfolio_marks as marks
+        params = record.get('params')
+        return (record.get('method') == 'getMultipleAccounts' and type(params) is list and len(params) == 2
+                and type(params[0]) is list and len(params[0]) % 3 == 0 and params[1] == marks.OPTIONS)
+
     def reserve_read(self, progress, scan_id, method, params):
         """One committed attempted read shared by all currently held positions."""
         try:
@@ -631,7 +642,7 @@ class MonitoringBudget:
                 if old is None:
                     c.execute('INSERT INTO paper_monitoring_outcomes VALUES(?,?)', (reservation['id'], evidence_hash))
                 self._accounting(c,checkpoint=True)
-                if _latching_failure(record):
+                if _latching_failure(record) and not self._valuation_only(record):
                     c.execute("UPDATE paper_monitoring_budget SET blocked='SOURCE_FAILURE' WHERE id=1 AND blocked IS NULL")
                 c.commit()
             except BaseException:

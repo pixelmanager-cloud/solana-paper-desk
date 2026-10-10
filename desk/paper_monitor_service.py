@@ -23,10 +23,11 @@ def _legs(args,cfg,output,invocation):
     positions=_state(canonical_job_path(args.ledger_db),cfg)['positions']
     exported={row['mint']:row for row in payload['position_targets']}
     if set(exported)!=set(positions):raise ValueError('Exported targets differ from checkpoint positions')
-    run,deferred=concurrency.plan_legs(positions,args.wall_seconds)
-    code=0
     from . import portfolio_marks
-    if portfolio_marks.selected(cfg):
+    marks_on=bool(portfolio_marks.selected(cfg))
+    run,deferred=concurrency.plan_legs(positions,args.wall_seconds,refresh_seconds=concurrency.MARKS_REFRESH_SECONDS if marks_on else 0.0)
+    code=0
+    if marks_on:
         # Start of the pass: ONE batched marks refresh for all positions (a positions-less monitoring cycle). A failed
         # refresh is charged and leaves the marks stale; it never stops the exit legs below.
         refresh=output.with_name('targets-marks.json')

@@ -19,8 +19,17 @@ MAX_CONCURRENT = 8
 
 # Held monitoring cost per position per leg; matches paper_monitor_operator.preflight.
 LEG_REQUESTS = 5
-# One hour of five-minute held passes stays reserved for every position, new one included.
-RESERVE_PASSES = 12
+# The held unit's timer is OnUnitInactiveSec=120, so a pass starts at most every 120 s + its own run time (>= one leg).
+# One hour of passes stays reserved for every position, new one included: ceil(3600 / (120 + 7.8)) = 29 passes (T35F;
+# the earlier 12 assumed a five-minute cadence the shipped timer never had).
+HELD_TIMER_SECONDS = 120.0
+LEG_SECONDS = 7.8
+RESERVE_PASSES = -(-3600 // int(HELD_TIMER_SECONDS + LEG_SECONDS + 0.999))
+# Batched portfolio marks (T35): one extra monitoring request per held pass, two per entry that has positions.
+MARKS_PASS_REQUESTS = 1
+MARKS_ENTRY_REQUESTS = 2
+# Wall seconds one batched marks read costs the budget (a paced request plus margin; T36's faster pacing only helps).
+MARKS_REFRESH_SECONDS = 2.5
 # Native-clock Kraken fixture timings (docs/readiness.md): BUY 7.006 s, SELL 7.807 s.
 # An entry is history preparation (desk.paper_history_preparation.PREPARATION_SECONDS, asserted equal in tests)
 # followed by the bounded 10 s cycle plus its 2 s sleep, all BEFORE the engine decides.
@@ -37,7 +46,6 @@ ENTRY_SECONDS = sum(seconds for _, seconds in ENTRY_PHASES)
 # Wall caps ENFORCED by the dispatcher (T16H): no request of an over-cap phase starts, and an overrun ends the intent as a
 # typed terminal NO_ENTRY. Preparation and the cycle are already capped in code (18 s history preparation, 10 s cycle deadline).
 PHASE_CAPS = {'acquisition': 2.5 * ACQUISITION_SECONDS, 'intake': 2.5 * INTAKE_SECONDS}
-LEG_SECONDS = 7.8
 # Longest wall time a held position may go without a monitoring leg while an entry runs: the held cadence.
 HELD_MAX_GAP_SECONDS = 120.0
 
@@ -93,9 +101,19 @@ def state_blockers(state, cfg):
     return blockers
 
 
-def monitoring_required(positions_after_entry, reserve_passes=RESERVE_PASSES):
-    """Allowance that must remain so every position, the new one included, keeps its passes."""
-    return LEG_REQUESTS * positions_after_entry * reserve_passes
+def monitoring_required(positions_after_entry, reserve_passes=None, marks=False):
+    """Allowance that must remain so every position, the new one included, keeps its passes.
+
+    Per pass: LEG_REQUESTS per position (+1 batched marks read when ``marks``); plus the entry's own two marks reads.
+    Worked: 4 positions with marks = 29 x (5 x 4 + 1) + 2 = 611 of the 3600/hour allowance; 8 positions = 29 x 41 + 2 = 1191."""
+    reserve_passes = RESERVE_PASSES if reserve_passes is None else reserve_passes
+    per_pass = LEG_REQUESTS * positions_after_entry + (MARKS_PASS_REQUESTS if marks else 0)
+    return reserve_passes * per_pass + (MARKS_ENTRY_REQUESTS if marks else 0)
+
+
+def entry_seconds(cfg=None):
+    """Planning wall time of an entry: the four phases, plus the two marks refreshes when batched marks are on."""
+    return ENTRY_SECONDS + (MARKS_ENTRY_REQUESTS * MARKS_REFRESH_SECONDS if cfg is not None and portfolio_marks.selected(cfg) else 0.0)
 
 
 def portfolio_age_at_decision(state, now, entry_seconds=ENTRY_SECONDS):
@@ -116,7 +134,7 @@ def entry_blockers(state, cfg, *, monitoring_remaining=None, now=None, entry_sec
     if not selected(cfg):
         return blockers
     after = len(state['positions']) + 1
-    if monitoring_remaining is not None and monitoring_remaining < monitoring_required(after):
+    if monitoring_remaining is not None and monitoring_remaining < monitoring_required(after, marks=bool(portfolio_marks.selected(cfg))):
         blockers.append('MONITORING_RESERVE_INSUFFICIENT')
     if now is not None and state['positions'] and not portfolio_marks.selected(cfg):
         # With batched portfolio marks the cycle refreshes every mark right before the decision, so the age of the
@@ -144,25 +162,26 @@ def held_wall_seconds(count, leg_seconds=LEG_SECONDS):
     return count * leg_seconds
 
 
-def plan_legs(positions, wall_seconds=None, leg_seconds=LEG_SECONDS):
+def plan_legs(positions, wall_seconds=None, leg_seconds=LEG_SECONDS, refresh_seconds=0.0):
     """(run now, deferred) held legs, oldest mark first.
 
     `wall_seconds=None` covers every open position. A finite budget runs as many whole legs
-    as fit (at least one) and defers the rest to the next pass in the same order.
+    as fit (at least one) and defers the rest to the next pass in the same order. The pass's batched marks refresh
+    (`refresh_seconds`, T35F) is spent first, so it is counted against the same wall budget.
     """
     order = held_order(positions)
     if wall_seconds is None:
         return order, []
-    count = max(1, int(Decimal(str(wall_seconds)) // Decimal(str(leg_seconds))))
+    count = max(1, int((Decimal(str(wall_seconds)) - Decimal(str(refresh_seconds))) // Decimal(str(leg_seconds))))
     return order[:count], order[count:]
 
 
-def checkpoint_due(elapsed_since_held, next_phase_seconds, positions, *, max_gap=HELD_MAX_GAP_SECONDS):
+def checkpoint_due(elapsed_since_held, next_phase_seconds, positions, *, max_gap=HELD_MAX_GAP_SECONDS, refresh_seconds=0.0):
     """True when running the next uninterruptible entry phase would stretch the gap since the last held
     legs past `max_gap` (the legs themselves take `held_wall_seconds(positions)`). Pure; flat books never need it."""
     if not positions:
         return False
-    return elapsed_since_held + next_phase_seconds + held_wall_seconds(len(positions)) > max_gap
+    return elapsed_since_held + next_phase_seconds + refresh_seconds + held_wall_seconds(len(positions)) > max_gap
 
 
 def clock():
