@@ -1035,3 +1035,60 @@ AVOID: every other line of desk/paper_cycle.py
 4. **Early returns.** Place `enqueue` before the terminal-receipt and no-entry early returns (merged ~:688, :698), so fills in those passes are measured.
 5. **Single worker.** Hold a single-instance flock for the worker. Move the attempt-row INSERT inside the try, so a duplicate becomes a recorded no-op, not a BLOCKED exit.
 6. **Off-path identity.** Add a committed test that runs the same fixture pass on code with the flag absent and compares ledger, events and outcomes bytes. Mask only random IDs, and assert the mask list is exactly those fields.
+
+---
+
+## T32F — RUNBOOK must work against the REAL production systemd state — CRITICAL PATH
+STATUS: OPEN
+DEPENDS: none
+BASE: integration/r1 (T32 is merged there)
+OWNS: tools/ops/cutover.py, tools/ops/fresh_start.py, tools/ops/healthcheck.py, tools/ops/notify.py, deploy/fresh/**, docs/ops/RUNBOOK.md, docs/ops/OPERATIONS_24x7.md, tests/test_ops_e2e_deploy.py, tests/test_ops_cutover.py
+AVOID: desk/**, tools/ops/status.py, tools/ops/preflight_dryrun.py, tools/ops/verify_cycle.py (T34 owns those)
+
+**Ground truth from the production VPS (read-only inventory by the coordinator, 2026-10-11).** Each existing desk unit has a STACK of Codex-era drop-ins that load AFTER any 60-/70- drop-in and override it:
+- `desk-backup.service.d`: 60-reviewed-release, 90-reviewed-73edf43, 95-reviewed-e4badab, 96-reviewed-b414dbd, 97-reviewed-continuation, 98-reviewed-extension, 99-profile2-reviewed
+- `desk-dashboard.service.d`: the same as backup, plus zz-paper-scheduler-reviewed
+- `desk-decisions.service.d`: the same as dashboard
+- `desk-discovery.service.d`: 60-reviewed-release, 70-migration-sampling
+- `desk-paper-entry-dispatcher.service.d`: zz-paper-scheduler-reviewed, zzz-local-validation-deadline
+- `desk-paper-entry-dispatcher.timer.d`: 90-reviewed-cadence
+- `desk-paper-held-cycle.service.d`: 70-reviewed-runtime, 90..99 (as above), zz-paper-scheduler-reviewed, zzz-local-validation-deadline, zzzz-full-cycle-wall-deadline
+- `desk-paper-held-cycle.timer.d`: 70-reviewed-enable ([Install]), 90-reviewed-cadence
+- `desk-paper-monitor.service.d`: 60-reviewed-release, 90..99, zz-paper-scheduler-reviewed
+
+All timers and the dashboard are currently `disabled` (the coordinator disabled them). Only `desk-continuous-discovery.service` runs (static, not enabled).
+
+Required:
+1. **Drop-in archive.** Never layer on top of this. Add a `cutover archive-dropins` step that MOVES every existing `/etc/systemd/system/desk-*.d/` directory (and any `desk-*` unit files that will be replaced) into `/var/backups/solana-desk/systemd-archive-<UTC>/`, preserving content, modes and a manifest with sha256. Then install the fresh unit set as clean full unit files plus our marked drop-ins only. `rollback` restores the archive exactly (verify with the manifest). The e2e test MUST seed this exact production drop-in tree (names above, plus realistic ExecStart/Environment/WorkingDirectory overrides) and prove that after cutover `systemctl cat` (the fake) shows ONLY our configuration, and that rollback restores the original tree byte-for-byte.
+2. **Inventory and backup.** Add an inventory step before anything else (`ls -la /etc/systemd/system/desk-*`, `systemctl cat` for each unit, saved to the backup dir). Fix the `cp -a` backup so it includes the `*.d` dirs.
+3. **Old units.** `desk-discovery.timer/.service`, `desk-recorder.service`, the old monitor and held timers, and every old unit not in the fresh set must be `disable`d (and stopped) in step 2, so a reboot cannot restart anything against the archived stores.
+4. **Archive quiesce.** The archive backup's `--require-quiesced` must include `desk-dashboard.service` and `desk-continuous-discovery.service`, i.e. stop discovery during the archive backup and restart it afterwards against the fresh discovery path or the shared discovery DB, whichever the DECISION says.
+5. **Rotate.** The rotate procedure disables the entry timer, so the "reboot fails closed" claim becomes true.
+6. **Dashboard pacing.** Give the dashboard unit `DESK_PROVIDER_PACING_DB`, so dashboard scans use the shared 2s pacing (T09 F11).
+7. **Run as the service user.** Read-only tools in the RUNBOOK run as `runuser -u solana-desk --`, not as root.
+8. **Archived store permissions.** The archived stores become `chown root:root`, files 0444 and dirs 0555 (except the shared `provider-pacing.sqlite` and its directory requirements; document exactly how pacing stays writable, e.g. by moving the shared pacing DB to its own directory `/var/lib/solana-desk-shared/provider-pacing.sqlite` with a symlink-free path, updating every unit, and recording the move). The healthcheck and notify units get `ReadOnlyPaths` for the old and fresh roots.
+9. **Healthcheck watchdog.** A dead healthcheck timer must be detected within 15 minutes (a separate watchdog timer or a systemd `OnFailure=`), not only by the daily summary.
+10. **Rollback docs.** Document that rendered unit files stay installed after rollback, or remove them.
+11. **Unit file check.** The RUNBOOK includes `systemd-analyze verify` for every rendered unit, and the e2e test checks the systemd quoting of the backup unit's `python -c` line.
+12. **E2E realism.** The e2e must not turn `mkdir`/`cp`/`ls`/`is-active` into no-ops where avoidable. Run the real filesystem commands inside the sandbox root, cover stage and rotate, and include `--chown`, which is simulated by asserting the intended owner in a fake chown layer.
+
+---
+
+## T34 — Make status / preflight / verify_cycle work with the fresh layout
+STATUS: OPEN
+DEPENDS: none
+BASE: integration/r1
+OWNS: tools/ops/status.py, tools/ops/preflight_dryrun.py, tools/ops/verify_cycle.py, tests/test_ops_status.py, tests/test_ops_preflight_dryrun.py, tests/test_ops_verify_cycle.py
+AVOID: desk/**, the T32F files
+
+In the fresh layout, the shared stores live OUTSIDE the experiment root. The shared pacing DB is in the old root (or `/var/lib/solana-desk-shared/` if T32F moves it), and the discovery DB is shared too. Today:
+- `preflight_dryrun` refuses absolute `--pacing-db`/`--discovery-db` and requires every store inside `--data`;
+- `status` hard-codes `data/provider-pacing.sqlite`, so it always reports a pacing error;
+- `verify_cycle snapshot --ledger <abs path>` fails because it only accepts plain names inside `--data`.
+
+Add explicit `--pacing-db PATH`, `--discovery-db PATH` and `--ledger PATH` (absolute) options to all three, with the same canonical/no-symlink/owner checks as for in-root stores:
+- preflight copies the external stores into its workdir too, and binds them in the namespace;
+- status reads them `mode=ro` (immutable only for a quiet WAL);
+- verify_cycle snapshots them.
+
+The defaults stay backward compatible. Tests use a fixture layout that mirrors production (fresh root plus an external shared pacing/discovery DB). Show `status` reporting empty blockers on a healthy fresh layout.
