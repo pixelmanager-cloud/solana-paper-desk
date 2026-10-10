@@ -13,6 +13,7 @@ from desk.paper_history_source import PaperHistorySource
 from desk.security import base58
 from tools import history_first_paper_entry as entry
 from desk import history_preparation_rejection as rejection
+from desk import paper_terminal_reconciliation as terminal
 from tests import test_paper_entry_dispatcher as fixture
 from tests.test_live_strategy_features import transaction
 from tests.test_paper_read_sources import Response
@@ -102,6 +103,31 @@ class PreparationTests(unittest.TestCase):
         with closing(self.store.connect()) as c:c.execute('UPDATE pages SET raw_bytes=raw_bytes+1 WHERE hash=?',(key,))
         with self.assertRaises(ValueError):self.publish('HISTORY_FEATURE_RECORD_BYTES_EXCEEDED')
         self.assertIsNone(self.marker())
+    def rejected(self):
+        with self.assertRaises(entry.PreparationRejected):
+            self.advance({'data':self.rows(1,padding=140000),'paginationToken':'next'})
+        return self.publish('HISTORY_FEATURE_RECORD_BYTES_EXCEEDED')
+    def test_global_gate_retirement_and_unrelated_scan(self):
+        result=self.rejected()
+        research=self.context['research_db']
+        self.assertEqual(terminal.gate(self.store,research,(self.target.scan_id,)), 'REJECTED_SCAN_RETIRED')
+        self.assertIsNone(terminal.gate(self.store,research,('b'*32,)))
+        self.assertEqual(self.publish(result['reason']),result)
+    def test_global_gate_dropped_rejection_table_cannot_erase_retirement(self):
+        self.rejected()
+        with closing(self.store.connect()) as c:c.execute('DROP TABLE '+rejection.TABLE)
+        with self.assertRaisesRegex(ValueError,'inventory incomplete'):
+            terminal.gate(self.store,self.context['research_db'],('b'*32,))
+    def test_replay_and_global_gate_reject_later_charge(self):
+        result=self.rejected()
+        self.assertTrue(self.progress.reserve(self.target.scan_id))
+        with self.assertRaisesRegex(ValueError,'live charge changed'):
+            rejection.verify(self.store,self.progress,result)
+        with self.assertRaisesRegex(ValueError,'live charge changed'):
+            terminal.gate(self.store,self.context['research_db'],('b'*32,))
+    def test_fresh_context_without_pass_table_has_no_rejection(self):
+        with closing(self.store.connect()) as c:c.execute('DROP TABLE paper_observation_passes')
+        self.assertIsNone(terminal.gate(self.store,self.context['research_db'],('b'*32,)))
     def test_native_clock_preparation_can_exceed_fresh_ten_seconds(self):
         started=time.monotonic()
         for n in range(5):

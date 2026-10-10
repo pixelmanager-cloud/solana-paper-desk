@@ -148,7 +148,7 @@ def _proof(store,progress,value,*,publishing=False,cfg=None):
             if anchors!=original['ledger_anchors'] or historical._ledger_originals(c)!=original['ledger_original_hash']:raise ValueError('Preparation ledger changed')
         elif historical._ledger_originals(c,prefix=True)!=original['ledger_prefix_hash']:raise ValueError('Preparation ledger prefix changed')
     terminal._pacing(ctx['pacing_db'])
-    if publishing and progress.admission(scan)!=after:raise ValueError('Preparation live charge changed')
+    if progress.admission(scan)!=after:raise ValueError('Preparation live charge changed')
     return original
 
 
@@ -218,7 +218,25 @@ def verify(store,progress,result):
 def gate(store,research,scan_ids):
     """Companion global-gate hook: replay every rejection; never trust a marker."""
     progress=HistoryProgress.__new__(HistoryProgress);progress.store=store
-    with closing(store.connect()) as c:retired=rows(c)
+    with closing(store.connect()) as c:
+        retired=rows(c)
+        found=c.execute("SELECT 1 FROM sqlite_master WHERE type='table' AND name='paper_observation_passes'").fetchone()
+        if not found:
+            if retired:raise ValueError('Preparation original pass table missing')
+            return None
+        passes=_passes(c)
+    # Two-way inventory: deleting the rejection table cannot erase a bound
+    # outcome's retirement. All references are bounded by the original pass
+    # validator, and their stored bytes are independently checked.
+    bound=set()
+    for _,identity,intent_key,outcome_key in passes:
+        if outcome_key is None:continue
+        outcome=terminal._load(store,outcome_key)
+        if type(outcome) is dict and outcome.get('kind')=='history_preparation_no_entry_v1':
+            if outcome.get('pass_id')!=identity or outcome.get('intent_hash')!=intent_key:
+                raise ValueError('Preparation outcome original pass conflict')
+            bound.add((identity,outcome.get('scan_id'),intent_key,outcome_key))
+    if bound!=set(retired):raise ValueError('Preparation rejection inventory incomplete')
     for identity,scan,intent_key,outcome_key in retired:
         value=terminal._load(store,outcome_key)
         original=verify(store,progress,{**value,'evidence_hash':outcome_key})
