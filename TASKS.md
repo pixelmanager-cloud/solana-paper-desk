@@ -1016,3 +1016,22 @@ AVOID: desk/**
 3. **(LOW) Null-pool backoff.** Cap the retry backoff so it cannot overshoot the +5m window (300–420s). For example, retry at 30s intervals while inside a sample window.
 
 After this lands, T27F (if it has already merged T26F) must merge T26G as well. Note this in the report.
+
+---
+
+## T14G — Final fill-realism fixes (from the T14F review)
+STATUS: OPEN
+DEPENDS: none
+BASE: origin/cloud/T14F, then merge origin/integration/r1. Resolve the import conflict at desk/paper_cycle.py:21 as `from . import engine, quote_execution as qe, paper_concurrency as concurrency, fill_realism`.
+OWNS: desk/fill_realism.py, desk/quote_execution.py (config validation only), tools/ops/fill_realism_worker.py, tests/test_fill_realism*.py, and the minimal hook lines in desk/paper_cycle.py
+AVOID: every other line of desk/paper_cycle.py
+
+1. **(BLOCKER) The hook can raise inside the pass.** `fill_realism.selected(cfg)` raises FILL_REALISM_CONFIG_INVALID after `deliver`, which leaves the pass NULL and latches the store. `qe.config` skips the realism validation when `paper_quote_execution_version` is absent.
+   - Validate the realism key unconditionally at config load, so a bad config is refused before any cycle.
+   - Make the in-pass hook strictly non-raising.
+   - Add a test: a bad realism config with no quote-execution key is refused at load, and the pass never latches.
+2. **Freshness tolerance.** Our own receive clock is not provider time. Add an upper bound: a sample is valid only if its request started within a small tolerance of its due time (default ≤ 1.0s late) and finished within ≤ 2.0s. Otherwise it is LATE (excluded from latency-adjusted PnL, counted). Use the provider timestamp or `Age` when present. Document that Jupiter has no provider timestamp.
+3. **Pacing priority.** Add a lower pacing priority (e.g. `research`) below `investigation`, used by the worker and the T26/T28 research services, so measurement never delays trading quotes. Minimal change to `desk/provider_pacing.py`; coordinate with T23F, which owns that file. If T23F is not merged yet, put the priority change in a separate small commit and say so.
+4. **Early returns.** Place `enqueue` before the terminal-receipt and no-entry early returns (merged ~:688, :698), so fills in those passes are measured.
+5. **Single worker.** Hold a single-instance flock for the worker. Move the attempt-row INSERT inside the try, so a duplicate becomes a recorded no-op, not a BLOCKED exit.
+6. **Off-path identity.** Add a committed test that runs the same fixture pass on code with the flag absent and compares ledger, events and outcomes bytes. Mask only random IDs, and assert the mask list is exactly those fields.
