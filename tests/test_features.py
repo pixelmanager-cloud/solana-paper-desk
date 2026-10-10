@@ -80,6 +80,15 @@ class Fixture(unittest.TestCase):
     def row(self, mint, ts):
         return self.rows()[(mint, float(ts))]
 
+    def hashes(self, store=None):
+        store = store or self.store
+        return {(r['mint'], r['as_of']): r['row_hash'] for r in ft.read_rows(store)}
+
+    def fresh_store(self, name):
+        path = self.dir / name
+        ft.init(path)
+        return path
+
 
 class KnownAnswerTests(Fixture):
     def test_ledger_event_features_and_provenance(self):
@@ -484,15 +493,6 @@ class IncrementalIngestTests(Fixture):
         ledger.apply(helpers.event(ts=ts, mint=mint, **changes), self.cfg, transition, initial_state)
         ledger.close()
 
-    def hashes(self, store=None):
-        store = store or self.store
-        return {(r['mint'], r['as_of']): r['row_hash'] for r in ft.read_rows(store)}
-
-    def fresh_store(self, name):
-        path = self.dir / name
-        ft.init(path)
-        return path
-
     def test_a_rerun_resumes_from_the_cursor_and_reads_nothing(self):
         first = self.ingest()
         self.assertEqual(first['pages'], {'ledger.events': 1})
@@ -683,6 +683,294 @@ class RealStoresTests(unittest.TestCase):
                 self.assertLessEqual(prov['at'], r['as_of'])
         again = ft.ingest(store, ledger_db=d.ledger, discovery_db=d.discovery, journal_db=d.journal, now=now + 1)
         self.assertEqual((again['inserted'], again['conflict']), (0, 0))
+
+
+_REAL_FRAMES = []
+
+
+def real_frames():
+    """(rows, migration_row) of the discovery store of a real dispatched paper entry: actual frames decoded by the production decoder."""
+    if not _REAL_FRAMES:
+        from tests import test_paper_entry_dispatcher as fixtures
+        d = fixtures.DispatcherTests('test_dry_run_no_admission_credentials_or_io_and_context_activation')
+        d.setUp()
+        try:
+            from tools.research import funnel_report as fr
+            hints, _ = fr.discovery_hints(d.discovery, since=0, until=d.f.at + 1000)
+            rows = sql(d.discovery, 'SELECT seq,source_id,received_at,slot,payload,payload_hash FROM raw_events ORDER BY seq')
+            migration = next(r for r in rows if r[0] == hints[0]['seq'])
+            _REAL_FRAMES.extend([rows, migration, hints[0]])
+        finally:
+            d.doCleanups()
+    return _REAL_FRAMES
+
+
+class DiscoveryFixture(Fixture):
+    """A discovery store with N junk frames (their stored hash is wrong, so they are counted and never used) and real frames."""
+
+    def make_discovery(self, name='discovery.sqlite', junk=0, real=(), junk_start=1_000.0):
+        path = self.dir / name
+        with closing(sqlite3.connect(path)) as c:
+            c.execute('CREATE TABLE raw_events(seq INTEGER PRIMARY KEY,source_id TEXT UNIQUE NOT NULL,received_at REAL NOT NULL,slot INTEGER NOT NULL,'
+                      'payload TEXT NOT NULL,payload_hash TEXT NOT NULL)')
+            c.executemany('INSERT INTO raw_events(source_id,received_at,slot,payload,payload_hash) VALUES(?,?,?,?,?)',
+                          (('%s-junk-%d' % (name, i), junk_start + i, 5, '{"junk":%d}' % i, 'x') for i in range(junk)))
+            c.commit()
+        self.add_real(path, real)
+        return path
+
+    def add_real(self, path, received_list):
+        _, row, _ = real_frames()
+        with closing(sqlite3.connect(path)) as c:
+            for i, received in enumerate(received_list):
+                c.execute('INSERT INTO raw_events(source_id,received_at,slot,payload,payload_hash) VALUES(?,?,?,?,?)',
+                          ('%s-real-%d-%s' % (path.name, i, received), received, row[3], row[4], row[5]))
+            c.commit()
+
+    def add_junk(self, path, n, start):
+        with closing(sqlite3.connect(path)) as c:
+            c.executemany('INSERT INTO raw_events(source_id,received_at,slot,payload,payload_hash) VALUES(?,?,?,?,?)',
+                          (('%s-more-%d-%d' % (path.name, start, i), float(start + i), 5, '{"more":%d}' % i, 'x') for i in range(n)))
+            c.commit()
+
+    def migrated(self):
+        mint = real_frames()[2]['mint']
+        return sorted(r['as_of'] for (m, _), r in self.rows().items() if m == mint and 'migrated_at' in r['features'])
+
+
+class DiscoveryCursorTests(DiscoveryFixture):
+    def test_the_newest_hint_is_ingested_beyond_fifty_thousand_frames(self):
+        d = self.make_discovery(junk=60_005, real=[T + 50.0])
+        report = self.ingest(discovery_db=d, ledger_db=None)
+        self.assertEqual(self.migrated(), [T + 50.0], report['skipped'])
+        self.assertEqual(report['rows_read'], {'discovery.raw_events': 60_006})
+        self.assertNotIn('DISCOVERY_TRUNCATED', report['skipped'])
+        self.assertEqual(ft.read_cursors(self.store)['discovery.raw_events'][1], 60_006)
+
+    def test_a_second_run_reads_only_the_new_frames(self):
+        d = self.make_discovery(junk=300, real=[T + 50.0])
+        first = self.ingest(discovery_db=d, ledger_db=None)
+        self.assertEqual(first['rows_read'], {'discovery.raw_events': 301})
+        self.assertEqual(first['skipped']['DISCOVERY_FRAME_ALTERED'], 300)          # the junk frames are counted, never used
+        again = self.ingest(discovery_db=d, ledger_db=None, now=NOW + 1)
+        self.assertNotIn('discovery.raw_events', again['rows_read'])           # nothing new: nothing read
+        self.assertEqual((again['inserted'], again['duplicate']), (0, 0))
+        self.add_junk(d, 3, 5_000)
+        self.add_real(d, [T + 80.0])
+        step = self.ingest(discovery_db=d, ledger_db=None, now=NOW + 2)
+        self.assertEqual(step['rows_read'], {'discovery.raw_events': 4})
+        self.assertEqual(self.migrated(), [T + 50.0, T + 80.0])
+
+    def test_a_bound_is_recorded_and_the_next_run_continues_from_the_cursor(self):
+        d = self.make_discovery(junk=2500, real=[T + 50.0])
+        first = self.ingest(discovery_db=d, ledger_db=None, page_rows=1000, max_pages=2)
+        self.assertEqual(first['skipped']['DISCOVERY_TRUNCATED'], 1)
+        self.assertEqual(first['page_bound_hit'], {'discovery.raw_events': 1})
+        self.assertEqual(self.migrated(), [])                                   # the hint is behind the bound, not lost
+        second = self.ingest(discovery_db=d, ledger_db=None, page_rows=1000, max_pages=2, now=NOW + 1)
+        self.assertEqual(second['rows_read'], {'discovery.raw_events': 501})
+        self.assertNotIn('DISCOVERY_TRUNCATED', second['skipped'])
+        self.assertEqual(self.migrated(), [T + 50.0])
+
+    def test_a_source_drained_exactly_by_the_last_page_is_not_a_bound(self):
+        exact = self.make_discovery('exact.sqlite', junk=3, real=[T + 50.0])      # 4 frames = 2 pages x 2 rows
+        report = self.ingest(discovery_db=exact, ledger_db=None, page_rows=2, max_pages=2)
+        self.assertEqual((report['page_bound_hit'], 'DISCOVERY_TRUNCATED' in report['skipped']), ({}, False), report['skipped'])
+        self.assertEqual(self.migrated(), [T + 50.0])
+        more = self.make_discovery('more.sqlite', junk=4, real=[T + 60.0])        # 5 frames: one frame is left behind
+        other = self.fresh_store('other.sqlite')
+        hit = ft.ingest(other, discovery_db=more, now=NOW, page_rows=2, max_pages=2)
+        self.assertEqual((hit['page_bound_hit'], hit['skipped']['DISCOVERY_TRUNCATED']), ({'discovery.raw_events': 1}, 1))
+
+    def test_a_replaced_discovery_store_restarts_from_zero(self):
+        d = self.make_discovery(junk=5, real=[T + 50.0])
+        self.ingest(discovery_db=d, ledger_db=None)
+        d.unlink()
+        d = self.make_discovery(junk=4, real=[T + 90.0], junk_start=9_000.0)     # a different first frame
+        again = self.ingest(discovery_db=d, ledger_db=None, now=NOW + 1)
+        self.assertEqual(again['skipped']['CURSOR_RESET_SOURCE_CHANGED'], 1)
+        self.assertEqual(again['rows_read'], {'discovery.raw_events': 5})
+        self.assertEqual(self.migrated(), [T + 50.0, T + 90.0])                  # the old row is kept
+
+    def test_a_cursor_past_the_end_of_a_shrunk_store_restarts(self):
+        d = self.make_discovery(junk=10, real=[T + 50.0])
+        self.ingest(discovery_db=d, ledger_db=None)
+        with closing(sqlite3.connect(d)) as c:
+            c.execute('DROP TRIGGER IF EXISTS raw_identity')
+            c.execute('DELETE FROM raw_events WHERE seq>5')
+            c.commit()
+        again = self.ingest(discovery_db=d, ledger_db=None, now=NOW + 1)
+        self.assertEqual(again['skipped']['CURSOR_RESET_SOURCE_CHANGED'], 1)
+
+    def test_a_windowed_run_reads_its_window_records_truncation_and_leaves_the_cursor_alone(self):
+        d = self.make_discovery(junk=10, real=[T + 50.0])
+        with unittest.mock.patch.object(ft, 'DISCOVERY_WINDOW_LIMIT', 3):
+            report = self.ingest(discovery_db=d, ledger_db=None, since=0, until=T + 1_000_000)
+        self.assertEqual(report['skipped']['DISCOVERY_TRUNCATED'], 1)
+        self.assertEqual((report['rows_read'], ft.read_cursors(self.store)), ({}, {}))
+
+    def test_the_cursor_is_committed_with_the_rows_and_a_failed_write_re_reads_the_frames(self):
+        d = self.make_discovery(junk=5, real=[T + 50.0])
+        real = ft.Writer.append
+        calls = []
+
+        def failing(writer, records, cursors=()):
+            calls.append(len(records))
+            raise OSError('disk full')
+        with unittest.mock.patch.object(ft.Writer, 'append', failing):
+            with self.assertRaises(OSError):
+                self.ingest(discovery_db=d, ledger_db=None)
+        self.assertEqual((ft.read_cursors(self.store), self.migrated()), ({}, []))
+        again = self.ingest(discovery_db=d, ledger_db=None, now=NOW + 1)
+        self.assertEqual(again['rows_read'], {'discovery.raw_events': 6})
+        self.assertEqual(self.migrated(), [T + 50.0])
+
+    def test_frames_are_taken_in_seq_order_even_when_received_at_goes_backwards(self):
+        d = self.make_discovery(junk=5, real=[T + 50.0])
+        self.ingest(discovery_db=d, ledger_db=None)
+        self.add_real(d, [T + 10.0])                    # a later frame stamped EARLIER than everything read (a clock step)
+        self.ingest(discovery_db=d, ledger_db=None, now=NOW + 1)
+        self.assertEqual(self.migrated(), [T + 10.0, T + 50.0])
+        # ...and inside ONE page: a page is the next rows by seq, whatever their stamps (ordering by time would drop one at the page edge)
+        self.add_real(d, [T + 300.0, T + 100.0, T + 200.0])
+        self.ingest(discovery_db=d, ledger_db=None, now=NOW + 2, page_rows=2)
+        self.assertEqual(self.migrated(), [T + 10.0, T + 50.0, T + 100.0, T + 200.0, T + 300.0])
+
+    def test_per_frame_decoding_matches_funnel_reports_on_every_kind_of_frame(self):
+        from tools.research import funnel_report as fr
+        rows, migration, _ = real_frames()
+        d = self.make_discovery(junk=2, real=[T + 50.0])
+        tampered = (migration[4], '0' * 64)
+        with closing(sqlite3.connect(d)) as c:
+            for source, payload, h in (('tamper', *tampered), ('nonjson', 'not json', 'x'), ('other', '{"jsonrpc":"2.0"}', 'x')):
+                c.execute('INSERT INTO raw_events(source_id,received_at,slot,payload,payload_hash) VALUES(?,?,?,?,?)', (source, T + 70.0, 9, payload, h))
+            c.commit()
+        stats = {'frames': 0, 'altered': 0, 'undecodable': 0, 'not_migration': 0, 'ambiguous': 0}
+        hints = []
+        for seq, _, received, slot, payload, h in sql(d, 'SELECT seq,source_id,received_at,slot,payload,payload_hash FROM raw_events ORDER BY seq'):
+            hint = ft._frame_hint(seq, received, slot, h, payload, stats)
+            if hint:
+                hints.append(hint)
+        expected, expected_stats = fr.discovery_hints(d, since=0, until=T + 1_000_000)
+        self.assertEqual((hints, stats), (expected, {k: v for k, v in expected_stats.items() if k != 'truncated'}))
+        self.assertEqual(len(hints), 1)
+        self.assertGreaterEqual(stats['altered'], 3)
+
+
+class JournalCursorTests(Fixture):
+    def make_journal(self):
+        journal = self.dir / 'dispatch.sqlite'
+        for ddl in dispatcher.SCHEMAS.values():
+            sql(journal, ddl)
+        return journal
+
+    def dispatch(self, journal, mint, *, at, result=None, result_at=None, result_text=None):
+        sql(journal, 'INSERT INTO intents VALUES(?,?,?,?,?)', ('id-' + mint, mint, 'S-' + mint, canonical({'version': 1, 'at': at}), 'h'))
+        if result is not None or result_text is not None:
+            self.result_for(journal, mint, result=result, result_at=result_at, result_text=result_text)
+
+    def result_for(self, journal, mint, *, result=None, result_at=None, result_text=None):
+        text = result_text if result_text is not None else canonical({'version': 1, 'at': result_at, 'scan_id': 'scan-' + mint, 'result': result})
+        sql(journal, 'INSERT INTO results VALUES(?,?,?)', ('id-' + mint, text, 'h'))
+
+    BODY = {'kind': 'paper_cycle_v1', 'status': 'COMPLETE', 'attempted_requests': 9,
+            'outcomes': [{'type': 'reject', 'reason': 'COST_BUDGET', 'reasons': ['COST_BUDGET'], 'mint': 'D'}]}
+
+    def test_a_second_run_reads_only_new_rows_and_the_result_of_an_old_intent_is_offered_alone(self):
+        journal = self.make_journal()
+        self.dispatch(journal, 'D', at=T + 400, result=self.BODY, result_at=T + 420)
+        self.dispatch(journal, 'E', at=T + 500)                                    # dispatched, no result yet
+        first = self.ingest(journal_db=journal, ledger_db=None)
+        self.assertEqual(first['rows_read'], {'journal.intents': 2, 'journal.results': 1})
+        quiet = self.ingest(journal_db=journal, ledger_db=None, now=NOW + 1)
+        self.assertEqual((quiet['rows_read'], quiet['inserted'], quiet['duplicate']), ({}, 0, 0))
+        self.result_for(journal, 'E', result={**self.BODY, 'outcomes': [{**self.BODY['outcomes'][0], 'mint': 'E'}]}, result_at=T + 520)
+        step = self.ingest(journal_db=journal, ledger_db=None, now=NOW + 2)
+        self.assertEqual(step['rows_read'], {'journal.results': 1})
+        self.assertEqual((step['inserted'], step['duplicate'], step['conflict']), (1, 0, 0))   # the intent is not offered again
+        self.assertEqual(self.row('E', T + 520)['features']['dispatch_death_reason'], 'ENGINE:COST_BUDGET')
+        self.dispatch(journal, 'F', at=T + 600, result=self.BODY, result_at=T + 640)
+        last = self.ingest(journal_db=journal, ledger_db=None, now=NOW + 3)
+        self.assertEqual(last['rows_read'], {'journal.intents': 1, 'journal.results': 1})
+
+    def test_incremental_journal_rows_equal_a_full_read(self):
+        journal = self.make_journal()
+        self.dispatch(journal, 'D', at=T + 400, result=self.BODY, result_at=T + 420)
+        self.dispatch(journal, 'E', at=T + 500)
+        self.ingest(journal_db=journal, ledger_db=None)
+        self.result_for(journal, 'E', result=self.BODY, result_at=T + 520)
+        self.dispatch(journal, 'F', at=T + 600, result=self.BODY, result_at=T + 640)
+        self.ingest(journal_db=journal, ledger_db=None, now=NOW + 1)
+        other = self.fresh_store('full.sqlite')
+        ft.ingest(other, journal_db=journal, now=NOW)
+        self.assertEqual(self.hashes(), self.hashes(other))
+        self.assertEqual(len(self.hashes()), 6)                  # D, E, F: dispatched + result each
+
+    def test_an_unreadable_result_skips_the_dispatch_as_the_full_read_does(self):
+        journal = self.make_journal()
+        self.dispatch(journal, 'U', at=T + 400, result_text='{broken')
+        self.dispatch(journal, 'V', at=T + 410)
+        report = self.ingest(journal_db=journal, ledger_db=None)
+        self.assertEqual(report['skipped']['JOURNAL_ROW_UNREADABLE'], 1)
+        self.assertEqual(sorted(m for m, _ in self.rows()), ['V'])
+
+    def test_a_replaced_journal_restarts_and_a_windowed_run_reads_it_whole_without_cursors(self):
+        journal = self.make_journal()
+        self.dispatch(journal, 'D', at=T + 400)
+        self.ingest(journal_db=journal, ledger_db=None)
+        journal.unlink()
+        journal = self.make_journal()
+        self.dispatch(journal, 'Z', at=T + 450)
+        again = self.ingest(journal_db=journal, ledger_db=None, now=NOW + 1)
+        self.assertEqual(again['skipped']['CURSOR_RESET_SOURCE_CHANGED'], 1)        # the intents cursor (the old journal had no results)
+        before = ft.read_cursors(self.store)
+        windowed = self.ingest(journal_db=journal, ledger_db=None, now=NOW + 2, since=0, until=T + 10_000)
+        self.assertEqual((windowed['rows_read'], ft.read_cursors(self.store)), ({}, before))
+        self.assertEqual(windowed['duplicate'], 1)                                   # it did read the journal whole
+
+    def test_a_bound_continues_from_the_journal_cursor(self):
+        journal = self.make_journal()
+        for i in range(5):
+            self.dispatch(journal, 'M%d' % i, at=T + 400 + i)
+        first = self.ingest(journal_db=journal, ledger_db=None, page_rows=2, max_pages=1)
+        self.assertEqual(first['page_bound_hit'], {'journal.intents': 1})
+        self.assertEqual(first['rows_read']['journal.intents'], 2)
+        for step in range(2):
+            self.ingest(journal_db=journal, ledger_db=None, page_rows=2, max_pages=1, now=NOW + 1 + step)
+        self.assertEqual(sorted(m for m, _ in self.rows()), ['M%d' % i for i in range(5)])
+
+
+class ExactDrainTests(Fixture):
+    """A last full page that drains its source exactly is not a page bound (T43 item 2)."""
+
+    def test_ledger_events_drained_exactly(self):
+        report = self.ingest(page_rows=1, max_pages=2)                              # exactly two events
+        self.assertEqual((report['page_bound_hit'], 'PAGE_BOUND_HIT:ledger.events' in report['skipped']), ({}, False), report['skipped'])
+        other = self.fresh_store('one-page.sqlite')
+        report = ft.ingest(other, ledger_db=self.ledger, now=NOW, page_rows=2, max_pages=1)
+        self.assertEqual(report['page_bound_hit'], {})
+        report = self.ingest(page_rows=1, max_pages=1, now=NOW + 1)                  # one event is left: that IS a bound
+        self.assertEqual(report['page_bound_hit'], {})                               # ...but the first store already holds both
+        third = self.fresh_store('bound.sqlite')
+        report = ft.ingest(third, ledger_db=self.ledger, now=NOW, page_rows=1, max_pages=1)
+        self.assertEqual(report['page_bound_hit'], {'ledger.events': 1})
+
+    def test_counterfactual_and_decisions_drained_exactly(self):
+        store = self.dir / 'cf.sqlite'
+        cf.init(store, now=T)
+        for mint in ('C1', 'C2'):
+            cf.add_candidate(store, mint=mint, pool='P' + mint, signature='S' + mint, slot=1, migrated_at=T, seq=1 if mint == 'C1' else 2, now=T)
+            sql(store, "INSERT INTO samples(mint,horizon,due_at,sampled_at,slot,base_raw,quote_raw,price,status) VALUES(?,300,?,?,5,'2000','80000000000','1','OK')",
+                (mint, T + 300, T + 301))
+        decisions = self.dir / 'decisions.sqlite'
+        sql(decisions, 'CREATE TABLE decisions(scan_id TEXT PRIMARY KEY,source_hash TEXT NOT NULL,source_payload TEXT NOT NULL,decision TEXT NOT NULL)')
+        for i in range(2):
+            sql(decisions, 'INSERT INTO decisions VALUES(?,?,?,?)', ('s%d' % i, 'h', json.dumps({'mint': 'A'}), json.dumps({'ts': T + 5 + i, 'action': 'BUY'})))
+        exact = self.ingest(ledger_db=None, counterfactual_store=store, decisions_db=decisions, page_rows=2, max_pages=1)
+        self.assertEqual((exact['page_bound_hit'], exact['pages']), ({}, {'counterfactual.samples': 1, 'decisions.decisions': 1}), exact['skipped'])
+        other = self.fresh_store('bound.sqlite')
+        hit = ft.ingest(other, counterfactual_store=store, decisions_db=decisions, now=NOW, page_rows=1, max_pages=1)
+        self.assertEqual(hit['page_bound_hit'], {'counterfactual.samples': 1, 'decisions.decisions': 1})
 
 
 class UnitTemplateTests(unittest.TestCase):

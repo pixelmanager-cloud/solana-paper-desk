@@ -49,6 +49,7 @@ from tools.research import funnel_report as fr
 LABEL = 'PAPER_ONLY_EXECUTION_UNVERIFIED_RESEARCH_FEATURES'
 FEATURE_SET_VERSION = 'candidate-features-v1'
 STORE_VERSION = 1
+DISCOVERY_WINDOW_LIMIT = fr.MAX_FRAMES      # a windowed (--since/--until) run reads at most this many frames; hitting it is recorded
 PAGE_ROWS, MAX_PAGES = 5000, 1000     # rows per bounded page; pages per source per run (a run that hits it resumes from its cursor next time)
 MAX_FEATURE_BYTES = 16384
 
@@ -350,8 +351,9 @@ class Paging:
     def __init__(self, writer, col, cursors, *, page_rows=PAGE_ROWS, max_pages=MAX_PAGES, use_cursor=True):
         self.writer, self.col, self.cursors = writer, col, cursors
         self.page_rows, self.max_pages, self.use_cursor = int(page_rows), int(max_pages), use_cursor
-        self.pages, self.bound_hit = {}, {}
+        self.pages, self.bound_hit, self.rows_read = {}, {}, {}
         self.carry = {}      # bounded small-source records (discovery frames, journal) merged into the page they share a key with
+        self.carry_cursors = {}   # their cursors: committed together with the leftovers in flush_carry, never before the rows are stored
 
     def start(self, source, anchor, last):
         saved = self.cursors.get(source) if self.use_cursor else None
@@ -370,6 +372,17 @@ class Paging:
             self._merge(records[key], self.carry.pop(key))
         self.writer.append(records, cursors if self.use_cursor else ())
 
+    def counted_page(self, source, rows):
+        """A page of a small source read into ``carry``: it counts against the page bound and its rows are reported, but nothing is
+        committed until ``flush_carry`` (its rows may still be merged into a ledger page)."""
+        self.pages[source] = self.pages.get(source, 0) + 1
+        self.rows_read[source] = self.rows_read.get(source, 0) + rows
+
+    def carry_cursor(self, *cursors):
+        if self.use_cursor:
+            for cursor in cursors:
+                self.carry_cursors[cursor[0]] = cursor
+
     def _merge(self, into, other):
         for name, value in other['features'].items():
             if name in into['features']:
@@ -381,10 +394,15 @@ class Paging:
 
     def flush_carry(self):
         carry, self.carry = self.carry, {}
-        self.writer.append(carry)
+        cursors, self.carry_cursors = list(self.carry_cursors.values()), {}
+        self.writer.append(carry, cursors)
 
-    def exhausted(self, source):
+    def exhausted(self, source, more=None):
+        """True when no further page may be read. ``more`` (a callable) says whether rows remain: the page bound is only HIT when
+        it stops a run that still had rows left; a last full page that drained the source exactly leaves nothing behind."""
         if self.pages.get(source, 0) >= self.max_pages:
+            if more is not None and not more():
+                return True
             self.bound_hit[source] = self.bound_hit.get(source, 0) + 1
             self.col.skip('PAGE_BOUND_HIT:' + source)
             return True
@@ -415,7 +433,8 @@ def extract_ledger(col, ledger_db, *, since=None, until=None, paging):
             where += ' AND ts>=?'; args.append(since)
         if until is not None:
             where += ' AND ts<?'; args.append(until)
-        while not paging.exhausted('ledger.events'):
+        more = lambda: c.execute('SELECT 1 FROM events WHERE seq>?' + where + ' LIMIT 1', (position, *args)).fetchone() is not None
+        while not paging.exhausted('ledger.events', more):
             page = c.execute('SELECT seq,event_id,ts,payload,payload_hash FROM events WHERE seq>?' + where + ' ORDER BY seq LIMIT ?',
                              (position, *args, paging.page_rows)).fetchall()
             if not page:
@@ -549,25 +568,137 @@ def _event_outcomes(col, mint, event_id, ts, payloads):
         col.add(mint, ts, 'entered', True, source='ledger.outcomes', ref=event_id, role='decision')
 
 
-def extract_discovery(col, *, discovery_db=None, hints=None, since=0, until=None):
+def _add_hint(col, h):
+    ref = f"discovery.raw_events#{h['seq']}"
+    col.add(h['mint'], h['migrated_at'], 'migrated_at', h['migrated_at'], source='discovery.raw_events', ref=ref)
+    col.add(h['mint'], h['migrated_at'], 'migration_slot', h['slot'], source='discovery.raw_events', ref=ref)
+
+
+def _count_frame_stats(col, stats):
+    for key in ('altered', 'undecodable', 'ambiguous'):
+        for _ in range(stats[key]):
+            col.skip('DISCOVERY_FRAME_' + key.upper())
+
+
+def _frame_hint(seq, received, slot, stored_hash, payload, stats):
+    """ONE discovery frame -> a migration hint or None, by the same decode and selection rule as ``funnel_report.discovery_hints``
+    (that function reads by a received_at window; the cursor needs a seq page, so the per-frame step is repeated here and a parity
+    test pins the two together on every kind of frame)."""
+    from desk.decode import decode
+    from desk.model import digest
+    from tools import paper_entry_dispatcher as dispatcher
+    from desk import migration_slot_intake as migration
+    stats['frames'] += 1
+    try:
+        raw = json.loads(payload, parse_constant=lambda _: (_ for _ in ()).throw(ValueError('Nonfinite')))
+        if digest(raw) != stored_hash or type(received) not in (int, float) or not math.isfinite(received):
+            stats['altered'] += 1
+            return None
+        decoded = decode(raw)
+        if decoded['status'] != 'OBSERVED':
+            stats['not_migration'] += 1
+            return None
+        found = [o for o in decoded['program_observations']
+                 if o.get('name') in ('migrate', 'migrate_v2') and o.get('status') == 'IDENTIFIED'
+                 and dispatcher._migration_event_hint(raw, decoded, o)]
+    except (ValueError, KeyError, TypeError, IndexError, AttributeError, OverflowError):
+        stats['undecodable'] += 1
+        return None
+    if not found:
+        stats['not_migration'] += 1
+        return None
+    if len(found) > 1:
+        stats['ambiguous'] += 1
+        return None
+    hint = {'seq': seq, 'mint': found[0]['mint'], 'pool': found[0]['pool'],
+            'signature': decoded['signature'], 'slot': slot, 'migrated_at': float(received)}
+    try:        # the dispatcher's own selection filter (imported, not copied)
+        migration._hints('selection-only', hint['mint'], hint['pool'], hint['signature'], slot, dispatcher.PROVENANCE)
+    except migration.IntakeBlocked as error:
+        hint['unselectable'] = (str(error) or 'UNSUPPORTED_HINT')[:96]
+    return hint
+
+
+DISCOVERY_SOURCE = 'discovery.raw_events'
+
+
+def _extract_discovery_paged(col, discovery_db, paging):
+    """Seq-ordered, resumable read of the discovery frames, the same cursor + anchor rule as the other sources. Hints go to the
+    carry (they may merge into the ledger page they share a key with); the cursor is committed WITH the leftovers in
+    ``flush_carry``, so a crash before that re-reads the frames (merging is idempotent) instead of skipping them."""
+    stats = {'frames': 0, 'altered': 0, 'undecodable': 0, 'not_migration': 0, 'ambiguous': 0}
+    with closing(fr.connect_ro(discovery_db)) as d:
+        d.execute('BEGIN')
+        if not fr._has_table(d, 'raw_events'):
+            raise FeatureError('DISCOVERY_TABLE_MISSING')
+        first = d.execute('SELECT seq,payload_hash FROM raw_events ORDER BY seq LIMIT 1').fetchone()
+        anchor = '%s/%s' % first if first else ''
+        last = d.execute('SELECT COALESCE(MAX(seq),0) FROM raw_events').fetchone()[0]
+        start = position = paging.start(DISCOVERY_SOURCE, anchor, last)
+        more = lambda: d.execute('SELECT 1 FROM raw_events WHERE seq>? LIMIT 1', (position,)).fetchone() is not None
+        while not paging.exhausted(DISCOVERY_SOURCE, more):
+            rows = 0
+            for seq, received, slot, stored_hash, payload in d.execute(
+                    'SELECT seq,received_at,slot,payload_hash,payload FROM raw_events WHERE seq>? ORDER BY seq LIMIT ?',
+                    (position, paging.page_rows)):
+                rows += 1
+                position = seq
+                hint = _frame_hint(seq, received, slot, stored_hash, payload, stats)
+                if hint is not None:
+                    _add_hint(col, hint)
+            if not rows:
+                break
+            paging.counted_page(DISCOVERY_SOURCE, rows)
+            if rows < paging.page_rows:
+                break
+    _count_frame_stats(col, stats)
+    if paging.bound_hit.get(DISCOVERY_SOURCE):
+        col.skip('DISCOVERY_TRUNCATED')        # frames remain behind the bound; the next run continues from the cursor
+    if position != start:
+        paging.carry_cursor((DISCOVERY_SOURCE, anchor, position))
+
+
+def extract_discovery(col, *, discovery_db=None, hints=None, since=0, until=None, paging=None):
+    """Migration hints. With ``paging`` (a normal run) the frames are read in seq pages from a persisted cursor; a windowed run
+    (``paging`` is None) reads one received_at window and records DISCOVERY_TRUNCATED if the window had more frames than it reads."""
     if hints is None:
-        hints, stats = fr.discovery_hints(discovery_db, since=since, until=until if until is not None else col.now + 1)
-        for key in ('altered', 'undecodable', 'ambiguous'):
-            for _ in range(stats[key]):
-                col.skip('DISCOVERY_FRAME_' + key.upper())
+        if paging is not None:
+            return _extract_discovery_paged(col, discovery_db, paging)
+        hints, stats = fr.discovery_hints(discovery_db, since=since, until=until if until is not None else col.now + 1,
+                                          limit=DISCOVERY_WINDOW_LIMIT)
+        _count_frame_stats(col, stats)
+        if stats['truncated']:
+            col.skip('DISCOVERY_TRUNCATED')
     for h in hints:
-        ref = f"discovery.raw_events#{h['seq']}"
-        col.add(h['mint'], h['migrated_at'], 'migrated_at', h['migrated_at'], source='discovery.raw_events', ref=ref)
-        col.add(h['mint'], h['migrated_at'], 'migration_slot', h['slot'], source='discovery.raw_events', ref=ref)
+        _add_hint(col, h)
 
 
-def extract_journal(col, journal_db):
-    journal, _ = fr.read_journal(journal_db)
+def _journal_entry(intent_payload, result_payload):
+    """The row ``funnel_report.read_journal`` builds for one dispatch (same fields, same unreadable rules)."""
+    try:
+        at = float(json.loads(intent_payload)['at'])
+    except (ValueError, KeyError, TypeError):
+        return {'intent_at': None, 'result': None, 'result_at': None, 'unreadable': True}
+    res, unreadable = None, False
+    if result_payload is not None:
+        try:
+            res = json.loads(result_payload)
+        except ValueError:
+            unreadable = True
+    body = res.get('result') if isinstance(res, dict) else None
+    return {'intent_at': at, 'scan_id': res.get('scan_id') if isinstance(res, dict) and isinstance(res.get('scan_id'), str) else None,
+            'result': body if isinstance(body, dict) else None,
+            'result_at': float(res['at']) if isinstance(res, dict) and isinstance(res.get('at'), (int, float)) else None,
+            'unreadable': unreadable}
+
+
+def _journal_features(col, journal, *, only_result=frozenset()):
     for mint, row in journal.items():
         if row.get('unreadable') or row.get('intent_at') is None:
             col.skip('JOURNAL_ROW_UNREADABLE')
             continue
-        col.add(mint, row['intent_at'], 'dispatched', True, source='dispatch.intents', ref=mint, role='decision')
+        if mint not in only_result:        # an intent that an earlier run stored is not offered again when only its result is new
+            col.add(mint, row['intent_at'], 'dispatched', True, source='dispatch.intents', ref=mint, role='decision')
         body, result_at = row.get('result'), row.get('result_at')
         if body is None or result_at is None:
             continue
@@ -579,6 +710,67 @@ def extract_journal(col, journal_db):
             col.add(mint, result_at, 'requests_charged', requests, source='dispatch.results', ref=ref, role='decision')
 
 
+JOURNAL_INTENTS, JOURNAL_RESULTS = 'journal.intents', 'journal.results'
+
+
+def _new_ids(j, table, source, position, paging):
+    """(rowid, id) of the rows after ``position``, in bounded pages; returns the new position."""
+    out = {}
+    more = lambda: j.execute(f'SELECT 1 FROM {table} WHERE rowid>? LIMIT 1', (position,)).fetchone() is not None
+    while not paging.exhausted(source, more):
+        rows = 0
+        for rowid, ident in j.execute(f'SELECT rowid,id FROM {table} WHERE rowid>? ORDER BY rowid LIMIT ?', (position, paging.page_rows)):
+            rows += 1
+            position = rowid
+            out[ident] = rowid
+        if not rows:
+            break
+        paging.counted_page(source, rows)
+        if rows < paging.page_rows:
+            break
+    return out, position
+
+
+def _extract_journal_paged(col, journal_db, paging):
+    """Only the dispatches that are new since the cursors: intents and results have their own rowid cursors, because a result is
+    written after its intent. A result that arrives for an intent stored earlier is offered alone (its intent is not re-offered)."""
+    with closing(fr.connect_ro(journal_db)) as j:
+        j.execute('BEGIN')
+        if not (fr._has_table(j, 'intents') and fr._has_table(j, 'results')):
+            raise fr.FunnelError('JOURNAL_TABLES_MISSING')
+        anchors, positions = {}, {}
+        for source, table in ((JOURNAL_INTENTS, 'intents'), (JOURNAL_RESULTS, 'results')):
+            first = j.execute(f'SELECT id FROM {table} ORDER BY rowid LIMIT 1').fetchone()
+            anchors[source] = first[0] if first else ''
+            positions[source] = paging.start(source, anchors[source], j.execute(f'SELECT COALESCE(MAX(rowid),0) FROM {table}').fetchone()[0])
+        start = dict(positions)
+        new_intents, positions[JOURNAL_INTENTS] = _new_ids(j, 'intents', JOURNAL_INTENTS, positions[JOURNAL_INTENTS], paging)
+        new_results, positions[JOURNAL_RESULTS] = _new_ids(j, 'results', JOURNAL_RESULTS, positions[JOURNAL_RESULTS], paging)
+        journal, only_result = {}, set()
+        for ident in sorted({*new_intents, *new_results}, key=lambda i: (new_intents.get(i, 0), new_results.get(i, 0), i)):
+            intent = j.execute('SELECT mint,payload FROM intents WHERE id=?', (ident,)).fetchone()
+            if intent is None:
+                col.skip('JOURNAL_RESULT_WITHOUT_INTENT')
+                continue
+            result = j.execute('SELECT payload FROM results WHERE id=?', (ident,)).fetchone()
+            journal[intent[0]] = _journal_entry(intent[1], result[0] if result else None)
+            if ident not in new_intents:
+                only_result.add(intent[0])
+    _journal_features(col, journal, only_result=only_result)
+    for source in (JOURNAL_INTENTS, JOURNAL_RESULTS):
+        if positions[source] != start[source]:
+            paging.carry_cursor((source, anchors[source], positions[source]))
+
+
+def extract_journal(col, journal_db, *, paging=None):
+    """Dispatch intents and results. With ``paging`` (a normal run) only rows after the persisted cursors are read; a windowed run
+    reads the journal whole, as before (it neither reads nor writes cursors)."""
+    if paging is not None:
+        return _extract_journal_paged(col, journal_db, paging)
+    journal, _ = fr.read_journal(journal_db)
+    _journal_features(col, journal)
+
+
 def extract_counterfactual(col, store, *, paging):
     with closing(fr.connect_ro(store)) as c:
         c.execute('BEGIN')
@@ -587,7 +779,8 @@ def extract_counterfactual(col, store, *, paging):
         first = c.execute('SELECT mint,horizon FROM samples ORDER BY rowid LIMIT 1').fetchone()
         anchor = '%s/%s' % first if first else ''
         position = paging.start('counterfactual.samples', anchor, c.execute('SELECT COALESCE(MAX(rowid),0) FROM samples').fetchone()[0])
-        while not paging.exhausted('counterfactual.samples'):
+        more = lambda: c.execute('SELECT 1 FROM samples WHERE rowid>? LIMIT 1', (position,)).fetchone() is not None
+        while not paging.exhausted('counterfactual.samples', more):
             page = c.execute("SELECT rowid,mint,horizon,sampled_at,base_raw,quote_raw,status FROM samples WHERE rowid>? ORDER BY rowid LIMIT ?",
                              (position, paging.page_rows)).fetchall()
             if not page:
@@ -635,7 +828,8 @@ def extract_decisions(col, decisions_db, research_db=None, *, paging):
             first = x.execute('SELECT scan_id FROM decisions ORDER BY rowid LIMIT 1').fetchone()
             anchor = first[0] if first else ''
             position = paging.start('decisions.decisions', anchor, x.execute('SELECT COALESCE(MAX(rowid),0) FROM decisions').fetchone()[0])
-            while not paging.exhausted('decisions.decisions'):
+            more = lambda: x.execute('SELECT 1 FROM decisions WHERE rowid>? LIMIT 1', (position,)).fetchone() is not None
+            while not paging.exhausted('decisions.decisions', more):
                 page = x.execute('SELECT rowid,scan_id,decision,source_payload FROM decisions WHERE rowid>? ORDER BY rowid LIMIT ?',
                                  (position, paging.page_rows)).fetchall()
                 if not page:
@@ -699,12 +893,14 @@ def ingest(store, *, ledger_db=None, discovery_db=None, hints=None, journal_db=N
         paging = Paging(writer, col, cursors, page_rows=page_rows, max_pages=max_pages)
         # the bounded small sources first: held aside and merged into the ledger page that shares a (mint, as_of) key
         # (this is how a dispatch intent joins the market event it was made on); leftovers are stored after the ledger pages
+        # a windowed run (--since/--until) neither reads nor writes cursors: it reads its window whole, as before
+        small = None if (since is not None or until is not None) else paging
         if hints is not None:
             extract_discovery(col, hints=hints)
         else:
             _optional(col, sources, 'discovery', discovery_db,
-                      lambda: extract_discovery(col, discovery_db=discovery_db, since=since or 0, until=until))
-        _optional(col, sources, 'journal', journal_db, lambda: extract_journal(col, journal_db))
+                      lambda: extract_discovery(col, discovery_db=discovery_db, since=since or 0, until=until, paging=small))
+        _optional(col, sources, 'journal', journal_db, lambda: extract_journal(col, journal_db, paging=small))
         paging.carry, col.records = col.records, {}
         if ledger_db:
             extract_ledger(col, ledger_db, since=since, until=until, paging=paging)
@@ -717,7 +913,7 @@ def ingest(store, *, ledger_db=None, discovery_db=None, hints=None, journal_db=N
     finally:
         writer.close()
     return {'kind': 'features_ingest_v1', 'label': LABEL, 'paper_only': True, 'feature_set_version': FEATURE_SET_VERSION,
-            'now': now, **counts, 'pages': dict(sorted(paging.pages.items())), 'page_bound_hit': dict(sorted(paging.bound_hit.items())),
+            'now': now, **counts, 'pages': dict(sorted(paging.pages.items())), 'rows_read': dict(sorted(paging.rows_read.items())), 'page_bound_hit': dict(sorted(paging.bound_hit.items())),
             'sources_unavailable': dict(sorted(sources.items())), 'skipped': dict(sorted(col.skipped.items()))}
 
 
