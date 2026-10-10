@@ -6,6 +6,7 @@ rollback). A flag or argument that drifts between the RUNBOOK and the tools ther
 service user are adapted for the sandbox; no network, no credentials, no real systemd.
 """
 import contextlib
+import fnmatch
 import io
 import json
 import os
@@ -87,6 +88,19 @@ class E2E(FreshStartBase):
         for i in range(12):                                   # 12 production stores + pacing + discovery = 14
             with sqlite3.connect(self.old / f'old-store-{i}.sqlite') as c:
                 c.execute('CREATE TABLE t(x)'); c.execute('INSERT INTO t VALUES(?)', (i,))
+        # Live lock files of the SHARED inputs and of the archived stores (T32G item 1): seal must never touch them.
+        # discovery/continuous.py:61 opens `<db>.discovery.lock` read-write with O_CREAT; the pacing holders, paper-cycle,
+        # invocation, scheduler and dispatcher locks are owned by the service user and flock'ed by running processes.
+        self.locks = [self.old / n for n in (
+            'discovery/continuous.sqlite.discovery.lock', 'provider-pacing.sqlite.holder-helius.lock',
+            'provider-pacing.sqlite.holder-jupiter.lock', 'old-store-0.sqlite.paper-cycle.lock',
+            'old-store-1.sqlite.ownership-invocation.lock', 'paper-scheduler.lock', '.daily.lock')]
+        for lock in self.locks:
+            lock.write_bytes(b'')
+            lock.chmod(0o600)
+        self.lock_stats = {l: (os.lstat(l).st_mode, os.lstat(l).st_uid, os.lstat(l).st_gid, os.lstat(l).st_mtime_ns) for l in self.locks}
+        patcher = mock.patch.object(cutover, 'ROOT_UID', -1)       # the suite may run as uid 0; seal's "root-only" rule is tested elsewhere
+        patcher.start(); self.addCleanup(patcher.stop)
         self.sha = 'abc1234'
         self.rel = self.rels / self.sha
         shutil.copytree(REPO / 'desk', self.rel / 'desk', ignore=shutil.ignore_patterns('__pycache__'))
@@ -99,9 +113,15 @@ class E2E(FreshStartBase):
         patcher = mock.patch.object(cutover.Ops, 'chown', side_effect=lambda path, owner, group: self.chowns.append((Path(path), owner, group)))
         patcher.start(); self.addCleanup(patcher.stop)
         self.systemd = FakeSystemd(self.unit_dir)
+        # Real VPS state (read-only inventory, 2026-10-11): two units are `failed`, most old units are `static`.
+        self.systemd.state['desk-paper-entry-dispatcher.service'] = 'failed'
+        self.systemd.state['desk-decisions.service'] = 'failed'
+        for unit in ('desk-recorder.service', 'desk-discovery.service', 'desk-paper-monitor.service'):
+            self.systemd.enabled[unit] = 'static'
         self.plan_hash = None
         self.last_cutover = None
         self.results = []
+        self.research_runs = []
         self.runuser = []
         self.shell_log = []
 
@@ -208,9 +228,9 @@ class E2E(FreshStartBase):
             argv += ['--no-systemd']
         if module == 'cutover':
             head = ['--journal', str(self.rootdir / 'cutover-journal.jsonl'), '--python', sys.executable]
-            sub = next(a for a in argv if a in ('stage', 'cutover', 'rollback', 'inventory', 'archive-dropins', 'seal-archive'))
+            sub = next(a for a in argv if a in ('stage', 'cutover', 'rollback', 'inventory', 'archive-dropins', 'seal-archive', 'unseal'))
             i = argv.index(sub)
-            tail = ['--unit-dir', str(self.unit_dir)] if sub != 'seal-archive' else []
+            tail = ['--unit-dir', str(self.unit_dir)] if sub not in ('seal-archive', 'unseal') else []
             if sub == 'archive-dropins':
                 tail += ['--archive-root', str(self.vb)]
             if sub == 'cutover':
@@ -224,7 +244,13 @@ class E2E(FreshStartBase):
         self.shell_log.append(words)
         if cmd == 'systemctl' and words[1] == 'stop':
             for unit in words[2:]:
-                self.systemd.state[unit] = 'inactive'
+                if self.systemd.state.get(unit) != 'failed':             # stopping a failed unit leaves it `failed`
+                    self.systemd.state[unit] = 'inactive'
+        elif cmd == 'systemctl' and words[1] == 'reset-failed':
+            patterns = words[2:] or ['*']
+            for unit, state in list(self.systemd.state.items()):
+                if state == 'failed' and any(fnmatch.fnmatch(unit, pattern) for pattern in patterns):
+                    self.systemd.state[unit] = 'inactive'
         elif cmd == 'systemctl' and words[1] == 'enable':
             units = [w for w in words[2:] if not w.startswith('--')]
             for unit in units:
@@ -236,9 +262,9 @@ class E2E(FreshStartBase):
         elif cmd == 'systemctl' and words[1] == 'disable':
             for unit in words[2:]:
                 self.systemd(['systemctl', 'disable', unit])
-        elif cmd == 'systemctl' and words[1] == 'is-enabled':   # the RUNBOOK says "expect disabled": make it so
+        elif cmd == 'systemctl' and words[1] == 'is-enabled':   # the RUNBOOK says "expect disabled or static": make it so
             for unit in words[2:]:
-                self.assertEqual(self.systemd(['systemctl', 'is-enabled', unit]).stdout.strip(), 'disabled', unit)
+                self.assertIn(self.systemd(['systemctl', 'is-enabled', unit]).stdout.strip(), ('disabled', 'static'), unit)
         elif cmd == 'systemctl' and words[1] == 'is-active':
             for unit in words[2:]:
                 self.assertIn(self.systemd.state.get(unit, 'inactive'), ('inactive', 'failed'), unit)
@@ -300,6 +326,11 @@ class E2E(FreshStartBase):
                 self.runuser.append(' '.join(words[4:7]))      # the sandbox user is not solana-desk: run it directly
                 words = words[4:]
             if words[0] == v['PY'] or words[0] == sys.executable:
+                if words[1] == '-m' and words[2].startswith('tools.research.'):
+                    done = subprocess.run([sys.executable, *words[1:]], cwd=self.rel, capture_output=True, text=True)
+                    self.assertEqual(done.returncode, 0, (words, done.stderr[-400:]))
+                    self.research_runs.append(words[1:])
+                    continue
                 assert words[1] == '-m' and words[2].startswith('tools.ops.'), words
                 module = words[2].split('.')[-1]
                 argv = self.adapt(module, words[3:], v)
@@ -321,6 +352,8 @@ class E2E(FreshStartBase):
         return ran
 
     def test_runbook_sequence_composes_end_to_end(self):
+        self.presealed = {p: (os.lstat(p).st_mode & 0o7777, os.lstat(p).st_uid, os.lstat(p).st_gid)
+                          for p in [self.old, self.old / 'discovery', *self.old.glob('old-store-*.sqlite')]}
         self.run_runbook(('2.', '3.', '4.', '5.', '7a.', '7b.', '8.', '9.'))
         # every RUNBOOK command that ran succeeded (healthcheck is judged separately: a sandbox has no live discovery)
         for section, module, argv, code, payload, raw in self.results:
@@ -392,12 +425,31 @@ class E2E(FreshStartBase):
                       'systemctl-cat-desk-paper-held-cycle.service.txt').read_text())
         # archived stores: root-owned read-only; shared inputs untouched (fake chown layer records the intended owner)
         owners = {p: (o, g) for p, o, g in self.chowns}
-        self.assertEqual(owners[self.old / 'old-store-3.sqlite'], ('root', 'root'))
-        self.assertEqual(oct((self.old / 'old-store-3.sqlite').stat().st_mode & 0o777), '0o444')
+        self.assertEqual(owners[self.old / 'old-store-3.sqlite'], ('root', 'solana-desk'))
+        self.assertEqual(oct((self.old / 'old-store-3.sqlite').stat().st_mode & 0o777), '0o440')
         self.assertNotIn(self.pacer, owners)
         self.assertNotIn(self.discovery, owners)
         self.assertEqual(owners[self.old], ('root', 'solana-desk'))
-        self.assertEqual(oct(self.old.stat().st_mode & 0o7777), '0o1775')
+        self.assertEqual(oct(self.old.stat().st_mode & 0o7777), '0o1770')            # group rwx + sticky, nothing for others
+        self.assertEqual(oct((self.old / 'discovery').stat().st_mode & 0o7777), '0o1770')
+        # T32G item 1: every live lock file is exactly as it was (owner, mode, mtime) and was never a chown target
+        for lock in self.locks:
+            now = os.lstat(lock)
+            self.assertEqual((now.st_mode, now.st_uid, now.st_gid, now.st_mtime_ns), self.lock_stats[lock], lock.name)
+            self.assertNotIn(lock, owners, lock.name)
+        with discovery.worker(self.discovery):                                        # continuous discovery still gets its lock
+            pass
+        # the seal manifest exists (root-only) and lists what was changed
+        manifest_path = Path(self.v['SM'])
+        self.assertEqual(oct(manifest_path.stat().st_mode & 0o777), '0o600')
+        sealed = {e['path'] for e in json.loads(manifest_path.read_text())['sealed']}
+        self.assertIn('old-store-3.sqlite', sealed)
+        self.assertFalse(any(path.endswith('.lock') for path in sealed))
+        # T32G items 4/5: the backup parent was never chowned or re-moded; failed units were reset; static is accepted
+        self.assertNotIn(self.vb, owners)
+        self.assertEqual(self.systemd.state['desk-paper-entry-dispatcher.service'], 'inactive')
+        self.assertEqual(self.systemd.state['desk-decisions.service'], 'inactive')
+        self.assertIn(['systemctl', 'reset-failed', 'desk-*'], self.shell_log)
         # read-only tools run as the service user
         self.assertEqual([r.split()[-1] for r in self.runuser], ['tools.ops.healthcheck', 'tools.ops.entry_latch'])
         # ...and so does every other read-only tool the RUNBOOK mentions (inline code spans are not executed here)
@@ -432,11 +484,16 @@ class E2E(FreshStartBase):
                  'desk-decisions.service', 'desk-backup.service', 'desk-healthcheck.service',
                  'desk-notify-daily.service', 'desk-notify-watchdog.service', 'desk-paper-monitor.service',
                  'desk-paper-entry-dispatcher.service']
-        code, payload, raw = self.run_tool('cutover', self.adapt('cutover', ['--apply', 'rollback', '--stop', '--disable',
-                                                                            '--restore-archive', str(archive),
-                                                                            '--units', *units], self.v))
-        self.assertEqual(code, 0, raw[-600:])
+        self.chowns.clear()
+        self.run_runbook(('Rollback',))                                                 # the RUNBOOK's own commands, unseal included
         self.assertEqual(tree(self.unit_dir), self.prod_tree)
+        modes = {p: (os.lstat(p).st_mode & 0o7777) for p in self.presealed}
+        self.assertEqual(modes, {p: v[0] for p, v in self.presealed.items()})            # unseal restored every mode...
+        restored = {p: (u, g) for p, u, g in self.chowns}
+        for path, (mode, uid, gid) in self.presealed.items():
+            self.assertEqual(restored[path], (uid, gid), path)                          # ...and the exact numeric owner
+        for lock in self.locks:
+            self.assertNotIn(lock, restored)
         for unit in started + ['desk-paper-entry-dispatcher.timer']:
             self.assertNotEqual(self.systemd.enabled.get(unit, 'disabled'), 'enabled', unit)
             self.assertIn(self.systemd.state.get(unit, 'inactive'), ('inactive', 'failed'), unit)
@@ -444,6 +501,69 @@ class E2E(FreshStartBase):
         code, payload, raw = self.run_tool('cutover', self.adapt('cutover', ['--apply', 'rollback', '--units', *units], self.v))
         self.assertEqual((code, payload['removed']), (0, []))
         self.assertEqual(tree(self.unit_dir), self.prod_tree)
+
+    def test_runbook_never_chowns_or_installs_into_the_backup_parent(self):
+        """T32G item 4: /var/backups/solana-desk is root:root 0755 on the VPS and stays so; fresh_start creates $BK in it."""
+        text = RUNBOOK.read_text()
+        for section, command in logical_commands(text):
+            if re.search(r'\b(chown|install|chmod)\b', command):
+                self.assertNotRegex(command, r'(?<![\w/-])/var/backups/solana-desk(?![\w/-])', command)
+        step0 = text.split('## 0. Preconditions')[1].split('## 1.')[0]
+        self.assertRegex(step0, r'(?is)/var/backups/solana-desk[^.]*root')
+        self.assertRegex(step0, r'(?i)never chown')
+
+    def test_failed_units_are_reset_after_the_stops_and_static_old_units_pass_the_disabled_check(self):
+        self.run_runbook(('2.',))
+        self.assertEqual({u: s for u, s in self.systemd.state.items() if s == 'failed'}, {})
+        commands = [w for w in self.shell_log if w[:2] == ['systemctl', 'reset-failed']]
+        self.assertEqual(commands, [['systemctl', 'reset-failed', 'desk-*']])
+        index = {tuple(w): i for i, w in enumerate(self.shell_log)}
+        stops = [i for i, w in enumerate(self.shell_log) if w[:2] == ['systemctl', 'stop']]
+        reset = next(i for i, w in enumerate(self.shell_log) if w[:2] == ['systemctl', 'reset-failed'])
+        self.assertGreater(reset, max(stops))                                       # only after every stop
+        for unit in ('desk-recorder.service', 'desk-discovery.service', 'desk-paper-monitor.service'):
+            self.assertEqual(self.systemd(['systemctl', 'is-enabled', unit]).stdout.strip(), 'static')
+
+    def test_runbook_expects_disabled_or_static_not_only_disabled(self):
+        step2 = RUNBOOK.read_text().split('## 2.')[1].split('## 3.')[0]
+        self.assertRegex(step2, r'expect disabled(?: or |\|)static')
+
+    def test_runbook_pins_the_working_directory_and_documents_the_stale_package_fix(self):
+        text = RUNBOOK.read_text()
+        self.assertRegex(text, r'cwd = \$REL')
+        self.assertRegex(text, r'(?i)site-packages')
+        self.assertIn('pip uninstall -y solana-desk', text)
+
+    def test_seal_step_uses_a_manifest_and_the_rollback_unseals(self):
+        text = RUNBOOK.read_text()
+        self.assertRegex(text, r'(?m)^SM=\S*seal-manifest\S*')
+        seal = [c for s, c in logical_commands(text) if 'seal-archive' in c and 'apply' in c]
+        self.assertTrue(seal and all('--manifest $SM' in c for c in seal), seal)
+        rollback = [c for s, c in logical_commands(text) if s == 'Rollback']
+        self.assertTrue(any(' unseal ' in c and '--manifest $SM' in c for c in rollback), rollback)
+
+    def test_research_units_are_never_installed_or_enabled_by_the_default_flow(self):
+        self.run_runbook(('2.', '3.', '4.', '5.', '7a.', '7b.', '8.', '9.'))
+        research = {'desk-counterfactual.service', 'desk-counterfactual.timer', 'desk-held-watcher.service',
+                    'desk-paper-held-cycle.path'}
+        self.assertFalse(research & {p.name for p in self.unit_dir.iterdir()})
+        touched = {c[-1] for c in self.systemd.calls if c[1] in ('start', 'enable')}
+        self.assertFalse(research & touched)
+        self.assertEqual({p.name for p in (Path(self.v['UNITS']) / 'research').iterdir()}, research)
+
+    def test_the_explicit_research_step_renders_installs_initialises_and_enables_them(self):
+        self.run_runbook(('2.', '3.', '4.', '5.', '7a.', '7b.', '8.', '9.', '11.'))
+        for name in ('desk-counterfactual.service', 'desk-counterfactual.timer', 'desk-held-watcher.service',
+                     'desk-paper-held-cycle.path'):
+            self.assertTrue((self.unit_dir / name).is_file(), name)
+        new = Path(self.v['NEW'])
+        self.assertTrue((new / 'counterfactual' / 'counterfactual.sqlite').is_file())     # init ran for real
+        self.assertTrue((Path(self.v['STATE']) / 'held-watcher').is_dir())
+        self.assertEqual(self.systemd.enabled.get('desk-counterfactual.timer'), 'enabled')
+        installed = (self.unit_dir / 'desk-counterfactual.service').read_text()
+        self.assertIn(f'{new}/counterfactual/counterfactual.sqlite', installed)
+        self.assertNotIn('exp-FRESH', installed)
+        self.assertTrue(any(r[:3] == ['-m', 'tools.research.counterfactual', 'init'] for r in self.research_runs))
 
     def systemd_units(self):
         return sorted(p.name for p in self.unit_dir.glob('desk-*') if p.is_file() and p.suffix in ('.service', '.timer'))
