@@ -28,6 +28,79 @@ def equity(state):
     return dec(state["cash"]) + sum((dec(p["mark_value"]) for p in state["positions"].values()), ZERO)
 
 
+PORTFOLIO_KEY = "paper_portfolio_risk_version"
+PORTFOLIO_PARAMS = ("portfolio_max_open_risk_fraction", "portfolio_loss_streak_cooldown_after",
+                    "portfolio_cooldown_minutes", "portfolio_max_entries_per_10m")
+PORTFOLIO_WINDOW_SECONDS = 600
+
+
+def _portfolio_risk(cfg):
+    """Opt-in versioned portfolio gates (None when absent). Every parameter is explicit in the frozen config: a
+    version without parameters, or parameters without the version, fails closed instead of silently disabling a gate."""
+    version = cfg.get(PORTFOLIO_KEY)
+    if version is None:
+        if any(key in cfg for key in PORTFOLIO_PARAMS):
+            raise ValueError("Portfolio risk parameters require the versioned flag")
+        return None
+    if type(version) is not int or version != 1 or cfg.get("mode") != "paper":
+        raise ValueError("Unsupported portfolio risk configuration")
+    try:
+        fraction = dec(cfg[PORTFOLIO_PARAMS[0]])
+        after, minutes, entries = (cfg[key] for key in PORTFOLIO_PARAMS[1:])
+    except (KeyError, ValueError, TypeError):
+        raise ValueError("Portfolio risk parameters incomplete or invalid") from None
+    if (not ZERO < fraction < ONE or any(type(v) is not int for v in (after, minutes, entries))
+            or not 1 <= after <= 100 or not 1 <= minutes <= 1440 or not 1 <= entries <= 100):
+        raise ValueError("Portfolio risk parameters out of range")
+    return {"fraction": fraction, "after": after, "seconds": minutes * 60, "entries": entries}
+
+
+def portfolio_open_risk(state):
+    """Sum over open positions of cost still at risk times the distance to the position's own stop."""
+    return sum((dec(p["cost_left"]) * max(ZERO, ONE - dec(p["stop_ratio"])) for p in state["positions"].values()), ZERO)
+
+
+def _portfolio_amount_cap(state, cfg, pr):
+    """Largest entry (SOL, before the fixed fee) whose stop loss still fits under the aggregate open-risk limit."""
+    room = pr["fraction"] * equity(state) - portfolio_open_risk(state)
+    if room <= ZERO:
+        return ZERO
+    amount = room / dec(cfg["stop_fraction"]) - dec(cfg["fixed_fee_sol"])
+    return max(ZERO, amount).quantize(D(".000000001"), rounding="ROUND_DOWN")
+
+
+def _portfolio_recent_entries(state, ts):
+    return [t for t in state.get("portfolio_entries", []) if 0 <= ts - t < PORTFOLIO_WINDOW_SECONDS]
+
+
+def _portfolio_reasons(state, ts, pr):
+    reasons = []
+    if state.get("portfolio_cooldown_until", 0) > ts:
+        reasons.append("PORTFOLIO_LOSS_COOLDOWN")
+    if len(_portfolio_recent_entries(state, ts)) >= pr["entries"]:
+        reasons.append("PORTFOLIO_ENTRY_SPACING")
+    return reasons
+
+
+def portfolio_blockers(state, cfg, ts):
+    """Ledger-only reasons a new entry at `ts` would be refused by the portfolio gates (no I/O, no mutation);
+    lets an entry path skip a doomed investigation before spending any request."""
+    pr = _portfolio_risk(cfg)
+    if pr is None:
+        return []
+    reasons = _portfolio_reasons(state, ts, pr)
+    if _portfolio_amount_cap(state, cfg, pr) < dec(cfg["min_order_sol"]):
+        reasons.append("PORTFOLIO_RISK_CAP")
+    return reasons
+
+
+def _portfolio_after_exit(state, cfg, ts):
+    """A fully closed losing position extends the streak; at the configured streak the portfolio cools down."""
+    pr = _portfolio_risk(cfg)
+    if pr is not None and state["loss_streak"] >= pr["after"]:
+        state["portfolio_cooldown_until"] = max(state.get("portfolio_cooldown_until", 0), ts + pr["seconds"])
+
+
 def _exit_only_recovery(cfg):
     """Opt-in versioned: EXIT_ONLY caused by an unresolved exit returns to RUNNING once cleared."""
     version = cfg.get("paper_exit_only_recovery_version")
@@ -173,6 +246,7 @@ def sell(state, e, cfg, fraction, reason, output, quote_book=None):
                    **({"entry_policy": deepcopy(p["entry_policy"])} if "entry_policy" in p else {})})
     if dec(p["qty"]) <= D("1e-20"):
         state["loss_streak"] = state["loss_streak"] + 1 if dec(p["trade_pnl"]) < 0 else 0
+        _portfolio_after_exit(state, cfg, e["ts"])
         del state["positions"][e["mint"]]
         cooldown = cfg["stop_cooldown_seconds"] if reason == "STOP" else cfg["cooldown_seconds"]
         state["cooldowns"][e["mint"]] = e["ts"] + cooldown
@@ -229,6 +303,7 @@ def _quote_sell(state,e,cfg,fraction,reason,output,book):
         **({'entry_policy':deepcopy(p['entry_policy'])} if 'entry_policy' in p else {})})
     if current==raw:
         state['loss_streak']=state['loss_streak']+1 if dec(p['trade_pnl'])<0 else 0
+        _portfolio_after_exit(state,cfg,e['ts'])
         del state['positions'][e['mint']]
         cooldown=cfg['stop_cooldown_seconds'] if reason=='STOP' else cfg['cooldown_seconds']
         state['cooldowns'][e['mint']]=e['ts']+cooldown
@@ -311,6 +386,7 @@ def transition(state, e, cfg, *, _quote_book=None):
     # Config is fingerprinted by Ledger: selecting this experimental strategy
     # requires a new experiment, never an event-provided permission flag.
     quote_mode=qe.config(cfg)
+    pr = _portfolio_risk(cfg)
     from .kraken_usd_observation import validate_event as validate_usd
     validate_usd(e,cfg)
     if quote_mode:
@@ -429,6 +505,8 @@ def transition(state, e, cfg, *, _quote_book=None):
         reasons.append("ENTRY_THROTTLE")
     if any(e["ts"] - p["mark_at"] > cfg["price_ttl_seconds"] for p in state["positions"].values()):
         reasons.append("STALE_PORTFOLIO")
+    if pr is not None:
+        reasons.extend(_portfolio_reasons(state, e["ts"], pr))
     evidence = {k: str(v) if v is not None else None for k, v in scored.items()}
     policy_record = {"entry_policy": deepcopy(policy)} if policy is not None else {}
     if reasons:
@@ -439,6 +517,13 @@ def transition(state, e, cfg, *, _quote_book=None):
     allocated_risk = exposure(state) * dec(cfg["stress_loss_fraction"])
     amount, limits = size(e, cfg, scored["entry"], equity(state), dec(state["cash"]),
                           exposure(state), budget, allocated_risk)
+    if pr is not None:
+        cap_amount = _portfolio_amount_cap(state, cfg, pr)
+        if cap_amount < dec(cfg["min_order_sol"]):
+            return state, output + [{"type": "reject", "reason": "PORTFOLIO_RISK_CAP", "mint": mint,
+                                     "size_sol": str(cap_amount), "open_risk": str(portfolio_open_risk(state)),
+                                     "limit": str(pr["fraction"] * equity(state))}]
+        amount = min(amount, cap_amount)
     if state["loss_streak"] >= 4:
         amount /= 2
     if quote_mode:
@@ -493,6 +578,8 @@ def transition(state, e, cfg, *, _quote_book=None):
             'last_quote_execution':_quote_book.record(exit_quote,cfg)} if quote_mode else {}),
     }
     state["last_entry_minute"] = e["ts"] // 60
+    if pr is not None:
+        state["portfolio_entries"] = (_portfolio_recent_entries(state, e["ts"]) + [e["ts"]])[-pr["entries"]:]
     output.append({"type": "fill", "side": "buy", "mint": mint, "reason": "ENTRY",
                    "amount_sol": str(amount), "quantity": str(qty), "fee_sol": str(fee),
                    "scores": evidence, "estimated_cost_fraction": str(roundtrip),
