@@ -282,7 +282,7 @@ def _preflight(ctx, scan=None):
 
 
 @contextmanager
-def _held_guard(ctx):
+def _held_guard(ctx, scan=None):
     """Caller already owns research/evidence locks; ledger is acquired last.
 
     Used by acquisition's budget-reserved RPC and intake's existing before-I/O
@@ -298,11 +298,16 @@ def _held_guard(ctx):
         state = cycle._state(ledger,cfg)
         if state['positions'] or state['mode']!='RUNNING':
             raise ValueError('Held-position priority before I/O')
+        store = EvidenceStore(ctx['paths']['evidence_db']['path'],read_only=True)
+        blocked = terminal.gate(store,Path(ctx['paths']['research_db']['path']),
+                                (() if scan is None else (scan,)),ledger_locked=str(ledger))
+        if blocked:
+            raise ValueError('Observation recovery or retired scan before I/O')
         yield
 
 
-def _intake_guard(ctx):
-    with _held_guard(ctx):
+def _intake_guard(ctx, scan):
+    with _held_guard(ctx, scan):
         pass
 
 
@@ -405,7 +410,7 @@ def dispatch(expected, *, execute=False, systemd_credentials=False):
             scan = jobs.admit(hint['mint'],kind=BIRTH_ACQUISITION_V1,evidence_db=store.path,
                               paper_token_profile_version=cfg.get('paper_token_profile_version',0))
         def guarded_rpc(method,params):
-            with _held_guard(expected):
+            with _held_guard(expected,scan):
                 return helius_rpc(method,params)
         acquired = acquisition.acquire(paths['research_db'],paths['evidence_db'],guarded_rpc,
                                       scan_id=scan,paper_token_profile_version=cfg.get('paper_token_profile_version',0))
@@ -415,7 +420,7 @@ def dispatch(expected, *, execute=False, systemd_credentials=False):
         _preflight(expected,scan)
         retained = migration.intake(paths['research_db'],paths['evidence_db'],scan_id=scan,
             mint=hint['mint'],pool=hint['pool'],signature=hint['signature'],slot=hint['slot'],
-            provenance=PROVENANCE,credentials_loader=lambda:_intake_guard(expected),paper_token_profile_version=cli._config(paths['config']).get('paper_token_profile_version',0))
+            provenance=PROVENANCE,credentials_loader=lambda:_intake_guard(expected,scan),paper_token_profile_version=cli._config(paths['config']).get('paper_token_profile_version',0))
         if retained['status'] != 'RETAINED_MIGRATION_WITNESS':
             raise ValueError('Migration intake incomplete; dispatcher recovery required')
         _preflight(expected,scan)

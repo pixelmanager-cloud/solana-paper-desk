@@ -261,3 +261,39 @@ class DispatcherTests(unittest.TestCase):
         before=self.f.progress.admission(result['scan_id'])
         self.assertEqual(self.invoke()['status'],'NO_CANDIDATE')
         self.assertEqual(self.f.progress.admission(result['scan_id']),before)
+
+
+    def insert_concurrent_pending(self):
+        with tool.monitor._context(self.f.jobs.path,self.f.progress.store.path,self.ledger,self.cfg) as (store,ledger,state):
+            intent=store.save({'kind':'concurrent_observation_intent_fixture','ledger':str(ledger)})
+            with store.connect() as c:
+                c.execute('CREATE TABLE IF NOT EXISTS paper_observation_passes(id TEXT PRIMARY KEY,intent_hash TEXT NOT NULL,outcome_hash TEXT)')
+                c.execute('INSERT INTO paper_observation_passes VALUES(?,?,NULL)',('concurrent-pending',intent))
+
+    def test_acquisition_rechecks_concurrent_null_pass_before_rpc_preserves_charge(self):
+        original=tool.acquisition.acquire
+        def racing(*args,**kwargs):
+            self.insert_concurrent_pending()
+            return original(*args,**kwargs)
+        with patch.object(tool.acquisition,'acquire',side_effect=racing):
+            with self.assertRaises(ValueError):self.live()
+        self.assertEqual(self.calls,[])
+        with self.f.jobs.connect() as c:scan=c.execute('SELECT id FROM scans').fetchone()[0]
+        self.assertEqual(self.f.progress.admission(scan)['requests_used'],1)
+        self.assertEqual(self.count('intents'),1);self.assertEqual(self.count('results'),0)
+        with patch('desk.providers.helius_rpc',side_effect=AssertionError('retry')):
+            with self.assertRaises(ValueError):self.invoke(execute=True,systemd_credentials=True)
+
+    def test_intake_rechecks_concurrent_null_pass_before_http_preserves_original_charges(self):
+        original=tool.migration.intake
+        def racing(*args,**kwargs):
+            self.insert_concurrent_pending()
+            return original(*args,**kwargs)
+        with patch.object(tool.migration,'intake',side_effect=racing):
+            with self.assertRaises(ValueError):self.live()
+        self.assertEqual(self.calls,['getAccountInfo','getSlot','getTransactionsForAddress'])
+        with self.f.jobs.connect() as c:scan=c.execute('SELECT id FROM scans').fetchone()[0]
+        self.assertEqual(self.f.progress.admission(scan)['requests_used'],3)
+        self.assertEqual(self.count('intents'),1);self.assertEqual(self.count('results'),0)
+        with patch.object(tool.migration,'intake',side_effect=AssertionError('retry')):
+            with self.assertRaises(ValueError):self.invoke(execute=True,systemd_credentials=True)
