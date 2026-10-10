@@ -8,10 +8,12 @@ An explicit, versioned experiment config. With the key **absent** every path beh
 any open position, or any mode other than `RUNNING`, refuses new entries (`HELD_POSITION_PRIORITY`), and the
 engine's price TTL (10 s) governs everything.
 
-With `"paper_concurrent_entries_version": 1`, `max_positions` an integer in 2..8 **and**
-`"paper_portfolio_mark_ttl_seconds"` (an integer from `price_ttl_seconds` to 120), entries may start while
-positions are open, subject to the gates below. Any other value, the flag without the TTL key, or the TTL key
-without the flag raises `ValueError` (fail closed). The flag changes the config hash, so it is a **new
+With `"paper_concurrent_entries_version": 1` and `max_positions` an integer in 2..8, entries may start while
+positions are open, subject to the gates below. Any other value raises `ValueError` (fail closed). The flag does NOT
+require `paper_portfolio_mark_ttl_seconds` (T16H): the coordinator rejected relaxing the held-mark TTL, the 10 s price TTL
+applies, and with N positions it is met by the batched portfolio marks (below). Set
+`paper_portfolio_mark_source_version` with the flag; without it, any entry while a position is open is refused
+before any charge (`PORTFOLIO_MARKS_TOO_OLD_FOR_ENTRY`) because the 10 s rule cannot be met by sequential legs. The flag changes the config hash, so it is a **new
 ledger/config version** (fresh-start policy): never flip it on an existing ledger.
 
 Code: `desk/paper_concurrency.py` (pure rules), `desk/engine.py::portfolio_ttl` (the one engine change),
@@ -19,14 +21,15 @@ Code: `desk/paper_concurrency.py` (pure rules), `desk/engine.py::portfolio_ttl` 
 `tools/history_first_paper_entry.py` (gate call sites), `desk/paper_monitor_service.py` (per-position legs),
 `desk/paper_cycle.py` (one gate, below).
 
-## Why a portfolio mark TTL exists (read this before activating)
+## Why the 10 s rule needs batched marks (read this before activating)
 
 `engine.transition` rejects an entry when **any held mark is older than the TTL at the entry decision**
 (`STALE_PORTFOLIO`), and `DAY_ROLLOVER` is deferred unless every mark is within the TTL. With the price TTL
 of 10 s this can never be satisfied with real provider pacing:
 
 * An entry is history preparation (up to 18 s) + a bounded cycle (10 s deadline plus a 2 s sleep) before the
-  engine decides: `ENTRY_SECONDS = 30`. Even a mark refreshed a moment ago is ~30 s old at the decision.
+  engine decides (the budgeted `ENTRY_SECONDS` is now 52 s: acquisition 12, intake 10, preparation 18, cycle 12). Even a mark
+  refreshed a moment ago is that old at the decision.
 * N held positions need N sequential legs of ~7.8 s each (5 requests per leg at 2 s provider pacing), so the
   oldest of N marks is another `(N-1) x 7.8 s` older.
 * The candidate's own quote and history must stay fresh for the same decision, so inserting the leg refreshes
@@ -36,7 +39,7 @@ of 10 s this can never be satisfied with real provider pacing:
 `tests/test_paper_concurrency.py::test_timeline_arithmetic_for_every_book_size` asserts the numbers for every
 book size: the oldest mark at an entry decision is 38 s (1 held) to 85 s (7 held), always above 10 s and below 120 s.
 
-Fix (versioned and opt-in): `paper_portfolio_mark_ttl_seconds` replaces `price_ttl_seconds` in exactly two
+REJECTED proposal (T16F, kept for the record; do not use): `paper_portfolio_mark_ttl_seconds` would replace `price_ttl_seconds` in exactly two
 engine checks, the entry-time `STALE_PORTFOLIO` gate and the day-rollover "all marks current" test.
 Everything else keeps the 10 s price TTL: the candidate's own price/quote/mint evidence, exit decisions,
 quote-exit validation and the stale-mark watchdog. Held legs still refresh every mark each tick.
@@ -45,7 +48,8 @@ Risk of the relaxed rule (stated, not hidden): at an entry the engine computes e
 to 120 s old. Each position is at most 2 % of equity (`max_position_fraction`) and total exposure is capped at 8 %
 (`max_exposure_fraction`), so even if every held token went to zero inside the window equity is overstated by at
 most 8 % of equity at that one decision; the daily pause/liquidation then trips on the next fresh mark. Exits are
-unaffected. The coordinator decides whether that is acceptable for the experiment; the default is off.
+unaffected. The coordinator REJECTED this relaxation (2026-10-11); the batched marks below replace it and no config,
+flag or rollover rule depends on the key.
 
 ## Scheduling model
 
@@ -199,13 +203,26 @@ ONE `getMultipleAccounts` over the PumpSwap pool and both vaults of every open p
   `UNCLASSIFIED_ERROR`) latches the monitoring allowance for every read; connection resets, timeouts and 408/429/5xx do not.
 * Cost: 2 requests per entry with positions, 1 per held pass.
 
+## Checkpoint results and phase caps (T16H)
+
+* A post-intent checkpoint that comes back non-zero, moves the mode off `RUNNING`, leaves an exit unresolved, or
+  leaves monitoring blocked ends the intent as a typed terminal result `dispatcher_checkpoint_no_entry_v1` in the
+  dispatcher journal (reasons, the held pass's exit code, the mode, the phase). The investigation charges stay charged,
+  nothing is retried, the next preflight validates the journal normally, and held monitoring proceeds on its own.
+  The dispatch result surfaces it as `checkpoint_no_entry` (previously the next preflight raised and the intent was
+  orphaned: "Unresolved dispatch; no retry").
+* Acquisition and intake have enforced wall caps (`PHASE_CAPS`: 30 s and 25 s, 2.5x the planning figures): no request of
+  an over-cap phase starts, and an overrun (cut, or finished late) ends the intent as the same typed result with reason
+  `PHASE_CAP_EXCEEDED`. Preparation and the cycle are already capped in code (18 s and the 10 s cycle deadline).
+
 ## Recommended activation
 
 1. Verify the first single-position cycle (entry, hold, exit, accounting, restart) with the flag off.
-2. New ledger/config version with the flag, `"max_positions": 2` and `"paper_portfolio_mark_ttl_seconds": 120`
-   (timeline arithmetic admits up to 8, so raise to 4 after one forward observation period).
-   Leave `paper_portfolio_mark_ttl_seconds` out of every example config until the coordinator decides on it; add
-   `"paper_rollover_after_mark_version": 1` with it if daily counters must stay correct while 2+ positions are held.
+2. New ledger/config version with the flag, `"max_positions": 2`, `"paper_portfolio_mark_source_version": 1` and
+   `"paper_portfolio_mark_pool_fee_bps"` (raise to 4 after one forward observation period). Never set
+   `paper_portfolio_mark_ttl_seconds`. The batched marks roll the day over at the start of a held pass or checkpoint
+   whenever every position's mark is fresh; `"paper_rollover_after_mark_version": 1` additionally lets a single
+   fresh leg do it when the other marks are within 10 s.
 3. Monitoring allowance 3600/hour (provisioned by `fresh_start`); install the `deploy/fresh` held unit as shipped.
 4. Keep `desk-paper-monitor.timer` off: the stale-mark watchdog uses the 10 s price TTL and would put the book in
    `EXIT_ONLY` (T09 F5/T23).
