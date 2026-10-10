@@ -42,6 +42,6 @@ You are an autonomous CLOUD WORKER on **solana-paper-desk**: a Solana-only, pape
 - **Long commands.** For anything over a few minutes, use `nohup cmd > /tmp/x.log 2>&1 & echo $! > /tmp/<ID>.pid`, then wait in foreground `timeout 540` loops. Kill processes by PID only, never with `pkill -f` or `killall`.
 - **Scratch files** go in `/tmp`, never in the repo.
 - **Stay active.** The VM pauses when you go idle. Keep working, or keep waiting in foreground loops.
-- **Commit trailer.** End every commit message with `Co-Authored-By: Claude Opus 5.5 <noreply@anthropic.com>`
+- **Commit trailer.** End every commit message with `Co-Authored-By: Claude <your actual model name, e.g. Sonnet 5.5> <noreply@anthropic.com>`. Name the model you are actually running on.
 
 Start now with step 1.
