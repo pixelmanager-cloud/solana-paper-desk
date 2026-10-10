@@ -143,8 +143,8 @@ acquisition and intake figures are conservative planning numbers (intake showed 
 Rollover needs every mark current at the evaluating event. During pure held passes it is deferred for any book
 size (each leg's own mark is one cadence old when its event is evaluated; this already held with one position).
 It fires at the **first entry decision after midnight** because the held-first legs have just refreshed every mark
-and the portfolio TTL covers them; the entry gates run after the rollover, so the daily counters are correct
-exactly when they are used (`RolloverTests`, three positions across UTC midnight; without the TTL the same book
+and the batched marks cover them; the entry gates run after the rollover, so the daily counters are correct
+exactly when they are used (`RolloverTests`, three positions across UTC midnight; without the batched marks the same book
 stays on yesterday and the entry is rejected `STALE_PORTFOLIO`). If no entry is attempted for days while
 positions are held, the counters stay stale, which affects only entry gates, never exits.
 
@@ -155,21 +155,25 @@ positions are held, the counters stay stale, which affects only entry gates, nev
 | held pass nonzero / monitoring blocked | `HELD_MONITORING_DEGRADED`, 0 requests |
 | unresolved exit, `EXIT_ONLY`/paused mode, full book | `CONCURRENT_ENTRY_BLOCKED` + reasons, still monitoring |
 | monitoring allowance below reserve | preflight `MONITORING_RESERVE_INSUFFICIENT`, before the intent |
-| marks too old for the portfolio TTL (incl. 30 s of entry work) | preflight `PORTFOLIO_MARKS_TOO_OLD_FOR_ENTRY`, before the intent, 0 requests, no latch |
+| marks too old for the 10 s rule without batched marks (incl. the 52 s of entry work) | preflight `PORTFOLIO_MARKS_TOO_OLD_FOR_ENTRY`, before the intent, 0 requests, no latch |
 | estimate wrong, engine sees stale marks | terminal engine reject `STALE_PORTFOLIO` (charges kept, store not latched) |
 | exported targets differ from checkpoint positions | held service `UNAVAILABLE`, no leg |
-| invalid flag / `max_positions` / TTL | `ValueError` |
+| invalid flag / `max_positions` / mark-source or rollover version | `ValueError` |
 | entry still running when the held wait expires | `SCHEDULER_BUSY`; the next tick follows |
 
 Restart: ledger events are idempotent by `event_id`. `tests/test_paper_concurrency_pipeline.py` runs two real
 dispatcher entries on `fresh_start` stores and uses `tools.ops.verify_cycle` snapshots: a cold restart between and
 after the entries changes no fill, charge, reservation or journal row; the second entry is append-only progress.
 
-### Rollover after the mark (T16G, `paper_rollover_after_mark_version: 1`)
+### The ONE rollover rule (`paper_rollover_after_mark_version: 1`, T16G/T16H/T35F)
 
-Versioned, opt-in, valid only with the concurrent-entries flag and the portfolio TTL (anything else refuses at load).
-With it, a held-position event that has just refreshed its own mark (or exited) re-tests the rollover against the
-updated book: if every remaining mark is within the portfolio TTL the UTC day rolls over inside that event
+There is exactly one place that rolls the UTC day (`engine._roll_day`: every position's valuation mark must be current,
+then `day_start_equity` is re-based on the guarded risk equity and the daily loss counter reset). The versioned flag is
+valid only with the concurrent-entries flag (it needs neither the TTL key nor batched marks) and lets two more events
+call that rule: a batched `portfolio_marks` event (which previously rolled the day unconditionally) and a held-position
+event after its own mark is refreshed. Without the flag only the pre-existing top-of-event test applies. With it, a
+held-position event that has just refreshed its own mark (or exited) re-tests the rollover against the
+updated book: if every remaining mark is within the 10 s price TTL the UTC day rolls over inside that event
 (`DAY_ROLLOVER_AFTER_FRESH_MARKS`, `day_start_equity` from the refreshed book, `day_gross_losses` reset). The held
 pass's final leg therefore rolls the day even with a full book, no candidate, or `EXIT_ONLY` mode (`RolloverAfterMarkTests`).
 A single failed or skipped leg leaves its stale mark in place and the rollover stays deferred (fail closed). Key
@@ -203,6 +207,26 @@ ONE `getMultipleAccounts` over the PumpSwap pool and both vaults of every open p
   `UNCLASSIFIED_ERROR`) latches the monitoring allowance for every read; connection resets, timeouts and 408/429/5xx do not.
 * Cost: 2 requests per entry with positions, 1 per held pass.
 
+## Batched marks: fixes from the review (T35F)
+
+* **Source version 2** (`paper_portfolio_mark_source_version: 2`, optional `paper_portfolio_mark_max_divergence`, default
+  "0.03"): model marks still feed exposure, position limits, sizing and every freshness gate, but `peak_equity`,
+  `day_start_equity` and the daily drawdown/pause/liquidation use the executable mark unless the model mark is within
+  the bound of it. Version 1 keeps the model mark in every valuation (unchanged).
+* **No latch from a valuation-only read.** The 3N-key marks read is exempt from the monitoring `SOURCE_FAILURE` latch
+  whatever its failure class (`RESPONSE_INVALID`, HTTP 4xx, TLS, unclassified): the attempt stays charged with its typed
+  `failure_code`, the marks stay stale and the entry ends as an ordinary `STALE_PORTFOLIO` reject, while the held legs'
+  own exit-protecting reads (7-key pool snapshots, quotes) keep their latch. (A 429 still arms the provider's pacing backoff.)
+* **Deadline.** The read happens inside the 10 s cycle budget, bounded by what is left (at most 5 s; skipped with
+  `PORTFOLIO_MARKS_DEADLINE` when under 3 s remain) and never extends the deadline.
+* **Closed vault/pool.** A null vault or pool account in the answer marks that position at zero with an explicit
+  `reason` (`VAULT_CLOSED`/`POOL_CLOSED`, stored as `portfolio_mark_reason`) instead of leaving it stale for ever.
+* **Estimates.** `entry_seconds(cfg)` adds the two refreshes (2 x 2.5 s); `plan_legs` and the checkpoint rule count the
+  pass's refresh against `--wall-seconds` / the held gap.
+* **Reserve math.** The held unit's timer is `OnUnitInactiveSec=120`, so at most ceil(3600 / (120 + 7.8)) = 29 passes per
+  hour; the old 12 assumed a five-minute cadence. Reserve = 29 x (5 x N + 1 marks request) + 2 for the entry's own
+  refreshes: N=4 gives 611, N=8 gives 1191 of the 3600/hour allowance (flag-off: 29 x 5 x N).
+
 ## Checkpoint results and phase caps (T16H)
 
 * A post-intent checkpoint that comes back non-zero, moves the mode off `RUNNING`, leaves an exit unresolved, or
@@ -234,5 +258,5 @@ ONE `getMultipleAccounts` over the PumpSwap pool and both vaults of every open p
 * The read-only dashboard/ledger-reader per-position view was not changed; `desk.paper_concurrency.attribution`
   provides the read-only per-position fill attribution and the portfolio cash identity (tested after an interleaved
   buy/buy/sell/buy/sell/sell sequence).
-* The relaxed portfolio TTL is a risk decision; see the bound above.
+* The relaxed portfolio TTL was rejected by the coordinator (see the REJECTED note above); nothing depends on it.
 * `desk/` changed, so the runtime implementation hash changes; the coordinator rotates the ledger.
