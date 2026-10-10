@@ -159,6 +159,8 @@ def _require_first(c,*,implementation=None,continuation=False,_extensions=False)
     if _extensions:
         if not continuation:raise ValueError('Extension requires both original receipts')
         expected.add('paper_runtime_extensions')
+        from .runtime_performance_continuation import namespace
+        expected=namespace(c,expected)
     if names!=expected:raise ValueError('Partial runtime transition schema')
     if c.execute("SELECT sql FROM sqlite_master WHERE type='table' AND name=?",(TABLE,)).fetchone() != (_schema(),):
         raise ValueError('Malformed runtime table semantics')

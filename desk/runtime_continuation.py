@@ -54,7 +54,8 @@ def _guards():
 def _first(c,*,_extensions=False):
     """Validate SQL contract and bounds BEFORE loading any first-receipt bytes."""
     names={r[0] for r in c.execute("SELECT name FROM sqlite_master WHERE type='table' AND name LIKE 'paper_runtime_%'")}
-    allowed=({runtime.TABLE,TABLE,'paper_runtime_extensions'},) if _extensions else ({runtime.TABLE},{runtime.TABLE,TABLE})
+    from .runtime_performance_continuation import namespace
+    allowed=(namespace(c,{runtime.TABLE,TABLE,'paper_runtime_extensions'}),) if _extensions else ({runtime.TABLE},{runtime.TABLE,TABLE})
     if names not in allowed:
         raise ValueError('Partial runtime transition schema')
     if c.execute("SELECT sql FROM sqlite_master WHERE type='table' AND name=?",(runtime.TABLE,)).fetchone()!=(runtime._schema(),):

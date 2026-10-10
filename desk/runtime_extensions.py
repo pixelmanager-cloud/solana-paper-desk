@@ -67,7 +67,8 @@ def _guards():
 def _bounded_rows(c):
     """All schema/cardinality/type/byte bounds precede any journal field fetch."""
     names={r[0] for r in c.execute("SELECT name FROM sqlite_master WHERE type='table' AND name LIKE 'paper_runtime_%'")}
-    if names!={runtime.TABLE,continuation.TABLE,TABLE}:raise ValueError('Partial runtime extension namespace')
+    from .runtime_performance_continuation import namespace
+    if names!=namespace(c,{runtime.TABLE,continuation.TABLE,TABLE}):raise ValueError('Partial runtime extension namespace')
     if c.execute("SELECT sql FROM sqlite_master WHERE type='table' AND name=?",(TABLE,)).fetchone()!=(_schema(),):
         raise ValueError('Malformed extension table')
     columns=c.execute(f'PRAGMA table_info({TABLE})').fetchall()
@@ -165,6 +166,8 @@ def _validate(c,rows,first,first_hash,base,base_hash,current):
 
 
 def require_extensions(c,*,implementation=None):
+    from .runtime_performance_continuation import read,require
+    if read(c) is not None:return require(c,implementation=implementation)
     rows=_bounded_rows(c)
     first,first_hash,base,base_hash=_base(c,extended=True)
     current=runtime.implementation_hash() if implementation is None else implementation
