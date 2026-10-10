@@ -112,6 +112,10 @@ class HistoryRuntimeCompositionTests(unittest.TestCase):
         self._scenario(continuation=True, event_quote_bytes=bytes(32),
                        fee_profile=True, extension=True)
 
+    def test_native_quote_acquisition_completion_boundary_preserves_entry_exit(self):
+        self._scenario(continuation=True,event_quote_bytes=bytes(32),
+                       fee_profile=True,extension=True,quote_completion_boundary=True)
+
     def test_synthetic_sentinel_entry_exit_continuation_preserves_originals(self):
         # Retained public event stays unchanged. Its representation is reused
         # only in a separately constructed synthetic current-time transaction.
@@ -130,7 +134,7 @@ class HistoryRuntimeCompositionTests(unittest.TestCase):
     def test_invalid_chunked_history_retains_charge_and_blocks_restart_without_retry(self):
         self._scenario(invalid_history=True)
 
-    def _scenario(self, invalid_history=False, continuation=False, event_quote_bytes=None, fee_profile=False, extension=False, terminal=False):
+    def _scenario(self, invalid_history=False, continuation=False, event_quote_bytes=None, fee_profile=False, extension=False, terminal=False, quote_completion_boundary=False):
         if extension:
             from tests import test_runtime_extensions
             u = test_runtime_extensions.RuntimeExtensionTests()
@@ -251,8 +255,24 @@ class HistoryRuntimeCompositionTests(unittest.TestCase):
                     return result
 
             http = HTTP()
+            from desk.evidence import EvidenceStore
+            original_save=EvidenceStore.save
+            boundary_times=[]
+            boundary_phases=set()
+            def save_with_native_boundary(store,value):
+                key=original_save(store,value)
+                phase='held' if isinstance(value,dict) and 'monitoring_reservation' in value else 'entry'
+                if (quote_completion_boundary and phase not in boundary_phases and isinstance(value,dict)
+                        and value.get('kind')=='paper_read_attempt_v1' and value.get('method')=='jupiter_probe'):
+                    observed=value['observed_at'];delay=max(0,observed+1.02-time.time())
+                    self.assertLessEqual(delay,1.1)
+                    time.sleep(delay)  # bounded native persistence latency, no clock replacement
+                    boundary_times.append(observed)
+                    boundary_phases.add(phase)
+                return key
             with patch.object(operator_fixture.tool.cli, '_credentials'), \
-                    patch.object(transport, 'build_opener', return_value=http):
+                    patch.object(transport, 'build_opener', return_value=http), \
+                    patch.object(EvidenceStore,'save',save_with_native_boundary):
                 if invalid_history:
                     with self.assertRaises(ValueError):
                         op.invoke(live=True, systemd_credentials=True)
@@ -287,6 +307,11 @@ class HistoryRuntimeCompositionTests(unittest.TestCase):
                     and page.get('response_bytes_base64') == base64.b64encode(history_bodies[0]).decode()
                     and page.get('source_id') == transport.PaperReadSources.rpc_source_id for page in pages))
                 if fee_profile:
+                    if quote_completion_boundary:
+                        self.assertEqual(len(boundary_times),1)
+                        self.assertTrue(any(isinstance(page,dict) and page.get('method')=='jupiter_probe'
+                            and page.get('acquired_at',-1)>boundary_times[0]
+                            and page.get('result',{}).get('observed_at')==boundary_times[0] for page in pages))
                     self._assert_nonboosted_originals(h.store, h.target)
                 admission = f.f.progress.admission(h.target.scan_id)
                 held = paper_cycle._state(h.new, h.cfg)['positions'][h.target.mint]
@@ -298,6 +323,8 @@ class HistoryRuntimeCompositionTests(unittest.TestCase):
                     self.assertEqual(result['status'], 'COMPLETE', result)
                     self.assertEqual(result['monitoring_attempted_requests'], 4)
                     self.assertTrue(any(row.get('side') == 'sell' for row in result['outcomes']))
+                    if quote_completion_boundary:
+                        self.assertEqual(boundary_phases,{'entry','held'})
                     if fee_profile:
                         self._assert_nonboosted_originals(h.store, h.target)
                         buy = next(row for row in entry['outcomes'] if row.get('side') == 'buy')

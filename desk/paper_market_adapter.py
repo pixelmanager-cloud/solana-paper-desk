@@ -209,6 +209,34 @@ def _replay_collected(collected, context, load_evidence):
     mint_raw=original(collected.mint.source,context.rpc_source_id)
     pool_raw=original(collected.pool.source,context.rpc_source_id)
     quote_raw=original(collected.quote.source,context.quote_source_id)
+    attempt_key=quote_raw.get('evidence_hash')
+    if 'evidence_hash' in quote_raw:
+        from . import paper_terminal_reconciliation as terminal
+        import base64
+        from urllib.parse import urlencode,parse_qsl
+        if type(attempt_key) is not str or len(attempt_key)!=64:raise ValueError('quote attempt reference')
+        attempt=load_evidence(attempt_key)
+        encoded=attempt.get('request_bytes_base64') if type(attempt) is dict else None
+        if type(encoded) is not str or len(encoded)>4*((8192+2)//3):raise ValueError('quote request byte bound')
+        request_bytes=base64.b64decode(encoded,validate=True)
+        if not request_bytes or len(request_bytes)>8192 or base64.b64encode(request_bytes).decode()!=encoded:
+            raise ValueError('quote request bytes malformed')
+        pairs=parse_qsl(request_bytes.decode('ascii'),strict_parsing=True)
+        if len(pairs)!=len(dict(pairs)) or urlencode(pairs).encode('ascii')!=request_bytes:
+            raise ValueError('quote request query ambiguous')
+        if (type(attempt) is not dict or len(canonical(attempt).encode())>3*1024*1024
+                or digest(attempt)!=attempt_key or attempt.get('kind')!='paper_read_attempt_v1'
+                or attempt.get('source_id')!=context.quote_source_id or attempt.get('scan_id')!=target.scan_id
+                or attempt.get('method')!='jupiter_probe' or attempt.get('params')!=quote_raw['request']
+                or type(attempt.get('http_status')) is not int or attempt['http_status']!=200
+                or attempt.get('failure_code') is not None
+                or type(attempt.get('observed_at')) is not int or attempt['observed_at']!=collected.quote.source.observed_at
+                or dict(pairs)!=quote_raw['request']
+                or terminal._wire(attempt['response_bytes_base64'],2*1024*1024)!=quote_raw['response']):
+            raise ValueError('quote transport attempt binding')
+        total+=len(canonical(attempt).encode())
+        if total>8*1024*1024:raise ValueError('record mismatch')
+        records[attempt_key]=attempt
     mint_envelope=mint_raw['original_rpc_observation']
     if (mint_envelope not in records.values() or mint_envelope['source_id']!=context.rpc_source_id
             or mint_envelope['params']!=[target.mint,{'encoding':'base64','commitment':'confirmed'}]
@@ -221,9 +249,17 @@ def _replay_collected(collected, context, load_evidence):
                and r.get('params')==pool_raw['params'] and r.get('result')==pool_raw['result']
                and r.get('acquired_at')==collected.pool.source.observed_at for r in records.values()):
         raise ValueError('pool envelope binding')
-    if not any(r.get('method')=='jupiter_probe' and r.get('source_id')==context.quote_source_id
-               and r.get('params')==[quote_raw['request']['inputMint'],quote_raw['request']['outputMint'],target.amount_raw,target.taker]
-               and r.get('result')==quote_raw and r.get('acquired_at')==collected.quote.source.observed_at for r in records.values()):
+    def quote_envelope(r):
+        # Transport acquisition precedes collector completion/persistence. A
+        # second boundary between them must not rebase the original quote time.
+        started,completed=r.get('started_at'),r.get('acquired_at')
+        return (r.get('method')=='jupiter_probe' and r.get('source_id')==context.quote_source_id
+                and r.get('params')==[quote_raw['request']['inputMint'],quote_raw['request']['outputMint'],target.amount_raw,target.taker]
+                and r.get('result')==quote_raw and type(started) is int and type(completed) is int
+                and 0<=started<=collected.quote.source.observed_at<=completed<=context.now
+                and completed-started<=10 and context.now-completed<=10
+                and (attempt_key is not None or completed==collected.quote.source.observed_at))
+    if not any(quote_envelope(r) for r in records.values()):
         raise ValueError('quote envelope binding')
     def reader(source,payload):return lambda:ProviderObservation(source.source_id,source.observed_at,payload)
     atomic_account=pool_raw['result']['value'][pool_raw['params'][0].index(target.mint)]

@@ -383,5 +383,6 @@ class PaperReadSources:
                     'notice': 'Provider valuation estimate, not executable price or independently verified block.'}, evidence_hash
         if method == 'jupiter_probe':
             return {'kind': 'unsigned_route_probe', 'observed_at': completed, 'request': params,
-                            'response': result, 'notice': 'No signing or submission. Quote is not a guaranteed fill.'}, evidence_hash
+                            'response': result, 'evidence_hash': evidence_hash,
+                            'notice': 'No signing or submission. Quote is not a guaranteed fill.'}, evidence_hash
         return result, evidence_hash
