@@ -1379,3 +1379,20 @@ Behind a new versioned flag, `paper_usd_valuation_version: 2` (absent or 1 means
    - a failure becomes a normal terminal outcome, with no NULL pass.
 
 Add an example config with the flag on, validated by the real loader. The coordinator will decide whether the fresh experiment ships with it.
+
+---
+
+## T16H — Concurrency: post-intent checkpoints must not orphan the intent; TTL-independent rollover (from the T16G review)
+STATUS: OPEN
+DEPENDS: branch `cloud/T35` has a `DONE T35:` commit (T35's batched marks make all held marks fresh within 10s, which this task relies on)
+BASE: origin/cloud/T35 (it contains T16G)
+OWNS: the T16/T16F/T16G files, docs/MULTI_POSITION.md
+AVOID: T22G files (desk/paper_cycle.py closure logic, desk/paper_pass_closure.py)
+
+1. **(HIGH) Orphaned intents.** T16G's held checkpoints run AFTER the entry intent is written. A checkpoint leg that comes back BLOCKED, or that moves the mode to EXIT_ONLY/LIQUIDATING or sets `exit_blocked`, makes the next `_preflight` raise, leaving an intent without a result ("Unresolved dispatch; no retry"). That is a new dispatcher latch.
+   - Fix: when a checkpoint changes the held state or gate after the intent, publish a typed terminal NO_ENTRY result for that intent (charges retained), and let held monitoring proceed normally.
+   - Add a test that runs the REAL `_held_pass` (`paper_monitor_service.main` in-process, not patched out) with a BLOCKED leg. Surface the held pass's failure code in the entry result instead of swallowing it.
+2. **Rollover.** The rollover rule must not depend on the rejected `paper_portfolio_mark_ttl_seconds`. With T35's fresh batched marks, roll over when every position has a fresh mark (≤10s), on a held pass or a checkpoint. Test the book-full, no-candidate and EXIT_ONLY cases with 3 positions and the TTL at the price TTL (10s).
+3. **Flag dependency.** The concurrent flag must NOT require the TTL key. Remove that dependency.
+4. **Docs and reports.** Remove every recommendation of `paper_portfolio_mark_ttl_seconds` (docs/MULTI_POSITION.md ~:177; correct reports/T16F.md's suggestion with a note). Fix the stale `ENTRY_SECONDS = 30` line (it is 52).
+5. **Phase caps.** Cap each entry phase so the held-latency bound is enforced, not just estimated. A phase that overruns is cut, with a terminal no-entry result, never an orphaned intent.
