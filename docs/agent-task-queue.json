@@ -6612,7 +6612,11 @@
       "PR187": {
         "head": "b453a745542cae6b394aec379362f0d6d6d1fe6b",
         "review": "PASS independent07 turn01a12373-5dd4-7654-b661-25ba46c6ce97;71 tests32.684s and both original bounded-read probes",
-        "owner": "06 completed implementation; final CI pending"
+        "owner": "06 completed implementation; final CI pending",
+        "ci": {
+          "38013862415": "PASS2744/648.136s",
+          "38013859569": "running"
+        }
       }
     },
     "activation_draft": {
@@ -6635,15 +6639,19 @@
       "turn": "01a12376-27ae-737c-baec-93092e5cf858",
       "source": "c7be1e9502da954a759dbe34ffd602762caf8bb2b84c70dd99a6fcf3736df8bf",
       "native_probe": "PASS208pages51375067rawbytes;dispatch21.488s;Helius2.001sJupiter2.024s",
-      "full_suite": "running"
+      "full_suite": "PASS2788tests712.635s zero skips",
+      "tree": "92ebb710bdd8af1da4dabc4e81f90643031ed6a1",
+      "base_policies_and_helpers": "byte-identical9504728"
     },
     "service_cutover_review": {
       "worker": "07",
-      "status": "requested",
+      "status": "PASS",
       "script": "work/start-paper-ready-reviewed.py",
       "source": "c7be1e9502da954a759dbe34ffd602762caf8bb2b84c70dd99a6fcf3736df8bf",
       "same_ledger": true,
-      "turn": "01a1237b-3a25-71a8-953b-f0ad566b19eb"
+      "turn": "01a1237f-22a6-76c9-9b81-9371cee8388f",
+      "preservation_check": "PASS11DBoriginalschema/rows/types/rowids;onlyexactretirement/runtimeadditions",
+      "repairs": "ExplicitchecksindependentofPYTHONOPTIMIZE;verifiedshutdowncleanup"
     },
     "dispatcher_activation_review": {
       "worker": "06",
