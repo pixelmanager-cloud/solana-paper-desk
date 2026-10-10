@@ -33,5 +33,7 @@
   "paper_signal_policy_version": 3,
   "paper_quote_execution_version": 1,
   "paper_token_profile_version": 2,
-  "paper_usd_valuation_version": 1
+  "paper_usd_valuation_version": 1,
+  "paper_exit_only_recovery_version": 1,
+  "paper_entry_latch_version": 1
 }

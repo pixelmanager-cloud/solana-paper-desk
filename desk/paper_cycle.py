@@ -18,7 +18,7 @@ import sqlite3
 import time
 import uuid
 
-from . import engine, quote_execution as qe, paper_concurrency as concurrency
+from . import engine, quote_execution as qe, paper_concurrency as concurrency, fill_realism, regime
 from .graduation_witness import extract_graduation
 from .ledger import Ledger
 from .model import canonical, digest, validate_event
@@ -71,6 +71,7 @@ def _config(cfg):
             or cfg['paper_signal_policy_version'] != 3
             or 'experimental_policy_version' in cfg or not qe.config(cfg)):
         raise ValueError('Explicit signal profile3 and quote execution1 required; no legacy policy field')
+    if regime.enabled(cfg):regime.policy(cfg)  # invalid flag/policy refused at load, not at first entry
 
 
 @contextmanager
@@ -531,7 +532,7 @@ def run_once(research_db, evidence_db, ledger_db, cfg, *, position_targets=(), c
                         intent.update(ledger_anchors=anchors,terminal_context=context,source_hash=terminal.runtime.implementation_hash())
                     except (ValueError,OSError,sqlite3.Error):pass
                 identity = uuid.uuid4().hex; key = store.save(intent)
-                attempt_refs=[]; terminal_hazards=()
+                attempt_refs=[]; terminal_hazards=(); realism_jobs=[]
                 result.update(pass_id=identity,intent_hash=key,attempt_refs=attempt_refs)
                 with store.connect() as c:c.execute('INSERT INTO paper_observation_passes VALUES(?,?,NULL)',(identity,key))
                 # Category (a) rejections may retire this pass; only a lone,
@@ -641,13 +642,22 @@ def run_once(research_db, evidence_db, ledger_db, cfg, *, position_targets=(), c
                                 diagnostic = build_market_event(collected,context=context,load_evidence=store.load,
                                     raw_trades=raw,history_pages=pages,usd_response=response,
                                     usd_bounds=usd_bounds,usd_attempt=usd_attempt,strategy_profile=OBSERVABLE_FLOW_CHURN_CONCENTRATION_V1)
+                            if not is_position and diagnostic['event'] is not None and regime.enabled(cfg):
+                                from . import regime_producer
+                                event=diagnostic['event']
+                                found=regime_producer.evidence(research,evidence,event['ts'],regime.policy(cfg)['ttl_seconds'])
+                                if found is not None:
+                                    event['regime']=found
+                                    event['event_id']='paper-market:'+digest({k:v for k,v in event.items() if k!='event_id'})
                             if diagnostic['event'] is None:
                                 result['diagnostics'].append({'scan_id':target.scan_id,'blockers':diagnostic['blockers']})
                             return diagnostic['event']
                         event, quotes, planned = fulfill_quotes(state,cfg,event_builder,collected,source,action_budget)
                         result['diagnostics'].append({'scan_id':target.scan_id,'blockers':diagnostic['blockers'],
                                                       'planned_outcomes':planned['outcomes']})
+                        before_outcomes=len(result['outcomes'])
                         deliver(event,quotes)
+                        realism_jobs+=fill_realism.capture(cfg,result['outcomes'][before_outcomes:],event,collected,is_position)  # never raises
                         _state(path,cfg)
                         if is_position and any(x['type']=='blocked_exit' for x in planned['outcomes']):
                             raise CycleBlocked('UNRESOLVED_POSITION_EXIT')
@@ -678,6 +688,7 @@ def run_once(research_db, evidence_db, ledger_db, cfg, *, position_targets=(), c
                     result['budget']={scan:{'used':progress.admission(scan)['requests_used'],
                         'ceiling':progress.admission(scan)['request_ceiling']} for scan in intent['admissions']}
                 outcome = store.save(result)
+                if realism_jobs:fill_realism.enqueue(path,realism_jobs,digest(cfg))  # opt-in; result page durable; before every early return; never raises
                 if terminal_hazards and 'terminal_context' in intent:
                     try:
                         receipt=terminal.certify_intrinsic(store,progress,cfg,pass_id=identity,intent_hash=key,

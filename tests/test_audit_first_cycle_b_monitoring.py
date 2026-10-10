@@ -1,5 +1,7 @@
 """Audit B: monitoring-budget latches and O(N) re-verification. Fixture only."""
 import unittest
+import sys
+import os
 from unittest.mock import patch
 
 from desk.evidence import EvidenceStore
@@ -29,7 +31,6 @@ class MonitoringLatchTests(_Fixture):
         self.budget.clock = lambda: base.T + 7 * 86400
         self.assertEqual(self.budget.snapshot()['blockers'], [])
 
-    @unittest.expectedFailure
     def test_process_killed_after_reservation_must_not_block_forever(self):
         """Reservation is committed before the HTTP call; SIGKILL/SIGTERM at
         the systemd timeout leaves a reservation without an outcome.
@@ -39,7 +40,20 @@ class MonitoringLatchTests(_Fixture):
             opener.return_value.open.side_effect = KeyboardInterrupt()
             with self.assertRaises(KeyboardInterrupt):
                 self.read_unmocked()
+        # T25F: the real owner check needs the lock files run_once creates before any reservation
+        # (a missing lock file now means "owner unknown"); no other process holds them.
+        for path in (str(self.store.path) + '.ownership-invocation.lock', str(self.f.path) + '.paper-cycle.lock'):
+            with open(path, 'a'):
+                pass
         self.budget.clock = lambda: base.T + 7 * 86400
+        if not sys.platform.startswith('linux'):   # no /proc: inject empty owner evidence ("nothing holds anything")
+            import desk.monitoring_budget as _mb, tempfile as _tf
+            tmp = _tf.mkdtemp()
+            open(os.path.join(tmp, 'locks'), 'w').close()
+            os.mkdir(os.path.join(tmp, 'proc'))
+            with patch.object(_mb, 'LOCK_TABLE', os.path.join(tmp, 'locks')), patch.object(_mb, 'PROC_ROOT', os.path.join(tmp, 'proc')):
+                self.assertEqual(self.budget.snapshot()['blockers'], [])
+            return
         self.assertEqual(self.budget.snapshot()['blockers'], [])
 
 

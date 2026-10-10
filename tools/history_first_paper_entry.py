@@ -68,6 +68,7 @@ def _pacer():
     if value is None: raise ValueError('Configured durable pacer required')
     # Existing validator checks schema, private mode and canonical inode identity.
     value._validate()
+    value.reclaim_orphans()      # T23F: see paper_entry_dispatcher._preflight
     with closing(value._connect()) as c:
         if c.execute('SELECT 1 FROM state WHERE pending IS NOT NULL LIMIT 1').fetchone():
             raise ValueError('Pacer recovery required')
