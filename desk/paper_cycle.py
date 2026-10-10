@@ -18,7 +18,7 @@ import sqlite3
 import time
 import uuid
 
-from . import engine, quote_execution as qe
+from . import engine, quote_execution as qe, paper_concurrency as concurrency
 from .graduation_witness import extract_graduation
 from .ledger import Ledger
 from .model import canonical, digest, validate_event
@@ -469,10 +469,15 @@ def run_once(research_db, evidence_db, ledger_db, cfg, *, position_targets=(), c
                 except (_Blocked, sqlite3.Error):
                     return {**result,'blockers':['PERSISTED_ADMISSION_OR_SCHEMA_REQUIRED']}
                 supplied = {x.target.mint:x for x in position_targets}
-                if len(supplied)!=len(position_targets) or set(supplied)!=set(state['positions']):
+                # Explicit concurrent-entries experiments may monitor a subset of the
+                # open positions per pass (held legs); otherwise all must be supplied.
+                if len(supplied)!=len(position_targets) or (
+                        not set(supplied)<=set(state['positions']) if concurrency.selected(cfg)
+                        else set(supplied)!=set(state['positions'])):
                     return {**result,'blockers':['ALL_OPEN_POSITION_TARGETS_REQUIRED']}
                 with closing(sqlite3.connect(path.as_uri()+'?mode=ro',uri=True)) as c:
                     for mint,p in state['positions'].items():
+                        if mint not in supplied:continue
                         target = supplied[mint].target
                         row = c.execute('SELECT payload,payload_hash FROM events WHERE event_id=?',(p.get('entry_event_id'),)).fetchone()
                         original = json.loads(row[0]) if row else None
@@ -529,6 +534,14 @@ def run_once(research_db, evidence_db, ledger_db, cfg, *, position_targets=(), c
                 attempt_refs=[]; terminal_hazards=()
                 result.update(pass_id=identity,intent_hash=key,attempt_refs=attempt_refs)
                 with store.connect() as c:c.execute('INSERT INTO paper_observation_passes VALUES(?,?,NULL)',(identity,key))
+                # Category (a) rejections may retire this pass; only a lone,
+                # control-free, non-monitoring candidate qualifies.
+                ledger_before=None
+                if len(candidates)==1 and not position_targets and not controls and not monitoring:
+                    try:
+                        from .paper_cycle_no_entry import ledger_snapshot
+                        ledger_before=ledger_snapshot(path)
+                    except (ValueError,OSError,sqlite3.Error):pass
                 ledger = Ledger(path,must_exist=True)
                 try:
                     ledger.apply(INIT,cfg,engine.transition,engine.initial_state)
@@ -673,6 +686,16 @@ def run_once(research_db, evidence_db, ledger_db, cfg, *, position_targets=(), c
                     except (ValueError,TypeError,KeyError,OSError,sqlite3.Error):
                         # Missing/contradictory proof never clears the NULL latch.
                         pass
+                if (ledger_before is not None and result['status']=='BLOCKED' and budget.attempted>0
+                        and len(result['blockers'])==1):
+                    from . import paper_cycle_no_entry as no_entry
+                    if result['blockers'][0] in no_entry.NORMAL:
+                        try:
+                            no_entry.publish(store,progress,pass_id=identity,intent_hash=key,result=result,ledger=ledger_before)
+                            return {**result,'evidence_hash':outcome}
+                        except (ValueError,TypeError,KeyError,OSError,sqlite3.Error):
+                            # Unproved rejection keeps the NULL latch (fail closed).
+                            pass
                 if result['status']=='COMPLETE' or (budget.attempted==0 and budget.monitoring_attempted==0 and all(
                         progress.admission(scan)==admission for scan,admission in intent['admissions'].items())):
                     with store.connect() as c:c.execute('UPDATE paper_observation_passes SET outcome_hash=? WHERE id=?',(outcome,identity))

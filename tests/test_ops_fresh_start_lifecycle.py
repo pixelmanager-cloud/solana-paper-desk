@@ -137,27 +137,21 @@ class FreshStoreScenario(FreshFixture):
                 result = {'error': str(error)}
         return result
 
-    @unittest.expectedFailure  # DEPENDS ON T01: remove once cloud/T01 (generic terminal outcome) is integrated
     def test_market_producer_blocked_pass_must_not_block_second_candidate(self):
         self.blocked_first_candidate()
-        self.assertTrue(any(outcome is None for _, outcome in self.passes()), 'fixture must leave a NULL pass')
         second = self.append_distinct_migration()
         with patch.object(tool.cli, '_credentials', side_effect=AssertionError('dry-run credentials')):
             result = self.invoke()
         self.assertEqual((result['status'], result['hint']['mint']), ('DRY_RUN', second))
 
-    def test_market_producer_blocked_currently_latches_and_keeps_charges(self):
-        """Documents the pre-T01 behaviour this task cannot fix: fail closed, nothing reset."""
+    def test_market_producer_blocked_is_terminal_and_keeps_charges(self):
+        """Post-T01: the typed rejection gets a terminal NO_ENTRY outcome; charges stay charged."""
         self.blocked_first_candidate()
-        null = [p for p in self.passes() if p[1] is None]
-        self.assertEqual(len(null), 1)
-        self.assertEqual(self.gate(), 'OBSERVATION_RECOVERY_REQUIRED')
+        self.assertEqual([p for p in self.passes() if p[1] is None], [])
+        self.assertIsNone(self.gate())
         with self.f.jobs.connect() as c:
             scan = c.execute('SELECT id FROM scans').fetchone()[0]
         self.assertGreater(self.f.progress.admission(scan)['requests_used'], 1)
-        self.append_distinct_migration()
-        with self.assertRaises(ValueError):
-            self.invoke()
 
 
 class FreshEntryScenario(FreshFixture):
