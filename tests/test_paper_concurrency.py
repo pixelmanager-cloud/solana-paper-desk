@@ -395,6 +395,18 @@ class RolloverAfterMarkTests(RolloverTests):
     def test_running_book_with_room(self):
         self.roll_case()
 
+    def test_rollover_resets_the_daily_loss_counter(self):
+        apply, state = self.book(**self.ROLL)
+        for i, mint in enumerate('AB'):
+            apply(self.ev(T + 10 + 8 * i, mint))
+        marked = state()
+        marked['day_gross_losses'] = '0.5'                            # yesterday's losses must not leak into today
+        rolled, out = transition(copy.deepcopy(marked), self.ev(T + 26, 'C'), cfg_on(**self.ROLL))
+        self.assertEqual(rolled['day_gross_losses'], '0')
+        self.assertNotEqual(rolled['day'], marked['day'])
+        kept, _ = transition(copy.deepcopy(marked), self.ev(T + 26, 'C'), cfg_on())    # key absent: deferred, counter kept
+        self.assertEqual((kept['day'], kept['day_gross_losses']), (marked['day'], '0.5'))
+
     def test_a_stale_other_mark_still_defers(self):
         apply, state = self.book(**self.ROLL)
         before = state()
