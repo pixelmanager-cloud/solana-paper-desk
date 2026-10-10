@@ -1,5 +1,5 @@
 {
-  "status": "HTTP403_RECOVERY_DEPLOYED_JUPITER_ACCOUNT_ACCESS_BLOCKED_NO_BUY",
+  "status": "KRAKEN_USD_INTEGRATION_ASSIGNED_NO_BUY",
   "repository": "https://github.com/pixelmanager-cloud/solana-paper-desk",
   "cloud_environment": {
     "name": "solana-paper-desk",
@@ -5309,7 +5309,14 @@
               "portal_session": "No browser tabs available; native Mac locked. No account changes performed.",
               "docs": "https://developers.jup.ag/docs/portal/api-keys",
               "production_services": "RECOVERY_RELEASE_RUNNING_ZERO_POSITIONS",
-              "further_provider_calls": "HELD_PENDING_ACCESS_RESOLUTION"
+              "further_provider_calls": "HELD_PENDING_ACCESS_RESOLUTION",
+              "recovery_schedule": {
+                "automation_id": "finish-solana-paper-trading-desk",
+                "status": "PAUSED",
+                "reason": "Repeated unchanged external account-access blocker; no useful independent work remains after reviewed recovery deployed",
+                "resume_condition": "User confirms Jupiter Price permission/firewall resolution or provides new actionable account evidence",
+                "production_services": "Remain running; no new entry/provider attempts"
+              }
             },
             "http403_retirement": {
               "owner": "07",
@@ -5515,11 +5522,12 @@
               }
             },
             "last_actionable_check": {
-              "at": "2026-10-09T21:41:00Z",
+              "at": "2026-10-09T21:43:22.122033+00:00",
               "live_buy": false,
               "provider_calls": "Held for existing Jupiter Price key permission/firewall resolution; no candidate retry",
               "recovery": "Deployed, original70tables preserved, all gates verified",
-              "unclaimed_dependency_ready_work": "None without resolving provider access; screening expansion remains frozen"
+              "unclaimed_dependency_ready_work": "None without resolving provider access; screening expansion remains frozen",
+              "result": "No new worker findings; final integrated helper head1b4c both CI PASS; provider account access still awaiting user"
             }
           }
         }
@@ -5536,7 +5544,153 @@
       "reviewed_combined_tree": "613d5e3393e8a930cb15df979cf0c211fa89c037",
       "test_identity_note": "Exact d758bc5 + PR75 tree independently tested; accepted integration differs only in coordinator documentation."
     },
-    "production_commit": "5746912cd88b9527e2b196a2edefc66b72c257a0"
+    "production_commit": "5746912cd88b9527e2b196a2edefc66b72c257a0",
+    "kraken_usd_integration": {
+      "status": "SENSITIVE_REVIEW_PASS_FULL_LINUX_AND_NATIVE_TIMING_PENDING",
+      "base_head": "c1c613b696755c53912feb45639191045b831554",
+      "author_thread": "01a118fd-0f1c-749c-b85b-5e730937d0a8",
+      "reviewer_thread": "01a118fd-3f90-77d9-9549-c4497f5b10a6",
+      "host": "durable",
+      "implementation_claim": "KRAKEN-USD-1",
+      "review_claim": "KRAKEN-USD-REVIEW",
+      "user_authorization": "Ok begin integration. Is the api rate limited?",
+      "source_evaluation": "docs/free-sol-usd-source-evaluation.json",
+      "minimum_request_interval_seconds": 2,
+      "production_changed": false,
+      "pr": 183,
+      "head": "2d507b83fec026d247d68b564b3ada83993562ca",
+      "constraints": [
+        "Existing budgets and charged usage preserved",
+        "No legacy evidence relabeling",
+        "30s trade age / 10s acquisition age",
+        "Independent exact-head review and full Linux CI before deployment",
+        "Jupiter quote dependency remains"
+      ],
+      "author_turn": "01a1231d-4b49-74b4-adc1-5f4ec17ff1d5",
+      "reviewer_turn": "01a1231d-8e2a-779b-8230-d6325444f9b3",
+      "ci_runs": [
+        38008364274,
+        38008331516
+      ],
+      "local_test_setup_note": "First 38-test run: 4 errors due missing scratch work directory; created directory and reran unchanged code",
+      "attachment_blocker": "Desktop attachment cap100; PR URL retained in queue",
+      "ops_worker": "01a118fc-f867-7233-8eec-c20659e70095",
+      "local_focused": {
+        "tests": 38,
+        "result": "PASS",
+        "seconds": 4.186
+      },
+      "retained_public_response_replay": {
+        "result": "MEASURED_AT_ORIGINAL_TIME_STALE_REJECTED",
+        "artifact": "work/kraken-retained-parser-check.json"
+      },
+      "vps_full_suite": {
+        "unit": "desk-fixture-kraken-2d507b8",
+        "invocation": "53f14e3e97ea40709a5858764e45828e",
+        "status": "RUNNING",
+        "network": "PrivateNetwork",
+        "production_paths": "inaccessible"
+      },
+      "review_turn": "01a1232c-7700-76ac-aa4c-379568f45a34",
+      "ops_turn": "01a1232d-12d5-714b-b512-1fb8a8ee32c1",
+      "recovery_schedule": "ACTIVE",
+      "independent_review": {
+        "result": "SCOPED_SENSITIVE_PASS",
+        "head": "2d507b83fec026d247d68b564b3ada83993562ca",
+        "tree": "11a0e2f737b948287e91ca76193f11a35f59c375",
+        "reviewer": "09",
+        "turn": "01a1232c-7700-76ac-aa4c-379568f45a34",
+        "tests": [
+          {
+            "count": 52,
+            "seconds": 7.714
+          },
+          {
+            "count": 50,
+            "seconds": 44.955
+          },
+          {
+            "independent_probes": 2,
+            "seconds": 0.063
+          }
+        ],
+        "remaining_gates": [
+          "full Linux CI",
+          "VPS full suite",
+          "exact migration/runtime/successor pin review",
+          "quiescent pending-state checks",
+          "separately initialized experiment"
+        ]
+      },
+      "proposed_config_hash": "3dc3108e1c23ebbad97b88338e37f4012d3dd6b259f5a911624d799da1c11dff",
+      "ops_review": {
+        "worker": "06",
+        "turn": "01a1232d-12d5-714b-b512-1fb8a8ee32c1",
+        "result": "SUPPORTED_WITH_REQUIRED_GATES",
+        "order": [
+          "final source/config freeze",
+          "quiesce/backups",
+          "initialize distinct config-selected ledger",
+          "review and activate monitoring successor",
+          "review and apply additive Kraken pacing migration",
+          "validate originals/retirements/budgets and postbackup",
+          "switch all service paths/config/ledger and restart"
+        ],
+        "constraint": "Archived old pacer refuses migrated schema; do not rollback by restoring old services"
+      },
+      "native_timing_review": {
+        "worker": "09",
+        "turn": "01a1232f-9e20-7503-bc54-840b9ff06484",
+        "status": "PASS_SYNTHETIC_HTTP_REAL_CLOCKS",
+        "entry_seconds": 6.642,
+        "entry_requests": 7,
+        "held_seconds": 6.156,
+        "held_requests": 5,
+        "minimum_cadence_seconds": {
+          "helius": 2.014,
+          "jupiter": 2.21,
+          "kraken": 2.039
+        },
+        "stale_31s": "REJECTED_FAILURE_RETAINED",
+        "live_provider_calls": 0
+      },
+      "preparation_wrapper": {
+        "path": "work/prepare-kraken-transition.py",
+        "reviewer": "03",
+        "turn": "01a12330-e755-7345-bddb-45bb31b362d6",
+        "status": "PASS_PROPOSAL_ONLY_NOT_EXECUTED",
+        "review_turn": "01a12332-5e85-71bb-9c6b-df65935d560e",
+        "sha256": "a52e206fb88c3864f19d5e28a3914af9cae2bc1353f693d20cb2772df64a7f8e"
+      },
+      "preservation_verifier": {
+        "worker": "06",
+        "status": "IMPLEMENTATION_REQUESTED",
+        "turn": "01a12330-81c5-76a4-b7b1-1f378c912fa9"
+      },
+      "candidate_hints": {
+        "path": "work/kraken-predeployment-candidate-hints.json",
+        "status": "OFFLINE_HINTS_ONLY_NOT_ADMITTED",
+        "count": 10
+      },
+      "activation_wrapper": {
+        "path": "work/activate-kraken-reviewed.py",
+        "status": "PASS_UNDER_EXTERNAL_GATES_NOT_EXECUTED",
+        "reviewer": "03",
+        "review_turn": "01a12333-4267-7626-9275-65ba9ec2e713",
+        "sha256": "3269545b3e137cd93dca7998f01a770ed6e5fe6f73fcc2a7bc0e0521e0e63e4e"
+      }
+    },
+    "quote_alternative": {
+      "claim": "QUOTE-ALTERNATIVE-1",
+      "status": "DRAFT_BACKUP_NOT_CRITICAL_PATH",
+      "worker_thread": "01a118fc-f867-7233-8eec-c20659e70095",
+      "host": "durable",
+      "scope": "Jupiter-independent buy/sell quotes for actual supported pool families; Raydium coverage versus direct pool SDK math; no chart-price fills",
+      "production_changed": false,
+      "pr": 182,
+      "head": "f2e174b7d796bd411e5eca20854e72be96cc6ad1",
+      "finding": "Direct PumpSwap pure quote estimates; Raydium PumpSwap coverage not demonstrated; further wiring deferred"
+    }
   },
   "native_reconciliation_review": {
     "pr": 56,

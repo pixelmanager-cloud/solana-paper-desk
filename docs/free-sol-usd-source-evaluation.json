@@ -1,0 +1,35 @@
+{
+  "evaluated_at": "2026-10-09T23:58:14Z",
+  "status": "KRAKEN_LIVE_ACCESS_VERIFIED_NOT_INTEGRATED",
+  "scope": "Two explicitly user-authorized read-only diagnostic requests; one per provider; no production counters reset or caps changed",
+  "recommended_source": {
+    "provider": "Kraken",
+    "url": "https://api.kraken.com/0/public/Trades?pair=SOLUSD&count=1",
+    "authentication": "none",
+    "http_status": 200,
+    "price_usd": "109.08000",
+    "trade_timestamp": 1791590292.2493582,
+    "received_at": "2026-10-09T23:58:14.220369+00:00",
+    "age_seconds_approx": 1.971,
+    "trade_id": 34299138,
+    "purpose": "SOL/USD valuation only; not token fill or route evidence",
+    "documentation": "https://docs.kraken.com/api-reference/market-data/get-recent-trades"
+  },
+  "other_source": {
+    "provider": "Coinbase Exchange",
+    "http_status": 403,
+    "reason": "Cloudflare 1010 browser_signature_banned; no retries"
+  },
+  "raw_receipt_vps": "/var/lib/solana-desk/free-usd-source-check-20261010.jsonl",
+  "integration_requirements": [
+    "Explicit versioned Kraken source adapter, not relabelled Jupiter evidence",
+    "Strict SOLUSD pair, original response/request retention, Decimal price and timestamp parsing",
+    "Reject provider errors, stale/future trade timestamps, malformed/nonpositive prices and oversized responses",
+    "Preserve current 30-second source-price age and 10-second acquisition age limits; use trade time rather than fabricate a Solana slot",
+    "Durable reservation and provider pacing before each request, including failures, under existing approved ceilings",
+    "Keep Jupiter swap quote dependency explicit; verify separately before new paper entry",
+    "Independent exact-head sensitive review, combined Linux tests, exact-head CI and reviewed runtime identity migration before deployment"
+  ],
+  "production_changed": false,
+  "paper_entry_created": false
+}
