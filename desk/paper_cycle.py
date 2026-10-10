@@ -417,7 +417,8 @@ def fulfill_quotes(state, cfg, event_builder, collected, source, budget):
 
 def run_once(research_db, evidence_db, ledger_db, cfg, *, position_targets=(), candidates=(),
              dependency_blockers, controls=(), usd_evidence_refs=(), monitoring=False, source_factory=PaperReadSources,
-             history_source_factory=PaperHistorySource, wall_clock=time.time, monotonic=time.monotonic):
+             history_source_factory=PaperHistorySource, wall_clock=time.time, monotonic=time.monotonic,
+             history_first=False, preparation_publication=None):
     """Trusted callable, no automatic runner activation or permission from JSON.
 
     Pending dependency blockers are explicit caller-supplied review/integration
@@ -429,6 +430,12 @@ def run_once(research_db, evidence_db, ledger_db, cfg, *, position_targets=(), c
     valuation_version=usd_selected(cfg)
     if type(monitoring) is not bool or type(position_targets) is not tuple or type(candidates) is not tuple:
         raise ValueError('Explicit bounded cycle target tuples required')
+    if type(history_first) is not bool or (preparation_publication is not None and not callable(preparation_publication)):
+        raise ValueError('Explicit history-first mode and publication required')
+    if history_first and (len(candidates)!=1 or position_targets or controls or monitoring or usd_evidence_refs):
+        raise ValueError('History-first requires exactly one new candidate')
+    if not history_first and preparation_publication is not None:
+        raise ValueError('Publication requires history-first mode')
     items = position_targets+candidates
     if (type(position_targets) is not tuple or type(candidates) is not tuple or len(items)>18
             or any(type(x) is not CycleTarget or type(x.target) is not ObservationTarget for x in items)
@@ -488,6 +495,25 @@ def run_once(research_db, evidence_db, ledger_db, cfg, *, position_targets=(), c
                     blocked = 'OBSERVATION_RECOVERY_REQUIRED'
                 if blocked:
                     return {**result,'status':'RECOVERY_REQUIRED','blockers':[blocked]}
+                if history_first:
+                    from .paper_history_preparation import prepare
+                    from . import provider_pacing
+                    pacer=provider_pacing.configured(priority='investigation')
+                    if pacer is None:raise ValueError('Configured durable pacer required')
+                    pacer._validate();pacing_identity=(pacer.path,pacer.identity)
+                    prepared=prepare(store,progress,path,cfg,candidates[0],research_db=research,pacing_path=pacer.path)
+                    if type(prepared) is dict:
+                        # Only independently replayed typed rejection can publish.
+                        from .history_preparation_rejection import verify
+                        verify(store,progress,prepared)
+                        if preparation_publication is not None:preparation_publication(prepared)
+                        return prepared
+                    candidates=(prepared,);items=candidates
+                    time.sleep(2.0)
+                    pacer=provider_pacing.configured(priority='investigation')
+                    if pacer is None or (pacer.path,pacer.identity)!=pacing_identity:
+                        raise ValueError('Pacer identity changed')
+                    pacer._validate()
                 budget = _Budget(progress,wall_clock,monotonic)
                 for control in controls:
                     validate_event(control)
