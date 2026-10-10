@@ -137,14 +137,23 @@ class DispatcherTests(unittest.TestCase):
         with patch.object(tool.cli,'_credentials',side_effect=AssertionError('retry')):
             with self.assertRaises(ValueError):self.invoke(execute=True,systemd_credentials=True)
 
-    def test_actual_charged_acquisition_failure_retains_pending_and_refuses_retry(self):
+    def test_actual_charged_acquisition_failure_is_closed_charged_and_never_retried(self):
+        # T22: was ..._retains_pending_and_refuses_retry. An unresolved intent used to kill the entry timer
+        # for good (every later tick raised "Unresolved dispatch"). The intent is now closed with a
+        # FAILED_CHARGED result: the charge stays, the same mint is never dispatched again, other
+        # candidates may proceed, and no provider call is made on the next tick.
         with patch.object(tool.cli,'_credentials'),patch('desk.providers.helius_rpc',side_effect=ValueError('ambiguous')):
             with self.assertRaises(ValueError):self.invoke(execute=True,systemd_credentials=True)
         with self.f.jobs.connect() as c:scan=c.execute('SELECT id FROM scans').fetchone()[0]
         self.assertEqual(self.f.progress.admission(scan)['requests_used'],1)
         with patch('desk.providers.helius_rpc',side_effect=AssertionError('retry')):
-            with self.assertRaises(ValueError):self.invoke(execute=True,systemd_credentials=True)
-        self.assertEqual(self.count('results'),0)
+            self.assertEqual(self.invoke(execute=True,systemd_credentials=True)['status'],'NO_CANDIDATE')
+        self.assertEqual(self.count('results'),1)
+        with sqlite3.connect(self.journal) as c:
+            closed=json.loads(c.execute('SELECT payload FROM results').fetchone()[0])
+        self.assertEqual((closed['result']['kind'],closed['result']['status'],closed['scan_id']),
+                         ('dispatcher_failed_charged_v1','FAILED_CHARGED',scan))
+        self.assertEqual(self.f.progress.admission(scan)['requests_used'],1)    # charge retained, not refunded
 
     def test_already_admitted_even_completed_mint_not_selected(self):
         def rpc(method,params):
@@ -376,16 +385,22 @@ class DispatcherTests(unittest.TestCase):
         self.assertEqual(proof['requests_after'],1)
         self.assertEqual(self.invoke()['status'],'NO_CANDIDATE')
 
-    def test_invalid_option_with_authority_stays_unresolved(self):
+    def test_invalid_option_with_authority_is_not_a_token_rejection_and_is_closed_charged(self):
+        # T22: was ..._stays_unresolved. Not a replay-proved typed rejection (so no TOKEN_REJECTED result),
+        # but the intent no longer wedges the timer: it is closed FAILED_CHARGED, no further provider call.
         with self.assertRaises(ValueError):self.rejection(mint_tag=2)
-        self.assertEqual(self.count('results'),0)
-        with self.assertRaises(ValueError):self.invoke()
+        self.assertEqual(self.count('results'),1)
+        self.assertEqual(self.invoke()['status'],'NO_CANDIDATE')
         self.assertEqual(self.calls,['getAccountInfo'])
+        with sqlite3.connect(self.journal) as c:
+            self.assertEqual(json.loads(c.execute('SELECT payload FROM results').fetchone()[0])['result']['kind'],
+                             'dispatcher_failed_charged_v1')
 
-    def test_extra_nonallowlisted_zero_supply_stays_unresolved(self):
+    def test_extra_nonallowlisted_zero_supply_is_not_a_token_rejection_and_is_closed_charged(self):
+        # T22: was ..._stays_unresolved (see the invalid-option test above).
         with self.assertRaises(ValueError):self.rejection(zero_supply=True)
-        self.assertEqual(self.count('results'),0)
-        with self.assertRaises(ValueError):self.invoke()
+        self.assertEqual(self.count('results'),1)
+        self.assertEqual(self.invoke()['status'],'NO_CANDIDATE')
 
     def test_rejection_restart_detects_corrupt_retained_mint_not_status_string(self):
         self.assertEqual(self.rejection()['status'],'TOKEN_REJECTED')
@@ -438,7 +453,9 @@ class DispatcherTests(unittest.TestCase):
             return result
         with patch.object(tool.acquisition,'acquire',side_effect=acquire):
             with self.assertRaises(ValueError):self.rejection()
-        self.assertEqual(self.count('results'),0)
+        # T22: the dispatch is closed FAILED_CHARGED (it can never publish), but the pending provider waiter is a
+        # separate latch that still blocks every later tick until it clears.
+        self.assertEqual(self.count('results'),1)
         with self.assertRaises(ValueError):self.invoke()
 
     def test_admission_race_after_selection_cannot_duplicate_complete_scan(self):

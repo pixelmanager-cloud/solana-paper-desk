@@ -28,7 +28,6 @@ class DispatcherTransientFault(unittest.TestCase):
         self.h.setUp()
         self.addCleanup(self.h.doCleanups)
 
-    @unittest.expectedFailure
     def test_single_transient_acquisition_timeout_permanently_kills_dispatcher(self):
         """One OSError/timeout on the very first acquisition RPC (a routine Helius 429/timeout)
         leaves an intent without a result in the dispatcher journal. Even the DRY RUN of every
@@ -41,7 +40,8 @@ class DispatcherTransientFault(unittest.TestCase):
             with self.assertRaises((ValueError, OSError)):
                 h.invoke(execute=True, systemd_credentials=True)
         self.assertEqual(h.count('intents'), 1)
-        self.assertEqual(h.count('results'), 0)
+        # T22: was `results == 0` (the intent stayed unresolved forever). It is now closed FAILED_CHARGED.
+        self.assertEqual(h.count('results'), 1)
         # A healthy provider is back; the timer's next tick must at least be able to run.
         self.assertIn(h.invoke()['status'], ('NO_CANDIDATE', 'DRY_RUN'))
 
@@ -52,7 +52,6 @@ class HistoryFirstTransientFault(unittest.TestCase):
         self.h.setUp()
         self.addCleanup(self.h.doCleanups)
 
-    @unittest.expectedFailure
     def test_transient_history_error_in_preparation_latches_whole_store(self):
         """FRESH store, first history-first candidate. The first history page read raises a
         typed CycleBlocked (what a Helius HTTP 429 becomes). prepare() inserted the NULL pass
@@ -176,7 +175,6 @@ class HeldMonitoringTransientFault(unittest.TestCase):
         self.h.setUp()
         self.addCleanup(self.h.doCleanups)
 
-    @unittest.expectedFailure
     def test_one_transient_monitoring_read_failure_strands_open_position_forever(self):
         """An open paper position, monitoring allowance provisioned. One transport error on the
         held mark read (timeout/429 -> charged failure) sets paper_monitoring_budget.blocked=
@@ -195,7 +193,9 @@ class HeldMonitoringTransientFault(unittest.TestCase):
             first = h.run_cycle(position_targets=(item,), candidates=(), monitoring=True,
                                 source_factory=transport.PaperReadSources)
         self.assertEqual(first['status'], 'BLOCKED')
-        h.sell_output = 30_000_000
+        # T22: 30_000_000 lamports is a 3x mark, which trips the 1.4x profit ladder and sells only 30%;
+        # the scenario needs the healthy retry to EXIT, so the retry quote is a stop-loss quote instead.
+        h.sell_output = 500_000
         restart = h.actual_cycle(positions=(item,), candidates=(), monitoring=True)
         self.assertEqual(restart['status'], 'COMPLETE', restart.get('blockers'))
         self.assertEqual(cycle._state(h.path, h.cfg)['positions'], {})

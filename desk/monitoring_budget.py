@@ -24,11 +24,12 @@ from . import allowance_policy as policy
 CAP = 60
 WINDOW_SECONDS = 3600
 VERSION = 1
-# Provider-availability failures carry no evidence about the position, so they are
-# charged and retained but do not latch the shared allowance. Every other failure
-# (rejections, malformed or oversized responses, persistence faults) still does.
-TRANSIENT_FAILURE_CODES = frozenset({'TRANSPORT_ERROR', 'DEADLINE_EXCEEDED'})
-TRANSIENT_HTTP_STATUSES = frozenset({408, 429}) | frozenset(range(500, 600))
+# A failed read is reserved, charged and retained with its outcome whatever the provider did, so it is
+# not a store-wide latch: the next pass for the same position must be able to try again. Only a failure
+# that makes the retained original itself untrustworthy keeps the one-way latch.
+LATCHING_FAILURE_CODES = frozenset({'CLOCK_INVALID', 'OUTCOME_PERSISTENCE_FAILED'})
+ABANDONED_KIND = 'paper_monitoring_abandoned_v1'
+MAX_ABANDONED = 64
 
 
 class MonitoringBlocked(ValueError):
@@ -248,7 +249,10 @@ class MonitoringBudget:
                     or receipt.get('reserved_at') != at or receipt.get('checkpoint_hash') != checkpoint
                     or receipt.get('mint') != mint
                     or original.get('scan_id') != scan or original.get('method') != method
-                    or digest(original.get('params')) != params_hash):
+                    or (original.get('params_hash') != params_hash or original.get('failure_code') != 'ABANDONED'
+                        or original.get('request_completed') is not False
+                        if original.get('kind') == ABANDONED_KIND
+                        else digest(original.get('params')) != params_hash)):
                 raise MonitoringBlocked('MONITORING_ACCOUNTING_INVALID')
         return row
 
@@ -425,6 +429,67 @@ class MonitoringBudget:
                 'remaining':max(0,row[4]-used), 'cap':row[4], 'window_seconds':WINDOW_SECONDS,
                 'high_water':row[6], 'entries_enabled':False, 'actual_fill_verified':False}
 
+    def abandon_pending(self, *, cause='LEASE_GONE'):
+        """Append an explicit ABANDONED outcome for every reservation whose reader is gone.
+
+        The caller holds research -> evidence -> ledger locks, so no reader can be mid-request: a reservation
+        without an outcome was committed by a process that died before recording one. Nothing is deleted, reset
+        or refunded (the reservation stays charged and counted); the unknown request is recorded as never
+        completed. Returns the resolved reservation ids.
+        """
+        if type(cause) is not str or not 1 <= len(cause) <= 128:
+            raise MonitoringBlocked('MONITORING_OUTCOME_BINDING_INVALID')
+        planned = []
+        with self.store.connect() as c:          # read phase: EvidenceStore.save opens its own writer
+            c.execute('BEGIN')
+            row = self._accounting(c, checkpoint=True)
+            pending = c.execute('SELECT r.id,r.at,r.scan_id,r.mint,r.checkpoint_hash,r.method,r.params_hash '
+                                'FROM paper_monitoring_reservations r LEFT JOIN paper_monitoring_outcomes o '
+                                'ON o.reservation_id=r.id WHERE o.reservation_id IS NULL ORDER BY r.id LIMIT ?',
+                                (MAX_ABANDONED + 1,)).fetchall()
+            if len(pending) > MAX_ABANDONED:
+                raise MonitoringBlocked('MONITORING_ACCOUNTING_INVALID')
+            transition = policy.monitoring_policy(c)
+            from .monitoring_handoff import read as read_handoff
+            handoff = read_handoff(c)
+            from .monitoring_successor import rows as successor_rows
+            history = successor_rows(c, handoff) if handoff else []
+        for identity, at, scan, mint, checkpoint, method, params_hash in pending:
+            receipt = {'kind': 'open_paper_monitoring_reservation_v2' if row[0] in (2, 3) else 'open_paper_monitoring_reservation_v1',
+                       'id': identity, 'reserved_at': at, 'mint': mint, 'total_used': identity,
+                       'window_used': None, 'cap': row[4], 'window_seconds': WINDOW_SECONDS,
+                       'checkpoint_hash': checkpoint, 'investigation_requests_used': None}
+            if row[0] in (2, 3):
+                receipt['policy_hash'] = transition[1]
+            if handoff:
+                receipt['context_hash'] = handoff[1]
+                successor = next((k for v, k in reversed(history) if identity > v['reservation_cutoff']), None)
+                if successor is not None:
+                    receipt['successor_context_hash'] = successor
+            record = {'kind': ABANDONED_KIND, 'failure_code': 'ABANDONED', 'cause': cause, 'scan_id': scan,
+                      'method': method, 'params_hash': params_hash, 'request_completed': False,
+                      'monitoring_reservation': receipt}
+            planned.append((identity, self.store.save(record)))
+        if not planned:
+            return []
+        with self.store.connect() as c:
+            c.execute('BEGIN IMMEDIATE')
+            try:
+                self._accounting(c, checkpoint=True)
+                still = [r[0] for r in c.execute(
+                    'SELECT r.id FROM paper_monitoring_reservations r LEFT JOIN paper_monitoring_outcomes o '
+                    'ON o.reservation_id=r.id WHERE o.reservation_id IS NULL ORDER BY r.id')]
+                if still != [identity for identity, _ in planned]:
+                    raise MonitoringBlocked('MONITORING_ACCOUNTING_INVALID')
+                for identity, key in planned:
+                    c.execute('INSERT INTO paper_monitoring_outcomes VALUES(?,?)', (identity, key))
+                self._accounting(c, checkpoint=True)
+                c.commit()
+            except BaseException:
+                c.rollback()
+                raise
+        return [identity for identity, _ in planned]
+
     def retain_outcome(self, reservation, evidence_hash):
         record = self.store.load(evidence_hash)
         if record.get('monitoring_reservation') != reservation:
@@ -452,13 +517,7 @@ class MonitoringBudget:
                 raise
 
 def _latching_failure(record):
-    code = record.get('failure_code')
-    if code is None:
-        return False
-    if code in TRANSIENT_FAILURE_CODES:
-        return False
-    status = record.get('http_status')
-    return not (code == 'HTTP_REJECTED' and type(status) is int and status in TRANSIENT_HTTP_STATUSES)
+    return record.get('failure_code') in LATCHING_FAILURE_CODES
 
 
 def _research_binding(research, evidence):

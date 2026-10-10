@@ -37,7 +37,6 @@ class _Base(KrakenLifecycleTests):
 
 
 class HeldPassLatchTests(_Base):
-    @unittest.expectedFailure
     def test_dust_sell_quote_must_not_strand_position(self):
         """Rug scenario: held pass sees a sell quote worth less than the fixed fee.
         The pass spends 5 monitoring requests, ends BLOCKED (UNRESOLVED_QUOTE_DEMAND),
@@ -53,7 +52,6 @@ class HeldPassLatchTests(_Base):
         second = actual_cycle(self.h, positions=(item,), candidates=(), monitoring=True)
         self.assertNotEqual(second['blockers'], ['OBSERVATION_RECOVERY_REQUIRED'], second)
 
-    @unittest.expectedFailure
     def test_zero_sell_quote_must_not_strand_position(self):
         """Same latch via ObservationError (sell quote outAmount 0 -> HELD_OBSERVATION_CONTENT_REJECTED)."""
         item = self._enter_and_provision()
@@ -64,12 +62,16 @@ class HeldPassLatchTests(_Base):
         second = actual_cycle(self.h, positions=(item,), candidates=(), monitoring=True)
         self.assertNotEqual(second['blockers'], ['OBSERVATION_RECOVERY_REQUIRED'], second)
 
-    def test_latch_is_global_not_per_scan_and_per_position(self):
-        """Documents (passes): the NULL pass count is 1 after the failed held pass."""
+    def test_failed_held_pass_is_closed_not_latched(self):
+        """T22: was test_latch_is_global_not_per_scan_and_per_position (documented NULL count 1).
+        The failed held pass now carries a FAILED_CHARGED closure instead of staying NULL, so no
+        store-wide latch remains and the position's next pass is not refused."""
         item = self._enter_and_provision()
         self.h.sell_output = 0
         actual_cycle(self.h, positions=(item,), candidates=(), monitoring=True)
-        self.assertEqual(self._null_passes(), 1)
+        self.assertEqual(self._null_passes(), 0)
+        with sqlite3.connect(self.h.f.progress.store.path) as c:
+            self.assertEqual(c.execute('SELECT count(*) FROM paper_pass_closures').fetchone()[0], 1)
 
 
 class ExitOnlyStickinessTests(_Base):

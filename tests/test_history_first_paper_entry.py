@@ -76,7 +76,10 @@ class HistoryFirstTests(unittest.TestCase):
                 state=original(*args);return {**state,'positions':{'already-held':{}}}
             with patch.object(tool.cycle,'_state',side_effect=held):
                 with self.assertRaises(ValueError):self.invoke()
-    def test_charged_preparation_failure_latched_across_restart(self):
+    def test_charged_preparation_failure_is_closed_and_the_candidate_is_not_retried_across_restart(self):
+        # T22: was ..._latched_across_restart (a NULL pass blocked EVERY later candidate). The failed pass is now
+        # closed FAILED_CHARGED: the charge stays, the same scan is retired (refused before credentials or history
+        # reads), and the store is no longer latched for other candidates.
         self.row['provenance']='PUBLIC_MAINNET_CAPTURE_NOT_TRADING_EVIDENCE';self.save()
         def failed(progress,item,*args):
             progress.reserve(item.target.scan_id)
@@ -86,8 +89,10 @@ class HistoryFirstTests(unittest.TestCase):
         self.assertEqual(self.f.f.progress.admission(self.f.target.scan_id)['requests_used'],1)
         with patch.object(tool.cli,'_credentials',side_effect=AssertionError('secret')),patch.object(tool.cycle,'_history',side_effect=AssertionError('retry')):
             with self.assertRaises(ValueError):self.invoke(live=True,systemd_credentials=True)
+        self.assertEqual(self.f.f.progress.admission(self.f.target.scan_id)['requests_used'],1)
         with self.f.f.progress.store.connect() as c:
-            self.assertEqual(c.execute('SELECT count(*) FROM paper_observation_passes WHERE outcome_hash IS NULL').fetchone()[0],1)
+            self.assertEqual(c.execute('SELECT count(*) FROM paper_observation_passes WHERE outcome_hash IS NULL').fetchone()[0],0)
+            self.assertEqual(c.execute('SELECT count(*) FROM paper_pass_closures WHERE retired_scan IS NOT NULL').fetchone()[0],1)
 
     def test_live_known_hazard_no_credentials_history_charge_or_pending(self):
         self.row.update(provenance='PUBLIC_MAINNET_CAPTURE_NOT_TRADING_EVIDENCE',known_hazards=['KNOWN_TOKEN_HAZARD']);self.save()

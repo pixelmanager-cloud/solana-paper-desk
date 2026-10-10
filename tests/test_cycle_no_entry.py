@@ -7,6 +7,7 @@ import contextlib
 import copy
 import sqlite3
 import time
+from tests import legacy_null_pass
 import unittest
 from contextlib import closing
 from dataclasses import replace
@@ -29,6 +30,7 @@ def fixture(legacy=False):
 
 class CycleNoEntryTests(unittest.TestCase):
     def setUp(self):
+        legacy_null_pass.install(self)    # T22: these tests certify retained pre-T22 NULL/unresolved states
         self.t = fixture(); self.addCleanup(self.t.doCleanups)
         t = self.t
         self.store, self.progress, self.scan = t.store, t.progress, t.h.f.target.scan_id
