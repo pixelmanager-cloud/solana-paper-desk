@@ -18,7 +18,7 @@ import sqlite3
 import time
 import uuid
 
-from . import engine, quote_execution as qe
+from . import engine, quote_execution as qe, paper_concurrency as concurrency
 from .graduation_witness import extract_graduation
 from .ledger import Ledger
 from .model import canonical, digest, validate_event
@@ -469,10 +469,15 @@ def run_once(research_db, evidence_db, ledger_db, cfg, *, position_targets=(), c
                 except (_Blocked, sqlite3.Error):
                     return {**result,'blockers':['PERSISTED_ADMISSION_OR_SCHEMA_REQUIRED']}
                 supplied = {x.target.mint:x for x in position_targets}
-                if len(supplied)!=len(position_targets) or set(supplied)!=set(state['positions']):
+                # Explicit concurrent-entries experiments may monitor a subset of the
+                # open positions per pass (held legs); otherwise all must be supplied.
+                if len(supplied)!=len(position_targets) or (
+                        not set(supplied)<=set(state['positions']) if concurrency.selected(cfg)
+                        else set(supplied)!=set(state['positions'])):
                     return {**result,'blockers':['ALL_OPEN_POSITION_TARGETS_REQUIRED']}
                 with closing(sqlite3.connect(path.as_uri()+'?mode=ro',uri=True)) as c:
                     for mint,p in state['positions'].items():
+                        if mint not in supplied:continue
                         target = supplied[mint].target
                         row = c.execute('SELECT payload,payload_hash FROM events WHERE event_id=?',(p.get('entry_event_id'),)).fetchone()
                         original = json.loads(row[0]) if row else None

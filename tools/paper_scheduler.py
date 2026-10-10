@@ -1,17 +1,46 @@
 """Serialize approved operator invocations; no service stopping or provider I/O."""
 import argparse
+import contextlib
+import io
 import json
 import os
 import sys
 from pathlib import Path
 from desk.paper_scheduler import lease
-from desk import paper_cycle
+from desk import paper_cycle, paper_concurrency as concurrency
 from desk.paper_cycle_cli import _config
 
 COMMANDS={'entry':['-m','tools.paper_entry_dispatcher'],
           'held':['-m','desk.paper_monitor_service'],
           'expire':['-m','desk','paper-monitor'],
           'decisions':['-m','desk','consume-scans']}
+
+def _concurrent_tick(args,argument,cfg,ledger):
+    """Held first, always: every open position is monitored before any entry work.
+
+    Returns a refusal document, or None when the entry dispatcher may be asked. The
+    lease is held throughout, so an entry can never delay or interleave with an exit
+    pass. The engine, budget and freshness gates still decide inside the dispatcher.
+    """
+    state=paper_cycle._state(ledger,cfg)
+    held=None
+    if state['positions']:
+        from desk.paper_monitor_service import main as held_pass
+        held_args=[x for name in ('--config','--research-db','--evidence-db','--ledger-db','--pool-fee-bps')
+                   for x in (name,argument(name))]
+        if '--systemd-credentials' in args:held_args.append('--systemd-credentials')
+        captured=io.StringIO()
+        with contextlib.redirect_stdout(captured):
+            code=held_pass(held_args)
+        held={'exit_code':code}
+        if code!=0:
+            return {'status':'HELD_MONITORING_DEGRADED','held_pass':held,'attempted_requests':0,'entry_authorized':False}
+        state=paper_cycle._state(ledger,cfg)
+    blockers=concurrency.entry_blockers(state,cfg,now=concurrency.clock())
+    if blockers:
+        return {'status':'CONCURRENT_ENTRY_BLOCKED','blockers':blockers,'held_pass':held,
+                'attempted_requests':0,'entry_authorized':False}
+    return None
 
 def main(argv=None):
     p=argparse.ArgumentParser()
@@ -38,7 +67,12 @@ def main(argv=None):
             ledger=paper_cycle.canonical_job_path(argument('--ledger-db'))
             if ledger.parent!=research.parent:raise ValueError('Scheduler ledger context mismatch')
             state=paper_cycle._state(ledger,cfg)
-            if state['positions'] or state['mode']!='RUNNING':
+            if concurrency.selected(cfg):
+                refusal=_concurrent_tick(args,argument,cfg,ledger)
+                if refusal is not None:
+                    print(json.dumps(refusal,sort_keys=True))
+                    return 0
+            elif state['positions'] or state['mode']!='RUNNING':
                 print(json.dumps({'status':'HELD_POSITION_PRIORITY','attempted_requests':0,'entry_authorized':False}))
                 return 0
         # Existing commands run in this process while the lease remains held
