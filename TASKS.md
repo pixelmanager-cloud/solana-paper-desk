@@ -1221,7 +1221,7 @@ BASE: origin/cloud/T16F, then merge origin/integration/r1. Resolve `deploy/fresh
 OWNS: the T16/T16F files, plus tools/ops/fresh_start.py (held argv only)
 AVOID: T22/T22F files, T23G files
 
-**Coordinator decision pending** on T16F's `paper_portfolio_mark_ttl_seconds` (a relaxation of held-mark freshness for entry decisions). Keep it behind its flag, and default it to ABSENT in example configs until the coordinator decides. Do not change its semantics.
+**Coordinator decision (2026-10-11): REJECTED** — do not relax the 10s held-mark freshness. T35 will make all held marks fresh with one batched on-chain read. Leave T16F's `paper_portfolio_mark_ttl_seconds` code behind its flag, but never set it in any config or doc recommendation. The original note was about T16F's `paper_portfolio_mark_ttl_seconds` (a relaxation of held-mark freshness for entry decisions). Keep it behind its flag, and default it to ABSENT in example configs until the coordinator decides. Do not change its semantics.
 
 1. **Wiring.** Add `--wall-seconds 64` to the held manifest argv (`fresh_start.py` ~:215) so `test_ops_fresh_start_wiring` passes after the merge. Fix the stale "held 10 s pass" comment (~:86).
 2. **Bounded held latency during an entry.** The worst case today is ~5 min between monitoring passes, against a 120s cadence. Bound it:
@@ -1232,3 +1232,24 @@ AVOID: T22/T22F files, T23G files
 3. **Rollover.** Guarantee a day rollover at least once per rollover window even when the book is full, no candidate exists, or the mode is EXIT_ONLY. For example, let the held pass's final leg roll over using fresh marks for all positions, under a versioned rule. Test all three cases.
 4. **Entry estimate.** `ENTRY_SECONDS` must include acquisition and intake time (dispatcher ~:646-667). The pipeline test must not freeze `time.time` to 0 for those phases.
 5. **Restart test.** Use 3 positions, a crash mid-leg (a reservation without an outcome) and an interrupted-entry restart. Prove there are no duplicate charges or fills.
+
+---
+
+## T35 — Batched on-chain portfolio marks (keep the 10s freshness rule with N positions)
+STATUS: OPEN
+DEPENDS: branch `cloud/T16G` has a `DONE T16G:` commit
+BASE: origin/cloud/T16G (merge origin/integration/r1 first)
+OWNS: a new desk/portfolio_marks.py, the minimal hooks in tools/paper_entry_dispatcher.py and desk/paper_monitor_service.py, desk/engine.py (only how a versioned reserve-implied mark is accepted for PORTFOLIO VALUATION), tests/test_portfolio_marks*.py, docs/MULTI_POSITION.md
+AVOID: exit logic (exits keep using executable Jupiter sell quotes), T22/T23 files
+
+**DECISION (CK, 2026-10-11).** Do not relax the held-mark TTL. Instead, refresh ALL open positions' marks with ONE batched `getMultipleAccounts` over their PumpSwap pool vaults right before an entry decision, and at the start of every held pass.
+- **Versioned flag:** `paper_portfolio_mark_source_version: 1`. When absent, behaviour stays identical.
+- **The mark:** a reserve-implied price from same-slot base/quote vault balances. Reuse and verify the math from T26G (`tools/research/counterfactual.py`) and T28F (`tools/ops/held_watcher.py`), and move the shared pricing into `desk/portfolio_marks.py` with tests: orientation, decimals, PumpSwap creator fee and Token-2022 transfer fee where known, virtual reserves.
+- **Evidence:** the bytes of the accountInfo response (slot, data) are retained like other evidence. The request is charged to the monitoring allowance (one request for N positions). A failure is charged and leaves marks stale, and stale marks give a normal STALE_PORTFOLIO reject, never a latch.
+- **Use:** the engine uses these marks ONLY for portfolio valuation, exposure and the daily equity checks. Stop, trailing and take-profit decisions and every SELL fill still require the executable Jupiter quote path, as today.
+- **Tests:**
+  - 4 open positions, with all marks within 10s using one request;
+  - a cross-slot vault pair rejected;
+  - flag-absent byte identity;
+  - a failure leading to a normal stale reject;
+  - realistic pipeline timing, with no frozen clock for real phases.
