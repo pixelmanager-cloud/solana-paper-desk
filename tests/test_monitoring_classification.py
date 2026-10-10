@@ -255,8 +255,9 @@ class Abandonment(_Fixture):
         if not LINUX_LOCKS:          # no /proc here: inject empty sources ("nothing holds anything")
             self.use_lock_sources(table='')
 
-    def use_lock_sources(self, *, table, proc=None):
+    def use_lock_sources(self, *, table, proc=None, uids=None):
         """Point the owner evidence at fixture files (portable): a /proc/locks-format table and a /proc-like tree."""
+        uids = uids or {}
         tmp = tempfile.TemporaryDirectory()
         self.addCleanup(tmp.cleanup)
         locks = os.path.join(tmp.name, 'locks')
@@ -267,6 +268,8 @@ class Abandonment(_Fixture):
         for pid, target in (proc or {}).items():
             os.makedirs(f'{root}/{pid}/fd')
             os.symlink(target, f'{root}/{pid}/fd/7')
+            with open(f'{root}/{pid}/status', 'w') as status:
+                status.write(f'Name:\tfixture\nUid:\t{uids.get(pid, os.geteuid())}\t0\t0\t0\n')
         for patcher in (patch.object(mb, 'LOCK_TABLE', locks), patch.object(mb, 'PROC_ROOT', root)):
             patcher.start()
             self.addCleanup(patcher.stop)
@@ -502,6 +505,20 @@ class Abandonment(_Fixture):
         self.now = T + mb.ABANDON_AFTER_SECONDS + 1
         with self.denied_fd_dirs():
             self.read()                                                  # the orphan resolves despite the opaque process
+        self.assertEqual(self.store.load(self.rows()[1][0][1])['failure_code'], 'ABANDONED_CHARGED')
+
+    def test_unreadable_flock_holder_of_another_user_is_skipped(self):
+        """Root daemons (journald, systemd...) hold their own flocks and have unreadable fd dirs on a runner."""
+        self.kill_after_reservation()
+        other = os.geteuid() + 1
+        elsewhere = '1: FLOCK  ADVISORY  WRITE 4243 08:01:1 0 EOF\n'      # a daemon's own lock on an unrelated inode
+        self.use_lock_sources(table=elsewhere, proc={4243: 'x'}, uids={4243: other})
+        self.restart(T + mb.ABANDON_AFTER_SECONDS + 1)
+        with self.denied_fd_dirs():
+            self.assertEqual(mb._deleted_lock_holders(self.lock_path()), set())
+        self.now = T + mb.ABANDON_AFTER_SECONDS + 1
+        with self.denied_fd_dirs():
+            self.read()
         self.assertEqual(self.store.load(self.rows()[1][0][1])['failure_code'], 'ABANDONED_CHARGED')
 
     def test_unreadable_process_that_holds_a_flock_blocks_abandonment(self):

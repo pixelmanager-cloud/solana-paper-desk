@@ -127,20 +127,39 @@ def _flock_pids():
     return pids - {os.getpid()}
 
 
+def _real_uid(pid):
+    """Real uid of ``pid`` from /proc/<pid>/status; None when it cannot be read (treated as the owner's: fail closed)."""
+    try:
+        with open(f'{PROC_ROOT}/{pid}/status') as status:
+            for line in status:
+                if line.startswith('Uid:'):
+                    return int(line.split()[1])
+    except (OSError, ValueError, IndexError):
+        pass
+    return None
+
+
 def _deleted_lock_holders(path):
     """PIDs other than ours holding an open descriptor on a DELETED lock file at ``path``.
 
     That is the recreated-lock-file hazard: the live owner's flock sits on an unlinked inode the
     path no longer names. None when the process table cannot be read (fail closed). A process whose
-    descriptors cannot be read (other users' processes, and same-user helpers such as `(sd-pam)` that
-    drop dumpability) is skipped unless the kernel lock table shows it holding a flock: only a flock
-    holder can be the owner we are looking for, and that table is readable for every pid. A
-    root-owned holder of a user's lock file that we cannot inspect is also covered by this rule.
+    descriptors cannot be read is skipped unless it could be our owner: the kernel lock table must show
+    it holding a flock (readable for every pid) AND it must run as the lock file's owner (read from
+    /proc/<pid>/status, readable even when fd/ is not). That skips system daemons of other users (root
+    services holding their own locks) and same-user helpers such as `(sd-pam)` that hold none, which
+    made an orphan permanently unprovable on GitHub runners (T38). Residual risk: a process of
+    ANOTHER user (for example root) holding our deleted lock inode is not covered; the desk services
+    never run as root.
     """
     target = str(path) + ' (deleted)'
     flock_pids = _flock_pids()
     if flock_pids is None:
         return None
+    try:
+        owner = os.stat(path).st_uid
+    except OSError:
+        owner = os.geteuid()
     try:
         pids = [n for n in os.listdir(PROC_ROOT) if n.isdigit()][:MAX_PROC_SCAN]
     except OSError:
@@ -153,8 +172,8 @@ def _deleted_lock_holders(path):
         try:
             names = os.listdir(fd_dir)
         except PermissionError:
-            if int(pid) in flock_pids:
-                return None                             # a flock holder we cannot inspect: cannot prove it is not ours
+            if int(pid) in flock_pids and _real_uid(pid) in (owner, None):
+                return None                             # a same-user flock holder we cannot inspect: cannot prove it is not ours
             continue
         except OSError:
             continue                                    # exited meanwhile
