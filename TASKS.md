@@ -1001,3 +1001,18 @@ T30's regime gate (opt-in, `paper_regime_version: 1`) has no producer: nothing f
 2. **(T30 issue 1)** `score()` can raise `decimal.Overflow` on huge or tiny values. Bound magnitudes in `validate_record` and catch ArithmeticError, mapping it to INVALID.
 3. **(nit)** Validate the flag and policy config at load or initialize time, not at the first entry candidate.
 4. **Tests:** the producer fills evidence deterministically from fixture stores; a producer failure becomes a terminal no-entry; the flag stays off by default; replay determinism holds.
+
+---
+
+## T26G — Two remaining classification bugs in the counterfactual (from the T26F review)
+STATUS: OPEN
+DEPENDS: none
+BASE: origin/cloud/T26F, then merge origin/integration/r1 (it contains T01's `paper_cycle_no_entry`)
+OWNS: tools/research/counterfactual.py, tests/test_counterfactual.py
+AVOID: desk/**
+
+1. **(HIGH) Latches counted as filter rejections** (~:240). A BLOCKED `paper_cycle_v1` result becomes REJECTED:OBSERVATIONS:<code> only if its blocker is in T01's `desk/paper_cycle_no_entry.NORMAL` set (import it, don't copy it) or a `paper_cycle_no_entry` row exists for the scan. Everything else is `UNRESOLVED:<code>` and is shown separately. Add a category-(b) fixture (`USD_ORIGINAL_BINDING_INVALID`). Same rule as T29F item 1.
+2. **(MED) Decision-store results finalised too early** (`_is_final` ~:342). A result from `source=DECISIONS` only becomes final after the dispatch window closes (same rule as NOT_DISPATCHED). A later journal or ledger BUY must override it (priority ledger > journal > decision). Add a test: a decision REJECT first, then a ledger BUY, gives BOUGHT.
+3. **(LOW) Null-pool backoff.** Cap the retry backoff so it cannot overshoot the +5m window (300–420s). For example, retry at 30s intervals while inside a sample window.
+
+After this lands, T27F (if it has already merged T26F) must merge T26G as well. Note this in the report.
