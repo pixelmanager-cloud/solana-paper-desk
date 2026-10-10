@@ -4,6 +4,10 @@ Every SQLite file is opened ``mode=ro`` with ``query_only`` after a canonical
 path check (absolute, no symlink component, regular file, single link). Any
 section that cannot be read fails closed: it is reported as an error, adds a
 blocker and makes the process exit 2. Nothing is written except stdout.
+
+Fresh layout (T34): the shared provider-pacing and discovery databases live outside the experiment
+root; ``--pacing-db`` and ``--discovery-db`` take their absolute canonical paths (read ``mode=ro``,
+``immutable`` only for a quiet WAL file) and they are inventoried with the same link checks.
 """
 import argparse
 from contextlib import closing
@@ -250,11 +254,26 @@ def pacing_section(pacing_path, now, samples=1, interval=3.0, sleep=time.sleep):
             'pending_stuck': sorted(stuck) if samples >= 2 else []}
 
 
+def discovery_section(discovery_path, now):
+    """The shared discovery input (read-only; reported, not graded: staleness thresholds belong to the healthcheck)."""
+    with closing(connect_ro(discovery_path)) as c:
+        tables = _tables(c)
+        counts = {t: c.execute(f'SELECT COUNT(*) FROM "{t}"').fetchone()[0]
+                  for t in ('reservations', 'completions', 'raw_events') if t in tables}
+        frame = c.execute('SELECT MAX(at) FROM completions').fetchone()[0] if 'completions' in tables else None
+        event = c.execute('SELECT MAX(received_at) FROM raw_events').fetchone()[0] if 'raw_events' in tables else None
+    age = lambda value: None if value is None else round(now - value, 3)
+    return {'status': 'OK', 'path': str(discovery_path), 'counts': counts,
+            'latest_completion_at': frame, 'latest_completion_age_seconds': age(frame),
+            'latest_event_at': event, 'latest_event_age_seconds': age(event)}
+
+
 def _raise(error):
     raise error
 
 
-def inventory_section(data, check):
+def inventory_section(data, check, externals=()):
+    """Stores under ``data`` plus the shared stores that live OUTSIDE it (fresh layout), same link checks."""
     out, symlinked, hardlinked = [], [], []
     for root, dirs, files in os.walk(data, followlinks=False, onerror=_raise):
         for name in sorted(dirs):
@@ -279,6 +298,29 @@ def inventory_section(data, check):
                 except (StatusError, sqlite3.Error, OSError) as e:
                     item['quick_check'] = f'ERROR:{type(e).__name__}'
             out.append(item)
+    for role, path in externals:
+        path = Path(path)
+        if path == data or data in path.parents:
+            continue                                  # already walked
+        name = str(path)
+        try:
+            info = os.lstat(path)
+        except OSError:
+            out.append({'name': name, 'external': True, 'role': role, 'missing': True})
+            continue
+        item = {'name': name, 'external': True, 'role': role, 'size': info.st_size, 'mtime': info.st_mtime,
+                'symlink': os.path.islink(path), 'nlink': info.st_nlink}
+        if item['symlink']:
+            symlinked.append(name)
+        elif info.st_nlink != 1:
+            hardlinked.append(name)
+        if check and not item['symlink'] and info.st_nlink == 1:
+            try:
+                with closing(connect_ro(path)) as c:
+                    item['quick_check'] = c.execute('PRAGMA quick_check').fetchone()[0]
+            except (StatusError, sqlite3.Error, OSError) as e:
+                item['quick_check'] = f'ERROR:{type(e).__name__}'
+        out.append(item)
     return {'status': 'OK', 'stores': sorted(out, key=lambda x: x['name']),
             'symlinked': sorted(symlinked), 'hardlinked': sorted(hardlinked)}
 
@@ -383,7 +425,8 @@ def _safe(fn, *args):
 
 
 def build_report(data, ledger, config, *, release_dir=None, systemd=False, check=False, last=5,
-                 runner=default_runner, now=None, samples=1, sample_interval=3.0, sleep=time.sleep):
+                 runner=default_runner, now=None, samples=1, sample_interval=3.0, sleep=time.sleep,
+                 pacing_db=None, discovery_db=None):
     now = time.time() if now is None else now
     try:
         data_dir = canonical_path(data, directory=True)
@@ -400,8 +443,19 @@ def build_report(data, ledger, config, *, release_dir=None, systemd=False, check
         cfg_digest = None    # binding then reads as unverified, which is a blocker
     ledger_bound = Path(ledger) if Path(ledger).is_absolute() else None
     report['budgets'] = _safe(budgets_section, data_dir / 'evidence.sqlite', now, ledger_bound, cfg_digest)
-    report['provider_pacing'] = _safe(pacing_section, data_dir / 'provider-pacing.sqlite', now, samples, sample_interval, sleep)
-    report['store_inventory'] = _safe(inventory_section, data_dir, check)
+    # Fresh layout: the shared pacing and discovery databases live outside the experiment root, so they are
+    # named explicitly (absolute, canonical). Without the options the in-root defaults apply as before.
+    pacing_path = Path(pacing_db) if pacing_db is not None else data_dir / 'provider-pacing.sqlite'
+    report['provider_pacing'] = _safe(pacing_section, pacing_path, now, samples, sample_interval, sleep)
+    discovery_path = Path(discovery_db) if discovery_db is not None else data_dir / 'discovery' / 'continuous.sqlite'
+    if discovery_db is None and not os.path.lexists(discovery_path):
+        report['discovery'] = {'status': 'SKIPPED', 'reason': 'no discovery database in the data directory; pass --discovery-db'}
+    else:
+        report['discovery'] = _safe(discovery_section, discovery_path, now)
+    externals = [('ledger', Path(ledger)), ('provider_pacing', pacing_path)]
+    if report['discovery']['status'] != 'SKIPPED':
+        externals.append(('discovery', discovery_path))
+    report['store_inventory'] = _safe(inventory_section, data_dir, check, tuple(externals))
     if systemd:
         report['systemd'] = _safe(systemd_section, runner)
     report['dashboard'] = _safe(dashboard_section, runner)
@@ -417,6 +471,10 @@ def main(argv=None, *, runner=default_runner, out=None):
     p.add_argument('--ledger', required=True)
     p.add_argument('--config', required=True)
     p.add_argument('--release-dir')
+    p.add_argument('--pacing-db', help='absolute path of the shared provider-pacing.sqlite when it lives outside --data '
+                                       '(default: <data>/provider-pacing.sqlite)')
+    p.add_argument('--discovery-db', help='absolute path of the shared discovery/continuous.sqlite '
+                                          '(default: <data>/discovery/continuous.sqlite when present)')
     p.add_argument('--systemd', action='store_true')
     p.add_argument('--check', action='store_true', help='PRAGMA quick_check each store')
     p.add_argument('--last', type=int, default=5)
@@ -426,7 +484,8 @@ def main(argv=None, *, runner=default_runner, out=None):
     a = p.parse_args(argv)
     report = build_report(a.data, a.ledger, a.config, release_dir=a.release_dir, systemd=a.systemd,
                           check=a.check, last=max(1, min(a.last, BOUND)), runner=runner,
-                          samples=a.samples, sample_interval=max(0.0, min(a.sample_interval, 60.0)))
+                          samples=a.samples, sample_interval=max(0.0, min(a.sample_interval, 60.0)),
+                          pacing_db=a.pacing_db, discovery_db=a.discovery_db)
     print(json.dumps(report, sort_keys=True, indent=2, default=str), file=out or sys.stdout)
     return 0 if report['status'] == 'OK' else 2
 

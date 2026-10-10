@@ -2,7 +2,7 @@
 
     python -m tools.research.shadow_strategies --store counterfactual.sqlite \
         --grid config/experiments/shadow/exit-grid.json [--holdout-from UTC|epoch] [--features f.json] \
-        [--min-trades 30] [--parity-ledger ledger.sqlite] [--json]
+        [--min-trades 30] [--parity-ledger ledger.sqlite] [--parity-samples ledger.sqlite] [--json]
 
 SIMULATED_SHADOW, never trading evidence, no provider request, no ledger writes. Every variant is
 evaluated by calling the REAL ``desk.engine.transition`` on events synthesized from the sampled PumpSwap
@@ -47,6 +47,17 @@ every candidate gets the same neutral features (printed in the output), so varia
 ``as_of`` per candidate: those features are known only from that instant, entries before it are refused
 (counted as FEATURES_NOT_YET_KNOWN) and a feature that would be observed after the decision is never used. The
 take-profit ladder is fixed inside ``desk.engine.manage_position`` and is not a config key.
+
+Parity (two different questions). ``--parity-ledger`` replays the RECORDED EVENTS (recorded evidence included) through
+the same engine function: it proves determinism and is circular by construction. ``--parity-samples`` is the real test of
+the shadow: each mint is rebuilt from the recorded RESERVES and TIMESTAMPS only, ``simulate`` runs on synthetic events with
+the NEUTRAL features and the ledger's saved config, and its first entry and exit are compared with what the live engine
+recorded. A difference is reported with its known cause (recorded features that differ from the neutral ones, operator
+controls and portfolio limits the one-candidate shadow does not model); a difference without a cause is UNEXPLAINED (exit 3).
+
+Outcome groups (T26F classification): ``REJECTED:<stage>:<code>`` is verified; ``...:UNVERIFIED`` only carries a terminal receipt
+nobody re-verified; ``UNRESOLVED:<code>`` is a latch, never a filter's rejection; ``...:PROVISIONAL`` can still be outranked by a
+later journal result or a ledger BUY while the dispatch window is open and must not be read as final.
 """
 import argparse
 import base64
@@ -57,6 +68,7 @@ import json
 import math
 import random
 import sqlite3
+import time
 import sys
 from contextlib import closing
 from datetime import datetime
@@ -158,19 +170,43 @@ def load_candidates(store, selection=None, *, include_truncated=False):
     return out
 
 
-def load_outcomes(store):
-    """mint -> report group of the T26F classification (read-only): BOUGHT | REJECTED:<stage>:<code> | NOT_DISPATCHED | UNKNOWN."""
+def outcome_group(payload, *, migrated_at=None, now=None, grace=0):
+    """Report group of one stored classification (read-only; T26F ``groups_of`` plus what it drops).
+
+    * ``REJECTED:<stage>:<code>`` is a VERIFIED rejection; a result the cycle only certified with a terminal receipt that
+      nobody re-verified (``detail == TERMINAL_RECEIPT_UNVERIFIED``) is ``REJECTED:<stage>:<code>:UNVERIFIED``.
+    * ``UNRESOLVED:<code>`` (a latch, never a filter's rejection) keeps its own group.
+    * A result that can still be outranked by a later journal result or a ledger BUY (``NOT_DISPATCHED`` or a
+      decision-store rejection while the dispatch window is open) is suffixed ``:PROVISIONAL`` and must not be read as final.
+    The primary code is used, so a candidate lands in exactly one group.
+    """
+    names, _detail = cf.groups_of(payload)
+    name = names[0]
+    if type(payload) is not dict or payload.get('v') != 2:
+        return name
+    if payload.get('class') == 'REJECTED' and payload.get('detail') == 'TERMINAL_RECEIPT_UNVERIFIED':
+        name += ':UNVERIFIED'
+    if migrated_at is not None and now is not None and payload.get('class') in ('NOT_DISPATCHED', 'REJECTED') \
+            and not cf._is_final(payload, migrated_at, now, grace):
+        name += ':PROVISIONAL'
+    return name
+
+
+def load_outcomes(store, *, now=None):
+    """mint -> report group (see ``outcome_group``): BOUGHT | REJECTED:<stage>:<code>[:UNVERIFIED][:PROVISIONAL] |
+    UNRESOLVED:<code> | NOT_DISPATCHED[:PROVISIONAL] | UNKNOWN. ``now`` defaults to the wall clock."""
+    now = time.time() if now is None else now
     groups = {}
     with closing(cf._connect(store, readonly=True)) as c:
         c.execute('BEGIN')
-        for mint, in c.execute('SELECT mint FROM candidates').fetchall():
+        grace = cf._policy(c)[1]
+        for mint, migrated in c.execute('SELECT mint,migrated_at FROM candidates').fetchall():
             last = c.execute('SELECT payload FROM outcomes WHERE mint=? ORDER BY id DESC LIMIT 1', (mint,)).fetchone()
             try:
                 payload = json.loads(last[0]) if last else None
             except ValueError:
                 payload = {}
-            names, _detail = cf.groups_of(payload)
-            groups[mint] = names[0]       # primary code; a candidate is never counted twice in the split
+            groups[mint] = outcome_group(payload, migrated_at=migrated, now=now, grace=grace)
     return groups
 
 
@@ -752,6 +788,151 @@ def replay_ledger(ledger_path):
     return {'events': len(events), 'matched': len(events) - len(mismatches), 'mismatches': mismatches}
 
 
+# Recorded rejections that come from portfolio state or operator controls, which the one-candidate shadow does not model.
+PORTFOLIO_REASONS = frozenset({'ENTRY_PAUSED', 'EXIT_ONLY', 'LIQUIDATING', 'STOPPED', 'MAX_POSITIONS', 'COOLDOWN',
+                               'ENTRY_THROTTLE', 'STALE_PORTFOLIO'})
+
+
+def _ledger_view(ledger_path):
+    """(saved config, events, outcomes by event) of a strict-mode ledger, read-only."""
+    with closing(cf._connect(ledger_path, readonly=True)) as c:
+        c.execute('BEGIN')
+        raw = c.execute("SELECT value FROM metadata WHERE key='config'").fetchone()
+        if raw is None:
+            raise ShadowError('Ledger has no saved config')
+        cfg = json.loads(raw[0])
+        from desk import quote_execution as qe
+        if qe.config(cfg):
+            raise ShadowError('Quote-execution ledgers need their recorded quotes and cannot be replayed from events alone')
+        events = [(eid, json.loads(p)) for eid, p in c.execute('SELECT event_id,payload FROM events ORDER BY seq')]
+        outcomes = {}
+        for event_id, payload in c.execute('SELECT event_id,payload FROM outcomes ORDER BY seq'):
+            outcomes.setdefault(event_id, []).append(json.loads(payload))
+    return cfg, events, outcomes
+
+
+def _derive_assumptions(first):
+    """Shadow assumptions read from the first RECORDED event of a mint (nothing invented)."""
+    try:
+        data = base64.b64decode(first['token_evidence']['account']['data'][0])
+        decimals = data[44]
+        reserve_sol, reserve_tokens = D(first['reserve_sol']), D(first['reserve_tokens'])
+        price_usd = reserve_sol / reserve_tokens * D(first['sol_usd'])
+        supply = D(first['market_cap_usd']) / price_usd
+    except (KeyError, IndexError, TypeError, ValueError, ArithmeticError) as exc:
+        raise ShadowError('A recorded event lacks the fields needed to derive the shadow assumptions') from exc
+    return {**DEFAULT_ASSUMPTIONS, 'sol_usd': str(first['sol_usd']), 'token_decimals': decimals,
+            'token_supply_tokens': format(supply, 'f'), 'pool_fee_bps': str(first['pool_fee_bps']), 'max_intra_marks': 0}
+
+
+def _raw_units(value, scale, what):
+    raw = D(value) * D(10) ** scale
+    if raw != raw.to_integral_value():
+        raise ShadowError(f'Recorded {what} is not a whole number of raw units')
+    return int(raw)
+
+
+def rebuild_candidate(mint, market_events, assumptions):
+    """A counterfactual-style candidate whose samples are the RECORDED reserves at the RECORDED timestamps."""
+    first = market_events[0]
+    return {'mint': mint, 'pool': first['pool'], 'migrated_at': first['graduated_at'], 'pool_died': False,
+            'samples': [{'horizon': e['ts'] - first['graduated_at'],
+                         'base_raw': _raw_units(e['reserve_tokens'], assumptions['token_decimals'], 'reserve_tokens'),
+                         'quote_raw': _raw_units(e['reserve_sol'], 9, 'reserve_sol')} for e in market_events]}
+
+
+def _recorded_trade(mint, events, outcomes):
+    """First recorded entry and its final (non-ladder) exit for one mint, from the real engine's recorded outcomes."""
+    ts = {eid: e['ts'] for eid, e in events}
+    entry = exit_ = None
+    rejects, buys, pnl = [], 0, D(0)
+    for eid, _event in events:
+        for o in outcomes.get(eid, []):
+            if o.get('mint') != mint:
+                continue
+            if o.get('type') == 'fill' and o.get('side') == 'buy':
+                buys += 1
+                entry = entry or {'at': ts[eid], 'size_sol': o.get('amount_sol')}
+            elif o.get('type') == 'fill' and o.get('side') == 'sell' and entry is not None and exit_ is None:
+                pnl += D(o.get('realized_pnl_sol', 0))             # ladder rungs count toward the round trip
+                if o.get('reason') != 'TAKE_PROFIT':
+                    exit_ = {'at': ts[eid], 'reason': o.get('reason'), 'round_trip_pnl_sol': str(pnl)}
+            elif o.get('type') == 'reject' and entry is None:
+                rejects.append({'at': ts[eid], 'reasons': list(o.get('reasons') or [o.get('reason')])})
+    return {'entry': entry, 'exit': exit_, 'rejects': rejects, 'later_entries': max(0, buys - 1)}
+
+
+def parity_from_samples(ledger_path, overrides=None):
+    """NON-CIRCULAR parity of the shadow against the recorded engine.
+
+    ``replay_ledger`` feeds the recorded EVENTS (with their recorded evidence) to the same engine function, so it can
+    only prove determinism. Here, for every mint, a candidate is rebuilt from the recorded RESERVES and TIMESTAMPS only,
+    and the shadow's own ``simulate`` (synthetic events with the neutral features, the ledger's saved config,
+    ``max_intra_marks = 0``) decides entry and exit. Its first entry/exit is compared with what the live engine recorded.
+
+    Each mint is MATCH, or a gap with a reason the shadow is known not to model:
+    GAP_FEATURES (recorded features differ from the neutral ones: listed), GAP_PORTFOLIO_OR_CONTROL (a recorded
+    rejection from portfolio state / an operator control that precedes the mint's last event), WHAT_IF (``overrides``
+    changed the config on purpose), or UNEXPLAINED (a real divergence: the CLI exits 3).
+    """
+    cfg, events, outcomes = _ledger_view(ledger_path)
+    run_cfg = build_config(cfg, overrides or {})
+    market = {}
+    for eid, e in events:
+        if e.get('kind') == 'market':
+            market.setdefault(e['mint'], []).append(e)
+    controls = [e['ts'] for _eid, e in events if e.get('kind') == 'control']
+    mints = []
+    for mint, evs in market.items():
+        assumptions = _derive_assumptions(evs[0])
+        cand = rebuild_candidate(mint, evs, assumptions)
+        trade = simulate(cand, run_cfg, assumptions, 'samples')
+        recorded = _recorded_trade(mint, events, outcomes)
+        sim = ({'entered': False, 'reject': trade.get('reject')} if not trade.get('entered') else
+               {'entered': True, 'entry_at': trade['entry_at'], 'exit_at': trade['exit_at'], 'exit_reason': trade['exit_reason'],
+                'horizon_end': trade['horizon_end'], 'pnl_sol': str(trade['pnl_sol'])})
+        rec_entry = recorded['entry']['at'] if recorded['entry'] else None
+        rec_exit = recorded['exit']
+        same_entry = (rec_entry is None and not sim['entered']) or (sim['entered'] and sim['entry_at'] == rec_entry)
+        same_exit = (rec_exit is None and (not sim['entered'] or sim['horizon_end'])) or (
+            rec_exit is not None and sim['entered'] and not sim['horizon_end']
+            and (sim['exit_at'], sim['exit_reason']) == (rec_exit['at'], rec_exit['reason']))
+        differing = {}
+        for e in evs:
+            for key, neutral in NEUTRAL_FEATURES.items():
+                if key in e and e[key] != neutral:
+                    differing.setdefault(key, {'neutral': neutral, 'recorded': []})
+                    if e[key] not in differing[key]['recorded']:
+                        differing[key]['recorded'].append(e[key])
+        last_ts = evs[-1]['ts']
+        portfolio = sorted({r for rej in recorded['rejects'] for r in rej['reasons']} & PORTFOLIO_REASONS)
+        control_before = any(t <= last_ts for t in controls)
+        if same_entry and same_exit:
+            status = 'MATCH'
+        elif overrides:
+            status = 'WHAT_IF'
+        elif differing:
+            status = 'GAP_FEATURES'
+        elif portfolio or control_before:
+            status = 'GAP_PORTFOLIO_OR_CONTROL'
+        else:
+            status = 'UNEXPLAINED'
+        pnl_equal = (D(rec_exit['round_trip_pnl_sol']) == D(sim['pnl_sol'])
+                     if rec_exit is not None and sim['entered'] and not sim['horizon_end'] else None)
+        mints.append({'mint': mint, 'status': status, 'samples': len(cand['samples']), 'recorded': recorded,
+                      'shadow': sim, 'entry_matches': same_entry, 'exit_matches': same_exit, 'round_trip_pnl_equal': pnl_equal,
+                      'differing_features': differing, 'portfolio_or_control_reasons': portfolio,
+                      'assumptions_derived': {k: assumptions[k] for k in ('sol_usd', 'token_decimals', 'token_supply_tokens', 'pool_fee_bps')}})
+    counts = {}
+    for m in mints:
+        counts[m['status']] = counts.get(m['status'], 0) + 1
+    return {'kind': 'shadow_parity_from_samples_v1', 'label': LABEL, 'mints': mints, 'counts': counts,
+            'unexplained': counts.get('UNEXPLAINED', 0), 'neutral_features': dict(NEUTRAL_FEATURES),
+            'expected_gap': 'The shadow sees only reserves and timestamps and applies the neutral features above; every recorded '
+                            'feature that differs, every operator control and every portfolio limit is a known source of difference '
+                            'and is reported per mint, never hidden.'}
+
+
 # ----------------------------------------------------------------- CLI
 def _fmt(x):
     if isinstance(x, tuple):
@@ -801,9 +982,15 @@ def main(argv=None):
     parser.add_argument('--no-outcomes', action='store_true', help='do not join the T26F outcome classification')
     parser.add_argument('--include-truncated', action='store_true', help='also evaluate paths that are not yet complete (flagged, liquidated at the last sample)')
     parser.add_argument('--parity-ledger', help='replay this ledger\'s recorded events through the shadow engine path and compare decisions')
+    parser.add_argument('--parity-samples', help='NON-CIRCULAR parity: rebuild each mint from the ledger\'s recorded reserves and timestamps, '
+                        'run the shadow\'s own simulate with the saved config and compare entry/exit with the recorded engine decisions')
     parser.add_argument('--json', action='store_true')
     args = parser.parse_args(argv)
     try:
+        if args.parity_samples:
+            result = parity_from_samples(args.parity_samples)
+            print(json.dumps(result, default=str, sort_keys=True))
+            return 0 if not result['unexplained'] else 3
         if args.parity_ledger:
             result = replay_ledger(args.parity_ledger)
             print(json.dumps({'label': LABEL, **{k: result[k] for k in ('events', 'matched')}, 'mismatches': result['mismatches']}, sort_keys=True))

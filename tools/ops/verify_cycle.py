@@ -1,7 +1,7 @@
 """Read-only paper round-trip snapshot and cold-restart comparison.
 
-    python -m tools.ops.verify_cycle snapshot --data DIR --ledger NAME --config PATH --out snap.json
-        [--anchor-from earlier.json]
+    python -m tools.ops.verify_cycle snapshot --data DIR --ledger NAME|ABS_PATH --config PATH --out snap.json
+        [--pacing-db ABS_PATH] [--discovery-db ABS_PATH] [--anchor-from earlier.json]
     python -m tools.ops.verify_cycle compare snapA.json snapB.json [--allow-progress]
 
 Nothing here opens a store for writing, calls a provider, signs or broadcasts.
@@ -342,8 +342,10 @@ def _ledger(path, cfg, anchor=None):
 
 # ------------------------------------------------- budgets, pacing, journal
 
-def _optional(path, reader, what):
+def _optional(path, reader, what, required=False):
     if not os.path.lexists(path):
+        if required:
+            raise VerifyError(f'{what} named explicitly but not present')
         return {'present': False}
     with closing(_connect(path, what)) as c:
         c.execute('BEGIN')
@@ -393,6 +395,26 @@ def _pacing_volatile(c):
     return {'providers': [list(r) for r in rows], 'waiters': waiters}
 
 
+def _discovery(c):
+    """Informational only (the discovery feed grows continuously): row counts and the latest timestamps."""
+    have = _tables(c)
+    counts = {t: c.execute(f'SELECT count(*) FROM "{t}"').fetchone()[0]
+              for t in ('reservations', 'completions', 'raw_events') if t in have}
+    return {'counts': counts,
+            'latest_completion_at': c.execute('SELECT max(at) FROM completions').fetchone()[0] if 'completions' in have else None,
+            'latest_event_at': c.execute('SELECT max(received_at) FROM raw_events').fetchone()[0] if 'raw_events' in have else None}
+
+
+def _store_path(data, value, what):
+    """A plain name inside ``data`` (as before) or, for the fresh layout, an absolute path outside it. Absolute
+    paths get exactly the checks of in-root stores when opened: canonical, regular, not a symlink."""
+    if os.path.isabs(value):
+        return Path(value), True
+    if Path(value).name != value or value in ('', '.', '..'):
+        raise VerifyError(f'store names are plain names inside --data (or an absolute path): {what}')
+    return data / value, False
+
+
 def _journal(directory, anchor=None):
     out = {}
     if not os.path.lexists(directory):
@@ -411,31 +433,36 @@ def _journal(directory, anchor=None):
 
 
 def snapshot(data, ledger, config, *, evidence='evidence.sqlite', pacing='provider-pacing.sqlite',
-             journal='entry-dispatch', anchor=None):
+             journal='entry-dispatch', anchor=None, discovery=None):
     """Read-only snapshot. ``anchor`` is an earlier snapshot of the same stores: the new
     snapshot then records its row digests at the exact old row counts, which is what lets
     ``compare --allow-progress`` prove the old prefix beyond the rolling-mark bound."""
     data = Path(data)
     if data.resolve() != data.absolute() or not data.is_dir():
         raise VerifyError('data directory must be a canonical directory')
-    for name in (ledger, evidence, pacing, journal):
+    for name in (evidence, journal):
         if Path(name).name != name or name in ('', '.', '..'):
             raise VerifyError('store names are plain names inside --data')
+    ledger_path, _ = _store_path(data, ledger, 'ledger')
+    pacing_path, pacing_explicit = _store_path(data, pacing, 'pacing store')
+    discovery_path = None if discovery is None else _store_path(data, discovery, 'discovery store')[0]
     if anchor is not None and (type(anchor) is not dict or anchor.get('kind') != KIND):
         raise VerifyError('anchor must be a paper_cycle_snapshot_v1 document')
     anchor = anchor or {}
     cfg = _config(config)
-    result = _ledger(data / ledger, cfg, anchor)
+    result = _ledger(ledger_path, cfg, anchor)
     # paper_monitoring_* and ownership_budgets both live in the EvidenceStore.
     result.update({
         'kind': KIND, 'ledger': ledger,
         'monitoring': _optional(data / evidence, lambda c: _monitoring(c, anchor.get('monitoring')),
                                 'evidence store'),
         'ownership': _optional(data / evidence, _ownership, 'evidence store'),
-        'pacing': _optional(data / pacing, _pacing, 'pacing store'),
-        'pacing_volatile': _optional(data / pacing, _pacing_volatile, 'pacing store'),
+        'pacing': _optional(pacing_path, _pacing, 'pacing store', required=pacing_explicit),
+        'pacing_volatile': _optional(pacing_path, _pacing_volatile, 'pacing store', required=pacing_explicit),
         'dispatcher': _journal(data / journal, anchor.get('dispatcher')),
         'taken_at': datetime.now(timezone.utc).isoformat()})
+    if discovery_path is not None:
+        result['discovery'] = _optional(discovery_path, _discovery, 'discovery store', required=True)
     return result
 
 
@@ -443,7 +470,7 @@ def snapshot(data, ledger, config, *, evidence='evidence.sqlite', pacing='provid
 
 # Not part of the strict equality: wall-clock, and pacing cadence state that changes with every
 # provider call. The shared pacing high_water is checked separately (it may rise, never fall).
-NOT_STRICT = ('taken_at', 'pacing', 'pacing_volatile')
+NOT_STRICT = ('taken_at', 'pacing', 'pacing_volatile', 'discovery')
 
 
 def _comparable(s):
@@ -569,12 +596,15 @@ def main(argv=None):
     sub = p.add_subparsers(dest='command', required=True)
     s = sub.add_parser('snapshot')
     s.add_argument('--data', required=True)
-    s.add_argument('--ledger', required=True)
+    s.add_argument('--ledger', required=True, help='plain name inside --data, or an absolute path')
     s.add_argument('--config', required=True)
     s.add_argument('--out', required=True)
-    for name, default in (('evidence', 'evidence.sqlite'),
-                          ('pacing', 'provider-pacing.sqlite'), ('journal', 'entry-dispatch')):
+    for name, default in (('evidence', 'evidence.sqlite'), ('journal', 'entry-dispatch')):
         s.add_argument(f'--{name}', default=default)
+    s.add_argument('--pacing', '--pacing-db', dest='pacing', default='provider-pacing.sqlite',
+                   help='plain name inside --data, or the absolute path of the shared pacing store (must exist)')
+    s.add_argument('--discovery-db', default=None,
+                   help='absolute path (or plain name) of the shared discovery store; recorded for information only')
     s.add_argument('--anchor-from', help='earlier snapshot: record digests at its exact row counts '
                                          'so compare --allow-progress can prove the old prefix')
     c = sub.add_parser('compare')
@@ -585,7 +615,8 @@ def main(argv=None):
     try:
         if a.command == 'snapshot':
             result = snapshot(a.data, a.ledger, a.config, evidence=a.evidence, pacing=a.pacing,
-                              journal=a.journal, anchor=_load(a.anchor_from) if a.anchor_from else None)
+                              journal=a.journal, anchor=_load(a.anchor_from) if a.anchor_from else None,
+                              discovery=a.discovery_db)
             _write_new(a.out, result)
             print(json.dumps({'status': result['status'], 'fill_count': result['fill_count'],
                               'open_positions': len(result['open_positions']),

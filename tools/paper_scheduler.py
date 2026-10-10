@@ -42,6 +42,24 @@ def _concurrent_tick(args,argument,cfg,ledger):
                 'attempted_requests':0,'entry_authorized':False}
     return None
 
+def _latch_refusal(cfg,ledger):
+    """Entry pre-check for EVERY entry path: a persisted BUY whose first-BUY latch has not been applied refuses entry.
+
+    Only active when the config selects the latch (`paper_entry_latch_version: 1`). Uses the T07 read-only check, so
+    manual or other invocations are covered too, not only the dispatcher's ExecStartPre drop-in. An unreadable or
+    inconsistent ledger refuses (fail closed). A deliberate operator RESUME after the latch is not undone: the latch
+    check reports NOOP_ALREADY_LATCHED_ONCE then.
+    """
+    if cfg.get('paper_entry_latch_version') is None:return None
+    from tools.ops import entry_latch
+    try:
+        code,report=entry_latch.latch(ledger,cfg,apply=False)
+    except Exception:
+        return {'status':'ENTRY_LATCH_UNAVAILABLE','attempted_requests':0,'entry_authorized':False}
+    if code!=0 or report.get('status')=='WOULD_PAUSE_ENTRY':
+        return {'status':'ENTRY_LATCH_REQUIRED','latch_status':report.get('status'),'attempted_requests':0,'entry_authorized':False}
+    return None
+
 def main(argv=None):
     p=argparse.ArgumentParser()
     p.add_argument('--research-db',required=True)
@@ -67,6 +85,10 @@ def main(argv=None):
             ledger=paper_cycle.canonical_job_path(argument('--ledger-db'))
             if ledger.parent!=research.parent:raise ValueError('Scheduler ledger context mismatch')
             state=paper_cycle._state(ledger,cfg)
+            refusal=_latch_refusal(cfg,ledger)
+            if refusal is not None:
+                print(json.dumps(refusal,sort_keys=True))
+                return 0
             if concurrency.selected(cfg):
                 refusal=_concurrent_tick(args,argument,cfg,ledger)
                 if refusal is not None:

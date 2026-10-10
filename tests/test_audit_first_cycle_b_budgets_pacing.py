@@ -61,20 +61,38 @@ class FreshPacingTests(unittest.TestCase):
         from desk import kraken_pacing_migration as k
         self.assertEqual(k.migrate(self.path)['status'], 'MIGRATED')
 
-    @unittest.expectedFailure
     def test_slot_granted_to_killed_process_is_reclaimed_eventually(self):
         """Process acquires a slot (pending=ticket) then is SIGKILLed by
         systemd TimeoutStartSec before finish()/throttle() (most likely
         exactly when a provider is slow, i.e. during the HTTP call). pending
         has no TTL and no clear path: 24h later every acquire() still raises
         PACING_OUTCOME_PENDING and dispatcher _preflight() refuses forever."""
-        self.make().acquire('helius', timeout_seconds=1)   # never finished
+        # T23F: "killed" now means the PROCESS is gone (a discarded Pacer object no longer counts), and the
+        # reclaim table exists only after the explicit upgrade.
+        p.upgrade(self.path)
+        code = textwrap.dedent(f'''
+            import time
+            from desk import provider_pacing as p
+            c = type("C", (), {{"time": lambda s: {self.clock.wall}, "sleep": lambda s, d: None}})()
+            p.Pacer({str(self.path)!r}, clock=c.time, monotonic=c.time, sleep=c.sleep).acquire("helius", timeout_seconds=1)
+            print("HELD", flush=True); time.sleep(600)
+            ''')
+        proc = subprocess.Popen([sys.executable, '-c', code], cwd=ROOT, stdout=subprocess.PIPE, text=True,
+                                env={**os.environ, 'PYTHONPATH': str(ROOT)})
+        self.addCleanup(proc.stdout.close)
+        self.assertEqual(proc.stdout.readline().strip(), 'HELD')
+        proc.send_signal(signal.SIGKILL); proc.wait()                  # never finished
         self.clock.wall += 86400
-        self.make().acquire('helius', timeout_seconds=1)
+        pacer = self.make()
+        with self.assertRaisesRegex(p.PacingError, 'DEADLINE_EXCEEDED'):   # T23: reclaim embargoes the fixed backoff
+            pacer.acquire('helius', timeout_seconds=1)
+        self.clock.wall += 31
+        pacer.acquire('helius', timeout_seconds=1)
 
     def test_orphaned_pending_blocks_every_provider_call_today(self):
-        """GREEN characterisation of the above: confirms the block is real."""
-        self.make().acquire('helius', timeout_seconds=1)
+        """GREEN characterisation: the block is real while the owner is provably alive (T23 reclaims
+        only owner-gone slots; the grant is held by `pacer` so its lock stays open)."""
+        pacer = self.make(); pacer.acquire('helius', timeout_seconds=1)
         self.clock.wall += 86400
         with self.assertRaisesRegex(p.PacingError, 'OUTCOME_PENDING'):
             self.make().acquire('helius', timeout_seconds=1)

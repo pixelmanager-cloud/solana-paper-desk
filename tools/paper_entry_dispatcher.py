@@ -25,6 +25,7 @@ from desk import runtime_compatibility as runtime
 from desk import ownership_acquisition as acquisition, migration_slot_intake as migration
 from desk import provider_pacing as pacing
 from desk import paper_concurrency as concurrency
+from desk import watchlist
 from desk.job_persistence import BIRTH_ACQUISITION_V1, JobPersistence
 from desk.history_progress import HistoryProgress
 from desk.model import canonical, digest
@@ -49,7 +50,12 @@ SCHEMAS = {
 }
 
 
-def _guards():
+SCHEMAS_V2 = {**SCHEMAS, 'intents': (
+    'CREATE TABLE intents(id TEXT PRIMARY KEY,mint TEXT NOT NULL,signature TEXT NOT NULL,evaluation INTEGER NOT NULL,'
+    'payload TEXT NOT NULL,hash TEXT NOT NULL,UNIQUE(mint,evaluation),UNIQUE(signature,evaluation))')}
+
+
+def _guards(version=1):
     guards = {}
     for table in SCHEMAS:
         for operation in ('UPDATE', 'DELETE'):
@@ -59,7 +65,8 @@ def _guards():
         name = f'no_{table}_replace'
         match = 'id=NEW.id OR rowid=NEW.rowid'
         if table == 'intents':
-            match += ' OR mint=NEW.mint OR signature=NEW.signature'
+            match += (' OR mint=NEW.mint OR signature=NEW.signature' if version == 1 else
+                      ' OR (mint=NEW.mint AND evaluation=NEW.evaluation) OR (signature=NEW.signature AND evaluation=NEW.evaluation)')
         guards[name] = (f'CREATE TRIGGER {name} BEFORE INSERT ON {table} '
                        f'WHEN EXISTS(SELECT 1 FROM {table} WHERE {match}) '
                        "BEGIN SELECT RAISE(ABORT,'Immutable dispatcher identity'); END")
@@ -120,7 +127,7 @@ def _discovery(c):
 
 
 def plan(*, config, research_db, evidence_db, ledger_db, discovery_db,
-         pacing_db, journal, taker, amount_raw, pool_fee_bps):
+         pacing_db, journal, taker, amount_raw, pool_fee_bps, watchlist_db=None):
     address(taker)
     if type(amount_raw) is not int or not 0 < amount_raw < 2**64:
         raise ValueError('Exact positive u64 entry size required')
@@ -128,9 +135,14 @@ def plan(*, config, research_db, evidence_db, ledger_db, discovery_db,
         'config': config, 'research_db': research_db, 'evidence_db': evidence_db,
         'ledger_db': ledger_db, 'discovery_db': discovery_db,
         'pacing_db': pacing_db}.items()}
-    if len(set(paths.values()) | {Path(journal)}) != 7:
-        raise ValueError('Distinct context paths required')
     cfg = cli._config(paths['config']); cycle._config(cfg)
+    versioned = bool(watchlist.selected(cfg))
+    if versioned != (watchlist_db is not None):
+        raise ValueError('Watchlist path is required exactly when paper_watchlist_version is selected')
+    if versioned:
+        paths['watchlist_db'] = _path(watchlist_db, private=True)
+    if len(set(paths.values()) | {Path(journal)}) != len(paths) + 1:
+        raise ValueError('Distinct context paths required')
     if cfg.get('paper_usd_valuation_version') != 1:
         raise ValueError('Explicit Kraken experiment required')
     # Reuse actual strict target size/taker/fee grammar without granting evidence.
@@ -156,7 +168,12 @@ def plan(*, config, research_db, evidence_db, ledger_db, discovery_db,
             'tool_hash': hashlib.sha256(Path(__file__).read_bytes()).hexdigest(),
             'entry_tool_hash': hashlib.sha256(Path(entry.__file__).read_bytes()).hexdigest(),
             'discovery': discovery, 'taker': taker, 'amount_raw': amount_raw,
-            'pool_fee_bps': pool_fee_bps, 'minimum_age': 300, 'maximum_age': 7200}
+            'pool_fee_bps': pool_fee_bps, 'minimum_age': 300,
+            # Fresh selection keeps the configured dispatch window (7200 s) in both schemas; only a watchlist
+            # re-evaluation may use the longer engine age window (T20F item 5).
+            'maximum_age': 7200,
+            **({'journal_schema': 2, 'watchlist_maximum_age': watchlist.settings(cfg)['max_age_seconds'],
+                'preparation_margin': watchlist.PREPARATION_MARGIN_SECONDS} if versioned else {})}
 
 
 def _parse(payload, h):
@@ -167,13 +184,14 @@ def _parse(payload, h):
     return value
 
 
-def _read_journal(c):
+def _read_journal(c, version=1):
+    schemas = SCHEMAS if version == 1 else SCHEMAS_V2
     actual = dict(c.execute("SELECT name,sql FROM sqlite_master WHERE type='table' AND name NOT LIKE 'sqlite_%'"))
     guards = dict(c.execute("SELECT name,sql FROM sqlite_master WHERE type='trigger'"))
-    if actual != SCHEMAS or guards != _guards() or c.execute('PRAGMA journal_mode').fetchone()[0] != 'delete':
+    if actual != schemas or guards != _guards(version) or c.execute('PRAGMA journal_mode').fetchone()[0] != 'delete':
         raise ValueError('Dispatcher schema/guards invalid')
     values = {}
-    for table in SCHEMAS:
+    for table in schemas:
         count, size, bad = c.execute(
             f'SELECT COUNT(*),COALESCE(SUM(length(CAST(payload AS BLOB))),0),'
             f"COALESCE(SUM(typeof(payload)!='text' OR length(CAST(payload AS BLOB))>{MAX_PAYLOAD} "
@@ -186,7 +204,7 @@ def _read_journal(c):
 
 
 def _validate(c, expected, unresolved=None):
-    values = _read_journal(c)
+    values = _read_journal(c, expected.get('journal_schema', 1))
     retired={}; bindings={}; historical_contexts={}
     if values['context'] != {1: expected}:
         if set(values['context'])!={1}:raise ValueError('Reviewed dispatcher context mismatch')
@@ -206,10 +224,15 @@ def _check_records(c,expected,values,bindings,retired,*,historical_contexts=None
         raise ValueError('Exact historical dispatcher review source required')
     if set(values['results']) - set(values['intents']):
         raise ValueError('Orphan dispatch result')
-    for i, mint, signature in c.execute('SELECT id,mint,signature FROM intents'):
+    v2 = expected.get('journal_schema', 1) == 2
+    for i, mint, signature, *extra in c.execute('SELECT id,mint,signature,evaluation FROM intents' if v2 else
+                                               'SELECT id,mint,signature FROM intents'):
         value = values['intents'][i]
+        if v2 and (type(value.get('evaluation')) is not int or not 1 <= value['evaluation'] <= watchlist.MAX_LIMIT + 1
+                   or extra != [value['evaluation']]):
+            raise ValueError('Dispatch evaluation binding invalid')
         if (type(i) is not str or len(i)!=32 or any(x not in '0123456789abcdef' for x in i)
-                or set(value) != {'version','context_hash','at','hint'} or value['version'] != 1
+                or set(value) != ({'version','context_hash','at','hint','evaluation'} if v2 else {'version','context_hash','at','hint'}) or value['version'] != 1
                 or value['context_hash'] != bindings.get(i,retired.get(i,digest(expected))) or type(value['at']) not in (int,float) or not math.isfinite(value['at'])
                 or value['at'] < 0 or value['hint']['mint'] != mint
                 or value['hint']['signature'] != signature):
@@ -218,7 +241,7 @@ def _check_records(c,expected,values,bindings,retired,*,historical_contexts=None
         if (set(hint) != {'seq','payload_hash','raw_hash','received_at','mint','pool','signature','slot'}
                 or type(hint['seq']) is not int or hint['seq'] <= 0
                 or type(hint['received_at']) not in (int,float) or not math.isfinite(hint['received_at'])
-                or not 300 <= value['at']-hint['received_at'] <= 7200
+                or not 300 <= value['at']-hint['received_at'] <= ((expected['watchlist_maximum_age'] if value['evaluation'] > 1 else expected['maximum_age']) if v2 else 7200)
                 or not all(runtime._hash(hint[k]) for k in ('payload_hash','raw_hash'))):
             raise ValueError('Dispatch hint grammar invalid')
         migration._hints('dispatch-check', mint, hint['pool'], signature, hint['slot'], PROVENANCE)
@@ -321,7 +344,8 @@ def initialize(expected, *, approved_context_hash):
     with closing(sqlite3.connect(p, isolation_level=None)) as c:
         c.execute('PRAGMA synchronous=FULL')
         c.execute('BEGIN IMMEDIATE')
-        for sql in (*SCHEMAS.values(), *_guards().values()):
+        version = expected.get('journal_schema', 1)
+        for sql in (*(SCHEMAS if version == 1 else SCHEMAS_V2).values(), *_guards(version).values()):
             c.execute(sql)
         c.execute('INSERT INTO context VALUES(1,?,?)', (canonical(expected), digest(expected)))
         c.commit()
@@ -354,6 +378,7 @@ def _preflight(ctx, scan=None):
         pacer = pacing.configured(priority='investigation')
         if pacer is None or str(pacer.path) != paths['pacing_db']:
             raise ValueError('Pacer context mismatch')
+        pacer.reclaim_orphans()      # T23F: an orphan whose owner process is gone must not block entry forever
         with closing(pacer._connect()) as c:
             if (c.execute('SELECT 1 FROM state WHERE pending IS NOT NULL LIMIT 1').fetchone()
                     or c.execute('SELECT 1 FROM waiters LIMIT 1').fetchone()):
@@ -430,6 +455,7 @@ def _rejection(ctx, intent, scan, publish=None):
         pacer = pacing.configured(priority='investigation')
         if pacer is None or str(pacer.path) != paths['pacing_db']:
             raise ValueError('Pacer context mismatch')
+        pacer.reclaim_orphans()      # T23F: see _preflight
         with closing(pacer._connect()) as pc:
             if (pc.execute('SELECT 1 FROM state WHERE pending IS NOT NULL LIMIT 1').fetchone()
                     or pc.execute('SELECT 1 FROM waiters LIMIT 1').fetchone()):
@@ -551,6 +577,38 @@ def _migration_event_hint(raw, decoded, parent):
         events.append(event)
     return len(events) == 1
 
+WINDOW_PAGE = 500
+WINDOW_SKEW_GRACE = 600        # rows may arrive slightly out of received_at order; keep walking this far past the window
+WINDOW_MAX_ROWS = 400_000      # memory/time bound of one walk; far above a 6 h window at any realistic discovery rate
+
+
+def _window_rows(d, now, oldest_age, youngest_age, columns):
+    """Rows with youngest_age <= now-received_at <= oldest_age, newest first, without scanning the table.
+
+    `received_at` has no index and the discovery table grows without bound, so a `WHERE received_at BETWEEN`
+    reads every page (7 s per tick at 600k rows). raw_events is append-only in receipt order, so walk seq DESC in
+    pages and stop at the first row older than the window plus a skew grace. Non-numeric `received_at` rows are
+    yielded so the caller's integrity check rejects them exactly as before.
+    """
+    lo, hi = now - oldest_age, now - youngest_age
+    floor = lo - WINDOW_SKEW_GRACE
+    cursor, walked = None, 0
+    while walked < WINDOW_MAX_ROWS:
+        page = d.execute(f'SELECT {columns} FROM raw_events WHERE seq < ? ORDER BY seq DESC LIMIT ?',
+                         (2**62 if cursor is None else cursor, WINDOW_PAGE)).fetchall()
+        if not page:
+            return
+        for row in page:
+            walked += 1
+            cursor = row[0]
+            received = row[2]
+            numeric = type(received) in (int, float) and math.isfinite(received)
+            if numeric and received < floor:
+                return
+            if not numeric or lo <= received <= hi:
+                yield row
+
+
 def _select(ctx, c, now):
     discovery = Path(ctx['paths']['discovery_db']['path'])
     research = Path(ctx['paths']['research_db']['path'])
@@ -558,13 +616,23 @@ def _select(ctx, c, now):
         d.execute('BEGIN')
         if _discovery(d) != ctx['discovery']:
             raise ValueError('Discovery identity changed')
-        rows = d.execute('SELECT seq,source_id,received_at,slot,payload_hash,typeof(payload),length(CAST(payload AS BLOB)) FROM raw_events ORDER BY seq DESC LIMIT 500').fetchall()
+        columns = 'seq,source_id,received_at,slot,payload_hash,typeof(payload),length(CAST(payload AS BLOB))'
+        # A candidate must keep `preparation_margin` seconds of its age window when it is picked (v2 only), otherwise
+        # preparation can outlive it and strand an unresolved intent ("expired during preparation").
+        margin = ctx.get('preparation_margin', 0)
+        newest_age_limit = ctx['maximum_age'] - margin
+        if ctx.get('journal_schema', 1) == 2:
+            # Window-based by age (not "newest 500"): every notification inside the eligible age window is
+            # considered, walking seq DESC and stopping at the window's end. Never a scan of the whole table.
+            rows = _window_rows(d, now, newest_age_limit, 300, columns)
+        else:
+            rows = d.execute(f'SELECT {columns} FROM raw_events ORDER BY seq DESC LIMIT 500').fetchall()
         for seq, source, received, slot, h, kind, length in rows:
             if (type(received) not in (int,float) or not math.isfinite(received) or received < 0
                     or type(seq) is not int or seq <= 0 or type(slot) is not int or not 0 <= slot < 2**63
                     or kind != 'text' or not 0 < length <= 200000):
                 raise ValueError('Malformed discovery row')
-            if not 300 <= now-received <= 7200:
+            if not 300 <= now-received <= newest_age_limit:
                 continue
             payload = d.execute('SELECT payload FROM raw_events WHERE seq=?', (seq,)).fetchone()[0]
             raw = json.loads(payload, object_pairs_hook=cli._object,
@@ -610,14 +678,63 @@ def _select(ctx, c, now):
             if (c.execute('SELECT 1 FROM intents WHERE mint=? OR signature=?', (hint['mint'],hint['signature'])).fetchone()
                     or r.execute('SELECT 1 FROM scans WHERE mint=? LIMIT 1', (hint['mint'],)).fetchone()):
                 continue
-            return hint
+            return {**hint, 'evaluation': 1} if ctx.get('journal_schema', 1) == 2 else hint
+        if ctx.get('journal_schema', 1) == 2:
+            return _due(ctx, c, r, now)
     return None
 
 
-def _write(c, table, identity, value, hint=None):
+def _due(ctx, c, r, now):
+    """Fresh hints are exhausted: the oldest due watchlist re-evaluation, as a NEW evaluation."""
+    cfg = cli._config(ctx['paths']['config']['path'])
+    if _watchlist_pressure(ctx):
+        return None   # bounded no-entry tables are >= 80% full: fresh hints keep the room, re-evaluations pause
+    with closing(watchlist.Watchlist(ctx['paths']['watchlist_db']['path'], read_only=True)) as wl:
+        for item in wl.due(now, cfg):
+            hint, evaluation = item['hint'], item['evaluation']
+            prior = sorted(x[0] for x in c.execute('SELECT evaluation FROM intents WHERE mint=?', (hint['mint'],)))
+            scans = r.execute('SELECT COUNT(*) FROM scans WHERE mint=?', (hint['mint'],)).fetchone()[0]
+            if prior != list(range(1, evaluation)) or scans != evaluation - 1:
+                continue  # any ambiguity between journal, scans and watchlist: never re-evaluate
+            if not 300 <= now - hint['received_at'] <= ctx['watchlist_maximum_age'] - ctx['preparation_margin']:
+                continue
+            return {**hint, 'evaluation': evaluation}
+    return None
+
+
+def _watchlist_pressure(ctx):
+    """[{'table','rows','cap'}] of bounded no-entry tables at >= 80%; [] when the watchlist is not versioned."""
+    if ctx.get('journal_schema', 1) != 2:
+        return []
+    return watchlist.capacity_pressure(ctx['paths']['evidence_db']['path'])
+
+
+def _reconcile_watchlist(ctx, journal, now):
+    """Derive every completed evaluation's disposition from the journal (single source of truth).
+
+    Idempotent and restart-safe: a crash between a journal result and its watchlist row is
+    repaired here, before any new selection; existing rows are never rewritten.
+    """
+    cfg = cli._config(ctx['paths']['config']['path'])
+    with closing(watchlist.Watchlist(ctx['paths']['watchlist_db']['path'])) as wl:
+        rows = journal.execute('SELECT i.mint,i.evaluation,i.payload,r.payload FROM intents i '
+                               'JOIN results r ON r.id=i.id ORDER BY i.rowid').fetchall()
+        for mint, evaluation, intent_text, result_text in rows:
+            if wl.db.execute('SELECT 1 FROM watchlist_events WHERE mint=? AND evaluation=?', (mint, evaluation)).fetchone():
+                continue
+            intent, result = json.loads(intent_text), json.loads(result_text)
+            codes, accepted = watchlist.reason_codes(result['result'], mint=mint, scan_id=result['scan_id'])
+            wl.record(mint=mint, evaluation=evaluation, scan_id=result['scan_id'], codes=codes, at=result['at'],
+                      hint=intent['hint'], cfg=cfg, accepted=accepted)
+        wl.expire(now, cfg)
+
+
+def _write(c, table, identity, value, hint=None, evaluation=None):
     c.execute('BEGIN IMMEDIATE')
     try:
-        if table == 'intents':
+        if table == 'intents' and evaluation is not None:
+            c.execute('INSERT INTO intents VALUES(?,?,?,?,?,?)', (identity,hint['mint'],hint['signature'],evaluation,canonical(value),digest(value)))
+        elif table == 'intents':
             c.execute('INSERT INTO intents VALUES(?,?,?,?,?)', (identity,hint['mint'],hint['signature'],canonical(value),digest(value)))
         else:
             c.execute('INSERT INTO results VALUES(?,?,?)', (identity,canonical(value),digest(value)))
@@ -684,22 +801,28 @@ def dispatch(expected, *, execute=False, systemd_credentials=False):
 
 def _dispatch(expected, *, execute=False, systemd_credentials=False):
     paths = {k: v['path'] for k,v in expected['paths'].items()}
+    v2 = expected.get('journal_schema', 1) == 2
     with _journal(expected['journal']) as journal:
         unresolved = []
         _validate(journal, expected, unresolved=unresolved if execute else None)
         if unresolved:
             _recover_unresolved(expected, journal, unresolved)
             _validate(journal, expected)
+        if v2 and execute:
+            # Derived from the validated journal only; repairs a crash between a result and its row.
+            _reconcile_watchlist(expected, journal, _now())
         _preflight(expected)
         now = _now()
         last = journal.execute('SELECT payload FROM intents ORDER BY rowid DESC LIMIT 1').fetchone()
         if last and now < json.loads(last[0])['at']:
             raise ValueError('Dispatcher clock rollback')
         hint = _select(expected, journal, now)
+        paused = {'watchlist_paused_table_capacity': _watchlist_pressure(expected)} if v2 and _watchlist_pressure(expected) else {}
         if hint is None:
-            return {'status':'NO_CANDIDATE','attempted_requests':0}
+            return {'status':'NO_CANDIDATE','attempted_requests':0, **paused}
         if not execute:
-            return {'status':'DRY_RUN','hint':hint,'attempted_requests':0,'entry_authorized':False}
+            return {'status':'DRY_RUN','hint':hint,'attempted_requests':0,'entry_authorized':False, **paused}
+        evaluation = hint.pop('evaluation') if v2 else None
         if not systemd_credentials:
             raise ValueError('Explicit managed credentials required')
         if journal.execute('SELECT COUNT(*) FROM intents').fetchone()[0] >= MAX_DISPATCHES:
@@ -707,7 +830,8 @@ def _dispatch(expected, *, execute=False, systemd_credentials=False):
         written = []; known_scan = []
         try:
             identity = uuid.uuid4().hex
-            intent = {'version':1,'context_hash':digest(expected),'at':now,'hint':hint}
+            intent = {'version':1,'context_hash':digest(expected),'at':now,'hint':hint,
+                      **({'evaluation':evaluation} if v2 else {})}
             # A competing held/worker invocation is a zero-intent refusal. Complete
             # the final lock reacquisition before publishing the irreversible latch.
             _preflight(expected)
@@ -719,11 +843,12 @@ def _dispatch(expected, *, execute=False, systemd_credentials=False):
                 cli._credentials()
                 jobs = JobPersistence.__new__(JobPersistence); jobs.path = Path(paths['research_db'])
                 with closing(jobs.connect()) as c:
-                    if c.execute('SELECT 1 FROM scans WHERE mint=? LIMIT 1',(hint['mint'],)).fetchone():
+                    admitted = c.execute('SELECT COUNT(*) FROM scans WHERE mint=?',(hint['mint'],)).fetchone()[0]
+                    if admitted != (evaluation - 1 if v2 else 0):
                         raise ValueError('Already admitted candidate')
                 if terminal.gate(store,jobs.path,(),ledger_locked=str(ledger)):
                     raise ValueError('Observation recovery required')
-                _write(journal,'intents',identity,intent,hint)
+                _write(journal,'intents',identity,intent,hint,evaluation)
                 written.append(identity)
                 # From this point any interruption stays unresolved; never retry or
                 # erase an intent merely because acquisition has not yet spent.
@@ -760,7 +885,8 @@ def _dispatch(expected, *, execute=False, systemd_credentials=False):
                 return {'status':'DISPATCHED','dispatch_id':identity,'scan_id':scan,'paper_status':'NO_ENTRY',
                         'entry_authorized':False,'execution_status':'EXECUTION_UNVERIFIED','live_readiness':False}
             _preflight(expected,scan)
-            if not 300 <= _now()-hint['received_at'] <= 7200:
+            window = expected['watchlist_maximum_age'] if v2 and evaluation > 1 else expected['maximum_age']
+            if not 300 <= _now()-hint['received_at'] <= window:
                 raise ValueError('Candidate expired during preparation')
             row = {'scan_id':scan,'mint':hint['mint'],'pool':hint['pool'],'taker':expected['taker'],
                    'amount_raw':expected['amount_raw'],'provenance':PROVENANCE,
@@ -814,6 +940,7 @@ def main(argv=None):
     for name in ('config','research-db','evidence-db','ledger-db','discovery-db','pacing-db','journal','taker','pool-fee-bps'):
         p.add_argument('--'+name,required=True)
     p.add_argument('--amount-raw',type=int,required=True)
+    p.add_argument('--watchlist-db',help='Required exactly when paper_watchlist_version is selected')
     p.add_argument('--plan',action='store_true')
     p.add_argument('--initialize',action='store_true')
     p.add_argument('--approved-context-hash')
@@ -823,7 +950,8 @@ def main(argv=None):
     try:
         if sum((a.plan,a.initialize,a.execute)) > 1:
             raise ValueError('Choose one explicit operation')
-        expected = plan(**{k:getattr(a,k) for k in ('config','research_db','evidence_db','ledger_db','discovery_db','pacing_db','journal','taker','amount_raw','pool_fee_bps')})
+        expected = plan(**{k:getattr(a,k) for k in ('config','research_db','evidence_db','ledger_db','discovery_db','pacing_db','journal','taker','amount_raw','pool_fee_bps')},
+                        **({'watchlist_db':a.watchlist_db} if a.watchlist_db is not None else {}))
         if a.plan:
             _preflight(expected)
             result = {'status':'PLAN','context':expected,'context_hash':digest(expected),'entry_authorized':False}

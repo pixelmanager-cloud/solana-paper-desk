@@ -130,6 +130,7 @@ def _context(research,evidence,ledger,pacing):
 def _pacing(path):
     if path is None:return
     pacer=provider_pacing.Pacer(path)
+    pacer.reclaim_orphans()   # T23F: reclaim an orphan whose owner process is gone before refusing on `pending`
     with closing(pacer._connect()) as c:
         c.execute('BEGIN')
         if c.execute('SELECT 1 FROM state WHERE pending IS NOT NULL LIMIT 1').fetchone():raise ValueError('Provider outcome pending')

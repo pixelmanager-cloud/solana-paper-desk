@@ -99,11 +99,46 @@ class Ledger:
             latest = self.db.execute('SELECT MAX(ts) FROM events').fetchone()[0]
             if latest is None or state['last_ts'] != latest:
                 raise ValueError('checkpoint journal timestamp mismatch')
+            self._portfolio_state(state)
             from .paper_checkpoint import validate_entry_policies
             validate_entry_policies(self.db, state)
             return state
         except (ValueError, TypeError, KeyError) as exc:
             raise ValueError('ledger checkpoint invalid: recovery required; original records preserved') from exc
+
+    def _portfolio_state(self, state):
+        """Opt-in portfolio-risk keys (engine.py): validate them against the saved config and the rest of the checkpoint.
+
+        The engine writes both keys lazily, so a missing key is legitimate only until the checkpoint itself proves it must
+        exist: an entry was made (last_entry_minute >= 0) or loss_streak reached the cooldown threshold. Present keys must
+        be well formed and agree with last_ts / last_entry_minute. Any violation is the standard recovery-required error;
+        nothing is reset or rewritten.
+        """
+        row = self.db.execute("SELECT value FROM metadata WHERE key='config'").fetchone()
+        cfg = json.loads(row[0]) if row else {}
+        if cfg.get('paper_portfolio_risk_version') is None:
+            if 'portfolio_entries' in state or 'portfolio_cooldown_until' in state:
+                raise ValueError('portfolio state without the portfolio risk flag')
+            return
+        limit, after, minutes = (cfg.get(k) for k in ('portfolio_max_entries_per_10m',
+                                                      'portfolio_loss_streak_cooldown_after', 'portfolio_cooldown_minutes'))
+        if any(type(v) is not int or v < 1 for v in (limit, after, minutes)):
+            raise ValueError('invalid portfolio parameters')
+        if 'portfolio_entries' in state:
+            entries = state['portfolio_entries']
+            if (type(entries) is not list or not 1 <= len(entries) <= limit
+                    or any(type(t) is not int or not 0 <= t <= state['last_ts'] for t in entries)
+                    or any(b <= a for a, b in zip(entries, entries[1:]))
+                    or entries[-1] // 60 != state['last_entry_minute']):
+                raise ValueError('invalid portfolio entries')
+        elif state['last_entry_minute'] >= 0:
+            raise ValueError('portfolio entries missing after an entry')
+        if 'portfolio_cooldown_until' in state:
+            until = state['portfolio_cooldown_until']
+            if type(until) is not int or not 0 < until <= state['last_ts'] + minutes * 60:
+                raise ValueError('invalid portfolio cooldown')
+        elif state['loss_streak'] >= after:
+            raise ValueError('portfolio cooldown missing at the loss-streak threshold')
 
     def apply(self, event, cfg, transition, initial_state):
         """Idempotency, transition and checkpoint share one durable transaction."""
