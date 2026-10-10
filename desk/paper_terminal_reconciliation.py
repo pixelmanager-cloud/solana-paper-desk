@@ -420,6 +420,10 @@ def reconcile(research_db,evidence_db,ledger_db,cfg,*,pass_id,outcome_hash,attem
 
 def gate(store,research,scan_ids,*,ledger_locked=None):
     """Shared conservative pending/retirement gate, invoked under outer locks."""
+    from .paper_migration_no_entry import gate as migration_gate
+    migration = migration_gate(store,research,scan_ids,ledger_locked=ledger_locked)
+    if migration is not None:
+        return migration
     from .history_preparation_rejection import gate as preparation_rejection_gate
     rejection = preparation_rejection_gate(store, research, scan_ids, ledger_locked=ledger_locked)
     if rejection is not None:

@@ -1,0 +1,85 @@
+"""Synthetic actual acquisition/intake wires; no providers or approval mocks."""
+import copy
+from contextlib import closing
+import sqlite3
+import unittest
+from unittest.mock import patch
+from tests import test_paper_entry_dispatcher as fixture
+from tools import paper_entry_dispatcher as tool
+from desk import paper_migration_no_entry as rejection, paper_terminal_reconciliation as terminal
+from desk.model import canonical,digest
+from desk.programs import unbase58
+from desk.security import base58
+
+class MigrationNoEntryTests(unittest.TestCase):
+    def setUp(self):
+        self.f=fixture.DispatcherTests();self.f.setUp();self.addCleanup(self.f.doCleanups)
+        self.seeds=0
+        original=self.f.setup_rpc
+        def rpc(method,params):
+            if method!='getTransactionsForAddress':return original(method,params)
+            self.f.calls.append(method);self.seeds+=1
+            return {'data':[],'paginationToken':'seed-next' if self.seeds==1 else None}
+        self.f.setup_rpc=rpc
+    def quote(self,key):
+        event=self.f.raw['meta']['innerInstructions'][0]['instructions'][0]
+        event['data']=base58(unbase58(event['data'])[:-32]+unbase58(key))
+    def reject(self):
+        self.quote(base58(bytes([33])*32))
+        return self.f.live()
+    def test_exact_unsupported_quote_records_skips_and_replays_without_more_calls(self):
+        before=self.f.ledger.read_bytes();result=self.reject()
+        self.assertEqual(result['paper_status'],'NO_ENTRY')
+        self.assertEqual(self.f.count('intents'),1);self.assertEqual(self.f.count('results'),1)
+        self.assertEqual(self.f.ledger.read_bytes(),before)
+        self.assertEqual(self.f.f.progress.admission(result['scan_id'])['requests_used'],5)
+        store=self.f.f.progress.store
+        with closing(store.connect()) as c:
+            records=rejection.rows(c)
+        self.assertEqual(records[0]['reason'],'UNSUPPORTED_MIGRATION_EVENT_QUOTE')
+        self.assertEqual(records[0]['canonical_acquisition']['evidence_class'],'CANONICAL_METHOD_PARAMS_RESULTS_NOT_ORIGINAL_WIRE')
+        self.assertEqual(len(records[0]['wire_attempt_refs']),1)
+        with tool._journal(self.f.journal) as c:tool._validate(c,self.f.ctx)
+        self.assertEqual(terminal.gate(store,self.f.f.jobs.path,(result['scan_id'],)),'REJECTED_SCAN_RETIRED')
+        calls=len(self.f.calls);self.assertEqual(self.f.invoke()['status'],'NO_CANDIDATE');self.assertEqual(len(self.f.calls),calls)
+    def test_witness_absence_alone_remains_unresolved(self):
+        self.f.raw['meta']['innerInstructions']=[]
+        with self.assertRaises(ValueError):self.f.live()
+        self.assertEqual(self.f.count('intents'),1);self.assertEqual(self.f.count('results'),0)
+        with self.assertRaises(ValueError):self.f.invoke()
+    def test_generic_non_quote_binding_mismatch_stays_unresolved(self):
+        self.quote(base58(bytes([33])*32))
+        event=self.f.raw['meta']['innerInstructions'][0]['instructions'][0]
+        data=bytearray(unbase58(event['data']));data[16:48]=bytes([42])*32;event['data']=base58(data)
+        with self.assertRaises(ValueError):self.f.live()
+        self.assertEqual(self.f.count('results'),0)
+    def test_legacy_sentinel_is_not_an_automatic_recovery(self):
+        self.quote('11111111111111111111111111111111')
+        with self.assertRaises(ValueError):self.f.live()
+        self.assertEqual(self.f.count('results'),0)
+    def test_dropped_table_and_partial_publication_block(self):
+        result=self.reject();store=self.f.f.progress.store
+        with closing(store.connect()) as c:c.execute('DROP TABLE '+rejection.TABLE)
+        with self.assertRaisesRegex(ValueError,'table missing'):terminal.gate(store,self.f.f.jobs.path,())
+        with self.assertRaises(ValueError):self.f.invoke()
+    def test_raw_http_failure_and_uncaptured_attempt_cannot_publish(self):
+        self.reject();store=self.f.f.progress.store
+        with closing(store.connect()) as c:v=rejection.rows(c)[0]
+        key=v['wire_attempt_refs'][0];original=store.load(key)
+        with closing(store.connect()) as c:c.execute('DELETE FROM pages WHERE hash=?',(key,))
+        store.save({**original,'failure_code':'HTTP_STATUS_403','http_status':403,'response_bytes_base64':None})
+        with self.assertRaises(ValueError):rejection.proof(store,v)
+    def test_rehashed_summary_and_changed_charge_are_not_trusted(self):
+        self.reject();store=self.f.f.progress.store
+        with closing(store.connect()) as c:v=rejection.rows(c)[0]
+        changed=copy.deepcopy(v);changed['reason']='NO_HAZARDS'
+        with self.assertRaises(ValueError):rejection.proof(store,changed)
+        self.f.f.progress.reserve(v['scan_id'])
+        with self.assertRaises(ValueError):rejection.proof(store,v)
+    def test_immutable_disposition_no_replace_update_delete(self):
+        self.reject();store=self.f.f.progress.store
+        with closing(store.connect()) as c:
+            row=c.execute('SELECT * FROM '+rejection.TABLE).fetchone()
+            for sql in ('UPDATE '+rejection.TABLE+' SET payload=payload','DELETE FROM '+rejection.TABLE):
+                with self.assertRaises(sqlite3.Error):c.execute(sql)
+            with self.assertRaises(sqlite3.Error):c.execute('INSERT OR REPLACE INTO '+rejection.TABLE+' VALUES(?,?,?,?)',row)

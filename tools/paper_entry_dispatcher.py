@@ -161,7 +161,7 @@ def _parse(payload, h):
     return value
 
 
-def _validate(c, expected):
+def _read_journal(c):
     actual = dict(c.execute("SELECT name,sql FROM sqlite_master WHERE type='table' AND name NOT LIKE 'sqlite_%'"))
     guards = dict(c.execute("SELECT name,sql FROM sqlite_master WHERE type='trigger'"))
     if actual != SCHEMAS or guards != _guards() or c.execute('PRAGMA journal_mode').fetchone()[0] != 'delete':
@@ -176,18 +176,32 @@ def _validate(c, expected):
         if count > (1 if table == 'context' else MAX_DISPATCHES) or size > 16*1024*1024 or bad:
             raise ValueError('Dispatcher input bound invalid')
         values[table] = {i: _parse(payload, h) for i, payload, h in c.execute(f'SELECT id,payload,hash FROM {table}')}
-    retired={}
+    return values
+
+
+def _validate(c, expected):
+    values = _read_journal(c)
+    retired={}; bindings={}
     if values['context'] != {1: expected}:
         if set(values['context'])!={1}:raise ValueError('Reviewed dispatcher context mismatch')
-        from desk.paper_dispatch_preparation_retirement import lineage
-        retired=lineage(expected,values['context'][1])
+        from desk.paper_migration_no_entry import lineage as continuation
+        edge=continuation(c,expected,values['context'][1])
+        if edge is None:
+            from desk.paper_dispatch_preparation_retirement import lineage
+            retired=lineage(expected,values['context'][1])
+        else:
+            bindings,retired=edge
+    return _check_records(c,expected,values,bindings,retired)
+
+
+def _check_records(c,expected,values,bindings,retired):
     if set(values['results']) - set(values['intents']):
         raise ValueError('Orphan dispatch result')
     for i, mint, signature in c.execute('SELECT id,mint,signature FROM intents'):
         value = values['intents'][i]
         if (type(i) is not str or len(i)!=32 or any(x not in '0123456789abcdef' for x in i)
                 or set(value) != {'version','context_hash','at','hint'} or value['version'] != 1
-                or value['context_hash'] != retired.get(i,digest(expected)) or type(value['at']) not in (int,float) or not math.isfinite(value['at'])
+                or value['context_hash'] != bindings.get(i,retired.get(i,digest(expected))) or type(value['at']) not in (int,float) or not math.isfinite(value['at'])
                 or value['at'] < 0 or value['hint']['mint'] != mint
                 or value['hint']['signature'] != signature):
             raise ValueError('Dispatch intent binding invalid')
@@ -207,6 +221,16 @@ def _validate(c, expected):
                     or result['at'] < value['at']):
                 raise ValueError('Dispatch result binding invalid')
             original_result = result['result']
+            if type(original_result) is dict and original_result.get('kind') == 'dispatcher_migration_no_entry_v1':
+                from desk import paper_migration_no_entry
+                store=EvidenceStore(expected['paths']['evidence_db']['path'],read_only=True)
+                original=paper_migration_no_entry.verify(store,original_result)
+                if (original['dispatch_id']!=i or original['scan_id']!=result['scan_id']
+                        or original['intent_hash']!=digest(value) or original['hint']!=hint
+                        or original['config_hash']!=expected['config_hash']
+                        or any(original['context'][k]!=expected['paths'][k]['path'] for k in original['context'])):
+                    raise ValueError('Migration disposition dispatcher binding')
+                continue
             if type(original_result) is dict and original_result.get('kind') == 'history_preparation_no_entry_v1':
                 from desk import history_preparation_rejection
                 store = EvidenceStore(expected['paths']['evidence_db']['path'],read_only=True)
@@ -606,7 +630,15 @@ def dispatch(expected, *, execute=False, systemd_credentials=False):
             mint=hint['mint'],pool=hint['pool'],signature=hint['signature'],slot=hint['slot'],
             provenance=PROVENANCE,credentials_loader=lambda:_intake_guard(expected,scan),paper_token_profile_version=cli._config(paths['config']).get('paper_token_profile_version',0))
         if retained['status'] != 'RETAINED_MIGRATION_WITNESS':
-            raise ValueError('Migration intake incomplete; dispatcher recovery required')
+            from desk import paper_migration_no_entry
+            # Only a narrow replay-proved unsupported quote can publish. Every
+            # missing/uncaptured/unknown/generic mismatch still raises unresolved.
+            disposition=paper_migration_no_entry.publish(journal,expected,identity,scan)
+            outcome={'version':1,'intent_hash':digest(intent),'at':_now(),'scan_id':scan,'result':disposition}
+            if len(canonical(outcome).encode())>MAX_PAYLOAD:raise ValueError('Migration outcome exceeds bound')
+            _write(journal,'results',identity,outcome)
+            return {'status':'DISPATCHED','dispatch_id':identity,'scan_id':scan,'paper_status':'NO_ENTRY',
+                    'entry_authorized':False,'execution_status':'EXECUTION_UNVERIFIED','live_readiness':False}
         _preflight(expected,scan)
         if not 300 <= _now()-hint['received_at'] <= 7200:
             raise ValueError('Candidate expired during preparation')
