@@ -1,0 +1,13 @@
+[Unit]
+Description=Inactive template: refresh the candidate feature store every 10 minutes
+[Timer]
+OnActiveSec=5min
+OnUnitInactiveSec=10min
+AccuracySec=10s
+Persistent=false
+Unit=desk-features.service
+# [Install] only declares the target; nothing enables it. The coordinator enables it on the fresh store set only.
+# OnUnitInactiveSec re-arms after the service FINISHES: runs cannot overlap, and ingest is idempotent (identical rows are no-ops).
+
+[Install]
+WantedBy=timers.target

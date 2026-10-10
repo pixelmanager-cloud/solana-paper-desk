@@ -694,6 +694,7 @@ class UnitTemplateTests(unittest.TestCase):
                     'desk-notify-daily.service', 'desk-notify-daily.timer',
                     'desk-held-watcher.service',   # T28 adds the held watcher
                     'desk-counterfactual.service', 'desk-counterfactual.timer',   # T26 research sampler
+                    'desk-features.service', 'desk-features.timer',   # T40 feature store (research)
                     'desk-notify-watchdog.service', 'desk-notify-watchdog.timer'}   # T32F item 9
         self.assertEqual(set(self.units), expected)
         self.assertEqual(set(healthcheck.UNITS) - set(self.units), set())
