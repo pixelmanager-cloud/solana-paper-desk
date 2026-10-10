@@ -6869,7 +6869,11 @@
         ],
         "review_turn": "01a1241a-0a83-77df-828b-db25f0f2556a",
         "review_tests": "Actual nextcandidate publication/restart/selection PASS4.144s; prior14tests carryforward",
-        "planning_design_reviewer": "09"
+        "planning_design_reviewer": "09",
+        "ci_runs": {
+          "38025016459": "success",
+          "38025014134": "success"
+        }
       },
       "LEGACY-MIGRATE-SOL-SENTINEL-1": {
         "worker": "03",
@@ -6911,7 +6915,7 @@
       },
       "DISPATCH-SCHEDULER-SERIALIZATION-1": {
         "worker": "03",
-        "status": "Runtime and final test delta independent09PASS; final CI pending",
+        "status": "Both exact-head Linux CI SUCCESS; runtime and finaltestdelta independentlyPASS",
         "scope": "Prevent post-admission race while preserving held-position priority; no provider calls or shared dispatcher edits",
         "reviewer": "09",
         "design_turn": "01a123fc-9c6f-73e3-b587-a5a0c0ba3a20",
@@ -6925,7 +6929,13 @@
         "review_tests": "11 focusedPASS3.035s plus2 malformedCLI argv/lease probes",
         "activation_requirements": "Protected lock provision, inode identity env, effectiveoverrides forentry/held/expire/decisions/dashboard; preserveexistinginnerlocks",
         "final_delta_review_turn": "01a12412-1751-7351-8e8c-8b04cb9e445a",
-        "final_delta_tests": "26PASS9.156s"
+        "final_delta_tests": "26PASS9.156s",
+        "ci_runs": {
+          "38024178766": "success",
+          "38024176119": "success"
+        },
+        "ci_tests": 2831,
+        "ci_seconds": 1018.714
       }
     },
     "next_runtime_first_receipt_hash": "fb5476746fc700d5e4ab0456d17547e0b591d8a486918167249fd9038dd08f8b",
@@ -7092,7 +7102,7 @@
       "no_preparation_pass": true,
       "no_retry": true,
       "backup": "/var/backups/solana-desk/failed-intake-1252-03da7c9",
-      "status": "06 assigned terminal rejection and exact reviewed no-retry recovery; 07 design review",
+      "status": "RETIRED no retry under reviewed receiptab4e801; all6chargedrequests and original unresolved journal preserved",
       "precise_mismatch": "Legacy migrate event native SOL sentinel; outer WSOL and all other bindings pass",
       "preserved_prefix_snapshot": {
         "counts": {
@@ -7192,7 +7202,7 @@
     "intake_prospective_pin": {
       "hash": "ab4e801be7b17378758c875fd93bcb63cd13a6ac1c360cf3f7490f315197b6fd",
       "source": "fa84625e3ab4dabd41d566cedf01567c2d0829eaff1a59f0b769ed69b575bd3a",
-      "status": "READ_ONLY actual canonical paths PASS; NOT APPLIED",
+      "status": "APPLIED exact strict equality after extension; original3intents1result unchanged",
       "reviewer": "07",
       "review_turn": "01a1241d-7464-70e1-8962-80992f5a3bcb",
       "strict_after_extension_equality_required": true
@@ -7217,8 +7227,220 @@
     },
     "intake_native_timing_claim": {
       "worker": "06",
-      "status": "Assigned native-clock combined fixture verification; no runtime edits/providers",
-      "source": "fa84625e3ab4dabd41d566cedf01567c2d0829eaff1a59f0b769ed69b575bd3a"
+      "status": "PASS fixture-only; no installed certificate in BUY/SELL timing fixture",
+      "source": "fa84625e3ab4dabd41d566cedf01567c2d0829eaff1a59f0b769ed69b575bd3a",
+      "turn": "01a12420-4d6a-7601-9d26-31e949a93e28",
+      "probe_sha256": "73d387b6e924681b721d5a1a375782a5ea820b093a85e8486f5ac0660d8f7c8f",
+      "cloud_buy_seconds": 6.309,
+      "cloud_sell_seconds": 5.237,
+      "vps_buy_seconds": 7.0062007629312575,
+      "vps_sell_seconds": 7.8072065827436745,
+      "vps_total_seconds": 18.35435516992584,
+      "investigation_charges": 7,
+      "monitoring_charges": 5
+    },
+    "intake_final_candidate": {
+      "commit": "6b977d9b9d82ea8314ab3c4b25cffc46e8ff08c8",
+      "tree": "5d3fb6be1305d9c030b6da326d401442d570a98b",
+      "source": "fa84625e3ab4dabd41d566cedf01567c2d0829eaff1a59f0b769ed69b575bd3a",
+      "raw_tree": "0d1d7707d2ac24e76f8e9d4ee3d63989cd2790a4",
+      "branch": "codex/reviewed-intake-recovery-20261010",
+      "archive_sha256": "167629e224f4fb1453ba382bfed9915c06ba7ef06ba60055af3b49947cd006dc",
+      "ci_run": 38025148729,
+      "staged": true,
+      "active": true,
+      "independent_final_review_turn": "01a1241f-5e11-750e-8678-8d5af2d74163",
+      "native_timing_turn": "01a12420-4d6a-7601-9d26-31e949a93e28",
+      "runtime_checks": {
+        "discovery": "active",
+        "discovery_db_mib": 74,
+        "vps_available_gib": 51,
+        "production_entry_timer": "OFF",
+        "live_paper_buy": false
+      },
+      "ci_status": "SUCCESS",
+      "ci_tests": 2851,
+      "ci_seconds": 963.978,
+      "integrated": true,
+      "integration_head": "6b977d9b9d82ea8314ab3c4b25cffc46e8ff08c8",
+      "pre_backup": "/var/backups/solana-desk/pre-intake-recovery-6b977d9",
+      "deployment_status": "Applied and verified; entry timer paused after seq1340 unresolved intake failure",
+      "post_backup": "/var/backups/solana-desk/post-intake-recovery-6b977d9",
+      "original_tables_preserved": 87,
+      "unit_backup": "/var/backups/solana-desk/paper-ready-unit-_fh1_l1j",
+      "dispatcher_context_hash": "fd31decc9049fb5f522e9a2491173bc3a52576ac0b3eef6b246e1632b8a59a42",
+      "entry_timer": "OFF",
+      "entry_activation_at": "2026-10-10T05:08:12Z",
+      "first_invocation_id": "c48815a56c2345ff84393242205cd2b7",
+      "first_live_data_buy": false,
+      "dryrun_result": "SCHEDULER_BUSY zero requests; accepted dispatcher preflight/journal validation already passed under quiescence",
+      "first_live_attempt": {
+        "dispatch_id": "4d9735989e084e7b944092640d535232",
+        "scan_id": "df8ac72596cf4d30bf552aaf1b2c6adf",
+        "mint": "8vYJgiQPkpDtbWkDy1wyYDcUq3D9fUXVJUtt6aNEpump",
+        "seq": 1340,
+        "selected_at": 1791608917.5369918,
+        "observed_charged": 5,
+        "status": "Failed code2 at05:10:13UTC; intake RETRYABLE_ERROR attempts1 coverageNULL, no retained transport attempt; original journal unresolved, no BUY",
+        "invocation": "c48815a56c2345ff84393242205cd2b7",
+        "no_retry": true,
+        "backup": "/var/backups/solana-desk/failed-intake-1340-6b977d9"
+      }
+    },
+    "seq1340_repair_claims": {
+      "author": {
+        "worker": "06",
+        "thread": "01a118fc-f867-7233-8eec-c20659e70095",
+        "status": "Published; independent review pending",
+        "turn": "01a1243c-8b16-72fb-8be5-19fb2829681d",
+        "pr": 194,
+        "head": "7cd17d6de6b9ac58d6f012f425e02e8ffb155baf",
+        "focused_tests": "40PASS22.756s",
+        "independent_review": {
+          "worker": "09",
+          "turn": "01a12449-6b33-70e6-a55c-25a282f43a9f",
+          "status": "ScopedPASS",
+          "tests": "40PASS31.086s"
+        }
+      },
+      "reviewer": {
+        "worker": "07",
+        "thread": "01a118fd-0f1c-749c-b85b-5e730937d0a8",
+        "status": "dispatched independent diagnosis and exact-diff review",
+        "turn": "01a1243c-9ac2-712a-b469-8a959e7a966c"
+      },
+      "base": "6b977d9b9d82ea8314ab3c4b25cffc46e8ff08c8",
+      "hypothesis": "10s migration intake deadline begins before expensive local credentials_loader guard; not yet runtime-proven",
+      "production": "entry timer off; no retry, no resets",
+      "deadline_audit": {
+        "worker": "09",
+        "thread": "01a118fd-3f90-77d9-9549-c4497f5b10a6",
+        "turn": "01a1243d-5162-721c-8ac8-c8d4e17c8cbe",
+        "scope": "Other local replay inside timeboxes; read-only audit"
+      },
+      "historical_quarantine": {
+        "worker": "07",
+        "turn": "01a1243f-b8aa-7429-b302-406b59732613",
+        "status": "Runtime PASS; test-only delta independent review requested",
+        "pr": 196,
+        "head": "86052b3f4c033db174f307d83e9bec8f09d7e76f",
+        "runtime_review_turn": "01a1244b-700a-76b1-9dae-b1dae6a52dae",
+        "final_review": {
+          "turn": "01a12452-7bab-7789-9f24-63a30c062ee2",
+          "status": "PASS",
+          "combined_tests": "18PASS34.365s zero skips"
+        }
+      },
+      "performance": {
+        "worker": "03",
+        "turn": "01a1243f-9bcd-72b5-bba8-633d059960bc",
+        "reviewer": "09",
+        "scope": "bounded single-invocation validated-page reuse",
+        "pr": 195,
+        "head": "7d6e98699781390bf6c5b968720e4bb07e54bad8",
+        "review_turn": "01a1244c-025a-775f-bddc-030d408aa57d",
+        "review_status": "PASS final8MiB"
+      },
+      "production_guard_profile": {
+        "seconds": 14.352487080264837,
+        "profiling_overhead": true,
+        "provider_requests": 0,
+        "load_calls": 928,
+        "function_calls": 8895192
+      },
+      "diagnosis": "07 independently reproduced delayed guard expiring intake timer before transport; actual production local guard profile exceeds10s, historical fifth network outcome remains uncaptured",
+      "stopped_witness": {
+        "hash": "07a6b39bdf26c8a28de87411e294d1e241310a215070fcde957c5d73c7ec2f3a",
+        "observed_at": 1791609597,
+        "script_sha256": "41db32c6f301e990e5aedaabfa740e00c600bcfda4e176fc529372c80e2a0042",
+        "reviewer": "09",
+        "review_turn": "01a12440-895e-767a-8bed-5527e14f2451",
+        "captured_under_quiescence": true
+      },
+      "production_guard_native_seconds": 10.936425861436874,
+      "combined_focused": "18 historical/deadline tests passed; invocation included nonexistent cache module and exited1. Correct cache module separate7PASS0.014s. No runtime failure.",
+      "performance_diagnostics": {
+        "8MiB_seconds": 10.744776624254882,
+        "64MiB_seconds": 9.461636778898537,
+        "64MiB_rss_kib": 133000,
+        "diagnostic_only": true,
+        "raw_bytes": 72336007,
+        "compressed_bytes": 8133648,
+        "pages": 293,
+        "classification8MiB_seconds": 7.449473249260336,
+        "classification8MiB_rss_kib": 79776,
+        "classification96MiB_seconds": 8.213251935318112,
+        "classification96MiB_rss_kib": 151796,
+        "decision": "Discard96MiBtrial; retain8MiBraw/classificationcache; no service memory change"
+      },
+      "freshness_probe": {
+        "worker": "06",
+        "turn": "01a1244a-b744-7517-88ce-611f91580855",
+        "injected_gate_seconds": 7.451,
+        "latest_trade_age": 17,
+        "TTL": 15,
+        "result": "STALE_MOMENTUM noBUY; age17 after paced quote;03assigned minimal ordering analysis"
+      },
+      "ops_review": {
+        "activation": "01a1244e-2e93-75e8-a201-1504bc10835a PASS",
+        "active_context": "01a1244e-a0e5-72a1-946c-584bed662631 PASS",
+        "cutover": "01a1244f-75f0-70ec-8073-8e903b46e990 PASS",
+        "preservation": "03 HOLD missing-table check fixed SHA0fe2150520362a006dd445b481f87ddbdd5f3134bef7b01a5c2b29fcf5bbf3da;07delta review pending"
+      },
+      "prospective_pin": {
+        "retirement": "070ffd78b0b9ded3221428d8a96827c4de043e116900cd1187b4e59f19fb7ebe",
+        "source": "31eb70ed7ff2b16e499bc00d9a6248069e740c603fe722f0b488f2dc71f193b1",
+        "review": "01a1245a-c606-7729-ab5d-39c45ddf5060 scopedPASS",
+        "applied": false,
+        "status": "Reviewed readonly proposal; never applied"
+      },
+      "preservation_delta_review": {
+        "worker": "07",
+        "turn": "01a12451-fcf2-7183-93d6-56201c06d33c",
+        "status": "ScopedPASS",
+        "script_sha256": "0fe2150520362a006dd445b481f87ddbdd5f3134bef7b01a5c2b29fcf5bbf3da"
+      },
+      "freshness_ordering": {
+        "author": "03",
+        "thread": "01a118fc-9478-778a-b77a-8f8f6ec7e0ad",
+        "reviewer": "09",
+        "reviewer_thread": "01a118fd-3f90-77d9-9549-c4497f5b10a6",
+        "status": "Independent final scopedPASS; exact candidate CI pending",
+        "design_turn": "01a12451-c959-7279-8d5d-05dfc85a323d",
+        "turn": "01a12452-e4f8-72bf-9f9a-74f28bd6b6e8",
+        "pr": 197,
+        "head": "7e591f983be7d39ac875f24f2af5a8e2ebe45a43",
+        "review_turn": "01a1245b-7aa6-735a-a27a-ff2ff6ce62a2",
+        "runtime": "31eb70ed7ff2b16e499bc00d9a6248069e740c603fe722f0b488f2dc71f193b1",
+        "root_native": "2PASS25.483s; real7.451s pre-capture delay; synthetic BUY; no live acceptance",
+        "author_validation": "3nativePASS82.473s entry->monitor->full exit and stale refusal;55focusedPASS",
+        "root_validation": "3nativePASS79.022s; BUY/monitor/fullSELL/stale rejection; synthetic only",
+        "independent_validation": "3nativePASS81.857s entry/held/full exit/stale refusal"
+      },
+      "post_buy_check": {
+        "worker": "06",
+        "thread": "01a118fc-f867-7233-8eec-c20659e70095",
+        "status": "No concrete blocker; synthetic BUY/heldSELL checkpoints pass installed proofs/reopen/journal; not live validation",
+        "turn": "01a12456-7a77-71c1-b411-9aac3098eb54",
+        "tree": "debe3a9bbf55d1fc49af818213a2897e7054cccf"
+      },
+      "ci": {
+        "194": {
+          "head": "7cd17d6de6b9ac58d6f012f425e02e8ffb155baf",
+          "run": 38027224083,
+          "status": "success"
+        },
+        "195": {
+          "head": "7d6e98699781390bf6c5b968720e4bb07e54bad8",
+          "run": 38027767827,
+          "status": "success"
+        },
+        "196": {
+          "head": "86052b3f4c033db174f307d83e9bec8f09d7e76f",
+          "run": 38028019497,
+          "status": "in_progress"
+        }
+      }
     }
   }
 }
