@@ -363,7 +363,7 @@ def _verify(store, progress, rec, *, row=None, ledger=True):
     if rec['status'] == 'FAILED_CHARGED' and rec['cause'] in EVIDENCE_CAUSES and not failed_reads_transient(store, rec['attempt_refs']):
         raise ValueError('Pass closure failed read is not proven transient')
     if rec['status'] == 'FAILED_CHARGED':
-        _consistent(rec['cause'], rec['scans'])
+        _consistent(rec['cause'], rec['scans'], store, rec['attempt_refs'])
     monitoring = rec['monitoring']
     if monitoring is not None:
         first = intent.get('monitoring_total')
@@ -391,15 +391,28 @@ def _verify(store, progress, rec, *, row=None, ledger=True):
     return intent
 
 
-def _consistent(cause, scans):
-    """T22H L5: the necessary charge conditions of a budget cause (the same ones publish's `_consistent` demands of a no-entry)."""
-    charged = sum(w['after'] - w['before'] for w in scans.values())
-    if cause == 'INVESTIGATION_REQUEST_BUDGET_EXHAUSTED' and not any(w['after'] >= 18 for w in scans.values()):
+def _consistent(cause, scans, store=None, refs=()):
+    """T22H L5 / T22I: the necessary charge conditions of a budget cause, the same ones publish's `_consistent` demands of a no-entry.
+
+    INVESTIGATION: some scan reached exactly the 18-request ceiling (publish: `after == 18`). CYCLE: some scan was charged
+    exactly 18 inside the pass (publish: `after-before == 18`). FEATURE_HISTORY_PAGE_LIMIT: at least eight RETAINED
+    `getTransactionsForAddress` originals among the closure's attempt references (publish counts retained originals, not charges).
+    """
+    if cause == 'INVESTIGATION_REQUEST_BUDGET_EXHAUSTED' and not any(w['after'] == 18 for w in scans.values()):
         raise HoldRequired('Investigation budget exhaustion requires the full ceiling charged')
-    if cause == 'CYCLE_REQUEST_BUDGET_EXHAUSTED' and charged < 18:
+    if cause == 'CYCLE_REQUEST_BUDGET_EXHAUSTED' and not any(w['after'] - w['before'] == 18 for w in scans.values()):
         raise HoldRequired('Cycle budget exhaustion requires eighteen charged requests')
-    if cause == 'FEATURE_HISTORY_PAGE_LIMIT' and charged < 8:
-        raise HoldRequired('History page limit requires at least eight charged requests')
+    if cause == 'FEATURE_HISTORY_PAGE_LIMIT':
+        pages = 0
+        for key in dict.fromkeys(refs):
+            try:
+                record = terminal._load(store, key)
+            except (ValueError, OSError, sqlite3.Error):
+                continue
+            if type(record) is dict and record.get('kind') == 'paper_read_attempt_v1' and record.get('method') == 'getTransactionsForAddress':
+                pages += 1
+        if pages < 8:
+            raise HoldRequired('History page limit requires eight retained history pages')
 
 
 def close(store, progress, *, pass_id, status, cause, result_hash=None, attempt_refs=(), ledger_before=None):
@@ -626,7 +639,7 @@ def recover_abandoned(store, progress, *, ledger_db, cfg, clock, research_db):
         # T22H L3: sentinels are checked over the SAME ordered set that `pending` is taken from (an unordered LIMIT could
         # skip a different 1024 rows and let a sentinel-held pass through)
         ordered = [r[0] for r in c.execute('SELECT id FROM paper_observation_passes WHERE outcome_hash IS NULL ORDER BY rowid LIMIT 1024')]
-        skip |= {i for i in ordered if os.path.exists(sentinel_path(store, i))}      # a hold that could not be written stays a hold
+        skip |= {i for i in ordered if os.path.lexists(sentinel_path(store, i))}      # a hold that could not be written stays a hold
         pending = [i for i in ordered if i not in skip]
         has_monitoring = bool(c.execute("SELECT 1 FROM sqlite_master WHERE type='table' AND name='paper_monitoring_outcomes'").fetchone())
         dangling = has_monitoring and c.execute('SELECT 1 FROM paper_monitoring_reservations r LEFT JOIN paper_monitoring_outcomes o '

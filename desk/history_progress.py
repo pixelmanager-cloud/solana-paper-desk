@@ -28,6 +28,20 @@ def ownership_lock_path(store,invocation=False):
     return str(path)+('.ownership-invocation.lock' if invocation else '.ownership.lock')
 
 
+def _pre_transport_transient(error):
+    """T22I: a TYPED transient raised by the desk's own history source BEFORE any transport call has no attempt original.
+
+    `PaperHistorySource` raises `PaperReadError('DEADLINE_EXCEEDED')` after the reservation was charged and before it sends
+    anything, so there is nothing to retain. That one exact typed error (no evidence hash, exact class, code in the shared
+    monitoring non-latching vocabulary) is the pager's RETRYABLE_ERROR; any other evidence-less failure (a bare OSError,
+    a digest or binding conflict, a cached-request mismatch, a free-text ValueError) still propagates and is held.
+    """
+    from .monitoring_budget import TRANSIENT_FAILURE_CODES
+    from .paper_read_sources import PaperReadError
+    return (type(error) is PaperReadError and error.evidence_hash is None and type(error.code) is str
+            and error.code in TRANSIENT_FAILURE_CODES and error.code != 'ABANDONED_CHARGED')
+
+
 class HistoryProgress:
     def __init__(self,store):
         if store.read_only:raise ValueError('Writable evidence store required')
@@ -309,7 +323,9 @@ class HistoryProgress:
                 # real cause instead of being laundered into HISTORY_RECOVERY_REQUIRED. Never save provider error bodies.
                 evidence=getattr(error,'evidence_hash',None)
                 from .paper_pass_closure import failed_reads_transient
-                if type(evidence) is not str or not failed_reads_transient(self.store,[evidence]):raise
+                if type(evidence) is str:
+                    if not failed_reads_transient(self.store,[evidence]):raise
+                elif not _pre_transport_transient(error):raise
                 with self.store.connect() as c:c.execute("UPDATE ownership_history SET status='RETRYABLE_ERROR' WHERE id=?",(key,))
                 return {**self.snapshot(key),'failure_evidence':evidence}
             return self.snapshot(key)

@@ -792,26 +792,28 @@ def _close_dispatch(expected, journal, identity, intent, scan, cause, status):
 HOLD_SUFFIX = '.dispatch-hold.'
 
 
-def _hold_path(expected, identity):
-    return str(_path(expected['journal'], private=True)) + HOLD_SUFFIX + identity
+class DispatchHoldFailed(RuntimeError):
+    """The dispatch hold could not be made durable by ANY mechanism: this process refuses every further dispatch."""
 
 
-def _hold_dispatch(expected, identity, cause):
-    """T22H item 2: durable (fsynced file + directory) record that this dispatcher STOPPED ON PURPOSE or on an integrity cause.
+_HOLD_FAILED = []          # visible reason; non-empty = no further dispatch in this process (fail closed)
 
-    An intent has no hold row, so without this a later dispatcher could not tell a deliberate refusal from a dead process and
-    would abandon it after 900 s. Written before the failure propagates; a SIGKILL writes nothing (that IS an abandoned
-    dispatcher). Never raises: the original failure is propagating.
-    """
+
+def _hold_paths(expected, identity):
+    """Two independent durable locations: beside the journal, and beside the evidence database (another directory)."""
+    return (str(_path(expected['journal'], private=True)) + HOLD_SUFFIX + identity,
+            str(expected['paths']['evidence_db']['path']) + HOLD_SUFFIX + identity)
+
+
+def _write_hold(path, identity, cause):
     try:
-        path = _hold_path(expected, identity)
         fd = os.open(path, os.O_WRONLY | os.O_CREAT | os.O_EXCL | os.O_NOFOLLOW, 0o600)
         try:
             os.write(fd, canonical({'dispatch_id': identity, 'cause': str(cause)[:128]}).encode())
             os.fsync(fd)
         finally:
             os.close(fd)
-        dfd = os.open(os.path.dirname(path), os.O_RDONLY)
+        dfd = os.open(os.path.dirname(path) or '.', os.O_RDONLY)
         try:
             os.fsync(dfd)
         finally:
@@ -823,8 +825,29 @@ def _hold_dispatch(expected, identity, cause):
     return True
 
 
+def _hold_dispatch(expected, identity, cause):
+    """T22H item 2 / T22I item 2: durable (fsynced file + directory) record that this dispatcher STOPPED ON PURPOSE or on an integrity cause.
+
+    An intent has no hold row, so without this a later dispatcher could not tell a deliberate refusal from a dead process and
+    would abandon it after 900 s. Written before the failure propagates; a SIGKILL writes nothing (that IS an abandoned
+    dispatcher). The first location is beside the journal; if that write fails a second one beside the evidence database is
+    tried. If BOTH fail the hold cannot be proven durable: a visible reason is recorded, this process refuses every further
+    dispatch (`DispatchHoldFailed`), and the function returns False. Never raises: the original failure is propagating.
+    """
+    for path in _hold_paths(expected, identity):
+        if _write_hold(path, identity, cause):
+            return True
+    reason = 'DISPATCH_HOLD_NOT_DURABLE: ' + str(identity) + ' ' + str(cause)[:96]
+    _HOLD_FAILED.append(reason)
+    try:
+        print(reason, file=sys.stderr)
+    except Exception:
+        pass
+    return False
+
+
 def _held(expected, identity):
-    return os.path.lexists(_hold_path(expected, identity))
+    return any(os.path.lexists(path) for path in _hold_paths(expected, identity))
 
 
 def _recover_unresolved(expected, journal, ids):
@@ -868,6 +891,8 @@ def dispatch(expected, *, execute=False, systemd_credentials=False):
 
 
 def _dispatch(expected, *, execute=False, systemd_credentials=False):
+    if _HOLD_FAILED:                      # T22I item 2: a hold that could not be made durable refuses all further dispatch
+        raise DispatchHoldFailed(_HOLD_FAILED[0])
     paths = {k: v['path'] for k,v in expected['paths'].items()}
     v2 = expected.get('journal_schema', 1) == 2
     with _journal(expected['journal']) as journal:
@@ -1016,13 +1041,16 @@ def _dispatch(expected, *, execute=False, systemd_credentials=False):
                 try:
                     from desk.paper_pass_closure import classify
                     cause, transient = classify(error)
-                    if transient:                 # allow-list only: everything else stays unresolved (latched)
+                except Exception as failure:      # T22I item 3: an unclassifiable failure is a hold, never swallowed
+                    cause, transient = 'DISPATCH_CLASSIFY_FAILED:' + type(failure).__name__, False
+                if transient:                     # allow-list only: everything else stays unresolved (latched)
+                    try:
                         _close_dispatch(expected, journal, identity, intent, known_scan[0] if known_scan else None,
                                         cause, 'FAILED_CHARGED')
-                    else:                         # T22H item 2: a deliberate refusal / integrity stop is a durable hold
-                        _hold_dispatch(expected, identity, cause)
-                except Exception:
-                    pass
+                    except Exception as failure:  # T22I item 3: a failed close leaves the intent unresolved AND held
+                        _hold_dispatch(expected, identity, 'DISPATCH_CLOSE_FAILED:' + type(failure).__name__)
+                else:                             # T22H item 2: a deliberate refusal / integrity stop is a durable hold
+                    _hold_dispatch(expected, identity, cause)
             raise
 
 
