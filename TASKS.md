@@ -252,7 +252,7 @@ VPS facts (read-only, 2026-10-11):
 ---
 
 ## T38 — integration/r1 CI is RED: restore a green full suite on Linux — CRITICAL PATH, DO FIRST
-(Note: a worker is already on `cloud/T23H`, the narrower lifecycle `PACING_CLOCK_INVALID` fix. If `cloud/T23H` has a DONE commit, merge it in first and build on it.)
+(Coordinator: `cloud/T23H` is DONE but NOT merged. It only stops `reclaim_orphans` from raising. The lifecycle test still fails on integration+T23H with `AssertionError: 5.845` at the fixture line `assert lag<5` (test_empty_history_successor_lifecycle.py ~:54): the shared pacing `high_water` ends up ~6s AHEAD of wall time. Find what advances high_water/next_at into the future since T23G/T14G (reclaim with a fixture clock? the 3-tier priority? a reclaim row timestamp?) and fix that root cause. Merge `cloud/T23H` into your branch. , the narrower lifecycle `PACING_CLOCK_INVALID` fix. If `cloud/T23H` has a DONE commit, merge it in first and build on it.)
 STATUS: OPEN
 DEPENDS: none
 BASE: origin/integration/r1
