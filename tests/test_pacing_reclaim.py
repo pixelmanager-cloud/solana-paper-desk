@@ -460,5 +460,91 @@ class PacingReclaimTests(unittest.TestCase):
         self.assertEqual(self.rows('SELECT pending FROM state WHERE provider="helius"')[0][0], ticket)
 
 
+class SequenceClock:
+    """A wall clock that replays a list of readings (the last one repeats)."""
+    def __init__(self, *readings): self.readings = list(readings); self.calls = 0
+    def time(self):
+        value = self.readings[min(self.calls, len(self.readings) - 1)]; self.calls += 1
+        return value
+    def sleep(self, d): pass
+
+
+class ReclaimClockTests(PacingReclaimTests):
+    """T23H: a clock problem inside reclaim must never raise on the gate's read-first path.
+
+    `reclaim_orphans` is called by the entry gates before they test `pending`; they refuse on a pending grant without ever
+    calling acquire(). A clock behind `high_water` (or not a usable number) is already refused by acquire() with
+    PACING_CLOCK_INVALID; reclaim just does nothing, so a gate cannot be turned into a crash by a clock that disagrees with the
+    one that advanced the database (this crashed tests.test_empty_history_successor_lifecycle on integration/r1).
+    """
+
+    def snapshot(self):
+        return (self.rows('SELECT provider,next_at,blocked_until,high_water,pending FROM state ORDER BY provider'),
+                self.rows('SELECT * FROM pacing_reclaims'), self.path.read_bytes())
+
+    BAD_CLOCKS = {'behind high_water': T0 - 50, 'nan': float('nan'), 'inf': float('inf'), 'too large': 2.0 ** 41, 'none': None,
+                  'bool': True, 'string': '1000000'}
+
+    def test_a_clock_that_disagrees_with_the_database_returns_empty_and_changes_nothing(self):
+        self.killed_orphan()
+        before = self.snapshot()
+        for label, reading in self.BAD_CLOCKS.items():
+            with self.subTest(label):
+                pacer = self.make(Clock(reading))
+                self.assertEqual(pacer.reclaim_orphans(), [])
+                self.assertEqual(self.snapshot(), before)             # no reclaim row, orphan intact, file bytes identical
+
+    def test_acquire_still_fails_closed_with_the_same_clock(self):
+        self.killed_orphan()
+        for label, reading in self.BAD_CLOCKS.items():
+            with self.subTest(label), self.assertRaisesRegex(p.PacingError, 'PACING_CLOCK_INVALID|DEADLINE'):
+                self.make(Clock(reading)).acquire('helius', timeout_seconds=1)
+
+    def test_a_valid_clock_reclaims_afterwards_so_the_failed_attempt_damaged_nothing(self):
+        self.killed_orphan()
+        self.assertEqual(self.make(Clock(T0 - 50)).reclaim_orphans(), [])
+        self.assertEqual(self.make(Clock(T0 + 100)).reclaim_orphans(), ['helius'])
+        self.assertEqual(len(self.rows('SELECT * FROM pacing_reclaims')), 1)
+
+    def test_a_clock_that_goes_bad_between_the_read_and_the_write_pass_also_returns_empty(self):
+        self.killed_orphan()
+        before = self.snapshot()
+        clock = SequenceClock(T0 + 100, T0 - 5)                       # valid for the read-first pass, behind for the write pass
+        self.assertEqual(self.make(clock).reclaim_orphans(), [])
+        self.assertEqual(clock.calls, 2)
+        self.assertEqual(self.snapshot(), before)
+
+    def test_reclaim_without_an_orphan_and_a_bad_clock_is_also_quiet(self):
+        self.assertEqual(self.make(Clock(T0 - 50)).reclaim_orphans(), [])
+        self.assertEqual(self.make(Clock(float('nan'))).reclaim_orphans(), [])
+
+    def test_only_a_clock_problem_is_swallowed_an_integrity_error_still_raises(self):
+        self.killed_orphan()
+        pacer = self.make(Clock(T0 + 100))
+        for code in ('PACING_DATABASE_INVALID', 'PACING_DATABASE_CHANGED', 'PACING_POLICY_INVALID'):
+            with self.subTest(code), patch.object(p.Pacer, '_now', side_effect=p.PacingError(code)):
+                with self.assertRaisesRegex(p.PacingError, code):
+                    pacer.reclaim_orphans()                        # fail closed: never hidden as "nothing to reclaim"
+
+    def test_the_gate_refuses_on_the_pending_grant_not_on_the_clock(self):
+        from desk import paper_terminal_reconciliation as terminal
+        self.killed_orphan()
+        behind, real = Clock(T0 - 50), p.Pacer
+        with patch.object(terminal.provider_pacing, 'Pacer', lambda path: real(path, clock=behind.time)):
+            with self.assertRaisesRegex(ValueError, 'Provider outcome pending'):
+                terminal._pacing(self.path)                            # the pre-existing fail-closed refusal, not PacingError
+
+    def test_the_gate_passes_a_clean_database_even_when_the_clock_disagrees(self):
+        from desk import paper_terminal_reconciliation as terminal
+        real = p.Pacer
+        with patch.object(terminal.provider_pacing, 'Pacer', lambda path: real(path, clock=Clock(T0 - 50).time)):
+            terminal._pacing(self.path)                                # nothing pending: acquire() will refuse the bad clock later
+
+
+for _name in dir(PacingReclaimTests):                      # reuse setUp/helpers only; do not re-run the parent's tests
+    if _name.startswith('test_'):
+        setattr(ReclaimClockTests, _name, None)
+
+
 if __name__ == '__main__':
     unittest.main()
