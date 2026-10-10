@@ -237,12 +237,15 @@ class MeasureTests(unittest.TestCase):
                        'simulated_output_raw': qe.output_raw(buy, self.cfg), 'quote_hash': buy.source.raw_hash,
                        'mint_decimals': self.q.token.decimals}
         self.script, self.calls, self.sleeps, self.now = [], [], [], [T]
+        self.double_charge = False
         outer = self
         progress = self.q.admissions.progress
         class Source:
             quote_source_id = 'fixture:synthetic-quote'
             def quote(self, input_mint, output_mint, amount, taker, *, timeout_seconds):
                 outer.assertTrue(progress.reserve(outer.scan))  # the durable per-attempt charge
+                if outer.double_charge:
+                    progress.reserve(outer.scan)               # defect: provider layer charged twice
                 outer.calls.append((input_mint, output_mint, amount))
                 step = outer.script.pop(0)
                 if isinstance(step, Exception):
@@ -317,6 +320,14 @@ class MeasureTests(unittest.TestCase):
         self.assertEqual([s['status'] for s in summary], ['FAILED'] * 3)
         self.assertEqual({s['code'] for s in summary}, {'INVESTIGATION_REQUEST_BUDGET_EXHAUSTED'})
         self.assertEqual((self.calls, self.used(), [r['charged'] for r in self.rows()]), ([], used, [0, 0, 0]))
+
+    def test_charge_mismatch_latches_and_stops_further_requests(self):
+        self.double_charge = True
+        self.script[:] = [990_000, 990_000, 990_000]
+        summary = self.run_measure()
+        self.assertEqual({s['code'] for s in summary}, {'SHARED_BUDGET_CHARGE_OR_IDENTITY_MISMATCH'})
+        self.assertEqual(len(self.calls), 1)                       # integrity defect: no second request
+        self.assertEqual([r['charged'] for r in self.rows()], [1, 0, 0])
 
     def test_late_sample_is_skipped_without_a_request(self):
         self.now[0] = T + 100
