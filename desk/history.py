@@ -4,17 +4,18 @@ from .programs import address
 from .model import digest
 
 
-def collect_history(owner,start,end,rpc,max_pages=2,capture=None,token_accounts="balanceChanged",slot_range=None):
+def collect_history(owner,start,end,rpc,max_pages=2,capture=None,token_accounts="balanceChanged",slot_range=None,*,page_size=100):
     address(owner)
     if type(start) is not int or type(end) is not int or not 0<=start<end or not 1<=max_pages<=20:
         raise ValueError('Invalid history bounds')
+    if type(page_size) is not int or not 1<=page_size<=100:raise ValueError('Invalid history page size')
     if token_accounts not in ("none","balanceChanged","all"):raise ValueError("Invalid token account scope")
     if slot_range is not None and (not isinstance(slot_range,dict) or set(slot_range)!={'gte','lt'}
             or any(type(v) is not int for v in slot_range.values()) or not 0<=slot_range['gte']<slot_range['lt']):
         raise ValueError('Invalid history slot bounds')
     observations=[];seen={};cursors=set();cursor=None;reasons=[];pages=[];last_slot=None;exhausted=False
     for _ in range(max_pages):
-        opts={'transactionDetails':'full','sortOrder':'asc','limit':100,'commitment':'finalized',
+        opts={'transactionDetails':'full','sortOrder':'asc','limit':page_size,'commitment':'finalized',
               'encoding':'jsonParsed','maxSupportedTransactionVersion':1,
               'filters':{'blockTime':{'gte':start,'lt':end},'status':'any','tokenAccounts':token_accounts}}
         if slot_range is not None:
@@ -23,7 +24,7 @@ def collect_history(owner,start,end,rpc,max_pages=2,capture=None,token_accounts=
         params=[owner,opts]
         response=rpc('getTransactionsForAddress',params)
         rows=response.get('data')
-        if not isinstance(rows,list) or len(rows)>100:raise ValueError('Invalid history page')
+        if not isinstance(rows,list) or len(rows)>page_size:raise ValueError('Invalid history page')
         page_hash=digest(response)
         persisted=capture(response)==page_hash if capture else False
         if capture and not persisted:raise ValueError('Persisted history hash mismatch')
@@ -68,5 +69,6 @@ def collect_history(owner,start,end,rpc,max_pages=2,capture=None,token_accounts=
               'launch_history_complete':False,'reasons':sorted(set(reasons)),
               'notice':'Address-query coverage is not complete token transfer, launch or funding coverage.'}
     if slot_range is not None:coverage['slot_range']=dict(slot_range)
+    if page_size!=100:coverage['page_size']=page_size
     coverage['evidence_hash']=digest(coverage)
     return observations,coverage

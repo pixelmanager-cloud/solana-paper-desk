@@ -281,7 +281,9 @@ def _history(progress, item, budget, source_factory):
     as_of = budget.now() if item.history_as_of is None else item.history_as_of
     if type(as_of) is not int or as_of < 300:
         raise CycleBlocked('CAPTURED_HISTORY_WINDOW_INVALID')
-    key = progress.create(target.scan_id, target.pool, as_of-300, as_of+1)
+    from .paper_history_source import PAPER_HISTORY_PAGE_SIZE
+    key = progress.create(target.scan_id, target.pool, as_of-300, as_of+1,
+                          page_size=PAPER_HISTORY_PAGE_SIZE)
     state = progress.snapshot(key)
     while state['status'] != 'DONE':
         if state['status'] == 'RETRYABLE_ERROR':

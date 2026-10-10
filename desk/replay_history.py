@@ -23,7 +23,7 @@ def replay_history(coverage, store):
             raise ValueError('History request binding mismatch')
         return store.load(page['payload_hash'])
     observations,rebuilt=collect_history(coverage['address'],coverage['start'],coverage['end'],rpc,
-        max_pages=len(pages),capture=digest,token_accounts=coverage['token_accounts_filter'],slot_range=coverage.get('slot_range'))
+        max_pages=len(pages),capture=digest,token_accounts=coverage['token_accounts_filter'],slot_range=coverage.get('slot_range'),page_size=coverage.get('page_size',100))
     if position!=len(pages) or rebuilt!=coverage:raise ValueError('History coverage replay mismatch')
     return observations,rebuilt
 
