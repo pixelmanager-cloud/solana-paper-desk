@@ -39,9 +39,19 @@ def main(argv=None):
             if ledger.parent!=research.parent:raise ValueError('Scheduler ledger context mismatch')
             state=paper_cycle._state(ledger,cfg)
             if state['positions'] or state['mode']!='RUNNING':
-                if state['mode']!='RUNNING':
-                    print(json.dumps({'status':'LEDGER_PAUSED','attempted_requests':0,'entry_authorized':False}))
-                    return 0
+                print(json.dumps({'status':'HELD_POSITION_PRIORITY','attempted_requests':0,'entry_authorized':False}))
+                return 0
+        # Existing commands run in this process while the lease remains held
+        # across their inner lock release/reacquisition handoffs.
+        if a.mode=='entry':
+            from tools.paper_entry_dispatcher import main as invoke
+        elif a.mode=='held':
+            from desk.paper_monitor_service import main as invoke
+        else:
+            from desk.cli import main as invoke
+            args=[('paper-monitor' if a.mode=='expire' else 'consume-scans'),*args]
+        return invoke(args)
+    return 0
                 # Every entry wake-up services existing positions instead; an
                 # entry timer cannot starve held work by repeatedly winning.
                 held=[]
