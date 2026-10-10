@@ -69,6 +69,76 @@ This is the critical path alongside T01. Build `python -m tools.ops.fresh_start`
 
 ---
 
+## T11F — Fix coordinator review findings in T11 (cutover tool) — CRITICAL PATH
+STATUS: OPEN
+DEPENDS: none
+BASE: origin/cloud/T11
+OWNS: tools/ops/cutover.py, tests/test_ops_cutover.py, docs/ops/RUNBOOK.md
+AVOID: desk/**, deploy/*.service, deploy/*.timer
+
+The coordinator review found that the cutover/rollback lifecycle is not yet safe. Fix each item with a fail-first test:
+1. **A failed or hung start is never stopped.** A unit whose `systemctl start` fails or times out must be added to the started set *before* the start call, so the failure path stops it. Wrap `subprocess.TimeoutExpired` (and every other runner exception) in a `CutoverError`.
+2. **Already-running units.** Refuse to cutover any unit in `--units` that is not inactive/failed beforehand. Starting it would be a silent no-op, and the old code would keep running. After the start, verify the *running* process: `ExecMainStartTimestamp` must be newer than the cutover start, `MainPID` must have changed, or for oneshot timers the next trigger must be scheduled.
+3. **Rollback with active units.** Rollback must refuse while any managed unit is active, unless `--stop` is given, in which case it stops them first. Never leave timers firing the old release against the archived stores.
+4. **Keep-off must also be disabled.** Keep-off units must be `disable`d as well as stopped (check `is-enabled`, report it, and refuse to proceed if one is still enabled), so a reboot cannot start entries early.
+5. **Health settle.** `unit_ok` must not accept `activating`/`auto-restart`. Re-check after a settle delay (configurable, default 10s), and require `NRestarts` to be unchanged.
+6. **Old-store guard.** Refuse to start any writer unit whose effective ExecStart or Environment references the archived store root (`--archived-root /var/lib/solana-desk`), unless the unit is in an explicit `--allow-archived` list (empty by default).
+7. **T13 format.** Accept T13's `unit_arguments` JSON directly. Check `git show origin/cloud/T13:tools/ops/fresh_start.py` for the exact shape: keys without the `.service` suffix, lowercase `environment`/`argv` keys, argv without the interpreter. Render it to systemd correctly: proper systemd quoting, `%` escaped as `%%`, the full interpreter path prepended. No hand conversion.
+8. **Partial store-env.** `--store-env` with a subset of units must be allowed (stray-unit refusal only for units that are neither in `--units` nor in the file).
+9. **Minor fixes.**
+   - Hash and extract from the same open fd.
+   - Collision → `CutoverError`.
+   - Check all effective ExecStart lines.
+   - fsync drop-ins and their directory.
+   - The marker must be on the first line.
+10. **Rewrite the RUNBOOK** for the fresh start:
+    - The new store root lives OUTSIDE the old one: `/var/lib/solana-desk-fresh/<version>/`. Old: `/var/lib/solana-desk/`, archived read-only.
+    - The archive backup uses `--expect-count 14` (the 12 stores plus `demo.sqlite` and `verified-demo.sqlite`).
+    - Cut over and re-enable EVERY unit that should run: continuous discovery (as a long-running service with `Restart=`; it currently exits after `--seconds 86400`), held cycle, monitor, decisions, dashboard (loopback only) and backup (pointed at the new root).
+    - Install the T07 latch drop-in BEFORE enabling the entry timer.
+    - Give the exact cwd for every `python -m tools.ops.*` command, including stage, which runs from the staged release.
+
+---
+
+## T02F — Fix coordinator review findings in T02 (status CLI)
+STATUS: OPEN
+DEPENDS: none
+BASE: origin/cloud/T02
+OWNS: tools/ops/status.py, tests/test_ops_status.py
+AVOID: desk/**
+
+1. **[Blocker]** The release probe writes `.pyc` files into `--release-dir`. Use `python -I -B`, set `PYTHONDONTWRITEBYTECODE=1` in the subprocess env, and set `sys.dont_write_bytecode=True` before any `desk` import in the tool itself. Add a test that runs the REAL probe subprocess against a copied `desk/` tree and asserts that no file appears.
+2. **[High]** `immutable=1` is only allowed when the header byte 18 == 2 (WAL) and there is no `-wal`. Otherwise use plain `mode=ro`. `provider-pacing.sqlite` is in rollback-journal mode and is written every ~2s.
+3. **Tests:**
+   - exercise the live-WAL `mode=ro` path with an open writer connection;
+   - add a quote-execution fill fixture so the `EXECUTION_UNVERIFIED` extraction is actually asserted.
+4. **Binding check.** Check the `paper_monitoring_budget.ledger`/`config_hash` binding against `--ledger` and the config; a mismatch is a blocker.
+5. **Fail closed:**
+   - ownership-exhausted must not be limited to the first 50 rows (use an aggregate query);
+   - the `os.walk` onerror raises;
+   - symlinked or hardlinked stores go into blockers;
+   - NULL ceiling/mode becomes a blocker, not a crash.
+
+   A non-null pacing `pending` becomes a WARNING, not a blocker, unless it stays unchanged across `--samples 2` reads 3s apart.
+
+---
+
+## T10F — Fix coordinator review findings in T10 (forward eval)
+STATUS: OPEN
+DEPENDS: none
+BASE: origin/cloud/T10
+OWNS: tools/research/forward_eval.py, tests/test_forward_eval.py
+AVOID: desk/**
+
+1. **MFE/MAE.** Rebuild MFE/MAE from journaled held market events (`events` rows with `reserve_sol`/`reserve_tokens`/`market_cap_usd`, desk/model.py ~:267) between open and close for constant-product ledgers. Report `UNAVAILABLE_QUOTE_MODE` only where the marks truly are not persisted, and detect which case applies.
+2. **Pooled ordering.** Sort pooled trades by `closed_at` (tie-break ledger, seq), not by per-ledger seq. Define the pooled equity baseline explicitly. Add a test that argument order does not change any number.
+3. **One snapshot.** Validate and read inside one read transaction, or assert that the max outcome seq equals what was validated.
+4. **Holdout.** The holdout drawdown starts from equity at the cut. Split on ENTRY time (state this in the output) so train-period decisions do not leak.
+5. **Code versions.** Same config hash but different implementation hashes → separate rows by default (`--pool-implementations` to merge, with a warning).
+6. **Concurrency test.** Add a known-answer test with concurrent positions: buy A, buy B, sell B, sell A.
+
+---
+
 ## T02 — Read-only production status CLI
 STATUS: OPEN
 DEPENDS: none
@@ -361,3 +431,64 @@ Coordinator review of T15. Amend the doc:
 4. **Numbers everywhere.** Put a number on every gate threshold: shadow build success rate, fee tolerance, canary realised-vs-model cost tolerance. Define "reconciliation" in simulate-only shadow mode (e.g. simulated balance deltas vs the expected quote).
 5. **Risk acceptance.** Cap the "explicit written risk acceptance" escape hatch at no more than the wallet cap, with a time limit.
 6. **Reference fix.** `forJitoBundle` is at providers.py:213, not :223.
+
+---
+
+## T20 — Watchlist re-evaluation of "not yet" rejections (APPROVED rule change)
+STATUS: OPEN
+DEPENDS: branch `cloud/T16` has a `DONE T16:` commit (both edit the dispatcher's candidate selection)
+BASE: origin/cloud/T16
+OWNS: tools/paper_entry_dispatcher.py (selection only), a new desk/watchlist.py, tests/test_watchlist*.py, docs/WATCHLIST.md
+AVOID: T01's reconciliation files
+
+**DECISION (CK, 2026-10-11).** Replaces the old "never retry retired candidates" rule *for the fresh store set only*. The goal is a 24/7 desk that keeps filtering graduated memecoins and trades them when they satisfy selection and entry criteria. Today a candidate is evaluated once and a token that becomes eligible 30 minutes later is lost.
+
+- **Classify** every rejection into:
+  - **PERMANENT**: rug/control hazards, dangerous Token-2022 extensions, corrupt or contradictory evidence, the known-hazard list;
+  - **NOT_YET**: market cap or liquidity out of range, too young or too old for the window, insufficient history, empty five-minute window/`MARKET_PRODUCER_BLOCKED`, momentum or flow not met.
+
+  Default to PERMANENT for anything unclassified (fail closed). Show the full mapping table in the docs.
+- **Schedule NOT_YET mints.** They go to an append-only watchlist with `next_eval_at` (backoff 10m → 30m → 2h, configurable) and a max of N re-evaluations (default 4). They expire when the token leaves the engine age window (21600s).
+- **Fresh scans only.** Each re-evaluation is a NEW scan with a new intent id, and its requests are charged to the normal budgets. The original scan and its outcome are never retried, rewritten or un-charged.
+- **Selection order.** The dispatcher considers fresh migration hints first, then due watchlist entries, inside the existing budgets. Admission throughput must not starve held monitoring (respect T16's partitioning).
+- **Versioning.** A versioned config flag `paper_watchlist_version: 1`; when absent, behaviour stays identical.
+- **Tests (fail-first):**
+  - a NOT_YET token rejected at t0 and accepted at t0+30m with new fixture data;
+  - a PERMANENT token never re-admitted;
+  - an unclassified code is treated as PERMANENT;
+  - the backoff schedule and max count;
+  - budget charging of re-evaluations;
+  - the original scan rows unchanged;
+  - a cold restart preserving the watchlist.
+
+---
+
+## T21 — 24/7 unattended operations
+STATUS: OPEN
+DEPENDS: none
+BASE: r1-base
+OWNS: deploy/fresh/ (NEW unit files and drop-ins for the fresh-start deployment), tools/ops/healthcheck.py, tools/ops/notify.py, tests/test_ops_healthcheck.py, docs/ops/OPERATIONS_24x7.md
+AVOID: desk/**, the existing deploy/*.service|*.timer (do not modify them; create new templates under deploy/fresh/)
+
+The desk must run unattended 24/7. Today continuous discovery runs with `--seconds 86400` and exits after a day, it is not enabled at boot, and nothing watches health.
+1. **Units under `deploy/fresh/`** for every service the fresh desk needs (discovery, entry dispatcher + timer, held cycle + timer, monitor + timer, decisions + timer, dashboard on loopback, backup + timer pointed at the new root), with:
+   - `Restart=on-failure` and sane `RestartSec`/`StartLimit*`;
+   - long-running discovery that restarts cleanly instead of exiting after 24h;
+   - `WantedBy` so the intended units start at boot, except the entry timer, which is documented as enabled only by the coordinator after verification;
+   - the existing hardening (ProtectSystem, credentials via `LoadCredential`, MemoryMax);
+   - store paths as `<FRESH_ROOT>` placeholders that match T13's layout.
+2. **Health check.** `tools/ops/healthcheck.py` is read-only and runs as a timer every 5 min. It checks:
+   - each unit's state and restart counts;
+   - discovery freshness (latest discovery row age);
+   - entry/held tick recency;
+   - an open position's last mark age vs its TTL;
+   - unresolved exits / EXIT_ONLY;
+   - budget headroom;
+   - pacing blocked;
+   - disk free;
+   - the latest backup age.
+
+   It emits one JSON line and exits non-zero on CRITICAL.
+3. **Notify.** `tools/ops/notify.py` uses a pluggable notifier. The default writes to the journal plus a state file. An optional Telegram bot is supported when a token file exists in systemd credentials, with the token never in Git or logs; it is off unless configured. It rate-limits and de-duplicates alerts, and sends a daily summary (positions, realized PnL, trades, blockers).
+4. **Tests:** fake systemctl, fixture stores, staleness thresholds, rate limiting, and the notifier never logging secrets.
+5. **`docs/ops/OPERATIONS_24x7.md`:** the alert meanings and the operator response for each.
