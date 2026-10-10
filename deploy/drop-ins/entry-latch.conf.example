@@ -1,0 +1,12 @@
+# EXAMPLE ONLY - not installed by anything. Copy to
+# /etc/systemd/system/desk-paper-entry-dispatcher.service.d/70-entry-latch.conf
+# after the coordinator has reviewed paths. Paper only; no provider requests.
+#
+# ExecStartPre blocks an entry tick (non-zero exit) if a BUY exists but the
+# latch could not be applied (config/runtime mismatch, ledger busy): fail closed.
+# ExecStartPost latches right after the entry that produced the first BUY.
+# Exit 0 means nothing to do or already latched. Run from the same release
+# WorkingDirectory as the unit so the runtime identity matches the ledger.
+[Service]
+ExecStartPre=/opt/solana-desk/.venv/bin/python -m tools.ops.entry_latch --apply --config /etc/solana-paper/paper-kraken-reviewed.json --ledger /var/lib/solana-desk/paper-kraken-77de75a2.sqlite
+ExecStartPost=/opt/solana-desk/.venv/bin/python -m tools.ops.entry_latch --apply --config /etc/solana-paper/paper-kraken-reviewed.json --ledger /var/lib/solana-desk/paper-kraken-77de75a2.sqlite
