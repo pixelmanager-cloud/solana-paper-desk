@@ -860,3 +860,36 @@ Note: T27 (shadow strategies) is built on T26. After this lands, post the fixed 
    - A null pool account is retried with backoff until the horizon window passes.
    - `refresh_outcomes` reuses one journal connection and only processes candidates without a final outcome.
    - `set-allowance` range-checks its input (1..3600).
+
+---
+
+## T27F — Fix coordinator review findings in T27 (shadow strategies)
+STATUS: OPEN
+DEPENDS: branch `cloud/T26F` has a `DONE T26F:` commit
+BASE: origin/cloud/T27, then merge origin/cloud/T26F into it first
+OWNS: tools/research/shadow_strategies.py, tests/test_shadow_strategies.py, docs/research/SHADOW.md, config/experiments/shadow/*.json
+AVOID: desk/**, tools/research/counterfactual.py (T26F owns it)
+
+1. **True bracket.** The [worst, best] interval is not a true bracket. Between samples, assume nothing about the path except what is stated, and make the bracket cover:
+   - a stop crossed and recovered between samples;
+   - ladder rungs hit between samples (including several rungs at once on a gap);
+   - an unknown peak for the trailing level.
+
+   Use explicit min/max reasoning per gap. Mark every trade whose outcome depends on intra-gap ordering as AMBIGUOUS, and report the share of ambiguous trades per variant. Never present a "worst" that is not a worst case.
+2. **Parity against real events.** The parity test must replay RECORDED journaled engine events (from the fixture ledgers the existing tests use, or real-shaped events built by the real writers) through the shadow path with the live config, and compare against the decisions the engine actually recorded. The current test is circular.
+3. **Selection effects.**
+   - Count, never silently drop: candidates with no priced sample, dead before +5m, FAILED/MISSED gaps, horizon_end, and truncated paths.
+   - Require the +5m sample to enter; otherwise the candidate is excluded and counted.
+   - Report the totals at each exclusion stage.
+4. **POOL_DEAD.** Bracket the unknown death time (time-stop exits between the last OK sample and death are ambiguous). Adopt T26F's null-account retry semantics, so a transient VAULT_CLOSED is not counted as -100%.
+5. **Ranking.**
+   - Require a minimum trade count (default 30) to be ranked.
+   - Rank by the Bonferroni-corrected bootstrap CI lower bound, holdout only.
+   - Fix the CI index collapse with more variants: scale BOOTSTRAP with the variant count, or use a percentile with interpolation.
+6. **Features.**
+   - Join the T26F classification (BOUGHT vs REJECTED:<stage>:<code>) and split results by it.
+   - `--features` must carry an `as_of` per candidate and refuse features observed after the decision time (no look-ahead); test it.
+   - Make the neutral defaults (sol_usd 150, supply 1e9) explicit in the output.
+7. **Carry timers.** Carry-timer events must not sidestep `price_ttl_seconds`. Document the behaviour, or mark those exits ambiguous.
+8. **Opening stores.** `mode=ro` on a WAL store with a missing `-shm`: follow the T02F rule (immutable only for a quiet WAL).
+9. **`migrated_at`.** Use T26F's on-chain migration time if it provides one. Otherwise label the age windows as "since hint receipt".
