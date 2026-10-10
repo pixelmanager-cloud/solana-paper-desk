@@ -17,7 +17,6 @@ for _name in dir(base.MonitoringBudgetTests):      # reuse setUp/helpers only
 
 
 class MonitoringLatchTests(_Fixture):
-    @unittest.expectedFailure
     def test_one_transient_failed_read_must_not_block_entries_for_good(self):
         """A single failed held read (timeout/5xx/429, ~every provider has
         one over 48h) sets blocked='SOURCE_FAILURE'. Nothing ever clears it:
