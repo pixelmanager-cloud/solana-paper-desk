@@ -87,9 +87,21 @@ What is guaranteed instead:
   immediately when the entry finishes, instead of being skipped to the next timer tick
   (`HeldLeaseWaitTests`: real flock, real wrapper, latency measured: starts within one poll of the release). The
   wait applies only to a valid concurrent-entries config; flag off is byte-identical (`SCHEDULER_BUSY`, no wait).
-* So the worst-case gap between two refreshes of a position is the held cadence plus the remaining entry
-  duration (a 40 s wait covers a typical entry; an entry that runs longer makes the tick report `SCHEDULER_BUSY`
-  as before and the next tick follows one cadence later). Budget: 40 s wait + 62.4 s legs fits `TimeoutStartSec=120`.
+* **Held checkpoints between entry phases (T16G).** The entry phases (acquisition, intake, and the preparation +
+  cycle that ends in the engine decision) release the research/evidence/ledger locks between them. Before each phase
+  the dispatcher asks `paper_concurrency.checkpoint_due(elapsed_since_held, next_phase_seconds, positions)`: when the
+  next uninterruptible phase plus the legs themselves (7.8 s per position) would stretch the gap since the last held
+  legs past `HELD_MAX_GAP_SECONDS` (120 s, the held cadence), it runs one in-process held pass (every open position,
+  oldest mark first) before that phase. Flat books and flag-off runs never checkpoint. The pass never raises: the
+  entry intent is already latched, and a degraded pass shows up as stale marks that the engine's `STALE_PORTFOLIO`
+  gate rejects. Budgeted phases: acquisition 12 s, intake 10 s, preparation 18 s, cycle 12 s = `ENTRY_SECONDS` 52 s
+  (conservative planning figures, not measurements). With those figures no extra leg is needed; a slow provider (pacing
+  waits stretching acquisition to 70 s and intake to 40 s) triggers exactly one checkpoint leg before the cycle
+  (`tests/test_paper_concurrency_held_latency.py`; the same entry without the checkpoint leaves a 140 s gap).
+* So the worst-case gap between two refreshes of a position is now bounded by `HELD_MAX_GAP_SECONDS` plus the longest
+  single phase that the pre-phase estimate could not foresee (the cycle phase itself, 30 s, is uninterruptible).
+  A held *timer* tick that finds the lease taken still waits up to 40 s and otherwise reports `SCHEDULER_BUSY`; the
+  entry's own checkpoints now cover that case. Budget: 40 s wait + 62.4 s legs fits `TimeoutStartSec=120`.
 
 ## Budget math
 
@@ -112,8 +124,10 @@ The legacy cap is 60 per hour (cannot carry a second position); the reviewed 360
 
 ## Wall time (fixture timings, not live)
 
-BUY 7.006 s and SELL 7.807 s on the native-clock Kraken fixture: a held leg is budgeted at 7.8 s, an entry at 30 s
-(18 s preparation, asserted equal to `PREPARATION_SECONDS`, plus 12 s cycle).
+BUY 7.006 s and SELL 7.807 s on the native-clock Kraken fixture: a held leg is budgeted at 7.8 s, an entry at 52 s
+(12 s acquisition + 10 s intake + 18 s preparation, asserted equal to `PREPARATION_SECONDS`, + 12 s cycle). The
+acquisition and intake figures are conservative planning numbers (intake showed a 7.451 s local delay in the
+2026-10-10 native-clock regression); the older 30 s figure left both out.
 
 | unit (`deploy/fresh`) | budget |
 |---|---|
@@ -147,11 +161,23 @@ Restart: ledger events are idempotent by `event_id`. `tests/test_paper_concurren
 dispatcher entries on `fresh_start` stores and uses `tools.ops.verify_cycle` snapshots: a cold restart between and
 after the entries changes no fill, charge, reservation or journal row; the second entry is append-only progress.
 
+### Rollover after the mark (T16G, `paper_rollover_after_mark_version: 1`)
+
+Versioned, opt-in, valid only with the concurrent-entries flag and the portfolio TTL (anything else refuses at load).
+With it, a held-position event that has just refreshed its own mark (or exited) re-tests the rollover against the
+updated book: if every remaining mark is within the portfolio TTL the UTC day rolls over inside that event
+(`DAY_ROLLOVER_AFTER_FRESH_MARKS`, `day_start_equity` from the refreshed book, `day_gross_losses` reset). The held
+pass's final leg therefore rolls the day even with a full book, no candidate, or `EXIT_ONLY` mode (`RolloverAfterMarkTests`).
+A single failed or skipped leg leaves its stale mark in place and the rollover stays deferred (fail closed). Key
+absent: the old behaviour, byte for byte.
+
 ## Recommended activation
 
 1. Verify the first single-position cycle (entry, hold, exit, accounting, restart) with the flag off.
 2. New ledger/config version with the flag, `"max_positions": 2` and `"paper_portfolio_mark_ttl_seconds": 120`
    (timeline arithmetic admits up to 8, so raise to 4 after one forward observation period).
+   Leave `paper_portfolio_mark_ttl_seconds` out of every example config until the coordinator decides on it; add
+   `"paper_rollover_after_mark_version": 1` with it if daily counters must stay correct while 2+ positions are held.
 3. Monitoring allowance 3600/hour (provisioned by `fresh_start`); install the `deploy/fresh` held unit as shipped.
 4. Keep `desk-paper-monitor.timer` off: the stale-mark watchdog uses the 10 s price TTL and would put the book in
    `EXIT_ONLY` (T09 F5/T23).
