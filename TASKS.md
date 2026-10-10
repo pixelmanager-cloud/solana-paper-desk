@@ -164,6 +164,7 @@ AVOID: desk/**
 
 Generalise `read-completed-paper-cycle.py` (handoff support) with all paths as arguments, and add restart comparison:
 - `snapshot --data --ledger --config --out snap.json`. Read-only. Record: the checkpoint state digest, `last_ts`, the fill list with identities, event/outcome counts and max seq, monitoring budget used/reserved, ownership budget used, the pacing high_water, and the dispatcher journal counts. Validate the round-trip exactly as the support script does, reporting status `NO_FILLS` | `OPEN_POSITION` | `VALIDATED_LIVE_DATA_PAPER_ROUND_TRIP`. For an open position, report the entry token, time, size, price and the `EXECUTION_UNVERIFIED` label.
+- **Multi-position ready:** do not refuse multiple entries. Attribute each round trip per position (mint + entry fill identity); report open positions and closed round trips separately; and check that portfolio cash equals the initial amount plus the sum of realized PnL minus the cost of open positions. The desk will soon hold several coins at once (see T16).
 - `compare snapA.json snapB.json`, used across a cold service restart (no new activity expected). Fail if any fill, checkpoint or budget differs, or a duplicate fill/charge appears. With `--allow-progress`, allow only append-only growth, and verify the old prefix is identical.
 
 Tests: use the existing synthetic ledger/lifecycle fixtures (see `tests/test_cloud_ledger_restart.py`, `tests/test_paper_restart_integration.py`, `tests/test_empty_history_successor_lifecycle.py`) to build buy → held → exit ledgers. Cover: a duplicate fill detected, a cash mismatch detected, a sell before buy rejected, and a reopened-db cold restart compare passing.
@@ -309,3 +310,35 @@ The developer wants a future path from paper to real money. Write the design onl
 6. **What in the current codebase would block live use**, ranked.
 
 Be concrete, with file:line references. Be harsh about the risks.
+
+---
+
+## T16 — Concurrent multi-position trading (entries while holding)
+STATUS: OPEN
+DEPENDS: branch `cloud/T01` has a `DONE T01:` commit
+BASE: origin/cloud/T01
+OWNS: tools/paper_scheduler.py, tools/paper_entry_dispatcher.py, tools/history_first_paper_entry.py, desk/paper_scheduler.py, desk/paper_monitor_service.py, the related tests, and docs/MULTI_POSITION.md
+AVOID: desk/paper_terminal_reconciliation.py, T13's and T14's files. Touch desk/paper_cycle.py only for the per-item held-mint gate, and say so in the report.
+
+The developer wants the desk to hold several coins at once. The engine and ledger already support multiple positions (`max_positions`, exposure fraction, a held-monitoring allowance shared across positions). But three entry paths refuse ANY entry while a position is open:
+- `tools/paper_scheduler.py` ~:40 (`HELD_POSITION_PRIORITY`);
+- the dispatcher `_preflight`/`_held_guard` ~:313/:350;
+- `history_first_paper_entry._context` ~:47.
+
+Make concurrency an explicit, versioned config option: `paper_concurrent_entries_version: 1` with `max_positions` > 1. With it absent, behaviour must stay byte-identical to today (one at a time).
+
+Requirements:
+1. **Held first, always.** Each scheduler tick runs the held/exit pass for every open position before any entry work. An entry must never delay an exit. Use the existing lease. If held monitoring is degraded (an unresolved exit, EXIT_ONLY, the monitoring budget near its ceiling), block new entries.
+2. **Engine gates stay authoritative:** max_positions, max exposure 0.08, max position fraction 0.02, per-mint no-duplicate, cooldowns, daily pause and liquidation. No path may bypass `engine.transition`.
+3. **Budget partitioning.** Entry investigations and held monitoring must not starve each other. Reserve monitoring capacity per open position, refuse an entry that would leave too little monitoring allowance for all positions (including the new one), and document the math.
+4. **Wall-time.** The entry service has a 600s wall timeout and held has 120s with N positions. Prove that held passes for 4 positions fit inside the timeout using the fixture timings, or split the work.
+5. **Accounting and reporting:** per-position attribution in the ledger readers and dashboard view (read-only), with portfolio cash consistency checked after interleaved buy/buy/sell/buy/sell sequences.
+6. **Tests (fail-first):**
+   - two entries while holding (allowed only with the flag);
+   - a 5th entry refused at max 4;
+   - an exposure cap refusal;
+   - an exit-blocked position freezing entries;
+   - a cold restart with 3 open positions resuming monitoring without duplicate fills or charges;
+   - default-off byte-identical behaviour.
+
+Write `docs/MULTI_POSITION.md`: the scheduling model, the budget math, the failure modes, and the recommended first setting (e.g. max_positions 2, then 4) for the coordinator to activate after the first single-position cycle is verified.
