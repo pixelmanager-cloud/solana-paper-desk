@@ -400,6 +400,12 @@ class BracketKnownAnswerTests(unittest.TestCase):
         self.assertLess(revived['pnl_lo'], plain['pnl_lo'])
         self.assertEqual(revived['pnl_hi'], plain['pnl_hi'])                    # a revival never makes the best case better
 
+    def test_a_bracket_that_misses_the_nominal_run_is_an_error_not_a_result(self):
+        broken = (Decimal(0), Decimal(0), (), ())          # bounds that cannot contain a real outcome
+        with patch.object(sh._Explorer, 'value', return_value=broken):
+            with self.assertRaises(sh.ShadowError):
+                sh.bracket_trade(candidate(PATHS['rug']), BASE, A)
+
     def test_event_budget_reports_truncation_instead_of_guessing(self):
         with patch.object(sh, 'MAX_ENGINE_EVENTS', 5):
             t = sh.bracket_trade(candidate(PATHS['pump']), BASE, A)
@@ -698,6 +704,17 @@ class RankingTests(unittest.TestCase):
         self.assertEqual([r['rank'] for r in lenient['leaderboard']], [1, 2, 3])
         self.assertIn('minimum 30', result['ranking'])
         self.assertIn('Bonferroni', result['ranking'])
+
+    def test_rank_uses_the_ci_lower_bound_not_the_point_estimate(self):
+        def row(name, trades, mean_lo, ci_lo):
+            return {'variant': name, 'holdout': {'trades': trades, 'mean_return': (mean_lo, mean_lo + 0.1),
+                                                 'bootstrap_ci': (ci_lo, None if ci_lo is None else ci_lo + 0.5)},
+                    'train': {'trades': 99, 'mean_return': (9.0, 9.0), 'bootstrap_ci': (9.0, 9.0)}}
+        board = [row('lucky', 40, 0.30, -0.40), row('steady', 40, 0.05, 0.02), row('thin', 10, 0.90, 0.80), row('empty', 40, 0.1, None)]
+        ranked = sh.rank_rows(board, 30)
+        self.assertEqual([(r['variant'], r['rank']) for r in ranked], [('steady', 1), ('lucky', 2), ('empty', None), ('thin', None)])
+        self.assertEqual({r['variant']: r['rank_status'] for r in ranked},
+                         {'steady': 'RANKED', 'lucky': 'RANKED', 'empty': 'UNRANKED_FEWER_THAN_30_HOLDOUT_TRADES', 'thin': 'UNRANKED_FEWER_THAN_30_HOLDOUT_TRADES'})
 
     def test_many_variants_do_not_collapse_the_confidence_interval(self):
         trades = [{'mint': f'm{i}', 'entry_at': i, 'cost_sol': Decimal('0.1'), 'pnl_lo': Decimal(str(-0.01 + 0.0004 * i)),

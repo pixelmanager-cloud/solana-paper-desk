@@ -668,6 +668,26 @@ def split_time(candidates, holdout_from):
     return holdout_from
 
 
+def rank_rows(board, min_trades=MIN_TRADES):
+    """Holdout-only ranking: needs ``min_trades`` holdout trades; orders by the Bonferroni-corrected bootstrap CI LOWER
+    bound of the mean return (over the worst-case bounds). Unranked rows follow, with the reason."""
+    ranked, unranked = [], []
+    for row in board:
+        low = row['holdout']['bootstrap_ci'][0]
+        if row['holdout']['trades'] >= min_trades and low is not None:
+            row['rank_status'] = 'RANKED'
+            ranked.append(row)
+        else:
+            row['rank_status'] = f"UNRANKED_FEWER_THAN_{min_trades}_HOLDOUT_TRADES"
+            unranked.append(row)
+    ranked.sort(key=lambda r: -r['holdout']['bootstrap_ci'][0])
+    for position, row in enumerate(ranked, 1):
+        row['rank'] = position
+    for row in unranked:
+        row['rank'] = None
+    return ranked + sorted(unranked, key=lambda r: r['variant'])
+
+
 def run(candidates, grid, *, holdout_from=None, features=None, outcomes=None, selection=None, min_trades=MIN_TRADES):
     cut = split_time(candidates, holdout_from)
     parts = {'train': [c for c in candidates if c['migrated_at'] < cut], 'holdout': [c for c in candidates if c['migrated_at'] >= cut]}
@@ -689,20 +709,7 @@ def run(candidates, grid, *, holdout_from=None, features=None, outcomes=None, se
                                                if k in ('trades', 'ambiguous_trades', 'ambiguous_share', 'mean_return', 'net_pnl_sol')}
                                            for g, ts in sorted(groups.items())}
         board.append(row)
-    ranked, unranked = [], []
-    for row in board:
-        low = row['holdout']['bootstrap_ci'][0]
-        if row['holdout']['trades'] >= min_trades and low is not None:
-            row['rank_status'] = 'RANKED'
-            ranked.append(row)
-        else:
-            row['rank_status'] = f"UNRANKED_FEWER_THAN_{min_trades}_HOLDOUT_TRADES"
-            unranked.append(row)
-    ranked.sort(key=lambda r: -r['holdout']['bootstrap_ci'][0])
-    for position, row in enumerate(ranked, 1):
-        row['rank'] = position
-    for row in unranked:
-        row['rank'] = None
+    leaderboard = rank_rows(board, min_trades)
     a = grid['assumptions']
     return {'label': LABEL, 'grid': grid['name'], 'variants_tried': n, 'holdout_from': cut,
             'candidates': {k: len(v) for k, v in parts.items()}, 'selection': selection,
@@ -714,7 +721,7 @@ def run(candidates, grid, *, holdout_from=None, features=None, outcomes=None, se
                                   f"mark ratio lies in [(1-{a['excursion_fraction']})*min(a,b), (1+{a['excursion_fraction']})*max(a,b)] "
                                   '(lo = 0 across a dead sample); fills at the observed price; max_intra_marks=0 is the nominal run',
             'assumptions': a, 'neutral_features': NEUTRAL_FEATURES, 'features_supplied': sorted(features) if features else [],
-            'leaderboard': ranked + sorted(unranked, key=lambda r: r['variant'])}
+            'leaderboard': leaderboard}
 
 
 # --------------------------------------------------------- parity replay
