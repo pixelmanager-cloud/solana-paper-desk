@@ -25,11 +25,20 @@ sys.path.insert(0, str(Path(__file__).resolve().parents[2]))
 from desk import provider_pacing as pacing  # noqa: E402
 from tools.ops import backup  # noqa: E402
 
-# Units that open the shared pacing database (entry, held, watcher path trigger, research samplers, dashboard).
+# Units that open (or back up / health-check) the shared pacing database, rendered from deploy/fresh by `fresh_start render-units`.
+# tests/test_ops_pacing_writers.py recomputes the required set from those templates and `fresh_start.unit_arguments`: a unit
+# that reaches the store but is missing here is a unit this tool would not wait for. The research daily-report unit (T42) is
+# listed ahead of its template: an absent unit reads as inactive, so it costs nothing.
 DEFAULT_WRITERS = ('desk-paper-entry-dispatcher.service', 'desk-paper-entry-dispatcher.timer',
                    'desk-paper-held-cycle.service', 'desk-paper-held-cycle.timer', 'desk-paper-held-cycle.path',
+                   'desk-paper-monitor.service', 'desk-paper-monitor.timer',
+                   'desk-decisions.service', 'desk-decisions.timer',
+                   'desk-backup.service', 'desk-backup.timer',
+                   'desk-healthcheck.service', 'desk-healthcheck.timer',
                    'desk-counterfactual.service', 'desk-counterfactual.timer',
                    'desk-fill-realism-worker.service', 'desk-fill-realism-worker.timer',
+                   'desk-held-watcher.service', 'desk-continuous-discovery.service',
+                   'desk-daily-report.service', 'desk-daily-report.timer',
                    'desk-dashboard.service')
 
 

@@ -159,8 +159,9 @@ $PY -m tools.ops.cutover seal-archive --root $OLD --shared-path $PACING --shared
 $PY -m tools.ops.cutover --apply seal-archive --root $OLD --shared-path $PACING --shared-path $DISCOVERY --manifest $SM
 ```
 
-Seal changes ONLY an explicit allow-list: the sqlite family (`*.sqlite`, `-wal`, `-shm`, `-journal`; add `--seal-pattern <glob>` for
-anything else, never a lock). Those files become `root:solana-desk 0440` and their directories `root:solana-desk 0550`, so the
+Seal changes ONLY an explicit allow-list: the sqlite family (`*.sqlite`, `-wal`, `-shm`, `-journal`) and the JSON evidence files
+(`*.json`, `*.jsonl`: `acquisition-*.json`, `paper-target-*.json`, `*intake*.json`, event logs; the archived root holds about forty);
+add `--seal-pattern <glob>` for anything else, never a lock. Those files become `root:solana-desk 0440` and their directories `root:solana-desk 0550`, so the
 service user can read the old stores but cannot modify, delete or replace them, and nobody else can read them. Files that are
 already root-only (`root`, no group/other bits, e.g. a `0600` file) stay exactly as they are.
 
@@ -169,6 +170,8 @@ read-write by continuous discovery, `provider-pacing.sqlite.holder-*.lock` / `*.
 `*.ownership-invocation.lock` / `paper-scheduler.lock` are flock'ed by running processes), the two SHARED databases, and any file
 outside the allow-list (listed as `unlisted` in the output). Sealing a lock file would kill continuous discovery and the
 step-7b cutover, so read `untouched_locks` and `unlisted` in the dry run before applying.
+The JSON patterns also match any `*.json` that a LIVE process still rewrites inside `$OLD` or `$OLD/discovery`: read the dry run's
+`files` count and the manifest's `sealed` list once, and add nothing to the allow-list that a running unit writes.
 
 The shared pacing database uses a rollback journal (`<db>-journal` is created and removed per write), so the service user must
 be able to create files in its DIRECTORY (`$OLD`), and the discovery database the same in `$OLD/discovery`. Those two
@@ -215,45 +218,12 @@ cd $REL
 $PY -m tools.ops.preflight_dryrun --data $NEW --ledger $LEDGER --config $CFG --release-dir $REL --workdir /tmp/preflight-$SHA --pacing-db $PACING --discovery-db $DISCOVERY
 ```
 
+The directories `$OLD` and `$OLD/discovery` are in their sealed shape here (`root:solana-desk 1770`, step 4): preflight accepts exactly that
+shape (root-owned, the service group, sticky bit, nothing for others) and still blocks every other group-writable or world-accessible
+directory (`LIVE_external_*_dir:MODE_...`).
+
 Stop on any result other than a clean gate, plan and pre-check. The shared pacing database is copied, never opened live, and
 is never copied into `$NEW`.
-
-## 6b. Pacing policy for the paid Helius / Jupiter plans (optional, reviewed, append-only)
-
-Helius Developer (documented 50 req/s RPC, 10 req/s DAS/Enhanced, 5 req/s `sendTransaction`) and Jupiter Developer (10 req/s over a
-60 s sliding window, shared by Swap/Price/Token) are paid for, but the shared pacing database still runs both providers at the
-old 2.0 s cadence (0.5 req/s). The reviewed targets in `config/provider-pacing-policy.json` leave headroom for the other
-consumers of the same keys (counterfactual sampler, fill-realism worker, the held cycle): **Helius 0.1 s = 10 req/s (20% of 50),
-Jupiter 0.25 s = 4 req/s (40% of 10), backoff 30 s unchanged, Kraken untouched at exactly 2.0 s.**
-
-Do it NOW, while every writer is still stopped from step 2 (the tool re-checks this and refuses otherwise):
-
-```
-cd $REL
-$PY -m tools.ops.pacing_policy plan --db $PACING
-$PY -m tools.ops.pacing_policy apply --db $PACING --policy $REL/config/provider-pacing-policy.json
-$PY -m tools.ops.pacing_policy apply --db $PACING --policy $REL/config/provider-pacing-policy.json --execute
-```
-
-The first two are dry runs (`plan`, and `apply` without `--execute`); read the `changes` list (helius 2.0 -> 0.1, jupiter 2.0 -> 0.25) and
-`ready_to_apply: true`. `--execute` appends one `pacing_policy_changes` row per provider (old and new cadence/backoff, reason, sha256 of the
-policy file, digest of the reviewed entry, time). It never edits the original `policy` rows (the Kraken migration receipt pins them), never
-touches the Kraken row, state or receipt, and re-running it is a no-op (`ALREADY_APPLIED`). It needs: every unit that opens the
-shared pacing database inactive or failed (entry dispatcher service/timer, held cycle service/timer/path, counterfactual, fill-realism
-worker, dashboard; add more with `--require-quiesced UNIT ...`), and a database with no pending grant and no live waiter.
-
-**Mixed versions.** Every process that opens the shared database must run code that knows the new table BEFORE `apply`. Code from an
-older release raises `PACING_DATABASE_INVALID` on the extra table, that is, it fails closed instead of silently running at the old
-cadence (and `tools/verify_*_originals.py` compare the schema strictly). Therefore apply it from the new release while the old
-units are stopped, and never start a unit of an older release afterwards.
-
-**Provider budgets are separate from the cadence.** Helius `getMultipleAccounts` counts as ONE RPC call (up to 100 accounts per call), so
-batched marks are cheap; DAS and Enhanced calls have their own 10 req/s cap and must not be paced as plain RPC. A 429 or a returned
-`Retry-After` still embargoes the provider for the larger of the 30 s backoff and the header, exactly as before. Jupiter can answer 429
-from its firewall below the quota; the embargo handles that the same way.
-
-To change the cadence later (a new reviewed entry appended to the policy file in a new release), repeat with the writers stopped:
-`systemctl stop` the timers and services listed above, run the same three commands, then start them again.
 
 ## 7. Render, install and cut over (entry timer OFF, monitor OFF)
 
@@ -345,6 +315,30 @@ rollback below (that fallback would find a pacing database it cannot open, and t
 **Budgets are separate from the cadence.** Helius `getMultipleAccounts` counts as ONE RPC call (up to 100 accounts), so batched marks
 are cheap; DAS and Enhanced calls have their own 10 req/s cap and are not plain RPC.
 
+### 7a3. Pacing database schema upgrade (T23F orphan recovery; one-way door)
+
+The production pacing database was created before the append-only `pacing_reclaims` table existed, so the T23F recovery of a pacing
+slot orphaned by a killed process is INERT until the table is added (without it a reclaim is never a side effect, it just does not
+happen). The upgrade is explicit, idempotent and touches no existing row, counter, cadence or the Kraken lane/receipt; it validates the
+whole database first and refuses a tampered or unexpected schema. It goes in the same window as 7a2: after 7a (new release on every
+unit), before 7b (the first unit start), with every writer stopped. `cd $REL` first: `-m desk.provider_pacing` must import the NEW
+release's code, and it runs as the service user (a root-run SQLite writer would leave a root-owned `-journal` next to the 0600
+database that the services cannot open).
+
+```
+cd $REL
+systemctl is-active desk-paper-entry-dispatcher.timer desk-paper-entry-dispatcher.service desk-paper-held-cycle.timer desk-paper-held-cycle.service desk-paper-held-cycle.path desk-paper-monitor.timer desk-paper-monitor.service desk-decisions.timer desk-decisions.service desk-backup.timer desk-backup.service desk-healthcheck.timer desk-healthcheck.service desk-dashboard.service desk-continuous-discovery.service desk-counterfactual.timer desk-counterfactual.service     # every line must be inactive or failed
+runuser -u solana-desk -- $PY -m desk.provider_pacing --upgrade $PACING
+```
+
+Output `PACING_UPGRADED` (first time) or `PACING_ALREADY_UPGRADED`; `PACING_UPGRADE_FAILED` (rc 2) changed nothing: stop and read
+why (a busy database means a writer is still running).
+
+**One-way door.** Once the table exists, code from a release that predates T23F raises `PACING_DATABASE_INVALID` on the extra table
+(it fails closed, and the `verify_*_originals` tools compare the schema strictly). Do not start a unit of an older release afterwards,
+and do not run this step if you may still fall back to the OLD stack in the rollback below; the shared database is never reset.
+The order against 7a2 does not matter; both are append-only schema/record additions.
+
 ### 7b. Dry run, then apply
 
 `--store-env` consumes the manifest directly: interpreter prepended, systemd quoting, `%` escaped as `%%` except a leading
@@ -416,7 +410,7 @@ byte-for-byte against the manifest. Without `--restore-archive` the rendered uni
 in `$SDA`); restore later with the same command. Rollback never restarts anything, and never restores old backups over the new
 stores to "roll back code". After a restore the old units are disabled (step 2); re-enable what you intend to run.
 
-If step 7a2 was applied, the OLD stack cannot be started again (its code fails closed on the policy table, see 7a2); this path then
+If step 7a2 or 7a3 was applied, the OLD stack cannot be started again (its code fails closed on the policy / reclaim table, see 7a2 and 7a3); this path then
 ends at "everything stopped". Otherwise, after a rollback that goes back to the OLD stack, also make the old stores writable again (only if step 4 ran, and only after
 the new stack is stopped: the rollback above stops it) and BEFORE you start any old unit:
 
@@ -541,7 +535,12 @@ to a new store set. The previous fresh root becomes an archived root too.
    The stopped units stay enabled; until the new cutover re-points their drop-ins they still name the old root, whose stores are
    about to be read-only, so a reboot in this window fails closed (nothing can write) rather than trading.
 3. Backup the current root (step 3 with `--data $NEW` and its own `--expect-count`, destination `/var/backups/solana-desk/pre-rotate-<next version>`)
-   and seal its stores (step 4, `seal-archive --root $NEW`; the shared inputs stay in `$OLD` and are not part of `$NEW`).
+   and seal its stores. The seal uses a NEW manifest path (an existing one is refused, so never reuse `$SM`) and NO `--shared-path`: the
+   shared inputs stay in `$OLD` and are not part of `$NEW`, so no directory of `$NEW` is made group-writable (`$NEW` becomes `0550`, not `1770`):
+   ```
+   $PY -m tools.ops.cutover seal-archive --root $NEW --manifest /var/backups/solana-desk/seal-manifest-rotate-<next version>.json
+   $PY -m tools.ops.cutover --apply seal-archive --root $NEW --manifest /var/backups/solana-desk/seal-manifest-rotate-<next version>.json
+   ```
 4. Stage the new release (step 1), then from the NEW release directory run `fresh_start rotate` (dry run first; it refuses an
    open position and leaves `--from` untouched; `<hash>` is the `plan_hash` of the dry run):
    ```

@@ -25,7 +25,8 @@ from pathlib import Path
 
 MARKER = '# desk-cutover-managed v1'
 ROOT_UID = 0                      # tests patch this: the suite itself may run as uid 0
-SEAL_PATTERNS = ('*.sqlite', '*.sqlite-wal', '*.sqlite-shm', '*.sqlite-journal')   # the ONLY files seal may change
+SEAL_PATTERNS = ('*.sqlite', '*.sqlite-wal', '*.sqlite-shm', '*.sqlite-journal',
+                 '*.json', '*.jsonl')      # the ONLY files seal may change (sqlite family + JSON evidence); `*.lock` is never touched
 SEAL_FILE_MODE, SEAL_DIR_MODE, SEAL_SHARED_DIR_MODE = 0o440, 0o550, 0o1770
 SEAL_KIND = 'seal_manifest_v1'
 MAX_MANIFEST_BYTES = 64 << 20
@@ -1299,9 +1300,10 @@ def _seal_record(root, path, info, sha=False):
 def seal_archive(args, ops):
     """Make the archived (old) stores read-only to the service user; never touch anything that is live.
 
-    Only an explicit allow-list is changed: the sqlite family (``*.sqlite``, ``-wal``, ``-shm``, ``-journal``) plus any
-    ``--seal-pattern``. Files change to ``root:<service group> 0440``, directories to ``0550``, and the directories that hold
-    a SHARED database (the old root for provider-pacing.sqlite, discovery/ for continuous.sqlite) to ``1770``: the shared
+    Only an explicit allow-list is changed: the sqlite family (``*.sqlite``, ``-wal``, ``-shm``, ``-journal``), the JSON evidence
+    files (``*.json``, ``*.jsonl``) plus any ``--seal-pattern``. Files change to ``root:<service group> 0440``, directories to ``0550``, and the directories that hold
+    a SHARED database (the old root for provider-pacing.sqlite, discovery/ for continuous.sqlite) to ``1770`` (a root with no
+    ``--shared-path``, e.g. a rotated experiment root, stays ``0550``): the shared
     databases use a rollback journal, so SQLite must create and remove ``<db>-journal`` beside them, group write allows
     that, the sticky bit stops the service user from deleting or renaming any root-owned (archived) file there, and nobody
     outside the group gets any access. Everything that is already private to root (uid 0, no group/other bits) stays as it is.
@@ -1337,7 +1339,7 @@ def seal_archive(args, ops):
     if manifest.exists() or manifest.is_symlink():
         raise CutoverError('--manifest already exists: %s' % manifest)
     shared_names = {p for base in shared for p in [base] + [Path(str(base) + sfx) for sfx in SHARED_SUFFIXES[1:]]}
-    shared_dirs = {root} | {p.parent for p in shared}
+    shared_dirs = {p.parent for p in shared}          # only a directory that holds a shared database; a root without one is plain 0550
     plan = {'files': [], 'sealed_dirs': [], 'shared_dirs': [], 'kept_root_only': [], 'locks': [], 'unlisted': [], 'infos': {}}
     for path in sorted(root.rglob('*')) + [root]:
         info = path.lstat()
