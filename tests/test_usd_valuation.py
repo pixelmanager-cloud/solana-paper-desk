@@ -283,8 +283,115 @@ class ConfigTests(unittest.TestCase):
                 kraken.selected({**CFG, **bad})
 
 
-if __name__ == '__main__':
-    unittest.main()
+class ExtraMintTests(unittest.TestCase):
+    """T37F: the request names one id; an answer that carries any other mint is refused whole."""
+
+    def parse(self, payload):
+        return uv.parse_jupiter(payload, acquired_at=NOW - 2, http_status=200, now=NOW)
+
+    def test_an_extra_mint_is_refused_even_with_a_valid_sol_entry(self):
+        good = json.loads(jupiter_body())
+        extra = {**good, 'So11111111111111111111111111111111111111113': good[SOL_MINT]}
+        price, blockers, block = self.parse(json.dumps(extra).encode())
+        self.assertEqual((price, blockers, block), (None, ('UNEXPECTED_EXTRA_MINTS',), None))
+        self.assertEqual(self.parse(jupiter_body())[0], D('84.12'))            # control: the exact shape parses
+
+    def test_an_extra_mint_without_sol_is_still_a_missing_price(self):
+        price, blockers, _ = self.parse(json.dumps({'OtherMint1111111111111111111111111111111111': {'usdPrice': 1}}).encode())
+        self.assertEqual((price, blockers), (None, ('SOL_PRICE_MISSING',)))
+
+    def test_an_extra_mint_makes_the_observation_unknown_and_falls_back(self):
+        good = json.loads(jupiter_body())
+        raw = json.dumps({**good, 'X' * 43: good[SOL_MINT]}).encode()
+        decision, _ = uv.decide({'primary': jupiter_record(raw), 'fallback': kraken_record(kraken_body())}, now=str(NOW) + '.5', scan=SCAN,
+                                purpose='entry', cfg=CFG)
+        self.assertEqual((decision.status, decision.source), ('FALLBACK', 'KRAKEN'))
+
+
+class UnavailableTests(unittest.TestCase):
+    def test_no_usable_price_raises_a_typed_error_with_ordinary_blockers(self):
+        both_failed = {'primary': jupiter_record(None, failure='TRANSPORT_ERROR'), 'fallback': kraken_record(None, failure='TRANSPORT_ERROR')}
+        with self.assertRaises(uv.ValuationUnavailable) as caught:
+            uv.evidence(both_failed, now=str(NOW) + '.5', scan=SCAN, purpose='exit', cfg=CFG)
+        self.assertEqual(caught.exception.blockers, (uv.BLOCKER_UNAVAILABLE,))
+        self.assertIsInstance(caught.exception, ValueError)                    # callers that catch ValueError keep working
+
+    def test_ordinary_blockers_are_exactly_divergence_and_unavailable(self):
+        self.assertEqual(uv.NORMAL_BLOCKERS, frozenset({'USD_SOURCE_DIVERGENCE', 'SOL_USD_UNAVAILABLE'}))
+
+    def test_the_no_entry_vocabulary_accepts_them_and_nothing_near_them(self):
+        from desk.paper_cycle_no_entry import producer_blocker_is_normal as normal
+        self.assertTrue(normal('USD_SOURCE_DIVERGENCE'))
+        self.assertTrue(normal('SOL_USD_UNAVAILABLE'))
+        for code in ('SOL_USD_TRUSTED_INPUT_INVALID', 'SOL_USD_SOURCE_OR_EXACT_BLOCK_TIME_MISSING', 'SOL_USD:SOL_USD_UNAVAILABLE',
+                     'SOL_USD_UNAVAILABLE ', 'USD_SOURCE_DIVERGENCE:x', 'sol_usd_unavailable'):
+            with self.subTest(code):
+                self.assertFalse(normal(code))
+
+
+class CrossCheckConfigTests(unittest.TestCase):
+    def test_default_range_and_loader_validation(self):
+        self.assertEqual(uv.cross_check_seconds(CFG), 300)
+        for good in (1, 60, 300, 3600):
+            self.assertEqual(uv.selected({**CFG, uv.KEY_CROSS_CHECK: good}), 2)
+        for bad in (0, -1, 3601, True, False, '300', 1.5, None, [300]):
+            with self.subTest(bad), self.assertRaises(ValueError):
+                uv.selected({**CFG, uv.KEY_CROSS_CHECK: bad})
+
+
+class RetainedScanTests(unittest.TestCase):
+    """The bounded read-only scans over retained attempt originals (schedule, health probe)."""
+
+    def setUp(self):
+        import tempfile
+        from pathlib import Path
+        from desk.evidence import EvidenceStore
+        self.tmp = tempfile.TemporaryDirectory(); self.addCleanup(self.tmp.cleanup)
+        self.store = EvidenceStore(Path(self.tmp.name) / 'evidence.sqlite')
+
+    def test_last_kraken_attempt_counts_failures_and_respects_the_window(self):
+        self.assertIsNone(uv.last_kraken_attempt_at(self.store.path, NOW, 300))
+        self.store.save(kraken_record(None, acquired=NOW - 400, failure='TRANSPORT_ERROR'))
+        self.assertIsNone(uv.last_kraken_attempt_at(self.store.path, NOW, 300))      # too old
+        self.store.save(kraken_record(None, acquired=NOW - 200, failure='TRANSPORT_ERROR'))
+        self.assertEqual(uv.last_kraken_attempt_at(self.store.path, NOW, 300), NOW - 200)   # a failed cross-check counts
+        self.store.save(kraken_record(kraken_body(), acquired=NOW - 50))
+        self.assertEqual(uv.last_kraken_attempt_at(self.store.path, NOW, 300), NOW - 50)
+        self.store.save(jupiter_record(jupiter_body(), observed_at=NOW - 1))        # a Jupiter attempt is not a cross-check
+        self.assertEqual(uv.last_kraken_attempt_at(self.store.path, NOW, 300), NOW - 50)
+        self.assertIsNone(uv.last_kraken_attempt_at(self.store.path, NOW - 60, 5))   # future attempts are outside the window
+
+    def test_unreadable_and_foreign_pages_are_skipped_and_the_scan_is_bounded(self):
+        self.store.save({'kind': 'something_else', 'source_id': kraken.SOURCE, 'observed_at': NOW - 1})
+        self.store.save({'kind': 'paper_read_attempt_v1', 'source_id': 'other-source', 'observed_at': NOW - 1})
+        self.assertIsNone(uv.last_kraken_attempt_at(self.store.path, NOW, 300))
+        self.store.save(kraken_record(None, acquired=NOW - 10, failure='TRANSPORT_ERROR'))
+        for i in range(uv.SCAN_PAGES + 5):
+            self.store.save({'kind': 'filler', 'i': i})
+        self.assertIsNone(uv.last_kraken_attempt_at(self.store.path, NOW, 300))     # pushed out of the newest-pages window
+
+    def test_persistent_auth_failure(self):
+        probe = lambda: uv.persistent_auth_failure(self.store.path)
+        self.assertIsNone(probe())
+        for n, status in enumerate((401, 403, 401)):
+            self.store.save(jupiter_record(None, status=status, failure='HTTP_REJECTED', observed_at=NOW - 100 + n, requests_used=3 + n))
+        found = probe()
+        self.assertEqual((found['consecutive'], found['last_status']), (3, 401))
+        self.store.save(jupiter_record(jupiter_body(), observed_at=NOW - 1))        # the newest attempt succeeded: recovered
+        self.assertIsNone(probe())
+
+    def test_auth_failure_needs_the_newest_attempts_to_be_rejections(self):
+        self.store.save(jupiter_record(None, status=403, failure='HTTP_REJECTED', observed_at=NOW - 30))
+        self.store.save(jupiter_record(None, status=403, failure='HTTP_REJECTED', observed_at=NOW - 20, requests_used=4))
+        self.assertIsNone(uv.persistent_auth_failure(self.store.path))               # two are not "persistent"
+        self.assertEqual(uv.persistent_auth_failure(self.store.path, minimum=2)['consecutive'], 2)
+        self.store.save(jupiter_record(None, status=503, failure='HTTP_REJECTED', observed_at=NOW - 10, requests_used=5))
+        self.assertIsNone(uv.persistent_auth_failure(self.store.path, minimum=2))   # a 503 is not an authorization failure
+        self.store.save(kraken_record(None, acquired=NOW - 5, failure='HTTP_REJECTED', http_status=401))
+        self.assertIsNone(uv.persistent_auth_failure(self.store.path, minimum=2))   # Kraken attempts are not counted
+
+    def test_the_probe_never_raises(self):
+        self.assertIsNone(uv.persistent_auth_failure('/nonexistent/evidence.sqlite'))
 
 
 class ExampleConfigTests(unittest.TestCase):
@@ -294,6 +401,11 @@ class ExampleConfigTests(unittest.TestCase):
         from desk.model import load_config
         v2 = load_config(self.ROOT / 'paper-jupiter-kraken-fresh.example.json')
         self.assertEqual((v2['paper_usd_valuation_version'], uv.max_divergence(v2)), (2, D("0.01")))
+        self.assertEqual(uv.cross_check_seconds(v2), 300)
         v1 = load_config(self.ROOT / 'paper-kraken-fresh.example.json')
         self.assertEqual(v1['paper_usd_valuation_version'], 1)
         self.assertNotIn(uv.KEY_DIVERGENCE, v1)
+
+
+if __name__ == '__main__':
+    unittest.main()

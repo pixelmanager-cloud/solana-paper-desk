@@ -386,6 +386,14 @@ def manage_position(state, e, cfg, output, quote_book=None):
             p["stop_ratio"] = str(stop)
 
 
+def _usd_limit(cfg):
+    """validate_event kwargs binding the CONFIGURED USD divergence limit (valuation v2 only; otherwise nothing)."""
+    if cfg.get('paper_usd_valuation_version') != 2:
+        return {}
+    from .usd_valuation import max_divergence
+    return {'usd_divergence': max_divergence(cfg)}
+
+
 def transition(state, e, cfg, *, _quote_book=None):
     # Config is fingerprinted by Ledger: selecting this experimental strategy
     # requires a new experiment, never an event-provided permission flag.
@@ -422,7 +430,7 @@ def transition(state, e, cfg, *, _quote_book=None):
     if experimental:
         validate_event(e, mode=PAPER_EXPERIMENTAL, policy_version=version,token_profile_version=qe.selected(cfg))
     else:
-        validate_event(e,token_profile_version=qe.selected(cfg))
+        validate_event(e,token_profile_version=qe.selected(cfg),**_usd_limit(cfg))
     if e.get('kind')=='quote_exit':
         if not quote_mode:raise qe.QuoteExecutionError('QUOTE_EXECUTION_CONFIG_REQUIRED')
         if e['mint'] not in state['positions']:

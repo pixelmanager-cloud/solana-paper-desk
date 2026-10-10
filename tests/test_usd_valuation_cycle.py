@@ -152,6 +152,9 @@ class EntryTests(V2Base):
                          (Decimal('0.03'), '0.05'))
 
     def test_neither_source_available_is_a_normal_no_entry(self):
+        # T37F: was "the NULL pass stays (fail closed)". Both providers failing is a provider fault, not evidence
+        # corruption: the pass ends as a proper terminal NO_ENTRY that cites the two failed attempts, the charges
+        # stay charged, and nothing is latched.
         self.h.jupiter_fail = self.h.kraken_fail = True
         result = self.run_cycle()
         self.assertEqual(result['status'], 'BLOCKED', result)
@@ -160,7 +163,42 @@ class EntryTests(V2Base):
         self.assertIn('SOL_USD_UNAVAILABLE', codes)
         self.assertEqual(result['attempted_requests'], 7)
         self.assertEqual(cycle._state(self.h.path, self.h.cfg)['positions'], {})
-        self.assertEqual(len([p for p in self.passes() if p[1] is None]), 1)      # both providers failed: unproved, so the NULL pass stays (fail closed)
+        self.no_unresolved_pass()
+        store = self.h.f.progress.store
+        with store.connect() as c:
+            rows = c.execute('SELECT outcome_hash FROM paper_cycle_no_entry').fetchall()
+            self.assertEqual(len(rows), 1)
+            self.assertEqual(c.execute("SELECT count(*) FROM sqlite_master WHERE name='paper_pass_closures'").fetchone()[0], 0)
+        record = store.load(rows[0][0])
+        self.assertEqual((record['status'], record['blocker'], record['entry_authorized']), ('NO_ENTRY', 'MARKET_PRODUCER_BLOCKED', False))
+        self.assertEqual(len(result['usd_evidence_refs']), 2)
+        failed = [store.load(k) for k in result['usd_evidence_refs']]
+        self.assertEqual({r['failure_code'] for r in failed}, {'TRANSPORT_ERROR'})            # both failures retained, charged
+        self.assertTrue(set(result['usd_evidence_refs']) <= set(record['attempt_refs']))
+        self.assertEqual(self.h.f.progress.admission(self.h.target.scan_id)['requests_used'], 7)
+        from desk import paper_terminal_reconciliation as terminal
+        self.assertIsNone(terminal.gate(store, self.h.f.jobs.path, ()))
+        self.assertEqual(terminal.gate(store, self.h.f.jobs.path, (self.h.target.scan_id,)), 'REJECTED_SCAN_RETIRED')
+
+    def test_a_failed_attempt_that_the_result_does_not_cite_still_refuses_the_no_entry_proof(self):
+        # The acceptance is narrow: only failed SOL/USD attempts that the result cites. Anything else keeps the old
+        # proof (and, being a normal producer rejection with an unproved charge, the pass is then closed by T22G).
+        from desk import paper_cycle_no_entry as no_entry
+        self.h.jupiter_fail = self.h.kraken_fail = True
+        result = self.run_cycle()
+        store = self.h.f.progress.store
+        with store.connect() as c:
+            key = c.execute('SELECT outcome_hash FROM paper_cycle_no_entry').fetchone()[0]
+        rec = store.load(key)
+        failed = store.load(result['usd_evidence_refs'][0])
+        uncited = {**result, 'usd_evidence_refs': []}
+        index = no_entry._index(store, rec['scan_id'], rec['attempt_refs'])
+        self.assertFalse(no_entry._cited_usd_failure(result['usd_evidence_refs'][0], failed, uncited, rec['scan_id']))
+        self.assertTrue(no_entry._cited_usd_failure(result['usd_evidence_refs'][0], failed, result, rec['scan_id']))
+        self.assertFalse(no_entry._cited_usd_failure(result['usd_evidence_refs'][0], failed, result, 'other-scan'))
+        self.assertFalse(no_entry._cited_usd_failure(result['usd_evidence_refs'][0], {**failed, 'source_id': 'helius-mainnet-paper-confirmed-v1'}, result, rec['scan_id']))
+        self.assertFalse(no_entry._cited_usd_failure(result['usd_evidence_refs'][0], {**failed, 'failure_code': None}, result, rec['scan_id']))
+        self.assertTrue(index)
 
     def test_primary_alone_when_the_cross_check_fails_is_recorded_as_such(self):
         self.h.kraken_fail = True
@@ -170,6 +208,78 @@ class EntryTests(V2Base):
         value = event['paper_usd_valuation']
         self.assertEqual((value['selection'], value['fallback']['status'], value['fallback']['blockers']), ('PRIMARY', 'UNKNOWN', ['TRANSPORT_ERROR']))
         self.assertIsNone(value['divergence'])
+
+
+class CrossCheckScheduleTests(V2Base):
+    """T37 spec item 4: Kraken is fetched only as the fallback or on a cross-check schedule (default 5 min)."""
+
+    def seed_kraken_attempt(self, age, failure=None):
+        self.h.f.progress.store.save({'kind': 'paper_read_attempt_v1', 'source_id': kraken.SOURCE, 'method': kraken.METHOD,
+                                      'observed_at': int(self.h.f.at) - age, 'failure_code': failure, 'seed': age})
+
+    def event(self):
+        (event,) = [e for e in self.events() if e['kind'] == 'market']
+        return event
+
+    def h_calls(self, name):
+        return getattr(self.h, name + '_calls', 0)
+
+    def test_a_recent_kraken_attempt_skips_the_cross_check_and_the_entry_is_primary_only(self):
+        self.seed_kraken_attempt(60)
+        result = self.run_cycle()
+        self.assertEqual(result['status'], 'COMPLETE', result)
+        self.assertEqual((self.h_calls('jupiter'), self.h_calls('kraken')), (1, 0))
+        self.assertEqual(result['attempted_requests'], 7, result)                  # the Kraken request was not made
+        self.assertEqual(len(result['usd_evidence_refs']), 1)
+        value = self.event()['paper_usd_valuation']
+        self.assertEqual((value['selection'], value['selected_source'], value['fallback'], value['divergence']), ('PRIMARY', 'JUPITER', None, None))
+        cycle._state(self.h.path, self.h.cfg)                                      # the saved event replays from its originals
+        self.no_unresolved_pass()
+
+    def test_an_old_or_absent_kraken_attempt_is_cross_checked(self):
+        self.seed_kraken_attempt(400)                                              # outside the 300 s default window
+        result = self.run_cycle()
+        self.assertEqual((self.h_calls('jupiter'), self.h_calls('kraken')), (1, 1))
+        self.assertEqual(result['attempted_requests'], 8, result)
+        self.assertEqual(self.event()['paper_usd_valuation']['fallback']['status'], 'MEASURED')
+
+    def test_a_failed_recent_cross_check_also_counts(self):
+        self.seed_kraken_attempt(30, failure='TRANSPORT_ERROR')
+        self.run_cycle()
+        self.assertEqual(self.h_calls('kraken'), 0)                                # Kraken is down: no retry on every entry
+
+    def test_the_interval_is_configurable(self):
+        self.extra = {uv.KEY_CROSS_CHECK: 30}
+        self.setUp()
+        self.seed_kraken_attempt(60)                                               # older than 30 s: due
+        self.run_cycle()
+        self.assertEqual(self.h_calls('kraken'), 1)
+        self.setUp()
+        self.seed_kraken_attempt(10)                                               # inside 30 s: skipped
+        self.run_cycle()
+        self.assertEqual(self.h_calls('kraken'), 0)
+
+    def test_an_unusable_primary_still_fetches_kraken_as_the_fallback_even_when_a_cross_check_is_recent(self):
+        self.seed_kraken_attempt(10)
+        self.h.jupiter_fail = True
+        result = self.run_cycle()
+        self.assertEqual(result['status'], 'COMPLETE', result)
+        self.assertEqual(self.h_calls('kraken'), 1)
+        value = self.event()['paper_usd_valuation']
+        self.assertEqual((value['selection'], value['selected_source']), ('FALLBACK', 'KRAKEN'))
+
+    def test_the_divergence_guard_applies_only_when_the_cross_check_ran(self):
+        # Documented consequence of the 5-minute schedule: a skipped cross-check cannot see a divergent Kraken price.
+        self.h.kraken_price = '103.00000'
+        self.seed_kraken_attempt(60)
+        result = self.run_cycle()
+        self.assertEqual(result['status'], 'COMPLETE', result)
+        self.assertEqual(self.h_calls('kraken'), 0)
+
+    def test_an_invalid_interval_refuses_the_experiment_config(self):
+        for bad in (0, -5, 99999, '300', True):
+            with self.subTest(bad), self.assertRaises(ValueError):
+                uv.selected({**self.h.cfg, uv.KEY_CROSS_CHECK: bad})
 
 
 class HeldAndExitTests(V2Base):
@@ -230,14 +340,27 @@ class HeldAndExitTests(V2Base):
             self.assertIsNone(c.execute('SELECT blocked FROM paper_monitoring_budget WHERE id=1').fetchone()[0])
 
     def test_exit_with_no_usable_valuation_is_a_blocked_exit_not_a_latch(self):
-        self.enter()
+        # T37F: was "the unproved blocked pass keeps the NULL latch". The held pass now ends terminal (T22G
+        # FAILED_CHARGED: SOL_USD_UNAVAILABLE is an ordinary producer outcome), the failed reads stay charged, the
+        # position stays held and the next pass with a healthy provider exits it.
+        allowance = self.enter()
+        used_before = allowance.snapshot()['total_used']
         self.h.jupiter_fail = self.h.kraken_fail = True
         result = self.run_cycle(positions=(self.held_item(),), candidates=(), monitoring=True)
         self.assertNotEqual(result.get('status'), 'COMPLETE', result)
         codes = [b for d in result['diagnostics'] if 'blockers' in d for b in d['blockers']]
         self.assertIn('SOL_USD_UNAVAILABLE', codes)
         self.assertEqual(len(cycle._state(self.h.path, self.h.cfg)['positions']), 1)   # still held, nothing sold
-        self.assertEqual(len([p for p in self.passes() if p[1] is None]), 1)      # unproved blocked pass keeps the NULL latch
+        self.no_unresolved_pass()
+        with self.h.f.progress.store.connect() as c:
+            self.assertEqual([r[0] for r in c.execute('SELECT status FROM paper_pass_closures')], ['FAILED_CHARGED'])
+            self.assertIsNone(c.execute('SELECT blocked FROM paper_monitoring_budget WHERE id=1').fetchone()[0])
+        self.assertGreater(allowance.snapshot()['total_used'], used_before)             # the failed reads stay charged
+        self.h.jupiter_fail = self.h.kraken_fail = False
+        self.h.sell_output = 30_000_000
+        again = self.run_cycle(positions=(self.held_item(),), candidates=(), monitoring=True)
+        self.assertEqual(again['status'], 'COMPLETE', again)
+        self.assertTrue(any(o.get('side') == 'sell' for o in again['outcomes']))
 
 
 class IntegrityTests(V2Base):
