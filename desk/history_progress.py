@@ -235,17 +235,20 @@ class HistoryProgress:
         replay_history(coverage,self.store)
         query={k:coverage[k] for k in ('address','start','end','token_accounts_filter')}
         if 'slot_range' in coverage:query['slot_range']=coverage['slot_range']
+        if 'page_size' in coverage:query['page_size']=coverage['page_size']
         key=digest({'budget':budget,'query':query})
         with self.store.connect() as c:
             if not c.execute('SELECT 1 FROM ownership_budgets WHERE id=?',(budget,)).fetchone():raise ValueError('Budget missing')
             c.execute('INSERT OR IGNORE INTO ownership_history(id,budget,query,coverage,status) VALUES(?,?,?,?,?)',
                       (key,budget,canonical(query),canonical(coverage),'DONE' if coverage['query_range_exhausted'] else 'PENDING'))
         return key
-    def create(self,budget,owner,start,end,slot_range=None):
+    def create(self,budget,owner,start,end,slot_range=None,*,page_size=100):
         from .programs import address
         address(owner)
         if type(start) is not int or type(end) is not int or not 0<=start<end:raise ValueError('Invalid history window')
+        if type(page_size) is not int or not 1<=page_size<=100:raise ValueError('Invalid history page size')
         query={'address':owner,'start':start,'end':end,'token_accounts_filter':'none'}
+        if page_size!=100:query['page_size']=page_size
         if slot_range is not None:
             if set(slot_range)!={'gte','lt'} or any(type(v) is not int for v in slot_range.values()) or not 0<=slot_range['gte']<slot_range['lt']:raise ValueError('Invalid slot range')
             query['slot_range']=slot_range
@@ -295,7 +298,7 @@ class HistoryProgress:
                 return rpc(method,params)
             try:
                 _,updated=collect_history(query['address'],query['start'],query['end'],provider,
-                    max_pages=len(pages)+1,capture=self.store.save,token_accounts=query['token_accounts_filter'],slot_range=query.get('slot_range'))
+                    max_pages=len(pages)+1,capture=self.store.save,token_accounts=query['token_accounts_filter'],slot_range=query.get('slot_range'),page_size=query.get('page_size',100))
                 with self.store.connect() as c:
                     c.execute('UPDATE ownership_history SET coverage=?,status=? WHERE id=?',
                         (canonical(updated),'DONE' if updated['query_range_exhausted'] else 'PENDING',key))

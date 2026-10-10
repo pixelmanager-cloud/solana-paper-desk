@@ -13,6 +13,9 @@ from .model import canonical, digest
 from . import original_byte_slot_transport as wire
 
 
+PAPER_HISTORY_PAGE_SIZE = 50
+
+
 class PaperHistorySource:
     def __init__(self, progress, scan_id, history_id, *, timeout_seconds):
         if type(timeout_seconds) not in (int, float) or not math.isfinite(timeout_seconds) or not 0 < timeout_seconds <= 15:
@@ -29,6 +32,9 @@ class PaperHistorySource:
         if ('slot_range' in query
                 or query['token_accounts_filter'] != 'none' or query['end'] - query['start'] != 301
                 or self.before['status'] == 'DONE'):
+            raise PaperReadError('HISTORY_BINDING_INVALID')
+        page_size=query.get('page_size',100)
+        if type(page_size) is not int or not 1<=page_size<=100:
             raise PaperReadError('HISTORY_BINDING_INVALID')
         self.called = False
         self.evidence_hash = None
@@ -62,7 +68,7 @@ class PaperHistorySource:
     def __call__(self, method, params):
         before = self.before
         query = before['query']
-        options = {'transactionDetails':'full','sortOrder':'asc','limit':100,
+        options = {'transactionDetails':'full','sortOrder':'asc','limit':query.get('page_size',100),
                    'commitment':'finalized','encoding':'jsonParsed','maxSupportedTransactionVersion':1,
                    'filters':{'blockTime':{'gte':query['start'],'lt':query['end']},
                               'status':'any','tokenAccounts':'none'}}
