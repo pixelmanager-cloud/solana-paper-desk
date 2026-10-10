@@ -144,6 +144,38 @@ This tool runs on the Ubuntu VPS as root (needed for `unshare --mount`), while t
 
 ---
 
+## T32 — Deploy composition: make T13F + T11F + T21 + RUNBOOK one working end-to-end flow — CRITICAL PATH
+STATUS: OPEN
+DEPENDS: none
+BASE: integration/r1 (T13F, T11F and T21 are all merged there)
+OWNS: tools/ops/fresh_start.py, tools/ops/cutover.py, tools/ops/healthcheck.py, tools/ops/notify.py, deploy/fresh/**, docs/ops/RUNBOOK.md, docs/ops/OPERATIONS_24x7.md, the related tests/test_ops_*.py
+AVOID: desk/**
+
+Each piece passed its own tests (213 OK), but they do not compose. A single owner must make them one flow. The coordinator review found:
+1. **Store-env jq.** The RUNBOOK step-7a jq adds `desk-backup.service` while the manifest already has `desk-backup`, so cutover raises "names desk-backup.service twice". It also uses `desk.backup`, which cannot back up the fresh set. Remove the jq and consume the manifest/render output directly.
+2. **Entry is dry-run.** The entry argv (fresh_start.py ~:219-224) lacks `--execute --systemd-credentials`, and the 60-/70- drop-ins reset ExecStart over T21's correct template, so entries never happen. Emit `TimeoutStartSec` too (entry 600, held 120).
+3. **Drop-in hand-off.** Cutover silently drops `unit_sections` (cutover.py ~:302): no ReadWritePaths, no ConditionPathExists reset, no TimeoutStartSec. It must install T13F `render-dropins` output, or one combined format. Rollback must remove every drop-in the flow wrote (60- and 70-, identified by the marker).
+4. **Entry template.** The entry unit must use the fresh template, not the stock one (stock = ReadWritePaths on the old root only, ConditionPathExists on the old journal, TimeoutStartSec 180).
+5. **Held cycle.** The plan/apply in the RUNBOOK must pass `--enable-held`; otherwise held exits 2, cutover verification aborts, and positions are never exited.
+6. **Service user.** `apply` needs `--service-user solana-desk`/`--chown solana-desk` and must create the backup dir.
+7. **Monitor timer.** Do NOT cut over or start the expire/monitor timer until T23 (EXIT_ONLY stickiness) lands. Gate it behind an explicit flag and document why.
+8. **Boot and health.** Add boot-enable steps (`systemctl enable`) for the intended units (not the entry timer), plus the healthcheck/notify timers. Reconcile OPERATIONS_24x7's `enable --now` with cutover's refusal of already-running units: one sequence only.
+9. **Backup paths.** Pick ONE backup destination for the fresh set (`/var/backups/solana-desk/fresh-<version>/`) and use it everywhere: T13F, the T21 units, the RUNBOOK and the healthcheck `--backup-root`.
+10. **README root.** README.md:8 shows the example root inside the archived root. Use `/var/lib/solana-desk-fresh/<version>`.
+11. **Cutover timeout.** The runner timeout for oneshot `systemctl start` is 120s, which is ≤ the units' own timeouts. Use `--no-block` plus polling with a deadline above TimeoutStartSec.
+12. **Dashboard env.** The T21 dashboard unit lacks `DESK_PAPER_SCHEDULER_IDENTITY` and `DESK_PAPER_LEDGER_DB`, and the invariant test skips the dashboard. Add both and test them.
+13. **Restart alarms.** The healthcheck counts discovery's daily clean restart as a failure, giving false WARN/CRITICAL. Count only non-zero-exit restarts, or use a rate over a window.
+14. **Stale reports.** notify must reject a stale report (`ts` older than 2× the interval → CRITICAL "healthcheck not running"). Catch `sqlite3.Error` in build_report as a CRITICAL report, not a crash. A malformed telegram.json logs a WARNING.
+15. **Rotate.** The rotate procedure must stop the dashboard as well.
+16. **Pacing access.** Narrow ReadWritePaths for the shared pacing DB to that single file, or its directory if SQLite needs it, instead of the whole archived root.
+
+**Required end-to-end test.** On a temp filesystem with fake systemctl, run the RUNBOOK sequence literally (parse the commands from RUNBOOK.md, or keep a script that the RUNBOOK mirrors): archive → bootstrap → render drop-ins → cutover (entry OFF and disabled) → healthcheck OK → latch install → entry enable → rollback. Assert:
+- every rendered unit satisfies the invariants (T09 F8/F11, paths in the fresh root, loopback dashboard);
+- no unit references the archived root except the pacing DB;
+- rollback restores everything.
+
+---
+
 ## T22 — Extend T01: no store-wide latch from ANY charged failure (from T09 audit F1, F3) — CRITICAL PATH
 STATUS: OPEN
 DEPENDS: branch `cloud/T01` has a `DONE T01:` commit
