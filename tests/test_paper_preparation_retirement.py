@@ -8,7 +8,6 @@ from contextlib import closing, redirect_stdout
 from dataclasses import asdict
 import copy
 import io
-import inspect
 import json
 from pathlib import Path
 import sqlite3
@@ -70,15 +69,8 @@ class PreparationRetirementTests(unittest.TestCase):
                 return Response(b'UNREAD_OVERSIZED_BODY',[('Content-Length',str(transport.MAX_RESPONSE_BYTES+1))])
         # Generate the historical limit-100 request through real reservation and
         # transport interfaces, even when fresh producer defaults become 50.
-        from desk import paper_history_source, history, history_progress
-        def historical(namespace, obj):
-            scope=dict(namespace)
-            code=inspect.getsource(obj).replace("'limit':50", "'limit':100").replace("'limit': 50", "'limit': 100")
-            exec(code,scope)
-            return scope[obj.__name__]
-        old_source=historical(vars(paper_history_source),paper_history_source.PaperHistorySource)
-        old_collect=historical(vars(history),history.collect_history)
-        with patch.object(entry,'PaperHistorySource',old_source),patch.object(history_progress,'collect_history',old_collect),patch.object(entry.cli,'_credentials'),patch.object(transport,'build_opener',return_value=Oversize()),patch.dict('os.environ',{'HELIUS_API_KEY':'SYNTHETIC_TEST_ONLY'}):
+        from desk import paper_history_source
+        with patch.object(paper_history_source,'PAPER_HISTORY_PAGE_SIZE',100,create=True),patch.object(entry.cli,'_credentials'),patch.object(transport,'build_opener',return_value=Oversize()),patch.dict('os.environ',{'HELIUS_API_KEY':'SYNTHETIC_TEST_ONLY'}):
             with self.assertRaises(ValueError):entry.execute(self.f.config,self.f.f.jobs.path,self.f.f.progress.store.path,self.f.ledger,path,live=True,systemd_credentials=True)
         with self.f.f.progress.store.connect() as c:
             self.pass_id,self.intent_hash=c.execute('SELECT id,intent_hash FROM paper_observation_passes WHERE outcome_hash IS NULL').fetchone()
