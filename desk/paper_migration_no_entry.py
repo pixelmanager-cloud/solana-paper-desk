@@ -404,7 +404,7 @@ def verify(store,result):
     return v
 
 
-def gate(store,research,scan_ids,*,ledger_locked=None):
+def gate(store,research,scan_ids,*,ledger_locked=None,review_source=None):
     from .paper_cycle import _lock
     with closing(store.connect()) as c:
         c.execute('BEGIN')
@@ -421,12 +421,15 @@ def gate(store,research,scan_ids,*,ledger_locked=None):
         if v['context']['research_db']!=str(research) or v['context']['evidence_db']!=str(store.path):raise ValueError('Migration gate context')
         with ExitStack() as stack:
             if ledger_locked!=v['context']['ledger_db'] and not stack.enter_context(_lock(v['context']['ledger_db']+'.paper-cycle.lock')):raise ValueError('Migration ledger busy')
-            proof(store,v)
+            proof(store,v,review_source=review_source)
     if any(v['scan_id'] in scan_ids for v in records):return 'REJECTED_SCAN_RETIRED'
     return None
 
 
 def lineage(c,expected,original,*,ledger_locked=None):
+    from .paper_intake_uncaptured_retirement import lineage as intake_lineage
+    edge=intake_lineage(c,expected,original,ledger_locked=ledger_locked)
+    if edge is not None:return edge
     store=EvidenceStore(expected['paths']['evidence_db']['path'],read_only=True)
     with closing(store.connect()) as evidence:certs=[v for v in rows(evidence) if v['association']=='EXPLICIT_REVIEWED_LEGACY_SENTINEL' and v['producer_context']['journal']==expected['journal']]
     if not certs:return None
