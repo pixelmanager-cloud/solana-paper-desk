@@ -125,6 +125,25 @@ The store bootstrap is good and has been merged. The unit wiring it emits is inc
 
 ---
 
+## T05F — Fix coordinator review findings in T05 (preflight dry-run)
+STATUS: OPEN
+DEPENDS: none
+BASE: origin/cloud/T05
+OWNS: tools/ops/preflight_dryrun.py, tests/test_ops_preflight_dryrun.py
+AVOID: desk/**, tools/paper_entry_dispatcher.py
+
+This tool runs on the Ubuntu VPS as root (needed for `unshare --mount`), while the stores are owned by `solana-desk`.
+1. **Owner check.** It can never PASS in production: the OWNER check compares against euid. Add `--expect-owner USER` (default: the owner of `--data`) and compare against that instead. Test it by running with a different expected owner, simulated via an injectable stat or uid map.
+2. **Fresh store set.** A missing `paper-scheduler.lock` or an absent journal must report precisely what is missing. Keep it fail closed, but make the message say which bootstrap step creates it (T13F pre-creates the lock and activates the journal). Do NOT add a bypass.
+3. **macOS false positive.** `/proc/self/fd` dir_fd resolution only exists on Linux. Use `fcntl.F_GETPATH` on macOS, or skip that check off Linux with an explicit reason, so the suite is green on macOS. The namespace tests may skip without `unshare`. Also add a GitHub-Actions-friendly note: CI runs on Ubuntu, so the namespace tests will run there. Confirm whether they need root, and mark them clearly.
+4. **`_pending` fails open.** On `sqlite3.Error` it returns `[]`. Make that a blocker (`PENDING_UNREADABLE`).
+5. **Live-file guards.**
+   - Creating WAL sidecars beside a live store is a BLOCKER.
+   - `live_sources_unchanged` compares sha256, not only size and mtime.
+6. **Minor.** Fix the docstring (paths/journal ARE compared). Run the parent process with no bytecode writes (`sys.dont_write_bytecode=True` at the top).
+
+---
+
 ## T22 — Extend T01: no store-wide latch from ANY charged failure (from T09 audit F1, F3) — CRITICAL PATH
 STATUS: OPEN
 DEPENDS: branch `cloud/T01` has a `DONE T01:` commit
