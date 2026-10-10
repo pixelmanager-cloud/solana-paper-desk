@@ -19,7 +19,9 @@ POLICY=Path(__file__).resolve().parents[1]/'config/paper-migration-recovery.json
 MAX=4096  # Same lifetime dispatch-count ceiling as the existing journal.
 INSTALL_MARKER={'kind':'migration_disposition_installed_v1','table':TABLE}
 LEGACY_HASH='bd8751533ee11955952342729d794fd34306bcc20b349bc9ef596c973dbef474'
-LEGACY_DEPENDENCIES={'decode.py':'d7a0a3c0c9a525b5c1e38a890540e715bf67cdff1f294ceead1503e6ef3ec93d','programs.py':'e2716d67def3386b162ae345a5a474cd3b30a84bd89e6adbc053b283621a6b59','schemas/pump.json':'ffe966c42f1af41652ee753fe2f1e3f7cd4077d7e6f49faf3138959c8b56064b'}
+# Explicit decoder rollover proposal: parsed close operands only. The frozen
+# legacy extractor and its sentinel judgment remain unchanged (golden tests).
+LEGACY_DEPENDENCIES={'decode.py':'b691207821766ca987541b829806ec831ef209204aac64dccb810cce2c737f2c','programs.py':'e2716d67def3386b162ae345a5a474cd3b30a84bd89e6adbc053b283621a6b59','schemas/pump.json':'ffe966c42f1af41652ee753fe2f1e3f7cd4077d7e6f49faf3138959c8b56064b'}
 FIELDS={'version','kind','association','dispatch_id','scan_id','intent_hash','hint','context','config_hash',
         'source_hash','producer_context','successor_context','journal_prefix','parent_receipt_hash',
         'history_id','history_inventory_hash','admission','canonical_acquisition','wire_attempt_refs',
