@@ -298,6 +298,10 @@ def _validate_quote_journal(connection, state, cfg, quote):
     event_count, largest, total = connection.execute('SELECT COUNT(*),MAX(length(CAST(payload AS BLOB))),COALESCE(SUM(length(CAST(payload AS BLOB))),0) FROM events').fetchone()
     if event_count > 10000 or total > 16*1024*1024 or (largest is not None and largest > 2*1024*1024):
         raise ValueError('Quote event ceiling')
+    from .kraken_usd_observation import validate_event as validate_usd
+    if connection.execute("SELECT 1 FROM events WHERE typeof(payload)!='text' LIMIT 1").fetchone():raise ValueError('USD journal scalar shape')
+    for (saved,) in connection.execute('SELECT payload FROM events ORDER BY seq'):
+        validate_usd(json.loads(saved),cfg)
     inventory = {}; cash = decimal(cfg['initial_equity_sol']); realized = decimal('0')
     tolerance = decimal('1e-20')
     with localcontext() as context:

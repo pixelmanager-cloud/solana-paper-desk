@@ -194,6 +194,7 @@ class _HeldBudget:
     """Compare durable monotonic monitoring charges, never rolling count deltas."""
     def __init__(self, parent, monitoring):
         self.parent, self.monitoring = parent, monitoring
+    def wall_clock(self):return self.parent.wall_clock()
     def now(self): return self.parent.now()
     def remaining(self): return self.parent.remaining()
     def call(self, scan, invoke):
@@ -304,7 +305,19 @@ def _history(progress, item, budget, source_factory):
     return as_of, rows, pairs
 
 
-def _usd(progress, source, scan, budget, refs=()):
+def _usd(progress, source, scan, budget, refs=(), *, valuation_version=0):
+    if valuation_version==1:
+        from .kraken_usd_observation import from_attempt
+        if refs:
+            if len(refs)!=1:raise CycleBlocked('EXACT_KRAKEN_REF_REQUIRED')
+            key=refs[0]
+        else:key=budget.call(scan,lambda timeout:source.kraken_sol_price(timeout_seconds=timeout))['evidence_hash']
+        record=progress.store.load(key)
+        if digest(record)!=key:raise CycleBlocked('KRAKEN_ORIGINAL_BINDING_INVALID')
+        from decimal import Decimal
+        response,_=from_attempt(record,now=format(Decimal(str(budget.wall_clock())),'f'),scan=scan)
+        return response,None,None,None,(),record,(key,)
+
     if refs:
         return _retained_usd(progress,source,scan,refs)
     price = budget.call(scan, lambda timeout: source.sol_price(timeout_seconds=timeout))
@@ -410,6 +423,8 @@ def run_once(research_db, evidence_db, ledger_db, cfg, *, position_targets=(), c
     ledger position must have its original admission and exact current raw size.
     """
     _config(cfg)
+    from .kraken_usd_observation import selected as usd_selected
+    valuation_version=usd_selected(cfg)
     if type(monitoring) is not bool or type(position_targets) is not tuple or type(candidates) is not tuple:
         raise ValueError('Explicit bounded cycle target tuples required')
     items = position_targets+candidates
@@ -418,7 +433,7 @@ def run_once(research_db, evidence_db, ledger_db, cfg, *, position_targets=(), c
             or type(dependency_blockers) is not tuple or len(dependency_blockers)>16
             or any(type(x) is not str or not 1<=len(x)<=128 for x in dependency_blockers)
             or type(controls) is not tuple or len(controls)>18
-            or type(usd_evidence_refs) is not tuple or len(usd_evidence_refs) not in (0,3)):
+            or type(usd_evidence_refs) is not tuple or len(usd_evidence_refs) not in ((0,1) if valuation_version else (0,3))):
         raise ValueError('Explicit bounded cycle inputs required')
     result = {'kind':'paper_cycle_v1','status':'BLOCKED','execution_status':'EXECUTION_UNVERIFIED',
               'live_readiness':False,'attempted_requests':0,'outcomes':[],'events':[],
@@ -544,30 +559,53 @@ def run_once(research_db, evidence_db, ledger_db, cfg, *, position_targets=(), c
                             collected = collector.observations[0]
                         if not is_position:
                             as_of, raw, pages = _history(progress,item,budget,history_source_factory)
-                            if usd is None:
+                            if usd is None or valuation_version:
                                 try:
-                                    usd = _usd(progress,source,target.scan_id,budget,usd_evidence_refs)
+                                    usd = _usd(progress,source,target.scan_id,budget,usd_evidence_refs,valuation_version=valuation_version)
                                 except CycleBlocked:
                                     raise
                                 except (ValueError,TypeError,KeyError,AttributeError):
                                     raise CycleBlocked('USD_ORIGINAL_BINDING_INVALID') from None
                                 result['usd_evidence_refs']=list(usd[-1])
+                        if is_position and valuation_version:
+                            held_budget=_HeldBudget(budget,allowance) if allowance else budget
+                            usd=_usd(progress,source,target.scan_id,held_budget,valuation_version=valuation_version)
+                            result['usd_evidence_refs']=list(usd[-1])
                         diagnostic = None
                         def event_builder():
                             nonlocal diagnostic
-                            now = budget.now()
+                            if valuation_version:
+                                from decimal import Decimal
+                                from .kraken_usd_observation import timestamp
+                                decision_at=format(Decimal(str(budget.wall_clock())),'f')
+                                now=int(timestamp(decision_at))
+                            else:now=budget.now()
                             if is_position:
                                 context = ExitContext(now,target,source.rpc_source_id,source.quote_source_id,
                                                       item.provenance,item.known_hazards,selected(cfg))
                                 diagnostic = build_exit_event(collected,context=context,
                                     position=state['positions'][target.mint],cfg=cfg,load_evidence=store.load)
+                                if valuation_version and diagnostic['event'] is not None:
+                                    from .kraken_usd_observation import evidence as usd_evidence
+                                    from decimal import Decimal
+                                    event=diagnostic['event']
+                                    event['source_evidence']['scan_id']=target.scan_id
+                                    event['paper_usd_valuation']=usd_evidence(usd[-2],now=decision_at,scan=target.scan_id)
+                                    event['event_id']='paper-exit:'+digest({k:v for k,v in event.items() if k!='event_id'})
                             else:
                                 context = MarketContext(now,target,source.rpc_source_id,source.quote_source_id,
-                                    item.provenance,graduation['graduated_at'],item.holder_at,item.known_hazards,item.pool_fee_bps,as_of,selected(cfg))
-                                response,at,low,high,times,_refs = usd
+                                    item.provenance,graduation['graduated_at'],item.holder_at,item.known_hazards,item.pool_fee_bps,as_of,selected(cfg),valuation_version)
+                                if valuation_version:
+                                    response,at,low,high,times,usd_attempt,_refs=usd
+                                    from .kraken_usd_observation import TrustedTimeBounds
+                                    from decimal import Decimal
+                                    usd_bounds=TrustedTimeBounds(decision_at)
+                                else:
+                                    response,at,low,high,times,_refs = usd
+                                    usd_attempt=None;usd_bounds=TrustedSlotBounds(now,at,low,high,times)
                                 diagnostic = build_market_event(collected,context=context,load_evidence=store.load,
                                     raw_trades=raw,history_pages=pages,usd_response=response,
-                                    usd_bounds=TrustedSlotBounds(now,at,low,high,times),strategy_profile=OBSERVABLE_FLOW_CHURN_CONCENTRATION_V1)
+                                    usd_bounds=usd_bounds,usd_attempt=usd_attempt,strategy_profile=OBSERVABLE_FLOW_CHURN_CONCENTRATION_V1)
                             if diagnostic['event'] is None:
                                 result['diagnostics'].append({'scan_id':target.scan_id,'blockers':diagnostic['blockers']})
                             return diagnostic['event']

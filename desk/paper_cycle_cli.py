@@ -87,7 +87,7 @@ def load_targets(path):
                          graduation_refs=_hashes(row['graduation_refs'],8)))
         result.append(tuple(items))
     usd=_hashes(value['usd_evidence_refs'],3)
-    if len(usd) not in (0,3):raise ValueError('Exact USD source triple required')
+    if len(usd) not in (0,1,3):raise ValueError('Exact version-selected USD references required')
     return (*result,usd)
 
 

@@ -174,6 +174,10 @@ class PaperReadSources:
         query = {'ids': SOL}
         return self._attempt('jupiter_price_v3', query, urlencode(query).encode('ascii'), timeout_seconds)[0]
 
+    def kraken_sol_price(self, *, timeout_seconds):
+        from .kraken_usd_observation import METHOD,PARAMS
+        return self._attempt(METHOD,PARAMS,urlencode(PARAMS).encode('ascii'),timeout_seconds)[0]
+
     def _attempt(self, method, params, request_bytes, timeout_seconds):
         if type(timeout_seconds) not in (int, float) or not math.isfinite(timeout_seconds) or not 0 < timeout_seconds <= 15:
             raise PaperReadError('DEADLINE_INVALID')
@@ -207,25 +211,31 @@ class PaperReadSources:
         raw = None
         http_status = None
         completed = None
+        acquired_decimal = None
         code = 'CREDENTIAL_UNAVAILABLE'
         result = None
         pacer = None
         pacing_ticket = None
         pacing_release = True
-        provider = 'jupiter' if method in ('jupiter_probe', 'jupiter_price_v3') else 'helius'
+        kraken = method=='kraken_solusd_trades_v1'
+        provider = 'kraken' if kraken else 'jupiter' if method in ('jupiter_probe', 'jupiter_price_v3') else 'helius'
         def remaining():
             now = time.monotonic()
             if not math.isfinite(now) or now < started or now >= deadline: raise PaperReadError('DEADLINE_EXCEEDED')
             return deadline - now
         try:
             pacer = provider_pacing.configured(priority='held' if self.monitoring_budget is not None else 'investigation')
+            if kraken and pacer is None:raise PaperReadError('KRAKEN_PACING_NOT_CONFIGURED')
             if pacer is not None: pacing_ticket = pacer.acquire(provider, timeout_seconds=remaining())
             name = 'JUPITER_API_KEY' if method in ('jupiter_probe', 'jupiter_price_v3') else 'HELIUS_API_KEY'
-            key = os.environ.get(name)
-            if type(key) is not str or not 1 <= len(key) <= 512 or any(not 33 <= ord(c) <= 126 for c in key):
+            key = None if kraken else os.environ.get(name)
+            if not kraken and (type(key) is not str or not 1 <= len(key) <= 512 or any(not 33 <= ord(c) <= 126 for c in key)):
                 raise PaperReadError(code)
             code = 'TRANSPORT_ERROR'
-            if method in ('jupiter_probe', 'jupiter_price_v3'):
+            if kraken:
+                from .kraken_usd_observation import URL
+                request=Request(URL,headers={'Accept':'application/json'},method='GET')
+            elif method in ('jupiter_probe', 'jupiter_price_v3'):
                 path = '/swap/v2/build' if method == 'jupiter_probe' else '/price/v3'
                 request = Request('https://api.jup.ag' + path + '?' + request_bytes.decode('ascii'),
                                   headers={'Accept': 'application/json', 'x-api-key': key}, method='GET')
@@ -250,9 +260,9 @@ class PaperReadSources:
                 if length is not None:
                     if not 1 <= len(length) <= 20 or not length.isascii() or not length.isdecimal(): raise PaperReadError(code)
                     length = int(length)
-                    limit = MAX_PRICE_RESPONSE_BYTES if method == 'jupiter_price_v3' else MAX_RESPONSE_BYTES
+                    limit = MAX_PRICE_RESPONSE_BYTES if method in ('jupiter_price_v3','kraken_solusd_trades_v1') else MAX_RESPONSE_BYTES
                     if length > limit: raise PaperReadError('RESPONSE_OVERSIZED')
-                limit = MAX_PRICE_RESPONSE_BYTES if method == 'jupiter_price_v3' else MAX_RESPONSE_BYTES
+                limit = MAX_PRICE_RESPONSE_BYTES if method in ('jupiter_price_v3','kraken_solusd_trades_v1') else MAX_RESPONSE_BYTES
                 remaining()
                 code = 'TRANSPORT_ERROR'
                 try:
@@ -277,11 +287,27 @@ class PaperReadSources:
             at = time.time()
             if type(at) not in (int, float) or not math.isfinite(at) or not 0 <= at < 2**63: raise PaperReadError(code)
             completed = int(at)
+            if kraken:
+                from decimal import Decimal
+                acquired_decimal=format(Decimal(str(at)),'f')
             remaining()
             code = 'RESPONSE_INVALID'
-            payload = wire._parse(raw)
-            syntax._bounded_json(payload)
-            if method in ('jupiter_probe', 'jupiter_price_v3'):
+            if kraken:
+                from .kraken_usd_observation import KrakenTradesResponse,TrustedTimeBounds,parse_kraken_usd,provider_error,URL
+                if provider_error(raw):
+                    if pacer is not None:
+                        pacing_release=False
+                        pacer.throttle(provider,None,ticket=pacing_ticket);pacing_ticket=None
+                    raise PaperReadError('KRAKEN_PROVIDER_ERROR')
+                parsed=parse_kraken_usd(KrakenTradesResponse('GET',URL,raw,acquired_decimal,http_status),bounds=TrustedTimeBounds(acquired_decimal))
+                if parsed.status!='MEASURED':raise PaperReadError('KRAKEN_PRICE_INVALID')
+                payload=None
+            else:
+                payload = wire._parse(raw)
+                syntax._bounded_json(payload)
+            if kraken:
+                result=None
+            elif method in ('jupiter_probe', 'jupiter_price_v3'):
                 if type(payload) is not dict or (method == 'jupiter_probe' and any(field not in payload for field in ('inAmount', 'outAmount', 'routePlan'))):
                     raise PaperReadError(code)
                 result = payload
@@ -331,10 +357,11 @@ class PaperReadSources:
             except Exception:
                 pass
         record = {'kind': 'paper_read_attempt_v1', 'scan_id': self.scan_id, 'requests_used': used,
-                  'source_id': self.price_source_id if method == 'jupiter_price_v3' else self.quote_source_id if method == 'jupiter_probe' else self.rpc_source_id,
+                  'source_id': 'kraken-solusd-recent-trades-paper-v1' if kraken else self.price_source_id if method == 'jupiter_price_v3' else self.quote_source_id if method == 'jupiter_probe' else self.rpc_source_id,
                   'method': method, 'params': params, 'request_bytes_base64': base64.b64encode(request_bytes).decode(),
                   'response_bytes_base64': None if raw is None else base64.b64encode(raw).decode(),
                   'observed_at': completed, 'http_status': http_status, 'failure_code': code}
+        if kraken:record['acquired_at_decimal']=acquired_decimal
         if monitoring_reservation is not None:
             record['monitoring_reservation'] = monitoring_reservation
         try:
@@ -349,6 +376,7 @@ class PaperReadSources:
         # trace refs fall out of memory while every original remains durable.
         self.attempt_evidence_refs.append(evidence_hash)
         if code is not None: raise PaperReadError(code, evidence_hash) from None
+        if kraken:return {'kind':'kraken_solusd_recent_trade_probe','observed_at':completed,'evidence_hash':evidence_hash},evidence_hash
         if method == 'jupiter_price_v3':
             return {'kind': 'sol_usd_price_probe', 'observed_at': completed, 'request': params,
                     'response': result, 'evidence_hash': evidence_hash, 'http_status': http_status,

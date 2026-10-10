@@ -289,6 +289,8 @@ def transition(state, e, cfg, *, _quote_book=None):
     # Config is fingerprinted by Ledger: selecting this experimental strategy
     # requires a new experiment, never an event-provided permission flag.
     quote_mode=qe.config(cfg)
+    from .kraken_usd_observation import validate_event as validate_usd
+    validate_usd(e,cfg)
     if quote_mode:
         for mint,position in state['positions'].items():
             qe.validate_position(mint,position,cfg)
