@@ -447,8 +447,6 @@ def close(store, progress, *, pass_id, status, cause, result_hash=None, attempt_
             refs.append(key)
     if status == 'FAILED_CHARGED' and cause in EVIDENCE_CAUSES and not failed_reads_transient(store, refs):
         raise HoldRequired('Failed read is not proven transient by a retained attempt original; the pass stays latched')
-    if status == 'FAILED_CHARGED':
-        _consistent(cause, scans)
     retired = None
     if (status == 'FAILED_CHARGED' and not positions and len(scans) == 1 and ledger_before is not None
             and all(w['after'] > w['before'] for w in scans.values())
