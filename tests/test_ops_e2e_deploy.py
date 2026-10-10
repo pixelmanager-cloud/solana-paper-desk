@@ -21,6 +21,7 @@ from pathlib import Path
 from unittest import mock
 
 import time
+import types
 from desk import kraken_pacing_migration as upgrade, provider_pacing as pace, runtime_compatibility as runtime
 from desk.model import canonical
 from discovery import continuous as discovery
@@ -89,6 +90,13 @@ class E2E(FreshStartBase):
         for i in range(12):                                   # 12 production stores + pacing + discovery = 14
             with sqlite3.connect(self.old / f'old-store-{i}.sqlite') as c:
                 c.execute('CREATE TABLE t(x)'); c.execute('INSERT INTO t VALUES(?)', (i,))
+        # T32I item 4: the archived root also holds ~40 non-sqlite evidence files; they must be sealed too.
+        self.evidence_files = [self.old / n for n in (
+            *('acquisition-%02d.json' % i for i in range(5)), *('paper-target-SYNTH%02d.json' % i for i in range(5)),
+            'migration-slot-intake.json', 'wallet-intake-2.json', 'events.jsonl', 'discovery/frames.jsonl')]
+        for path in self.evidence_files:
+            path.write_text('{"synthetic": true}\n')
+            path.chmod(0o644)
         # Live lock files of the SHARED inputs and of the archived stores (T32G item 1): seal must never touch them.
         # discovery/continuous.py:61 opens `<db>.discovery.lock` read-write with O_CREAT; the pacing holders, paper-cycle,
         # invocation, scheduler and dispatcher locks are owned by the service user and flock'ed by running processes.
@@ -450,12 +458,17 @@ class E2E(FreshStartBase):
             self.assertNotIn(lock, owners, lock.name)
         with discovery.worker(self.discovery):                                        # continuous discovery still gets its lock
             pass
+        # T32I item 4: the JSON/JSONL evidence files are sealed like the stores (root:service-group 0440), locks still never
+        for path in self.evidence_files:
+            self.assertEqual(oct(path.stat().st_mode & 0o777), '0o440', path.name)
+            self.assertEqual(owners[path], ('root', 'solana-desk'), path.name)
         # the seal manifest exists (root-only) and lists what was changed
         manifest_path = Path(self.v['SM'])
         self.assertEqual(oct(manifest_path.stat().st_mode & 0o777), '0o600')
         sealed = {e['path'] for e in json.loads(manifest_path.read_text())['sealed']}
         self.assertIn('old-store-3.sqlite', sealed)
         self.assertFalse(any(path.endswith('.lock') for path in sealed))
+        self.assertTrue({f.relative_to(self.old).as_posix() for f in self.evidence_files} <= sealed)
         # T32G items 4/5: the backup parent was never chowned or re-moded; failed units were reset; static is accepted
         self.assertNotIn(self.vb, owners)
         self.assertEqual(self.systemd.state['desk-paper-entry-dispatcher.service'], 'inactive')
@@ -531,6 +544,148 @@ class E2E(FreshStartBase):
     def runbook_blocks(self):
         return logical_commands(RUNBOOK.read_text().split('## Rotate when flat')[0])
 
+    def sealed_stat_overlay(self):
+        """The sandbox cannot chown: show the owner/group the (mocked) seal recorded, so the REAL permission rules see a sealed root."""
+        real = os.lstat
+        sealed = {Path(p) for p, owner, group in self.chowns if owner == 'root'}
+        service_gid = real(self.v['NEW']).st_gid
+
+        def stat(path, *a, **k):
+            info = real(path, *a, **k)
+            if Path(path) in sealed:
+                return types.SimpleNamespace(st_mode=info.st_mode, st_nlink=info.st_nlink, st_uid=0, st_gid=service_gid,
+                                             st_size=info.st_size, st_mtime_ns=info.st_mtime_ns)
+            return info
+        return mock.patch.object(preflight_dryrun, '_stat', side_effect=stat)
+
+    def test_the_real_preflight_accepts_the_sealed_archive_it_is_run_against_after_a_real_seal(self):
+        """T32I item 1 (BLOCKER): step 6 failed with LIVE_external_*_dir:MODE_1770 right after the step-4 seal. Nothing is stubbed here:
+        the RUNBOOK's seal ran for real, then the REAL preflight tool (copies, child, `_live_findings`) is run with the RUNBOOK's arguments."""
+        if preflight_dryrun.namespace_prefix() is None:
+            self.skipTest('REQUIRES a private mount namespace (euid 0 or unprivileged user namespaces) - unavailable on this host')
+        self.run_runbook(('2.', '3.', '4.', '5.'))
+        self.assertEqual(oct(self.old.stat().st_mode & 0o7777), '0o1770')
+        shutil.copyfile(self.base / 'migration-e2e.json', self.rel / 'config' / 'kraken-pacing-migration.json')   # the child reads the RELEASE's pin
+        (step6,) = [c for sec, c in self.runbook_blocks() if sec.startswith('6.') and 'preflight_dryrun' in c]
+        prod = self.variables(RUNBOOK.read_text())
+        words = shlex.split(self.sandbox(step6, prod))
+        argv = words[3:]
+        workdir = argv.index('--workdir')
+        argv[workdir + 1] = str(self.base / 'preflight-work')
+        out = io.StringIO()
+        with self.sealed_stat_overlay(), contextlib.redirect_stdout(out):
+            code = preflight_dryrun.main(argv)
+        report = json.loads(out.getvalue())
+        self.assertEqual((code, report.get('status'), report.get('blockers'), report.get('live_permission_findings')), (0, 'PASS', [], []), report)
+        self.assertEqual(report['isolation'], 'MOUNT_NAMESPACE')
+
+    def test_there_is_exactly_one_pacing_policy_step_and_no_6b(self):
+        """T32I item 3: T36's `## 6b` hunk is dropped; T32H's 7a2 is the one place the policy is applied."""
+        text = RUNBOOK.read_text()
+        self.assertNotIn('## 6b', text)
+        self.assertEqual(len(re.findall(r'^#+ .*[Pp]acing policy', text, re.M)), 1)
+        steps = [sec for sec, c in self.runbook_blocks() if 'tools.ops.pacing_policy' in c]
+        self.assertEqual(steps, ['7a2. Pacing policy for the paid Helius / Jupiter plans (T36; optional, reviewed, append-only)'] * 3)
+
+    def test_the_pacing_schema_upgrade_step_sits_next_to_7a2_and_says_what_it_is(self):
+        text = RUNBOOK.read_text()
+        a, p2, p3, b = (text.index(h) for h in ('### 7a. Render', '### 7a2.', '### 7a3.', '### 7b. Dry run'))
+        self.assertTrue(a < p2 < p3 < b)
+        commands = [c for sec, c in self.runbook_blocks() if sec.startswith('7a3.')]
+        self.assertEqual(len(commands), 3, commands)
+        cd, quiet, upgrade = commands
+        self.assertEqual(cd, 'cd $REL')
+        self.assertTrue(quiet.startswith('systemctl is-active '))
+        for unit in ('desk-paper-entry-dispatcher.service', 'desk-paper-held-cycle.path', 'desk-paper-monitor.timer', 'desk-decisions.service',
+                     'desk-backup.service', 'desk-healthcheck.service', 'desk-dashboard.service', 'desk-continuous-discovery.service'):
+            self.assertIn(unit, quiet)
+        self.assertEqual(upgrade, 'runuser -u solana-desk -- $PY -m desk.provider_pacing --upgrade $PACING')
+        section = ' '.join(text[p3:b].split())
+        for phrase in ('One-way door', 'PACING_DATABASE_INVALID', 'INERT', 'every writer stopped', 'service user', 'never reset'):
+            self.assertIn(phrase, section, phrase)
+        self.assertIn('If step 7a2 or 7a3 was applied, the OLD stack cannot be started again', text)
+
+    def test_the_pacing_schema_upgrade_command_runs_as_written_against_a_production_shaped_pacing_database(self):
+        """T32I item 2: the production database has the Kraken receipt and NO pacing_reclaims table."""
+        import sqlite3
+        prod = self.variables(RUNBOOK.read_text())
+        commands = [c for sec, c in self.runbook_blocks() if sec.startswith('7a3.')]
+
+        def tables():
+            with sqlite3.connect(self.pacer) as c:
+                return sorted(r[0] for r in c.execute("SELECT name FROM sqlite_master WHERE type='table'"))
+
+        def rows():
+            with sqlite3.connect(self.pacer) as c:
+                return {t: c.execute('SELECT * FROM "%s"' % t).fetchall() for t in tables() if t not in ('pacing_reclaims', 'sqlite_sequence')}
+        self.assertNotIn('pacing_reclaims', tables())
+        self.assertEqual(len(rows()['kraken_pacing_migration']), 1, 'production-shaped: the Kraken migration receipt is there')
+        before = rows()
+        outputs = []
+        for command in commands:
+            words = shlex.split(self.sandbox(command, prod))
+            if words[:4] == ['runuser', '-u', 'solana-desk', '--']:
+                words = words[4:]
+            if words[0] == sys.executable:
+                self.assertEqual(words[1:3], ['-m', 'desk.provider_pacing'])
+                out = io.StringIO()
+                with contextlib.redirect_stdout(out):
+                    code = pace.main(words[3:])
+                outputs.append((code, out.getvalue().strip()))
+            else:
+                self.shell(words, prod)
+        self.assertEqual(outputs, [(0, 'PACING_UPGRADED')])
+        self.assertIn('pacing_reclaims', tables())
+        self.assertEqual(rows(), before, 'no existing row, counter, cadence or the Kraken receipt changed')
+        with sqlite3.connect(self.pacer) as c:                      # append-only guards came with it
+            c.execute("INSERT INTO pacing_reclaims(provider,ticket,granted_at,reclaimed_at,backoff_until,reason) VALUES('helius','t',1,2,3,'OWNER_GONE')")
+            with self.assertRaises(sqlite3.DatabaseError):
+                c.execute('UPDATE pacing_reclaims SET reason=\'x\'')
+            c.rollback()
+        with contextlib.redirect_stdout(io.StringIO()) as again:
+            self.assertEqual(pace.main(['--upgrade', str(self.pacer)]), 0)
+        self.assertEqual(again.getvalue().strip(), 'PACING_ALREADY_UPGRADED')
+        pace.Pacer(self.pacer)                                      # the strict schema check still accepts the database
+        from tools.ops import pacing_policy
+        with mock.patch.object(pace, 'POLICY_FILE', self.rel / 'config' / 'provider-pacing-policy.json'):
+            shutil.copytree(REPO / 'config', self.rel / 'config', dirs_exist_ok=True)
+            plan = pacing_policy.run(types.SimpleNamespace(command='plan', db=str(self.pacer), policy=None, policy_id=None, execute=False,
+                                                          require_quiesced=[]), runner=lambda unit: 'inactive')
+        self.assertTrue(plan['ready_to_apply'], plan)
+
+    def test_the_rotate_seal_uses_a_new_manifest_and_no_shared_path_so_the_new_root_is_0550(self):
+        """T32I items 5/6: run the rotate section's two seal commands as written."""
+        text = RUNBOOK.read_text()
+        rotate = text[text.index('## Rotate when flat'):text.index('## If a position is open')]
+        seals = [c for c in (l.strip() for l in rotate.splitlines()) if 'cutover' in c and 'seal-archive' in c]
+        self.assertEqual(len(seals), 2, seals)
+        for command in seals:
+            self.assertNotIn('--shared-path', command)
+            self.assertIn('--manifest /var/backups/solana-desk/seal-manifest-rotate-<next version>.json', command)
+            self.assertNotIn('$SM', command)
+        self.assertNotIn('--apply', seals[0])
+        self.assertIn('--apply', seals[1])
+        prod = self.variables(text)
+        root = Path(self.v['NEW'] if hasattr(self, 'v') else self.base / 'var-lib' / 'fresh' / 'v1')
+        root = self.base / 'var-lib' / 'fresh' / 'rotated-from'
+        (root / 'sub').mkdir(parents=True)
+        for rel in ('a.sqlite', 'sub/b.sqlite', 'run.json'):
+            (root / rel).write_text('x')
+            (root / rel).chmod(0o644)
+        for command in seals:
+            command = command.replace('$NEW', str(root)).replace('<next version>', 'v2')
+            words = shlex.split(self.sandbox(command, prod))
+            argv = self.adapt('cutover', words[3:], {})
+            code, payload, raw = self.run_tool('cutover', argv)
+            self.assertEqual(code, 0, (command, payload or raw[-300:]))
+        self.assertEqual(oct(root.stat().st_mode & 0o7777), '0o550')
+        self.assertEqual(oct((root / 'sub').stat().st_mode & 0o7777), '0o550')
+        self.assertEqual(payload['shared_dirs'], [])
+        self.assertTrue((self.vb / 'seal-manifest-rotate-v2.json').is_file())
+        code, payload, raw = self.run_tool('cutover', self.adapt('cutover', words[3:], {}))      # the same manifest path again: refused
+        self.assertNotEqual(code, 0)
+        self.assertIn('already exists', payload.get('error', raw))
+
     def test_every_status_preflight_and_snapshot_command_names_the_shared_pacing_and_discovery_stores(self):
         """T32H/T34: the shared stores live outside $NEW; the tools' defaults would look for them under $NEW."""
         hits = [(section, c) for section, c in self.runbook_blocks()
@@ -564,7 +719,8 @@ class E2E(FreshStartBase):
         for phrase in ('ONLY after the new release is on every unit', 'BEFORE the first unit starts', '**The policy file is append-only.**', 'Kraken stays at exactly 2.0 s',
                        'Never edit, reorder or delete an entry that was applied', 'ALREADY_APPLIED', 'One-way door', 'PACING_DATABASE_INVALID', 'shared database must not be reset'):
             self.assertIn(phrase, ' '.join(section.split()), phrase)
-        self.assertIn('If step 7a2 was applied, the OLD stack cannot be started again', text)         # the rollback section says so
+        # T32I: the rollback sentence now names both one-way doors (7a2 policy table, 7a3 reclaim table); the 7a2 half is unchanged
+        self.assertIn('If step 7a2 or 7a3 was applied, the OLD stack cannot be started again', text)         # the rollback section says so
 
     @unittest.skipUnless((REPO / 'tools' / 'ops' / 'pacing_policy.py').is_file(), 'T36 (tools.ops.pacing_policy) is not merged into this tree yet')
     def test_the_pacing_policy_commands_run_as_written_against_the_sandbox_pacing_database(self):

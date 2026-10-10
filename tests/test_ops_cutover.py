@@ -1856,6 +1856,53 @@ class SealArchiveTests(Base):
         self.assertIn((self.old / 'discovery', 'root', 'solana-desk'), self.chowns)
         self.assertEqual(sorted(report['shared_dirs']), sorted([str(self.old), str(self.old / 'discovery')]))
 
+    EVIDENCE = ('acquisition-2026-10-01.json', 'paper-target-SYNTH.json', 'x-intake-1.json', 'events.jsonl', 'discovery/frames.jsonl')
+
+    def test_json_and_jsonl_evidence_files_are_sealed_by_default_but_never_a_lock(self):
+        """T32I item 4: ~40 non-sqlite evidence files in the archived root were left writable by the service user."""
+        for name in self.EVIDENCE:
+            (self.old / name).write_text('{}\n')
+            (self.old / name).chmod(0o644)
+        (self.old / 'telegram.json.lock').write_text('')               # a lock keeps its identity whatever its extension looks like
+        (self.old / 'telegram.json.lock').chmod(0o600)
+        locks_before = {n: os.lstat(self.old / n) for n in (*self.LOCKS, 'telegram.json.lock')}
+        code, report = self.seal()
+        self.assertEqual(code, 0, report)
+        after = tree(self.old)
+        for name in self.EVIDENCE:
+            self.assertEqual(after[name][1], '0o440', name)
+            self.assertIn((self.old / name, 'root', 'solana-desk'), self.chowns, name)
+        self.assertEqual(after['notes.txt'][1], '0o644', 'still outside the allow-list')
+        self.assertIn(str(self.old / 'notes.txt'), report['unlisted'])
+        for name, before in locks_before.items():
+            self.assertEqual((os.lstat(self.old / name).st_mode, os.lstat(self.old / name).st_mtime_ns), (before.st_mode, before.st_mtime_ns), name)
+            self.assertNotIn(self.old / name, [c[0] for c in self.chowns], name)
+        sealed = {e['path'] for e in json.loads(self.manifest.read_text())['sealed']}
+        self.assertTrue(set(self.EVIDENCE) <= sealed)
+        self.assertEqual(self.unseal()[0], 0)                                       # and unseal puts them back
+        for name in self.EVIDENCE:
+            self.assertEqual(oct(os.lstat(self.old / name).st_mode & 0o777), '0o644', name)
+
+    def seal_without_shared_paths(self, *extra):
+        return self.run_cli('seal-archive', '--root', str(self.old), '--manifest', str(self.manifest), *extra, apply=True)
+
+    def test_a_root_without_shared_inputs_is_sealed_0550_not_1770(self):
+        """T32I item 6: rotating seals $NEW, which holds no shared database; it must not be left group-writable."""
+        code, report = self.seal_without_shared_paths()
+        self.assertEqual(code, 0, report)
+        self.assertEqual(report['shared_dirs'], [])
+        for directory in (self.old, self.old / 'discovery', self.old / 'entry-dispatch'):
+            self.assertEqual(oct(directory.stat().st_mode & 0o7777), '0o550', directory)
+        self.assertEqual(oct((self.old / 'research.sqlite').stat().st_mode & 0o777), '0o440')
+
+    def test_only_the_directory_that_holds_a_shared_database_gets_1770(self):
+        code, report = self.run_cli('seal-archive', '--root', str(self.old), '--shared-path', str(self.cont),
+                                    '--manifest', str(self.manifest), apply=True)
+        self.assertEqual(code, 0, report)
+        self.assertEqual(report['shared_dirs'], [str(self.old / 'discovery')])
+        self.assertEqual(oct((self.old / 'discovery').stat().st_mode & 0o7777), '0o1770')
+        self.assertEqual(oct(self.old.stat().st_mode & 0o7777), '0o550')
+
     def test_shared_databases_and_every_live_lock_file_are_untouched(self):
         before = tree(self.old)
         names = ('provider-pacing.sqlite', 'discovery/continuous.sqlite', *self.LOCKS)
@@ -1921,7 +1968,9 @@ class SealArchiveTests(Base):
         entries = {e['path']: e for e in data['sealed']}
         for rel in self.stores:
             e = entries[rel]
-            self.assertEqual((e['type'], e['mode'], e['uid'], e['gid']), ('file', 0o644, os.geteuid(), os.getegid()))
+            # T32I item 7: a new file's group is its parent directory's (BSD/macOS: /private/tmp is gid 0), not os.getegid()
+            self.assertEqual((e['type'], e['mode'], e['uid'], e['gid']),
+                             ('file', 0o644, os.geteuid(), (self.old / rel).parent.stat().st_gid))
             self.assertEqual(e['sha256'], hashlib.sha256(rel.rsplit('/', 1)[-1].encode()).hexdigest())
         self.assertEqual(entries['entry-dispatch']['type'], 'dir')
         self.assertEqual(entries['.']['type'], 'dir')                              # the root itself
@@ -1976,8 +2025,8 @@ class SealArchiveTests(Base):
         self.assertEqual(code, 0, report)
         self.assertEqual(tree(self.old), before)
         recorded = {c[0]: (c[1], c[2]) for c in self.chowns}
-        self.assertEqual(recorded[self.old / 'research.sqlite'], (os.geteuid(), os.getegid()))   # numeric uid/gid back
-        self.assertEqual(recorded[self.old], (os.geteuid(), os.getegid()))
+        self.assertEqual(recorded[self.old / 'research.sqlite'], (os.geteuid(), self.old.stat().st_gid))   # numeric uid/gid back (parent's group)
+        self.assertEqual(recorded[self.old], (os.geteuid(), self.old.parent.stat().st_gid))
         for name in self.LOCKS:
             self.assertNotIn(self.old / name, recorded)
         self.assertEqual(self.unseal()[0], 0)                                      # idempotent
