@@ -6,6 +6,7 @@ import unittest
 from decimal import Decimal
 
 from desk import engine, portfolio_marks as pm
+from desk.model import digest
 from desk.engine import initial_state, transition
 from desk.providers import PUMP, PUMPSWAP, SOL
 from desk.pools import ATA
@@ -181,6 +182,17 @@ class RequestAndResponseTests(unittest.TestCase):
             self.assertIn(str(chains[0].mint), errors, name)
             self.assertNotIn(str(chains[0].mint), marks, name)
 
+    def test_pool_account_naming_other_vaults_than_the_derived_ones_is_rejected(self):
+        chains = sorted(self.chains, key=lambda c: str(c.mint))
+        for offset, name in ((11 + 32 * 4, 'base vault'), (11 + 32 * 5, 'quote vault')):
+            response = reply(chains, self.amounts)
+            raw = bytearray(base64.b64decode(response['value'][0]['data'][0]))
+            raw[offset] ^= 1                                                    # pool fields no longer match the derived ATAs
+            response['value'][0]['data'][0] = b64(bytes(raw))
+            marks, _, errors = pm.marks_from_result(self.positions, self.keys(), response, self.cfg, pool_fee_bps=Decimal(25))
+            self.assertEqual(errors.get(str(chains[0].mint)), 'POOL_BINDING_MISMATCH', name)
+            self.assertNotIn(str(chains[0].mint), marks, name)
+
     def test_wrong_decimals_in_retained_mint_evidence_rejects_that_position(self):
         chains = sorted(self.chains, key=lambda c: str(c.mint))
         self.positions[str(chains[0].mint)]['quote_execution']['mint_decimals'] = 9
@@ -217,6 +229,8 @@ class RequestAndResponseTests(unittest.TestCase):
                        lambda e: e.update(marks={})):
             bad = copy.deepcopy(event)
             mutate(bad)
+            if 'extra' not in bad:       # a forger recomputes the content hash; the shape/range/age checks must still refuse
+                bad['event_id'] = 'paper-marks:' + digest({k: v for k, v in bad.items() if k != 'event_id'})
             with self.subTest(mutate=mutate), self.assertRaises(ValueError):
                 pm.validate_event(bad)
         tampered = copy.deepcopy(event)

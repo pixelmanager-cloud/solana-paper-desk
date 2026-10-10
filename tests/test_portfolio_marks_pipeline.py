@@ -313,6 +313,23 @@ class FailureAndFlagTests(MarksPipeline):
         self.assertIn('STALE_PORTFOLIO', [o.get('reason') for o in self.outcomes()])
         self.assertEqual(self.null_passes(), [])
 
+    def test_a_read_that_did_not_raise_the_monitoring_charge_is_never_applied(self):
+        self.first_entry()
+        self.append_second_candidate(seed=22)
+        self.idle()
+        real = transport.PaperReadSources.rpc_with_evidence
+
+        def uncharged(source, method, params, *, timeout_seconds):
+            if method == 'getMultipleAccounts' and params[1].get('minContextSlot') == 0:
+                return {'context': {'slot': 1}, 'value': []}, 'f' * 64     # a source that skipped its reservation
+            return real(source, method, params, timeout_seconds=timeout_seconds)
+        with patch.object(transport.PaperReadSources, 'rpc_with_evidence', uncharged):
+            self.dispatch(intents=2, raw=self.second_raw)
+        self.assertEqual(self.ledger_events('portfolio_marks'), [])
+        self.assertIn('STALE_PORTFOLIO', [o.get('reason') for o in self.outcomes()])
+        notes = [d for d in self.cycle_result['diagnostics'] if 'portfolio_marks' in d]
+        self.assertEqual(notes[0]['code'], 'MONITORING_CHARGE_OR_ADMISSION_MISMATCH')
+
     def test_held_pass_start_refreshes_every_mark_with_one_request(self):
         self.open_positions(3)
         self.idle()
