@@ -247,8 +247,12 @@ def classify_result(body, *, scan_id=None, no_entry_scans=frozenset()):
             from desk.paper_cycle_no_entry import NORMAL   # imported, never copied: one source of truth
             certified = type(body.get('terminal_receipt_hash')) is str and len(body['terminal_receipt_hash']) == 64 \
                 and all(ch in '0123456789abcdef' for ch in body['terminal_receipt_hash'])
-            if scan_id in no_entry_scans or certified or all(b in NORMAL for b in blockers):
+            # T01 only retires single-blocker results, so a multi-blocker result stays latched in the desk.
+            if scan_id in no_entry_scans or (len(blockers) == 1 and blockers[0] in NORMAL):
                 return {'class': 'REJECTED', 'stage': 'OBSERVATIONS', 'codes': blockers, 'detail': None}
+            if certified:   # receipt not re-verified here; kept separable from verified rejections
+                return {'class': 'REJECTED', 'stage': 'OBSERVATIONS', 'codes': blockers,
+                        'detail': 'TERMINAL_RECEIPT_UNVERIFIED'}
             return {'class': 'UNRESOLVED', 'stage': 'OBSERVATIONS', 'codes': blockers, 'detail': 'LATCH_NOT_A_NORMAL_REJECTION'}
         return {'class': 'UNKNOWN', 'stage': None, 'codes': [], 'detail': 'BLOCKED_WITHOUT_CODE'}
     return {'class': 'UNKNOWN', 'stage': None, 'codes': [], 'detail': 'UNKNOWN_RESULT_KIND'}

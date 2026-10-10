@@ -964,7 +964,8 @@ class OpenModeAndServiceTests(CounterfactualBase):
         self.assertEqual(v['Environment'], ['DESK_PROVIDER_PACING_DB=/var/lib/solana-desk/provider-pacing.sqlite'])
         self.assertIn('--ledger', v['ExecStartPre'][0]); self.assertIn('--decisions-db', v['ExecStartPre'][0])
         self.assertEqual(v['Type'], ['oneshot'])
-        self.assertNotIn('\n[Install]', text)
+        # Coordinator rule (T09 F11/T21): every timer declares [Install]; nothing enables it automatically.
+        self.assertIn('\n[Install]', text)
         self.assertIn('provider-pacing', text)
 
     def test_timer_template_is_the_restart_policy(self):
@@ -976,3 +977,17 @@ class OpenModeAndServiceTests(CounterfactualBase):
 
 if __name__ == '__main__':
     unittest.main()
+
+
+class CoordinatorClassificationGuards(unittest.TestCase):
+    def test_multi_blocker_normal_result_stays_unresolved(self):
+        from tools.research.counterfactual import classify_result
+        body = {'kind': 'paper_cycle_v1', 'status': 'BLOCKED', 'outcomes': [],
+                'blockers': ['MARKET_PRODUCER_BLOCKED', 'CYCLE_REQUEST_BUDGET_EXHAUSTED']}
+        self.assertEqual(classify_result(body)['class'], 'UNRESOLVED')
+
+    def test_unverified_receipt_is_separable(self):
+        from tools.research.counterfactual import classify_result
+        body = {'kind': 'paper_cycle_v1', 'status': 'BLOCKED', 'outcomes': [],
+                'blockers': ['USD_ORIGINAL_BINDING_INVALID'], 'terminal_receipt_hash': 'a' * 64}
+        self.assertEqual(classify_result(body)['detail'], 'TERMINAL_RECEIPT_UNVERIFIED')
