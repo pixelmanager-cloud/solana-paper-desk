@@ -690,7 +690,8 @@ class UnitTemplateTests(unittest.TestCase):
                     'desk-paper-entry-dispatcher.service', 'desk-paper-entry-dispatcher.timer', 'desk-paper-held-cycle.service',
                     'desk-paper-held-cycle.timer', 'desk-paper-monitor.service', 'desk-paper-monitor.timer',
                     'desk-decisions.service', 'desk-decisions.timer', 'desk-healthcheck.service', 'desk-healthcheck.timer',
-                    'desk-notify-daily.service', 'desk-notify-daily.timer'}
+                    'desk-notify-daily.service', 'desk-notify-daily.timer',
+                    'desk-held-watcher.service'}   # T28 adds the held watcher
         self.assertEqual(set(self.units), expected)
         self.assertEqual(set(healthcheck.UNITS) - set(self.units), set())
 
