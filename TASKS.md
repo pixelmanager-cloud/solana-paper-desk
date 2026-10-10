@@ -200,6 +200,13 @@ Remove the `expectedFailure` decorators from the T09 tests that this fixes; they
 
 ---
 
+**Coordinator addendum (T01 review, 2026-10-11) — also in T22's scope:**
+- **(HIGH) Store-wide page cap latch.** `desk/paper_cycle_no_entry.py` `_index` (~:112-116) counts ALL evidence `pages` and raises above 4096 pages or 256 MB. `run_once` maps that to `OBSERVATION_RECOVERY_REQUIRED`, which latches the whole store after roughly 200 rejections (about a day). Index attempts per scan, never scan the whole store, and never latch on a count bound. Coordinate with T24 F7, which has the same pattern in `history_preparation_rejection`.
+- **(MED) Producer diagnostics allow-list.** `MARKET_PRODUCER_BLOCKED` accepts any non-empty producer diagnostics (`_check_result` ~:152-155). Binding/integrity producer codes (`COORDINATOR_TARGET_BINDING_MISMATCH`, `COLLECTOR_SOURCE_BINDING_OR_CONTENT_INVALID`, `SOL_USD_TRUSTED_INPUT_INVALID`, ...) must stay category (b). Add an explicit allow-list of normal producer codes; anything else stays latched.
+- **(MED) `history_first` path.** `run_once` calls `paper_history_preparation.prepare` (`paper_cycle.py` ~:493-498). A `CycleBlocked` from `_history` (FEATURE_HISTORY_PAGE_LIMIT, budget exhaustion) escapes and leaves prepare's NULL pass. Cover it.
+
+---
+
 ## T23 — EXIT_ONLY stickiness + orphaned pacing slot (from T09 audit F5, F6)
 STATUS: OPEN
 DEPENDS: branch `cloud/T08` has a `DONE T08:` commit
