@@ -1,0 +1,1948 @@
+{
+ "ledger": {
+  "events": [
+   [
+    1,
+    "paper-cycle:init:v1",
+    0,
+    {
+     "actor": "paper_monitor",
+     "event_id": "paper-cycle:init:v1",
+     "kind": "clock",
+     "schema_version": 1,
+     "ts": 0
+    },
+    "<RANDOM_ID>"
+   ],
+   [
+    2,
+    "paper-market:<RANDOM_ID>",
+    100000,
+    {
+     "bundle_pct": null,
+     "cluster_pct": null,
+     "danger": false,
+     "data_healthy": true,
+     "dev_launches_7d": null,
+     "dev_pct": null,
+     "drawdown_from_high": "0",
+     "event_id": "paper-market:<RANDOM_ID>",
+     "extensions_safe": true,
+     "flow": null,
+     "flow_at": 99999,
+     "flow_confirmed": false,
+     "freeze_revoked": true,
+     "fresh_wallet_ratio": null,
+     "graduated": true,
+     "graduated_at": 99400,
+     "holder_at": null,
+     "kind": "market",
+     "lp_verified": true,
+     "manip_flow": null,
+     "manip_safety": null,
+     "market_cap_usd": "100000.0000",
+     "mint": "US517G5965aydkZ46HS38QLi7UQiSojurfbQfKCELFx",
+     "mint_revoked": true,
+     "momentum_at": 99999,
+     "net_buy_ratio": "1",
+     "paper_experimental": {
+      "mode": "PAPER_EXPERIMENTAL",
+      "ownership_unknowns": {
+       "bundle_pct": {
+        "reasons": [
+         "CURRENT_OWNERSHIP_HISTORY_MEASUREMENT_UNAVAILABLE"
+        ],
+        "status": "UNKNOWN"
+       },
+       "cluster_pct": {
+        "reasons": [
+         "CURRENT_OWNERSHIP_HISTORY_MEASUREMENT_UNAVAILABLE"
+        ],
+        "status": "UNKNOWN"
+       },
+       "dev_launches_7d": {
+        "reasons": [
+         "CURRENT_OWNERSHIP_HISTORY_MEASUREMENT_UNAVAILABLE"
+        ],
+        "status": "UNKNOWN"
+       },
+       "dev_pct": {
+        "reasons": [
+         "CURRENT_OWNERSHIP_HISTORY_MEASUREMENT_UNAVAILABLE"
+        ],
+        "status": "UNKNOWN"
+       },
+       "fresh_wallet_ratio": {
+        "reasons": [
+         "CURRENT_OWNERSHIP_HISTORY_MEASUREMENT_UNAVAILABLE"
+        ],
+        "status": "UNKNOWN"
+       },
+       "manip_safety": {
+        "reasons": [
+         "CURRENT_OWNERSHIP_HISTORY_MEASUREMENT_UNAVAILABLE"
+        ],
+        "status": "UNKNOWN"
+       },
+       "top10_pct": {
+        "reasons": [
+         "CURRENT_OWNERSHIP_HISTORY_MEASUREMENT_UNAVAILABLE"
+        ],
+        "status": "UNKNOWN"
+       }
+      },
+      "policy_version": 3,
+      "risk_flag": "UNRESOLVED_OWNERSHIP_HISTORY"
+     },
+     "paper_fee_assumption": {
+      "pool_fee_bps": "25",
+      "status": "MODEL_ASSUMPTION_NOT_FEE_PROOF"
+     },
+     "paper_quote": {
+      "direction": "buy",
+      "estimated_output_raw": 1000000,
+      "execution_status": "EXECUTION_UNVERIFIED",
+      "input_raw": 10000000,
+      "minimum_output_raw": 990000,
+      "observed_at": 100000,
+      "source_hash": "<RANDOM_ID>"
+     },
+     "paper_signal_profile": {
+      "feature_manifest_hash": "8c9b9689c91f3fcd8ddcfef8756777513a4a14632aca92e59c1c884665889d6e",
+      "formulas": {
+       "buyer_volume_concentration_proxy_v1": "max(wallet_buy_quote)/buy_quote",
+       "directional_flow_proxy_v1": "100*buy_quote/total_quote",
+       "same_wallet_churn_proxy_v1": "sum(2*min(wallet_buy_quote,wallet_sell_quote))/total_quote"
+      },
+      "history_hashes": [
+       "83185fa362eff28dc76cd1e60e975e7ae9898b997c3902a77648a414062e0d92",
+       "eadec14a0612d0e0705397849c04edc876756b046775c96aed093b01823b346a"
+      ],
+      "holder_freshness": "UNKNOWN_OMITTED",
+      "limitations": [
+       "PROVIDER_DECLARED_WINDOW_NOT_CHAIN_AUTHENTICATION",
+       "CHURN_IS_NOT_PROOF_OF_WASH_OR_COMMON_OWNERSHIP",
+       "BUYER_CONCENTRATION_IS_NOT_MANIPULATION_PROOF",
+       "QUOTE_SIMULATION_EXECUTION_UNVERIFIED"
+      ],
+      "measurements": {
+       "buyer_volume_concentration_proxy_v1": {
+        "blockers": [],
+        "observed_at": 99999,
+        "status": "MEASURED_WINDOW",
+        "value": "0.025"
+       },
+       "directional_flow_proxy_v1": {
+        "blockers": [],
+        "observed_at": 99999,
+        "status": "MEASURED_WINDOW",
+        "value": "100"
+       },
+       "drawdown_from_high": {
+        "blockers": [],
+        "observed_at": 99999,
+        "status": "MEASURED_WINDOW",
+        "value": "0"
+       },
+       "net_buy_ratio": {
+        "blockers": [],
+        "observed_at": 99999,
+        "status": "MEASURED_WINDOW",
+        "value": "1"
+       },
+       "same_wallet_churn_proxy_v1": {
+        "blockers": [],
+        "observed_at": 99999,
+        "status": "MEASURED_WINDOW",
+        "value": "0"
+       },
+       "unique_buyers_5m": {
+        "blockers": [],
+        "observed_at": 99999,
+        "status": "MEASURED_WINDOW",
+        "value": 40
+       },
+       "volume_vs_liq": {
+        "blockers": [],
+        "observed_at": 99999,
+        "status": "MEASURED_WINDOW",
+        "value": "4"
+       }
+      },
+      "name": "observable-flow-churn-concentration-v1",
+      "source_hashes": [
+       "082789ceaa47d69b87f23f4226be6af2643469b0db548b221ff58841dd9311fc",
+       "13b1e60a2e7bda3cefacce541ee962244672c05d7fff63d90e791900964b3a4b",
+       "15da80af5a7f246113d3e2a60b2ef20778106a61962a5b4ce0267411d9c468ec",
+       "1664e6db6333839963f43b4710aafc206f09fb7d6e590835c891794b491145ea",
+       "19dadbb40fe6d29cf5a4f1812b3fcfe14049bea14eb7691f940242158a4f268a",
+       "1a24bc5720bcab83813c23e0502507cf11054c14fac05673bf4d58231e61ded0",
+       "23a73346afefc4058603d9296eb7c8c4e83a1c1713c833c38809c822ae000642",
+       "267238a83e7edc72b4367a8e16e26cd9619f2d36402111592328ae4c30747b61",
+       "2d00389d5836c2085b6ad9385d7e2e619f12702b2701bb638f38e4990ace2ad7",
+       "331ecc9355b502cfeb757bbbb3158d499b9456c33fa68369392db042a3df5927",
+       "3eae00f96984047501abc0f8aab75408aa0dc591c65c5a9b8741bcec14d0daf8",
+       "41b7766ca74b9878ce735ba9729a4ffbb36af5fa3d2f806303811309dbfed97e",
+       "52b2823ddae8dfe6d99ff0442629441df1395be518483d701cc0d1f9224d9b93",
+       "6561ad17bdf92df26897aeb64266380b76f10f84da1ae9bdeab36b96661449e6",
+       "65878baf47a2395523039c64b9870d06a3e9322836c920f285fd33c23e954f00",
+       "675158c70841b1bad90a26f78385c32a63a66db675c6c09feac30a00fbd68800",
+       "70a6d2038a8bd21ce7c8a00d46b19640fd71c0e5b7b22dfaa7090e9076132d5b",
+       "76579cc91f3a321513814e50a7a2510e2bbf789c8265f12308765dea8a7d383a",
+       "7893194ee54d92b4e9cdb1c6de727655d39de0c870c99269497ec88a5c3d08e8",
+       "7acac455d528f434cbdefe078de281f064b9c6657c432c42205867e86af98315",
+       "7fc33f45f32adf8d537feb3e7d8accbcd39b8fa88e5bdb1874d90d1bf0b2f4f0",
+       "865ccb814fe6939006489c36bbca82916608568465ac8398acad663bbb6633fd",
+       "97597d945c039a9a999348ab29eb2137b1329ca5acfc542814c5ed56e300203d",
+       "99b9c87452acb9f2f7fd229104fdce9931d465c83605b43f5d23c2b629d0a166",
+       "a5bacfbec11ab5a8d32ecb57d570f3d59b5052d646212a2c16f4eb4325a53c66",
+       "b6db13f00b6071a1bc61fa7c1d08539878a447b6e377ea1873aa4f28ea2d1c63",
+       "b8c2ad199d494ce702f92b4f20107e363571399ded270c552bdb4f4b0d8dc48f",
+       "b97785a5350b3aee1547c8b6460fb825bd9492e3afbb2e0ae13a48a0b4596411",
+       "bb1a5ee432ea70d78e453c25b3cf5d9077100d24e41b763a179ec3858f2f18d5",
+       "c104fed68bddc765b32c25922e8e6cdb86f7a426f1ae04b0670ae4dae7c6038b",
+       "c13881535fa81cd53d754632845f5b774875c0bf1d131537693d796005071f13",
+       "c9ce1aed895b06cdc09fe0afc73311783b3106ebf14e79ec13261513d2558c47",
+       "d12c73469f2d0b9f40ce9ce7215c241d7bdb5ba0730560500092534ca430d242",
+       "d6b2657ef6a076b28d0fa546d319e11b8314a3224d7dd6c879d8b865d2f49ff0",
+       "e201e12538f27275ff2d8c24eb814f248334352c25dd1488b69b26e6f984e8c1",
+       "eec5a3200c0368bf0845c7dcdee8f19252e820168fb8c416efe05c238c7dc457",
+       "f1b4cf6ed3809997c3906831c6f80f0a16d4eb1f58fa079d386844840e2ad61b",
+       "f4806c1acb37d125267375cdb41c9992fc791e705dbbc483e7cc62b4e328acc0",
+       "fa62e4356d9e7d47d84143dbf296a07d7c26db8f5b8f7b16fc5d3cbc44bf42b0",
+       "fb0f1d373cb4b3eaa0ea1dbd1ab95833ce271fbe8fca411e0c241be0af89b5e1"
+      ],
+      "version": 1,
+      "window": {
+       "blockers": [],
+       "coverage_complete": true,
+       "end_inclusive": 100000,
+       "observed_end": 99999,
+       "observed_start": 99999,
+       "start_inclusive": 99700
+      },
+      "window_identity": {
+       "captured_as_of": 100000,
+       "decision_at": 100000,
+       "gap_seconds": 0,
+       "scope": "CAPTURED_WINDOW_NOT_CONTINUOUS_COVERAGE"
+      }
+     },
+     "paper_source_evidence": {
+      "collector_refs": [
+       "<RANDOM_ID>",
+       "<RANDOM_ID>",
+       "<RANDOM_ID>",
+       "<RANDOM_ID>",
+       "<RANDOM_ID>",
+       "<RANDOM_ID>"
+      ],
+      "mint_at": 100000,
+      "mint_hash": "296aaef1bd6516d6c5cb898edd4cee6c4b28ab7d06905811187fc05e0d7cd4aa",
+      "mint_slot": 100,
+      "pool_at": 100000,
+      "pool_hash": "5463bf193c8df5373366f6f512d71d0cb73988a1b58457d4c51ba52340441aae",
+      "pool_slot": 101,
+      "quote_at": 100000,
+      "quote_hash": "<RANDOM_ID>",
+      "scan_id": "<RANDOM_ID>",
+      "source_authentication": "COORDINATOR_ASSERTED_NOT_CRYPTOGRAPHIC",
+      "usd": {
+       "acquired_at": 100000,
+       "block_id": 100,
+       "payload_sha256": "2fa914d3ad3c97889cf55efa5bc845fe62ad141abefcf2ed561fcf1da63c753d",
+       "price_at": 99999,
+       "request_sha256": "c02388415c9673adc8bd782f507fdd20421f5a7069f08bc1c12ef3d11953a819",
+       "trusted_slot_bounds": {
+        "block_times": [
+         [
+          100,
+          99999
+         ]
+        ],
+        "max_slot": 110,
+        "min_slot": 78,
+        "now": 100000,
+        "observed_at": 100000
+       },
+       "valuation_basis": "CURRENT_RESERVE_SPOT_TIMES_SUPPLY_NOT_EXECUTABLE_PRICE"
+      },
+      "valuation_supply_at": 100000,
+      "valuation_supply_raw": "10000000000000",
+      "valuation_supply_slot": 101
+     },
+     "pool": "3GVnYDHddtPRfxyn6MrwQbw2uPd4pgNniHAN7ve2Zrc1",
+     "pool_fee_bps": "25",
+     "price_at": 99999,
+     "provenance": "SYNTHETIC_TEST_ONLY",
+     "reserve_sol": "100.000000000",
+     "reserve_tokens": "1000000.000000",
+     "risk_flags": [
+      "EXECUTION_UNVERIFIED",
+      "OBSERVABLE_PROXIES_NOT_SAFETY_PROOF",
+      "UNRESOLVED_OWNERSHIP_HISTORY"
+     ],
+     "route_available": true,
+     "schema_version": 1,
+     "sol_usd": "100",
+     "taker": "FzULv8pR9Rd7cyVKjVkzmJ1eqEmgwDnzjYyNUcEJtoG9",
+     "token_evidence": {
+      "account": {
+       "data": [
+        "AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAKByThgJAAAGAQAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA==",
+        "base64"
+       ],
+       "executable": false,
+       "owner": "TokenkegQfeZyiNwAJbNbGKPFXCWuBvf9Ss623VQ5DA"
+      },
+      "mint": "US517G5965aydkZ46HS38QLi7UQiSojurfbQfKCELFx",
+      "observed_at": 100000,
+      "original_json": {
+       "account": {
+        "data": [
+         "AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAKByThgJAAAGAQAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA==",
+         "base64"
+        ],
+        "executable": false,
+        "owner": "TokenkegQfeZyiNwAJbNbGKPFXCWuBvf9Ss623VQ5DA"
+       },
+       "mint": "US517G5965aydkZ46HS38QLi7UQiSojurfbQfKCELFx",
+       "observed_at": 100000,
+       "original_rpc_observation": {
+        "acquired_at": 100000,
+        "method": "getAccountInfo",
+        "params": [
+         "US517G5965aydkZ46HS38QLi7UQiSojurfbQfKCELFx",
+         {
+          "commitment": "confirmed",
+          "encoding": "base64"
+         }
+        ],
+        "result": {
+         "context": {
+          "slot": 100
+         },
+         "value": {
+          "data": [
+           "AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAKByThgJAAAGAQAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA==",
+           "base64"
+          ],
+          "executable": false,
+          "owner": "TokenkegQfeZyiNwAJbNbGKPFXCWuBvf9Ss623VQ5DA"
+         }
+        },
+        "source_id": "helius-mainnet-paper-confirmed-v1",
+        "started_at": 100000
+       },
+       "slot": 100
+      },
+      "slot": 100,
+      "source_hash": "<RANDOM_ID>",
+      "source_id": "helius-mainnet-paper-confirmed-v1"
+     },
+     "top10_pct": null,
+     "ts": 100000,
+     "unique_buyers_5m": 40,
+     "venue": "pumpswap",
+     "volume_vs_liq": "4",
+     "wash_score": null
+    },
+    "<RANDOM_ID>"
+   ]
+  ],
+  "metadata_keys": [
+   "config",
+   "config_hash",
+   "implementation_hash",
+   "paper_cycle"
+  ],
+  "outcomes": [
+   [
+    1,
+    "paper-market:<RANDOM_ID>",
+    {
+     "amount_sol": "0.010000000",
+     "bundle_audit": {
+      "decision": "UNKNOWN",
+      "entry_authorized": false,
+      "ownership_complete": false,
+      "reasons": [
+       "BUNDLE_HISTORY_UNAVAILABLE"
+      ],
+      "risk_flags": [
+       "UNRESOLVED_OWNERSHIP_HISTORY"
+      ],
+      "source_authenticated": false,
+      "status": "UNKNOWN"
+     },
+     "entry_policy": {
+      "confidence": "0.962500",
+      "entry": "98.500000",
+      "entry_authorized": false,
+      "entry_basis": "FLOW_MOMENTUM_30_25",
+      "event_hash": "<RANDOM_ID>",
+      "flow": "100",
+      "manipulation_penalty_basis": [
+       "buyer_volume_concentration_proxy_v1"
+      ],
+      "manipulation_safety": {
+       "reasons": [
+        "CURRENT_OWNERSHIP_HISTORY_MEASUREMENT_UNAVAILABLE"
+       ],
+       "status": "UNKNOWN",
+       "value": null
+      },
+      "mode": "PAPER_EXPERIMENTAL",
+      "momentum": "100.00",
+      "omitted_components": [
+       "bundle_pct",
+       "cluster_pct",
+       "dev_launches_7d",
+       "dev_pct",
+       "fresh_wallet_ratio",
+       "manip_safety",
+       "top10_pct"
+      ],
+      "ownership_complete": false,
+      "ownership_component": {
+       "measured_fields": {},
+       "status": "OMITTED",
+       "unknown_fields": {
+        "bundle_pct": {
+         "reasons": [
+          "CURRENT_OWNERSHIP_HISTORY_MEASUREMENT_UNAVAILABLE"
+         ],
+         "status": "UNKNOWN"
+        },
+        "cluster_pct": {
+         "reasons": [
+          "CURRENT_OWNERSHIP_HISTORY_MEASUREMENT_UNAVAILABLE"
+         ],
+         "status": "UNKNOWN"
+        },
+        "dev_launches_7d": {
+         "reasons": [
+          "CURRENT_OWNERSHIP_HISTORY_MEASUREMENT_UNAVAILABLE"
+         ],
+         "status": "UNKNOWN"
+        },
+        "dev_pct": {
+         "reasons": [
+          "CURRENT_OWNERSHIP_HISTORY_MEASUREMENT_UNAVAILABLE"
+         ],
+         "status": "UNKNOWN"
+        },
+        "fresh_wallet_ratio": {
+         "reasons": [
+          "CURRENT_OWNERSHIP_HISTORY_MEASUREMENT_UNAVAILABLE"
+         ],
+         "status": "UNKNOWN"
+        },
+        "manip_safety": {
+         "reasons": [
+          "CURRENT_OWNERSHIP_HISTORY_MEASUREMENT_UNAVAILABLE"
+         ],
+         "status": "UNKNOWN"
+        },
+        "top10_pct": {
+         "reasons": [
+          "CURRENT_OWNERSHIP_HISTORY_MEASUREMENT_UNAVAILABLE"
+         ],
+         "status": "UNKNOWN"
+        }
+       }
+      },
+      "ownership_verified": false,
+      "policy_version": 3,
+      "risk_flags": [
+       "EXECUTION_UNVERIFIED",
+       "OBSERVABLE_PROXIES_NOT_SAFETY_PROOF",
+       "UNRESOLVED_OWNERSHIP_HISTORY"
+      ],
+      "safety": null,
+      "score_version": "paper-observable-flow-momentum-v3",
+      "signal_profile": {
+       "feature_manifest_hash": "8c9b9689c91f3fcd8ddcfef8756777513a4a14632aca92e59c1c884665889d6e",
+       "formulas": {
+        "buyer_volume_concentration_proxy_v1": "max(wallet_buy_quote)/buy_quote",
+        "directional_flow_proxy_v1": "100*buy_quote/total_quote",
+        "same_wallet_churn_proxy_v1": "sum(2*min(wallet_buy_quote,wallet_sell_quote))/total_quote"
+       },
+       "history_hashes": [
+        "83185fa362eff28dc76cd1e60e975e7ae9898b997c3902a77648a414062e0d92",
+        "eadec14a0612d0e0705397849c04edc876756b046775c96aed093b01823b346a"
+       ],
+       "holder_freshness": "UNKNOWN_OMITTED",
+       "limitations": [
+        "PROVIDER_DECLARED_WINDOW_NOT_CHAIN_AUTHENTICATION",
+        "CHURN_IS_NOT_PROOF_OF_WASH_OR_COMMON_OWNERSHIP",
+        "BUYER_CONCENTRATION_IS_NOT_MANIPULATION_PROOF",
+        "QUOTE_SIMULATION_EXECUTION_UNVERIFIED"
+       ],
+       "measurements": {
+        "buyer_volume_concentration_proxy_v1": {
+         "blockers": [],
+         "observed_at": 99999,
+         "status": "MEASURED_WINDOW",
+         "value": "0.025"
+        },
+        "directional_flow_proxy_v1": {
+         "blockers": [],
+         "observed_at": 99999,
+         "status": "MEASURED_WINDOW",
+         "value": "100"
+        },
+        "drawdown_from_high": {
+         "blockers": [],
+         "observed_at": 99999,
+         "status": "MEASURED_WINDOW",
+         "value": "0"
+        },
+        "net_buy_ratio": {
+         "blockers": [],
+         "observed_at": 99999,
+         "status": "MEASURED_WINDOW",
+         "value": "1"
+        },
+        "same_wallet_churn_proxy_v1": {
+         "blockers": [],
+         "observed_at": 99999,
+         "status": "MEASURED_WINDOW",
+         "value": "0"
+        },
+        "unique_buyers_5m": {
+         "blockers": [],
+         "observed_at": 99999,
+         "status": "MEASURED_WINDOW",
+         "value": 40
+        },
+        "volume_vs_liq": {
+         "blockers": [],
+         "observed_at": 99999,
+         "status": "MEASURED_WINDOW",
+         "value": "4"
+        }
+       },
+       "name": "observable-flow-churn-concentration-v1",
+       "source_hashes": [
+        "082789ceaa47d69b87f23f4226be6af2643469b0db548b221ff58841dd9311fc",
+        "13b1e60a2e7bda3cefacce541ee962244672c05d7fff63d90e791900964b3a4b",
+        "15da80af5a7f246113d3e2a60b2ef20778106a61962a5b4ce0267411d9c468ec",
+        "1664e6db6333839963f43b4710aafc206f09fb7d6e590835c891794b491145ea",
+        "19dadbb40fe6d29cf5a4f1812b3fcfe14049bea14eb7691f940242158a4f268a",
+        "1a24bc5720bcab83813c23e0502507cf11054c14fac05673bf4d58231e61ded0",
+        "23a73346afefc4058603d9296eb7c8c4e83a1c1713c833c38809c822ae000642",
+        "267238a83e7edc72b4367a8e16e26cd9619f2d36402111592328ae4c30747b61",
+        "2d00389d5836c2085b6ad9385d7e2e619f12702b2701bb638f38e4990ace2ad7",
+        "331ecc9355b502cfeb757bbbb3158d499b9456c33fa68369392db042a3df5927",
+        "3eae00f96984047501abc0f8aab75408aa0dc591c65c5a9b8741bcec14d0daf8",
+        "41b7766ca74b9878ce735ba9729a4ffbb36af5fa3d2f806303811309dbfed97e",
+        "52b2823ddae8dfe6d99ff0442629441df1395be518483d701cc0d1f9224d9b93",
+        "6561ad17bdf92df26897aeb64266380b76f10f84da1ae9bdeab36b96661449e6",
+        "65878baf47a2395523039c64b9870d06a3e9322836c920f285fd33c23e954f00",
+        "675158c70841b1bad90a26f78385c32a63a66db675c6c09feac30a00fbd68800",
+        "70a6d2038a8bd21ce7c8a00d46b19640fd71c0e5b7b22dfaa7090e9076132d5b",
+        "76579cc91f3a321513814e50a7a2510e2bbf789c8265f12308765dea8a7d383a",
+        "7893194ee54d92b4e9cdb1c6de727655d39de0c870c99269497ec88a5c3d08e8",
+        "7acac455d528f434cbdefe078de281f064b9c6657c432c42205867e86af98315",
+        "7fc33f45f32adf8d537feb3e7d8accbcd39b8fa88e5bdb1874d90d1bf0b2f4f0",
+        "865ccb814fe6939006489c36bbca82916608568465ac8398acad663bbb6633fd",
+        "97597d945c039a9a999348ab29eb2137b1329ca5acfc542814c5ed56e300203d",
+        "99b9c87452acb9f2f7fd229104fdce9931d465c83605b43f5d23c2b629d0a166",
+        "a5bacfbec11ab5a8d32ecb57d570f3d59b5052d646212a2c16f4eb4325a53c66",
+        "b6db13f00b6071a1bc61fa7c1d08539878a447b6e377ea1873aa4f28ea2d1c63",
+        "b8c2ad199d494ce702f92b4f20107e363571399ded270c552bdb4f4b0d8dc48f",
+        "b97785a5350b3aee1547c8b6460fb825bd9492e3afbb2e0ae13a48a0b4596411",
+        "bb1a5ee432ea70d78e453c25b3cf5d9077100d24e41b763a179ec3858f2f18d5",
+        "c104fed68bddc765b32c25922e8e6cdb86f7a426f1ae04b0670ae4dae7c6038b",
+        "c13881535fa81cd53d754632845f5b774875c0bf1d131537693d796005071f13",
+        "c9ce1aed895b06cdc09fe0afc73311783b3106ebf14e79ec13261513d2558c47",
+        "d12c73469f2d0b9f40ce9ce7215c241d7bdb5ba0730560500092534ca430d242",
+        "d6b2657ef6a076b28d0fa546d319e11b8314a3224d7dd6c879d8b865d2f49ff0",
+        "e201e12538f27275ff2d8c24eb814f248334352c25dd1488b69b26e6f984e8c1",
+        "eec5a3200c0368bf0845c7dcdee8f19252e820168fb8c416efe05c238c7dc457",
+        "f1b4cf6ed3809997c3906831c6f80f0a16d4eb1f58fa079d386844840e2ad61b",
+        "f4806c1acb37d125267375cdb41c9992fc791e705dbbc483e7cc62b4e328acc0",
+        "fa62e4356d9e7d47d84143dbf296a07d7c26db8f5b8f7b16fc5d3cbc44bf42b0",
+        "fb0f1d373cb4b3eaa0ea1dbd1ab95833ce271fbe8fca411e0c241be0af89b5e1"
+       ],
+       "version": 1,
+       "window": {
+        "blockers": [],
+        "coverage_complete": true,
+        "end_inclusive": 100000,
+        "observed_end": 99999,
+        "observed_start": 99999,
+        "start_inclusive": 99700
+       },
+       "window_identity": {
+        "captured_as_of": 100000,
+        "decision_at": 100000,
+        "gap_seconds": 0,
+        "scope": "CAPTURED_WINDOW_NOT_CONTINUOUS_COVERAGE"
+       }
+      },
+      "source_authenticated": false
+     },
+     "estimated_cost_fraction": "0.03995",
+     "execution_status": "EXECUTION_UNVERIFIED",
+     "fee_sol": "0.00005",
+     "mint": "US517G5965aydkZ46HS38QLi7UQiSojurfbQfKCELFx",
+     "provenance": "SYNTHETIC_TEST_ONLY",
+     "quantity": "0.985050",
+     "quote_execution": {
+      "actual_fill_verified": false,
+      "assumptions": {
+       "additional_adverse_slippage_bps": 50,
+       "embedded_pool_fees_and_impact": "ALREADY_IN_QUOTE",
+       "network_fee_sol": "0.00005",
+       "output_basis": "PROVIDER_MINIMUM_PLUS_ADVERSE_HAIRCUT_RAW_FLOOR",
+       "rent_and_actual_transaction_fees": "UNVERIFIED"
+      },
+      "direction": "buy",
+      "estimated_output_raw": 1000000,
+      "input_raw": 10000000,
+      "mint_decimals": 6,
+      "mint_hash": "296aaef1bd6516d6c5cb898edd4cee6c4b28ab7d06905811187fc05e0d7cd4aa",
+      "mint_observed_at": 100000,
+      "mint_source_id": "helius-mainnet-paper-confirmed-v1",
+      "original_mint_json": {
+       "account": {
+        "data": [
+         "AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAKByThgJAAAGAQAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA==",
+         "base64"
+        ],
+        "executable": false,
+        "owner": "TokenkegQfeZyiNwAJbNbGKPFXCWuBvf9Ss623VQ5DA"
+       },
+       "mint": "US517G5965aydkZ46HS38QLi7UQiSojurfbQfKCELFx",
+       "observed_at": 100000,
+       "original_rpc_observation": {
+        "acquired_at": 100000,
+        "method": "getAccountInfo",
+        "params": [
+         "US517G5965aydkZ46HS38QLi7UQiSojurfbQfKCELFx",
+         {
+          "commitment": "confirmed",
+          "encoding": "base64"
+         }
+        ],
+        "result": {
+         "context": {
+          "slot": 100
+         },
+         "value": {
+          "data": [
+           "AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAKByThgJAAAGAQAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA==",
+           "base64"
+          ],
+          "executable": false,
+          "owner": "TokenkegQfeZyiNwAJbNbGKPFXCWuBvf9Ss623VQ5DA"
+         }
+        },
+        "source_id": "helius-mainnet-paper-confirmed-v1",
+        "started_at": 100000
+       },
+       "slot": 100
+      },
+      "original_quote_json": {
+       "evidence_hash": "<RANDOM_ID>",
+       "kind": "unsigned_route_probe",
+       "notice": "No signing or submission. Quote is not a guaranteed fill.",
+       "observed_at": 100000,
+       "request": {
+        "amount": "10000000",
+        "inputMint": "So11111111111111111111111111111111111111112",
+        "outputMint": "US517G5965aydkZ46HS38QLi7UQiSojurfbQfKCELFx",
+        "slippageBps": "100",
+        "taker": "FzULv8pR9Rd7cyVKjVkzmJ1eqEmgwDnzjYyNUcEJtoG9",
+        "transactionVersion": "0"
+       },
+       "response": {
+        "inAmount": "10000000",
+        "inputMint": "So11111111111111111111111111111111111111112",
+        "otherAmountThreshold": "990000",
+        "outAmount": "1000000",
+        "outputMint": "US517G5965aydkZ46HS38QLi7UQiSojurfbQfKCELFx",
+        "routePlan": [
+         {
+          "percent": 100,
+          "swapInfo": {
+           "ammKey": "3GVnYDHddtPRfxyn6MrwQbw2uPd4pgNniHAN7ve2Zrc1",
+           "inAmount": "10000000",
+           "inputMint": "So11111111111111111111111111111111111111112",
+           "outAmount": "1000000",
+           "outputMint": "US517G5965aydkZ46HS38QLi7UQiSojurfbQfKCELFx"
+          }
+         }
+        ],
+        "slippageBps": 100,
+        "swapMode": "ExactIn"
+       }
+      },
+      "provider_minimum_output_raw": 990000,
+      "quote_hash": "<RANDOM_ID>",
+      "quote_observed_at": 100000,
+      "quote_source_id": "jupiter-swap-v2-build-paper-v1",
+      "risk_flags": [
+       "QUOTE_NOT_FILL",
+       "ROUTE_POLICY_UNKNOWN",
+       "OWNERSHIP_HISTORY_UNKNOWN",
+       "STRATEGY_FEATURES_UNKNOWN"
+      ],
+      "simulated_output_raw": 985050,
+      "source_authenticated": false,
+      "status": "EXECUTION_UNVERIFIED",
+      "transaction_verified": false,
+      "version": 1
+     },
+     "reason": "ENTRY",
+     "scores": {
+      "entry": "98.500000",
+      "flow": "100",
+      "momentum": "100.00",
+      "safety": null
+     },
+     "side": "buy",
+     "simulation": "quote_minimum_with_adverse_slippage",
+     "type": "fill"
+    }
+   ]
+  ],
+  "state": [
+   {
+    "cash": "4.989950000",
+    "cooldowns": {},
+    "day": "1970-01-02",
+    "day_gross_losses": "0",
+    "day_start_equity": "5",
+    "last_entry_minute": 1666,
+    "last_ts": 100000,
+    "loss_streak": 0,
+    "max_drawdown": "0.000049900",
+    "mode": "RUNNING",
+    "peak_equity": "5",
+    "positions": {
+     "US517G5965aydkZ46HS38QLi7UQiSojurfbQfKCELFx": {
+      "cost_left": "0.010050000",
+      "entry_event_id": "paper-market:<RANDOM_ID>",
+      "entry_policy": {
+       "confidence": "0.962500",
+       "entry": "98.500000",
+       "entry_authorized": false,
+       "entry_basis": "FLOW_MOMENTUM_30_25",
+       "event_hash": "<RANDOM_ID>",
+       "flow": "100",
+       "manipulation_penalty_basis": [
+        "buyer_volume_concentration_proxy_v1"
+       ],
+       "manipulation_safety": {
+        "reasons": [
+         "CURRENT_OWNERSHIP_HISTORY_MEASUREMENT_UNAVAILABLE"
+        ],
+        "status": "UNKNOWN",
+        "value": null
+       },
+       "mode": "PAPER_EXPERIMENTAL",
+       "momentum": "100.00",
+       "omitted_components": [
+        "bundle_pct",
+        "cluster_pct",
+        "dev_launches_7d",
+        "dev_pct",
+        "fresh_wallet_ratio",
+        "manip_safety",
+        "top10_pct"
+       ],
+       "ownership_complete": false,
+       "ownership_component": {
+        "measured_fields": {},
+        "status": "OMITTED",
+        "unknown_fields": {
+         "bundle_pct": {
+          "reasons": [
+           "CURRENT_OWNERSHIP_HISTORY_MEASUREMENT_UNAVAILABLE"
+          ],
+          "status": "UNKNOWN"
+         },
+         "cluster_pct": {
+          "reasons": [
+           "CURRENT_OWNERSHIP_HISTORY_MEASUREMENT_UNAVAILABLE"
+          ],
+          "status": "UNKNOWN"
+         },
+         "dev_launches_7d": {
+          "reasons": [
+           "CURRENT_OWNERSHIP_HISTORY_MEASUREMENT_UNAVAILABLE"
+          ],
+          "status": "UNKNOWN"
+         },
+         "dev_pct": {
+          "reasons": [
+           "CURRENT_OWNERSHIP_HISTORY_MEASUREMENT_UNAVAILABLE"
+          ],
+          "status": "UNKNOWN"
+         },
+         "fresh_wallet_ratio": {
+          "reasons": [
+           "CURRENT_OWNERSHIP_HISTORY_MEASUREMENT_UNAVAILABLE"
+          ],
+          "status": "UNKNOWN"
+         },
+         "manip_safety": {
+          "reasons": [
+           "CURRENT_OWNERSHIP_HISTORY_MEASUREMENT_UNAVAILABLE"
+          ],
+          "status": "UNKNOWN"
+         },
+         "top10_pct": {
+          "reasons": [
+           "CURRENT_OWNERSHIP_HISTORY_MEASUREMENT_UNAVAILABLE"
+          ],
+          "status": "UNKNOWN"
+         }
+        }
+       },
+       "ownership_verified": false,
+       "policy_version": 3,
+       "risk_flags": [
+        "EXECUTION_UNVERIFIED",
+        "OBSERVABLE_PROXIES_NOT_SAFETY_PROOF",
+        "UNRESOLVED_OWNERSHIP_HISTORY"
+       ],
+       "safety": null,
+       "score_version": "paper-observable-flow-momentum-v3",
+       "signal_profile": {
+        "feature_manifest_hash": "8c9b9689c91f3fcd8ddcfef8756777513a4a14632aca92e59c1c884665889d6e",
+        "formulas": {
+         "buyer_volume_concentration_proxy_v1": "max(wallet_buy_quote)/buy_quote",
+         "directional_flow_proxy_v1": "100*buy_quote/total_quote",
+         "same_wallet_churn_proxy_v1": "sum(2*min(wallet_buy_quote,wallet_sell_quote))/total_quote"
+        },
+        "history_hashes": [
+         "83185fa362eff28dc76cd1e60e975e7ae9898b997c3902a77648a414062e0d92",
+         "eadec14a0612d0e0705397849c04edc876756b046775c96aed093b01823b346a"
+        ],
+        "holder_freshness": "UNKNOWN_OMITTED",
+        "limitations": [
+         "PROVIDER_DECLARED_WINDOW_NOT_CHAIN_AUTHENTICATION",
+         "CHURN_IS_NOT_PROOF_OF_WASH_OR_COMMON_OWNERSHIP",
+         "BUYER_CONCENTRATION_IS_NOT_MANIPULATION_PROOF",
+         "QUOTE_SIMULATION_EXECUTION_UNVERIFIED"
+        ],
+        "measurements": {
+         "buyer_volume_concentration_proxy_v1": {
+          "blockers": [],
+          "observed_at": 99999,
+          "status": "MEASURED_WINDOW",
+          "value": "0.025"
+         },
+         "directional_flow_proxy_v1": {
+          "blockers": [],
+          "observed_at": 99999,
+          "status": "MEASURED_WINDOW",
+          "value": "100"
+         },
+         "drawdown_from_high": {
+          "blockers": [],
+          "observed_at": 99999,
+          "status": "MEASURED_WINDOW",
+          "value": "0"
+         },
+         "net_buy_ratio": {
+          "blockers": [],
+          "observed_at": 99999,
+          "status": "MEASURED_WINDOW",
+          "value": "1"
+         },
+         "same_wallet_churn_proxy_v1": {
+          "blockers": [],
+          "observed_at": 99999,
+          "status": "MEASURED_WINDOW",
+          "value": "0"
+         },
+         "unique_buyers_5m": {
+          "blockers": [],
+          "observed_at": 99999,
+          "status": "MEASURED_WINDOW",
+          "value": 40
+         },
+         "volume_vs_liq": {
+          "blockers": [],
+          "observed_at": 99999,
+          "status": "MEASURED_WINDOW",
+          "value": "4"
+         }
+        },
+        "name": "observable-flow-churn-concentration-v1",
+        "source_hashes": [
+         "082789ceaa47d69b87f23f4226be6af2643469b0db548b221ff58841dd9311fc",
+         "13b1e60a2e7bda3cefacce541ee962244672c05d7fff63d90e791900964b3a4b",
+         "15da80af5a7f246113d3e2a60b2ef20778106a61962a5b4ce0267411d9c468ec",
+         "1664e6db6333839963f43b4710aafc206f09fb7d6e590835c891794b491145ea",
+         "19dadbb40fe6d29cf5a4f1812b3fcfe14049bea14eb7691f940242158a4f268a",
+         "1a24bc5720bcab83813c23e0502507cf11054c14fac05673bf4d58231e61ded0",
+         "23a73346afefc4058603d9296eb7c8c4e83a1c1713c833c38809c822ae000642",
+         "267238a83e7edc72b4367a8e16e26cd9619f2d36402111592328ae4c30747b61",
+         "2d00389d5836c2085b6ad9385d7e2e619f12702b2701bb638f38e4990ace2ad7",
+         "331ecc9355b502cfeb757bbbb3158d499b9456c33fa68369392db042a3df5927",
+         "3eae00f96984047501abc0f8aab75408aa0dc591c65c5a9b8741bcec14d0daf8",
+         "41b7766ca74b9878ce735ba9729a4ffbb36af5fa3d2f806303811309dbfed97e",
+         "52b2823ddae8dfe6d99ff0442629441df1395be518483d701cc0d1f9224d9b93",
+         "6561ad17bdf92df26897aeb64266380b76f10f84da1ae9bdeab36b96661449e6",
+         "65878baf47a2395523039c64b9870d06a3e9322836c920f285fd33c23e954f00",
+         "675158c70841b1bad90a26f78385c32a63a66db675c6c09feac30a00fbd68800",
+         "70a6d2038a8bd21ce7c8a00d46b19640fd71c0e5b7b22dfaa7090e9076132d5b",
+         "76579cc91f3a321513814e50a7a2510e2bbf789c8265f12308765dea8a7d383a",
+         "7893194ee54d92b4e9cdb1c6de727655d39de0c870c99269497ec88a5c3d08e8",
+         "7acac455d528f434cbdefe078de281f064b9c6657c432c42205867e86af98315",
+         "7fc33f45f32adf8d537feb3e7d8accbcd39b8fa88e5bdb1874d90d1bf0b2f4f0",
+         "865ccb814fe6939006489c36bbca82916608568465ac8398acad663bbb6633fd",
+         "97597d945c039a9a999348ab29eb2137b1329ca5acfc542814c5ed56e300203d",
+         "99b9c87452acb9f2f7fd229104fdce9931d465c83605b43f5d23c2b629d0a166",
+         "a5bacfbec11ab5a8d32ecb57d570f3d59b5052d646212a2c16f4eb4325a53c66",
+         "b6db13f00b6071a1bc61fa7c1d08539878a447b6e377ea1873aa4f28ea2d1c63",
+         "b8c2ad199d494ce702f92b4f20107e363571399ded270c552bdb4f4b0d8dc48f",
+         "b97785a5350b3aee1547c8b6460fb825bd9492e3afbb2e0ae13a48a0b4596411",
+         "bb1a5ee432ea70d78e453c25b3cf5d9077100d24e41b763a179ec3858f2f18d5",
+         "c104fed68bddc765b32c25922e8e6cdb86f7a426f1ae04b0670ae4dae7c6038b",
+         "c13881535fa81cd53d754632845f5b774875c0bf1d131537693d796005071f13",
+         "c9ce1aed895b06cdc09fe0afc73311783b3106ebf14e79ec13261513d2558c47",
+         "d12c73469f2d0b9f40ce9ce7215c241d7bdb5ba0730560500092534ca430d242",
+         "d6b2657ef6a076b28d0fa546d319e11b8314a3224d7dd6c879d8b865d2f49ff0",
+         "e201e12538f27275ff2d8c24eb814f248334352c25dd1488b69b26e6f984e8c1",
+         "eec5a3200c0368bf0845c7dcdee8f19252e820168fb8c416efe05c238c7dc457",
+         "f1b4cf6ed3809997c3906831c6f80f0a16d4eb1f58fa079d386844840e2ad61b",
+         "f4806c1acb37d125267375cdb41c9992fc791e705dbbc483e7cc62b4e328acc0",
+         "fa62e4356d9e7d47d84143dbf296a07d7c26db8f5b8f7b16fc5d3cbc44bf42b0",
+         "fb0f1d373cb4b3eaa0ea1dbd1ab95833ce271fbe8fca411e0c241be0af89b5e1"
+        ],
+        "version": 1,
+        "window": {
+         "blockers": [],
+         "coverage_complete": true,
+         "end_inclusive": 100000,
+         "observed_end": 99999,
+         "observed_start": 99999,
+         "start_inclusive": 99700
+        },
+        "window_identity": {
+         "captured_as_of": 100000,
+         "decision_at": 100000,
+         "gap_seconds": 0,
+         "scope": "CAPTURED_WINDOW_NOT_CONTINUOUS_COVERAGE"
+        }
+       },
+       "source_authenticated": false
+      },
+      "entry_scores": {
+       "entry": "98.500000",
+       "flow": "100",
+       "momentum": "100.00",
+       "safety": null
+      },
+      "exit_blocked": null,
+      "initial_cost": "0.010050000",
+      "initial_qty": "0.985050",
+      "last_quote_execution": {
+       "actual_fill_verified": false,
+       "assumptions": {
+        "additional_adverse_slippage_bps": 50,
+        "embedded_pool_fees_and_impact": "ALREADY_IN_QUOTE",
+        "network_fee_sol": "0.00005",
+        "output_basis": "PROVIDER_MINIMUM_PLUS_ADVERSE_HAIRCUT_RAW_FLOOR",
+        "rent_and_actual_transaction_fees": "UNVERIFIED"
+       },
+       "direction": "sell",
+       "estimated_output_raw": 10000000,
+       "input_raw": 985050,
+       "mint_decimals": 6,
+       "mint_hash": "296aaef1bd6516d6c5cb898edd4cee6c4b28ab7d06905811187fc05e0d7cd4aa",
+       "mint_observed_at": 100000,
+       "mint_source_id": "helius-mainnet-paper-confirmed-v1",
+       "original_mint_json": {
+        "account": {
+         "data": [
+          "AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAKByThgJAAAGAQAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA==",
+          "base64"
+         ],
+         "executable": false,
+         "owner": "TokenkegQfeZyiNwAJbNbGKPFXCWuBvf9Ss623VQ5DA"
+        },
+        "mint": "US517G5965aydkZ46HS38QLi7UQiSojurfbQfKCELFx",
+        "observed_at": 100000,
+        "original_rpc_observation": {
+         "acquired_at": 100000,
+         "method": "getAccountInfo",
+         "params": [
+          "US517G5965aydkZ46HS38QLi7UQiSojurfbQfKCELFx",
+          {
+           "commitment": "confirmed",
+           "encoding": "base64"
+          }
+         ],
+         "result": {
+          "context": {
+           "slot": 100
+          },
+          "value": {
+           "data": [
+            "AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAKByThgJAAAGAQAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA==",
+            "base64"
+           ],
+           "executable": false,
+           "owner": "TokenkegQfeZyiNwAJbNbGKPFXCWuBvf9Ss623VQ5DA"
+          }
+         },
+         "source_id": "helius-mainnet-paper-confirmed-v1",
+         "started_at": 100000
+        },
+        "slot": 100
+       },
+       "original_quote_json": {
+        "evidence_hash": "<RANDOM_ID>",
+        "kind": "unsigned_route_probe",
+        "notice": "No signing or submission. Quote is not a guaranteed fill.",
+        "observed_at": 100000,
+        "request": {
+         "amount": "985050",
+         "inputMint": "US517G5965aydkZ46HS38QLi7UQiSojurfbQfKCELFx",
+         "outputMint": "So11111111111111111111111111111111111111112",
+         "slippageBps": "100",
+         "taker": "FzULv8pR9Rd7cyVKjVkzmJ1eqEmgwDnzjYyNUcEJtoG9",
+         "transactionVersion": "0"
+        },
+        "response": {
+         "inAmount": "985050",
+         "inputMint": "US517G5965aydkZ46HS38QLi7UQiSojurfbQfKCELFx",
+         "otherAmountThreshold": "9900000",
+         "outAmount": "10000000",
+         "outputMint": "So11111111111111111111111111111111111111112",
+         "routePlan": [
+          {
+           "percent": 100,
+           "swapInfo": {
+            "ammKey": "3GVnYDHddtPRfxyn6MrwQbw2uPd4pgNniHAN7ve2Zrc1",
+            "inAmount": "985050",
+            "inputMint": "US517G5965aydkZ46HS38QLi7UQiSojurfbQfKCELFx",
+            "outAmount": "10000000",
+            "outputMint": "So11111111111111111111111111111111111111112"
+           }
+          }
+         ],
+         "slippageBps": 100,
+         "swapMode": "ExactIn"
+        }
+       },
+       "provider_minimum_output_raw": 9900000,
+       "quote_hash": "<RANDOM_ID>",
+       "quote_observed_at": 100000,
+       "quote_source_id": "jupiter-swap-v2-build-paper-v1",
+       "risk_flags": [
+        "QUOTE_NOT_FILL",
+        "ROUTE_POLICY_UNKNOWN",
+        "OWNERSHIP_HISTORY_UNKNOWN",
+        "STRATEGY_FEATURES_UNKNOWN"
+       ],
+       "simulated_output_raw": 9850500,
+       "source_authenticated": false,
+       "status": "EXECUTION_UNVERIFIED",
+       "transaction_verified": false,
+       "version": 1
+      },
+      "mark_at": 99999,
+      "mark_status": "MODEL_ESTIMATE",
+      "mark_value": "0.009800500",
+      "opened_at": 100000,
+      "peak_ratio": "1",
+      "pool": "3GVnYDHddtPRfxyn6MrwQbw2uPd4pgNniHAN7ve2Zrc1",
+      "provenance": "SYNTHETIC_TEST_ONLY",
+      "qty": "0.985050",
+      "quote_execution": {
+       "actual_fill_verified": false,
+       "assumptions": {
+        "additional_adverse_slippage_bps": 50,
+        "embedded_pool_fees_and_impact": "ALREADY_IN_QUOTE",
+        "network_fee_sol": "0.00005",
+        "output_basis": "PROVIDER_MINIMUM_PLUS_ADVERSE_HAIRCUT_RAW_FLOOR",
+        "rent_and_actual_transaction_fees": "UNVERIFIED"
+       },
+       "direction": "buy",
+       "estimated_output_raw": 1000000,
+       "input_raw": 10000000,
+       "mint_decimals": 6,
+       "mint_hash": "296aaef1bd6516d6c5cb898edd4cee6c4b28ab7d06905811187fc05e0d7cd4aa",
+       "mint_observed_at": 100000,
+       "mint_source_id": "helius-mainnet-paper-confirmed-v1",
+       "original_mint_json": {
+        "account": {
+         "data": [
+          "AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAKByThgJAAAGAQAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA==",
+          "base64"
+         ],
+         "executable": false,
+         "owner": "TokenkegQfeZyiNwAJbNbGKPFXCWuBvf9Ss623VQ5DA"
+        },
+        "mint": "US517G5965aydkZ46HS38QLi7UQiSojurfbQfKCELFx",
+        "observed_at": 100000,
+        "original_rpc_observation": {
+         "acquired_at": 100000,
+         "method": "getAccountInfo",
+         "params": [
+          "US517G5965aydkZ46HS38QLi7UQiSojurfbQfKCELFx",
+          {
+           "commitment": "confirmed",
+           "encoding": "base64"
+          }
+         ],
+         "result": {
+          "context": {
+           "slot": 100
+          },
+          "value": {
+           "data": [
+            "AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAKByThgJAAAGAQAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA==",
+            "base64"
+           ],
+           "executable": false,
+           "owner": "TokenkegQfeZyiNwAJbNbGKPFXCWuBvf9Ss623VQ5DA"
+          }
+         },
+         "source_id": "helius-mainnet-paper-confirmed-v1",
+         "started_at": 100000
+        },
+        "slot": 100
+       },
+       "original_quote_json": {
+        "evidence_hash": "<RANDOM_ID>",
+        "kind": "unsigned_route_probe",
+        "notice": "No signing or submission. Quote is not a guaranteed fill.",
+        "observed_at": 100000,
+        "request": {
+         "amount": "10000000",
+         "inputMint": "So11111111111111111111111111111111111111112",
+         "outputMint": "US517G5965aydkZ46HS38QLi7UQiSojurfbQfKCELFx",
+         "slippageBps": "100",
+         "taker": "FzULv8pR9Rd7cyVKjVkzmJ1eqEmgwDnzjYyNUcEJtoG9",
+         "transactionVersion": "0"
+        },
+        "response": {
+         "inAmount": "10000000",
+         "inputMint": "So11111111111111111111111111111111111111112",
+         "otherAmountThreshold": "990000",
+         "outAmount": "1000000",
+         "outputMint": "US517G5965aydkZ46HS38QLi7UQiSojurfbQfKCELFx",
+         "routePlan": [
+          {
+           "percent": 100,
+           "swapInfo": {
+            "ammKey": "3GVnYDHddtPRfxyn6MrwQbw2uPd4pgNniHAN7ve2Zrc1",
+            "inAmount": "10000000",
+            "inputMint": "So11111111111111111111111111111111111111112",
+            "outAmount": "1000000",
+            "outputMint": "US517G5965aydkZ46HS38QLi7UQiSojurfbQfKCELFx"
+           }
+          }
+         ],
+         "slippageBps": 100,
+         "swapMode": "ExactIn"
+        }
+       },
+       "provider_minimum_output_raw": 990000,
+       "quote_hash": "<RANDOM_ID>",
+       "quote_observed_at": 100000,
+       "quote_source_id": "jupiter-swap-v2-build-paper-v1",
+       "risk_flags": [
+        "QUOTE_NOT_FILL",
+        "ROUTE_POLICY_UNKNOWN",
+        "OWNERSHIP_HISTORY_UNKNOWN",
+        "STRATEGY_FEATURES_UNKNOWN"
+       ],
+       "simulated_output_raw": 985050,
+       "source_authenticated": false,
+       "status": "EXECUTION_UNVERIFIED",
+       "transaction_verified": false,
+       "version": 1
+      },
+      "stage": 0,
+      "stop_ratio": "0.82",
+      "taker": "FzULv8pR9Rd7cyVKjVkzmJ1eqEmgwDnzjYyNUcEJtoG9",
+      "touched_15": false,
+      "trade_pnl": "0"
+     }
+    },
+    "realized_pnl": "0"
+   }
+  ]
+ },
+ "result": {
+  "attempt_refs": [
+   "<RANDOM_ID>",
+   "<RANDOM_ID>",
+   "<RANDOM_ID>",
+   "<RANDOM_ID>"
+  ],
+  "attempted_requests": 9,
+  "blockers": [],
+  "budget": {
+   "<RANDOM_ID>": {
+    "ceiling": 18,
+    "used": 9
+   }
+  },
+  "diagnostics": [
+   {
+    "graduation": {
+     "blockers": [],
+     "entry_authorized": false,
+     "graduated_at": 99400,
+     "provenance": "SYNTHETIC_TEST_ONLY",
+     "request_evidence_refs": [
+      "d769c95b964ba61fa1b58d3a7ecae97a77ed2d861e34451880ff31f056b4a06c"
+     ],
+     "scope": "HISTORICAL_MIGRATION_SYNTAX_NOT_CURRENT_SAFETY",
+     "source_hashes": [
+      "adfa169ecb2c4ac775edc9e48679d282e9c1e6784d7538c824d785978024b8bc"
+     ],
+     "status": "OBSERVED_MIGRATION",
+     "witnesses": [
+      {
+       "bonding_curve": "C9g5VaBtV8rx1sfxiVAnnwQSw1FxNhx33ExWh89rJwTe",
+       "event_instruction": "0.0",
+       "event_quote_mint": "So11111111111111111111111111111111111111112",
+       "instruction": "0",
+       "mint": "US517G5965aydkZ46HS38QLi7UQiSojurfbQfKCELFx",
+       "payload_hash": "<RANDOM_ID>",
+       "pool": "3GVnYDHddtPRfxyn6MrwQbw2uPd4pgNniHAN7ve2Zrc1",
+       "quote_mint": "So11111111111111111111111111111111111111112",
+       "schema_file": "pump.json",
+       "signature": "synthetic-migration",
+       "slot": 10,
+       "timestamp": 99400
+      }
+     ]
+    },
+    "scan_id": "<RANDOM_ID>"
+   },
+   {
+    "blockers": [],
+    "planned_outcomes": [
+     {
+      "amount_sol": "0.010000000",
+      "bundle_audit": {
+       "decision": "UNKNOWN",
+       "entry_authorized": false,
+       "ownership_complete": false,
+       "reasons": [
+        "BUNDLE_HISTORY_UNAVAILABLE"
+       ],
+       "risk_flags": [
+        "UNRESOLVED_OWNERSHIP_HISTORY"
+       ],
+       "source_authenticated": false,
+       "status": "UNKNOWN"
+      },
+      "entry_policy": {
+       "confidence": "0.962500",
+       "entry": "98.500000",
+       "entry_authorized": false,
+       "entry_basis": "FLOW_MOMENTUM_30_25",
+       "event_hash": "<RANDOM_ID>",
+       "flow": "100",
+       "manipulation_penalty_basis": [
+        "buyer_volume_concentration_proxy_v1"
+       ],
+       "manipulation_safety": {
+        "reasons": [
+         "CURRENT_OWNERSHIP_HISTORY_MEASUREMENT_UNAVAILABLE"
+        ],
+        "status": "UNKNOWN",
+        "value": null
+       },
+       "mode": "PAPER_EXPERIMENTAL",
+       "momentum": "100.00",
+       "omitted_components": [
+        "bundle_pct",
+        "cluster_pct",
+        "dev_launches_7d",
+        "dev_pct",
+        "fresh_wallet_ratio",
+        "manip_safety",
+        "top10_pct"
+       ],
+       "ownership_complete": false,
+       "ownership_component": {
+        "measured_fields": {},
+        "status": "OMITTED",
+        "unknown_fields": {
+         "bundle_pct": {
+          "reasons": [
+           "CURRENT_OWNERSHIP_HISTORY_MEASUREMENT_UNAVAILABLE"
+          ],
+          "status": "UNKNOWN"
+         },
+         "cluster_pct": {
+          "reasons": [
+           "CURRENT_OWNERSHIP_HISTORY_MEASUREMENT_UNAVAILABLE"
+          ],
+          "status": "UNKNOWN"
+         },
+         "dev_launches_7d": {
+          "reasons": [
+           "CURRENT_OWNERSHIP_HISTORY_MEASUREMENT_UNAVAILABLE"
+          ],
+          "status": "UNKNOWN"
+         },
+         "dev_pct": {
+          "reasons": [
+           "CURRENT_OWNERSHIP_HISTORY_MEASUREMENT_UNAVAILABLE"
+          ],
+          "status": "UNKNOWN"
+         },
+         "fresh_wallet_ratio": {
+          "reasons": [
+           "CURRENT_OWNERSHIP_HISTORY_MEASUREMENT_UNAVAILABLE"
+          ],
+          "status": "UNKNOWN"
+         },
+         "manip_safety": {
+          "reasons": [
+           "CURRENT_OWNERSHIP_HISTORY_MEASUREMENT_UNAVAILABLE"
+          ],
+          "status": "UNKNOWN"
+         },
+         "top10_pct": {
+          "reasons": [
+           "CURRENT_OWNERSHIP_HISTORY_MEASUREMENT_UNAVAILABLE"
+          ],
+          "status": "UNKNOWN"
+         }
+        }
+       },
+       "ownership_verified": false,
+       "policy_version": 3,
+       "risk_flags": [
+        "EXECUTION_UNVERIFIED",
+        "OBSERVABLE_PROXIES_NOT_SAFETY_PROOF",
+        "UNRESOLVED_OWNERSHIP_HISTORY"
+       ],
+       "safety": null,
+       "score_version": "paper-observable-flow-momentum-v3",
+       "signal_profile": {
+        "feature_manifest_hash": "8c9b9689c91f3fcd8ddcfef8756777513a4a14632aca92e59c1c884665889d6e",
+        "formulas": {
+         "buyer_volume_concentration_proxy_v1": "max(wallet_buy_quote)/buy_quote",
+         "directional_flow_proxy_v1": "100*buy_quote/total_quote",
+         "same_wallet_churn_proxy_v1": "sum(2*min(wallet_buy_quote,wallet_sell_quote))/total_quote"
+        },
+        "history_hashes": [
+         "83185fa362eff28dc76cd1e60e975e7ae9898b997c3902a77648a414062e0d92",
+         "eadec14a0612d0e0705397849c04edc876756b046775c96aed093b01823b346a"
+        ],
+        "holder_freshness": "UNKNOWN_OMITTED",
+        "limitations": [
+         "PROVIDER_DECLARED_WINDOW_NOT_CHAIN_AUTHENTICATION",
+         "CHURN_IS_NOT_PROOF_OF_WASH_OR_COMMON_OWNERSHIP",
+         "BUYER_CONCENTRATION_IS_NOT_MANIPULATION_PROOF",
+         "QUOTE_SIMULATION_EXECUTION_UNVERIFIED"
+        ],
+        "measurements": {
+         "buyer_volume_concentration_proxy_v1": {
+          "blockers": [],
+          "observed_at": 99999,
+          "status": "MEASURED_WINDOW",
+          "value": "0.025"
+         },
+         "directional_flow_proxy_v1": {
+          "blockers": [],
+          "observed_at": 99999,
+          "status": "MEASURED_WINDOW",
+          "value": "100"
+         },
+         "drawdown_from_high": {
+          "blockers": [],
+          "observed_at": 99999,
+          "status": "MEASURED_WINDOW",
+          "value": "0"
+         },
+         "net_buy_ratio": {
+          "blockers": [],
+          "observed_at": 99999,
+          "status": "MEASURED_WINDOW",
+          "value": "1"
+         },
+         "same_wallet_churn_proxy_v1": {
+          "blockers": [],
+          "observed_at": 99999,
+          "status": "MEASURED_WINDOW",
+          "value": "0"
+         },
+         "unique_buyers_5m": {
+          "blockers": [],
+          "observed_at": 99999,
+          "status": "MEASURED_WINDOW",
+          "value": 40
+         },
+         "volume_vs_liq": {
+          "blockers": [],
+          "observed_at": 99999,
+          "status": "MEASURED_WINDOW",
+          "value": "4"
+         }
+        },
+        "name": "observable-flow-churn-concentration-v1",
+        "source_hashes": [
+         "082789ceaa47d69b87f23f4226be6af2643469b0db548b221ff58841dd9311fc",
+         "13b1e60a2e7bda3cefacce541ee962244672c05d7fff63d90e791900964b3a4b",
+         "15da80af5a7f246113d3e2a60b2ef20778106a61962a5b4ce0267411d9c468ec",
+         "1664e6db6333839963f43b4710aafc206f09fb7d6e590835c891794b491145ea",
+         "19dadbb40fe6d29cf5a4f1812b3fcfe14049bea14eb7691f940242158a4f268a",
+         "1a24bc5720bcab83813c23e0502507cf11054c14fac05673bf4d58231e61ded0",
+         "23a73346afefc4058603d9296eb7c8c4e83a1c1713c833c38809c822ae000642",
+         "267238a83e7edc72b4367a8e16e26cd9619f2d36402111592328ae4c30747b61",
+         "2d00389d5836c2085b6ad9385d7e2e619f12702b2701bb638f38e4990ace2ad7",
+         "331ecc9355b502cfeb757bbbb3158d499b9456c33fa68369392db042a3df5927",
+         "3eae00f96984047501abc0f8aab75408aa0dc591c65c5a9b8741bcec14d0daf8",
+         "41b7766ca74b9878ce735ba9729a4ffbb36af5fa3d2f806303811309dbfed97e",
+         "52b2823ddae8dfe6d99ff0442629441df1395be518483d701cc0d1f9224d9b93",
+         "6561ad17bdf92df26897aeb64266380b76f10f84da1ae9bdeab36b96661449e6",
+         "65878baf47a2395523039c64b9870d06a3e9322836c920f285fd33c23e954f00",
+         "675158c70841b1bad90a26f78385c32a63a66db675c6c09feac30a00fbd68800",
+         "70a6d2038a8bd21ce7c8a00d46b19640fd71c0e5b7b22dfaa7090e9076132d5b",
+         "76579cc91f3a321513814e50a7a2510e2bbf789c8265f12308765dea8a7d383a",
+         "7893194ee54d92b4e9cdb1c6de727655d39de0c870c99269497ec88a5c3d08e8",
+         "7acac455d528f434cbdefe078de281f064b9c6657c432c42205867e86af98315",
+         "7fc33f45f32adf8d537feb3e7d8accbcd39b8fa88e5bdb1874d90d1bf0b2f4f0",
+         "865ccb814fe6939006489c36bbca82916608568465ac8398acad663bbb6633fd",
+         "97597d945c039a9a999348ab29eb2137b1329ca5acfc542814c5ed56e300203d",
+         "99b9c87452acb9f2f7fd229104fdce9931d465c83605b43f5d23c2b629d0a166",
+         "a5bacfbec11ab5a8d32ecb57d570f3d59b5052d646212a2c16f4eb4325a53c66",
+         "b6db13f00b6071a1bc61fa7c1d08539878a447b6e377ea1873aa4f28ea2d1c63",
+         "b8c2ad199d494ce702f92b4f20107e363571399ded270c552bdb4f4b0d8dc48f",
+         "b97785a5350b3aee1547c8b6460fb825bd9492e3afbb2e0ae13a48a0b4596411",
+         "bb1a5ee432ea70d78e453c25b3cf5d9077100d24e41b763a179ec3858f2f18d5",
+         "c104fed68bddc765b32c25922e8e6cdb86f7a426f1ae04b0670ae4dae7c6038b",
+         "c13881535fa81cd53d754632845f5b774875c0bf1d131537693d796005071f13",
+         "c9ce1aed895b06cdc09fe0afc73311783b3106ebf14e79ec13261513d2558c47",
+         "d12c73469f2d0b9f40ce9ce7215c241d7bdb5ba0730560500092534ca430d242",
+         "d6b2657ef6a076b28d0fa546d319e11b8314a3224d7dd6c879d8b865d2f49ff0",
+         "e201e12538f27275ff2d8c24eb814f248334352c25dd1488b69b26e6f984e8c1",
+         "eec5a3200c0368bf0845c7dcdee8f19252e820168fb8c416efe05c238c7dc457",
+         "f1b4cf6ed3809997c3906831c6f80f0a16d4eb1f58fa079d386844840e2ad61b",
+         "f4806c1acb37d125267375cdb41c9992fc791e705dbbc483e7cc62b4e328acc0",
+         "fa62e4356d9e7d47d84143dbf296a07d7c26db8f5b8f7b16fc5d3cbc44bf42b0",
+         "fb0f1d373cb4b3eaa0ea1dbd1ab95833ce271fbe8fca411e0c241be0af89b5e1"
+        ],
+        "version": 1,
+        "window": {
+         "blockers": [],
+         "coverage_complete": true,
+         "end_inclusive": 100000,
+         "observed_end": 99999,
+         "observed_start": 99999,
+         "start_inclusive": 99700
+        },
+        "window_identity": {
+         "captured_as_of": 100000,
+         "decision_at": 100000,
+         "gap_seconds": 0,
+         "scope": "CAPTURED_WINDOW_NOT_CONTINUOUS_COVERAGE"
+        }
+       },
+       "source_authenticated": false
+      },
+      "estimated_cost_fraction": "0.03995",
+      "execution_status": "EXECUTION_UNVERIFIED",
+      "fee_sol": "0.00005",
+      "mint": "US517G5965aydkZ46HS38QLi7UQiSojurfbQfKCELFx",
+      "provenance": "SYNTHETIC_TEST_ONLY",
+      "quantity": "0.985050",
+      "quote_execution": {
+       "actual_fill_verified": false,
+       "assumptions": {
+        "additional_adverse_slippage_bps": 50,
+        "embedded_pool_fees_and_impact": "ALREADY_IN_QUOTE",
+        "network_fee_sol": "0.00005",
+        "output_basis": "PROVIDER_MINIMUM_PLUS_ADVERSE_HAIRCUT_RAW_FLOOR",
+        "rent_and_actual_transaction_fees": "UNVERIFIED"
+       },
+       "direction": "buy",
+       "estimated_output_raw": 1000000,
+       "input_raw": 10000000,
+       "mint_decimals": 6,
+       "mint_hash": "296aaef1bd6516d6c5cb898edd4cee6c4b28ab7d06905811187fc05e0d7cd4aa",
+       "mint_observed_at": 100000,
+       "mint_source_id": "helius-mainnet-paper-confirmed-v1",
+       "original_mint_json": {
+        "account": {
+         "data": [
+          "AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAKByThgJAAAGAQAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA==",
+          "base64"
+         ],
+         "executable": false,
+         "owner": "TokenkegQfeZyiNwAJbNbGKPFXCWuBvf9Ss623VQ5DA"
+        },
+        "mint": "US517G5965aydkZ46HS38QLi7UQiSojurfbQfKCELFx",
+        "observed_at": 100000,
+        "original_rpc_observation": {
+         "acquired_at": 100000,
+         "method": "getAccountInfo",
+         "params": [
+          "US517G5965aydkZ46HS38QLi7UQiSojurfbQfKCELFx",
+          {
+           "commitment": "confirmed",
+           "encoding": "base64"
+          }
+         ],
+         "result": {
+          "context": {
+           "slot": 100
+          },
+          "value": {
+           "data": [
+            "AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAKByThgJAAAGAQAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA==",
+            "base64"
+           ],
+           "executable": false,
+           "owner": "TokenkegQfeZyiNwAJbNbGKPFXCWuBvf9Ss623VQ5DA"
+          }
+         },
+         "source_id": "helius-mainnet-paper-confirmed-v1",
+         "started_at": 100000
+        },
+        "slot": 100
+       },
+       "original_quote_json": {
+        "evidence_hash": "<RANDOM_ID>",
+        "kind": "unsigned_route_probe",
+        "notice": "No signing or submission. Quote is not a guaranteed fill.",
+        "observed_at": 100000,
+        "request": {
+         "amount": "10000000",
+         "inputMint": "So11111111111111111111111111111111111111112",
+         "outputMint": "US517G5965aydkZ46HS38QLi7UQiSojurfbQfKCELFx",
+         "slippageBps": "100",
+         "taker": "FzULv8pR9Rd7cyVKjVkzmJ1eqEmgwDnzjYyNUcEJtoG9",
+         "transactionVersion": "0"
+        },
+        "response": {
+         "inAmount": "10000000",
+         "inputMint": "So11111111111111111111111111111111111111112",
+         "otherAmountThreshold": "990000",
+         "outAmount": "1000000",
+         "outputMint": "US517G5965aydkZ46HS38QLi7UQiSojurfbQfKCELFx",
+         "routePlan": [
+          {
+           "percent": 100,
+           "swapInfo": {
+            "ammKey": "3GVnYDHddtPRfxyn6MrwQbw2uPd4pgNniHAN7ve2Zrc1",
+            "inAmount": "10000000",
+            "inputMint": "So11111111111111111111111111111111111111112",
+            "outAmount": "1000000",
+            "outputMint": "US517G5965aydkZ46HS38QLi7UQiSojurfbQfKCELFx"
+           }
+          }
+         ],
+         "slippageBps": 100,
+         "swapMode": "ExactIn"
+        }
+       },
+       "provider_minimum_output_raw": 990000,
+       "quote_hash": "<RANDOM_ID>",
+       "quote_observed_at": 100000,
+       "quote_source_id": "jupiter-swap-v2-build-paper-v1",
+       "risk_flags": [
+        "QUOTE_NOT_FILL",
+        "ROUTE_POLICY_UNKNOWN",
+        "OWNERSHIP_HISTORY_UNKNOWN",
+        "STRATEGY_FEATURES_UNKNOWN"
+       ],
+       "simulated_output_raw": 985050,
+       "source_authenticated": false,
+       "status": "EXECUTION_UNVERIFIED",
+       "transaction_verified": false,
+       "version": 1
+      },
+      "reason": "ENTRY",
+      "scores": {
+       "entry": "98.500000",
+       "flow": "100",
+       "momentum": "100.00",
+       "safety": null
+      },
+      "side": "buy",
+      "simulation": "quote_minimum_with_adverse_slippage",
+      "type": "fill"
+     }
+    ],
+    "scan_id": "<RANDOM_ID>"
+   }
+  ],
+  "events": [
+   "paper-market:<RANDOM_ID>"
+  ],
+  "evidence_hash": "<RANDOM_ID>",
+  "execution_status": "EXECUTION_UNVERIFIED",
+  "intent_hash": "<RANDOM_ID>",
+  "investigation_attempted_requests": 9,
+  "kind": "paper_cycle_v1",
+  "live_readiness": false,
+  "monitoring_attempted_requests": 0,
+  "outcomes": [
+   {
+    "amount_sol": "0.010000000",
+    "bundle_audit": {
+     "decision": "UNKNOWN",
+     "entry_authorized": false,
+     "ownership_complete": false,
+     "reasons": [
+      "BUNDLE_HISTORY_UNAVAILABLE"
+     ],
+     "risk_flags": [
+      "UNRESOLVED_OWNERSHIP_HISTORY"
+     ],
+     "source_authenticated": false,
+     "status": "UNKNOWN"
+    },
+    "entry_policy": {
+     "confidence": "0.962500",
+     "entry": "98.500000",
+     "entry_authorized": false,
+     "entry_basis": "FLOW_MOMENTUM_30_25",
+     "event_hash": "<RANDOM_ID>",
+     "flow": "100",
+     "manipulation_penalty_basis": [
+      "buyer_volume_concentration_proxy_v1"
+     ],
+     "manipulation_safety": {
+      "reasons": [
+       "CURRENT_OWNERSHIP_HISTORY_MEASUREMENT_UNAVAILABLE"
+      ],
+      "status": "UNKNOWN",
+      "value": null
+     },
+     "mode": "PAPER_EXPERIMENTAL",
+     "momentum": "100.00",
+     "omitted_components": [
+      "bundle_pct",
+      "cluster_pct",
+      "dev_launches_7d",
+      "dev_pct",
+      "fresh_wallet_ratio",
+      "manip_safety",
+      "top10_pct"
+     ],
+     "ownership_complete": false,
+     "ownership_component": {
+      "measured_fields": {},
+      "status": "OMITTED",
+      "unknown_fields": {
+       "bundle_pct": {
+        "reasons": [
+         "CURRENT_OWNERSHIP_HISTORY_MEASUREMENT_UNAVAILABLE"
+        ],
+        "status": "UNKNOWN"
+       },
+       "cluster_pct": {
+        "reasons": [
+         "CURRENT_OWNERSHIP_HISTORY_MEASUREMENT_UNAVAILABLE"
+        ],
+        "status": "UNKNOWN"
+       },
+       "dev_launches_7d": {
+        "reasons": [
+         "CURRENT_OWNERSHIP_HISTORY_MEASUREMENT_UNAVAILABLE"
+        ],
+        "status": "UNKNOWN"
+       },
+       "dev_pct": {
+        "reasons": [
+         "CURRENT_OWNERSHIP_HISTORY_MEASUREMENT_UNAVAILABLE"
+        ],
+        "status": "UNKNOWN"
+       },
+       "fresh_wallet_ratio": {
+        "reasons": [
+         "CURRENT_OWNERSHIP_HISTORY_MEASUREMENT_UNAVAILABLE"
+        ],
+        "status": "UNKNOWN"
+       },
+       "manip_safety": {
+        "reasons": [
+         "CURRENT_OWNERSHIP_HISTORY_MEASUREMENT_UNAVAILABLE"
+        ],
+        "status": "UNKNOWN"
+       },
+       "top10_pct": {
+        "reasons": [
+         "CURRENT_OWNERSHIP_HISTORY_MEASUREMENT_UNAVAILABLE"
+        ],
+        "status": "UNKNOWN"
+       }
+      }
+     },
+     "ownership_verified": false,
+     "policy_version": 3,
+     "risk_flags": [
+      "EXECUTION_UNVERIFIED",
+      "OBSERVABLE_PROXIES_NOT_SAFETY_PROOF",
+      "UNRESOLVED_OWNERSHIP_HISTORY"
+     ],
+     "safety": null,
+     "score_version": "paper-observable-flow-momentum-v3",
+     "signal_profile": {
+      "feature_manifest_hash": "8c9b9689c91f3fcd8ddcfef8756777513a4a14632aca92e59c1c884665889d6e",
+      "formulas": {
+       "buyer_volume_concentration_proxy_v1": "max(wallet_buy_quote)/buy_quote",
+       "directional_flow_proxy_v1": "100*buy_quote/total_quote",
+       "same_wallet_churn_proxy_v1": "sum(2*min(wallet_buy_quote,wallet_sell_quote))/total_quote"
+      },
+      "history_hashes": [
+       "83185fa362eff28dc76cd1e60e975e7ae9898b997c3902a77648a414062e0d92",
+       "eadec14a0612d0e0705397849c04edc876756b046775c96aed093b01823b346a"
+      ],
+      "holder_freshness": "UNKNOWN_OMITTED",
+      "limitations": [
+       "PROVIDER_DECLARED_WINDOW_NOT_CHAIN_AUTHENTICATION",
+       "CHURN_IS_NOT_PROOF_OF_WASH_OR_COMMON_OWNERSHIP",
+       "BUYER_CONCENTRATION_IS_NOT_MANIPULATION_PROOF",
+       "QUOTE_SIMULATION_EXECUTION_UNVERIFIED"
+      ],
+      "measurements": {
+       "buyer_volume_concentration_proxy_v1": {
+        "blockers": [],
+        "observed_at": 99999,
+        "status": "MEASURED_WINDOW",
+        "value": "0.025"
+       },
+       "directional_flow_proxy_v1": {
+        "blockers": [],
+        "observed_at": 99999,
+        "status": "MEASURED_WINDOW",
+        "value": "100"
+       },
+       "drawdown_from_high": {
+        "blockers": [],
+        "observed_at": 99999,
+        "status": "MEASURED_WINDOW",
+        "value": "0"
+       },
+       "net_buy_ratio": {
+        "blockers": [],
+        "observed_at": 99999,
+        "status": "MEASURED_WINDOW",
+        "value": "1"
+       },
+       "same_wallet_churn_proxy_v1": {
+        "blockers": [],
+        "observed_at": 99999,
+        "status": "MEASURED_WINDOW",
+        "value": "0"
+       },
+       "unique_buyers_5m": {
+        "blockers": [],
+        "observed_at": 99999,
+        "status": "MEASURED_WINDOW",
+        "value": 40
+       },
+       "volume_vs_liq": {
+        "blockers": [],
+        "observed_at": 99999,
+        "status": "MEASURED_WINDOW",
+        "value": "4"
+       }
+      },
+      "name": "observable-flow-churn-concentration-v1",
+      "source_hashes": [
+       "082789ceaa47d69b87f23f4226be6af2643469b0db548b221ff58841dd9311fc",
+       "13b1e60a2e7bda3cefacce541ee962244672c05d7fff63d90e791900964b3a4b",
+       "15da80af5a7f246113d3e2a60b2ef20778106a61962a5b4ce0267411d9c468ec",
+       "1664e6db6333839963f43b4710aafc206f09fb7d6e590835c891794b491145ea",
+       "19dadbb40fe6d29cf5a4f1812b3fcfe14049bea14eb7691f940242158a4f268a",
+       "1a24bc5720bcab83813c23e0502507cf11054c14fac05673bf4d58231e61ded0",
+       "23a73346afefc4058603d9296eb7c8c4e83a1c1713c833c38809c822ae000642",
+       "267238a83e7edc72b4367a8e16e26cd9619f2d36402111592328ae4c30747b61",
+       "2d00389d5836c2085b6ad9385d7e2e619f12702b2701bb638f38e4990ace2ad7",
+       "331ecc9355b502cfeb757bbbb3158d499b9456c33fa68369392db042a3df5927",
+       "3eae00f96984047501abc0f8aab75408aa0dc591c65c5a9b8741bcec14d0daf8",
+       "41b7766ca74b9878ce735ba9729a4ffbb36af5fa3d2f806303811309dbfed97e",
+       "52b2823ddae8dfe6d99ff0442629441df1395be518483d701cc0d1f9224d9b93",
+       "6561ad17bdf92df26897aeb64266380b76f10f84da1ae9bdeab36b96661449e6",
+       "65878baf47a2395523039c64b9870d06a3e9322836c920f285fd33c23e954f00",
+       "675158c70841b1bad90a26f78385c32a63a66db675c6c09feac30a00fbd68800",
+       "70a6d2038a8bd21ce7c8a00d46b19640fd71c0e5b7b22dfaa7090e9076132d5b",
+       "76579cc91f3a321513814e50a7a2510e2bbf789c8265f12308765dea8a7d383a",
+       "7893194ee54d92b4e9cdb1c6de727655d39de0c870c99269497ec88a5c3d08e8",
+       "7acac455d528f434cbdefe078de281f064b9c6657c432c42205867e86af98315",
+       "7fc33f45f32adf8d537feb3e7d8accbcd39b8fa88e5bdb1874d90d1bf0b2f4f0",
+       "865ccb814fe6939006489c36bbca82916608568465ac8398acad663bbb6633fd",
+       "97597d945c039a9a999348ab29eb2137b1329ca5acfc542814c5ed56e300203d",
+       "99b9c87452acb9f2f7fd229104fdce9931d465c83605b43f5d23c2b629d0a166",
+       "a5bacfbec11ab5a8d32ecb57d570f3d59b5052d646212a2c16f4eb4325a53c66",
+       "b6db13f00b6071a1bc61fa7c1d08539878a447b6e377ea1873aa4f28ea2d1c63",
+       "b8c2ad199d494ce702f92b4f20107e363571399ded270c552bdb4f4b0d8dc48f",
+       "b97785a5350b3aee1547c8b6460fb825bd9492e3afbb2e0ae13a48a0b4596411",
+       "bb1a5ee432ea70d78e453c25b3cf5d9077100d24e41b763a179ec3858f2f18d5",
+       "c104fed68bddc765b32c25922e8e6cdb86f7a426f1ae04b0670ae4dae7c6038b",
+       "c13881535fa81cd53d754632845f5b774875c0bf1d131537693d796005071f13",
+       "c9ce1aed895b06cdc09fe0afc73311783b3106ebf14e79ec13261513d2558c47",
+       "d12c73469f2d0b9f40ce9ce7215c241d7bdb5ba0730560500092534ca430d242",
+       "d6b2657ef6a076b28d0fa546d319e11b8314a3224d7dd6c879d8b865d2f49ff0",
+       "e201e12538f27275ff2d8c24eb814f248334352c25dd1488b69b26e6f984e8c1",
+       "eec5a3200c0368bf0845c7dcdee8f19252e820168fb8c416efe05c238c7dc457",
+       "f1b4cf6ed3809997c3906831c6f80f0a16d4eb1f58fa079d386844840e2ad61b",
+       "f4806c1acb37d125267375cdb41c9992fc791e705dbbc483e7cc62b4e328acc0",
+       "fa62e4356d9e7d47d84143dbf296a07d7c26db8f5b8f7b16fc5d3cbc44bf42b0",
+       "fb0f1d373cb4b3eaa0ea1dbd1ab95833ce271fbe8fca411e0c241be0af89b5e1"
+      ],
+      "version": 1,
+      "window": {
+       "blockers": [],
+       "coverage_complete": true,
+       "end_inclusive": 100000,
+       "observed_end": 99999,
+       "observed_start": 99999,
+       "start_inclusive": 99700
+      },
+      "window_identity": {
+       "captured_as_of": 100000,
+       "decision_at": 100000,
+       "gap_seconds": 0,
+       "scope": "CAPTURED_WINDOW_NOT_CONTINUOUS_COVERAGE"
+      }
+     },
+     "source_authenticated": false
+    },
+    "estimated_cost_fraction": "0.03995",
+    "execution_status": "EXECUTION_UNVERIFIED",
+    "fee_sol": "0.00005",
+    "mint": "US517G5965aydkZ46HS38QLi7UQiSojurfbQfKCELFx",
+    "provenance": "SYNTHETIC_TEST_ONLY",
+    "quantity": "0.985050",
+    "quote_execution": {
+     "actual_fill_verified": false,
+     "assumptions": {
+      "additional_adverse_slippage_bps": 50,
+      "embedded_pool_fees_and_impact": "ALREADY_IN_QUOTE",
+      "network_fee_sol": "0.00005",
+      "output_basis": "PROVIDER_MINIMUM_PLUS_ADVERSE_HAIRCUT_RAW_FLOOR",
+      "rent_and_actual_transaction_fees": "UNVERIFIED"
+     },
+     "direction": "buy",
+     "estimated_output_raw": 1000000,
+     "input_raw": 10000000,
+     "mint_decimals": 6,
+     "mint_hash": "296aaef1bd6516d6c5cb898edd4cee6c4b28ab7d06905811187fc05e0d7cd4aa",
+     "mint_observed_at": 100000,
+     "mint_source_id": "helius-mainnet-paper-confirmed-v1",
+     "original_mint_json": {
+      "account": {
+       "data": [
+        "AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAKByThgJAAAGAQAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA==",
+        "base64"
+       ],
+       "executable": false,
+       "owner": "TokenkegQfeZyiNwAJbNbGKPFXCWuBvf9Ss623VQ5DA"
+      },
+      "mint": "US517G5965aydkZ46HS38QLi7UQiSojurfbQfKCELFx",
+      "observed_at": 100000,
+      "original_rpc_observation": {
+       "acquired_at": 100000,
+       "method": "getAccountInfo",
+       "params": [
+        "US517G5965aydkZ46HS38QLi7UQiSojurfbQfKCELFx",
+        {
+         "commitment": "confirmed",
+         "encoding": "base64"
+        }
+       ],
+       "result": {
+        "context": {
+         "slot": 100
+        },
+        "value": {
+         "data": [
+          "AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAKByThgJAAAGAQAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA==",
+          "base64"
+         ],
+         "executable": false,
+         "owner": "TokenkegQfeZyiNwAJbNbGKPFXCWuBvf9Ss623VQ5DA"
+        }
+       },
+       "source_id": "helius-mainnet-paper-confirmed-v1",
+       "started_at": 100000
+      },
+      "slot": 100
+     },
+     "original_quote_json": {
+      "evidence_hash": "<RANDOM_ID>",
+      "kind": "unsigned_route_probe",
+      "notice": "No signing or submission. Quote is not a guaranteed fill.",
+      "observed_at": 100000,
+      "request": {
+       "amount": "10000000",
+       "inputMint": "So11111111111111111111111111111111111111112",
+       "outputMint": "US517G5965aydkZ46HS38QLi7UQiSojurfbQfKCELFx",
+       "slippageBps": "100",
+       "taker": "FzULv8pR9Rd7cyVKjVkzmJ1eqEmgwDnzjYyNUcEJtoG9",
+       "transactionVersion": "0"
+      },
+      "response": {
+       "inAmount": "10000000",
+       "inputMint": "So11111111111111111111111111111111111111112",
+       "otherAmountThreshold": "990000",
+       "outAmount": "1000000",
+       "outputMint": "US517G5965aydkZ46HS38QLi7UQiSojurfbQfKCELFx",
+       "routePlan": [
+        {
+         "percent": 100,
+         "swapInfo": {
+          "ammKey": "3GVnYDHddtPRfxyn6MrwQbw2uPd4pgNniHAN7ve2Zrc1",
+          "inAmount": "10000000",
+          "inputMint": "So11111111111111111111111111111111111111112",
+          "outAmount": "1000000",
+          "outputMint": "US517G5965aydkZ46HS38QLi7UQiSojurfbQfKCELFx"
+         }
+        }
+       ],
+       "slippageBps": 100,
+       "swapMode": "ExactIn"
+      }
+     },
+     "provider_minimum_output_raw": 990000,
+     "quote_hash": "<RANDOM_ID>",
+     "quote_observed_at": 100000,
+     "quote_source_id": "jupiter-swap-v2-build-paper-v1",
+     "risk_flags": [
+      "QUOTE_NOT_FILL",
+      "ROUTE_POLICY_UNKNOWN",
+      "OWNERSHIP_HISTORY_UNKNOWN",
+      "STRATEGY_FEATURES_UNKNOWN"
+     ],
+     "simulated_output_raw": 985050,
+     "source_authenticated": false,
+     "status": "EXECUTION_UNVERIFIED",
+     "transaction_verified": false,
+     "version": 1
+    },
+    "reason": "ENTRY",
+    "scores": {
+     "entry": "98.500000",
+     "flow": "100",
+     "momentum": "100.00",
+     "safety": null
+    },
+    "side": "buy",
+    "simulation": "quote_minimum_with_adverse_slippage",
+    "type": "fill"
+   }
+  ],
+  "pass_id": "<RANDOM_ID>",
+  "status": "COMPLETE",
+  "usd_evidence_refs": [
+   "<RANDOM_ID>",
+   "<RANDOM_ID>",
+   "<RANDOM_ID>"
+  ]
+ }
+}

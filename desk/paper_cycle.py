@@ -649,8 +649,7 @@ def run_once(research_db, evidence_db, ledger_db, cfg, *, position_targets=(), c
                                                       'planned_outcomes':planned['outcomes']})
                         before_outcomes=len(result['outcomes'])
                         deliver(event,quotes)
-                        if fill_realism.selected(cfg):
-                            realism_jobs+=fill_realism.collect(result['outcomes'][before_outcomes:],event,collected,is_position)
+                        realism_jobs+=fill_realism.capture(cfg,result['outcomes'][before_outcomes:],event,collected,is_position)  # never raises
                         _state(path,cfg)
                         if is_position and any(x['type']=='blocked_exit' for x in planned['outcomes']):
                             raise CycleBlocked('UNRESOLVED_POSITION_EXIT')
@@ -681,6 +680,7 @@ def run_once(research_db, evidence_db, ledger_db, cfg, *, position_targets=(), c
                     result['budget']={scan:{'used':progress.admission(scan)['requests_used'],
                         'ceiling':progress.admission(scan)['request_ceiling']} for scan in intent['admissions']}
                 outcome = store.save(result)
+                if realism_jobs:fill_realism.enqueue(path,realism_jobs,digest(cfg))  # opt-in; result page durable; before every early return; never raises
                 if terminal_hazards and 'terminal_context' in intent:
                     try:
                         receipt=terminal.certify_intrinsic(store,progress,cfg,pass_id=identity,intent_hash=key,
@@ -702,5 +702,4 @@ def run_once(research_db, evidence_db, ledger_db, cfg, *, position_targets=(), c
                 if result['status']=='COMPLETE' or (budget.attempted==0 and budget.monitoring_attempted==0 and all(
                         progress.admission(scan)==admission for scan,admission in intent['admissions'].items())):
                     with store.connect() as c:c.execute('UPDATE paper_observation_passes SET outcome_hash=? WHERE id=?',(outcome,identity))
-                if realism_jobs:fill_realism.enqueue(path,realism_jobs,digest(cfg))  # opt-in; only after the pass outcome is durable; never raises
                 return {**result,'evidence_hash':outcome}

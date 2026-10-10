@@ -38,6 +38,11 @@ def config(cfg):
     selected(cfg)
     from .kraken_usd_observation import selected as usd_selected
     usd_selected(cfg)
+    if cfg.get('paper_fill_realism_version') is not None:
+        # Validated BEFORE the quote-execution early return: a malformed or orphaned measurement key is refused with
+        # the rest of the config, never discovered mid-pass (T14G item 1).
+        from .fill_realism import selected as realism_selected
+        realism_selected(cfg)
     version = cfg.get('paper_quote_execution_version')
     if version is None:
         return False
@@ -54,9 +59,6 @@ def config(cfg):
         raise QuoteExecutionError('QUOTE_EXECUTION_SLIPPAGE_INVALID')
     if type(cfg.get('price_ttl_seconds')) is not int or not 0 < cfg['price_ttl_seconds'] <= 60:
         raise QuoteExecutionError('QUOTE_EXECUTION_TTL_INVALID')
-    if cfg.get('paper_fill_realism_version') is not None:
-        from .fill_realism import selected as realism_selected
-        realism_selected(cfg)  # explicit opt-in measurement only; absent key leaves behaviour untouched
     return True
 
 

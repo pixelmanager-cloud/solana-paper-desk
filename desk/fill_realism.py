@@ -138,6 +138,21 @@ def drift(side, decision, requote_estimated, requote_simulated, decimals):
 
 
 # --------------------------------------------- enqueue (the ONLY pass-side code)
+def capture(cfg, outcomes, event, collected, held, wall_clock=time.time):
+    """The whole in-pass hook: flag check + job specs. NEVER raises (a defect here must not latch the store).
+
+    A malformed realism key is refused up front by ``qe.config``; should one still reach this point the
+    measurement is simply off for the pass."""
+    try:
+        if selected(cfg) != VERSION:
+            return []
+        return collect(outcomes, event, collected, held, wall_clock)
+    except BaseException as error:  # noqa: BLE001
+        if isinstance(error, (KeyboardInterrupt, SystemExit)):
+            raise
+        return []
+
+
 def collect(outcomes, event, collected, held, wall_clock=time.time):
     """Detached job specs for the fills of one delivered event. Pure, bounded, NEVER raises."""
     try:

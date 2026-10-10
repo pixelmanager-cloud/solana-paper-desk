@@ -1,7 +1,7 @@
 """Fill-realism worker: measures quote drift of simulated paper fills OUTSIDE the trading pass.
 
     python -m tools.ops.fill_realism_worker --ledger L --config C [--allowance-per-hour 60]
-        [--wait-seconds 12] [--late-seconds 4] [--follow-seconds 3600] [--systemd-credentials]
+        [--wait-seconds 12] [--late-seconds 1] [--response-seconds 2] [--follow-seconds 3600] [--systemd-credentials]
 
 Reads the jobs the trading pass enqueued in ``<ledger>.fill-realism.sqlite`` (paper
 config ``paper_fill_realism_version: 1``) and re-quotes each fill's SAME route and
@@ -14,13 +14,19 @@ provider pacing; a failed attempt is charged and recorded, never retried.
 Samples are scheduled by absolute due time across all jobs (a priority queue), so
 simultaneous fills keep their +2s and +5s samples when the pacing allows; a sample
 that cannot start within ``--late-seconds`` of its due time is recorded LATE with
-its actual lag instead of being measured. A quote is valid only if it was observed
-at or after decision + delay (otherwise REALISM_STALE_QUOTE). A kill mid-request
+its actual lag instead of being measured. A sample is valid only if its request was SENT within
+``--late-seconds`` (default 1.0) of its due time and finished within ``--response-seconds`` (default 2.0) of it;
+otherwise it is LATE (counted, excluded from latency-adjusted PnL). A quote is valid only if it was observed
+at or after decision + delay, its ``Age`` is at most 1 s and, when the provider sends a ``Date``, that is not older
+than the due second (otherwise REALISM_STALE_QUOTE). Jupiter's JSON carries NO provider timestamp, so ``observed_at``
+is OUR receive clock; ``Age``/``Date`` are the only provider-side evidence and are used when present.
+Only one worker may run per store (an exclusive flock); a second instance exits BUSY. A kill mid-request
 leaves an attempt row: the next start records it REALISM_INTERRUPTED (charged) and
 never re-requests, so there is no double sampling and no double charge.
 EXECUTION_UNVERIFIED: a re-quote is not a fill.
 """
 import argparse
+import fcntl
 import json
 import math
 import os
@@ -37,7 +43,8 @@ from desk.model import digest
 from desk.providers import SOL
 
 DEFAULT_ALLOWANCE = 60
-LATE_SECONDS = 4.0
+LATE_SECONDS = 1.0          # the request must be sent this close to its due time
+RESPONSE_SECONDS = 2.0      # ... and finished this close to it
 MAX_SLEEP = 15.0
 MAX_RESPONSE_BYTES = 2 * 1024 * 1024
 REQUEST_TIMEOUT = 8.0
@@ -73,6 +80,7 @@ class JupiterQuoteClient:
             raise QuoteClientError(error.code) from None
         request = Request('https://api.jup.ag/swap/v2/build?' + urlencode(query), method='GET',
                           headers={'Accept': 'application/json', 'x-api-key': self.key})
+        sent_at = time.time()                          # after the pacing grant: this is when the request really left
 
         class NoRedirect(HTTPRedirectHandler):
             def redirect_request(self, *a, **k):
@@ -88,6 +96,7 @@ class JupiterQuoteClient:
                 if (response.headers.get('Content-Encoding') or 'identity').lower() != 'identity':
                     raise QuoteClientError('RESPONSE_HEADERS_INVALID')
                 age = response.headers.get('Age')
+                date = response.headers.get('Date')
                 raw = response.read(MAX_RESPONSE_BYTES + 1)
         except HTTPError as error:
             if provider_pacing.should_throttle(error.code, error.headers) and not released:
@@ -111,8 +120,15 @@ class JupiterQuoteClient:
         if type(result) is not dict or any(k not in result for k in ('inAmount', 'outAmount', 'routePlan')):
             raise QuoteClientError('RESPONSE_INVALID')
         age_seconds = int(age) if type(age) is str and age.isascii() and age.isdecimal() and len(age) < 9 else 0
+        provider_date = None
+        if type(date) is str and len(date) < 64:
+            try:
+                from email.utils import parsedate_to_datetime
+                provider_date = int(parsedate_to_datetime(date).timestamp())
+            except (TypeError, ValueError, OverflowError):
+                provider_date = None
         return {'kind': 'unsigned_route_probe', 'observed_at': completed, 'request': query, 'response': result,
-                'age_seconds': age_seconds}
+                'age_seconds': age_seconds, 'started_at': sent_at, 'provider_date': provider_date}
 
 
 def _rows(c, sql, args=()):
@@ -153,8 +169,11 @@ def _allowance(c):
     return c.execute(f'SELECT allowance_per_hour FROM {fr.POLICY_TABLE} ORDER BY id DESC LIMIT 1').fetchone()[0]
 
 
-def _sample(c, job, cfg, client, clock, late_seconds):
-    """One due (job, delay). Never raises: every outcome becomes exactly one sample row."""
+def _sample(c, job, cfg, client, clock, late_seconds, response_seconds):
+    """One due (job, delay). Returns exactly one sample row, or None for a duplicate attempt (a recorded no-op).
+
+    Never raises for a provider/parse failure: every outcome becomes a row. The attempt row is written inside the
+    try, so a duplicate (two workers, a restart race) is a no-op rather than an exit."""
     delay, due = job['delay'], job['due_at']
     base = {'fill_event_id': job['fill_event_id'], 'side': job['side'], 'delay_seconds': delay, 'due_at': due,
             'execution_status': fr.STATUS}
@@ -166,19 +185,28 @@ def _sample(c, job, cfg, client, clock, late_seconds):
         return {**base, 'status': 'LATE', 'code': 'REALISM_SAMPLE_LATE', 'charged': 0, 'lag_seconds': format(Decimal(str(lag)), 'f')}
     if _allowance_used(c, started) >= _allowance(c):
         return {**base, 'status': 'FAILED', 'code': 'REALISM_ALLOWANCE_EXHAUSTED', 'charged': 0}
-    c.execute(f'INSERT INTO {fr.ATTEMPT_TABLE} VALUES(?,?,?,?)', (job['fill_event_id'], job['side'], delay, started))
     base = {**base, 'started_at': started, 'lag_seconds': format(Decimal(str(max(0.0, lag))), 'f'), 'charged': 1}
     try:
+        try:
+            c.execute(f'INSERT INTO {fr.ATTEMPT_TABLE} VALUES(?,?,?,?)', (job['fill_event_id'], job['side'], delay, started))
+        except sqlite3.IntegrityError:
+            return None                      # someone already attempted this sample: never request it twice
         record = json.loads(job['record_json'])
         side, amount = job['side'], record['input_raw']
         input_mint, output_mint = (SOL, job['mint']) if side == 'buy' else (job['mint'], SOL)
-        payload = client(input_mint, output_mint, amount, job['taker'], timeout_seconds=min(REQUEST_TIMEOUT, max(1.0, late_seconds + 4)))
+        timeout = min(REQUEST_TIMEOUT, max(1.0, due + response_seconds - clock() + 1.0))
+        payload = client(input_mint, output_mint, amount, job['taker'], timeout_seconds=timeout)
         completed = clock()
         base['completed_at'] = completed
+        sent = payload.get('started_at', started)           # the client reports when the request really left (after pacing)
+        if type(sent) in (int, float) and sent - due > late_seconds:
+            return {**base, 'status': 'LATE', 'code': 'REALISM_SAMPLE_LATE', 'lag_seconds': format(Decimal(str(max(0.0, sent - due))), 'f')}
         observed = payload.get('observed_at')
-        if type(observed) is not int or payload.get('age_seconds', 0) > 1 or observed < math.floor(due):
+        provider_date = payload.get('provider_date')
+        if (type(observed) is not int or payload.get('age_seconds', 0) > 1 or observed < math.floor(due)
+                or (provider_date is not None and (type(provider_date) is not int or provider_date < math.floor(due)))):
             return {**base, 'status': 'STALE', 'code': 'REALISM_STALE_QUOTE'}  # cached/early: excluded, counted
-        if completed - due > late_seconds + REQUEST_TIMEOUT:
+        if completed - due > response_seconds:
             return {**base, 'status': 'LATE', 'code': 'REALISM_RESPONSE_LATE'}
         mint = MintObservation(job['mint'], 0, job['mint_decimals'], 1, None, None,
                                SourceRecord('fill-realism-decision-mint', job['mint_observed_at'], digest({'mint': job['mint']}), '{}'))
@@ -201,14 +229,31 @@ def _sample(c, job, cfg, client, clock, late_seconds):
 
 
 def run(store, cfg, *, client, clock=time.time, sleep=time.sleep, wait_seconds=12.0, late_seconds=LATE_SECONDS,
-        allowance_per_hour=DEFAULT_ALLOWANCE, max_samples=None, follow_seconds=None, poll_seconds=0.5):
+        response_seconds=RESPONSE_SECONDS, allowance_per_hour=DEFAULT_ALLOWANCE, max_samples=None, follow_seconds=None,
+        poll_seconds=0.5):
     """Process due samples; sleep (bounded) for samples due within ``wait_seconds``; then return.
 
     ``follow_seconds`` keeps polling for new jobs for that long (a long-running service); without it the
-    worker returns as soon as nothing is pending within the wait window (a timer-driven one-shot).
+    worker returns as soon as nothing is pending within the wait window (a timer-driven one-shot). Only one worker
+    may run per store: the second returns ``BUSY`` without touching it.
     """
     if fr.selected(cfg) != fr.VERSION:
         return {'status': 'OFF', 'samples': 0}
+    lock = open(str(store) + '.worker.lock', 'a')
+    try:
+        os.chmod(lock.fileno(), 0o600)
+        try:
+            fcntl.flock(lock, fcntl.LOCK_EX | fcntl.LOCK_NB)
+        except BlockingIOError:
+            return {'status': 'BUSY', 'samples': 0}
+        return _run_locked(store, cfg, client, clock, sleep, wait_seconds, late_seconds, response_seconds, allowance_per_hour,
+                           max_samples, follow_seconds, poll_seconds)
+    finally:
+        lock.close()
+
+
+def _run_locked(store, cfg, client, clock, sleep, wait_seconds, late_seconds, response_seconds, allowance_per_hour,
+                max_samples, follow_seconds, poll_seconds):
     summary = {'status': 'DONE', 'samples': 0, 'measured': 0, 'late': 0, 'stale': 0, 'failed': 0, 'charged': 0, 'interrupted': 0}
     with closing(fr.connect(store)) as c:
         fr.ensure_schema(c, allowance_per_hour=allowance_per_hour)
@@ -232,9 +277,13 @@ def run(store, cfg, *, client, clock=time.time, sleep=time.sleep, wait_seconds=1
                     break  # the next sample is beyond this run; a timer starts the worker again
                 sleep(min(job['due_at'] - now, MAX_SLEEP))
                 continue
-            row = _sample(c, job, cfg, client, clock, late_seconds)
+            row = _sample(c, job, cfg, client, clock, late_seconds, response_seconds)
+            if row is None:
+                continue                      # a duplicate attempt is a recorded no-op (it is no longer pending)
             try:
                 _insert_sample(c, row)
+            except sqlite3.IntegrityError:
+                continue                      # the sample already exists: nothing to add
             except sqlite3.Error:
                 summary['status'] = 'STORE_ERROR'  # the attempt row stays: restart records it INTERRUPTED
                 break
@@ -253,7 +302,10 @@ def main(argv=None):
     parser.add_argument('--wait-seconds', type=float, default=12.0)
     parser.add_argument('--follow-seconds', type=float, default=None,
                         help='Keep polling for new jobs this long (service mode); omit for a timer-driven one-shot')
-    parser.add_argument('--late-seconds', type=float, default=LATE_SECONDS)
+    parser.add_argument('--late-seconds', type=float, default=LATE_SECONDS,
+                        help='a sample whose request is sent later than this after its due time is LATE')
+    parser.add_argument('--response-seconds', type=float, default=RESPONSE_SECONDS,
+                        help='a sample whose response arrives later than this after its due time is LATE')
     parser.add_argument('--systemd-credentials', action='store_true')
     args = parser.parse_args(argv)
     try:
@@ -267,14 +319,16 @@ def main(argv=None):
         if args.systemd_credentials:
             from desk.paper_cycle_cli import _credentials
             _credentials()
-        client = JupiterQuoteClient(provider_pacing.configured(priority='investigation'), os.environ.get('JUPITER_API_KEY'))
+        # 'research' is the lowest pacing priority: measurement never delays a trading quote.
+        client = JupiterQuoteClient(provider_pacing.configured(priority='research'), os.environ.get('JUPITER_API_KEY'))
         result = run(store, cfg, client=client, wait_seconds=args.wait_seconds, late_seconds=args.late_seconds,
-                     allowance_per_hour=args.allowance_per_hour, follow_seconds=args.follow_seconds)
+                     allowance_per_hour=args.allowance_per_hour, follow_seconds=args.follow_seconds,
+                     response_seconds=args.response_seconds)
     except (QuoteClientError, ValueError, OSError, sqlite3.Error, KeyError, TypeError) as error:
         print(json.dumps({'status': 'BLOCKED', 'error': type(error).__name__, 'execution_status': fr.STATUS}))
         return 2
     print(json.dumps({**result, 'execution_status': fr.STATUS}, sort_keys=True))
-    return 0 if result['status'] in ('DONE', 'OFF') else 2
+    return 0 if result['status'] in ('DONE', 'OFF', 'BUSY') else 2
 
 
 if __name__ == '__main__':
