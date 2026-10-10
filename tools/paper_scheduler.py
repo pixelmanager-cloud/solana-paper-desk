@@ -5,6 +5,7 @@ import io
 import json
 import os
 import sys
+import time
 from pathlib import Path
 from desk.paper_scheduler import lease
 from desk import paper_cycle, paper_concurrency as concurrency
@@ -14,6 +15,30 @@ COMMANDS={'entry':['-m','tools.paper_entry_dispatcher'],
           'held':['-m','desk.paper_monitor_service'],
           'expire':['-m','desk','paper-monitor'],
           'decisions':['-m','desk','consume-scans']}
+
+# A held pass that finds the lease taken by a running entry waits this long for it instead of
+# giving up until the next timer tick (concurrent-entries experiments only). Held unit budget:
+# 40 s wait + 8 legs x 7.8 s = 102 s inside TimeoutStartSec=120.
+HELD_LEASE_WAIT_SECONDS=40.0
+LEASE_POLL_SECONDS=0.5
+
+@contextlib.contextmanager
+def _lease(research,wait=0.0,*,clock=time.monotonic,sleep=time.sleep):
+    """`lease`, optionally polling for up to `wait` seconds. Default 0 is exactly `lease`."""
+    deadline=clock()+wait
+    while True:
+        with lease(research) as fd:
+            if fd is not None or clock()>=deadline:
+                yield fd
+                return
+        sleep(LEASE_POLL_SECONDS)
+
+def _held_wait(argument):
+    """Wait only for a valid concurrent-entries config; every other configuration keeps today's behaviour."""
+    try:
+        return HELD_LEASE_WAIT_SECONDS if concurrency.selected(_config(argument('--config'))) else 0.0
+    except (ValueError,OSError,KeyError,TypeError):
+        return 0.0
 
 def _concurrent_tick(args,argument,cfg,ledger):
     """Held first, always: every open position is monitored before any entry work.
@@ -58,7 +83,7 @@ def main(argv=None):
     bound=argument('--db' if a.mode in ('expire','decisions') else '--research-db')
     if a.mode!='expire' and paper_cycle.canonical_job_path(bound)!=research:
         raise ValueError('Scheduler research context mismatch')
-    with lease(research) as fd:
+    with _lease(research,_held_wait(argument) if a.mode=='held' else 0.0) as fd:
         if fd is None:
             print(json.dumps({'status':'SCHEDULER_BUSY','attempted_requests':0,'entry_authorized':False}))
             return 0

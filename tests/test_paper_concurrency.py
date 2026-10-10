@@ -22,10 +22,11 @@ from desk.model import canonical
 from tests.helpers import T, config, event
 
 KEY = pc.KEY
+TTL = pc.TTL_KEY
 
 
 def cfg_on(**changes):
-    return {**config(), KEY: 1, **changes}
+    return {**config(), KEY: 1, TTL: 120, **changes}
 
 
 def position(mark_at=T, opened_at=T, **changes):
@@ -90,15 +91,39 @@ class ConfigAndGateTests(unittest.TestCase):
         self.assertGreater(pc.monitoring_required(2), 60)
         self.assertLessEqual(pc.monitoring_required(8), 3600)
 
-    def test_portfolio_freshness_matches_engine_price_ttl(self):
+    def test_portfolio_freshness_matches_the_portfolio_ttl_and_includes_preparation(self):
         cfg = cfg_on()
         s = state({'A': position(mark_at=1000)})
-        ttl = cfg['price_ttl_seconds']
-        # Mark age at decision = (now - mark) + entry seconds; refused once it exceeds the engine TTL.
+        ttl = cfg[TTL]
+        self.assertEqual(pc.ENTRY_SECONDS, 30.0)   # 18 s preparation + 12 s bounded cycle: the engine decides last
+        # Mark age at decision = (now - mark) + entry seconds; refused once it exceeds the portfolio TTL.
         edge = 1000 + int(ttl - pc.ENTRY_SECONDS)
         self.assertEqual(pc.entry_blockers(s, cfg, now=edge), [])
         self.assertEqual(pc.entry_blockers(s, cfg, now=edge + 1), ['PORTFOLIO_MARKS_TOO_OLD_FOR_ENTRY'])
         self.assertEqual(pc.entry_blockers(state(), cfg, now=10**9), [])  # flat ledgers have no marks
+        # The price TTL alone (10 s) can never cover an entry, so every entry with a position is refused up front.
+        strict = cfg_on(**{TTL: cfg['price_ttl_seconds']})
+        self.assertEqual(pc.entry_blockers(s, strict, now=1000), ['PORTFOLIO_MARKS_TOO_OLD_FOR_ENTRY'])
+
+    def test_preparation_seconds_match_the_real_history_preparation_budget(self):
+        from desk.paper_history_preparation import PREPARATION_SECONDS
+        self.assertEqual(pc.PREPARATION_SECONDS, PREPARATION_SECONDS)
+
+    def test_portfolio_ttl_is_only_valid_with_the_flag_and_inside_its_bounds(self):
+        with self.assertRaises(ValueError):                     # key without the experiment
+            pc.selected({**config(), TTL: 60})
+        with self.assertRaises(ValueError):                     # flag without the key
+            pc.selected({**config(), KEY: 1})
+        base = config()
+        for bad in (base['price_ttl_seconds'] - 1, 121, 600, '60', 60.0, True, None, 0, -5):
+            with self.assertRaises(ValueError, msg=repr(bad)):
+                pc.selected(cfg_on(**{TTL: bad}))
+        for good in (base['price_ttl_seconds'], 60, 120):
+            self.assertEqual(pc.selected(cfg_on(**{TTL: good})), 1)
+        from desk.engine import portfolio_ttl
+        self.assertEqual(portfolio_ttl(config()), config()['price_ttl_seconds'])   # absent: unchanged
+        with self.assertRaises(ValueError):                     # the engine itself never trusts a bare key
+            portfolio_ttl({**config(), TTL: 60})
 
     def test_held_order_and_legs_are_deterministic_unresolved_first(self):
         positions = {'C': position(mark_at=30), 'B': position(mark_at=20), 'A': position(mark_at=20, opened_at=1),
@@ -171,14 +196,25 @@ class EngineInterleavingTests(unittest.TestCase):
         reject = self.enter('M5', T + 300, held)[0]
         self.assertEqual((reject['type'], reject['reason']), ('reject', 'BELOW_MINIMUM'))
 
-    def test_engine_rejects_entry_when_a_held_mark_is_stale(self):
-        """The binding constraint: every held mark must be within price_ttl at the entry decision."""
+    def test_engine_rejects_entry_when_a_held_mark_is_older_than_the_portfolio_ttl(self):
+        """The binding constraint: every held mark must be within the portfolio TTL at the entry decision."""
+        self.enter('A', T)
+        fresh_enough = self.apply(event(T + 60, mint='B'))[0]          # 60 s old mark, TTL 120: allowed
+        self.assertEqual(fresh_enough['type'], 'fill')
+        reject = self.apply(event(T + 200, mint='C'))[0]                # A is 200 s old: stale
+        self.assertEqual((reject['type'], reject['reason']), ('reject', 'STALE_PORTFOLIO'))
+        self.assertEqual(set(self.positions()), {'A', 'B'})
+        self.assertEqual(pc.entry_blockers(state(self.positions()), self.cfg, now=T + 200), [
+            'PORTFOLIO_MARKS_TOO_OLD_FOR_ENTRY'])  # refused before spending any investigation request
+
+    def test_price_ttl_only_config_keeps_the_original_ten_second_rule(self):
+        cfg = cfg_on(**{TTL: config()['price_ttl_seconds']})
+        self.ledger.close()
+        self.ledger = Ledger(self.path)
+        self.cfg = cfg
         self.enter('A', T)
         reject = self.apply(event(T + 60, mint='B'))[0]
         self.assertEqual((reject['type'], reject['reason']), ('reject', 'STALE_PORTFOLIO'))
-        self.assertEqual(set(self.positions()), {'A'})
-        self.assertEqual(pc.entry_blockers(state(self.positions()), self.cfg, now=T + 60), [
-            'PORTFOLIO_MARKS_TOO_OLD_FOR_ENTRY'])  # refused before spending any investigation request
 
     def fills(self):
         return self.ledger.db.execute(
@@ -330,7 +366,7 @@ class SchedulerTickTests(unittest.TestCase):
 
     def test_marks_too_old_for_the_engine_ttl_defer_the_entry(self):
         self.states = [state({'A': position(mark_at=T)})]
-        out = json.loads(self.run_entry(cfg_on(), now=T + 30))
+        out = json.loads(self.run_entry(cfg_on(), now=T + 100))   # 100 s + 30 s of entry work > 120 s TTL
         self.assertEqual(out['blockers'], ['PORTFOLIO_MARKS_TOO_OLD_FOR_ENTRY'])
         self.assertEqual([c[0] for c in self.calls], ['held'])
 
@@ -436,7 +472,7 @@ class CycleGateTests(unittest.TestCase):
         self.assertEqual(result['attempted_requests'], 0)
 
     def test_flag_on_allows_a_candidate_pass_but_never_a_second_entry_into_a_held_mint(self):
-        f = self.fixture(**{KEY: 1})
+        f = self.fixture(**{KEY: 1, TTL: 120})
         result = self.second_pass(f)
         self.assertEqual(result['status'], 'COMPLETE', result)
         self.assertNotIn('ALL_OPEN_POSITION_TARGETS_REQUIRED', result['blockers'])
@@ -445,7 +481,7 @@ class CycleGateTests(unittest.TestCase):
         self.assertEqual(result['attempted_requests'], 0)
 
     def test_flag_on_still_rejects_duplicate_position_targets(self):
-        f = self.fixture(**{KEY: 1})
+        f = self.fixture(**{KEY: 1, TTL: 120})
         entry = f.actual_cycle()
         self.assertEqual(entry['status'], 'COMPLETE', entry)
         duplicate = f.actual_cycle(positions=(f.item, f.item), candidates=())
@@ -465,7 +501,7 @@ class DispatcherPreflightTests(unittest.TestCase):
 
     def fixture(self):
         from tests import test_paper_entry_dispatcher as module
-        with patch.object(module, 'config', lambda: {**config(), KEY: 1}):
+        with patch.object(module, 'config', lambda: {**config(), KEY: 1, TTL: 120}):
             f = module.DispatcherTests()
             f.setUp()
         self.addCleanup(f.doCleanups)
@@ -484,7 +520,7 @@ class DispatcherPreflightTests(unittest.TestCase):
                 patch.object(tool.concurrency, 'clock', return_value=fresh):
             tool._preflight(ctx)  # held position + fresh mark + ample allowance: permitted
         with patch.object(tool.monitor.MonitoringBudget, 'snapshot', return_value=full), \
-                patch.object(tool.concurrency, 'clock', return_value=fresh + 60):
+                patch.object(tool.concurrency, 'clock', return_value=fresh + 100):
             with self.assertRaisesRegex(ValueError, 'PORTFOLIO_MARKS_TOO_OLD_FOR_ENTRY'):
                 tool._preflight(ctx)
         with patch.object(tool.monitor.MonitoringBudget, 'snapshot', return_value={**full, 'remaining': 60}), \

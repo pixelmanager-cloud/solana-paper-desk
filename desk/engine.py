@@ -20,6 +20,30 @@ def initial_state(cfg):
             "last_entry_minute": -1, "loss_streak": 0}
 
 
+PORTFOLIO_TTL_KEY = "paper_portfolio_mark_ttl_seconds"
+MAX_PORTFOLIO_TTL = 120
+
+
+def portfolio_ttl(cfg):
+    """Max age of a HELD mark when an ENTRY is decided or the day rolls over.
+
+    Absent key: the price TTL, so behaviour is unchanged. Concurrent-entries experiments
+    (paper_concurrent_entries_version 1) set `paper_portfolio_mark_ttl_seconds`: N sequential
+    held legs under 2 s provider pacing cannot all be 10 s old at an entry decision for N >= 2.
+    Exits, candidate evidence and the stale-mark watchdog keep using `price_ttl_seconds`.
+    The key is honoured only with the experiment flag and within [price_ttl_seconds, 120].
+    """
+    price = cfg["price_ttl_seconds"]
+    if PORTFOLIO_TTL_KEY not in cfg:
+        return price
+    ttl = cfg[PORTFOLIO_TTL_KEY]
+    flag = cfg.get("paper_concurrent_entries_version")
+    if (type(flag) is not int or flag != 1 or type(ttl) is not int or type(price) is not int
+            or not price <= ttl <= MAX_PORTFOLIO_TTL):
+        raise ValueError("Invalid portfolio mark TTL")
+    return ttl
+
+
 def exposure(state):
     return sum((dec(p["cost_left"]) for p in state["positions"].values()), ZERO)
 
@@ -351,7 +375,7 @@ def transition(state, e, cfg, *, _quote_book=None):
     day = datetime.fromtimestamp(e["ts"], timezone.utc).date().isoformat()
     if state["day"] != day:
         marks_current=all(not p.get("exit_blocked") and p.get("mark_status")=="MODEL_ESTIMATE"
-            and 0<=e["ts"]-p["mark_at"]<=cfg["price_ttl_seconds"] for p in state["positions"].values())
+            and 0<=e["ts"]-p["mark_at"]<=portfolio_ttl(cfg) for p in state["positions"].values())
         if marks_current:
             state["day"] = day
             state["day_start_equity"] = str(equity(state))
@@ -403,7 +427,7 @@ def transition(state, e, cfg, *, _quote_book=None):
         reasons.append("COOLDOWN")
     if state["last_entry_minute"] == e["ts"] // 60:
         reasons.append("ENTRY_THROTTLE")
-    if any(e["ts"] - p["mark_at"] > cfg["price_ttl_seconds"] for p in state["positions"].values()):
+    if any(e["ts"] - p["mark_at"] > portfolio_ttl(cfg) for p in state["positions"].values()):
         reasons.append("STALE_PORTFOLIO")
     evidence = {k: str(v) if v is not None else None for k, v in scored.items()}
     policy_record = {"entry_policy": deepcopy(policy)} if policy is not None else {}

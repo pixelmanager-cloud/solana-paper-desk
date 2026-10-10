@@ -319,7 +319,9 @@ def _preflight(ctx, scan=None):
         snapshot = monitor.MonitoringBudget(store, ledger, cfg).snapshot()
         if snapshot['status'] != 'AVAILABLE' or snapshot.get('blockers'):
             raise ValueError('Monitoring pending or blocked')
-        if concurrency.selected(cfg):
+        if concurrency.selected(cfg) and scan is None:
+            # Only BEFORE the irreversible dispatch intent: a refusal raised after charges (scan is set
+            # on every later call) would leave an unresolved intent. The engine stays authoritative.
             # Reserve held monitoring for every position (the new one included) and
             # refuse entries the engine's STALE_PORTFOLIO gate would reject anyway.
             refusal = concurrency.entry_blockers(state, cfg, monitoring_remaining=snapshot['remaining'],

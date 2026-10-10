@@ -40,12 +40,14 @@ def main(argv=None):
     for name in ('config','research-db','evidence-db','ledger-db','pool-fee-bps'):
         parser.add_argument('--'+name,required=True)
     parser.add_argument('--systemd-credentials',action='store_true')
-    parser.add_argument('--wall-seconds',type=float,default=12.0,
-                        help='Concurrent-entries experiments only: wall budget used to choose how many held legs run')
+    parser.add_argument('--wall-seconds',type=float,default=None,
+                        help='Concurrent-entries experiments only: wall cap on held legs per pass '
+                             '(default: every open position, oldest mark first)')
     parser.add_argument('--dependency-blocker',action='append',default=[])
     args=parser.parse_args(argv)
     try:
         cfg=cli._config(args.config)
+        if args.wall_seconds is not None and not 0<args.wall_seconds<=3600:raise ValueError('Wall budget bound')
         # Pending dependency review stops before export/database/credentials.
         if args.dependency_blocker:
             if len(args.dependency_blocker)>16 or any(not 1<=len(x)<=128 for x in args.dependency_blocker):
