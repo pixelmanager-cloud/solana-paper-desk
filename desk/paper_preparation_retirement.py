@@ -82,10 +82,13 @@ def rows(c):
 
 def _histories(store,scan):
     with closing(store.connect()) as c:
+        c.execute('BEGIN')
         expected='CREATE TABLE ownership_history(id TEXT PRIMARY KEY,budget TEXT NOT NULL,query TEXT NOT NULL,coverage TEXT,status TEXT NOT NULL,attempts INTEGER NOT NULL DEFAULT 0)'
         if c.execute("SELECT sql FROM sqlite_master WHERE type='table' AND name='ownership_history'").fetchone()!=(expected,):raise ValueError('Preparation history schema')
         # Includes original row identity and canonical strings, not lossy summaries.
-        bounds=c.execute('SELECT count(*),COALESCE(sum(length(CAST(query AS BLOB))+COALESCE(length(CAST(coverage AS BLOB)),0)),0) FROM ownership_history WHERE budget=?',(scan,)).fetchone()
+        invalid=c.execute("SELECT 1 FROM ownership_history WHERE budget=? AND (typeof(id)!='text' OR length(CAST(id AS BLOB))!=64 OR typeof(budget)!='text' OR length(CAST(budget AS BLOB))!=32 OR typeof(query)!='text' OR length(CAST(query AS BLOB)) NOT BETWEEN 1 AND 1048576 OR (typeof(coverage)!='null' AND (typeof(coverage)!='text' OR length(CAST(coverage AS BLOB)) NOT BETWEEN 1 AND 1048576)) OR typeof(status)!='text' OR length(CAST(status AS BLOB)) NOT BETWEEN 1 AND 64 OR typeof(attempts)!='integer' OR CASE WHEN typeof(attempts)='integer' THEN attempts NOT BETWEEN 0 AND 18 ELSE 1 END) LIMIT 1",(scan,)).fetchone()
+        if invalid:raise ValueError('Preparation history scalar bound')
+        bounds=c.execute('SELECT count(*),COALESCE(sum(length(CAST(id AS BLOB))+length(CAST(budget AS BLOB))+length(CAST(query AS BLOB))+COALESCE(length(CAST(coverage AS BLOB)),0)+length(CAST(status AS BLOB))),0) FROM ownership_history WHERE budget=?',(scan,)).fetchone()
         if bounds[0]>18 or bounds[1]>2*1024*1024:raise ValueError('Preparation history bound')
         return c.execute('SELECT rowid,id,budget,query,coverage,status,attempts FROM ownership_history WHERE budget=? ORDER BY id',(scan,)).fetchall()
 
@@ -94,7 +97,10 @@ def _attempts(store,scan,*,intent_hash=None):
     # Compressed pages have no kind/scan index. A bounded whole-set scalar
     # preflight precedes streaming decompression; unrelated pages are not retained.
     with closing(store.connect()) as c:
-        bounds=c.execute('SELECT count(*),COALESCE(sum(raw_bytes),0),COALESCE(sum(length(payload)),0) FROM pages').fetchone()
+        c.execute('BEGIN')
+        invalid=c.execute("SELECT 1 FROM pages WHERE typeof(hash)!='text' OR length(CAST(hash AS BLOB))!=64 OR typeof(payload)!='blob' OR length(payload) NOT BETWEEN 1 AND ? OR typeof(raw_bytes)!='integer' OR CASE WHEN typeof(raw_bytes)='integer' THEN raw_bytes NOT BETWEEN 1 AND ? ELSE 1 END LIMIT 1",(terminal.MAX_PROOF_COMPRESSED_BYTES,terminal.MAX_PROOF_RAW_BYTES)).fetchone()
+        if invalid:raise ValueError('Preparation attempt inventory scalar bound')
+        bounds=c.execute('SELECT count(*),COALESCE(sum(raw_bytes),0),COALESCE(sum(length(payload)+length(CAST(hash AS BLOB))),0) FROM pages').fetchone()
         if bounds[0]>MAX_INVENTORY_PAGES or bounds[1]>MAX_INVENTORY_BYTES or bounds[2]>MAX_INVENTORY_BYTES:raise ValueError('Preparation attempt inventory bound')
         keys=[r[0] for r in c.execute('SELECT hash FROM pages ORDER BY hash')]
     result=[]

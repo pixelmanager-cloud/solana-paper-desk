@@ -8,6 +8,7 @@ from contextlib import closing, redirect_stdout
 from dataclasses import asdict
 import copy
 import io
+import inspect
 import json
 from pathlib import Path
 import sqlite3
@@ -67,7 +68,17 @@ class PreparationRetirementTests(unittest.TestCase):
         class Oversize:
             def open(self,request,*,timeout):
                 return Response(b'UNREAD_OVERSIZED_BODY',[('Content-Length',str(transport.MAX_RESPONSE_BYTES+1))])
-        with patch.object(entry.cli,'_credentials'),patch.object(transport,'build_opener',return_value=Oversize()),patch.dict('os.environ',{'HELIUS_API_KEY':'SYNTHETIC_TEST_ONLY'}):
+        # Generate the historical limit-100 request through real reservation and
+        # transport interfaces, even when fresh producer defaults become 50.
+        from desk import paper_history_source, history, history_progress
+        def historical(namespace, obj):
+            scope=dict(namespace)
+            code=inspect.getsource(obj).replace("'limit':50", "'limit':100").replace("'limit': 50", "'limit': 100")
+            exec(code,scope)
+            return scope[obj.__name__]
+        old_source=historical(vars(paper_history_source),paper_history_source.PaperHistorySource)
+        old_collect=historical(vars(history),history.collect_history)
+        with patch.object(entry,'PaperHistorySource',old_source),patch.object(history_progress,'collect_history',old_collect),patch.object(entry.cli,'_credentials'),patch.object(transport,'build_opener',return_value=Oversize()),patch.dict('os.environ',{'HELIUS_API_KEY':'SYNTHETIC_TEST_ONLY'}):
             with self.assertRaises(ValueError):entry.execute(self.f.config,self.f.f.jobs.path,self.f.f.progress.store.path,self.f.ledger,path,live=True,systemd_credentials=True)
         with self.f.f.progress.store.connect() as c:
             self.pass_id,self.intent_hash=c.execute('SELECT id,intent_hash FROM paper_observation_passes WHERE outcome_hash IS NULL').fetchone()
@@ -201,3 +212,27 @@ class PreparationRetirementTests(unittest.TestCase):
                 try:
                     with self.assertRaises(ValueError):retire.review_plan(*self.args,**(self.kw|{'failed_attempt_hash':key}))
                 finally:self.sql('DELETE FROM pages WHERE hash=?',(key,));self.f.f.progress.store.save(original)
+
+    def test_oversized_page_hash_refused_before_any_proof_load(self):
+        self.sql('UPDATE pages SET hash=? WHERE hash=?',('x'*(20*1024*1024),self.failed))
+        with patch.object(terminal,'_load',side_effect=AssertionError('must preflight before proof loads')) as load:
+            with self.assertRaisesRegex(ValueError,'inventory scalar bound'):
+                retire._attempts(self.f.f.progress.store,self.scan)
+            load.assert_not_called()
+
+    def test_oversized_history_status_refused_before_row_materialization(self):
+        self.sql('UPDATE ownership_history SET status=? WHERE budget=?',('x'*(20*1024*1024),self.scan))
+        with self.assertRaisesRegex(ValueError,'history scalar bound'):
+            retire._histories(self.f.f.progress.store,self.scan)
+
+    def test_all_history_materialized_fields_have_scalar_preflight(self):
+        for field,value in (('id','x'*65),('query',sqlite3.Binary(b'invalid')),('coverage','x'*1048577),('status',sqlite3.Binary(b'invalid')),('attempts','x'*1048577)):
+            with self.subTest(field=field):
+                with self.f.f.progress.store.connect() as c:
+                    saved=c.execute('SELECT rowid,'+field+' FROM ownership_history WHERE budget=? LIMIT 1',(self.scan,)).fetchall()
+                    c.execute('UPDATE ownership_history SET '+field+'=? WHERE rowid=?',(value,saved[0][0]))
+                try:
+                    with self.assertRaisesRegex(ValueError,'history scalar bound'):retire._histories(self.f.f.progress.store,self.scan)
+                finally:
+                    with self.f.f.progress.store.connect() as c:
+                        for rowid,old in saved:c.execute('UPDATE ownership_history SET '+field+'=? WHERE rowid=?',(old,rowid))
