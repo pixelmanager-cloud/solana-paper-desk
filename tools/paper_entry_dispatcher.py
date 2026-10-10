@@ -194,8 +194,10 @@ def _validate(c, expected):
     return _check_records(c,expected,values,bindings,retired,historical_contexts=historical_contexts)
 
 
-def _check_records(c,expected,values,bindings,retired,*,historical_contexts=None):
+def _check_records(c,expected,values,bindings,retired,*,historical_contexts=None,review_source=None):
     historical_contexts={} if historical_contexts is None else historical_contexts
+    if review_source is not None and (not runtime._hash(review_source) or review_source!=expected['source_hash']):
+        raise ValueError('Exact historical dispatcher review source required')
     if set(values['results']) - set(values['intents']):
         raise ValueError('Orphan dispatch result')
     for i, mint, signature in c.execute('SELECT id,mint,signature FROM intents'):
@@ -237,7 +239,7 @@ def _check_records(c,expected,values,bindings,retired,*,historical_contexts=None
                 store = EvidenceStore(expected['paths']['evidence_db']['path'],read_only=True)
                 from desk.history_progress import HistoryProgress
                 progress = HistoryProgress.__new__(HistoryProgress); progress.store = store
-                original = history_preparation_rejection.verify(store,progress,original_result)
+                original = history_preparation_rejection.verify(store,progress,original_result,review_source=review_source)
                 context = original['context']
                 if (original_result['scan_id'] != result['scan_id']
                         or original['target']['target']['mint'] != mint

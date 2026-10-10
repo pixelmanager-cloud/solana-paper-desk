@@ -155,14 +155,14 @@ def _validate_predecessor_journal(c,expected):
     if expected['source_hash']!=PREDECESSOR:raise ValueError('Exact deployed predecessor required')
     values,_=migration._journal(c)
     if values['context']=={1:expected}:
-        return dispatcher._check_records(c,expected,values,{}, {})
+        return dispatcher._check_records(c,expected,values,{}, {},review_source=PREDECESSOR)
     if set(values['context'])!={1}:raise ValueError('Original dispatcher context missing')
     store=EvidenceStore(expected['paths']['evidence_db']['path'],read_only=True)
     with closing(store.connect()) as evidence:
         matches=[v for v in migration.rows(evidence) if v['association']==migration.PREWIRE and v['successor_context']==expected]
     if len(matches)!=1:raise ValueError('Exact installed predecessor dispatcher certificate required')
     bindings,retired,contexts=migration._prewire_lineage(c,matches[0],values['context'][1],review_source=PREDECESSOR)
-    return dispatcher._check_records(c,expected,values,bindings,retired,historical_contexts=contexts)
+    return dispatcher._check_records(c,expected,values,bindings,retired,historical_contexts=contexts,review_source=PREDECESSOR)
 
 
 @contextmanager
