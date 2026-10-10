@@ -73,7 +73,15 @@ class HeldPassLatchTests(_Base):
 
 
 class ExitOnlyStickinessTests(_Base):
-    @unittest.expectedFailure
+    def setUp(self):
+        # T23 (F5): recovery is an explicit versioned experiment option, so this scenario runs on a
+        # ledger initialised with paper_exit_only_recovery_version=1 (default-off stays sticky; see
+        # tests.test_exit_only_recovery.test_default_off_is_byte_identical_and_sticky).
+        super().setUp()
+        self.h.cfg = self.h.cfg | {'paper_exit_only_recovery_version': 1}
+        self.h.path = Path(self.h.f.tmp.name) / 'kraken-recovery.sqlite'
+        cycle.initialize(self.h.path, self.h.cfg)
+
     def test_mode_returns_to_running_after_stale_mark_exit(self):
         """Entry, then the 5-second stale-mark watchdog (monitor.tick) fires >10s later
         (guaranteed with a 5-minute held timer). That sets exit_blocked and mode=EXIT_ONLY.
