@@ -337,5 +337,34 @@ class EngineTests(unittest.TestCase):
         self.assertEqual(json.dumps(first, sort_keys=True), json.dumps(second, sort_keys=True))
 
 
+
+
+from tests import test_paper_concurrency as _tpc
+
+
+class MonitorServiceMarksTests(_tpc.MonitorLegTests):
+    """The held pass starts with ONE positions-less marks cycle, then the exit legs run exactly as before."""
+
+    def test_refresh_runs_first_with_no_positions_then_every_leg(self):
+        code, seen, _ = self.run_service(cfg_marks(), wall=None)
+        self.assertEqual([len(t['position_targets']) for t in seen], [0, 1, 1, 1])
+        self.assertEqual(code, 0)
+
+    def test_a_failed_refresh_never_stops_the_exit_legs(self):
+        code, seen, _ = self.run_service(cfg_marks(), wall=None, codes=[2])
+        self.assertEqual([len(t['position_targets']) for t in seen], [0, 1, 1, 1])
+        self.assertEqual(code, 0)           # the refresh code is not an exit-leg code
+
+    def test_flag_absent_and_single_position_runs_are_unchanged(self):
+        plain = {k: v for k, v in cfg_marks().items() if k not in (pm.KEY, pm.FEE_KEY)}
+        plain['paper_portfolio_mark_ttl_seconds'] = 120
+        _, seen, _ = self.run_service(plain, wall=None)
+        self.assertEqual([len(t['position_targets']) for t in seen], [1, 1, 1])
+
+
+for _name in dir(_tpc.MonitorLegTests):
+    if _name.startswith('test_') and _name not in vars(MonitorServiceMarksTests):
+        setattr(MonitorServiceMarksTests, _name, None)
+
 if __name__ == '__main__':
     unittest.main()
