@@ -7,6 +7,8 @@
 # ExecStartPost latches right after the entry that produced the first BUY.
 # Exit 0 means nothing to do or already latched. Run from the same release
 # WorkingDirectory as the unit so the runtime identity matches the ledger.
+# Fresh-start: <FRESH_*> are the T13 store-set paths. Never point this at the archived
+# paper-kraken-77de75a2 ledger.
 [Service]
-ExecStartPre=/opt/solana-desk/.venv/bin/python -m tools.ops.entry_latch --apply --config /etc/solana-paper/paper-kraken-reviewed.json --ledger /var/lib/solana-desk/paper-kraken-77de75a2.sqlite
-ExecStartPost=/opt/solana-desk/.venv/bin/python -m tools.ops.entry_latch --apply --config /etc/solana-paper/paper-kraken-reviewed.json --ledger /var/lib/solana-desk/paper-kraken-77de75a2.sqlite
+ExecStartPre=/opt/solana-desk/.venv/bin/python -m tools.ops.entry_latch --apply --config <FRESH_CONFIG> --ledger <FRESH_LEDGER>
+ExecStartPost=/opt/solana-desk/.venv/bin/python -m tools.ops.entry_latch --apply --config <FRESH_CONFIG> --ledger <FRESH_LEDGER>
