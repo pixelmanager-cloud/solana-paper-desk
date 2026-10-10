@@ -32,16 +32,35 @@ class CredentialTests(unittest.TestCase):
                                     capture_output=True, text=True)
             self.assertNotEqual(result.returncode, 0)
     def test_deployed_decision_and_monitor_entrypoints_execute(self):
-        import sqlite3,shlex
+        import sqlite3,shlex,fcntl,hashlib
         root=Path(__file__).resolve().parents[1]
         with tempfile.TemporaryDirectory() as d:
             p=Path(d);source=p/'research.sqlite';journal=p/'decisions.sqlite'
             with sqlite3.connect(source) as c:
                 c.execute('CREATE TABLE scans(id TEXT PRIMARY KEY,mint TEXT,created INTEGER,status TEXT,result TEXT)')
                 c.execute('INSERT INTO scans VALUES(?,?,?,?,?)',('a','mint',1,'COMPLETE',json.dumps({'mint':'mint','observed_at':1,'unknowns':[]})))
-            for service,extra in [('desk-decisions.service',['--db',str(source),'--journal',str(journal)]),('desk-paper-monitor.service',['--db',str(p/'missing.sqlite'),'--config',str(root/'config/paper.json')])]:
+            # Execute the complete installed command shape, changing only the
+            # interpreter and explicit production paths to protected fixtures.
+            lock=p/'paper-scheduler.lock';lock.touch(mode=0o600);lock.chmod(0o600)
+            info=lock.stat();env=dict(os.environ,DESK_PAPER_SCHEDULER_IDENTITY=f'{info.st_dev}:{info.st_ino}')
+            replacements={'/var/lib/solana-desk/research.sqlite':str(source),
+                          '/var/lib/solana-desk/paper-decisions.sqlite':str(journal),
+                          '/var/lib/solana-desk/evidence.sqlite':str(p/'evidence.sqlite'),
+                          '/var/lib/solana-desk/active-paper.sqlite':str(p/'missing.sqlite'),
+                          '/opt/solana-desk/config/paper.json':str(root/'config/paper.json')}
+            for service in ('desk-decisions.service','desk-paper-monitor.service'):
                 line=next(x for x in (root/'deploy'/service).read_text().splitlines() if x.startswith('ExecStart='))
-                command=shlex.split(line.split('=',1)[1]);result=subprocess.run([sys.executable,*command[1:4],*extra],capture_output=True,text=True,cwd=root)
+                command=shlex.split(line.split('=',1)[1]);command[0]=sys.executable
+                command=[replacements.get(value,value) for value in command]
+                self.assertIn('tools.paper_scheduler',command)
+                result=subprocess.run(command,env=env,capture_output=True,text=True,cwd=root)
                 self.assertEqual(result.returncode,0,result.stderr);data=json.loads(result.stdout)
                 self.assertFalse(data['automatic_entry_enabled'])
+                before=hashlib.sha256(journal.read_bytes()).hexdigest()
+                with lock.open('r+') as held:
+                    fcntl.flock(held,fcntl.LOCK_EX|fcntl.LOCK_NB)
+                    busy=subprocess.run(command,env=env,capture_output=True,text=True,cwd=root)
+                self.assertEqual(busy.returncode,0,busy.stderr)
+                self.assertEqual(json.loads(busy.stdout)['status'],'SCHEDULER_BUSY')
+                self.assertEqual(hashlib.sha256(journal.read_bytes()).hexdigest(),before)
             self.assertTrue(journal.is_file());self.assertFalse((p/'missing.sqlite').exists())
