@@ -1,0 +1,22 @@
+# Read-only health probe. Exit 2 on CRITICAL (unit shows failed, visible in systemctl --failed);
+# ExecStopPost runs for both outcomes so notify always sees the report.
+[Unit]
+Description=Fresh-start desk health check (read-only)
+[Service]
+Type=oneshot
+User=solana-desk
+Group=solana-desk
+WorkingDirectory=<RELEASE_DIR>
+ExecStart=/opt/solana-desk/.venv/bin/python -m tools.ops.healthcheck --root <FRESH_ROOT> --discovery-db <DISCOVERY_DB> --pacing-db <PACING_DB> --backup-root <BACKUP_ROOT> --config <CONFIG> --out <STATE_DIR>/health.json
+ExecStopPost=/opt/solana-desk/.venv/bin/python -m tools.ops.notify alert --report <STATE_DIR>/health.json --state <STATE_DIR>/notify-state.json
+UMask=0077
+NoNewPrivileges=true
+PrivateTmp=true
+ProtectSystem=strict
+ProtectHome=true
+# Databases are opened mode=ro but SQLite still needs writable WAL shared-memory files.
+ReadWritePaths=<STATE_DIR> <FRESH_ROOT> <PACING_DIR>
+ReadOnlyPaths=<DISCOVERY_DIR> <BACKUP_ROOT>
+RestrictAddressFamilies=AF_INET AF_INET6 AF_UNIX
+TimeoutStartSec=120
+MemoryMax=128M

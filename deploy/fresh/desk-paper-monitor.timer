@@ -1,0 +1,11 @@
+# Manual enablement only (see the service header). Thirty seconds keeps scheduler-lease contention low.
+[Unit]
+Description=Check existing paper positions for stale marks
+[Timer]
+OnBootSec=60
+OnUnitInactiveSec=30
+AccuracySec=1s
+Persistent=false
+Unit=desk-paper-monitor.service
+[Install]
+WantedBy=timers.target

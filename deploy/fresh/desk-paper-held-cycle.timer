@@ -1,0 +1,12 @@
+# Two-minute cadence (marks only stay fresh during a pass; a tighter cadence costs monitoring requests,
+# about 5 per pass, far below the 3600/hour allowance). OnUnitInactiveSec: never overlaps itself.
+[Unit]
+Description=Schedule bounded held-position paper passes
+[Timer]
+OnBootSec=60
+OnUnitInactiveSec=120
+AccuracySec=1s
+Persistent=false
+Unit=desk-paper-held-cycle.service
+[Install]
+WantedBy=timers.target

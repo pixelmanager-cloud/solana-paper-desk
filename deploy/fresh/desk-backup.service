@@ -1,0 +1,23 @@
+# desk.backup cannot back up the fresh set (it requires launches/raw/active-paper databases), so this
+# uses tools.ops.backup (T03): every *.sqlite under the root, online backup API, manifest per snapshot.
+# Pruning runs only after a verified new backup (ExecStartPost is skipped when ExecStart fails).
+[Unit]
+Description=Fresh-start verified database snapshot
+ConditionPathExists=<FRESH_ROOT>/paper-scheduler.lock
+[Service]
+Type=oneshot
+User=solana-desk
+Group=solana-desk
+WorkingDirectory=<RELEASE_DIR>
+ExecStart=/bin/sh -c 'exec /opt/solana-desk/.venv/bin/python -m tools.ops.backup --data <FRESH_ROOT> --destination <BACKUP_ROOT>/daily-$$(date -u +%%Y%%m%%dT%%H%%M%%SZ) --label daily'
+ExecStartPost=/usr/bin/find <BACKUP_ROOT> -maxdepth 1 -type d -name daily-* -mtime +7 -exec /bin/rm -rf -- {} +
+UMask=0077
+NoNewPrivileges=true
+PrivateTmp=true
+ProtectSystem=strict
+ProtectHome=true
+# SQLite read-only connections still need writable WAL shared-memory locks in the source directory.
+ReadWritePaths=<BACKUP_ROOT> <FRESH_ROOT>
+RestrictAddressFamilies=AF_UNIX
+TimeoutStartSec=300
+MemoryMax=256M
