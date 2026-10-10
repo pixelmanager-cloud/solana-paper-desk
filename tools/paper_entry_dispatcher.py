@@ -789,6 +789,44 @@ def _close_dispatch(expected, journal, identity, intent, scan, cause, status):
     _write(journal, 'results', identity, outcome)
 
 
+HOLD_SUFFIX = '.dispatch-hold.'
+
+
+def _hold_path(expected, identity):
+    return str(_path(expected['journal'], private=True)) + HOLD_SUFFIX + identity
+
+
+def _hold_dispatch(expected, identity, cause):
+    """T22H item 2: durable (fsynced file + directory) record that this dispatcher STOPPED ON PURPOSE or on an integrity cause.
+
+    An intent has no hold row, so without this a later dispatcher could not tell a deliberate refusal from a dead process and
+    would abandon it after 900 s. Written before the failure propagates; a SIGKILL writes nothing (that IS an abandoned
+    dispatcher). Never raises: the original failure is propagating.
+    """
+    try:
+        path = _hold_path(expected, identity)
+        fd = os.open(path, os.O_WRONLY | os.O_CREAT | os.O_EXCL | os.O_NOFOLLOW, 0o600)
+        try:
+            os.write(fd, canonical({'dispatch_id': identity, 'cause': str(cause)[:128]}).encode())
+            os.fsync(fd)
+        finally:
+            os.close(fd)
+        dfd = os.open(os.path.dirname(path), os.O_RDONLY)
+        try:
+            os.fsync(dfd)
+        finally:
+            os.close(dfd)
+    except FileExistsError:
+        pass
+    except OSError:
+        return False
+    return True
+
+
+def _held(expected, identity):
+    return os.path.lexists(_hold_path(expected, identity))
+
+
 def _recover_unresolved(expected, journal, ids):
     """Execute path: close stale unresolved intents of a dead dispatcher (this process holds its lock)."""
     from desk.paper_pass_closure import ABANDONED_CAUSE
@@ -803,8 +841,23 @@ def _recover_unresolved(expected, journal, ids):
         intent = json.loads(journal.execute('SELECT payload FROM intents WHERE id=?', (identity,)).fetchone()[0])
         if now - intent['at'] < ABANDON_AFTER_SECONDS:
             continue                       # inside its deadline: the strict revalidation keeps refusing
+        # T22H item 2: abandon ONLY when (1) there is no hold, (2) the owner proof above says the owner is gone (done), and
+        # (3) no retained attempt original of this intent's scan shows a latching failure.
+        if _held(expected, identity):
+            continue                       # the dispatcher refused on purpose / stopped on an integrity cause: stays latched
+        scan = _scan_for(paths['research_db'], intent['hint']['mint'])
+        if scan is not None and _latching_attempts(paths, scan):
+            continue
         _close_dispatch(expected, journal, identity, intent, _scan_for(paths['research_db'], intent['hint']['mint']),
                         ABANDONED_CAUSE, 'ABANDONED_CHARGED')
+
+
+def _latching_attempts(paths, scan):
+    from desk.paper_pass_closure import latching_attempt_for_scan
+    try:
+        return latching_attempt_for_scan(EvidenceStore(paths['evidence_db'], read_only=True), scan)
+    except (ValueError, OSError, sqlite3.Error):
+        return True                        # unreadable evidence is not proof of a transient history
 
 
 def dispatch(expected, *, execute=False, systemd_credentials=False):
@@ -966,6 +1019,8 @@ def _dispatch(expected, *, execute=False, systemd_credentials=False):
                     if transient:                 # allow-list only: everything else stays unresolved (latched)
                         _close_dispatch(expected, journal, identity, intent, known_scan[0] if known_scan else None,
                                         cause, 'FAILED_CHARGED')
+                    else:                         # T22H item 2: a deliberate refusal / integrity stop is a durable hold
+                        _hold_dispatch(expected, identity, cause)
                 except Exception:
                     pass
             raise

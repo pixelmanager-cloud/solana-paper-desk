@@ -302,7 +302,14 @@ class HistoryProgress:
                 with self.store.connect() as c:
                     c.execute('UPDATE ownership_history SET coverage=?,status=? WHERE id=?',
                         (canonical(updated),'DONE' if updated['query_range_exhausted'] else 'PENDING',key))
-            except (ValueError,KeyError,TypeError,IndexError,OSError):
-                # Never save provider error bodies or pretend a failed page advanced.
+            except (ValueError,KeyError,TypeError,IndexError,OSError) as error:
+                # T22H: only a failure PROVEN transient by its retained attempt original is the pager's RETRYABLE_ERROR state.
+                # Everything else (a digest conflict, a binding or cached-request mismatch, TLS, an unclassified or bare
+                # OSError, a failure without an original) propagates so the enclosing pass is classified (and held) by its
+                # real cause instead of being laundered into HISTORY_RECOVERY_REQUIRED. Never save provider error bodies.
+                evidence=getattr(error,'evidence_hash',None)
+                from .paper_pass_closure import failed_reads_transient
+                if type(evidence) is not str or not failed_reads_transient(self.store,[evidence]):raise
                 with self.store.connect() as c:c.execute("UPDATE ownership_history SET status='RETRYABLE_ERROR' WHERE id=?",(key,))
+                return {**self.snapshot(key),'failure_evidence':evidence}
             return self.snapshot(key)

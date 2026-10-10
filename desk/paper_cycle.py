@@ -295,7 +295,10 @@ def _history(progress, item, budget, source_factory):
             return progress.advance(key, source)
         state = budget.call(target.scan_id, advance)
         if state.get('busy') or state.get('blocked') or state['status'] == 'RETRYABLE_ERROR':
-            raise CycleBlocked(state.get('blocked') or ('HISTORY_BUSY' if state.get('busy') else 'HISTORY_RECOVERY_REQUIRED'))
+            # T22H: HISTORY_RECOVERY_REQUIRED carries the failed page's retained attempt original; the closure accepts it
+            # only if that original proves a transient failure (timeout / reset / 429 / 5xx).
+            raise CycleBlocked(state.get('blocked') or ('HISTORY_BUSY' if state.get('busy') else 'HISTORY_RECOVERY_REQUIRED'),
+                               state.get('failure_evidence'))
         if state['coverage'] and len(state['coverage']['pages']) >= 8 and state['status'] != 'DONE':
             raise CycleBlocked('FEATURE_HISTORY_PAGE_LIMIT')
     from .streaming_history import RetainedHistoryPages
@@ -752,6 +755,12 @@ def run_once(research_db, evidence_db, ledger_db, cfg, *, position_targets=(), c
                                 result['monitoring_budget']={'status':'RECOVERY_REQUIRED','blockers':['MONITORING_SNAPSHOT_UNAVAILABLE']}
                         result['budget']={scan:{'used':progress.admission(scan)['requests_used'],
                             'ceiling':progress.admission(scan)['request_ceiling']} for scan in intent['admissions']}
+                    if result['status']!='COMPLETE' and (budget.attempted>0 or budget.monitoring_attempted>0):
+                        # T22H L4: when this pass can not be closed, the hold goes to disk BEFORE the result is saved, so a kill in
+                        # between cannot leave a NULL pass that a later recovery would abandon.
+                        from . import paper_pass_closure as closure
+                        if closure.result_requires_hold(store,result,key,attempt_refs):
+                            closure.write_sentinel(store,identity,(result['blockers'] or [result['status']])[0])
                     outcome = store.save(result)
                     if realism_jobs:fill_realism.enqueue(path,realism_jobs,digest(cfg))  # opt-in; result page durable; before every early return; never raises
                     if terminal_hazards and 'terminal_context' in intent:
