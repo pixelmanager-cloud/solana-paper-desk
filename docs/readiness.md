@@ -624,3 +624,19 @@ Follow-up at 03:53 UTC: the dispatcher timer is paused again. Initial automatic 
 2026-10-10 05:14 UTC: Reviewed release6b977d9 passed exact-head combined Linux CI2851tests and was deployed with all87originaltables preserved. First subsequent candidate1340 failed before BUY: acquisition4requests succeeded; intake charged one further request, history RETRYABLE_ERROR with no retained transport attempt. Original journal remains unresolved, all5charges retained. Entry timer is OFF; candidate1340 must not be retried. Focused deadline-boundary repair assigned to06, independent diagnosis/review07. No live-data paper BUY is verified.
 
 2026-10-10 05:51 UTC: Combined PR194–197 candidate fixes the local intake deadline and captures recent history after full recovery validation under continuously held locks. Root native-clock regression with 7.451s local delay passed entry, monitoring, full exit and stale-data refusal (3 tests,79.022s). Independent final delta review and exact final Linux CI remain prerequisites; these synthetic results are not live readiness. Production entry timer remains off, discovery/private dashboard active, no BUY recorded and candidate1340 never retried. Read-only original-record recovery proposal binds runtime31eb70ed7ff2b16e499bc00d9a6248069e740c603fe722f0b488f2dc71f193b1 and preserves all original five charges.
+
+### 2026-10-10 captured-intake decoder correction candidate
+
+PR198 `9784a59a29fc7d2c0477e5420e56f7736ac8d4c5` and PR199
+`b151f4385acab388be09778e9f658ebc560fa6ba` are composed for review. The
+parsed multisig close no longer raises a missing-owner error. A fully captured
+pre-entry decoder gap can retire without retry, rewriting evidence, or asserting
+candidate safety. Root combined focused tests: 15 passed in 11.618s. Independent
+runtime reviews passed; final fixture delta and full exact-head Linux CI pending.
+
+Readonly original-store installed-proof audit passed after the decoder rollover.
+The explicit 1396 retirement proposal also passed against original retained data.
+Sequence-three runtime and retirement pins are proposals, not applied receipts.
+Production remains source `31eb70ed7ff2b16e499bc00d9a6248069e740c603fe722f0b488f2dc71f193b1`.
+Entry timer is off; no production BUY. Preserve all six charged requests and the
+original unresolved 1396 journal intent. No retry of that candidate.
