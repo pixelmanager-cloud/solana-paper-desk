@@ -2,11 +2,33 @@
   "version": "shadow-grid-1",
   "name": "window-grid",
   "base_config": "config/paper.json",
-  "assumptions": {"sol_usd": "150", "token_decimals": 6, "token_supply_tokens": "1000000000", "pool_fee_bps": "25"},
-  "variants": [{"name": "live", "overrides": {}}],
+  "assumptions": {
+    "sol_usd": "150",
+    "token_decimals": 6,
+    "token_supply_tokens": "1000000000",
+    "pool_fee_bps": "25",
+    "excursion_fraction": "0.30",
+    "max_intra_marks": 3
+  },
+  "variants": [
+    {
+      "name": "live",
+      "overrides": {}
+    }
+  ],
   "grid": {
-    "min_age_seconds": [300, 900, 1800],
-    "min_market_cap_usd": ["50000", "100000"],
-    "min_liquidity_usd": ["8000", "20000"]
+    "min_age_seconds": [
+      300,
+      900,
+      1800
+    ],
+    "min_market_cap_usd": [
+      "50000",
+      "100000"
+    ],
+    "min_liquidity_usd": [
+      "8000",
+      "20000"
+    ]
   }
 }
