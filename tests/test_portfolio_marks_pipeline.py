@@ -313,6 +313,21 @@ class FailureAndFlagTests(MarksPipeline):
         self.assertIn('STALE_PORTFOLIO', [o.get('reason') for o in self.outcomes()])
         self.assertEqual(self.null_passes(), [])
 
+    def test_a_partial_sale_drops_the_valuation_mark_of_the_larger_remainder(self):
+        self.open_positions(2)
+        state = cycle._state(self.ledger, self.cfg)
+        mint = min(state['positions'], key=lambda m: state['positions'][m]['opened_at'])   # the one the 2nd entry's refresh marked
+        self.assertIn('portfolio_mark_at', state['positions'][mint])          # the 2nd entry's refresh marked both
+        self.idle(5)
+        leg = self.held_leg(mint, sell_output=150_000_000)                     # +80 %: the first take-profit sells part
+        after = cycle._state(self.ledger, self.cfg)['positions']
+        sells = [o for o in self.outcomes() if o.get('type') == 'fill' and o['side'] == 'sell' and o['mint'] == mint]
+        self.assertEqual(len(sells), 1, leg)
+        self.assertIn(mint, after)
+        self.assertLess(float(after[mint]['qty']), float(state['positions'][mint]['qty']))
+        for key in ('portfolio_mark_value', 'portfolio_mark_at', 'portfolio_mark_source'):
+            self.assertNotIn(key, after[mint])
+
     def test_a_read_that_did_not_raise_the_monitoring_charge_is_never_applied(self):
         self.first_entry()
         self.append_second_candidate(seed=22)
