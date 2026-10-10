@@ -75,9 +75,13 @@ class GraduationWitnessTests(unittest.TestCase):
         self.assertEqual(f['pool'],g._pda([b'pool',b'\0\0',unbase58(authority),unbase58(f['mint']),unbase58(g.SOL)],g.AMM))
         self.assertEqual(event,original)
 
-    def test_sentinel_does_not_expand_legacy_migrate_or_arbitrary_quotes(self):
+    def test_legacy_sentinel_preserves_quote_and_arbitrary_quotes_still_reject(self):
         raw,mint,pool=self.sentinel_fixture('migrate')
-        self.assertIn('MIGRATION_ACCOUNT_BINDING_MISMATCH',self.extract([raw],mint,pool)['blockers'])
+        original=copy.deepcopy(raw);result=self.extract([raw],mint,pool)
+        self.assertEqual(result['status'],'OBSERVED_MIGRATION')
+        self.assertEqual(result['witnesses'][0]['event_quote_mint'],g.NATIVE_SOL_SENTINEL)
+        self.assertEqual(result['witnesses'][0]['quote_mint'],g.SOL)
+        self.assertFalse(result['entry_authorized']);self.assertEqual(raw,original)
         for quote in (g.NATIVE_SOL_SENTINEL,mint):
             raw,mint,pool=self.sentinel_fixture();outer=raw['transaction']['message']['instructions'][0]
             spec=json.loads((Path(__file__).resolve().parents[1]/'desk/schemas/pump.json').read_text())['instructions']
