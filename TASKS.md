@@ -1425,3 +1425,18 @@ AVOID: desk/paper_pass_closure.py (T22G owns it; only consume it)
 3. **(MED) Byte identity.** Add a committed flag-absent byte-identity test (ledger, events and outcomes vs a v1 run).
 4. **(LOW) Divergence limit.** `model.py` ~:220-224 must rebuild using the CONFIGURED `divergence_max_fraction` and refuse an event whose stored value differs.
 5. **(LOW) Persistent auth failures.** A persistent Jupiter 401/403 under v2 must raise a health WARNING (it must not stay silent while falling back). The parser refuses responses with extra mints. Move `ExampleConfigTests` above the `unittest.main()` guard.
+
+---
+
+## T24R — Rebuild T24 on top of T22G with durable, verifiable incremental state
+STATUS: OPEN
+DEPENDS: branch `cloud/T22G` has a `DONE T22G:` commit
+BASE: origin/cloud/T22G (merge origin/integration/r1 first). Build FRESH; do not rebase or cherry-pick the T24 commits (`origin/cloud/T24`, review: FIX). Reuse ideas and tests only.
+OWNS: desk/history_preparation_rejection.py, desk/paper_cycle_no_entry.py (index only), desk/monitoring_budget.py (accounting only), desk/paper_cycle.py (deadline config only), new tests and a committed benchmark harness under tools/research/bench_*.py
+AVOID: desk/paper_pass_closure.py, dispatcher closure logic (T22G)
+
+The T24 review found that every unit is `Type=oneshot`, so an in-process cache gives cold cost on every pass.
+1. **F7 durable index.** Use an append-only, trigger-guarded verified-digest table in the store, written in the same transaction as each retained item, so each gate call verifies only NEW items plus a bounded deterministic sample. Remove the 100k-page/256MiB hard latch: rotation warnings at 80%, visible to the healthcheck (a queryable row or state file, not only the log). The F7 audit test must measure COLD cost, constant within generous bounds across 1×/10×/30× history.
+2. **F14 incremental accounting.** Keep running totals per window in an append-only, hash-chained table that is updated in the same transaction as each reservation/outcome. Verification covers new rows plus a chained digest; no unauthenticated sidecar file. Add a property test that the incremental result equals a full recompute after random sequences, including forced corruption of an already-verified row being detected by the chain. No flaky tests: everything deterministic.
+3. **F9 deadline.** The default stays 10s. With T36's paced cadences (helius 0.1s, jupiter 0.25s), compute the real worst case per pass type from the code and choose a range accordingly. Validate at config load. Keep it consistent with the unit `TimeoutStartSec` values (held 120, entry 600, decisions as rendered); add a test that checks the rendered units. An overrun yields T22G's FAILED_CHARGED (allow-listed), never a latch.
+4. **Benchmarks.** Commit the 7-day fixture generator and benchmark harness, with before/after numbers in the report, reproducible by `python -m tools.research.bench_...`.
