@@ -13,6 +13,8 @@ import unittest
 import urllib.error
 from decimal import Decimal as D
 
+from unittest.mock import patch
+
 from desk import paper_cycle_no_entry as no_entry, regime_producer as producer, usd_valuation as uv
 from desk import kraken_usd_observation as kraken
 from desk.model import canonical
@@ -51,7 +53,7 @@ class Probe(cyc.V2Base):
         kw = {}
         if mode == 'held':
             self.enter()
-            self.h.sell_output = 0 if blocked_exit else 30_000_000
+            self.h.sell_output = 40_000 if blocked_exit else 30_000_000      # dust quote: UNRESOLVED_QUOTE_DEMAND, after the USD reads
             kw = dict(positions=(self.held_item(),), candidates=(), monitoring=True)
         if jupiter is not None:
             self.h.jupiter_fail, self.h.jupiter_exc = True, jupiter
@@ -135,7 +137,8 @@ class AuthExceptionTests(Probe):
                 self._used = True
                 state = self.end_state('held', jupiter=FAULTS[name], blocked_exit=True)
                 self.assertEqual(state, 'FAILED_CHARGED', self.last)
-                self.assertIn('UNRESOLVED_POSITION_EXIT', self.last['blockers'])
+                self.assertIn('UNRESOLVED_QUOTE_DEMAND', self.last['blockers'])
+                self.assertEqual(len(self.last['usd_evidence_refs']), 2)         # the failed primary and the measured fallback are both cited
 
     def test_any_other_primary_failure_with_kraken_measured_still_holds_a_blocked_exit(self):
         for name in ('tls', 'unclassified', '404'):
@@ -248,6 +251,35 @@ class RegimeSourceTests(unittest.TestCase):
         self.assertEqual(producer.sol_usd_change_pct(self.store.path, regime_fixtures.TS, regime_fixtures.TTL, 2, 'JUPITER'), ('-2.0000', regime_fixtures.TS - 5))
         self.assertEqual(producer.sol_usd_change_pct(self.store.path, regime_fixtures.TS, regime_fixtures.TTL, 2), ('-2.0000', regime_fixtures.TS - 5))
         self.assertEqual(producer.sol_usd_change_pct(self.store.path, regime_fixtures.TS, regime_fixtures.TTL, 1), (None, None))
+
+
+class RegimeCycleTests(Probe):
+    """The cycle hands the regime producer the source the valuation actually used."""
+    extra = {'paper_regime_version': 1}
+
+    def entry_sources(self, **failures):
+        seen = []
+
+        def fake(research, evidence, ts, ttl, **kw):
+            seen.append(kw)
+            return {'version': 1, 'as_of': ts, 'graduations_per_hour': '60', 'sol_usd_change_pct': '1'}
+        for name, value in failures.items():
+            setattr(self.h, name, value)
+        with patch.object(producer, 'evidence', fake):
+            result = self.run_cycle()
+        return seen, result
+
+    def test_a_primary_valuation_asks_for_the_jupiter_series(self):
+        seen, result = self.entry_sources()
+        self.assertEqual(result['status'], 'COMPLETE', result)
+        self.assertTrue(seen)
+        self.assertEqual({tuple(sorted(kw.items())) for kw in seen}, {(('source', 'JUPITER'), ('valuation_version', 2))})
+
+    def test_a_kraken_fallback_valuation_asks_for_the_kraken_series(self):
+        seen, result = self.entry_sources(jupiter_fail=True)
+        self.assertEqual(result['status'], 'COMPLETE', result)
+        self.assertTrue(seen)
+        self.assertEqual({tuple(sorted(kw.items())) for kw in seen}, {(('source', 'KRAKEN'), ('valuation_version', 2))})
 
 
 if __name__ == '__main__':
