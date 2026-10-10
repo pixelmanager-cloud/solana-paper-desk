@@ -26,6 +26,7 @@ import json
 import os
 from pathlib import Path
 import re
+import tempfile
 import time
 
 LABEL = 'EXECUTION_UNVERIFIED'
@@ -39,7 +40,7 @@ REPO = Path(__file__).resolve().parents[2]
 DEFAULT_GRID = REPO / 'config' / 'experiments' / 'shadow' / 'exit-grid.json'
 FRESH_NAMES = {'research': 'research.sqlite', 'evidence': 'evidence.sqlite', 'ledger': 'paper-ledger.sqlite',
                'decisions': 'paper-decisions.sqlite', 'journal': 'entry-dispatch/dispatch.sqlite',
-               'counterfactual': 'counterfactual/counterfactual.sqlite'}
+               'counterfactual': 'counterfactual/counterfactual.sqlite', 'features': 'features/features.sqlite'}
 
 
 class ReportError(ValueError):
@@ -95,7 +96,7 @@ def _safe(function):
     try:
         return {'status': 'OK', 'data': function()}
     except Exception as error:  # a broken input must degrade one section, not the whole report
-        return {'status': 'ERROR', 'error': type(error).__name__, 'detail': str(error)[:160]}
+        return {'status': 'ERROR', 'error': type(error).__name__}   # never str(error): it can carry paths or provider text
 
 
 def _not_provided(why):
@@ -110,10 +111,45 @@ def _derive(opts):
         root = Path(root)
         for key, name in (('research_db', 'research'), ('evidence_db', 'evidence'), ('ledger', 'ledger'),
                           ('decisions_db', 'decisions'), ('journal', 'journal'),
-                          ('counterfactual_store', 'counterfactual')):
+                          ('counterfactual_store', 'counterfactual'), ('features_store', 'features')):
             if not out.get(key):
                 out[key] = str(root / FRESH_NAMES[name])
     return out
+
+
+def _shadow_features(ss, opts, candidates):
+    """The T27 features for the shadow section and a label saying which candidates had REAL features and which fell back to the
+    neutral ones. An explicit ``--features`` file wins; otherwise the T40 features store is used when it exists (a missing store
+    is not an error: everything is then neutral). Store rows dated after a candidate's price path ends are look-ahead: dropped
+    and counted, never used."""
+    source, features, refused = None, None, 0
+    if opts.get('features'):
+        source, features = 'file', ss.load_features(opts['features'], candidates)
+    elif opts.get('features_store') and Path(opts['features_store']).is_file():
+        from tools.research import features as ft
+        ends = {c['mint']: c['migrated_at'] + max((x['horizon'] for x in c['samples']), default=0) for c in candidates}
+        wanted = {}
+        for mint, entry in ft.shadow_features(opts['features_store']).items():
+            if mint not in ends:
+                continue
+            if entry['as_of'] > ends[mint]:
+                refused += 1
+                continue
+            wanted[mint] = entry
+        if wanted:
+            with tempfile.TemporaryDirectory() as tmp:       # reuse the shadow engine's own validation of the file format
+                path = Path(tmp) / 'features.json'
+                path.write_text(json.dumps(wanted, sort_keys=True))
+                features = ss.load_features(path, candidates)
+        source = 'features_store'
+    real = sorted(m for m in (features or {}) if any(c['mint'] == m for c in candidates))
+    fields = sorted({k for m in real for k in features[m]['fields']})
+    label = {'source': source, 'mode': 'REAL_FEATURES_FOR_SOME_CANDIDATES' if real else 'NEUTRAL_FEATURES_ONLY',
+             'candidates': len(candidates), 'real_candidates': len(real), 'neutral_candidates': len(candidates) - len(real),
+             'fields': fields, 'look_ahead_refused': refused}
+    if source is None:
+        label['source'] = None
+    return features, label
 
 
 # --------------------------------------------------------------------------- collection (the only I/O)
@@ -175,11 +211,13 @@ def collect(opts, now):
             from tools.research import shadow_strategies as ss
             selection = {}
             candidates = ss.load_candidates(opts['counterfactual_store'], selection)
-            features = ss.load_features(opts['features'], candidates) if opts.get('features') else None
-            return ss.run(candidates, ss.load_grid(opts.get('grid') or DEFAULT_GRID),
-                          holdout_from=ss._time(opts.get('holdout_from')), features=features,
-                          outcomes=ss.load_outcomes(opts['counterfactual_store'], now=now), selection=selection,
-                          min_trades=opts.get('min_trades', ss.MIN_TRADES))
+            features, label = _shadow_features(ss, opts, candidates)
+            result = ss.run(candidates, ss.load_grid(opts.get('grid') or DEFAULT_GRID),
+                            holdout_from=ss._time(opts.get('holdout_from')), features=features,
+                            outcomes=ss.load_outcomes(opts['counterfactual_store'], now=now), selection=selection,
+                            min_trades=opts.get('min_trades', ss.MIN_TRADES))
+            result['features_label'] = label
+            return result
         sections['shadow'] = _safe(shadow)
 
     why = need('ledger')
@@ -315,8 +353,13 @@ def what_next(sections, metrics):
         for mean, name, n in sorted(winners, reverse=True)[:3]:
             lines.append('Review the filter behind %s: its rejects average %s at +%ds (n=%d) vs %s for bought candidates'
                          % (name, _pct(mean), cf.get('horizon_seconds', 0), n, _pct(base) if base is not None else 'no bought baseline'))
-        if not winners and groups:
+        adequate = [g for name, g in groups.items() if name.startswith('REJECTED') and (g.get('with_return') or 0) >= MIN_SAMPLE]
+        if not winners and groups and adequate:
             lines.append('Counterfactual: no rejection group with n>=%d outperforms the bought baseline; filters look non-harmful so far' % MIN_SAMPLE)
+        elif not winners and groups:
+            largest = max([g.get('with_return') or 0 for name, g in groups.items() if name.startswith('REJECTED')] or [0])
+            lines.append('INSUFFICIENT_SAMPLE: every counterfactual group has n<%d (largest rejection group n=%d); '
+                         'nothing can be said about whether the filters are harmful' % (MIN_SAMPLE, largest))
         elif not groups:
             lines.append('Counterfactual store has no outcome groups yet: let ingest/sample run')
     shadow = data('shadow')
@@ -468,7 +511,13 @@ def _render_shadow(s):
         mean = h.get('mean_return') or (None, None)
         rows.append((r.get('rank') or '-', r['variant'], r.get('rank_status'), _flag(h.get('trades'), 'holdout n'), _pct(h.get('ambiguous_share')),
                      '%s .. %s' % (_pct(mean[0]), _pct(mean[1])), '%s .. %s' % (_pct(ci[0]), _pct(ci[1]))))
-    return ('<p class="note">SIMULATED_SHADOW on the counterfactual price paths; holdout from %s; %s variants tried (Bonferroni). '
+    label = d.get('features_label') or {}
+    features = ('<p class="note">Features: real features for %s of %s candidates (fields: %s); neutral features for %s.%s</p>'
+                % (_e(label.get('real_candidates', 0)), _e(label.get('candidates', '?')), _e(', '.join(label.get('fields') or ()) or 'none'),
+                   _e(label.get('neutral_candidates', '?')),
+                   (' %s store rows dated after the price path were refused as look-ahead.' % _e(label['look_ahead_refused']))
+                   if label.get('look_ahead_refused') else ''))
+    return (features + '<p class="note">SIMULATED_SHADOW on the counterfactual price paths; holdout from %s; %s variants tried (Bonferroni). '
             'Candidates: %s. Mean return and CI are worst/best-case bounds over unsampled gaps.</p>'
             % (_e(d.get('holdout_from')), _e(d.get('variants_tried')), _e(json.dumps(d.get('candidates'), sort_keys=True)))
             + _table(('rank', 'variant', 'status', 'holdout trades', 'ambiguous share', 'mean return (lo..hi)', 'CI95 (lo..hi)'), rows, 3))
@@ -571,7 +620,8 @@ def main(argv=None):
     p.add_argument('--config')
     p.add_argument('--no-systemd', action='store_true')
     p.add_argument('--grid', help='shadow grid (default config/experiments/shadow/exit-grid.json)')
-    p.add_argument('--features')
+    p.add_argument('--features', help='explicit T27 features file; wins over the features store')
+    p.add_argument('--features-store', help='T40 features.sqlite (default with --root: <root>/features/features.sqlite)')
     p.add_argument('--holdout-from')
     p.add_argument('--min-trades', type=int)
     p.add_argument('--lookback-days', type=int, default=7)

@@ -49,7 +49,7 @@ from tools.research import funnel_report as fr
 LABEL = 'PAPER_ONLY_EXECUTION_UNVERIFIED_RESEARCH_FEATURES'
 FEATURE_SET_VERSION = 'candidate-features-v1'
 STORE_VERSION = 1
-MAX_EVENTS, MAX_OUTCOMES, MAX_SAMPLES, MAX_DECISIONS = 500000, 1000000, 500000, 500000
+PAGE_ROWS, MAX_PAGES = 5000, 1000     # rows per bounded page; pages per source per run (a run that hits it resumes from its cursor next time)
 MAX_FEATURE_BYTES = 16384
 
 # event field -> (time key on the event, role). ``None`` time key = measured at the event's own ``ts``.
@@ -86,7 +86,11 @@ CREATE TABLE feature_conflicts(id INTEGER PRIMARY KEY AUTOINCREMENT,mint TEXT NO
 CREATE TABLE ingest_runs(id INTEGER PRIMARY KEY AUTOINCREMENT,now REAL NOT NULL,summary TEXT NOT NULL);
 CREATE INDEX feature_rows_mint_time ON feature_rows(mint,as_of);
 '''
-GUARDED = ('feature_rows', 'feature_conflicts', 'ingest_runs', 'meta')
+CURSOR_TABLE = '''
+CREATE TABLE IF NOT EXISTS ingest_cursors(id INTEGER PRIMARY KEY AUTOINCREMENT,source TEXT NOT NULL,anchor TEXT NOT NULL,
+  position INTEGER NOT NULL,run_id INTEGER NOT NULL);
+'''
+GUARDED = ('feature_rows', 'feature_conflicts', 'ingest_runs', 'meta', 'ingest_cursors')
 
 
 # --------------------------------------------------------------------------- the store
@@ -113,14 +117,21 @@ def init(store):
     os.close(fd)
     with closing(sqlite3.connect(path)) as c:
         c.executescript(SCHEMA)
-        for table in GUARDED:
-            for action in ('UPDATE', 'DELETE'):
-                c.execute(f"CREATE TRIGGER {table}_no_{action.lower()} BEFORE {action} ON {table} "
-                          f"BEGIN SELECT RAISE(ABORT,'Feature store records are append-only'); END")
+        _ensure_cursors(c)
         c.execute("INSERT INTO meta VALUES('store_version',?)", (str(STORE_VERSION),))
         c.execute("INSERT INTO meta VALUES('feature_set_version',?)", (FEATURE_SET_VERSION,))
         c.commit()
     return path
+
+
+def _ensure_cursors(c):
+    """Additive and idempotent: also upgrades a store created before the cursor table existed. Nothing is rewritten."""
+    c.executescript(CURSOR_TABLE)
+    for table in GUARDED:
+        for action in ('UPDATE', 'DELETE'):
+            c.execute(f"CREATE TRIGGER IF NOT EXISTS {table}_no_{action.lower()} BEFORE {action} ON {table} "
+                      f"BEGIN SELECT RAISE(ABORT,'Feature store records are append-only'); END")
+    c.commit()
 
 
 def _open_rw(store):
@@ -129,7 +140,18 @@ def _open_rw(store):
     if not row or row[0] != str(STORE_VERSION):
         c.close()
         raise FeatureError('STORE_VERSION_UNSUPPORTED')
+    _ensure_cursors(c)
     return c
+
+
+def read_cursors(store):
+    """{source: (anchor, position)}: the latest cursor row per source. Cursors only ever advance by appending a row."""
+    with closing(sqlite3.connect(_canonical_store(store).as_uri() + '?mode=ro', uri=True)) as c:
+        c.execute('PRAGMA query_only=1')
+        if not c.execute("SELECT 1 FROM sqlite_master WHERE name='ingest_cursors'").fetchone():
+            return {}
+        return {src: (anchor, pos) for src, anchor, pos in c.execute(
+            'SELECT source,anchor,position FROM ingest_cursors WHERE id IN (SELECT MAX(id) FROM ingest_cursors GROUP BY source)')}
 
 
 def row_digest(mint, as_of, version, features, provenance):
@@ -160,38 +182,83 @@ def validate_row(mint, as_of, features, provenance):
     return None
 
 
+class Writer:
+    """One connection for a whole ingest run. Each page is its own transaction: rows and the cursor that covers them commit
+    together, so a crash can neither lose a cursor advance nor advance it past rows that were not stored."""
+
+    def __init__(self, store, now):
+        self.now = float(now)
+        self.counts = {'inserted': 0, 'duplicate': 0, 'conflict': 0, 'invalid': 0}
+        self.c = _open_rw(store)
+        self.c.execute('BEGIN IMMEDIATE')
+        self.run = self.c.execute('INSERT INTO ingest_runs(now,summary) VALUES(?,?)', (self.now, '{}')).lastrowid
+        self.c.execute('COMMIT')
+
+    def close(self):
+        self.c.close()
+
+    def append(self, records, cursors=()):
+        c, counts = self.c, self.counts
+        c.execute('BEGIN IMMEDIATE')
+        try:
+            for (mint, as_of), rec in sorted(records.items()):
+                self._one(c, mint, as_of, rec['features'], rec['provenance'])
+            for cursor in cursors:
+                c.execute('INSERT INTO ingest_cursors(source,anchor,position,run_id) VALUES(?,?,?,?)', (*cursor, self.run))
+            c.execute('COMMIT')
+        except BaseException:
+            c.execute('ROLLBACK')
+            raise
+        return counts
+
+    def _one(self, c, mint, as_of, features, provenance):
+        counts = self.counts
+        if validate_row(mint, as_of, features, provenance):
+            counts['invalid'] += 1
+            return
+        digest = row_digest(mint, as_of, FEATURE_SET_VERSION, features, provenance)
+        existing = c.execute('SELECT row_hash FROM feature_rows WHERE mint=? AND as_of=? AND feature_set_version=?',
+                             (mint, as_of, FEATURE_SET_VERSION)).fetchone()
+        if existing is None:
+            c.execute('INSERT INTO feature_rows(mint,as_of,feature_set_version,features,provenance,row_hash) VALUES(?,?,?,?,?,?)',
+                      (mint, as_of, FEATURE_SET_VERSION, json.dumps(features, sort_keys=True), json.dumps(provenance, sort_keys=True), digest))
+            counts['inserted'] += 1
+        elif existing[0] == digest or self._already_known(c, mint, as_of, features, provenance):
+            counts['duplicate'] += 1
+        else:
+            already = c.execute('SELECT 1 FROM feature_conflicts WHERE mint=? AND as_of=? AND feature_set_version=? AND offered_hash=?',
+                                (mint, as_of, FEATURE_SET_VERSION, digest)).fetchone()
+            if already is None:
+                c.execute('INSERT INTO feature_conflicts(mint,as_of,feature_set_version,kept_hash,offered_hash,offered,run_id) VALUES(?,?,?,?,?,?,?)',
+                          (mint, as_of, FEATURE_SET_VERSION, existing[0], digest,
+                           json.dumps({'features': features, 'provenance': provenance}, sort_keys=True), self.run))
+            counts['conflict'] += 1
+
+    def _already_known(self, c, mint, as_of, features, provenance):
+        """An incremental run re-offers a small source (journal, discovery) without the ledger event it was merged with: if
+        every offered feature and its provenance is already in the stored row, nothing is new and nothing conflicts."""
+        row = c.execute('SELECT features,provenance FROM feature_rows WHERE mint=? AND as_of=? AND feature_set_version=?',
+                        (mint, as_of, FEATURE_SET_VERSION)).fetchone()
+        stored_f, stored_p = json.loads(row[0]), json.loads(row[1])
+        return all(name in stored_f and stored_f[name] == value and stored_p.get(name) == provenance[name]
+                   for name, value in features.items())
+
+    def finish(self):
+        self.c.execute('BEGIN IMMEDIATE')
+        self.c.execute('INSERT INTO ingest_runs(now,summary) VALUES(?,?)', (self.now, json.dumps(self.counts, sort_keys=True)))
+        self.c.execute('COMMIT')
+        return self.counts
+
+
 def append_rows(store, records, *, now):
     """Insert merged records. Identical re-runs are no-ops; a different row for an existing key is recorded as a conflict and
     never overwrites. Returns counts."""
-    counts = {'inserted': 0, 'duplicate': 0, 'conflict': 0, 'invalid': 0}
-    with closing(_open_rw(store)) as c:
-        c.execute('BEGIN IMMEDIATE')
-        run = c.execute('INSERT INTO ingest_runs(now,summary) VALUES(?,?)', (float(now), '{}')).lastrowid
-        for (mint, as_of), rec in sorted(records.items()):
-            features, provenance = rec['features'], rec['provenance']
-            if validate_row(mint, as_of, features, provenance):
-                counts['invalid'] += 1
-                continue
-            digest = row_digest(mint, as_of, FEATURE_SET_VERSION, features, provenance)
-            existing = c.execute('SELECT row_hash FROM feature_rows WHERE mint=? AND as_of=? AND feature_set_version=?',
-                                 (mint, as_of, FEATURE_SET_VERSION)).fetchone()
-            if existing is None:
-                c.execute('INSERT INTO feature_rows(mint,as_of,feature_set_version,features,provenance,row_hash) VALUES(?,?,?,?,?,?)',
-                          (mint, as_of, FEATURE_SET_VERSION, json.dumps(features, sort_keys=True), json.dumps(provenance, sort_keys=True), digest))
-                counts['inserted'] += 1
-            elif existing[0] == digest:
-                counts['duplicate'] += 1
-            else:
-                already = c.execute('SELECT 1 FROM feature_conflicts WHERE mint=? AND as_of=? AND feature_set_version=? AND offered_hash=?',
-                                    (mint, as_of, FEATURE_SET_VERSION, digest)).fetchone()
-                if already is None:
-                    c.execute('INSERT INTO feature_conflicts(mint,as_of,feature_set_version,kept_hash,offered_hash,offered,run_id) VALUES(?,?,?,?,?,?,?)',
-                              (mint, as_of, FEATURE_SET_VERSION, existing[0], digest,
-                               json.dumps({'features': features, 'provenance': provenance}, sort_keys=True), run))
-                counts['conflict'] += 1
-        c.execute('INSERT INTO ingest_runs(now,summary) VALUES(?,?)', (float(now), json.dumps(counts, sort_keys=True)))
-        c.execute('COMMIT')
-    return counts
+    writer = Writer(store, now)
+    try:
+        writer.append(records)
+        return dict(writer.finish())
+    finally:
+        writer.close()
 
 
 def read_rows(store, *, since=None, until=None):
@@ -275,35 +342,132 @@ def _fmt(d):
     return text
 
 
-def extract_ledger(col, ledger_db, *, since=None, until=None):
-    """Market events as recorded (features at decision time) plus their outcomes (rejection reasons, entry)."""
+class Paging:
+    """Bounded, resumable reads of one append-only source: pages of ``page_rows``, at most ``max_pages`` per run, and a
+    persisted (anchor, position) cursor. The anchor names what the position is a position IN (the first row of the source):
+    a source that was replaced restarts from zero instead of silently skipping the rows its predecessor had."""
+
+    def __init__(self, writer, col, cursors, *, page_rows=PAGE_ROWS, max_pages=MAX_PAGES, use_cursor=True):
+        self.writer, self.col, self.cursors = writer, col, cursors
+        self.page_rows, self.max_pages, self.use_cursor = int(page_rows), int(max_pages), use_cursor
+        self.pages, self.bound_hit = {}, {}
+        self.carry = {}      # bounded small-source records (discovery frames, journal) merged into the page they share a key with
+
+    def start(self, source, anchor, last):
+        saved = self.cursors.get(source) if self.use_cursor else None
+        if saved is None:
+            return 0
+        if saved[0] != anchor or saved[1] > last:
+            self.col.skip('CURSOR_RESET_SOURCE_CHANGED')
+            return 0
+        return saved[1]
+
+    def page_done(self, source, *cursors):
+        """Commit the page's rows and the cursor(s) that cover them in one transaction."""
+        self.pages[source] = self.pages.get(source, 0) + 1
+        records, self.col.records = self.col.records, {}
+        for key in [k for k in self.carry if k in records]:
+            self._merge(records[key], self.carry.pop(key))
+        self.writer.append(records, cursors if self.use_cursor else ())
+
+    def _merge(self, into, other):
+        for name, value in other['features'].items():
+            if name in into['features']:
+                if into['features'][name] != value:
+                    self.col.skip('SAME_TIME_SOURCE_DISAGREEMENT')
+                continue
+            into['features'][name] = value
+            into['provenance'][name] = other['provenance'][name]
+
+    def flush_carry(self):
+        carry, self.carry = self.carry, {}
+        self.writer.append(carry)
+
+    def exhausted(self, source):
+        if self.pages.get(source, 0) >= self.max_pages:
+            self.bound_hit[source] = self.bound_hit.get(source, 0) + 1
+            self.col.skip('PAGE_BOUND_HIT:' + source)
+            return True
+        return False
+
+
+def extract_ledger(col, ledger_db, *, since=None, until=None, paging):
+    """Market events as recorded (features at decision time) plus their outcomes (rejection reasons, entry).
+
+    Events are read in seq order in pages. Outcomes are streamed in their own seq order next to them (the ledger writes an event
+    and its outcomes in one transaction, so they are in the same order); every outcome of a page's events is attached to that
+    page, so a page bound can end a run but can never drop the outcome (reject reasons) of an event that was stored."""
     with closing(fr.connect_ro(ledger_db)) as c:
         c.execute('BEGIN')
         if not (fr._has_table(c, 'events') and fr._has_table(c, 'outcomes')):
             raise FeatureError('LEDGER_TABLES_MISSING')
+        first = c.execute('SELECT event_id FROM events ORDER BY seq LIMIT 1').fetchone()
+        last = (c.execute('SELECT MAX(seq) FROM events').fetchone() or (0,))[0] or 0
+        anchor = first[0] if first else ''
+        windowed = since is not None or until is not None
+        position = 0 if windowed else paging.start('ledger.events', anchor, last)
+        outcome_anchor = (c.execute('SELECT event_id FROM outcomes ORDER BY seq LIMIT 1').fetchone() or ('',))[0]
+        outcome_pos = 0 if windowed else paging.start('ledger.outcomes', outcome_anchor,
+                                                      (c.execute('SELECT MAX(seq) FROM outcomes').fetchone() or (0,))[0] or 0)
+        outcomes = _OutcomeStream(c, outcome_pos, col, quiet=windowed)
         where, args = '', []
         if since is not None:
             where += ' AND ts>=?'; args.append(since)
         if until is not None:
             where += ' AND ts<?'; args.append(until)
-        events = c.execute('SELECT event_id,ts,payload,payload_hash FROM events WHERE 1=1' + where + ' ORDER BY seq LIMIT ?',
-                           (*args, MAX_EVENTS)).fetchall()
-        outcomes = {}
-        ids = {e[0] for e in events}
-        for event_id, payload in c.execute('SELECT event_id,payload FROM outcomes ORDER BY seq LIMIT ?', (MAX_OUTCOMES,)):
-            if event_id in ids:
-                outcomes.setdefault(event_id, []).append(payload)
-    for event_id, ts, payload, payload_hash in events:
-        try:
-            event = json.loads(payload)
-        except ValueError:
-            col.skip('EVENT_UNREADABLE')
-            continue
-        if not isinstance(event, dict) or event.get('kind') != 'market' or not isinstance(event.get('mint'), str) or not _num(ts):
-            col.skip('NOT_A_MARKET_EVENT')
-            continue
-        _market_event(col, event, event_id, ts, payload_hash)
-        _event_outcomes(col, event['mint'], event_id, ts, outcomes.get(event_id, ()))
+        while not paging.exhausted('ledger.events'):
+            page = c.execute('SELECT seq,event_id,ts,payload,payload_hash FROM events WHERE seq>?' + where + ' ORDER BY seq LIMIT ?',
+                             (position, *args, paging.page_rows)).fetchall()
+            if not page:
+                break
+            hi = page[-1][0]
+            attached = outcomes.take(hi, {row[1] for row in page})
+            for _, event_id, ts, payload, payload_hash in page:
+                _ledger_event(col, event_id, ts, payload, payload_hash, attached.get(event_id, ()))
+            position = hi
+            # the outcome cursor moves with the page that consumed it, in the same transaction as the rows
+            paging.page_done('ledger.events', *(() if windowed else (('ledger.events', anchor, position),
+                                                                  ('ledger.outcomes', outcome_anchor, outcomes.position))))
+            if len(page) < paging.page_rows:
+                break
+
+
+class _OutcomeStream:
+    def __init__(self, c, position, col, quiet=False):
+        self.c, self.col, self.position, self.quiet = c, col, position, quiet
+        self.rows = iter(c.execute('SELECT seq,event_id,payload FROM outcomes WHERE seq>? ORDER BY seq', (position,)))
+        self.pending = next(self.rows, None)
+
+    def take(self, hi_seq, ids):
+        attached = {}
+        while self.pending is not None:
+            seq, event_id, payload = self.pending
+            if event_id not in ids:
+                row = self.c.execute('SELECT seq FROM events WHERE event_id=?', (event_id,)).fetchone()
+                if row is None:
+                    self.col.skip('OUTCOME_WITHOUT_EVENT')
+                elif row[0] > hi_seq:
+                    break                       # belongs to a later page
+                elif not self.quiet:             # a windowed run legitimately passes events outside its window
+                    self.col.skip('OUTCOME_FOR_EARLIER_EVENT')
+            else:
+                attached.setdefault(event_id, []).append(payload)
+            self.position = seq
+            self.pending = next(self.rows, None)
+        return attached
+
+
+def _ledger_event(col, event_id, ts, payload, payload_hash, outcome_payloads):
+    try:
+        event = json.loads(payload)
+    except ValueError:
+        col.skip('EVENT_UNREADABLE')
+        return
+    if not isinstance(event, dict) or event.get('kind') != 'market' or not isinstance(event.get('mint'), str) or not _num(ts):
+        col.skip('NOT_A_MARKET_EVENT')
+        return
+    _market_event(col, event, event_id, ts, payload_hash)
+    _event_outcomes(col, event['mint'], event_id, ts, outcome_payloads)
 
 
 def _market_event(col, event, event_id, ts, payload_hash):
@@ -415,77 +579,146 @@ def extract_journal(col, journal_db):
             col.add(mint, result_at, 'requests_charged', requests, source='dispatch.results', ref=ref, role='decision')
 
 
-def extract_counterfactual(col, store):
+def extract_counterfactual(col, store, *, paging):
     with closing(fr.connect_ro(store)) as c:
         c.execute('BEGIN')
         if not (fr._has_table(c, 'samples') and fr._has_table(c, 'candidates')):
             raise FeatureError('COUNTERFACTUAL_TABLES_MISSING')
-        for mint, horizon, sampled_at, base_raw, quote_raw, status in c.execute(
-                "SELECT mint,horizon,sampled_at,base_raw,quote_raw,status FROM samples WHERE sampled_at IS NOT NULL "
-                "AND status='OK' ORDER BY mint,horizon LIMIT ?", (MAX_SAMPLES,)):
-            if not _num(sampled_at):
-                col.skip('SAMPLE_TIME_UNREADABLE')
-                continue
-            try:
-                base, quote = int(base_raw), int(quote_raw)
-            except (TypeError, ValueError):
-                col.skip('SAMPLE_VALUE_UNREADABLE')
-                continue
-            ref = f'counterfactual.samples#{mint}/{horizon}'
-            col.add(mint, sampled_at, 'cf_base_vault_raw', str(base), source='counterfactual.samples', ref=ref)
-            col.add(mint, sampled_at, 'cf_quote_vault_raw', str(quote), source='counterfactual.samples', ref=ref)
-            col.add(mint, sampled_at, 'cf_sample_horizon_seconds', horizon, source='counterfactual.samples', ref=ref)
+        first = c.execute('SELECT mint,horizon FROM samples ORDER BY rowid LIMIT 1').fetchone()
+        anchor = '%s/%s' % first if first else ''
+        position = paging.start('counterfactual.samples', anchor, c.execute('SELECT COALESCE(MAX(rowid),0) FROM samples').fetchone()[0])
+        while not paging.exhausted('counterfactual.samples'):
+            page = c.execute("SELECT rowid,mint,horizon,sampled_at,base_raw,quote_raw,status FROM samples WHERE rowid>? ORDER BY rowid LIMIT ?",
+                             (position, paging.page_rows)).fetchall()
+            if not page:
+                break
+            for _, mint, horizon, sampled_at, base_raw, quote_raw, status in page:
+                if sampled_at is None or status != 'OK':
+                    continue
+                if not _num(sampled_at):
+                    col.skip('SAMPLE_TIME_UNREADABLE')
+                    continue
+                try:
+                    base, quote = int(base_raw), int(quote_raw)
+                except (TypeError, ValueError):
+                    col.skip('SAMPLE_VALUE_UNREADABLE')
+                    continue
+                ref = f'counterfactual.samples#{mint}/{horizon}'
+                col.add(mint, sampled_at, 'cf_base_vault_raw', str(base), source='counterfactual.samples', ref=ref)
+                col.add(mint, sampled_at, 'cf_quote_vault_raw', str(quote), source='counterfactual.samples', ref=ref)
+                col.add(mint, sampled_at, 'cf_sample_horizon_seconds', horizon, source='counterfactual.samples', ref=ref)
+            position = page[-1][0]
+            paging.page_done('counterfactual.samples', ('counterfactual.samples', anchor, position))
+            if len(page) < paging.page_rows:
+                break
 
 
-def extract_decisions(col, decisions_db, research_db=None):
+def extract_decisions(col, decisions_db, research_db=None, *, paging):
     """Decision journal rows that carry their own time. A decision without a time is skipped: it could not be placed."""
-    scan_mint = {}
+    research = None
     if research_db:
-        with closing(fr.connect_ro(research_db)) as r:
-            r.execute('BEGIN')
-            if fr._has_table(r, 'scans'):
-                scan_mint = {i: m for i, m in r.execute('SELECT id,mint FROM scans LIMIT 500000')}
-    with closing(fr.connect_ro(decisions_db)) as x:
-        x.execute('BEGIN')
-        if not fr._has_table(x, 'decisions'):
-            raise FeatureError('DECISIONS_TABLE_MISSING')
-        for scan_id, text, source in x.execute('SELECT scan_id,decision,source_payload FROM decisions LIMIT ?', (MAX_DECISIONS,)):
-            try:
-                decision = json.loads(text)
-                payload = json.loads(source)
-            except ValueError:
-                col.skip('DECISION_UNREADABLE')
-                continue
-            if not isinstance(decision, dict):
-                col.skip('DECISION_UNLABELLED')
-                continue
-            at = next((decision[k] for k in ('ts', 'at', 'decided_at') if _num(decision.get(k))), None)
-            mint = (payload.get('mint') if isinstance(payload, dict) else None) or scan_mint.get(scan_id)
-            if at is None or not isinstance(mint, str):
-                col.skip('DECISION_NOT_PLACEABLE')
-                continue
-            label = next((str(decision[k]) for k in ('action', 'decision', 'verdict') if k in decision), None)
-            if label:
-                col.add(mint, at, 'decision_label', label[:64], source='decisions.decisions', ref=scan_id, role='decision')
+        try:
+            research = fr.connect_ro(research_db)
+        except fr.FunnelError as error:
+            if error.code != 'STORE_MISSING':
+                raise
+            col.skip('SOURCE_ABSENT:research')       # only the scan->mint fallback is lost; decisions that carry a mint still count
+    try:
+        scans = False
+        if research is not None:
+            research.execute('BEGIN')
+            scans = fr._has_table(research, 'scans')
+        with closing(fr.connect_ro(decisions_db)) as x:
+            x.execute('BEGIN')
+            if not fr._has_table(x, 'decisions'):
+                raise FeatureError('DECISIONS_TABLE_MISSING')
+            first = x.execute('SELECT scan_id FROM decisions ORDER BY rowid LIMIT 1').fetchone()
+            anchor = first[0] if first else ''
+            position = paging.start('decisions.decisions', anchor, x.execute('SELECT COALESCE(MAX(rowid),0) FROM decisions').fetchone()[0])
+            while not paging.exhausted('decisions.decisions'):
+                page = x.execute('SELECT rowid,scan_id,decision,source_payload FROM decisions WHERE rowid>? ORDER BY rowid LIMIT ?',
+                                 (position, paging.page_rows)).fetchall()
+                if not page:
+                    break
+                for _, scan_id, text, source in page:
+                    _decision(col, research if scans else None, scan_id, text, source)
+                position = page[-1][0]
+                paging.page_done('decisions.decisions', ('decisions.decisions', anchor, position))
+                if len(page) < paging.page_rows:
+                    break
+    finally:
+        if research is not None:
+            research.close()
+
+
+def _decision(col, research, scan_id, text, source):
+    try:
+        decision = json.loads(text)
+        payload = json.loads(source)
+    except ValueError:
+        col.skip('DECISION_UNREADABLE')
+        return
+    if not isinstance(decision, dict):
+        col.skip('DECISION_UNLABELLED')
+        return
+    at = next((decision[k] for k in ('ts', 'at', 'decided_at') if _num(decision.get(k))), None)
+    mint = payload.get('mint') if isinstance(payload, dict) else None
+    if not mint and research is not None:
+        found = research.execute('SELECT mint FROM scans WHERE id=?', (scan_id,)).fetchone()
+        mint = found[0] if found else None
+    if at is None or not isinstance(mint, str):
+        col.skip('DECISION_NOT_PLACEABLE')
+        return
+    label = next((str(decision[k]) for k in ('action', 'decision', 'verdict') if k in decision), None)
+    if label:
+        col.add(mint, at, 'decision_label', label[:64], source='decisions.decisions', ref=scan_id, role='decision')
+
+
+def _optional(col, sources, name, path, run):
+    """Only the ledger is required. A configured but absent optional store skips its features with a recorded reason;
+    anything else wrong with it (symlink, hard link, unreadable, wrong tables) still fails closed."""
+    if not path:
+        return
+    try:
+        run()
+    except fr.FunnelError as error:
+        if error.code != 'STORE_MISSING':
+            raise
+        sources[name] = 'STORE_MISSING'
+        col.skip('SOURCE_ABSENT:' + name)
 
 
 def ingest(store, *, ledger_db=None, discovery_db=None, hints=None, journal_db=None, research_db=None, decisions_db=None,
-           counterfactual_store=None, since=None, until=None, now=None):
+           counterfactual_store=None, since=None, until=None, now=None, page_rows=PAGE_ROWS, max_pages=MAX_PAGES):
     now = time.time() if now is None else float(now)
     col = Collector(now)
-    if ledger_db:
-        extract_ledger(col, ledger_db, since=since, until=until)
-    if discovery_db or hints is not None:
-        extract_discovery(col, discovery_db=discovery_db, hints=hints, since=since or 0, until=until)
-    if journal_db:
-        extract_journal(col, journal_db)
-    if counterfactual_store:
-        extract_counterfactual(col, counterfactual_store)
-    if decisions_db:
-        extract_decisions(col, decisions_db, research_db)
-    counts = append_rows(store, col.records, now=now)
+    cursors = read_cursors(store)
+    sources = {}
+    writer = Writer(store, now)
+    try:
+        paging = Paging(writer, col, cursors, page_rows=page_rows, max_pages=max_pages)
+        # the bounded small sources first: held aside and merged into the ledger page that shares a (mint, as_of) key
+        # (this is how a dispatch intent joins the market event it was made on); leftovers are stored after the ledger pages
+        if hints is not None:
+            extract_discovery(col, hints=hints)
+        else:
+            _optional(col, sources, 'discovery', discovery_db,
+                      lambda: extract_discovery(col, discovery_db=discovery_db, since=since or 0, until=until))
+        _optional(col, sources, 'journal', journal_db, lambda: extract_journal(col, journal_db))
+        paging.carry, col.records = col.records, {}
+        if ledger_db:
+            extract_ledger(col, ledger_db, since=since, until=until, paging=paging)
+        paging.flush_carry()
+        _optional(col, sources, 'counterfactual', counterfactual_store,
+                  lambda: extract_counterfactual(col, counterfactual_store, paging=paging))
+        _optional(col, sources, 'decisions', decisions_db,
+                  lambda: extract_decisions(col, decisions_db, research_db, paging=paging))
+        counts = writer.finish()
+    finally:
+        writer.close()
     return {'kind': 'features_ingest_v1', 'label': LABEL, 'paper_only': True, 'feature_set_version': FEATURE_SET_VERSION,
-            'now': now, 'candidate_rows': len(col.records), **counts, 'skipped': dict(sorted(col.skipped.items()))}
+            'now': now, **counts, 'pages': dict(sorted(paging.pages.items())), 'page_bound_hit': dict(sorted(paging.bound_hit.items())),
+            'sources_unavailable': dict(sorted(sources.items())), 'skipped': dict(sorted(col.skipped.items()))}
 
 
 # --------------------------------------------------------------------------- exports

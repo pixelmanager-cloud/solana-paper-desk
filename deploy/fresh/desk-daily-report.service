@@ -13,12 +13,17 @@ NoNewPrivileges=true
 PrivateTmp=true
 ProtectSystem=strict
 ProtectHome=true
-ReadWritePaths=<STATE_DIR>
+# Only the reports directory is writable (not the whole state directory); create it before the first run (see below).
+ReadWritePaths=<STATE_DIR>/reports
 ReadOnlyPaths=<FRESH_ROOT> <DISCOVERY_DIR> <PACING_DIR>
-# No network: the report only reads local stores. AF_UNIX stays for `systemctl show` (healthcheck section).
+# No network at all: the report only reads local stores. AF_UNIX stays for `systemctl show` (healthcheck section); that
+# talks to systemd over a filesystem socket, which PrivateNetwork does not remove (not executable-verified without systemd).
 RestrictAddressFamilies=AF_UNIX
+PrivateNetwork=true
 # Research limits: it must never compete with the trading units.
 Nice=15
+CPUWeight=20
+IOWeight=20
 IOSchedulingClass=idle
 CPUQuota=50%
 MemoryMax=512M

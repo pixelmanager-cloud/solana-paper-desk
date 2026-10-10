@@ -68,7 +68,11 @@ def ro(path):
     path = Path(path)
     if path.is_symlink() or not path.is_file():
         raise FileNotFoundError('missing or non-regular database: %s' % path)
-    return sqlite3.connect(path.resolve().as_uri() + '?mode=ro', uri=True, timeout=5)
+    from tools.research import funnel_report
+    resolved = path.resolve()
+    # the shared T02F rule: immutable only for a quiet WAL store (a plain ro open would create -shm/-wal beside it)
+    flag = 'immutable=1' if funnel_report.open_mode(resolved) == 'immutable' else 'mode=ro'
+    return sqlite3.connect(resolved.as_uri() + '?' + flag, uri=True, timeout=5)
 
 
 def graded(name, value, warn, critical, detail, **extra):
