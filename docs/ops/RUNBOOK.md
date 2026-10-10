@@ -202,12 +202,21 @@ its parent must exist), runs the real dispatcher preflight and terminal gate aga
 `units` arguments and `unit_sections`). No reconciliation receipts or successor pins are involved. Its `implementation_hash`
 must equal `DIGEST` from step 1.
 
-## 6. Preflight dry run against copies (T05, when merged)
+## 6. Preflight dry run against copies (T05/T05F + T34)
 
-`tools.ops.preflight_dryrun` (T05/T05F) is not part of this tree yet. Until it lands, `apply` in step 5 has already run the
-real dispatcher preflight and the terminal gate against the new stores (its self-check). When T05F is merged run
-`$PY -m tools.ops.preflight_dryrun --data $NEW --ledger paper-ledger.sqlite --config $CFG --release-dir $REL --workdir /tmp/preflight-$SHA`
-from `$REL` and stop on any result other than a clean gate, plan and pre-check. Never copy the shared pacing database into `$NEW`.
+`apply` in step 5 already ran the real dispatcher preflight and the terminal gate against the new stores (its self-check).
+This repeats them on COPIES with the real entry-scheduler pre-check, as root (it needs a private mount namespace; the child
+sees the copies at the real paths and never touches a live store). The shared pacing and discovery databases live OUTSIDE
+`$NEW`, so both must be named: without `--pacing-db $PACING --discovery-db $DISCOVERY` the tool looks for them under `$NEW`,
+where they do not exist, and the check is meaningless.
+
+```
+cd $REL
+$PY -m tools.ops.preflight_dryrun --data $NEW --ledger $LEDGER --config $CFG --release-dir $REL --workdir /tmp/preflight-$SHA --pacing-db $PACING --discovery-db $DISCOVERY
+```
+
+Stop on any result other than a clean gate, plan and pre-check. The shared pacing database is copied, never opened live, and
+is never copied into `$NEW`.
 
 ## 7. Render, install and cut over (entry timer OFF, monitor OFF)
 
@@ -249,6 +258,55 @@ The entry-latch drop-in in `$UNITS/desk-paper-entry-dispatcher.service.d/` is in
 The optional research units (`desk-counterfactual.*`, `desk-held-watcher.service`, `desk-paper-held-cycle.path`) are rendered
 into `$UNITS/research/`, outside the `$UNITS/*.service $UNITS/*.timer` install above, so the default flow never installs, starts
 or enables them. Step 11 does that explicitly, later.
+
+### 7a2. Pacing policy for the paid Helius / Jupiter plans (T36; optional, reviewed, append-only)
+
+Helius Developer (documented 50 req/s RPC, 10 req/s DAS/Enhanced) and Jupiter Developer (10 req/s over a 60 s window, shared by
+Swap/Price/Token) are paid for, but the shared pacing database still runs both providers at the old 2.0 s cadence (0.5 req/s). The
+reviewed entry in `config/provider-pacing-policy.json` sets **Helius 0.1 s (10 req/s, 20% of 50) and Jupiter 0.25 s (4 req/s,
+40% of 10)** with the 30 s backoff unchanged; **Kraken stays at exactly 2.0 s** (its row, state and migration receipt are never
+touched). Skipping this step is safe: everything keeps running at 2.0 s.
+
+**Where it goes, and why exactly here.** Apply it ONLY after the new release is on every unit and BEFORE the first unit starts:
+
+- after 7a: the old stacks and unit files are archived and the rendered units, whose `WorkingDirectory` and `ExecStart` point at
+  `$REL`, are installed; nothing that could still start runs older code;
+- before 7b: `cutover` starts discovery, the dashboard and the held-cycle timer, all of which open the shared pacing database, and the
+  tool refuses while any writer is active (the same `ActiveState` proof as `backup`, checked again immediately before the write, plus
+  "no pending grant and no live waiter" in the database).
+
+Never earlier than 7a, and never "later, while things run": the apply needs every writer stopped, so applying after 7b means stopping
+the freshly started stack again.
+
+**Run it as the service user, from `$REL`.** The database is owned by `solana-desk` with mode 0600 (the Kraken migration receipt pins
+the path and the mode), and a root-run SQLite writer would leave a root-owned `-journal` next to it that the services cannot open.
+`--policy` must be this release's file, `$REL/config/provider-pacing-policy.json`; the tool refuses any other path. The first two
+commands change nothing: read `changes` (`helius` 2.0 -> 0.1, `jupiter` 2.0 -> 0.25, no `kraken`) and `ready_to_apply: true`, then
+run the third. `--require-quiesced` adds the units of this stack that the built-in writer list does not name:
+
+```
+cd $REL
+runuser -u solana-desk -- $PY -m tools.ops.pacing_policy plan --db $PACING --require-quiesced desk-continuous-discovery.service desk-decisions.service desk-paper-monitor.service desk-paper-monitor.timer
+runuser -u solana-desk -- $PY -m tools.ops.pacing_policy apply --db $PACING --policy $REL/config/provider-pacing-policy.json --require-quiesced desk-continuous-discovery.service desk-decisions.service desk-paper-monitor.service desk-paper-monitor.timer
+runuser -u solana-desk -- $PY -m tools.ops.pacing_policy apply --db $PACING --policy $REL/config/provider-pacing-policy.json --execute --require-quiesced desk-continuous-discovery.service desk-decisions.service desk-paper-monitor.service desk-paper-monitor.timer
+```
+
+`--execute` appends one `pacing_policy_changes` row per provider (old and new cadence and backoff, the reason, the sha256 of the
+policy file, the digest of the reviewed entry, the time). It never edits the original `policy` rows, and re-running it is a no-op
+(`ALREADY_APPLIED`). A 429 or a `Retry-After` still embargoes the provider for the larger of the 30 s backoff and the header.
+
+**The policy file is append-only.** `config/provider-pacing-policy.json` is the reviewed record of cadence decisions. Never edit,
+reorder or delete an entry that was applied anywhere: every applied row stores the file's sha256 and the entry's digest, and
+validation re-checks them forever. A later change is a NEW entry with a new `id`, shipped in a new release and applied by
+repeating this step with all writers stopped. Never `UPDATE policy` by hand and never reset or recreate the shared database.
+
+**One-way door for the old stack.** Once applied, code from a release that predates T36 raises `PACING_DATABASE_INVALID` on the extra
+table (it fails closed rather than running at the old cadence; the `verify_*_originals` tools also compare the schema strictly).
+Do not start a unit of an older release afterwards, and do not apply this step if you may still fall back to the OLD stack in the
+rollback below (that fallback would find a pacing database it cannot open, and the shared database must not be reset).
+
+**Budgets are separate from the cadence.** Helius `getMultipleAccounts` counts as ONE RPC call (up to 100 accounts), so batched marks
+are cheap; DAS and Enhanced calls have their own 10 req/s cap and are not plain RPC.
 
 ### 7b. Dry run, then apply
 
@@ -321,7 +379,8 @@ byte-for-byte against the manifest. Without `--restore-archive` the rendered uni
 in `$SDA`); restore later with the same command. Rollback never restarts anything, and never restores old backups over the new
 stores to "roll back code". After a restore the old units are disabled (step 2); re-enable what you intend to run.
 
-After a rollback that goes back to the OLD stack, also make the old stores writable again (only if step 4 ran, and only after
+If step 7a2 was applied, the OLD stack cannot be started again (its code fails closed on the policy table, see 7a2); this path then
+ends at "everything stopped". Otherwise, after a rollback that goes back to the OLD stack, also make the old stores writable again (only if step 4 ran, and only after
 the new stack is stopped: the rollback above stops it) and BEFORE you start any old unit:
 
 ```
@@ -350,10 +409,16 @@ Right after cutover expect exit 2 with exactly two CRITICAL checks, both legitim
 completed yet) and `backup` (none exists until `desk-backup.timer` fires; `systemctl start desk-backup.service` clears it). It must
 clear `discovery_frames` within minutes; any other CRITICAL is a stop. `mode`, `monitoring_budget` and `pacing:*` must be OK. Also check every `desk-*` unit's effective
 `WorkingDirectory` (`systemctl show -p WorkingDirectory`), discovery rows are fresh and the mode is `RUNNING`. With the
-read-only status tool (T02/T02F, when merged) run
-`runuser -u solana-desk -- $PY -m tools.ops.status --data $NEW --ledger $LEDGER --config $CFG --release-dir $REL --systemd` and expect empty `blockers`.
-Take the pre-entry snapshot (T06, when merged):
-`runuser -u solana-desk -- $PY -m tools.ops.verify_cycle snapshot --data $NEW --ledger $LEDGER --config $CFG --out /var/lib/solana-desk-health/snap-before.json`.
+read-only status tool (T02/T02F/T34) run the block below as the service user and expect empty `blockers`. The shared pacing and
+discovery databases are outside `$NEW`, so `--pacing-db $PACING --discovery-db $DISCOVERY` are required: without them the report
+reads (and blames) `$NEW/provider-pacing.sqlite`, which does not exist. Then take the pre-entry snapshot (T06/T34) with the same
+two flags:
+
+```
+cd $REL
+runuser -u solana-desk -- $PY -m tools.ops.status --data $NEW --ledger $LEDGER --config $CFG --release-dir $REL --pacing-db $PACING --discovery-db $DISCOVERY --systemd
+runuser -u solana-desk -- $PY -m tools.ops.verify_cycle snapshot --data $NEW --ledger $LEDGER --config $CFG --pacing-db $PACING --discovery-db $DISCOVERY --out /var/lib/solana-desk-health/snap-before.json
+```
 
 ## 9. Latch, then enable entries (T07)
 
@@ -374,14 +439,14 @@ The last command is read-only (no BUY yet, nothing to do). Enable entries by the
 systemctl enable --now desk-paper-entry-dispatcher.timer
 ```
 
-## 10. Cold restart check (T06, when merged)
+## 10. Cold restart check (T06/T34)
 
 After a position has been opened or closed and with no new activity expected:
 
 ```
 cd $REL
 systemctl restart desk-paper-held-cycle.timer desk-dashboard.service
-runuser -u solana-desk -- $PY -m tools.ops.verify_cycle snapshot --data $NEW --ledger $LEDGER --config $CFG --out /var/lib/solana-desk-health/snap-after.json
+runuser -u solana-desk -- $PY -m tools.ops.verify_cycle snapshot --data $NEW --ledger $LEDGER --config $CFG --pacing-db $PACING --discovery-db $DISCOVERY --out /var/lib/solana-desk-health/snap-after.json
 runuser -u solana-desk -- $PY -m tools.ops.verify_cycle compare /var/lib/solana-desk-health/snap-before.json /var/lib/solana-desk-health/snap-after.json            # exact
 runuser -u solana-desk -- $PY -m tools.ops.verify_cycle compare /var/lib/solana-desk-health/snap-before.json /var/lib/solana-desk-health/snap-after.json --allow-progress
 ```

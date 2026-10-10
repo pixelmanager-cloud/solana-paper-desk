@@ -26,7 +26,7 @@ from discovery import continuous as discovery
 from tests.test_ops_cutover import FakeSystemd, tree
 from tests.test_ops_fresh_start import FreshStartBase
 from tests.test_ops_fresh_start_wiring import exec_words, env_words, settings
-from tools.ops import backup, cutover, entry_latch, fresh_start as fs, healthcheck, verify_backup
+from tools.ops import backup, cutover, entry_latch, fresh_start as fs, healthcheck, preflight_dryrun, status, verify_backup, verify_cycle
 
 REPO = Path(__file__).resolve().parents[1]
 RUNBOOK = REPO / 'docs' / 'ops' / 'RUNBOOK.md'
@@ -204,9 +204,15 @@ class E2E(FreshStartBase):
                 fake = lambda unit: self.systemd.state.get(unit, 'inactive')
                 with mock.patch.object(backup.backup, '__defaults__', ((), None, fake)):
                     code = backup.main(argv)
+            elif module == 'preflight_dryrun':
+                # The real tool needs unshare/mount and a service-user owner; here only the parsed arguments are judged
+                # (T32H/T34: the shared pacing and discovery stores must be named, they are not under --data).
+                self.preflight_args = []
+                with mock.patch.object(preflight_dryrun, 'run', lambda args: self.preflight_args.append(args) or {'status': 'PASS'}):
+                    code = preflight_dryrun.main(argv)
             else:
                 code = {'verify_backup': verify_backup, 'fresh_start': fs, 'healthcheck': healthcheck,
-                        'entry_latch': entry_latch}[module].main(argv)
+                        'entry_latch': entry_latch, 'status': status, 'verify_cycle': verify_cycle}[module].main(argv)
         text = out.getvalue()
         try:
             payload = json.loads(text) if text.strip() else {}
@@ -226,6 +232,8 @@ class E2E(FreshStartBase):
                 i = argv.index('--service-user'); argv[i + 1] = self.user
         if module == 'healthcheck':
             argv += ['--no-systemd']
+        if module == 'status':                                  # the sandbox has no systemd and no git checkout to describe
+            argv = [a for i, a in enumerate(argv) if a != '--systemd' and a != '--release-dir' and (i == 0 or argv[i - 1] != '--release-dir')]
         if module == 'cutover':
             head = ['--journal', str(self.rootdir / 'cutover-journal.jsonl'), '--python', sys.executable]
             sub = next(a for a in argv if a in ('stage', 'cutover', 'rollback', 'inventory', 'archive-dropins', 'seal-archive', 'unseal'))
@@ -334,13 +342,15 @@ class E2E(FreshStartBase):
                 assert words[1] == '-m' and words[2].startswith('tools.ops.'), words
                 module = words[2].split('.')[-1]
                 argv = self.adapt(module, words[3:], v)
-                if module == 'cutover' and 'stage' in words[3:] or module in ('preflight_dryrun', 'status', 'verify_cycle'):
-                    continue                                    # stage: own tests; others: not in this tree
+                if module == 'cutover' and 'stage' in words[3:]:
+                    continue                                    # stage: own tests
+                if module == 'pacing_policy':
+                    continue                                    # T36's tool lives on cloud/T36 until the coordinator merges it
                 if '<' in ' '.join(argv):
                     continue                                    # step needs a value only the operator has
                 code, payload, raw = self.run_tool(module, argv)
                 self.results.append((section, module, argv, code, payload, raw))
-                if code != 0 and module != 'healthcheck':      # healthcheck exits 2 on any CRITICAL; judged below
+                if code != 0 and module not in ('healthcheck', 'status'):      # healthcheck/status exit 2 on any blocker; judged below
                     raise AssertionError((section, module, argv, payload or raw[-800:]))
                 if module == 'fresh_start' and argv[0] == 'plan':
                     self.plan_hash = payload['plan_hash']
@@ -354,7 +364,7 @@ class E2E(FreshStartBase):
     def test_runbook_sequence_composes_end_to_end(self):
         self.presealed = {p: (os.lstat(p).st_mode & 0o7777, os.lstat(p).st_uid, os.lstat(p).st_gid)
                           for p in [self.old, self.old / 'discovery', *self.old.glob('old-store-*.sqlite')]}
-        self.run_runbook(('2.', '3.', '4.', '5.', '7a.', '7b.', '8.', '9.'))
+        self.run_runbook(('2.', '3.', '4.', '5.', '6.', '7a.', '7b.', '8.', '9.'))
         # every RUNBOOK command that ran succeeded (healthcheck is judged separately: a sandbox has no live discovery)
         for section, module, argv, code, payload, raw in self.results:
             if module != 'healthcheck':
@@ -451,7 +461,22 @@ class E2E(FreshStartBase):
         self.assertEqual(self.systemd.state['desk-decisions.service'], 'inactive')
         self.assertIn(['systemctl', 'reset-failed', 'desk-*'], self.shell_log)
         # read-only tools run as the service user
-        self.assertEqual([r.split()[-1] for r in self.runuser], ['tools.ops.healthcheck', 'tools.ops.entry_latch'])
+        self.assertEqual([r.split()[-1] for r in self.runuser], ['tools.ops.healthcheck', 'tools.ops.status', 'tools.ops.verify_cycle', 'tools.ops.entry_latch'])
+        # T32H/T34: the read-only tools were really run against the fresh stores and named the SHARED pacing/discovery stores
+        (status_run,) = [r for r in self.results if r[1] == 'status']
+        self.assertEqual((status_run[3], status_run[4]['status'], status_run[4]['blockers']), (0, 'OK', []))
+        self.assertEqual(status_run[4]['discovery']['path'], str(self.discovery))
+        external = {store['name']: store['role'] for store in status_run[4]['store_inventory']['stores'] if store.get('external')}
+        self.assertEqual(external, {str(self.discovery): 'discovery', str(self.pacer): 'provider_pacing'})
+        self.assertTrue(status_run[4]['provider_pacing']['providers'])               # the shared pacing database was really read
+        (snapshot_run,) = [r for r in self.results if r[1] == 'verify_cycle']
+        self.assertEqual((snapshot_run[3], snapshot_run[4]['status']), (0, 'NO_FILLS'))
+        snapshot_doc = json.loads(Path(snapshot_run[4]['out']).read_text())
+        self.assertEqual((snapshot_doc['pacing']['present'], snapshot_doc['discovery']['present']), (True, True))   # the SHARED stores were found
+        self.assertEqual([name for name, _ in snapshot_doc['pacing']['providers']], ['helius', 'jupiter', 'kraken'])
+        (preflight,) = self.preflight_args
+        self.assertEqual((preflight.pacing_db, preflight.discovery_db, preflight.data, preflight.ledger),
+                         (str(self.pacer), str(self.discovery), self.v['NEW'], self.v['LEDGER']))
         # ...and so does every other read-only tool the RUNBOOK mentions (inline code spans are not executed here)
         for line in RUNBOOK.read_text().splitlines():
             for tool_name in ('tools.ops.status', 'tools.ops.verify_cycle', 'tools.ops.healthcheck', 'tools.ops.entry_latch'):
@@ -502,6 +527,44 @@ class E2E(FreshStartBase):
         self.assertEqual((code, payload['removed']), (0, []))
         self.assertEqual(tree(self.unit_dir), self.prod_tree)
 
+    def runbook_blocks(self):
+        return logical_commands(RUNBOOK.read_text().split('## Rotate when flat')[0])
+
+    def test_every_status_preflight_and_snapshot_command_names_the_shared_pacing_and_discovery_stores(self):
+        """T32H/T34: the shared stores live outside $NEW; the tools' defaults would look for them under $NEW."""
+        hits = [(section, c) for section, c in self.runbook_blocks()
+                if re.search(r'tools\.ops\.(status|preflight_dryrun|verify_cycle snapshot)\b', c)]
+        self.assertEqual(len(hits), 4, hits)             # preflight (6), status (8), snapshot before (8), snapshot after (10)
+        for section, command in hits:
+            self.assertIn('--pacing-db $PACING', command, (section, command))
+            self.assertIn('--discovery-db $DISCOVERY', command, (section, command))
+
+    def test_pacing_policy_step_sits_between_unit_installation_and_the_first_start(self):
+        """T32H: apply ONLY after the new release is on every unit, as the service user, from $REL, with an append-only file."""
+        text = RUNBOOK.read_text()
+        seven_a, policy, seven_b = (text.index(h) for h in ('### 7a. Render and install the units', '### 7a2. Pacing policy', '### 7b. Dry run, then apply'))
+        self.assertLess(seven_a, policy)
+        self.assertLess(policy, seven_b)
+        self.assertLess(text.index('install -m 0644 $UNITS/*.service $UNITS/*.timer /etc/systemd/system/'), policy)   # units installed first
+        self.assertLess(text.index('## 2. Inventory, then stop writers'), policy)                                     # writers stopped first
+        section = text[policy:seven_b]
+        commands = [c for sec, c in self.runbook_blocks() if sec.startswith('7a2.')]
+        self.assertEqual(len(commands), 4, commands)                        # cd + plan + dry-run apply + apply --execute
+        self.assertEqual(commands[0], 'cd $REL')
+        plan, dry, real = commands[1:]
+        for command in (plan, dry, real):
+            self.assertTrue(command.startswith('runuser -u solana-desk -- $PY -m tools.ops.pacing_policy '), command)
+            self.assertIn('--db $PACING', command)
+            self.assertIn('--require-quiesced', command)
+        self.assertNotIn('--execute', plan + dry)
+        self.assertIn('--execute', real)
+        for command in (dry, real):
+            self.assertIn('--policy $REL/config/provider-pacing-policy.json', command)
+        for phrase in ('ONLY after the new release is on every unit', 'BEFORE the first unit starts', 'append-only', 'Kraken stays at exactly 2.0 s',
+                       'Never edit', 'ALREADY_APPLIED', 'One-way door', 'PACING_DATABASE_INVALID', 'shared database must not be reset'):
+            self.assertIn(phrase, section.replace('\n', ' ').replace('  ', ' ') if phrase.startswith('shared') else section, phrase)
+        self.assertIn('If step 7a2 was applied, the OLD stack cannot be started again', text)         # the rollback section says so
+
     def test_runbook_never_chowns_or_installs_into_the_backup_parent(self):
         """T32G item 4: /var/backups/solana-desk is root:root 0755 on the VPS and stays so; fresh_start creates $BK in it."""
         text = RUNBOOK.read_text()
@@ -516,7 +579,7 @@ class E2E(FreshStartBase):
         """T32G item 4: apply creates $BK inside the root-owned parent; the parent itself is never chowned or re-moded."""
         self.vb.chmod(0o755)
         before = (self.vb.stat().st_uid, self.vb.stat().st_gid, self.vb.stat().st_mode & 0o7777)
-        self.run_runbook(('2.', '3.', '4.', '5.', '7a.', '7b.', '8.', '9.'))
+        self.run_runbook(('2.', '3.', '4.', '5.', '6.', '7a.', '7b.', '8.', '9.'))
         after = (self.vb.stat().st_uid, self.vb.stat().st_gid, self.vb.stat().st_mode & 0o7777)
         self.assertEqual(after, before)
         self.assertEqual(oct(Path(self.v['BK']).stat().st_mode & 0o777), '0o700')
@@ -553,7 +616,7 @@ class E2E(FreshStartBase):
         self.assertTrue(any(' unseal ' in c and '--manifest $SM' in c for c in rollback), rollback)
 
     def test_research_units_are_never_installed_or_enabled_by_the_default_flow(self):
-        self.run_runbook(('2.', '3.', '4.', '5.', '7a.', '7b.', '8.', '9.'))
+        self.run_runbook(('2.', '3.', '4.', '5.', '6.', '7a.', '7b.', '8.', '9.'))
         research = {'desk-counterfactual.service', 'desk-counterfactual.timer', 'desk-held-watcher.service',
                     'desk-paper-held-cycle.path'}
         self.assertFalse(research & {p.name for p in self.unit_dir.iterdir()})
