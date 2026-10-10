@@ -5546,7 +5546,7 @@
     },
     "production_commit": "5746912cd88b9527e2b196a2edefc66b72c257a0",
     "kraken_usd_integration": {
-      "status": "COMBINED_RELEASE_READY_FOR_FINAL_CI_PRODUCTION_QUIESCED",
+      "status": "DEPLOYED_PRESERVED_SERVICES_ACTIVE_NO_LIVE_BUY_YET",
       "base_head": "c1c613b696755c53912feb45639191045b831554",
       "author_thread": "01a118fd-0f1c-749c-b85b-5e730937d0a8",
       "reviewer_thread": "01a118fd-3f90-77d9-9549-c4497f5b10a6",
@@ -5556,7 +5556,7 @@
       "user_authorization": "Ok begin integration. Is the api rate limited?",
       "source_evaluation": "docs/free-sol-usd-source-evaluation.json",
       "minimum_request_interval_seconds": 2,
-      "production_changed": "WRITERS_QUIESCED_NEW_DISTINCT_LEDGER_INITIALIZED_ORIGINALS_NOT_MIGRATED",
+      "production_changed": true,
       "pr": 183,
       "head": "2d507b83fec026d247d68b564b3ada83993562ca",
       "constraints": [
@@ -5779,15 +5779,53 @@
       "local_integration_head": "a0869a4198e4be2a82c469a7883f24d4ad3d65bb",
       "autonomous_candidate_path_audit": {
         "worker": "07",
-        "status": "GAP_CONFIRMED_IMPLEMENTATION_ASSIGNED",
+        "status": "RECOVERY_FIX_REVIEW_RUNNING_REJECTION_REFINEMENT_ASSIGNED",
         "scope": "External tools dispatcher; no desk runtime change; separate reviewed activation; one candidate per invocation",
         "turn": "01a1233f-a054-77c9-8ef6-819376bb04ff",
-        "claim": "KRAKEN-AUTO-ENTRY-1"
+        "claim": "KRAKEN-AUTO-ENTRY-1",
+        "pr": 185,
+        "head": "5dc81bc53afe465640df5bffe609c42e49fc3c79",
+        "branch": "codex/cloud-wave1-07-auto-entry",
+        "author_turn": "01a12340-ca75-746e-b517-0dd830c5f51f",
+        "reviewer": "09",
+        "native_worker": "06",
+        "focused_tests": {
+          "count": 44,
+          "seconds": 30.007
+        },
+        "ci_runs": [
+          38011050874,
+          38011046987
+        ],
+        "retained_selector_check": "work/dispatcher-retained-selector-aa623d8.json",
+        "operational_review_note": "Deterministic rejected acquisition currently blocks entire dispatcher; reviewer assessing narrow evidence-bound terminal disposition",
+        "review_turn": "01a12350-6177-7769-8f42-3069a6a73b0a",
+        "finding": "Recheck global recovery gate under canonical locks at acquisition RPC and intake HTTP boundaries",
+        "operational_followup": "Narrow append-only completed deterministic token-policy rejection disposition; malformed/ambiguous failures remain blocked",
+        "native_validation": {
+          "head": "aa623d83bdb81d6971a2864ce76ad51ea79cbcc8",
+          "turn": "01a12350-adca-7488-95ff-d6468b48479b",
+          "status": "SYNTHETIC_PASS_HEAD_STILL_HELD_FOR_RECOVERY_RACE",
+          "cycle_seconds": 8.305,
+          "total_dispatch_seconds": 18.79,
+          "requests_used": 12,
+          "ceiling": 18,
+          "monitoring_used": 0,
+          "restart": "HELD_PRIORITY_NO_ADMISSION_OR_SPEND",
+          "log_sha256": "f9cd755ef09ff1f3b48d0f9cf1a79f64dee5a49eb3c3597644a3474a63adda2f",
+          "initial_probe": "Synthetic history timestamps exceeded cutoff; correctly blocked, retained separately"
+        },
+        "race_fix_turn": "01a12353-bf6d-7025-acce-83bf13763cb4",
+        "rejection_allowlist": [
+          "ACTIVE_MINT_AUTHORITY",
+          "ACTIVE_FREEZE_AUTHORITY"
+        ]
       },
       "pre_backup": {
         "path": "/var/backups/solana-desk/pre-kraken-77de75a2",
         "databases": 10,
-        "status": "PASS"
+        "status": "PASS",
+        "manifest_sha256": "ba805e7e14ebdb1ada259cdf088d9abade0fd5e7317ee0664ea1e5018cfc0784"
       },
       "proposals": {
         "path": "work/kraken-production-proposals.json",
@@ -5801,6 +5839,46 @@
         "databases": 10,
         "tables": 72,
         "status": "UNCHANGED_AFTER_NEW_LEDGER_INITIALIZATION"
+      },
+      "release": {
+        "head": "9504728bf099b72db83f344747e057a6ec45d4d3",
+        "source": "77de75a248fd087e62bcc2bac4a581c667905dfcb709e28ed8e80a58afcd4d54",
+        "ci_runs": [
+          38010663139,
+          38010660163
+        ],
+        "status": "DEPLOYED_BOTH_EXACT_HEAD_CI_PASS",
+        "path": "/opt/solana-desk-releases/9504728bf099b72db83f344747e057a6ec45d4d3",
+        "ci_results": {
+          "38010663139": {
+            "tests": 2716,
+            "seconds": 911.208,
+            "result": "PASS"
+          },
+          "38010660163": {
+            "tests": 2716,
+            "seconds": 923.246,
+            "result": "PASS"
+          }
+        }
+      },
+      "activation": {
+        "successor_hash": "494cbf72ecb0316cc792d237c1e084f3dd52e64521b483605b3ee182ae0e89f0",
+        "pacing_hash": "b040092fd3792cacfcc74881b6d1fd3553260d6afaed1d99a33ad86a1c8d073c",
+        "preservation": {
+          "original_databases": 10,
+          "original_tables": 72,
+          "new_ledgers": 1
+        },
+        "post_backup": "/var/backups/solana-desk/post-kraken-77de75a2",
+        "post_backup_databases": 11,
+        "unit_backup": "/var/backups/solana-desk/kraken-unit-ksphc4xr",
+        "loopback": "127.0.0.1:8765",
+        "cash": "5",
+        "held": 0,
+        "monitoring_used": 0,
+        "monitoring_cap": 3600,
+        "first_live_buy": false
       }
     },
     "quote_alternative": {
@@ -6448,5 +6526,62 @@
     "automatic_entry_enabled": false,
     "dashboard_active": true,
     "decision_and_monitor_exit_status": 0
+  },
+  "coordinator_live_kraken_attempts": {
+    "release": "9504728bf099b72db83f344747e057a6ec45d4d3",
+    "source": "77de75a248fd087e62bcc2bac4a581c667905dfcb709e28ed8e80a58afcd4d54",
+    "seq984": {
+      "scan_id": "000433bf419d4969aad3cc4fffdede92",
+      "charged": 6,
+      "status": "MIGRATION_WITNESS_ABSENT",
+      "diagnosis": "Exact retained successful migrate_v2 is no-op: unchanged balances and no completion event. No entry attempted; preserve admission and charges."
+    },
+    "seq1042": {
+      "mint": "4Hd1KUwnRXsjoz7aMNPSUNCq19Px4pHzA3GisUvTpump",
+      "status": "OBSERVED_POOL_BINDING_INVALID",
+      "hint": "Matching decoded completion event only, finalized intake still required",
+      "scan_id": "754842bb84d94fc18b20f5940aff1c78",
+      "charged": 4
+    },
+    "writers": "Restored dashboard/held/monitor/decisions/backup timers; continuous discovery active. Global unresolved preparation gate blocks new paper activity.",
+    "first_buy_notification_sent": false,
+    "pr185_recovery_review": {
+      "head": "5dc81bc53afe465640df5bffe609c42e49fc3c79",
+      "reviewer": "09",
+      "turn": "01a1235a-abd9-7039-8c2f-4b216a00088d",
+      "result": "PASS scoped recovery race fix; rejection/selector additions pending"
+    },
+    "seq1032": {
+      "scan_id": "86b0c16242934b768a0ddc0847d9b09d",
+      "charged": 7,
+      "status": "RESPONSE_OVERSIZED",
+      "http_status": 200,
+      "method": "getTransactionsForAddress",
+      "failure_hash": "f54506e614f264c6c483b2d054848f9d31c4c3fb1d6974a490da3e88f4227bfc",
+      "pass_id": "02b82210a5694a629a99ae54d20466bb",
+      "outcome": null,
+      "no_buy": true,
+      "do_not_retry": true
+    },
+    "history_page_size_claim": {
+      "worker": "03",
+      "task": "HISTORY-PAGE-SIZE-1",
+      "status": "dispatched"
+    },
+    "preparation_retirement_claim": {
+      "worker": "06",
+      "task": "PREPARATION-FAILURE-RETIREMENT-1",
+      "status": "dispatched",
+      "preserve_null_and_charge": true
+    },
+    "checkpoint_verified": {
+      "cash": "5",
+      "positions": {},
+      "realized_pnl": "0",
+      "last_ts": 0,
+      "no_first_buy": true
+    },
+    "pr185_head": "00d2583a5b9c31337c67e7727c7796d5fcf20a45",
+    "pr185_review_status": "09 reviewing; root requested unsupported non-SOL and malformed discovery skip repair preserving receipt validation"
   }
 }
