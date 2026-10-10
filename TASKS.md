@@ -176,6 +176,29 @@ Each piece passed its own tests (213 OK), but they do not compose. A single owne
 
 ---
 
+## T23F — Fix the pacing-orphan reclaim (F6) from the T23 review — CRITICAL PATH
+STATUS: OPEN
+DEPENDS: none
+BASE: origin/cloud/T23 (merge origin/integration/r1 first: take T23's side in the two audit test files, where it removes `expectedFailure`)
+OWNS: desk/provider_pacing.py, tests/test_provider_pacing.py, tests/test_pacing_reclaim.py, plus MINIMAL call-site additions (one call to `Pacer.reclaim_orphans()` before the pending check) in tools/paper_entry_dispatcher.py (~:333, ~:409), desk/paper_terminal_reconciliation.py (~:135) and tools/history_first_paper_entry.py (~:72)
+AVOID: every other line of those call-site files (T22/T22F own them); desk/engine.py (the T23 F5 part is accepted as is)
+
+T23's F5 (EXIT_ONLY auto-recovery) is correct and stays as it is. F6 does not fix the T09 deadlock, and it weakens a deliberate fail-closed guard:
+1. **(HIGH) Reachability.** The reclaim only runs inside `Pacer.acquire()`. The dispatcher `_preflight`, the terminal gate and history_first refuse on `pending IS NOT NULL` WITHOUT calling acquire, so on a flat ledger an orphan still blocks entry forever.
+   - Fix: add a public `Pacer.reclaim_orphans()` with the same proofs and the same append-only row, and call it right before each of those checks.
+   - Add an end-to-end test: SIGKILL a real subprocess holding a slot, then the dispatcher preflight passes after the age threshold. While the owner is alive it must NOT pass.
+2. **(HIGH) "Owner gone" must mean the PROCESS is gone.** Today it means the Pacer object was deleted: `__del__` releases the flock, and `paper_read_sources` deliberately keeps tickets (`pacing_release=False`, e.g. a 429 whose throttle write lost to contention). A live process's guard is then reclaimed after 60s with a fixed 30s embargo that ignores longer Retry-After values.
+   - Fix: remove `__del__`. Keep the held fds in a module-level registry so only process exit releases them.
+   - Honour the stored Retry-After/`blocked_until`: the reclaim never lowers it.
+   - Restore the two loosened assertions in `tests/test_provider_pacing.py` (~:329-345) to their original strictness, or justify any change in the test header. A reclaim with the owner alive must be impossible.
+3. **(MED) Mixed-version schema.** The new `pacing_reclaims`/`sqlite_sequence` tables make old-code `Pacer()` raise `PACING_DATABASE_INVALID`, and `tools/verify_*_originals.py` compare the schema strictly. Document in RUNBOOK notes (hand to T32 via the report) that every unit using the shared pacing DB must switch atomically. Make the old→new upgrade explicit and idempotent, not a side effect of the first reclaim.
+4. **(LOW) Races and validation.**
+   - Close the window between the grant commit and `_hold` (take the flock before committing the grant, or record an owner token atomically).
+   - Validate `paper_exit_only_recovery_version` at initialize/config load, not at the first `risk()`.
+5. **(LOW) Latch interaction.** Add a test combining the T07 entry latch with F5 auto-recovery: after recovery, entries stay latched on EVERY entry path, not only via the dispatcher's ExecStartPre. If they don't, make the latch check part of the scheduler entry pre-check.
+
+---
+
 ## T22 — Extend T01: no store-wide latch from ANY charged failure (from T09 audit F1, F3) — CRITICAL PATH
 STATUS: OPEN
 DEPENDS: branch `cloud/T01` has a `DONE T01:` commit
