@@ -10,6 +10,14 @@ max(60 s, 30 x cadence) by Pacer.reclaim_orphans()/acquire(), recorded append-on
 That table is added only by the explicit, idempotent `upgrade()` (`--upgrade DB`); every process using the
 shared database must run the new code first (old code rejects the extra table). Without the upgrade nothing is
 ever reclaimed.
+
+Holder lock files (``<db>.holder-<provider>.lock``) are the owner proof: NEVER delete one. A lock file that is
+removed and recreated no longer names the inode a live owner holds, so a second process could take "its" lock and
+the live owner's slot would look orphaned. A forked child inherits the open lock descriptor (flock belongs to the
+open file description), so the slot stays protected until the LAST copy closes; an owner that forks and exits
+leaves the child as the owner. The lock is released only after the commit that records the outcome has succeeded
+(see ``_commit_release``): if the commit keeps failing the lock is kept until process exit, so a live owner is
+never reclaimed and a throttle's Retry-After is never lost.
 """
 import argparse
 from contextlib import closing
@@ -30,6 +38,10 @@ MAX_DB_BYTES = 2 * 1024 * 1024
 ENV = 'DESK_PROVIDER_PACING_DB'
 # A granted slot whose owner process is gone is released only after BOTH this much time has
 # passed since the grant AND the owner's kernel-held holder lock is provably free.
+COMMIT_ATTEMPTS = 6                  # bounded retries of a busy COMMIT (finish/throttle) before giving up
+COMMIT_BACKOFF = (0.05, 0.5)         # first delay and cap, doubling
+HOLD_ATTEMPTS = 20                   # a new grantee waits briefly for the previous owner's post-commit release
+HOLD_DELAY = 0.005
 RECLAIM_INTERVALS = 30
 RECLAIM_MIN_SECONDS = 60.0
 RECLAIM_TABLE = 'pacing_reclaims'
@@ -172,7 +184,13 @@ class Pacer:
         fd = None
         try:
             fd = os.open(self._lock_path(provider), os.O_RDWR | os.O_CREAT | os.O_NOFOLLOW | os.O_CLOEXEC, 0o600)
-            fcntl.flock(fd, fcntl.LOCK_EX | fcntl.LOCK_NB)
+            for attempt in range(HOLD_ATTEMPTS):
+                try:
+                    fcntl.flock(fd, fcntl.LOCK_EX | fcntl.LOCK_NB); break
+                except BlockingIOError:
+                    # The previous owner committed its outcome and is about to release (release follows the commit).
+                    if attempt + 1 == HOLD_ATTEMPTS: raise
+                    time.sleep(HOLD_DELAY)
         except OSError:
             if fd is not None: os.close(fd)
             raise PacingError('PACING_HOLDER_LOCK_UNAVAILABLE') from None
@@ -198,20 +216,34 @@ class Pacer:
         free, row cap, table present). Called by the entry gates before they test `pending`, because those
         gates refuse on a pending grant without ever calling acquire(). A live owner is never reclaimed;
         `blocked_until` is only ever raised.
+
+        Read first: the write lock is taken only when an old enough pending row exists. A busy database
+        returns [] (no reclaim this time) and never raises, so the gate cannot create a new unresolved path.
         """
-        done = []
         try:
             with closing(self._connect()) as c:
-                c.execute('BEGIN IMMEDIATE')
+                c.execute('BEGIN')                                    # deferred: a plain read, no write lock
+                now = self._now(c)
+                if not c.execute("SELECT 1 FROM sqlite_master WHERE type='table' AND name=?", (RECLAIM_TABLE,)).fetchone():
+                    return []
+                old = False
+                for provider, next_at, pending in c.execute('SELECT provider,next_at,pending FROM state').fetchall():
+                    if pending is None or provider not in self.providers: continue
+                    cadence = c.execute('SELECT cadence FROM policy WHERE provider=?', (provider,)).fetchone()[0]
+                    if now - (next_at - cadence) >= max(RECLAIM_MIN_SECONDS, RECLAIM_INTERVALS * cadence): old = True
+                c.rollback()
+                if not old: return []
+                done = []
+                c.execute('BEGIN IMMEDIATE')                          # now (and only now) the write lock; re-proved inside
                 now = self._now(c)
                 for provider in self.providers:
                     row = c.execute('SELECT next_at,pending FROM state WHERE provider=?', (provider,)).fetchone()
                     if row and row[1] is not None and self._reclaim(c, provider, row[1], row[0], now):
                         done.append(provider)
                 c.commit()
+                return done
         except sqlite3.Error:
-            raise PacingError('PACING_DATABASE_BUSY') from None
-        return done
+            return []
 
     def _reclaim(self, c, provider, ticket, next_at, now):
         """Release an orphaned grant inside the caller's write transaction; True when released.
@@ -301,6 +333,19 @@ class Pacer:
                     with closing(self._connect()) as c: c.execute('DELETE FROM waiters WHERE ticket=?',(ticket,))
                 except (sqlite3.Error, PacingError): pass  # Durable expiry still bounds abandoned waiters.
 
+    def _commit_release(self, c, provider, ticket):
+        """Commit, THEN release the holder lock. A busy COMMIT (a reader's shared lock) is retried with bounded
+        backoff while the lock is still held; if it never succeeds the error propagates and the lock is kept until
+        process exit, so a live owner's slot cannot be reclaimed and a throttle's Retry-After cannot be lost."""
+        delay = COMMIT_BACKOFF[0]
+        for attempt in range(COMMIT_ATTEMPTS):
+            try:
+                c.commit(); break
+            except sqlite3.OperationalError:
+                if attempt + 1 == COMMIT_ATTEMPTS: raise
+                self.sleep(delay); delay = min(delay * 2, COMMIT_BACKOFF[1])
+        self._release(provider, ticket)
+
     def finish(self, provider, ticket):
         """Acknowledge an outcome with no unrecorded backoff; never clear another grant."""
         try:
@@ -308,8 +353,7 @@ class Pacer:
                 c.execute('BEGIN IMMEDIATE');now=self._now(c)
                 self._pending(c,provider,ticket)
                 c.execute('UPDATE state SET pending=NULL,high_water=? WHERE provider=?',(now,provider))
-                self._release(provider, ticket)   # before commit: a new grantee must always find the lock free
-                c.commit()
+                self._commit_release(c, provider, ticket)   # release only AFTER the outcome is durable
         except sqlite3.Error:
             raise PacingError('PACING_DATABASE_BUSY') from None
 
@@ -349,8 +393,7 @@ class Pacer:
                     except (ValueError,TypeError,OverflowError): pass
                 elif values: until=2**53-1  # Ambiguous/oversize instructions cannot permit an early retry.
                 c.execute('UPDATE state SET blocked_until=MAX(blocked_until,?),high_water=?,pending=NULL WHERE provider=?',(until,now,provider))
-                self._release(provider, ticket)
-                c.commit()
+                self._commit_release(c, provider, ticket)
         except sqlite3.Error:
             raise PacingError('PACING_DATABASE_BUSY') from None
 

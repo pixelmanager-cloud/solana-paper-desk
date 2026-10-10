@@ -147,22 +147,168 @@ class PacingReclaimTests(unittest.TestCase):
         with self.assertRaisesRegex(p.PacingError, 'DATABASE_INVALID'):
             self.make()
 
-    def test_slot_is_released_before_the_commit_so_a_new_grantee_always_finds_the_lock_free(self):
+    def test_slot_is_released_only_after_the_commit(self):
+        # T23G item 1 REVERSES the T23F ordering ("release before commit"): that order let a busy COMMIT fail after
+        # the flock was gone, so a live owner's slot looked orphaned. The lock is now released after the outcome is durable.
         pacer = self.make()
         ticket = pacer.acquire('helius', timeout_seconds=1)
         original, seen = pacer._release, []
         def spy(provider, tkt=None):
+            seen.append(self.rows('SELECT pending FROM state WHERE provider="helius"')[0][0])   # already committed
             original(provider, tkt)
             fd = os.open(pacer._lock_path(provider), os.O_RDWR)
             try:
                 import fcntl
                 fcntl.flock(fd, fcntl.LOCK_EX | fcntl.LOCK_NB); seen.append('lock free')
             finally: os.close(fd)
-            seen.append(self.rows('SELECT pending FROM state WHERE provider="helius"')[0][0] == ticket)   # not yet committed
         pacer._release = spy
         pacer.finish('helius', ticket)
-        self.assertEqual(seen, ['lock free', True])
+        self.assertEqual(seen, [None, 'lock free'])
+
+    # ---- T23G items 1 and 2: busy commits and contention --------------------------------------------------------
+    def reader(self):
+        """A connection holding a SHARED lock (DELETE journal mode): a writer's COMMIT then fails as busy."""
+        c = sqlite3.connect(self.path, isolation_level=None)
+        c.execute('BEGIN'); c.execute('SELECT * FROM state').fetchall()
+        self.addCleanup(c.close)
+        return c
+
+    def lock_is_held(self, pacer, provider='helius'):
+        import fcntl
+        fd = os.open(pacer._lock_path(provider), os.O_RDWR)
+        try:
+            try: fcntl.flock(fd, fcntl.LOCK_EX | fcntl.LOCK_NB)
+            except OSError: return True
+            return False
+        finally: os.close(fd)
+
+    def test_finish_with_a_busy_commit_keeps_the_owner_lock_and_succeeds_when_the_reader_leaves(self):
+        pacer = self.make()
+        ticket = pacer.acquire('helius', timeout_seconds=1)
+        reader, held_during, pending_during = self.reader(), [], []
+        sleeps = []
+        def sleep(d):
+            sleeps.append(d)
+            held_during.append(self.lock_is_held(pacer))
+            # the writer holds PENDING after a busy COMMIT, so only the existing reader can still look
+            pending_during.append(reader.execute('SELECT pending FROM state WHERE provider="helius"').fetchone()[0] == ticket)
+            if len(sleeps) == 2: reader.execute('ROLLBACK')             # the contention ends
+        pacer.sleep = sleep
+        pacer.finish('helius', ticket)
+        self.assertEqual(len(sleeps), 2)
+        self.assertEqual((held_during, pending_during), ([True, True], [True, True]))   # never reclaimable meanwhile
+        self.assertTrue(sleeps[1] > sleeps[0])                           # bounded, growing backoff
         self.assertIsNone(self.rows('SELECT pending FROM state WHERE provider="helius"')[0][0])
+        self.assertFalse(self.lock_is_held(pacer))                       # released only after the commit
+
+    def test_a_commit_that_never_succeeds_raises_busy_but_the_live_owner_is_never_reclaimed(self):
+        pacer = self.make()
+        ticket = pacer.acquire('helius', timeout_seconds=1)
+        reader = self.reader()
+        pacer.sleep = lambda d: None
+        with self.assertRaisesRegex(p.PacingError, 'DATABASE_BUSY'):
+            pacer.finish('helius', ticket)
+        self.assertTrue(self.lock_is_held(pacer))                        # kept until process exit
+        self.assertIn('helius', pacer._held)
+        reader.execute('ROLLBACK')
+        self.clock.wall = T0 + 10 * 86400                                # however old the slot is...
+        self.assertEqual(self.make().reclaim_orphans(), [])              # ...a live owner is not reclaimed
+        self.assertEqual(self.rows('SELECT COUNT(*) FROM pacing_reclaims'), [(0,)])
+        pacer.finish('helius', ticket)                                   # and the owner can still finish later
+        self.assertIsNone(self.rows('SELECT pending FROM state WHERE provider="helius"')[0][0])
+        self.assertFalse(self.lock_is_held(pacer))
+
+    def test_throttle_retry_after_survives_a_busy_commit(self):
+        from email.message import Message
+        headers = Message(); headers['Retry-After'] = '600'
+        pacer = self.make()
+        ticket = pacer.acquire('helius', timeout_seconds=1)
+        reader, sleeps = self.reader(), []
+        def sleep(d):
+            sleeps.append(d)
+            self.assertTrue(self.lock_is_held(pacer))
+            if len(sleeps) == 3: reader.execute('ROLLBACK')
+        pacer.sleep = sleep
+        pacer.throttle('helius', headers, ticket=ticket)
+        blocked, high = self.rows('SELECT blocked_until,high_water FROM state WHERE provider="helius"')[0]
+        self.assertGreaterEqual(blocked - high, 600)                     # the full Retry-After, not the 30 s fallback
+        self.assertIsNone(self.rows('SELECT pending FROM state WHERE provider="helius"')[0][0])
+
+    def test_a_new_grantee_waits_for_the_previous_owners_post_commit_release(self):
+        first = self.make()
+        t1 = first.acquire('helius', timeout_seconds=1)
+        second = self.make()
+        released = []
+        real_flock = p.fcntl.flock
+        calls = []
+        def flock(fd, op):
+            calls.append(op)
+            if len(calls) == 3 and not released: first._release('helius', t1); released.append(True)
+            return real_flock(fd, op)
+        first.finish('helius', t1) if False else None
+        with sqlite3.connect(self.path) as c:                            # the owner committed its outcome, release is next
+            c.execute('UPDATE state SET pending=NULL WHERE provider="helius"')
+        self.clock.wall = T0 + 10
+        with patch.object(p.fcntl, 'flock', flock):
+            ticket = second.acquire('helius', timeout_seconds=5)
+        self.assertEqual(len(ticket), 32)
+        self.assertTrue(released)
+
+    def test_reclaim_orphans_never_takes_the_write_lock_unless_an_old_pending_row_exists(self):
+        writer = sqlite3.connect(self.path, isolation_level=None)
+        self.addCleanup(writer.close)
+        writer.execute('BEGIN IMMEDIATE')                                # a held write lock: any write attempt is busy
+        pacer = self.make()
+        self.assertEqual(pacer.reclaim_orphans(), [])                    # nothing pending: pure read, no error
+        writer.execute('ROLLBACK')
+        ticket = pacer.acquire('helius', timeout_seconds=1)              # a young live grant
+        writer.execute('BEGIN IMMEDIATE')
+        self.assertEqual(self.make().reclaim_orphans(), [])              # young: still read-only, no error
+        writer.execute('ROLLBACK')
+        pacer.finish('helius', ticket)
+
+    def statements(self, pacer, action):
+        """SQL issued by reclaim_orphans: a wrapper over the real connection records every execute()."""
+        seen = []
+        real = pacer._connect
+
+        class Spy:
+            def __init__(self, c): self.c = c
+            def execute(self, sql, *a): seen.append(sql.split()[0] + ' ' + (sql.split()[1] if len(sql.split()) > 1 else '')); return self.c.execute(sql, *a)
+            def __getattr__(self, name): return getattr(self.c, name)
+        with patch.object(pacer, '_connect', lambda: Spy(real())):
+            result = action()
+        return result, seen
+
+    def test_reclaim_orphans_issues_no_write_transaction_for_nothing_pending_or_a_young_grant(self):
+        pacer = self.make()
+        result, seen = self.statements(pacer, pacer.reclaim_orphans)                  # nothing pending
+        self.assertEqual(result, [])
+        self.assertFalse([x for x in seen if x.startswith('BEGIN IMMEDIATE')], seen)
+        ticket = pacer.acquire('helius', timeout_seconds=1)                           # pending but young
+        result, seen = self.statements(pacer, pacer.reclaim_orphans)
+        self.assertEqual(result, [])
+        self.assertFalse([x for x in seen if x.startswith('BEGIN IMMEDIATE')], seen)
+        pacer.finish('helius', ticket)
+
+    def test_reclaim_orphans_takes_the_write_lock_once_an_old_pending_row_exists(self):
+        self.killed_orphan()
+        self.clock.wall = T0 + 3600                                                    # old and owner gone: now it writes
+        other = self.make()
+        result, seen = self.statements(other, other.reclaim_orphans)
+        self.assertEqual(result, ['helius'])
+        self.assertTrue([x for x in seen if x.startswith('BEGIN IMMEDIATE')], seen)
+
+    def test_reclaim_orphans_returns_empty_instead_of_raising_when_the_database_is_busy(self):
+        self.killed_orphan()
+        self.clock.wall = T0 + 3600                                      # old, owner gone: a write IS needed
+        writer = sqlite3.connect(self.path, isolation_level=None)
+        self.addCleanup(writer.close)
+        writer.execute('BEGIN IMMEDIATE')
+        self.assertEqual(self.make().reclaim_orphans(), [])              # busy: no reclaim this time, never an exception
+        self.assertIsNotNone(self.rows('SELECT pending FROM state WHERE provider="helius"')[0][0])
+        writer.execute('ROLLBACK')
+        self.assertEqual(self.make().reclaim_orphans(), ['helius'])      # the next call reclaims
 
     def test_holder_lock_failure_fails_closed_without_leaving_an_unprotected_ticket(self):
         pacer = self.make()
