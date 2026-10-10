@@ -7,6 +7,7 @@ All callers hold research -> evidence -> ledger locks. No requests or retries.
 import base64
 import json
 import zlib
+from contextvars import ContextVar
 from contextlib import closing, ExitStack
 from pathlib import Path
 import sqlite3
@@ -154,6 +155,13 @@ def _ledger(c,cfg,*,initial,historical_source=None):
             'events_hash':runtime._prefix(c,'events',1),'outcomes_hash':runtime._prefix(c,'outcomes',0)},metadata
 
 
+# One active gate only; cached bytes never survive invocation or become shared
+# mutable decoded objects. Every hit still checks the current SQL payload.
+_GATE_BYTES = ContextVar('terminal_gate_verified_bytes', default=None)
+MAX_GATE_CACHE_BYTES = 8 * 1024 * 1024
+MAX_GATE_CACHE_PAGES = 512
+
+
 def _load(store,key):
     if not runtime._hash(key):raise ValueError('Evidence identity malformed')
     # Pin SQL shape and payload to one read snapshot. In particular, do not
@@ -172,6 +180,12 @@ def _load(store,key):
                 or type(rows[0][1]) is not int or rows[0][1]!=shapes[0][5]):
             raise ValueError('Proof content changed or exceeded preflight')
         compressed,raw_bytes=rows[0]
+    cache=_GATE_BYTES.get()
+    identity=(str(store.path.resolve()),key)
+    cached=cache['pages'].get(identity) if cache is not None else None
+    if cached is not None and cached[0]==compressed and len(cached[1])==raw_bytes:
+        return json.loads(cached[1],object_pairs_hook=runtime._unique,
+            parse_constant=lambda _:(_ for _ in ()).throw(ValueError('Nonfinite proof content')))
     inflater=zlib.decompressobj()
     try:
         raw=inflater.decompress(compressed,raw_bytes+1)
@@ -182,6 +196,10 @@ def _load(store,key):
     except zlib.error as error:
         raise ValueError('Evidence encoding mismatch') from error
     if digest(value)!=key:raise ValueError('Original evidence missing/corrupt')
+    if cache is not None and identity not in cache['pages']:
+        size=len(compressed)+len(raw)
+        if len(cache['pages'])<MAX_GATE_CACHE_PAGES and cache['bytes']+size<=MAX_GATE_CACHE_BYTES:
+            cache['pages'][identity]=(compressed,raw);cache['bytes']+=size
     return value
 
 
@@ -433,7 +451,11 @@ def reconcile(research_db,evidence_db,ledger_db,cfg,*,pass_id,outcome_hash,attem
 
 def gate(store,research,scan_ids,*,ledger_locked=None):
     """Active gate always validates the current runtime, never a proposal."""
-    return _gate(store,research,scan_ids,ledger_locked=ledger_locked)
+    token=_GATE_BYTES.set({'pages':{},'bytes':0})
+    try:
+        return _gate(store,research,scan_ids,ledger_locked=ledger_locked)
+    finally:
+        _GATE_BYTES.reset(token)
 
 
 def _gate(store,research,scan_ids,*,ledger_locked=None,review_source=None):
