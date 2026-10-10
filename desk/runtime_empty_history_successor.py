@@ -112,6 +112,29 @@ def dispatch_binding(c,expected,journal):
     old=v['dispatch_predecessor'];return old,bindings,{digest(old):old}
 
 
+def _validate_predecessor_journal(ledger,journal,expected):
+    """Authenticate completions before giving the new prefix any authority."""
+    from tools import paper_entry_dispatcher as dispatcher
+    from . import paper_migration_no_entry as migration
+    from .evidence import EvidenceStore
+    values=dispatcher._read_journal(journal)
+    if values['context']=={1:expected}:
+        return dispatcher._check_records(journal,expected,values,{}, {},review_source=expected['source_hash'])
+    if set(values['context'])!={1}:raise ValueError('Original dispatcher context missing')
+    mapped,bindings,contexts=parent.dispatch_binding(ledger,expected,journal)
+    retired={}
+    if values['context']!={1:mapped}:
+        store=EvidenceStore(expected['paths']['evidence_db']['path'],read_only=True)
+        with closing(store.connect()) as evidence:
+            matches=[v for v in migration.rows(evidence) if v['association']==migration.PREWIRE and v['successor_context']==mapped]
+        if len(matches)!=1:raise ValueError('Exact original dispatcher lineage required')
+        original_bindings,retired,original_contexts=migration._prewire_lineage(
+            journal,matches[0],values['context'][1],review_source=expected['source_hash'])
+        bindings=original_bindings|bindings;contexts=original_contexts|contexts
+    return dispatcher._check_records(journal,expected,values,bindings,retired,
+        historical_contexts=contexts,review_source=expected['source_hash'])
+
+
 def plan(ledger_db,*,dispatch_predecessor,dispatch_successor,recovery_pin):
     """Read-only proposal. Coordinator quiescence and original backups required."""
     from . import paper_empty_history_reconciliation as recovery
@@ -127,6 +150,7 @@ def plan(ledger_db,*,dispatch_predecessor,dispatch_successor,recovery_pin):
             from .paper_migration_no_entry import _journal
             _,prefix=_journal(j)
             parent._verify_journal(original,c=j)
+            _validate_predecessor_journal(c,j,dispatch_predecessor)
     v={'version':1,'kind':KIND,'parent_hash':key,'predecessor':original['successor'],
        'successor':runtime.implementation_hash(),'config_hash':original['config_hash'],'context':original['context'],
        'recovery_hash':digest(recovery_pin),'dispatch_predecessor':dispatch_predecessor,
@@ -160,6 +184,8 @@ def append(ledger_db,*,pin):
                 original,_=parent.read(c);parent.require(c,implementation=original['successor'])
                 previous=read(c)
                 if previous is None:
+                    with closing(sqlite3.connect(journal.as_uri()+'?mode=ro',uri=True)) as j:
+                        j.execute('BEGIN');_validate_predecessor_journal(c,j,pin['dispatch_predecessor'])
                     from . import paper_empty_history_reconciliation as recovery
                     from .evidence import EvidenceStore
                     from .history_progress import HistoryProgress

@@ -39,3 +39,12 @@ recovery tests including actual BUY/held/full-exit. Full installed new-successor
 fixture and final source validation remain pending; this is a draft, not deployment
 approval. The coordinator's production retained recovery plan independently passed
 read-only at PR206 6b56b89 (digest 915d412be08ee751d1774fe7908615f497b07e5b1a7dd3616cebb9132e567cf8).
+
+Forward repair for review 5478812151 authenticates the complete predecessor
+journal at planning and initial append, using the explicit historical source
+selector and original reviewed retirement exceptions. Prefix equality alone
+does not prove completion. A genuine four-edge/performance fixture adds a valid
+unresolved intent after the old prefix: old prefix verification passes, but full
+disposition replay rejects it. Five focused tests PASS / 3.465s. The initial full
+suite was interrupted after confirmed sandbox socket PermissionError failures;
+no full-suite PASS is claimed. Installed lifecycle coverage belongs to worker06.

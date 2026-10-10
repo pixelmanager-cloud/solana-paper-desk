@@ -38,3 +38,26 @@ class ScalarTests(unittest.TestCase):
     def test_no_policy_no_shape_no_implicit_successor(self):
         for malformed in (None,[],{}, {'version':True}):
             with self.assertRaises(ValueError):edge.shape(malformed)
+
+
+class PredecessorJournalTests(unittest.TestCase):
+    def test_unresolved_intent_after_original_prefix_cannot_gain_authority(self):
+        from tests.test_runtime_performance_continuation import PerformanceContinuationTests
+        from tools import paper_entry_dispatcher as dispatcher
+        from desk.model import digest
+        from tests.test_migration_recovery_lineage import mint_fixture
+        h=PerformanceContinuationTests();h.setUp();self.addCleanup(h.doCleanups)
+        h.append()
+        with sqlite3.connect(h.h.f.new) as ledger,sqlite3.connect(h.old['journal']) as journal:
+            self.assertEqual(edge._validate_predecessor_journal(ledger,journal,h.new)['intents'],{})
+            raw,mint,pool=mint_fixture(77)
+            hint={'seq':1,'payload_hash':'1'*64,'raw_hash':'2'*64,'received_at':1000,
+                  'mint':mint,'pool':pool,'signature':raw['transaction']['signatures'][0],'slot':raw['slot']}
+            intent={'version':1,'context_hash':digest(h.new),'at':1600,'hint':hint}
+            dispatcher._write(journal,'intents','1'*32,intent,hint);journal.commit()
+            # Byte-prefix verification alone still passes: this is genuinely
+            # a newly appended, syntactically valid pending predecessor intent.
+            from desk import runtime_performance_continuation as parent
+            parent._verify_journal(h.pin,c=journal)
+            with self.assertRaisesRegex(ValueError,'Unresolved dispatch'):
+                edge._validate_predecessor_journal(ledger,journal,h.new)
