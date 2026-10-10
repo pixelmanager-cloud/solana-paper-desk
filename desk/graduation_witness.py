@@ -91,12 +91,12 @@ def extract_graduation(raw_transactions, *, mint, pool, now, provenance):
                 pool_authority = _pda([b'pool-authority', bytes(Pubkey.from_string(mint))], PUMP)
                 expected_pool = _pda([b'pool', b'\0\0', bytes(Pubkey.from_string(accounts['pool_authority'])),
                                       bytes(Pubkey.from_string(mint)), bytes(Pubkey.from_string(SOL))], AMM)
-                # SOL curves store the zero key; migrate_v2 uses WSOL for its
+                # SOL curves store the zero key; both migration interfaces use WSOL for the
                 # pool/interface. This exception is event-only: outer WSOL,
                 # canonical WSOL pool and every other binding stay mandatory.
                 event_quote = f.get('quote_mint')
                 event_quote_matches = (event_quote == SOL or
-                    (intent['name'] == 'migrate_v2' and event_quote == NATIVE_SOL_SENTINEL))
+                    (intent['name'] in ('migrate','migrate_v2') and event_quote == NATIVE_SOL_SENTINEL))
                 bindings = (accounts.get('pool_authority')==pool_authority, accounts.get('mint',accounts.get('base_mint'))==mint,
                             accounts.get('bonding_curve')==curve, accounts.get('pool')==pool==expected_pool,
                             accounts.get('quote_mint',accounts.get('wsol_mint'))==SOL,

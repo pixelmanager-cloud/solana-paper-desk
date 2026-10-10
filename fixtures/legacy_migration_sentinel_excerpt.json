@@ -1,0 +1,16 @@
+{
+  "provenance": "PUBLIC_MAINNET_CAPTURE_NOT_TRADING_EVIDENCE",
+  "source": "Coordinator-supplied retained transaction, 2026-10-10; excerpt only, not independent authentication",
+  "reported_full_raw_canonical_hash": "7bff3992151ae1341a536a81073cf4751676c7339c3f8928b23ce4e004ffae4e",
+  "signature": "3zpZcuQx6d9YLDdYEAz98cgX7nwxkTQaQNaQtGLUKYvA9k252fjEsb2dg4YuXyq2P2ikqvPTU1ZcaTAtEKs3HmJe",
+  "slot": 455110953,
+  "blockTime": 1791603801,
+  "outer_instruction": "migrate",
+  "outer_wsol_mint": "So11111111111111111111111111111111111111112",
+  "event": {
+    "accounts": ["Ce6TQqeHC9p8KetsN6JsjHK7UTZk7nasjjnr7XxXp9F1"],
+    "data": "28AUVybe3Jro3a5o6vV4ukD4xvNJyYdSDqDSRGw9xB7iCoBz1mrcVuGe9j1GC6waqHpbU3eR2GtxHqrzttZonLitJspXR15wT3Tm8HvBwy5FZUxo1oaNwQnm5Vy4TvYT3uMc123oLyMKdPSnxRjk3FqG5HSpQJ8smxXcMoKGao16zXoamYvb3Y1VtQKWZ8f5BEuCGoG2ftP8pNdDcLAT8zSi85ia2P7gLdoRGKzLmCCRAcxtybiZmDo5UVWiFgQ6XbEaZcwDVY6hbJ1vbAYD6UATe27y1",
+    "programId": "6EF8rrecthR5Dkzon8Nwu78hRvfCKubJ14M5uBEwF6P",
+    "stackHeight": 2
+  }
+}
