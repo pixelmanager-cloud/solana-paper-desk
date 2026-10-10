@@ -28,6 +28,7 @@ DISCOVERY=$OLD/discovery/continuous.sqlite # SHARED candidate source
 UNITS=/root/units-$SHA                     # rendered unit files (step 7)
 INV=/var/backups/solana-desk/systemd-inventory-$SHA   # saved ls -la + systemctl cat of every desk unit (step 2)
 SDA=/var/backups/solana-desk/systemd-archive-$SHA     # the Codex-era unit files and drop-in stacks, moved here (step 7a)
+SM=/var/backups/solana-desk/seal-manifest-$SHA.json   # what step 4 changed (path, uid, gid, mode, sha256); `unseal` restores it
 ```
 
 ### Working directory rule (exact cwd for every `python -m tools.ops.*`)
@@ -45,15 +46,29 @@ store directory that the services then cannot open. Mutating steps (`cutover`, `
 Never run a tool from `$OLD`, from `/root`, or from a checkout whose `desk/` differs from `$REL/desk/`
 (`implementation_hash()` hashes every `.py` and `.json` under `desk/`; compare with step 1's `runtime_digest`).
 
+Every tool invocation below runs with cwd = $REL (`cd $REL` first; step 1 uses `$SRC`). That is not cosmetic: Python puts the
+current directory first on `sys.path`, so `desk` and `tools` come from `$REL`. A stale `desk` package installed into the venv's
+site-packages (an older `pip install -e .` or wheel) would otherwise win from any other directory and the tool would hash and
+pin the WRONG code. The services are immune (their `WorkingDirectory` is `$REL`), the tools you type are not. Optionally remove
+the stale package once, so a wrong cwd fails loudly instead of silently using old code:
+
+```
+$PY -m pip uninstall -y solana-desk
+```
+
 ## 0. Preconditions
 
 - Release commit reviewed; CI green on that exact commit; archive sha256 recorded.
 - Old ledger is flat (no open position), otherwise do not start: see "If a position is open" at the end.
 - Decision on record (see DECISION in `TASKS.md`): old stores are archived read-only and never modified.
   `provider-pacing.sqlite`, `discovery/continuous.sqlite` and the provider keys file are shared and never reset.
-- `$FRESH`, `/var/backups/solana-desk` and `$STATE` exist, owned by the service user, canonical (no symlinks):
+- `$FRESH` and `$STATE` exist, owned by the service user, canonical (no symlinks):
   `install -d -m 0755 -o solana-desk -g solana-desk $FRESH` and `install -d -m 0700 -o solana-desk -g solana-desk $STATE`.
-  `$NEW` itself must NOT exist; `apply` creates it and `$BK`.
+- `/var/backups/solana-desk` exists and is `root:root 0755` on the VPS; it STAYS root-owned. Never chown or chmod it, and never
+  `install` into it: the archive backups, the inventory, the seal manifest and the systemd archive are written there by root, and
+  `apply` (run as root with `--chown solana-desk`) creates only `$BK` inside it (0700, owned by the service user), which is the
+  one place the service user writes backups.
+- `$NEW` itself must NOT exist; `apply` creates it and `$BK`.
 - Freeze `desk/` and `tools/` now. Any later byte change under `desk/` changes the runtime identity pinned in the new
   ledger, the monitoring allowance and the dispatcher context; the answer is a new rotation (below), not a pin.
 
@@ -91,8 +106,13 @@ systemctl stop desk-paper-entry-dispatcher.timer desk-paper-held-cycle.timer des
   desk-decisions.timer desk-discovery.timer desk-backup.timer
 systemctl stop desk-paper-entry-dispatcher.service desk-paper-held-cycle.service desk-paper-monitor.service \
   desk-decisions.service desk-discovery.service desk-recorder.service desk-dashboard.service desk-continuous-discovery.service
+systemctl reset-failed 'desk-*'
 systemctl is-active desk-paper-entry-dispatcher.service desk-paper-held-cycle.service desk-continuous-discovery.service   # expect inactive
 ```
+
+`reset-failed` clears the `failed` state of units that died before this deployment (on the VPS `desk-paper-entry-dispatcher.service`
+and `desk-decisions.service` are `failed`): a stop leaves a failed unit failed, and the checks below and the health tools should
+start from a clean slate. It only resets state; it starts and stops nothing.
 
 Then DISABLE every old unit so a reboot cannot restart anything against the archived stores. The units the fresh set reuses
 (`desk-paper-held-cycle.timer`, `desk-decisions.timer`, `desk-backup.timer`, `desk-dashboard.service`,
@@ -102,8 +122,11 @@ Then DISABLE every old unit so a reboot cannot restart anything against the arch
 ```
 systemctl disable desk-paper-entry-dispatcher.timer desk-paper-held-cycle.timer desk-paper-monitor.timer desk-decisions.timer \
   desk-discovery.timer desk-backup.timer desk-discovery.service desk-recorder.service desk-dashboard.service desk-continuous-discovery.service
-systemctl is-enabled desk-discovery.timer desk-recorder.service desk-paper-monitor.timer          # expect disabled
+systemctl is-enabled desk-discovery.timer desk-recorder.service desk-paper-monitor.timer          # expect disabled or static
 ```
+
+Most of the old units have no `[Install]` section, so `is-enabled` prints `static`, not `disabled` (`systemctl disable` on a
+static unit is a harmless no-op and it stays `static`): both mean "no boot persistence", and both are fine. Anything printing `enabled`, `enabled-runtime`, `linked` or `alias` is a stop.
 
 `desk-discovery` (writes `launches.sqlite`) and `desk-recorder` (writes `raw.sqlite`) feed archived stores only; leave them
 stopped and out of the new cutover. Continuous discovery is restarted by the cutover in step 7 as a long-running service:
@@ -128,21 +151,35 @@ This destination (`pre-fresh-<sha>`) is the archive of the OLD set; the fresh se
 Continuous discovery and the dashboard are in `--require-quiesced`, so they stay stopped for the whole backup; discovery is
 started again in step 7b against the SHARED `$DISCOVERY` (the DECISION keeps that input shared, so no fresh discovery path exists).
 
-## 4. Seal the old stores (root-owned, read-only)
+## 4. Seal the old stores (read-only to the service user)
 
 ```
 cd $REL
-$PY -m tools.ops.cutover seal-archive --root $OLD --shared-path $PACING --shared-path $DISCOVERY
-$PY -m tools.ops.cutover --apply seal-archive --root $OLD --shared-path $PACING --shared-path $DISCOVERY
+$PY -m tools.ops.cutover seal-archive --root $OLD --shared-path $PACING --shared-path $DISCOVERY --manifest $SM
+$PY -m tools.ops.cutover --apply seal-archive --root $OLD --shared-path $PACING --shared-path $DISCOVERY --manifest $SM
 ```
 
-Every archived file becomes `root:root 0444` and every archived directory `root:root 0555`, so the service user cannot modify,
-delete or replace an old store. The two SHARED databases are not touched. The shared pacing database uses a rollback journal
-(`<db>-journal` is created and removed per write), so the service user must be able to create files in its DIRECTORY (`$OLD`),
-and the discovery database the same in `$OLD/discovery`. Those two directories are therefore `root:solana-desk 1775`: group
-write lets the service create the journal; the sticky bit stops it from deleting or renaming any root-owned (archived) file
-in them. The shared pacing database is deliberately NOT moved: its migration receipt binds its path. Never touch
-`provider-pacing.sqlite` or `discovery/continuous.sqlite` otherwise: the new experiment shares them.
+Seal changes ONLY an explicit allow-list: the sqlite family (`*.sqlite`, `-wal`, `-shm`, `-journal`; add `--seal-pattern <glob>` for
+anything else, never a lock). Those files become `root:solana-desk 0440` and their directories `root:solana-desk 0550`, so the
+service user can read the old stores but cannot modify, delete or replace them, and nobody else can read them. Files that are
+already root-only (`root`, no group/other bits, e.g. a `0600` file) stay exactly as they are.
+
+Never touched, whatever the patterns say: every `*.lock` file (`discovery/continuous.sqlite.discovery.lock` is opened
+read-write by continuous discovery, `provider-pacing.sqlite.holder-*.lock` / `*.paper-cycle.lock` /
+`*.ownership-invocation.lock` / `paper-scheduler.lock` are flock'ed by running processes), the two SHARED databases, and any file
+outside the allow-list (listed as `unlisted` in the output). Sealing a lock file would kill continuous discovery and the
+step-7b cutover, so read `untouched_locks` and `unlisted` in the dry run before applying.
+
+The shared pacing database uses a rollback journal (`<db>-journal` is created and removed per write), so the service user must
+be able to create files in its DIRECTORY (`$OLD`), and the discovery database the same in `$OLD/discovery`. Those two
+directories are therefore `root:solana-desk 1770`: group write lets the service create the journal and its lock files, the sticky
+bit stops it from deleting or renaming any root-owned (archived) file there, and the mode gives other users nothing. The shared
+pacing database is deliberately NOT moved (its migration receipt binds its path, and the pin binds mode 0600 on that exact path).
+Never touch `provider-pacing.sqlite` or `discovery/continuous.sqlite` otherwise: the new experiment shares them.
+
+**Before anything is changed** the tool writes `$SM` (new file, `0600`, outside `$OLD`; it refuses an existing one): the path, type,
+uid, gid, mode and sha256 of every entry it is about to change. `tools.ops.cutover unseal --manifest $SM` puts exactly those
+owners and modes back, and refuses (changing nothing) if a sealed store was modified meanwhile. Keep `$SM` with the backups.
 
 ## 5. Bootstrap the new store set (T13)
 
@@ -208,6 +245,10 @@ not errors; any "Failed to parse"/"Unknown key"/quoting message is a stop). The 
 `systemctl cat desk-backup.service | grep ExecStart` and `systemd-analyze verify` before cutting over.
 
 The entry-latch drop-in in `$UNITS/desk-paper-entry-dispatcher.service.d/` is installed in step 9, not here.
+
+The optional research units (`desk-counterfactual.*`, `desk-held-watcher.service`, `desk-paper-held-cycle.path`) are rendered
+into `$UNITS/research/`, outside the `$UNITS/*.service $UNITS/*.timer` install above, so the default flow never installs, starts
+or enables them. Step 11 does that explicitly, later.
 
 ### 7b. Dry run, then apply
 
@@ -280,6 +321,18 @@ byte-for-byte against the manifest. Without `--restore-archive` the rendered uni
 in `$SDA`); restore later with the same command. Rollback never restarts anything, and never restores old backups over the new
 stores to "roll back code". After a restore the old units are disabled (step 2); re-enable what you intend to run.
 
+After a rollback that goes back to the OLD stack, also make the old stores writable again (only if step 4 ran, and only after
+the new stack is stopped: the rollback above stops it) and BEFORE you start any old unit:
+
+```
+cd $REL
+$PY -m tools.ops.cutover unseal --manifest $SM
+$PY -m tools.ops.cutover --apply unseal --manifest $SM
+```
+
+`unseal` restores the exact numeric owner, group and mode of every entry recorded in `$SM` and refuses if a sealed store changed.
+Lock files and the shared databases were never touched, so there is nothing to restore for them.
+
 ## 8. Verify
 
 ```
@@ -290,6 +343,8 @@ ss -ltn 'sport = :8765'            # the dashboard listens on 127.0.0.1 only
 
 `desk-notify-watchdog.timer` (every 5 min, own state file) alerts when `health.json` is older than 600 s, so a dead
 healthcheck timer is reported within 15 minutes even though the healthcheck itself only notifies from its own `ExecStopPost`.
+Watchdog grace: its first check is `OnActiveSec=600`, counted from the moment the timer is started at cutover (or activated at
+boot), so it cannot run before the first healthcheck wrote `health.json` and raise a false CRITICAL during the deployment.
 
 Right after cutover expect exit 2 with exactly two CRITICAL checks, both legitimate: `discovery_frames` (no listener frame has
 completed yet) and `backup` (none exists until `desk-backup.timer` fires; `systemctl start desk-backup.service` clears it). It must
@@ -333,6 +388,37 @@ runuser -u solana-desk -- $PY -m tools.ops.verify_cycle compare /var/lib/solana-
 
 Any differing fill, checkpoint or budget, or a duplicate fill/charge, is a failure. A cycle is verified only when `snapshot`
 reports `VALIDATED_LIVE_DATA_PAPER_ROUND_TRIP` and the compare passes.
+
+## 11. Optional research units (counterfactual tracking, event-driven held watcher)
+
+Not part of the first verified cycle: nothing above installs, starts or enables them. Do this only after step 9, as a deliberate,
+separate decision. Their write scope is small and explicit: `desk-counterfactual.service` writes only `$NEW/counterfactual`
+and the shared pacing database DIRECTORY (`$OLD`, because SQLite creates the rollback journal beside the shared database; the
+experiment root and the discovery directory are made read-only again inside it); `desk-held-watcher.service` writes only
+`$STATE/held-watcher` and deliberately does not use the shared pacing store (see `docs/ops/HELD_WATCHER.md`).
+
+```
+cd $REL
+install -d -m 0700 -o solana-desk -g solana-desk $NEW/counterfactual
+runuser -u solana-desk -- $PY -m tools.research.counterfactual init --store $NEW/counterfactual/counterfactual.sqlite --allowance-per-hour 300
+install -d -m 0700 -o solana-desk -g solana-desk $STATE/held-watcher
+install -m 0644 $UNITS/research/desk-counterfactual.service $UNITS/research/desk-counterfactual.timer $UNITS/research/desk-held-watcher.service $UNITS/research/desk-paper-held-cycle.path /etc/systemd/system/
+systemctl daemon-reload
+systemd-analyze verify /etc/systemd/system/desk-counterfactual.service /etc/systemd/system/desk-counterfactual.timer /etc/systemd/system/desk-held-watcher.service /etc/systemd/system/desk-paper-held-cycle.path
+systemctl enable --now desk-counterfactual.timer
+```
+
+Start the held watcher and its path unit only together with the entry timer (a watcher without a position has nothing to watch):
+
+```
+systemctl enable --now desk-paper-held-cycle.path
+systemctl enable --now desk-held-watcher.service
+```
+
+To undo: `systemctl disable --now desk-held-watcher.service desk-paper-held-cycle.path desk-counterfactual.timer`, then remove
+the four installed files from `/etc/systemd/system/` and `daemon-reload`. `cutover rollback` does not know about these units
+(they are not in the archive manifest), so undo them first. The stores under `$NEW/counterfactual` and `$STATE/held-watcher`
+are append-only and are kept.
 
 ## Rotate when flat
 

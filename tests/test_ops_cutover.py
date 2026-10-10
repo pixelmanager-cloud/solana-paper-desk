@@ -112,7 +112,8 @@ class FakeSystemd:
             self.enabled[argv[2]] = 'enabled'
             return SimpleNamespace(returncode=0, stdout='', stderr='')
         if cmd == 'disable':
-            if argv[2] not in self.stuck_enabled:
+            # systemd: a unit without [Install] (`static`) has nothing to disable and stays static (exit 0)
+            if argv[2] not in self.stuck_enabled and self.enabled.get(argv[2]) != 'static':
                 self.enabled[argv[2]] = 'disabled'
             return SimpleNamespace(returncode=0, stdout='', stderr='')
         if cmd == 'cat':       # base unit then every drop-in in lexical order, like systemd
@@ -1539,7 +1540,15 @@ class ArchiveDropinsTests(Base):
 
     def test_refuses_existing_archive_active_unit_hardlink_and_bad_name(self):
         self.assertEqual(self.archive()[0], 0)
-        self.assertEqual(self.archive()[0], 2)                                      # the archive name is taken
+        # T32G item 7: an existing COMPLETE archive is resumed, not refused. Nothing is left to remove, so this is a no-op.
+        code, report = self.archive()
+        self.assertEqual((code, report['resumed'], report['removed_now']), (0, True, []))
+        # ...but once the rendered units were installed the tree no longer matches the manifest: the name is taken.
+        (self.units / 'desk-backup.service').write_text((self.fresh / 'desk-backup.service').read_text())
+        code, report = self.archive()
+        self.assertEqual(code, 2)
+        self.assertIn('differs from the archive manifest', report['error'])
+        (self.units / 'desk-backup.service').unlink()
         self.assertEqual(self.archive(name='no-prefix')[0], 2)
         self.systemd.state['desk-backup.service'] = 'active'
         (self.units / 'desk-backup.service').write_text('[Service]\n')
@@ -1868,6 +1877,7 @@ class SealArchiveTests(Base):
         code, report = self.seal()
         self.assertEqual(tree(self.old)['notes.txt'], before)
         self.assertEqual(report['unlisted'], [str(self.old / 'notes.txt')])
+        self.manifest.unlink()                                                   # one exclusive manifest per run
         code, report = self.seal('--seal-pattern', '*.txt')                    # an explicit, per-run extension
         self.assertEqual(code, 0, report)
         self.assertEqual(tree(self.old)['notes.txt'][1], '0o440')
@@ -1932,8 +1942,9 @@ class SealArchiveTests(Base):
                                     '--shared-path', str(self.pacing), apply=True)
         self.assertEqual((code, tree(self.old), self.chowns), (2, before, []))
         self.assertIn('inside', report['error'])
-        code, report = self.seal(manifest=False)                                   # --manifest is mandatory
-        self.assertEqual((code, tree(self.old)), (2, before))
+        with mock.patch('sys.stderr', io.StringIO()), self.assertRaises(SystemExit) as caught:
+            self.seal(manifest=False)                                              # --manifest is mandatory (argparse exit 2)
+        self.assertEqual((caught.exception.code, tree(self.old)), (2, before))
 
     def test_second_seal_is_idempotent_and_refuses_unsafe_trees(self):
         self.assertEqual(self.seal()[0], 0)

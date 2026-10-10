@@ -413,7 +413,7 @@ class E2E(FreshStartBase):
                                 for h in headers), (unit, headers))
         # old units not in the fresh set stay put but disabled (RUNBOOK step 2)
         for unit in ('desk-discovery.timer', 'desk-discovery.service', 'desk-paper-monitor.timer'):
-            self.assertEqual(self.systemd.enabled.get(unit, 'disabled'), 'disabled', unit)
+            self.assertIn(self.systemd.enabled.get(unit, 'disabled'), ('disabled', 'static'), unit)    # static: no [Install], nothing to disable
         self.assertTrue((self.unit_dir / 'desk-discovery.service').is_file())            # not replaced: stays, disabled
         self.assertFalse((self.unit_dir / 'desk-discovery.service.d').exists())          # its stack was archived too
         self.assertTrue((archive / 'desk-discovery.service.d' / '70-migration-sampling.conf').is_file())
@@ -511,6 +511,16 @@ class E2E(FreshStartBase):
         step0 = text.split('## 0. Preconditions')[1].split('## 1.')[0]
         self.assertRegex(step0, r'(?is)/var/backups/solana-desk[^.]*root')
         self.assertRegex(step0, r'(?i)never chown')
+
+    def test_the_flow_leaves_the_backup_parent_owner_and_mode_alone(self):
+        """T32G item 4: apply creates $BK inside the root-owned parent; the parent itself is never chowned or re-moded."""
+        self.vb.chmod(0o755)
+        before = (self.vb.stat().st_uid, self.vb.stat().st_gid, self.vb.stat().st_mode & 0o7777)
+        self.run_runbook(('2.', '3.', '4.', '5.', '7a.', '7b.', '8.', '9.'))
+        after = (self.vb.stat().st_uid, self.vb.stat().st_gid, self.vb.stat().st_mode & 0o7777)
+        self.assertEqual(after, before)
+        self.assertEqual(oct(Path(self.v['BK']).stat().st_mode & 0o777), '0o700')
+        self.assertEqual(Path(self.v['BK']).parent, self.vb)
 
     def test_failed_units_are_reset_after_the_stops_and_static_old_units_pass_the_disabled_check(self):
         self.run_runbook(('2.',))

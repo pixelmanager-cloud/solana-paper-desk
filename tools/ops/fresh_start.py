@@ -356,6 +356,12 @@ def render_dropins(root, out, *, marker=DROPIN_MARKER):
 
 TEMPLATE_DIR = Path(__file__).resolve().parents[2] / 'deploy' / 'fresh'
 DEFAULT_STATE_DIR = '/var/lib/solana-desk-health'
+# Optional research / fast-exit helpers (T32G): rendered into <out>/research/ so the RUNBOOK's default install
+# (`install $UNITS/*.service $UNITS/*.timer ...`) can never pick them up; an explicit RUNBOOK step installs them.
+RESEARCH_UNITS = frozenset({'desk-counterfactual.service', 'desk-counterfactual.timer', 'desk-held-watcher.service',
+                            'desk-paper-held-cycle.path'})
+RESEARCH_DIR = 'research'
+UNIT_SUFFIXES = ('.service', '.timer', '.path')
 LATCH_TEMPLATE = 'dropins/70-entry-latch.conf'
 LATCH_OUT = 'desk-paper-entry-dispatcher.service.d/70-entry-latch.conf'
 SAFE_VALUE = re.compile(r'[A-Za-z0-9_@%:,./=+-]+')
@@ -369,7 +375,8 @@ def render_units(root, out, *, release_dir, state_dir=DEFAULT_STATE_DIR, templat
     """Substitute the deploy/fresh placeholders from an applied root's manifest into a NEW directory `out`.
 
     Writes every unit/timer template plus the entry-latch drop-in (marker first line, so cutover rollback removes
-    it). Nothing is installed or enabled; the operator copies the files (RUNBOOK step 7). Refuses any placeholder
+    it). The optional research units (RESEARCH_UNITS, including the `.path` unit) go to `<out>/research/`, outside the
+    default install glob. Nothing is installed or enabled; the operator copies the files (RUNBOOK steps 7a and 11). Refuses any placeholder
     it cannot fill and any value a unit file would need quoting for."""
     root = _absolute(root, 'root')
     _no_symlink_chain(root, 'root')
@@ -393,7 +400,10 @@ def render_units(root, out, *, release_dir, state_dir=DEFAULT_STATE_DIR, templat
         if not SAFE_VALUE.fullmatch(value):
             raise FreshStartError(f'{key} needs systemd quoting; refuse to render')
     templates = Path(templates)
-    sources = sorted(p for p in templates.iterdir() if p.suffix in ('.service', '.timer'))
+    sources = sorted(p for p in templates.iterdir() if p.suffix in UNIT_SUFFIXES)
+    missing = sorted(RESEARCH_UNITS - {p.name for p in sources})
+    if missing:
+        raise FreshStartError(f'research unit templates missing: {missing}')
     sources.append(templates / LATCH_TEMPLATE)
     rendered = {}
     for source in sources:
@@ -403,7 +413,8 @@ def render_units(root, out, *, release_dir, state_dir=DEFAULT_STATE_DIR, templat
         left = sorted(set(re.findall(r'<[A-Z_]+>', text)))
         if left:
             raise FreshStartError(f'{source.name}: unfilled placeholders {left}')
-        rendered[LATCH_OUT if source.name == '70-entry-latch.conf' else source.name] = text
+        name = LATCH_OUT if source.name == '70-entry-latch.conf' else source.name
+        rendered[f'{RESEARCH_DIR}/{name}' if name in RESEARCH_UNITS else name] = text
     out = _absolute(out, 'out')
     _no_symlink_chain(out, 'out')
     if os.path.lexists(out):
@@ -419,7 +430,8 @@ def render_units(root, out, *, release_dir, state_dir=DEFAULT_STATE_DIR, templat
             stream.write(text)
             stream.flush()
             os.fsync(stream.fileno())
-    return {'out': str(out), 'files': sorted(rendered), 'plan_hash': manifest['plan_hash']}
+    return {'out': str(out), 'files': sorted(rendered), 'plan_hash': manifest['plan_hash'],
+            'research': sorted(n for n in rendered if n.startswith(RESEARCH_DIR + '/'))}
 
 
 def read_manifest(root):

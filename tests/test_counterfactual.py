@@ -940,8 +940,15 @@ class OpenModeAndServiceTests(CounterfactualBase):
         with self.assertRaises(cf.CounterfactualError):
             cf._connect(link, readonly=True)
 
+    # T32G: the template carries the render-units placeholders; fill them with a production-shaped layout for these checks.
+    LAYOUT = {'FRESH_ROOT': '/var/lib/solana-desk-fresh/v1', 'RELEASE_DIR': '/opt/solana-desk-releases/abc1234',
+              'PACING_DB': '/var/lib/solana-desk/provider-pacing.sqlite', 'PACING_DIR': '/var/lib/solana-desk',
+              'DISCOVERY_DB': '/var/lib/solana-desk/discovery/continuous.sqlite', 'DISCOVERY_DIR': '/var/lib/solana-desk/discovery'}
+
     def unit(self, name):
         text = (Path(__file__).resolve().parents[1] / 'deploy' / 'fresh' / name).read_text()
+        for key, value in self.LAYOUT.items():
+            text = text.replace('<%s>' % key, value)
         values = {}
         for line in text.splitlines():
             if '=' in line and not line.startswith(('#', '[')):
@@ -951,18 +958,23 @@ class OpenModeAndServiceTests(CounterfactualBase):
 
     def test_service_template_isolation_and_restart_policy(self):
         text, v = self.unit('desk-counterfactual.service')
-        store = '/var/lib/solana-desk/exp-FRESH/counterfactual/counterfactual.sqlite'
+        root = self.LAYOUT['FRESH_ROOT']
+        store = root + '/counterfactual/counterfactual.sqlite'
         for key in ('ExecStartPre', 'ExecStart'):
             self.assertIn('--store ' + store, v[key][0])                         # the store lives in its OWN subdirectory
-        self.assertNotIn('--store /var/lib/solana-desk/exp-FRESH/counterfactual.sqlite', text)
+        self.assertNotIn('--store %s/counterfactual.sqlite' % root, text)
         rw = v['ReadWritePaths'][0].split()
-        self.assertIn('/var/lib/solana-desk/exp-FRESH/counterfactual', rw)
+        self.assertIn(root + '/counterfactual', rw)
         self.assertIn('/var/lib/solana-desk', rw)                                 # rollback journal of the shared pacing database
-        self.assertNotIn('/var/lib/solana-desk/exp-FRESH', rw)                    # the experiment root itself is never writable
+        self.assertNotIn(root, rw)                                                # the experiment root itself is never writable
         ro = v['ReadOnlyPaths'][0].split()
-        self.assertTrue({'/var/lib/solana-desk/exp-FRESH', '/var/lib/solana-desk/discovery'} <= set(ro))
+        self.assertTrue({root, '/var/lib/solana-desk/discovery'} <= set(ro))
         self.assertEqual(v['Environment'], ['DESK_PROVIDER_PACING_DB=/var/lib/solana-desk/provider-pacing.sqlite'])
-        self.assertIn('--ledger', v['ExecStartPre'][0]); self.assertIn('--decisions-db', v['ExecStartPre'][0])
+        self.assertEqual(v['WorkingDirectory'], [self.LAYOUT['RELEASE_DIR']])
+        self.assertIn('--ledger %s/paper-ledger.sqlite' % root, v['ExecStartPre'][0])
+        self.assertIn('--decisions-db %s/paper-decisions.sqlite' % root, v['ExecStartPre'][0])
+        self.assertIn('--evidence-db %s/evidence.sqlite' % root, v['ExecStartPre'][0])
+        self.assertNotRegex(text, r'exp-FRESH|<[A-Z_]+>')
         self.assertEqual(v['Type'], ['oneshot'])
         self.assertNotIn('\n[Install]', text)   # the oneshot service is driven by its timer
         self.assertIn('provider-pacing', text)

@@ -22,3 +22,15 @@ Do not substitute by hand: `python -m tools.ops.fresh_start render-units --root 
 fills every placeholder from the applied manifest (and refuses any it cannot fill).
 
 See `docs/ops/OPERATIONS_24x7.md` for install, enablement order and alert handling.
+
+## Optional research units (T32G)
+
+`desk-counterfactual.service|.timer`, `desk-held-watcher.service` and `desk-paper-held-cycle.path` are NOT part of the first
+verified cycle. `render-units` writes them to `<out>/research/` (never to the top level), so the RUNBOOK's default install
+(`install $UNITS/*.service $UNITS/*.timer /etc/systemd/system/`) cannot pick them up; `docs/ops/RUNBOOK.md` step 11 installs and
+enables them explicitly. They use the same placeholders as the other templates. Their write scope: the counterfactual store
+`<FRESH_ROOT>/counterfactual` plus the shared pacing database DIRECTORY (`<PACING_DIR>`, for SQLite's rollback journal), and
+for the watcher only `<STATE_DIR>/held-watcher`.
+
+`desk-notify-watchdog.timer` starts with `OnActiveSec=600` (a grace period counted from cutover) instead of `OnBootSec`, so it cannot
+fire before the first healthcheck report exists.

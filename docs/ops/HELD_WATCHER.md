@@ -112,10 +112,11 @@ disable fast exits. The watcher's own limits above are the guard.
 
 ### Install (coordinator)
 
-1. Copy `deploy/fresh/desk-held-watcher.service` and `deploy/fresh/desk-paper-held-cycle.path`, substituting
-   `<FRESH_ROOT>`, `<RELEASE_DIR>`, `<CONFIG>`, `<STATE_DIR>` (the same values as the other fresh units; `<STATE_DIR>` is the
-   0700 `solana-desk` directory used by the healthcheck). Create the watcher's directory first
-   (`install -d -m 0700 -o solana-desk -g solana-desk <STATE_DIR>/held-watcher`): it is the only path the service may write.
+1. `tools.ops.fresh_start render-units` fills `deploy/fresh/desk-held-watcher.service` and
+   `deploy/fresh/desk-paper-held-cycle.path` from the applied manifest (`<FRESH_ROOT>`, `<RELEASE_DIR>`, `<CONFIG>`,
+   `<STATE_DIR>`) into `<units>/research/`, outside the default install set. `docs/ops/RUNBOOK.md` step 11 is the exact
+   procedure (create the watcher's directory first, install, verify, enable). `<STATE_DIR>/held-watcher`
+   (`install -d -m 0700 -o solana-desk -g solana-desk <STATE_DIR>/held-watcher`) is the only path the service may write.
 2. Cut over with `tools.ops.cutover` like the other services (the unit has no store-env needs; its paths are in the
    template). It is a `Type=simple` service with `Restart=on-failure`; a cutover health check treats it like the dashboard.
 3. Enable the path unit and the watcher **after** the entry timer is enabled (there is nothing to watch before the first

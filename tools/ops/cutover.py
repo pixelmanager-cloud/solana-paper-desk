@@ -7,6 +7,7 @@ are printed. No provider I/O, no signing, no network.
 Drop-ins written here carry MARKER as their FIRST line so that rollback removes only its own files.
 """
 import argparse
+import fnmatch
 import hashlib
 import hmac
 import ipaddress
@@ -23,6 +24,11 @@ import time
 from pathlib import Path
 
 MARKER = '# desk-cutover-managed v1'
+ROOT_UID = 0                      # tests patch this: the suite itself may run as uid 0
+SEAL_PATTERNS = ('*.sqlite', '*.sqlite-wal', '*.sqlite-shm', '*.sqlite-journal')   # the ONLY files seal may change
+SEAL_FILE_MODE, SEAL_DIR_MODE, SEAL_SHARED_DIR_MODE = 0o440, 0o550, 0o1770
+SEAL_KIND = 'seal_manifest_v1'
+MAX_MANIFEST_BYTES = 64 << 20
 DEFAULT_ARCHIVED_ROOT = '/var/lib/solana-desk'
 DEFAULT_INTERPRETER = '/opt/solana-desk/.venv/bin/python'
 SHARED_RELATIVE = ('provider-pacing.sqlite', 'discovery/continuous.sqlite')
@@ -1038,6 +1044,10 @@ def _copy_entry(src, dst, record):
 def _finish_entry(dst, record):
     """Ownership (best effort: only root can chown) and the exact recorded mode; dirs are finished last."""
     if record['type'] == 'symlink':
+        try:
+            os.lchown(dst, record['uid'], record['gid'])
+        except PermissionError:
+            pass
         return
     try:
         os.chown(dst, record['uid'], record['gid'])
@@ -1058,17 +1068,27 @@ def copy_tree_exact(src_root, dst_root, records):
         _finish_entry(dst_root / record['path'], record)
 
 
+COMPARABLE = ('type', 'mode', 'uid', 'gid', 'target', 'sha256', 'size')     # owner and group are part of the identity
+
+
+def matches_record(root, record):
+    try:
+        now = entry_record(root, root / record['path'])
+    except (OSError, CutoverError):
+        return False
+    return all(now.get(k) == record.get(k) for k in COMPARABLE)
+
+
 def verify_records(root, records):
-    """Raise unless ``root`` holds exactly these records (type, mode, target and sha256 of every file)."""
+    """Raise unless ``root`` holds exactly these records (type, mode, uid, gid, target and sha256 of every file)."""
     for record in records:
         path = root / record['path']
         try:
             now = entry_record(root, path)
         except (OSError, CutoverError) as exc:
             raise CutoverError('Archive verification failed for %s: %s' % (record['path'], exc)) from exc
-        comparable = ('type', 'mode', 'target', 'sha256', 'size')
-        if any(now.get(k) != record.get(k) for k in comparable):
-            raise CutoverError('Archive verification failed for %s: content or mode differs' % record['path'])
+        if any(now.get(k) != record.get(k) for k in COMPARABLE):
+            raise CutoverError('Archive verification failed for %s: content, mode or owner differs' % record['path'])
 
 
 def remove_tree(path):
@@ -1078,6 +1098,56 @@ def remove_tree(path):
         for child in path.iterdir():
             remove_tree(child)
         path.rmdir()
+
+
+def resume_archive(ops, unit_dir, archive):
+    """Finish an archive step that died while removing the originals (T32G item 7).
+
+    The archive and its manifest are written and verified BEFORE the first original is removed, so an existing archive
+    WITH a manifest means the copy is complete: verify it again, prove that every original still present is exactly what the
+    manifest says (nothing edited since, nothing extra in a directory about to be removed), then remove what is left.
+    An archive without a manifest is a copy that never finished: the originals were not touched, and nothing is guessed.
+    """
+    manifest_path = archive / ARCHIVE_MANIFEST
+    if archive.is_symlink() or not archive.is_dir():
+        raise CutoverError('Archive already exists and is not a directory: %s' % archive)
+    if manifest_path.is_symlink() or not manifest_path.is_file():
+        raise CutoverError('Archive %s is incomplete (no manifest): the originals were not touched; check them, remove the '
+                           'partial archive by hand and run the step again' % archive)
+    manifest = json.loads(manifest_path.read_text())
+    if manifest.get('kind') != ARCHIVE_KIND or manifest.get('version') != 1 or manifest.get('unit_dir') != str(unit_dir):
+        raise CutoverError('Archive manifest does not match this unit directory')
+    records = manifest['records']
+    verify_records(archive, records)                              # the copy is intact
+    by_path = {r['path']: r for r in records}
+    tops = sorted({r['path'].split('/')[0] for r in records})
+    for record in records:
+        path = unit_dir / record['path']
+        if (path.exists() or path.is_symlink()) and not matches_record(unit_dir, record):
+            raise CutoverError('Refusing to resume: %s differs from the archive manifest' % record['path'])
+    for top in tops:
+        current = unit_dir / top
+        if not (current.exists() or current.is_symlink()):
+            continue
+        extra = [str(p.relative_to(unit_dir)) for _, p in _walk(current) if str(p.relative_to(unit_dir)) not in by_path]
+        if extra:
+            raise CutoverError('Refusing to resume: %s holds entries the archive manifest does not list: %s'
+                               % (top, ', '.join(sorted(extra)[:5])))
+        if UNIT_RE.fullmatch(top) and active_now(ops, top):
+            raise CutoverError('Unit %s is active; stop it before archiving its configuration' % top)
+    remaining = [unit_dir / top for top in tops if (unit_dir / top).exists() or (unit_dir / top).is_symlink()]
+    report = {'action': 'archive-dropins', 'archive': str(archive), 'applied': ops.apply, 'resumed': True,
+              'directories': sorted(t for t in tops if t.endswith('.d')),
+              'unit_files': sorted(t for t in tops if not t.endswith('.d')),
+              'files': sum(r['type'] == 'file' for r in records), 'removed_now': sorted(p.name for p in remaining)}
+
+    def finish():
+        for path in remaining:
+            remove_tree(path)
+        ops.fsync_dir(unit_dir)
+    ops.do('resume: remove %d originals already proven archived in %s' % (len(remaining), archive), finish)
+    ops.mutate(['systemctl', 'daemon-reload'])
+    return report
 
 
 def archive_dropins(args, ops):
@@ -1095,7 +1165,7 @@ def archive_dropins(args, ops):
         raise CutoverError('--name must look like systemd-archive-<label>')
     archive = archive_root / name
     if archive.exists() or archive.is_symlink():
-        raise CutoverError('Archive already exists: %s' % archive)
+        return resume_archive(ops, unit_dir, archive)
     fresh = {}
     if args.fresh_units:
         fresh_dir = canonical_dir(args.fresh_units, '--fresh-units')
@@ -1155,20 +1225,26 @@ def plan_restore(args, unit_dir, will_remove):
     records, fresh = manifest['records'], manifest['fresh_units']
     verify_records(archive, records)                  # the archive itself is intact before anything is touched
     archived_tops = {r['path'] for r in records if '/' not in r['path']}
+    by_path = {r['path']: r for r in records}
     pending = []                                      # (path, kind) removals needed so the archive can go back
     for top in archived_tops:
         current = unit_dir / top
         if not (current.exists() or current.is_symlink()):
-            continue
+            continue                                  # already removed (a complete or half-finished archive step)
         if top.endswith('.d'):
+            # An archived original that is still present (the archive step died part-way through removing it) is
+            # fine when it is exactly what the manifest records; anything else is somebody's work and is refused.
             leftover = [str(p.relative_to(unit_dir)) for _, p in _walk(current)
-                        if p != current and not p.is_dir() and p not in will_remove]
+                        if p != current and not p.is_dir() and p not in will_remove
+                        and not (str(p.relative_to(unit_dir)) in by_path and matches_record(unit_dir, by_path[str(p.relative_to(unit_dir))]))]
             if leftover:
                 raise CutoverError('Refusing restore: %s holds files nobody archived or rolled back: %s'
                                    % (top, ', '.join(sorted(leftover)[:5])))
             pending.append(current)
         elif current.is_file() and not current.is_symlink() and sha256_file(current) == fresh.get(top):
             pending.append(current)                   # our rendered unit, replaced by the archived original
+        elif matches_record(unit_dir, by_path[top]):
+            pending.append(current)                   # the original itself, never removed: removed and put back identically
         else:
             raise CutoverError('Refusing restore: %s is not the rendered unit this flow installed' % top)
     for name, digest in sorted(fresh.items()):
@@ -1204,15 +1280,38 @@ def run_restore(plan, ops, unit_dir):
 
 
 # ------------------------------------------------------------- archived store permissions
-def seal_archive(args, ops):
-    """Make the archived (old) store root read-only to the service user, except the shared inputs.
+def _root_only(info):
+    """Already private to root (owner uid 0, no group/other access): sealing must never loosen it."""
+    return info.st_uid == ROOT_UID and not info.st_mode & 0o077
 
-    Files: owner root:root, mode 0444. Directories: root:root 0555, EXCEPT the directories that hold a shared
-    database (the old root for provider-pacing.sqlite, discovery/ for continuous.sqlite): those are
-    root:<service group> 1775. The shared databases use a rollback journal, so SQLite must create and remove
-    ``<db>-journal`` next to them; group write on the directory allows that, and the sticky bit stops the service
-    user from deleting or renaming any root-owned (archived) file in it. The shared databases themselves are not
-    touched. Symlinks, hard links and special files abort the step.
+
+def _seal_record(root, path, info, sha=False):
+    rel = '.' if path == root else path.relative_to(root).as_posix()
+    record = {'path': rel, 'type': 'dir' if stat.S_ISDIR(info.st_mode) else 'file', 'mode': stat.S_IMODE(info.st_mode),
+              'uid': info.st_uid, 'gid': info.st_gid}
+    if record['type'] == 'file':
+        record['size'] = info.st_size
+        if sha:
+            record['sha256'] = sha256_file(path)
+    return record
+
+
+def seal_archive(args, ops):
+    """Make the archived (old) stores read-only to the service user; never touch anything that is live.
+
+    Only an explicit allow-list is changed: the sqlite family (``*.sqlite``, ``-wal``, ``-shm``, ``-journal``) plus any
+    ``--seal-pattern``. Files change to ``root:<service group> 0440``, directories to ``0550``, and the directories that hold
+    a SHARED database (the old root for provider-pacing.sqlite, discovery/ for continuous.sqlite) to ``1770``: the shared
+    databases use a rollback journal, so SQLite must create and remove ``<db>-journal`` beside them, group write allows
+    that, the sticky bit stops the service user from deleting or renaming any root-owned (archived) file there, and nobody
+    outside the group gets any access. Everything that is already private to root (uid 0, no group/other bits) stays as it is.
+
+    Never touched, whatever the patterns say: every ``*.lock`` file (continuous discovery opens ``<db>.discovery.lock``
+    read-write; the pacing holders, paper-cycle, invocation, scheduler and dispatcher locks are flock'ed by running
+    processes), the shared databases, and every file outside the allow-list (reported as ``unlisted``).
+
+    Before the first change a manifest (path, type, uid, gid, mode, sha256) is written to ``--manifest`` (new file, 0600,
+    outside the root); ``unseal`` restores exactly that. Symlinks, hard links and special files abort the step.
     """
     root = Path(args.root)
     if not root.is_absolute() or root.is_symlink() or not root.is_dir() or root.resolve() != root:
@@ -1223,38 +1322,145 @@ def seal_archive(args, ops):
         if not path.is_absolute() or path.resolve() != path or root not in path.parents:
             raise CutoverError('--shared-path must be a canonical absolute path inside --root: %s' % item)
         shared.append(path)
+    patterns = list(SEAL_PATTERNS)
+    for pattern in args.seal_pattern:
+        if 'lock' in pattern.lower() or not pattern or '/' in pattern:
+            raise CutoverError('--seal-pattern must be a plain file-name pattern and must not name lock files: %r' % pattern)
+        patterns.append(pattern)
+    manifest = Path(args.manifest)
+    if not manifest.is_absolute() or manifest.name in ('', '.', '..'):
+        raise CutoverError('--manifest must be an absolute file path')
+    if manifest == root or root in manifest.parents:
+        raise CutoverError('--manifest is inside --root, which is sealed with the stores; put it outside: %s' % manifest)
+    if not manifest.parent.is_dir() or manifest.parent.resolve() != manifest.parent:
+        raise CutoverError('--manifest parent must be an existing canonical directory')
+    if manifest.exists() or manifest.is_symlink():
+        raise CutoverError('--manifest already exists: %s' % manifest)
     shared_names = {p for base in shared for p in [base] + [Path(str(base) + sfx) for sfx in SHARED_SUFFIXES[1:]]}
     shared_dirs = {root} | {p.parent for p in shared}
-    plan = {'files': [], 'sealed_dirs': [], 'shared_dirs': [], 'untouched': sorted(str(p) for p in shared)}
+    plan = {'files': [], 'sealed_dirs': [], 'shared_dirs': [], 'kept_root_only': [], 'locks': [], 'unlisted': [], 'infos': {}}
     for path in sorted(root.rglob('*')) + [root]:
         info = path.lstat()
+        plan['infos'][path] = info
         if stat.S_ISLNK(info.st_mode):
             raise CutoverError('Refusing to seal a symlink: %s' % path)
         if stat.S_ISDIR(info.st_mode):
-            (plan['shared_dirs'] if path in shared_dirs else plan['sealed_dirs']).append(path)
+            if _root_only(info):
+                plan['kept_root_only'].append(path)
+            else:
+                (plan['shared_dirs'] if path in shared_dirs else plan['sealed_dirs']).append(path)
         elif stat.S_ISREG(info.st_mode):
+            if path.name.endswith('.lock'):
+                plan['locks'].append(path)                    # live: opened read-write by running processes
+                continue
             if info.st_nlink != 1:
                 raise CutoverError('Refusing to seal a hard-linked file: %s' % path)
-            if path not in shared_names:
+            if path in shared_names:
+                continue
+            if not any(fnmatch.fnmatch(path.name, pattern) for pattern in patterns):
+                plan['unlisted'].append(path)
+            elif _root_only(info):
+                plan['kept_root_only'].append(path)
+            else:
                 plan['files'].append(path)
         else:
             raise CutoverError('Refusing to seal a special file: %s' % path)
+    changed = plan['files'] + plan['sealed_dirs'] + plan['shared_dirs']
+    untouched = sorted(plan['locks'] + plan['unlisted'] + [p for p in shared_names if p.exists()])
+
+    def write_manifest():
+        text = json.dumps({
+            'kind': SEAL_KIND, 'version': 1, 'root': str(root), 'service_group': args.service_group,
+            'created_utc': time.strftime('%Y-%m-%dT%H:%M:%SZ', time.gmtime()),
+            'sealed': [_seal_record(root, p, plan['infos'][p], sha=True) for p in changed],
+            'untouched': sorted(('.' if p == root else p.relative_to(root).as_posix()) for p in untouched),
+            'kept_root_only': sorted(p.relative_to(root).as_posix() if p != root else '.' for p in plan['kept_root_only'])},
+            sort_keys=True, indent=1)
+        fd = os.open(manifest, os.O_CREAT | os.O_EXCL | os.O_WRONLY | os.O_NOFOLLOW, 0o600)
+        with os.fdopen(fd, 'w') as stream:
+            stream.write(text)
+            stream.flush()
+            os.fsync(stream.fileno())
+        ops.fsync_dir(manifest.parent)
 
     def seal():
         for path in plan['files']:
-            ops.chown(path, 'root', 'root')
-            os.chmod(path, 0o444)
+            ops.chown(path, 'root', args.service_group)
+            os.chmod(path, SEAL_FILE_MODE)
         for path in sorted(plan['sealed_dirs'], key=lambda p: -len(p.parts)):
-            ops.chown(path, 'root', 'root')
-            os.chmod(path, 0o555)
+            ops.chown(path, 'root', args.service_group)
+            os.chmod(path, SEAL_DIR_MODE)
         for path in plan['shared_dirs']:
             ops.chown(path, 'root', args.service_group)
-            os.chmod(path, 0o1775)
-    ops.do('seal %d files (root:root 0444), %d directories (root:root 0555), %d shared directories (root:%s 1775) under %s'
-           % (len(plan['files']), len(plan['sealed_dirs']), len(plan['shared_dirs']), args.service_group, root), seal)
+            os.chmod(path, SEAL_SHARED_DIR_MODE)
+    ops.do('write the seal manifest (path, uid, gid, mode, sha256 of %d entries) to %s' % (len(changed), manifest),
+           write_manifest)
+    ops.do('seal %d files (root:%s 0440), %d directories (0550), %d shared directories (1770) under %s; '
+           '%d lock files and %d other files are left exactly as they are'
+           % (len(plan['files']), args.service_group, len(plan['sealed_dirs']), len(plan['shared_dirs']), root,
+              len(plan['locks']), len(plan['unlisted'])), seal)
     return {'action': 'seal-archive', 'root': str(root), 'applied': ops.apply, 'files': len(plan['files']),
             'sealed_dirs': len(plan['sealed_dirs']), 'shared_dirs': sorted(str(p) for p in plan['shared_dirs']),
-            'untouched': plan['untouched'], 'service_group': args.service_group}
+            'untouched': sorted(str(p) for p in shared), 'untouched_locks': sorted(str(p) for p in plan['locks']),
+            'unlisted': sorted(str(p) for p in plan['unlisted']),
+            'kept_root_only': sorted(str(p) for p in plan['kept_root_only']),
+            'manifest': str(manifest), 'service_group': args.service_group}
+
+
+def unseal(args, ops):
+    """Restore every entry a ``seal-archive`` manifest recorded: its exact numeric owner, group and mode.
+
+    Refuses (changing nothing) when a recorded entry is missing, has another type, or a file's content no longer matches
+    its recorded sha256: a sealed store must not have changed, and restoring write access onto a modified store would hide
+    that. Idempotent: running it on an already restored tree re-applies the same values.
+    """
+    path = Path(args.manifest)
+    if not path.is_absolute() or path.is_symlink() or not path.is_file():
+        raise CutoverError('--manifest must be an absolute path to a regular file')
+    if path.stat().st_size > MAX_MANIFEST_BYTES:
+        raise CutoverError('Seal manifest exceeds the size bound')
+    try:
+        data = json.loads(path.read_text())
+    except ValueError as exc:
+        raise CutoverError('Seal manifest is not valid JSON') from exc
+    if type(data) is not dict or data.get('kind') != SEAL_KIND or data.get('version') != 1 or type(data.get('sealed')) is not list:
+        raise CutoverError('Not a seal manifest (kind %s)' % SEAL_KIND)
+    root = Path(str(data.get('root')))
+    if not root.is_absolute() or root.is_symlink() or not root.is_dir() or root.resolve() != root:
+        raise CutoverError('Seal manifest root is not a canonical absolute directory: %s' % root)
+    entries = []
+    for entry in data['sealed']:
+        rel = entry.get('path') if type(entry) is dict else None
+        if (type(rel) is not str or rel.startswith('/') or '..' in Path(rel).parts or entry.get('type') not in ('file', 'dir')
+                or any(type(entry.get(k)) is not int or entry[k] < 0 for k in ('mode', 'uid', 'gid'))
+                or (entry['type'] == 'file' and not re.fullmatch(r'[0-9a-f]{64}', str(entry.get('sha256'))))):
+            raise CutoverError('Seal manifest entry is malformed: %r' % (rel,))
+        target = root if rel == '.' else root / rel
+        entries.append((target, entry))
+    problems = []
+    for target, entry in entries:
+        try:
+            info = target.lstat()
+        except OSError:
+            problems.append('%s is missing' % entry['path'])
+            continue
+        if stat.S_ISLNK(info.st_mode) or stat.S_ISDIR(info.st_mode) != (entry['type'] == 'dir') \
+                or (entry['type'] == 'file' and not stat.S_ISREG(info.st_mode)):
+            problems.append('%s changed type' % entry['path'])
+        elif entry['type'] == 'file' and sha256_file(target) != entry['sha256']:
+            problems.append('%s was modified while sealed' % entry['path'])
+    if problems:
+        raise CutoverError('Refusing to unseal: %s' % '; '.join(problems[:5]))
+
+    def restore():
+        for target, entry in sorted((e for e in entries if e[1]['type'] == 'file'), key=lambda e: str(e[0])):
+            ops.chown(target, entry['uid'], entry['gid'])
+            os.chmod(target, entry['mode'])
+        for target, entry in sorted((e for e in entries if e[1]['type'] == 'dir'), key=lambda e: -len(e[0].parts)):
+            ops.chown(target, entry['uid'], entry['gid'])
+            os.chmod(target, entry['mode'])
+    ops.do('unseal %d entries under %s from %s' % (len(entries), root, path), restore)
+    return {'action': 'unseal', 'root': str(root), 'applied': ops.apply, 'entries': len(entries), 'manifest': str(path)}
 
 
 # ------------------------------------------------------------------ rollback
@@ -1368,6 +1574,11 @@ def build_parser():
     q.add_argument('--root', required=True)
     q.add_argument('--shared-path', action='append', default=[], help='shared database inside --root left untouched (repeatable)')
     q.add_argument('--service-group', default='solana-desk')
+    q.add_argument('--manifest', required=True, help='NEW file (0600, outside --root) listing path/uid/gid/mode/sha256 of every entry changed')
+    q.add_argument('--seal-pattern', action='append', default=[],
+                   help='extra file-name pattern to seal beyond the sqlite family (repeatable); lock files can never be named')
+    u = sub.add_parser('unseal', help='restore the exact owner/group/mode a seal-archive manifest recorded')
+    u.add_argument('--manifest', required=True)
     i = sub.add_parser('inventory', help='save ls -la and systemctl cat of every desk unit before changing anything')
     i.add_argument('--unit-dir', default='/etc/systemd/system')
     i.add_argument('--out', help='new directory (0700) for the saved inventory; omit to print only')
@@ -1391,7 +1602,8 @@ def main(argv=None, runner=None, sleep=None):
     ops = Ops(apply=args.apply, runner=runner, journal=Path(args.journal), sleep=sleep)
     try:
         report = {'stage': stage, 'cutover': cutover, 'rollback': rollback, 'inventory': inventory,
-                  'archive-dropins': archive_dropins, 'seal-archive': seal_archive}[args.command](args, ops)
+                  'archive-dropins': archive_dropins, 'seal-archive': seal_archive,
+                  'unseal': unseal}[args.command](args, ops)
     except CutoverError as exc:
         print(json.dumps({'status': 'REFUSED' if not ops.apply else 'FAILED', 'error': str(exc),
                           'commands': ops.planned}, indent=2))
