@@ -77,6 +77,26 @@ class SchedulerTests(unittest.TestCase):
             self.assertEqual(json.loads(output.getvalue())['status'],'HELD_POSITION_PRIORITY')
             self.assertEqual(hashlib.sha256(f.ledger.read_bytes()).hexdigest(),before)
         finally:f.doCleanups()
+    def test_real_expire_cli_and_argv_restoration(self):
+        from tests.helpers import config
+        from desk.model import canonical
+        cfg=self.root/'config.json';cfg.write_text(canonical(config()))
+        argv=sys.argv;output=io.StringIO()
+        with redirect_stdout(output):
+            wrapper.main(['--research-db',str(self.research),'--mode','expire','--','--db',str(self.root/'absent-ledger.sqlite'),'--config',str(cfg)])
+        self.assertIs(sys.argv,argv)
+        self.assertEqual(json.loads(output.getvalue())['status'],'NOT_CONFIGURED')
+        self.assertEqual(self.contender(),'ACQUIRED')
+    def test_real_decisions_cli_and_argv_restoration(self):
+        from desk.job_persistence import JobPersistence
+        JobPersistence(self.research)
+        argv=sys.argv;output=io.StringIO()
+        with redirect_stdout(output):
+            wrapper.main(['--research-db',str(self.research),'--mode','decisions','--','--db',str(self.research),'--journal',str(self.root/'decisions.sqlite')])
+        self.assertIs(sys.argv,argv)
+        result=json.loads(output.getvalue());self.assertEqual(result['mode'],'REJECT_ONLY')
+        self.assertEqual(result['consumed'],0);self.assertFalse(result['automatic_entry_enabled'])
+        self.assertEqual(self.contender(),'ACQUIRED')
     def test_exec_retains_lease_without_parent_child_gap(self):
         code="from desk.paper_scheduler import lease\nimport os,sys\nwith lease(sys.argv[1]) as fd:\n os.set_inheritable(fd,True)\n os.execv(sys.executable,[sys.executable,'-c',\"import sys;print('READY',flush=True);sys.stdin.readline()\"])"
         child=subprocess.Popen([sys.executable,'-c',code,str(self.research)],stdin=subprocess.PIPE,stdout=subprocess.PIPE,text=True)

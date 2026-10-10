@@ -50,6 +50,12 @@ def main(argv=None):
         else:
             from desk.cli import main as invoke
             args=[('paper-monitor' if a.mode=='expire' else 'consume-scans'),*args]
+            original_argv=sys.argv
+            try:
+                sys.argv=[original_argv[0],*args]
+                return invoke()
+            finally:
+                sys.argv=original_argv
         return invoke(args)
     return 0
 
