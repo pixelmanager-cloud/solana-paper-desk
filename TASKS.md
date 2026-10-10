@@ -1508,3 +1508,21 @@ AVOID: desk/paper_pass_closure.py (T22G)
 6. **(MED) TTL doc.** Remove the TTL-120 recommendation (`docs/MULTI_POSITION.md` ~:205).
 7. **(LOW) One rollover rule.** T35 added a rollover inside the marks event (`engine.py` ~:469) without a flag. Unify it with T16H's rollover rule under one versioned flag; there must be exactly one rollover rule.
 8. **(LOW) Closed vault.** A closed vault sets the mark to zero, with an explicit reason, rather than leaving it stale forever. Add a golden byte-identity test with the flag absent.
+
+---
+
+## T42 — Research-tool follow-ups (T40 caps/checkpoint, T41 fixes, read-only open rule)
+STATUS: OPEN
+DEPENDS: none
+BASE: origin/integration/r1, then merge origin/cloud/T40 and origin/cloud/T41. Resolve the trivial conflict in tests/test_ops_healthcheck.py by keeping both units.
+OWNS: tools/research/features.py, tools/research/daily_report.py, tools/research/forward_eval.py (open rule only), tools/research/fill_realism_report.py (open rule only), tools/ops/healthcheck.py (open rule only), deploy/fresh/desk-features.*, deploy/fresh/desk-daily-report.*, their tests
+AVOID: desk/**
+
+1. **(MED) T40 incremental ingestion.** Replace the capped full rescans (`features.py` ~:289-293, ~:423-425) with incremental ingestion from a persisted per-source cursor (seq/rowid). Process in bounded pages, iterating rows rather than calling `fetchall`, within `MemoryMax`. Record a counter when a page bound is hit, and NEVER store an outcome without its `reject_reasons` because of a cap. Test 2M fixture events with bounded memory.
+2. **(LOW) T40 optional stores.** Only the ledger is required. A missing decisions, research, journal or discovery store skips those features with a recorded reason, not exit 2.
+3. **(MED) T41 sample sizes.** "Filters look non-harmful" must never be printed when every group has n<30. Print INSUFFICIENT_SAMPLE instead, and test it.
+4. **(MED) T41 uses T40 features.** Run `features shadow-features` when the store exists and pass `--features` to the shadow section, labelling which features were real vs neutral.
+5. **(LOW) Unit hardening.**
+   - The daily-report unit gets `ReadWritePaths=<STATE_DIR>/reports`, `PrivateNetwork=true`, `CPUWeight`/`IOWeight`, the same as T39/T40.
+   - The `daily_report.py` error text drops `str(error)`; report the class name only.
+6. **(LOW) Read-only open rule.** `healthcheck.py` ~:71, `forward_eval.py` ~:61 and `fill_realism_report.py` ~:118 use the shared read-only open rule (`mode=ro`, falling back to `immutable` only for a quiet WAL), so sections don't become ERROR under `ReadOnlyPaths`.
