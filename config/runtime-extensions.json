@@ -80,6 +80,26 @@
         "ledger_db": "/var/lib/solana-desk/paper-kraken-77de75a2.sqlite",
         "research_db": "/var/lib/solana-desk/research.sqlite"
       }
+    },
+    {
+      "checkpoint_hash": "61eacdccf4ab480c20530384923f46d0f44e75f4b8199c4e39632fd3821e9362",
+      "metadata_hash": "220e263450c7f308ab26665f95d78a4b2673b2cb2ed097ace15943bf7aa8fde6",
+      "events_count": 1,
+      "events_hash": "d6a2c29038acabac20136482ea2d7848e4e4a334d6109f3133a9d807aaa2574b",
+      "outcomes_count": 0,
+      "outcomes_hash": "4f53cda18c2baa0c0354bb5f9a3ecbe5ed12ab4d8e11ba873c2f11161202b945",
+      "sequence": 4,
+      "first_receipt_hash": "fb5476746fc700d5e4ab0456d17547e0b591d8a486918167249fd9038dd08f8b",
+      "continuation_receipt_hash": "2fd601702c8147e68da440198d57b3e89e38912f0eaf829a8316dc60c55d7179",
+      "parent_receipt_hash": "61ffb6f397a66b85c627dc43ff2be74913281f1454bc4804cc0f182ed35c952d",
+      "predecessor": "536271582ad8e8dcbc5098ca38be9541a311bfdce9e2bebce7a40fa38127415c",
+      "successor": "6dd1ec3f12fe74c3fe94fab5c4be5736e94ba062b6766b9bba3cab3daf319b83",
+      "config_hash": "3dc3108e1c23ebbad97b88338e37f4012d3dd6b259f5a911624d799da1c11dff",
+      "context": {
+        "evidence_db": "/var/lib/solana-desk/evidence.sqlite",
+        "ledger_db": "/var/lib/solana-desk/paper-kraken-77de75a2.sqlite",
+        "research_db": "/var/lib/solana-desk/research.sqlite"
+      }
     }
   ]
 }
