@@ -1253,3 +1253,30 @@ AVOID: exit logic (exits keep using executable Jupiter sell quotes), T22/T23 fil
   - flag-absent byte identity;
   - a failure leading to a normal stale reject;
   - realistic pipeline timing, with no frozen clock for real phases.
+
+---
+
+## T36 — Pacing upgrade for the paid Helius/Jupiter Developer plans (Kraken untouched)
+STATUS: OPEN
+DEPENDS: none
+BASE: origin/integration/r1 (it contains T23G's pacing changes and T14G's research priority)
+OWNS: desk/provider_pacing.py (the policy upgrade path only), a new config/provider-pacing-policy.json (reviewed policy), tools/ops/pacing_policy.py (plan/apply CLI, dry-run default), tests/test_pacing_policy_upgrade.py, docs/ops/RUNBOOK.md (one new step; coordinate with T32G if it is still open)
+AVOID: the Kraken lane: its row, its migration receipt and `config/kraken-pacing-migration.json` must stay byte-identical
+
+**DECISION (CK, 2026-10-11).** CK has paid **Helius Developer** (documented RPC limit 50 req/s, DAS/Enhanced 10 req/s, `sendTransaction` 5/s) and **Jupiter Developer** (documented 10 req/s over a 60s sliding window, shared across Swap/Price/Token; a firewall 429 is possible below the quota) plans. The production shared pacing DB has `policy` rows `('helius',2,2.0,30.0)`, `('jupiter',2,2.0,30.0)`, `('kraken',2,2.0,30.0)`, so Helius and Jupiter run at 0.5 req/s and waste most of the paid capacity.
+- **New targets** (with headroom; other consumers such as the held watcher, the counterfactual sampler and the fill-realism worker share the same keys):
+  - Helius cadence **0.1s** (10 req/s, 20% of 50);
+  - Jupiter cadence **0.25s** (4 req/s, 40% of 10).
+
+  Keep the backoff at 30s, and honour Retry-After as today. Kraken stays at 2.0s, exactly.
+- **Explicit, reviewed upgrade.** The upgrade must be explicit and reviewed: an append-only `pacing_policy_changes` row recording the old and new values, the reason, and the config sha256. Never an in-place silent edit. Validation (`_validate`) must accept the reviewed policy for helius/jupiter and still pin Kraken exactly. Mixed-version note: every process using the shared DB must run code that accepts the new policy before `apply` (document this in the RUNBOOK).
+- **Dry-run first.** `python -m tools.ops.pacing_policy plan|apply --db <shared pacing db> --policy config/provider-pacing-policy.json` defaults to dry-run. `apply` requires all desk writers stopped (same quiesce check as backup), and is idempotent.
+- **Tests:**
+  - an upgrade on a copy of a production-shaped DB (including a Kraken migration receipt fixture) leaves the Kraken row and receipt byte-identical;
+  - new cadences take effect;
+  - an old-code reader's behaviour on the upgraded DB is documented (fails closed);
+  - re-apply is a no-op;
+  - a forged change row is rejected;
+  - a 429 still triggers the 30s backoff.
+
+Add the separate per-provider budget note to docs: Helius `getMultipleAccounts` counts as one RPC call; DAS calls have their own 10/s cap.
