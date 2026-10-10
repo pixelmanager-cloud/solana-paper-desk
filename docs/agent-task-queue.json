@@ -5546,7 +5546,7 @@
     },
     "production_commit": "5746912cd88b9527e2b196a2edefc66b72c257a0",
     "kraken_usd_integration": {
-      "status": "QUIESCED_BACKUP_COMPLETE_EXACT_PRODUCTION_PINS_IN_REVIEW",
+      "status": "COMBINED_RELEASE_READY_FOR_FINAL_CI_PRODUCTION_QUIESCED",
       "base_head": "c1c613b696755c53912feb45639191045b831554",
       "author_thread": "01a118fd-0f1c-749c-b85b-5e730937d0a8",
       "reviewer_thread": "01a118fd-3f90-77d9-9549-c4497f5b10a6",
@@ -5666,7 +5666,7 @@
       },
       "preservation_verifier": {
         "worker": "06",
-        "status": "FINAL_EXACT_HEAD_REVIEW_PASS_CI_PENDING",
+        "status": "INTEGRATED_REVIEW_AND_BOTH_FULL_CI_PASS",
         "turn": "01a12330-81c5-76a4-b7b1-1f378c912fa9",
         "pr": 184,
         "head": "f0b88394b283164984773656b0ae1db1bbe0f804",
@@ -5699,6 +5699,18 @@
           "tests": 16,
           "seconds": 53.372,
           "status": "PASS_PRIVATE_NETWORK_PRODUCTION_INACCESSIBLE"
+        },
+        "ci_results": {
+          "38009562774": {
+            "result": "PASS",
+            "tests": 2716,
+            "seconds": 891.325
+          },
+          "38009559315": {
+            "result": "PASS",
+            "tests": 2716,
+            "seconds": 813.678
+          }
         }
       },
       "candidate_hints": {
