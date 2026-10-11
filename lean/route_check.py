@@ -6,8 +6,14 @@ spending a second call per trade: it asks "did the build answer contain a route 
 route, the compute-unit limit, the priority-fee suggestion and, when there was no route, the error code. The built
 instructions themselves are not stored (only their sizes) and are never decoded beyond the two ComputeBudget fields.
 
-If the endpoint demands a funded taker (an error about balance/funds/simulation), the check records
-``ROUTE_CHECK_UNSUPPORTED`` ONCE, disables itself (persisted, survives restarts) and does not try to work around it.
+Only evidence about the route counts. A transient failure (429, timeout, 5xx), a rejected key, a redirect, our own bad
+argument or an unparseable body say nothing about whether a route exists: they are recorded as ``INCONCLUSIVE`` and never
+as ``NOT_ROUTABLE``. Every trade is checked ONCE per side: the first conclusive attempt is the check (an exit retried every
+pass while the route is gone is one NOT_ROUTABLE, not one per pass; the failed quotes themselves are in ``errors``).
+
+If the endpoint demands a funded taker (the provider's own ``errorCode`` is one of ``UNSUPPORTED_ERROR_CODES``, matched
+exactly), the check records ``ROUTE_CHECK_UNSUPPORTED`` ONCE, disables itself (persisted, survives restarts) and does not try
+to work around it.
 """
 import base64
 import json
@@ -19,7 +25,13 @@ from lean.store import StoreError
 KIND = 'route_check'
 DISABLED_EVENT = 'route_check_disabled'
 COMPUTE_BUDGET = 'ComputeBudget111111111111111111111111111111'
-UNSUPPORTED_MARKERS = ('INSUFFICIENT', 'NOT_ENOUGH', 'BALANCE', 'FUNDS', 'TAKER_NOT', 'SIMULATION', 'ACCOUNT_NOT_FOUND')
+# The provider's own ``errorCode`` values that mean "the taker must hold funds / exist on chain", matched EXACTLY (case-sensitive).
+# A substring match disabled the check on any route error that merely mentioned a balance or a simulation.
+UNSUPPORTED_ERROR_CODES = frozenset({'INSUFFICIENT_FUNDS', 'INSUFFICIENT_BALANCE', 'TAKER_NOT_FUNDED', 'TAKER_ACCOUNT_NOT_FOUND'})
+# Codes that are about OUR call or the transport, never about the route: never evidence of "no route".
+INCONCLUSIVE_CODES = frozenset({'AUTH_REJECTED', 'REDIRECT_REFUSED', 'ARGUMENT_INVALID', 'RESPONSE_MALFORMED', 'RESPONSE_INVALID',
+                                'RESPONSE_OVERSIZED', 'RESPONSE_TRUNCATED', 'RESPONSE_HEADERS_INVALID', 'TRANSPORT_ERROR',
+                                'CONNECTION_ERROR', 'TIMEOUT', 'RATE_LIMITED', 'DEADLINE_EXCEEDED', 'CHECK_FAILED'})
 MAX_LABELS = 8
 
 
@@ -57,7 +69,7 @@ def analyze(raw):
     if not isinstance(parsed, dict):
         return {'buildable': False, 'error_code': 'RESPONSE_INVALID'}
     if parsed.get('errorCode') or parsed.get('error'):
-        return {'buildable': False, 'error_code': str(parsed.get('errorCode') or 'BUILD_ERROR')[:64]}
+        return {'buildable': False, 'error_code': _code(parsed.get('errorCode') or 'BUILD_ERROR')}
     route = parsed.get('routePlan')
     labels = [str((step.get('swapInfo') or {}).get('label'))[:32] for step in route if isinstance(step, dict)][:MAX_LABELS] if isinstance(route, list) else []
     swap = parsed.get('swapInstruction')
@@ -71,35 +83,49 @@ def analyze(raw):
     return facts
 
 
+def _code(value):
+    return str(value)[:64]
+
+
 def analyze_error(error):
-    """Facts about a failed quote call (a ProviderError): its code, and the provider's own errorCode when it sent one."""
-    code = str(getattr(error, 'code', 'ERROR'))[:64]
+    """Facts about a failed quote call (a ProviderError): its code (the provider's own ``errorCode`` when it sent one) and
+    ``conclusive``: True only when the failure is evidence about the ROUTE (the provider answered a 4xx, or named its own
+    error code), False for anything transient or about our call / the transport."""
+    code = _code(getattr(error, 'code', 'ERROR'))
+    transient = bool(getattr(error, 'transient', False))
+    own_code = None
     body = getattr(error, 'raw', None)
-    text = code.upper()
     if isinstance(body, (bytes, bytearray)):
         try:
             parsed = json.loads(bytes(body))
-            if isinstance(parsed, dict):
-                code = str(parsed.get('errorCode') or code)[:64]
-                text += ' ' + json.dumps(parsed).upper()[:600]
+            if isinstance(parsed, dict) and isinstance(parsed.get('errorCode'), str) and parsed['errorCode']:
+                own_code = _code(parsed['errorCode'])
         except (ValueError, UnicodeError, RecursionError):
             pass
-    return {'buildable': False, 'error_code': code, 'transient': bool(getattr(error, 'transient', False))}, text
+    client_error = code.startswith('HTTP_4') and code not in ('HTTP_408', 'HTTP_429')
+    conclusive = not transient and code not in INCONCLUSIVE_CODES and (own_code is not None or client_error)
+    return {'buildable': False, 'error_code': own_code or code, 'transient': transient, 'conclusive': conclusive}
 
 
 class RouteChecker:
     def __init__(self, store, config=None, *, clock=None):
-        config = config or {}
+        if config is None:
+            config = {}
+        if not isinstance(config, dict):
+            raise ValueError('route_check must be an object')
         unknown = set(config) - {'enabled'}
         if unknown:
             raise ValueError('unknown route_check keys: %s' % sorted(unknown))
+        if not isinstance(config.get('enabled', False), bool):
+            raise ValueError('route_check.enabled must be true or false')
         self.store, self.clock = store, clock
-        self.enabled = bool(config.get('enabled', False))
+        self.enabled = config.get('enabled', False)
         if self.enabled and store.latest_event(DISABLED_EVENT) is not None:
             self.enabled = False                                  # an earlier run found the endpoint unsupported
 
     # -- hooks (called by the runner; they never raise except for a store failure) ------------------------------
-    def on_fill(self, side, mint, observation_ref, *, candidate_id=None):
+    # ``trade`` identifies the trade a check belongs to: the candidate id for an entry, the opening fill id for an exit.
+    def on_fill(self, side, mint, observation_ref, *, candidate_id=None, trade=None):
         if not self.enabled:
             return None
         try:
@@ -110,45 +136,66 @@ class RouteChecker:
         except Exception:
             facts = {'buildable': False, 'error_code': 'CHECK_FAILED'}
         facts['quote_ref'] = observation_ref
-        return self._record(side, mint, facts, candidate_id)
+        if not facts['buildable']:
+            facts['conclusive'] = facts.get('error_code') not in INCONCLUSIVE_CODES
+        return self._record(side, mint, facts, candidate_id, trade)
 
-    def on_quote_error(self, side, mint, error, *, candidate_id=None):
+    def on_quote_error(self, side, mint, error, *, candidate_id=None, trade=None):
         if not self.enabled:
             return None
         try:
-            facts, text = analyze_error(error)
+            facts = analyze_error(error)
         except Exception:
-            facts, text = {'buildable': False, 'error_code': 'CHECK_FAILED'}, ''
-        if any(marker in text for marker in UNSUPPORTED_MARKERS):
-            return self._unsupported(side, mint, facts, candidate_id)
-        return self._record(side, mint, facts, candidate_id)
+            facts = {'buildable': False, 'error_code': 'CHECK_FAILED', 'conclusive': False}
+        if facts['error_code'] in UNSUPPORTED_ERROR_CODES:
+            return self._unsupported(side, mint, facts, candidate_id, trade)
+        return self._record(side, mint, facts, candidate_id, trade)
 
     # -- recording ---------------------------------------------------------------------------------------------
-    def _record(self, side, mint, facts, candidate_id):
-        action = 'ROUTABLE' if facts.get('buildable') else 'NOT_ROUTABLE'
-        reasons = [] if facts.get('buildable') else [facts.get('error_code', 'UNKNOWN')]
-        return self.store.add_decision(KIND, action, mint=mint, candidate_id=candidate_id, reasons=reasons,
-                                       features={'side': side, **facts, 'signed': False, 'sent': False})
+    def _already(self, side, mint, trade, actions):
+        """True when this trade already has a row of one of ``actions`` for ``side`` (durable: it reads the store)."""
+        for row in self.store.rows('decisions', mint=mint, kind=KIND, limit=10000):
+            features = json.loads(row['features'])
+            if features.get('side') == side and features.get('trade') == trade and row['action'] in actions:
+                return True
+        return False
 
-    def _unsupported(self, side, mint, facts, candidate_id):
+    def _record(self, side, mint, facts, candidate_id, trade):
+        if facts.get('buildable'):
+            action = 'ROUTABLE'
+        elif facts.get('conclusive', True):
+            action = 'NOT_ROUTABLE'
+        else:
+            action = 'INCONCLUSIVE'                                # transient / about our call: says nothing about the route
+        if trade is not None:
+            seen = ('ROUTABLE', 'NOT_ROUTABLE') if action != 'INCONCLUSIVE' else ('ROUTABLE', 'NOT_ROUTABLE', 'INCONCLUSIVE')
+            if self._already(side, mint, trade, seen):
+                return None                                        # once per trade: later attempts add nothing
+        reasons = [] if facts.get('buildable') else [facts.get('error_code', 'UNKNOWN')]
+        features = {'side': side, 'trade': trade, **{k: v for k, v in facts.items() if k != 'conclusive'}, 'signed': False, 'sent': False}
+        return self.store.add_decision(KIND, action, mint=mint, candidate_id=candidate_id, reasons=reasons, features=features)
+
+    def _unsupported(self, side, mint, facts, candidate_id, trade):
         self.enabled = False
-        self.store.add_decision(KIND, 'UNSUPPORTED', mint=mint, candidate_id=candidate_id, reasons=['ROUTE_CHECK_UNSUPPORTED'],
-                                features={'side': side, **facts, 'signed': False, 'sent': False})
-        code_version, strategy_version = self.store._versions(None, None)
+        features = {'side': side, 'trade': trade, **{k: v for k, v in facts.items() if k != 'conclusive'}, 'signed': False, 'sent': False}
+        self.store.add_decision(KIND, 'UNSUPPORTED', mint=mint, candidate_id=candidate_id, reasons=['ROUTE_CHECK_UNSUPPORTED'], features=features)
         self.store.record(DISABLED_EVENT, {'reason': 'ROUTE_CHECK_UNSUPPORTED', 'error_code': facts.get('error_code')},
-                          code_version=code_version, strategy_version=strategy_version)
+                          code_version=self.store.code_version, strategy_version=self.store.strategy_version)
         return None
 
 
 def summary(rows):
     """Routable share at entry and at exit from ``decisions`` rows of kind route_check (dicts with action/features)."""
     result = {'entry': {'checked': 0, 'routable': 0, 'pct': None}, 'exit': {'checked': 0, 'routable': 0, 'pct': None},
-              'unsupported': False, 'not_routable_reasons': {}}
+              'unsupported': False, 'inconclusive': 0, 'not_routable_reasons': {}}
     for row in rows:
         action = row['action']
         features = json.loads(row['features']) if isinstance(row['features'], str) else (row['features'] or {})
         if action == 'UNSUPPORTED':
             result['unsupported'] = True
+            continue
+        if action == 'INCONCLUSIVE':
+            result['inconclusive'] += 1                    # a provider/transport problem: not part of the routable percentage
             continue
         side = features.get('side')
         if side not in ('entry', 'exit'):

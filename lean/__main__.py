@@ -44,6 +44,10 @@ def load_config(path):
     cfg['strategy_config'] = str(strategy_path if strategy_path.is_absolute() else path.parent / strategy_path)
     if not isinstance(cfg['screen'], dict):
         raise ConfigError('screen must be an object')
+    rc = cfg['route_check']                                                 # --- L16 hook ---
+    if not isinstance(rc, dict) or set(rc) - {'enabled'} or not isinstance(rc.get('enabled', False), bool):
+        raise ConfigError('route_check must be an object like {"enabled": true}')
+    # --- end L16 ---
     return cfg
 
 

@@ -274,7 +274,7 @@ class Runner:
         try:
             buy_q, buy_ref, buy_at = self._quote(self.providers, SOL_MINT, mint, size_lamports, 'quote:buy', mint, cid)
         except ProviderError as error:
-            self.route_check.on_quote_error('entry', mint, error, candidate_id=cid)
+            self.route_check.on_quote_error('entry', mint, error, candidate_id=cid, trade=cid)
             raise
         # --- end L16 ---
         sell_q, _, sell_at = self._quote(self.providers, mint, SOL_MINT, A.sell_leg_qty(buy_q.out_amount, self.pcfg),
@@ -289,7 +289,7 @@ class Runner:
             fill = paper.buy(A.paper_quote(buy_q, mint=mint, side='buy', decimals=features['decimals'], ts=self.clock(),
                                            ref=buy_ref), decision.size_sol, self.pcfg)
             self.store.add_fill(fill, candidate_id=cid, state={'event': 'open', 'state': A.open_state(features, fill, self.cfg)})
-            self.route_check.on_fill('entry', mint, buy_ref, candidate_id=cid)      # --- L16 hook ---
+            self.route_check.on_fill('entry', mint, buy_ref, candidate_id=cid, trade=cid)      # --- L16 hook ---
             self._count('entered')
             self._check()
 
@@ -378,7 +378,7 @@ class Runner:
             quote, ref, quote_at = self._quote(self.exit_providers, mint, SOL_MINT, qty, 'quote:exit', mint)
         except ProviderError as error:
             if qty == position.qty_raw:                                             # full exits only
-                self.route_check.on_quote_error('exit', mint, error)
+                self.route_check.on_quote_error('exit', mint, error, trade=open_id)
             raise
         # --- end L16 ---
         with self._trade_lock:
@@ -398,7 +398,7 @@ class Runner:
                 closed = dict(state, reason=final.reason, trade_pnl_lamports=position.realized_lamports + fill.realized_lamports,
                               cooldown_until=S.cooldown_until(final.reason, now, self.cfg))
                 self.store.add_fill(fill, state={'event': 'closed', 'open_fill_id': open_id, 'state': closed})
-                self.route_check.on_fill('exit', mint, ref)                          # --- L16 hook ---
+                self.route_check.on_fill('exit', mint, ref, trade=open_id)                          # --- L16 hook ---
                 self.marks.pop(mint, None)
                 self._count('closed')
             else:

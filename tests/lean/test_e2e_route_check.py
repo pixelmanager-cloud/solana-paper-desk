@@ -1,8 +1,9 @@
 """SYNTHETIC_TEST_ONLY: L16 end to end with the REAL lean modules; only HTTP is faked (tests/lean/fakeworld.py).
 
 Scenario A  a routable token is bought and stopped out: entry and exit both recorded ROUTABLE with the route.
-Scenario B  an exit whose route disappears (a rug): each failed FULL-exit quote is a NOT_ROUTABLE exit with the provider's
-            own error code and the position stays open; when the route returns the exit is ROUTABLE; the report shows %.
+Scenario B  an exit whose route disappears (a rug): the trade's exit check is ONE NOT_ROUTABLE row with the provider's own
+            error code (the first attempt), however many passes retry it; the position stays open; the later successful sell
+            adds nothing; the report shows 0 % for that one exit.
 Scenario C  the build endpoint demands a funded taker: ROUTE_CHECK_UNSUPPORTED is recorded exactly once, the check disables
             itself, a restart does not re-probe, and normal screening still works.
 Nothing is signed or sent in any scenario (every row says so and lean/ has no such primitive: test_route_check).
@@ -48,8 +49,9 @@ class RouteCheckEndToEnd(unittest.TestCase):
         tmp = tempfile.TemporaryDirectory(); self.addCleanup(tmp.cleanup)
         self.root = Path(os.path.realpath(tmp.name)); self.state = self.root / 'state'
         self.clock = FakeTime(T0)
-        self.cfg = load_config(ROOT / 'config' / 'lean' / 'lean.example.json')
-        self.assertTrue(self.cfg['route_check']['enabled'])
+        example = load_config(ROOT / 'config' / 'lean' / 'lean.example.json')
+        self.assertEqual(example['route_check'], {'enabled': False})              # the shipped example is off
+        self.cfg = {**example, 'route_check': {'enabled': True}}
 
     def make(self, tokens, frames):
         self.tokens = tokens
@@ -87,24 +89,41 @@ class RouteCheckEndToEnd(unittest.TestCase):
         html = report.render_html(report.build(self.state / 'lean.sqlite', now=self.clock.time()))
         self.assertIn('Live-route check', html)
 
-    def test_b_a_vanished_exit_route_is_a_not_routable_exit_then_routable_when_it_returns(self):
+    def test_b_a_vanished_exit_route_is_one_not_routable_exit_however_often_it_is_retried(self):
         token = Token(21, path=STOP)
         self.make([token], [0])
         gone = (T0 + 500, T0 + 1500)      # entry at ~T0, the STOP triggers at ~T0+600
         self.world.hook = lambda i, o, t: Resp(NO_ROUTE_BODY, 400) if i == token.mint and gone[0] <= t < gone[1] else None
         r = self.runner(); self.drive(r, 3000)
+        failed_quotes = [e for e in r.store.rows('errors', limit=1000) if e['scope'] == 'quote:exit']
+        self.assertGreaterEqual(len(failed_quotes), 2)                          # retried every pass while the route was gone (in `errors`)
         checks = self.checks(r)
-        sides = [(a, f['side']) for a, f, _ in checks]
-        self.assertEqual(sides[0], ('ROUTABLE', 'entry'))
-        bad = [c for c in checks if c[0] == 'NOT_ROUTABLE']
-        self.assertGreaterEqual(len(bad), 2)                                   # retried every pass while the route was gone
-        self.assertTrue(all(f['side'] == 'exit' and reasons == ['COULD_NOT_FIND_ANY_ROUTE'] for _, f, reasons in bad))
-        self.assertEqual(sides[-1], ('ROUTABLE', 'exit'))                      # sold once the route came back
-        self.assertEqual(r.store.positions(), {})
+        self.assertEqual([(a, f['side']) for a, f, _ in checks], [('ROUTABLE', 'entry'), ('NOT_ROUTABLE', 'exit')])
+        self.assertEqual(checks[1][2], ['COULD_NOT_FIND_ANY_ROUTE'])
+        self.assertEqual(checks[1][1]['trade'], r.store.closed_positions()[0]['open_fill_id'])
+        self.assertEqual(r.store.positions(), {})                               # it did sell once the route came back
         data = report.build(self.state / 'lean.sqlite', now=self.clock.time())['route_check']['data']
-        self.assertEqual(data['entry']['pct'], 100.0)
-        self.assertEqual(data['exit']['checked'], len(bad) + 1)
-        self.assertEqual(data['not_routable_reasons'], {'COULD_NOT_FIND_ANY_ROUTE': len(bad)})
+        self.assertEqual((data['entry']['pct'], data['exit']['checked'], data['exit']['pct']), (100.0, 1, 0.0))
+        self.assertEqual(data['not_routable_reasons'], {'COULD_NOT_FIND_ANY_ROUTE': 1})
+
+    def test_f_a_provider_outage_is_inconclusive_not_a_missing_route(self):
+        token = Token(21, path=STOP)
+        self.make([token], [0])
+        down = (T0 + 500, T0 + 900)
+        self.world.hook = lambda i, o, t: Resp(b'{"error":"overloaded"}', 503) if i == token.mint and down[0] <= t < down[1] else None
+        r = self.runner(); self.drive(r, 3000)
+        checks = self.checks(r)
+        self.assertEqual([(a, f['side']) for a, f, _ in checks], [('ROUTABLE', 'entry'), ('INCONCLUSIVE', 'exit'), ('ROUTABLE', 'exit')])
+        data = report.build(self.state / 'lean.sqlite', now=self.clock.time())['route_check']['data']
+        self.assertEqual((data['exit']['checked'], data['exit']['pct'], data['inconclusive'], data['not_routable_reasons']), (1, 100.0, 1, {}))
+
+    def test_g_a_buy_quote_without_a_route_is_one_entry_check_per_candidate(self):
+        token = Token(21)
+        self.make([token], [0])
+        self.world.hook = lambda i, o, t: Resp(NO_ROUTE_BODY, 400) if o == token.mint else None
+        r = self.runner(); self.drive(r, 900)
+        self.assertEqual([(a, f['side']) for a, f, _ in self.checks(r)], [('NOT_ROUTABLE', 'entry')])
+        self.assertEqual(r.store.positions(), {})
 
     def test_c_funded_taker_requirement_disables_the_check_once_and_survives_restart(self):
         self.make([Token(21), Token(23)], [0, 300])
