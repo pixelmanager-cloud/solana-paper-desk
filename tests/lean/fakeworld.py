@@ -150,6 +150,7 @@ class World:
         self.root, self.tokens, self.clock = root, {t.mint: t for t in tokens}, clock
         self.order = list(tokens)
         self.outages = {}
+        self.extra_rpc = {}                                  # L13: {method: fn(params, t) -> result} for methods the base world lacks
         self.calls = []                                      # (provider, method, t)
         self.slot = 300_000_000
         self.discovery_db = root / 'continuous.sqlite'
@@ -214,6 +215,8 @@ class World:
             result = {'context': {'apiVersion': '2.2.7', 'slot': self.slot}, 'value': [copy.deepcopy(known.get(k)) for k in params[0]]}
         elif method == 'getTokenLargestAccounts':
             result = {'context': {'apiVersion': '2.2.7', 'slot': self.slot}, 'value': self.tokens[params[0]].holders()}
+        elif method in self.extra_rpc:
+            result = self.extra_rpc[method](params, t)
         else:
             raise AssertionError('unexpected RPC ' + method)
         return Resp({'jsonrpc': '2.0', 'id': body['id'], 'result': result})

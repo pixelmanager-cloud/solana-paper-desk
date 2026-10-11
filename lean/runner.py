@@ -43,8 +43,9 @@ class _Halt(Exception):
 class Runner:
     def __init__(self, *, store, providers, exit_providers, strategy_cfg, discovery_db, state_dir, code_version,
                  screen_overrides=None, pool_fee_bps=25, taker=PAPER_TAKER, kill_switch=None, clock=time.time,
-                 scan_limit=500, max_retries=3, sol_usd_ttl_s=30):
+                 scan_limit=500, max_retries=3, sol_usd_ttl_s=30, wallet_signals=None):
         self.store, self.providers, self.exit_providers = store, providers, exit_providers
+        self.wallet_signals = wallet_signals       # L13: optional low-priority collector (None = today's behaviour)
         self.cfg = strategy_cfg
         self.pcfg = A.paper_config(strategy_cfg)
         self.screen_cfg = A.screen_config(strategy_cfg, screen_overrides)
@@ -401,7 +402,8 @@ class Runner:
                 'strategy_version': self.strategy_version, 'halted': self.halted,
                 'kill_switch': os.path.exists(self.kill_switch), 'last_loop': dict(self.last), 'counts': counts,
                 'errors_by_code': errors, 'open_positions': sorted(positions), 'cash_lamports': cash, 'cursor': self.cursor,
-                'retry_queue': len(self.retry), 'execution_status': 'EXECUTION_UNVERIFIED', 'live_readiness': False}
+                'retry_queue': len(self.retry), 'execution_status': 'EXECUTION_UNVERIFIED', 'live_readiness': False,
+                **({} if self.wallet_signals is None else {'wallet_signals': dict(self.wallet_signals.counts)})}  # L13
 
     def write_health(self):
         """Atomic: a unique temp file in the state dir, fsync, rename; one writer at a time."""
@@ -441,6 +443,11 @@ class Runner:
                 self.stop.wait(interval)
         threads = [threading.Thread(target=loop, args=(self.candidate_pass, candidate_interval), name='candidates'),
                    threading.Thread(target=loop, args=(self.position_pass, min(10.0, position_interval)), name='positions')]
+        # --- L13 hook --- (data collection on its own thread and its own low-priority budget; never blocks entries or exits)
+        if self.wallet_signals is not None:
+            self.wallet_signals.stop = self.stop
+            threads.append(threading.Thread(target=self.wallet_signals.run_loop, name='wallet_signals'))
+        # --- end L13 ---
         for t in threads:
             t.start()
         for t in threads:
