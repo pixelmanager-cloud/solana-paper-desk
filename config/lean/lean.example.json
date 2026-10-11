@@ -16,5 +16,6 @@
     "token_profile_version": 2,
     "holder_check": true,
     "max_top10_pct": 60
-  }
+  },
+  "execution": null
 }

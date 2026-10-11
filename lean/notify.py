@@ -1196,3 +1196,31 @@ def main(argv=None, *, opener=None):
 if __name__ == '__main__':
     logging.basicConfig(level=logging.INFO, format='%(levelname)s %(name)s %(message)s')
     sys.exit(main())
+
+
+# --- L10 hook (additive): fills shown to people carry no refundable ATA rent (price, fee, realized, cost), see lean.execution.economic.
+# The accounting replay (``StoreView.replay``) keeps reading the raw ``_fills`` rows, so cash and PnL checks are unchanged. ---
+def _install_economic_fills():
+    from lean import execution
+    plain = {name: getattr(StoreView, name) for name in ('fills_after', 'fills_between', 'fill', 'mint_fills')}
+
+    def economic_row(view, row):
+        state = view.state_for_fill(row['id']) or {}
+        return execution.economic(row, (state.get('state') or {}).get('execution'))
+
+    def wrap(name):
+        function = plain[name]
+
+        def method(self, *args, **kwargs):
+            result = function(self, *args, **kwargs)
+            if isinstance(result, list):
+                return [economic_row(self, r) for r in result]
+            return None if result is None else economic_row(self, result)
+        method.__name__ = name
+        return method
+    for name in plain:
+        setattr(StoreView, name, wrap(name))
+
+
+_install_economic_fills()
+# --- end L10 ---

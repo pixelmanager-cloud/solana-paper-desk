@@ -23,6 +23,7 @@ CONFIG_KEYS = {
     'stale_mark_s': 30,                # a mark older than this is not used; the position is quote-marked instead (3x interval)
     'unexitable_after_s': 7200,        # a wanted exit failing (no route / 4xx) this long is written off at zero proceeds
     'screen': {},                      # lean.candidates settings other than the strategy-owned bands
+    'execution': None,                 # L10: null = instant fills (today); an object turns on latency-aware fills + the cost model
 }
 REQUIRED = ('strategy_config', 'initial_cash_sol')
 
@@ -46,6 +47,10 @@ def load_config(path):
     cfg['strategy_config'] = str(strategy_path if strategy_path.is_absolute() else path.parent / strategy_path)
     if not isinstance(cfg['screen'], dict):
         raise ConfigError('screen must be an object')
+    # --- L10 hook ---
+    if cfg['execution'] is not None and not isinstance(cfg['execution'], dict):
+        raise ConfigError('execution must be an object or null')
+    # --- end L10 ---
     return cfg
 
 
@@ -72,13 +77,19 @@ def build_runner(cfg, *, state_dir, discovery_db, keys, code_version, clock=None
     the_store = store.Store(os.path.join(state, 'lean.sqlite'), initial_cash_sol=str(cfg['initial_cash_sol']),
                             code_version=code_version, strategy_version=strategy_cfg.strategy_version, clock=clock)
     transport_kwargs = transport_kwargs or {}
+    # --- L10 hook: the optional execution model (latency-aware fills + cost model) ---
+    exec_model = None
+    if cfg.get('execution') is not None:
+        from lean import execution
+        exec_model = execution.Execution(execution.ExecConfig.from_dict(cfg['execution']), sleep=transport_kwargs.get('sleep', time.sleep))
+    # --- end L10 ---
     return runner.Runner(
         store=the_store, providers=providers.build_providers(keys, lane='main', **transport_kwargs),
         exit_providers=providers.build_providers(keys, lane='exit', **transport_kwargs), strategy_cfg=strategy_cfg,
         discovery_db=discovery_db, state_dir=state, code_version=code_version, screen_overrides=cfg['screen'],
         pool_fee_bps=cfg['pool_fee_bps'], clock=clock, scan_limit=cfg['scan_limit'],
         max_retries=cfg['max_candidate_retries'], sol_usd_ttl_s=cfg['sol_usd_ttl_s'], stale_mark_s=cfg['stale_mark_s'],
-        unexitable_after_s=cfg['unexitable_after_s'])
+        unexitable_after_s=cfg['unexitable_after_s'], execution=exec_model)
 
 
 def main(argv=None):
