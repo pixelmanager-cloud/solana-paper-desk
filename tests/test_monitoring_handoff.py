@@ -25,7 +25,7 @@ ARCHIVE=Path(__file__).resolve().parents[1]/'fixtures/monitoring-handoff-predece
 
 class MonitoringHandoffTests(unittest.TestCase):
     def setUp(self):
-        self.f=runtime_fixtures.RuntimeCompatibilityTests();self.f.setUp();self.addCleanup(self.f.doCleanups)
+        self.f=runtime_fixtures.RuntimeCompatibilityTests();self.addCleanup(self.f.doCleanups);self.f.setUp()
         self.root=self.f.root;self.research=self.f.research;self.evidence=self.f.evidence;self.old=self.f.ledger
         from desk.paper_observation_collector import ObservationTarget
         self.target=ObservationTarget(next(iter(self.f.context.sources)),str(self.f.context.protocol.mint),
@@ -108,7 +108,7 @@ with store.connect() as c:
 
     def buy_new(self):
         from tests.test_quote_execution_v3_seam import QuoteV3SeamTests
-        fixture=QuoteV3SeamTests();fixture.setUp();self.addCleanup(fixture.doCleanups)
+        fixture=QuoteV3SeamTests();self.addCleanup(fixture.doCleanups);fixture.setUp()
         target=self.target
         fixture.fixture.mint=target.mint;fixture.fixture.pool=target.pool;fixture.fixture.wallet=target.taker
         buy=fixture.fixture.quote('buy',10_000_000,1_000_000,at=T+1)

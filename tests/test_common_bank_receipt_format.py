@@ -229,7 +229,7 @@ class ReceiptFormatTests(unittest.TestCase):
 
     @unittest.skipUnless(Path('/proc/self/mountinfo').is_file(),'Protected v1 ledger requires Linux')
     def test_actual_v1_read_and_write_refuse_required_fence_without_row_rewrite(self):
-        f=legacy_fixture.PoolReceiptLedgerTests();f.setUp();self.addCleanup(f.doCleanups)
+        f=legacy_fixture.PoolReceiptLedgerTests();self.addCleanup(f.doCleanups);f.setUp()
         f.writer.publish('legacy-original',f.receipt)
         with sqlite3.connect(f.writer.path) as c:
             before=tuple(c.execute('SELECT * FROM coordinator_receipts ORDER BY seq'))

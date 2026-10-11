@@ -88,6 +88,8 @@ original records stay original. When the ledger is flat the sanctioned recovery 
 | `monitoring_latch` | CRITICAL | monitoring `blocked` is set (`SOURCE_FAILURE`, clock rollback) and held monitoring stops | coordinator action (reviewed handoff); do not clear by hand |
 | `monitoring_pending` | WARN | reservations without an outcome (killed mid-read) | if it persists after a pass, escalate to the coordinator |
 | `pacing:<provider>` | CRITICAL | provider blocked for N s, or a slot has been pending >5 min (orphaned by a kill, T09 F6) | blocked: wait it out, never reset the shared pacing store. Orphaned: coordinator only |
+| `research_cpu:<unit>` | WARN | a research unit (`desk-counterfactual`, `desk-fill-realism-worker` if installed) used at least 90 % of its `CPUQuota` for 3 consecutive health checks, or has no `CPUQuota` at all. Research is throttled so it can never slow trading; this tells you it is being throttled all the time | `systemd-cgtop`, see "Reading per-unit CPU and memory"; lower the sampler's allowance or move it off this host. Never raise the quota above one core or throttle a trading unit |
+| `research_cpu_state` | WARN | `--cpu-state` is a symlink, unreadable or not writable; the streak cannot be tracked | fix the file in `<STATE_DIR>`; it is private data of the healthcheck only |
 | `disk` | WARN <20 %, CRITICAL <10 % or <1 GiB | filesystem under `<FRESH_ROOT>` | free space outside the stores (old backups, logs); never delete store files |
 | `backup` | WARN >30 h, CRITICAL >54 h or none | newest snapshot age | `journalctl -u desk-backup`; run `tools.ops.verify_backup` on the latest snapshot |
 | `healthcheck` / `notify_input` | CRITICAL | the check itself could not run, its report was unreadable, a database probe raised `sqlite3.Error`, or `notify` found the report older than 2x the interval (`healthcheck not running`) | fix the path/permission named in the detail; if the report is stale, `systemctl status desk-healthcheck.timer`. `notify alert|daily --interval N` must match the timer period (default 300 s) |
@@ -108,6 +110,25 @@ Every scheduler unit sets `DESK_PAPER_SCHEDULER_IDENTITY` and has `ConditionPath
 (created once by `fresh_start apply`; do not recreate it, the inode is pinned). Entry and held set `DESK_PROVIDER_PACING_DB` to the
 shared pacing store. Entry runs `--execute --systemd-credentials`; held, entry and monitor use the same `<CONFIG>` and ledger; no
 `--dependency-blocker`. `tests/test_ops_healthcheck.py::UnitTemplateTests` renders every template and checks these.
+
+## Resource isolation and reading per-unit usage (T39)
+
+Research and optional units must never degrade trading. `desk-counterfactual.service` (and `desk-fill-realism-worker.service`
+if you install one) carry `CPUQuota=100%` (one core), `CPUWeight=20`, `IOWeight=20`, `Nice=10`, `IOSchedulingClass=idle`,
+`MemoryMax` and `TasksMax`. Trading units (entry, held, monitor, decisions, dashboard, discovery) set none of the CPU/IO
+throttles. The held watcher triggers fast exits, so it runs at normal priority with only `MemoryMax=128M` and `TasksMax=32`.
+`tests/test_ops_healthcheck.py::UnitTemplateTests` fails if a research unit loses a limit or a trading unit gains one.
+
+```
+systemd-cgtop -n 1 -m -c                       # live CPU % and memory per cgroup, desk-* units included
+systemctl show -p CPUUsageNSec,MemoryCurrent,MemoryMax,CPUQuotaPerSecUSec,TasksCurrent desk-counterfactual.service
+```
+
+`CPUUsageNSec` is cumulative for the current run of a oneshot (it restarts with each start). Memory and CPU accounting must be on
+for the units (systemd enables it for any unit with `MemoryMax=`/`CPUQuota=`). The healthcheck keeps its previous CPU sample in
+`<STATE_DIR>/cpu-state.json` (`--cpu-state`, 0600, the only file it writes besides `--out`; tune with
+`--threshold research_cpu_fraction=0.9 --threshold research_cpu_consecutive=3`). An idle unit gives no sample: the streak is
+neither advanced nor reset.
 
 ## Known limitations
 

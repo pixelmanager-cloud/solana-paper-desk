@@ -455,16 +455,32 @@ def _external_sidecars(paths):
     return found
 
 
+def _sealed_dir(info, group):
+    """The shape `cutover seal-archive` gives the two shared directories of an archived root ($OLD, $OLD/discovery): root-owned,
+    group = the service group, sticky bit, nothing for others (1770). The group write bit lets the service create its journal and
+    lock files; the sticky bit keeps it from deleting or renaming the root-owned archive. Any other shape stays a finding."""
+    mode = stat.S_IMODE(info.st_mode)
+    return (stat.S_ISDIR(info.st_mode) and info.st_uid == 0 and group is not None and info.st_gid == group
+            and bool(mode & stat.S_ISVTX) and not mode & 0o007)
+
+
 def _live_findings(data, names, uid, locations, external):
     """Modes/links the copy would mask (copies are forced to 0600/0700)."""
     found = []
-    def bad(label, path, forbidden, exact=None):
+    try:
+        group = _stat(data).st_gid          # the service group: --data is created for the service user and its group
+    except OSError:
+        group = None
+
+    def bad(label, path, forbidden, exact=None, sealed_ok=False):
         try:
             info = _stat(path)
         except OSError:
             found.append(f'{label}:MISSING')
             return
         mode = stat.S_IMODE(info.st_mode)
+        if sealed_ok and _sealed_dir(info, group):
+            return
         if (exact is not None and mode != exact) or mode & forbidden or info.st_nlink != 1 and path.is_file():
             found.append(f'{label}:MODE_{mode:o}_LINKS_{info.st_nlink}')
         if path.is_file() and info.st_uid != uid:
@@ -478,7 +494,7 @@ def _live_findings(data, names, uid, locations, external):
         if key in external:                      # same owner rule as for stores inside --data
             bad('external_' + key, external[key], 0)
     for key, path in external.items():
-        bad('external_%s_dir' % key, path.parent, 0o022)
+        bad('external_%s_dir' % key, path.parent, 0o022, sealed_ok=True)
     bad('research_dir', (data / names['research_db']).parent, 0o022)
     bad('scheduler_lock', (data / names['research_db']).parent / 'paper-scheduler.lock', 0o177)
     return found

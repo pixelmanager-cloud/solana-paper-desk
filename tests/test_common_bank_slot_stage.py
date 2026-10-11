@@ -49,7 +49,7 @@ def child(research,evidence,fence,mode,queue=None,go=None):
 @unittest.skipUnless(Path('/proc/self/mountinfo').is_file(),'Linux guarded source contract')
 class SlotStageTests(unittest.TestCase):
     def setUp(self):
-        self.f=fixtures.CommonBankJournalTests(); self.f.setUp(); self.addCleanup(self.f.doCleanups)
+        self.f=fixtures.CommonBankJournalTests(); self.addCleanup(self.f.doCleanups); self.f.setUp()
         self.f.freeze(); self.journal=self.f.journal
         with self.journal.locked() as session:
             session.install_genesis_attachments()

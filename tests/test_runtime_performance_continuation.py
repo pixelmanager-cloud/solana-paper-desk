@@ -12,7 +12,7 @@ from tests import test_runtime_extensions as fixtures
 
 class PerformanceContinuationTests(unittest.TestCase):
     def setUp(self):
-        self.h=fixtures.RuntimeExtensionTests();self.h.setUp();self.addCleanup(self.h.doCleanups)
+        self.h=fixtures.RuntimeExtensionTests();self.addCleanup(self.h.doCleanups);self.h.setUp()
         h=self.h;h.append()
         previous=h.pin['successor'];parent=None
         for seq,source in ((2,'a'*64),(3,'b'*64),(4,'c'*64)):

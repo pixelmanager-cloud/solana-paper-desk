@@ -34,7 +34,7 @@ def _compete(evidence,ledger,cfg,scan,connection):
 
 class MonitoringBudgetTests(unittest.TestCase):
     def setUp(self):
-        self.f=fixtures.QuoteExecutionTests();self.f.setUp();self.addCleanup(self.f.doCleanups)
+        self.f=fixtures.QuoteExecutionTests();self.addCleanup(self.f.doCleanups);self.f.setUp()
         self.root=Path(self.f.tmp.name)
         self.jobs=JobPersistence(self.root/'research.sqlite')
         self.store=EvidenceStore(self.root/'evidence.sqlite')
@@ -212,7 +212,7 @@ class MonitoringBudgetTests(unittest.TestCase):
 
     def reentered_v3(self):
         from tests.test_quote_execution_v3_seam import QuoteV3SeamTests
-        case=QuoteV3SeamTests();case.setUp();self.addCleanup(case.doCleanups)
+        case=QuoteV3SeamTests();self.addCleanup(case.doCleanups);case.setUp()
         f=case.fixture;f.cfg=case.cfg
         root=Path(f.tmp.name);jobs=JobPersistence(root/'research.sqlite')
         store=EvidenceStore(root/'evidence.sqlite');progress=HistoryProgress(store)

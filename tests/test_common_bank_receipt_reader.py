@@ -23,7 +23,7 @@ from tests import test_common_bank_receipt_chain as typed_fixture
 @unittest.skipUnless(read_platform_available(),'Linux LP64 protected reader contract')
 class ProtectedReceiptReaderTests(unittest.TestCase):
     def setUp(self):
-        self.old=legacy_fixture.PoolReceiptLedgerTests();self.old.setUp();self.addCleanup(self.old.doCleanups)
+        self.old=legacy_fixture.PoolReceiptLedgerTests();self.addCleanup(self.old.doCleanups);self.old.setUp()
         self.old.writer.publish('legacy-original',self.old.receipt)
         self.path=self.old.writer.path;self.root=self.old.root;self.boundary=self.old.boundary
         with sqlite3.connect(self.path) as c:

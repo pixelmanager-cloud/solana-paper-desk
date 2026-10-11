@@ -18,7 +18,7 @@ from tests.test_paper_read_sources import Response,KEY,MINT
 
 class PaperHistoryPageSizeTests(unittest.TestCase):
     def setUp(self):
-        self.f=fixtures.HistorySourceTests();self.f.setUp();self.addCleanup(self.f.doCleanups)
+        self.f=fixtures.HistorySourceTests();self.addCleanup(self.f.doCleanups);self.f.setUp()
         self.store,self.progress=self.f.store,self.f.progress
         self.key=self.progress.create('scan',MINT,700,1001,page_size=PAPER_HISTORY_PAGE_SIZE)
         source=json.loads((Path(__file__).resolve().parents[1]/'fixtures/mainnet-launch.json').read_text())['payload']['params']['result']

@@ -241,11 +241,14 @@ class PacingReclaimTests(unittest.TestCase):
         released = []
         real_flock = p.fcntl.flock
         calls = []
+        # T38: a same-process leftover entry is now displaced at once (it is stale by construction: acquire() only grants
+        # while `pending` is NULL), so the wait is exercised the way production meets it: the previous owner is ANOTHER
+        # process, i.e. an open descriptor this process's registry does not know about.
+        foreign_fd = p._HELD.pop(first._hold_key('helius'))[1]
         def flock(fd, op):
             calls.append(op)
-            if len(calls) == 3 and not released: first._release('helius', t1); released.append(True)
+            if len(calls) == 3 and not released: os.close(foreign_fd); released.append(True)
             return real_flock(fd, op)
-        first.finish('helius', t1) if False else None
         with sqlite3.connect(self.path) as c:                            # the owner committed its outcome, release is next
             c.execute('UPDATE state SET pending=NULL WHERE provider="helius"')
         self.clock.wall = T0 + 10
@@ -529,21 +532,127 @@ class ReclaimClockTests(PacingReclaimTests):
     def test_the_gate_refuses_on_the_pending_grant_not_on_the_clock(self):
         from desk import paper_terminal_reconciliation as terminal
         self.killed_orphan()
-        behind, real = Clock(T0 - 50), p.Pacer
-        with patch.object(terminal.provider_pacing, 'Pacer', lambda path: real(path, clock=behind.time)):
+        behind = Clock(T0 - 50)
+        with patch.object(terminal.provider_pacing, 'Pacer', lambda path, _real=p.Pacer: _real(path, clock=behind.time)):
             with self.assertRaisesRegex(ValueError, 'Provider outcome pending'):
                 terminal._pacing(self.path)                            # the pre-existing fail-closed refusal, not PacingError
 
     def test_the_gate_passes_a_clean_database_even_when_the_clock_disagrees(self):
         from desk import paper_terminal_reconciliation as terminal
-        real = p.Pacer
-        with patch.object(terminal.provider_pacing, 'Pacer', lambda path: real(path, clock=Clock(T0 - 50).time)):
+        with patch.object(terminal.provider_pacing, 'Pacer', lambda path, _real=p.Pacer: _real(path, clock=Clock(T0 - 50).time)):
             terminal._pacing(self.path)                                # nothing pending: acquire() will refuse the bad clock later
 
 
 for _name in dir(PacingReclaimTests):                      # reuse setUp/helpers only; do not re-run the parent's tests
     if _name.startswith('test_'):
         setattr(ReclaimClockTests, _name, None)
+
+
+class RegistryIsolationTests(unittest.TestCase):
+    """T38: the process-wide holder registry must never let one database (or a deleted one) affect another."""
+
+    def setUp(self):
+        self.tmp = tempfile.TemporaryDirectory(); self.addCleanup(self.tmp.cleanup)
+        self.dir = Path(self.tmp.name).resolve()
+        self.clock = Clock()
+
+    def new_db(self, name):
+        path = self.dir / name
+        p.initialize(path)
+        return path
+
+    def pacer(self, path):
+        return p.Pacer(path, clock=self.clock.time, monotonic=self.clock.time, sleep=self.clock.sleep)
+
+    def keys(self, path=None):
+        return [k for k in p._HELD if path is None or k[0] == str(path)]
+
+    def test_two_databases_in_one_process_never_share_ownership(self):
+        a, b = self.new_db('a.sqlite'), self.new_db('b.sqlite')
+        pacer_a = self.pacer(a)
+        ticket_a = pacer_a.acquire('helius', timeout_seconds=1)          # A: live grant, never finished yet
+        pacer_b = self.pacer(b)
+        self.assertEqual(pacer_b._held, {})
+        ticket_b = pacer_b.acquire('helius', timeout_seconds=1)          # B is unaffected by A's holder
+        self.assertEqual(set(pacer_a._held), {'helius'}); self.assertEqual(set(pacer_b._held), {'helius'})
+        pacer_b.finish('helius', ticket_b)
+        self.assertEqual(pacer_b._held, {})
+        self.assertEqual(pacer_a._held['helius'][0], ticket_a)           # finishing B released nothing of A's
+        self.clock.wall += 3600
+        with self.assertRaisesRegex(p.PacingError, 'OUTCOME_PENDING'):   # A's owner (this process) is alive
+            self.pacer(a).acquire('helius', timeout_seconds=1)
+        pacer_a.finish('helius', ticket_a)
+
+    def test_deleted_and_recreated_database_gets_no_phantom_owner(self):
+        path = self.new_db('x.sqlite')
+        first = self.pacer(path)
+        first.acquire('helius', timeout_seconds=1)                       # grant that is never finished
+        old_keys = self.keys(path)
+        self.assertEqual(len(old_keys), 1)
+        path.unlink()
+        for sidecar in self.dir.glob('x.sqlite.holder-*'): sidecar.unlink()
+        p.initialize(path)                                                # same path, new inode
+        fresh = self.pacer(path)
+        self.assertEqual(fresh._held, {})
+        self.assertNotIn(old_keys[0], p._HELD, 'the entry for the deleted file was purged and its descriptor closed')
+        ticket = fresh.acquire('helius', timeout_seconds=1)
+        self.assertEqual(len(self.keys(path)), 1)
+        self.assertEqual(self.keys(path)[0][1:3], tuple(fresh.identity))
+        fresh.finish('helius', ticket)
+
+    def test_reused_inode_does_not_resurrect_an_old_ticket(self):
+        """ext4 reuses inode numbers at once: same path, device AND inode, but the database no longer records the ticket."""
+        path = self.new_db('r.sqlite')
+        pacer = self.pacer(path)
+        ticket = pacer.acquire('helius', timeout_seconds=1)
+        key = next(iter(self.keys(path)))
+        with sqlite3.connect(path) as c:
+            c.execute("UPDATE state SET pending=NULL WHERE provider='helius'")       # as a recreated database would be
+        self.assertEqual(pacer._held, {})
+        self.assertNotIn(key, p._HELD)
+        # and a new grant is not blocked by the stale lock the old entry used to hold
+        self.clock.wall += 5                                              # past the cadence of the first grant
+        again = self.pacer(path).acquire('helius', timeout_seconds=1)
+        self.assertNotEqual(again, ticket)
+
+    def test_new_grant_displaces_a_leftover_entry_for_the_same_database_and_provider(self):
+        path = self.new_db('l.sqlite')
+        first = self.pacer(path)
+        stale = first.acquire('helius', timeout_seconds=1)
+        with sqlite3.connect(path) as c:
+            c.execute("UPDATE state SET pending=NULL,next_at=0 WHERE provider='helius'")     # database forgot the grant
+        ticket = self.pacer(path).acquire('helius', timeout_seconds=1)                       # must not hit PACING_HOLDER_LOCK_UNAVAILABLE
+        self.assertEqual(self.pacer(path)._held['helius'][0], ticket)
+        self.assertNotEqual(ticket, stale)
+
+    def test_entry_with_a_foreign_inode_or_pid_is_purged_not_trusted(self):
+        path = self.new_db('y.sqlite')
+        pacer = self.pacer(path)
+        fd = os.open(os.devnull, os.O_RDONLY)
+        p._HELD[(str(path), 1, 2, 'helius')] = ('t' * 32, fd, os.getpid(), True)          # right path, wrong inode
+        fd2 = os.open(os.devnull, os.O_RDONLY)
+        p._HELD[(str(path),) + tuple(pacer.identity) + ('jupiter',)] = ('u' * 32, fd2, os.getpid() + 1, True)  # inherited
+        self.assertEqual(pacer._held, {})
+        self.assertEqual(self.keys(path), [])
+        for descriptor in (fd, fd2):
+            with self.assertRaises(OSError): os.fstat(descriptor)                    # closed by the purge
+
+    def test_forked_child_does_not_inherit_ownership(self):
+        path = self.new_db('z.sqlite')
+        pacer = self.pacer(path)
+        ticket = pacer.acquire('helius', timeout_seconds=1)
+        read, write = os.pipe()
+        pid = os.fork()
+        if pid == 0:
+            try:
+                os.write(write, repr(p.Pacer(path)._held).encode())
+            finally:
+                os._exit(0)
+        os.waitpid(pid, 0)
+        self.assertEqual(os.read(read, 100), b'{}')
+        os.close(read); os.close(write)
+        self.assertEqual(pacer._held['helius'][0], ticket)
+        pacer.finish('helius', ticket)
 
 
 if __name__ == '__main__':

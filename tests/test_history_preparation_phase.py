@@ -21,7 +21,7 @@ from tests.test_paper_read_sources import Response
 
 class PreparationTests(unittest.TestCase):
     def setUp(self):
-        self.f=fixture.DispatcherTests();self.f.setUp();self.addCleanup(self.f.doCleanups)
+        self.f=fixture.DispatcherTests();self.addCleanup(self.f.doCleanups);self.f.setUp()
         self.store=self.f.f.progress.store;self.progress=self.f.f.progress
         self.target=self.f.f.target();self.as_of=int(time.time())
         self.item=cycle.CycleTarget(self.target,provenance='SYNTHETIC_TEST_ONLY',

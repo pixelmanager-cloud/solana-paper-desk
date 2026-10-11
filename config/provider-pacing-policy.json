@@ -1,0 +1,13 @@
+{
+  "version": 1,
+  "policies": [
+    {
+      "id": "2026-10-11.paid-developer-plans.1",
+      "reason": "Paid Helius Developer (documented RPC 50 req/s, DAS/Enhanced 10 req/s) and Jupiter Developer (documented 10 req/s over a 60 s window) plans; Helius 0.1 s = 10 req/s (20% of 50), Jupiter 0.25 s = 4 req/s (40% of 10), backoff unchanged at 30 s; Kraken untouched",
+      "providers": {
+        "helius": {"cadence": 0.1, "backoff": 30.0},
+        "jupiter": {"cadence": 0.25, "backoff": 30.0}
+      }
+    }
+  ]
+}

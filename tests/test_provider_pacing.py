@@ -214,7 +214,7 @@ class ConnectorTests(unittest.TestCase):
         self._collector_backoff_refusal(expire_before_pacer=True)
 
     def _collector_backoff_refusal(self, *, expire_before_pacer):
-        f=read_fixtures.PaperReadTests();f.setUp();self.addCleanup(f.doCleanups);self.priorities=[]
+        f=read_fixtures.PaperReadTests();self.addCleanup(f.doCleanups);f.setUp();self.priorities=[]
         headers=Message();headers['Retry-After']='4'
         error=HTTPError('https://SYNTHETIC_SECRET_INVALID',429,'SYNTHETIC_SECRET',headers,io.BytesIO(b'private'))
         with patch.object(p,'configured',side_effect=self.factory):
@@ -248,14 +248,14 @@ class ConnectorTests(unittest.TestCase):
                 self.assertEqual(c.execute('SELECT COUNT(*) FROM waiters').fetchone()[0],0)
         self.assertEqual(self.priorities,['investigation','investigation'])
     def test_actual_jupiter_quote_and_price_share_cadence(self):
-        f=read_fixtures.PaperReadTests();f.setUp();self.addCleanup(f.doCleanups);self.priorities=[]
+        f=read_fixtures.PaperReadTests();self.addCleanup(f.doCleanups);f.setUp();self.priorities=[]
         with patch.object(p,'configured',side_effect=self.factory):
             f.call(Response(reads.canonical(f.quote).encode()),kind='quote')
             first=self.state('jupiter')[0]
             f.call(Response(reads.canonical({providers.SOL:{'usdPrice':100,'blockId':1,'decimals':9}}).encode()),kind='price')
         self.assertGreaterEqual(self.clock.wall,first);self.assertEqual(f.progress.admission('scan')['requests_used'],2)
     def test_actual_monitoring_uses_held_priority_failures_charged_no_investigation_change(self):
-        f=monitor_fixtures.MonitoringBudgetTests();f.setUp();self.addCleanup(f.doCleanups);self.priorities=[]
+        f=monitor_fixtures.MonitoringBudgetTests();self.addCleanup(f.doCleanups);f.setUp();self.priorities=[]
         original=f.progress.admission(f.scan);ledger=list(f.f.ledger.db.iterdump())
         with patch.object(p,'configured',side_effect=self.factory):
             f.read()
@@ -271,7 +271,7 @@ class ConnectorTests(unittest.TestCase):
         from tests.test_paper_cycle import PaperCycleTests
         from desk.ownership_acquisition import acquire
         from desk.model import canonical
-        c=PaperCycleTests();c.setUp();self.addCleanup(c.doCleanups);self.priorities=[];opened=[]
+        c=PaperCycleTests();self.addCleanup(c.doCleanups);c.setUp();self.priorities=[];opened=[]
         class Body(io.BytesIO):
             status=200;headers=Message()
         class Opener:
@@ -299,7 +299,7 @@ class ConnectorTests(unittest.TestCase):
             self.assertEqual(self.state()[1],103)
     def test_returned_429_and503_retry_after_without_hidden_requests(self):
         for status in (429,503):
-            f=read_fixtures.PaperReadTests();f.setUp();self.addCleanup(f.doCleanups);self.priorities=[]
+            f=read_fixtures.PaperReadTests();self.addCleanup(f.doCleanups);f.setUp();self.priorities=[]
             response=Response(b'SYNTHETIC_IGNORED_ERROR_BODY',[('Retry-After','7')]);response.status=status
             with patch.object(p,'configured',side_effect=self.factory):
                 with self.assertRaises(reads.PaperReadError) as caught:f.call(response)
@@ -308,7 +308,7 @@ class ConnectorTests(unittest.TestCase):
             self.assertEqual(f.progress.admission('scan')['requests_used'],1)
             self.clock.wall+=8
     def test_received429_sqlite_contention_leaves_shared_guard_and_exact_charges(self):
-        f=read_fixtures.PaperReadTests();f.setUp();self.addCleanup(f.doCleanups);self.priorities=[]
+        f=read_fixtures.PaperReadTests();self.addCleanup(f.doCleanups);f.setUp();self.priorities=[]
         headers=Message();headers['Retry-After']='120'
         lock=sqlite3.connect(self.path);self.addCleanup(lock.close)
         class Opener:

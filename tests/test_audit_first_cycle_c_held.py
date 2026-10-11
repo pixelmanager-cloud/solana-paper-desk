@@ -123,7 +123,7 @@ class FreshStoreBootstrapTests(unittest.TestCase):
         from desk.monitoring_budget import upgrade_existing
         from desk.monitoring_budget import MonitoringBudget
         from tests.test_paper_cycle import PaperCycleTests
-        t = PaperCycleTests(); t.setUp(); self.addCleanup(t.doCleanups)
+        t = PaperCycleTests(); self.addCleanup(t.doCleanups); t.setUp()
         cfg = t.cfg | {'paper_usd_valuation_version': 1}
         research, evidence, ledger = (self.root / n for n in ('r.sqlite', 'e.sqlite', 'l.sqlite'))
         JobPersistence(research); HistoryProgress(EvidenceStore(evidence))

@@ -43,7 +43,7 @@ class FreshFixture(unittest.TestCase):
     append_distinct_migration = base.DispatcherTests.append_distinct_migration
 
     def setUp(self):
-        self.f = fixture.PaperObservationCollectorTests(); self.f.setUp(); self.addCleanup(self.f.doCleanups)
+        self.f = fixture.PaperObservationCollectorTests(); self.addCleanup(self.f.doCleanups); self.f.setUp()
         self.f.at = int(time.time()); self.root = Path(self.f.tmp.name).resolve()
         self.config = self.root / 'config.json'; shutil.copy(EXAMPLE, self.config)
         if self.drop_token_profile:

@@ -1,20 +1,21 @@
 [Unit]
 Description=Counterfactual candidate tracking: ingest, sample vault prices (research only, no fills)
-# INACTIVE TEMPLATE: no [Install]. The coordinator enables desk-counterfactual.timer on the fresh store set only.
-# Replace FRESH with the experiment root created by tools.ops.fresh_start and LEDGER with its ledger file name.
+# OPTIONAL research unit (T32G). Rendered into <units>/research/ by `fresh_start render-units`; NOT installed and NOT enabled
+# by the default flow. RUNBOOK step 11 installs it, initialises its store and enables desk-counterfactual.timer on the
+# fresh store set only. No [Install]: only the timer is ever enabled.
 After=network-online.target
 [Service]
 Type=oneshot
 User=solana-desk
 Group=solana-desk
-WorkingDirectory=/opt/solana-desk
+WorkingDirectory=<RELEASE_DIR>
 LoadCredential=provider-keys.json:/etc/solana-desk/provider-keys.json
 # Shared two-second provider pacing: the same database every other desk unit uses. Never reset it.
-Environment=DESK_PROVIDER_PACING_DB=/var/lib/solana-desk/provider-pacing.sqlite
-# The store lives in ITS OWN subdirectory so the unit can be given write access to nothing else of the experiment.
-# journal, ledger and decisions are opened read-only (mode=ro; immutable=1 only for a quiet WAL file).
-ExecStartPre=/opt/solana-desk/.venv/bin/python -m tools.research.counterfactual ingest --store /var/lib/solana-desk/exp-FRESH/counterfactual/counterfactual.sqlite --discovery-db /var/lib/solana-desk/discovery/continuous.sqlite --journal /var/lib/solana-desk/exp-FRESH/entry-dispatch/dispatch.sqlite --ledger /var/lib/solana-desk/exp-FRESH/LEDGER.sqlite --decisions-db /var/lib/solana-desk/exp-FRESH/paper-decisions.sqlite
-ExecStart=/opt/solana-desk/.venv/bin/python -m tools.research.counterfactual sample --store /var/lib/solana-desk/exp-FRESH/counterfactual/counterfactual.sqlite --systemd-credentials
+Environment=DESK_PROVIDER_PACING_DB=<PACING_DB>
+# The store lives in ITS OWN subdirectory of the experiment root so the unit can be given write access to nothing else of it.
+# journal, ledger, decisions and evidence are opened read-only (mode=ro; immutable=1 only for a quiet WAL file).
+ExecStartPre=/opt/solana-desk/.venv/bin/python -m tools.research.counterfactual ingest --store <FRESH_ROOT>/counterfactual/counterfactual.sqlite --discovery-db <DISCOVERY_DB> --journal <FRESH_ROOT>/entry-dispatch/dispatch.sqlite --ledger <FRESH_ROOT>/paper-ledger.sqlite --decisions-db <FRESH_ROOT>/paper-decisions.sqlite --evidence-db <FRESH_ROOT>/evidence.sqlite
+ExecStart=/opt/solana-desk/.venv/bin/python -m tools.research.counterfactual sample --store <FRESH_ROOT>/counterfactual/counterfactual.sqlite --systemd-credentials
 UMask=0077
 NoNewPrivileges=true
 PrivateTmp=true
@@ -22,19 +23,27 @@ ProtectSystem=strict
 ProtectHome=true
 # Write access: its own store directory and the shared pacing database. The pacing database is a rollback-journal
 # SQLite file (journal_mode=DELETE), so SQLite must create provider-pacing.sqlite-journal beside it: that needs the
-# DIRECTORY /var/lib/solana-desk writable, and a file-only entry is not enough. Mount-namespace rules make the deeper
+# DIRECTORY <PACING_DIR> writable, and a file-only entry is not enough. Mount-namespace rules make the deeper
 # path win, so the experiment root is made read-only again and only the counterfactual subdirectory is writable
-# inside it. (Not executable-verified without systemd; check with `systemd-run --property=...` on the VPS.)
-ReadWritePaths=/var/lib/solana-desk /var/lib/solana-desk/exp-FRESH/counterfactual
-ReadOnlyPaths=/var/lib/solana-desk/exp-FRESH /var/lib/solana-desk/discovery
+# inside it, and the shared discovery directory is read-only again inside the writable pacing directory.
+# (Not executable-verified without systemd; check with `systemd-run --property=...` on the VPS.)
+ReadWritePaths=<PACING_DIR> <FRESH_ROOT>/counterfactual
+ReadOnlyPaths=<FRESH_ROOT> <DISCOVERY_DIR>
 # Discovery is a rollback-journal database and opens read-only with no -shm. If it were ever a WAL file with a live
 # writer, its -shm must already exist (reader cannot create it under ReadOnlyPaths).
 RestrictAddressFamilies=AF_INET AF_INET6 AF_UNIX
 TimeoutStartSec=120
 MemoryMax=256M
 TasksMax=32
-# Initialise once, as the service user, in its own subdirectory:
-#   install -d -m 0700 /var/lib/solana-desk/exp-FRESH/counterfactual
-#   python -m tools.research.counterfactual init --store /var/lib/solana-desk/exp-FRESH/counterfactual/counterfactual.sqlite --allowance-per-hour 300
+# Research must never slow trading (T39): at most one core, the lowest CPU and IO weights, idle IO class, niced.
+# Trading units (entry, held, monitor, decisions, dashboard, discovery, held watcher) carry none of these.
+CPUQuota=100%
+CPUWeight=20
+IOWeight=20
+Nice=10
+IOSchedulingClass=idle
+# Initialise once, as the service user, in its own subdirectory (RUNBOOK step 11 does exactly this):
+#   install -d -m 0700 -o solana-desk -g solana-desk <FRESH_ROOT>/counterfactual
+#   python -m tools.research.counterfactual init --store <FRESH_ROOT>/counterfactual/counterfactual.sqlite --allowance-per-hour 300
 # Restart policy: this is a oneshot driven by desk-counterfactual.timer (60 s after the previous run finished,
 # so runs never overlap and a failed run is retried on the next tick).

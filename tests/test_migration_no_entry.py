@@ -15,7 +15,7 @@ from desk.security import base58
 class MigrationNoEntryTests(unittest.TestCase):
     def setUp(self):
         legacy_null_pass.install(self)    # T22: these tests certify retained pre-T22 NULL/unresolved states
-        self.f=fixture.DispatcherTests();self.f.setUp();self.addCleanup(self.f.doCleanups)
+        self.f=fixture.DispatcherTests();self.addCleanup(self.f.doCleanups);self.f.setUp()
         self.seeds=0
         original=self.f.setup_rpc
         def rpc(method,params):

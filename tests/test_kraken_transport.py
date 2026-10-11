@@ -15,7 +15,7 @@ from tests.test_provider_pacing import Clock
 
 class KrakenTransportTests(unittest.TestCase):
     def setUp(self):
-        self.h=fixtures.PaperReadTests();self.h.setUp();self.addCleanup(self.h.doCleanups)
+        self.h=fixtures.PaperReadTests();self.addCleanup(self.h.doCleanups);self.h.setUp()
         self.clock=Clock();self.clock.wall=1002.220369
         self.path=Path(self.h.temp.name).resolve()/'pacing.sqlite';pace.initialize(self.path)
         self.policy=self.path.parent/'migration.json';self.policy.write_text(canonical({'version':1,'pins':[]}))

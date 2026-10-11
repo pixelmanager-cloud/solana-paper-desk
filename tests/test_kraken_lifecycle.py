@@ -104,7 +104,7 @@ def actual_cycle(self, *, positions=(), candidates=None, usd_refs=(), monitoring
 
 class KrakenLifecycleTests(unittest.TestCase):
     def setUp(self):
-        self.h=fixtures.PaperCycleTests();self.h.setUp();self.addCleanup(self.h.doCleanups)
+        self.h=fixtures.PaperCycleTests();self.addCleanup(self.h.doCleanups);self.h.setUp()
         self.old_path=self.h.path;self.old_dump=dump(self.old_path)
         self.h.cfg=self.h.cfg|{'paper_usd_valuation_version':1}
         self.h.path=Path(self.h.f.tmp.name)/'kraken-experiment.sqlite';cycle.initialize(self.h.path,self.h.cfg)

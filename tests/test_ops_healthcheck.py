@@ -400,6 +400,201 @@ class HealthcheckTests(Fixture):
                       (REPO / 'desk' / 'paper_cycle.py').read_text())
 
 
+class ResearchCpuTests(Fixture):
+    """T39: WARN when a research unit sits at its CPU quota for 3 consecutive checks. State lives in --cpu-state only."""
+    UNIT = 'desk-counterfactual.service'
+
+    def setUp(self):
+        super().setUp()
+        self.state = self.base / 'state' / 'cpu-state.json'
+        self.clock = NOW
+
+    def research(self, usage_s, enter_ago=100, quota='1s', active='active', unit=None):
+        self.systemd.set(unit or self.UNIT, ActiveState=active, SubState='running', Result='success', NRestarts='0',
+                         CPUUsageNSec=str(int(usage_s * 1e9)), CPUQuotaPerSecUSec=quota,
+                         ActiveEnterTimestamp=stamp(self.clock - enter_ago))
+
+    def run_check(self, *extra, state=True):
+        argv = ['--root', str(self.root), '--discovery-db', str(self.discovery), '--pacing-db', str(self.pacing),
+                '--backup-root', str(self.base / 'backups')]
+        if state:
+            argv += ['--cpu-state', str(self.state)]
+        out = io.StringIO()
+        with redirect_stdout(out):
+            code = healthcheck.main(argv + list(extra), runner=self.systemd, clock=lambda: self.clock,
+                                    usage=lambda p: SimpleNamespace(total=100 << 30, used=10 << 30, free=90 << 30))
+        return code, json.loads(out.getvalue())
+
+    def cpu(self, report, unit=None):
+        return self.find(report, 'research_cpu:' + (unit or self.UNIT))
+
+    def test_three_consecutive_saturated_checks_warn_and_not_before(self):
+        severities = []
+        for i in range(3):
+            self.clock = NOW + 300 * i
+            self.research(usage_s=0.95 * 300 * (i + 1), enter_ago=300 * (i + 1))   # ~0.95 core over each interval
+            code, rep = self.run_check()
+            (c,) = self.cpu(rep)
+            severities.append(c['severity'])
+        self.assertEqual(severities, ['OK', 'OK', 'WARN'])
+        self.assertIn('3 consecutive', c['detail'])
+
+    def test_a_calm_check_resets_the_streak(self):
+        usage = 0.0
+        for i, rate in enumerate((0.99, 0.99, 0.10, 0.99, 0.99)):
+            self.clock = NOW + 300 * i
+            usage += rate * 300
+            self.research(usage_s=usage, enter_ago=300 * (i + 1))
+            sev = self.cpu(self.run_check()[1])[0]['severity']
+        self.assertEqual(sev, 'OK', 'two saturated checks after a calm one are only a streak of two')
+
+    def test_inactive_oneshot_neither_counts_nor_resets(self):
+        usage = 0.0
+        for i in range(2):
+            self.clock = NOW + 300 * i
+            usage += 0.99 * 300
+            self.research(usage_s=usage, enter_ago=300 * (i + 1))
+            self.run_check()
+        self.clock = NOW + 600
+        self.research(usage_s=0, active='inactive')
+        self.assertEqual(self.cpu(self.run_check()[1]), [], 'no sample while the oneshot is not running')
+        self.clock = NOW + 900
+        self.research(usage_s=usage + 0.99 * 600, enter_ago=1200)   # same run, saturated again over the 600 s gap
+        (c,) = self.cpu(self.run_check()[1])
+        self.assertEqual(c['severity'], 'WARN', 'the idle gap kept the streak at 2, the next saturated check makes 3')
+
+    def test_new_run_is_judged_on_its_own_lifetime_average(self):
+        self.research(usage_s=500, enter_ago=500)       # saturated
+        self.run_check()
+        self.clock = NOW + 300
+        self.research(usage_s=20, enter_ago=100)        # a fresh run: counter went DOWN, 0.2 core
+        (c,) = self.cpu(self.run_check()[1])
+        self.assertEqual(c['severity'], 'OK')
+        self.assertLess(c['fraction'], 0.3)
+
+    def test_threshold_is_a_fraction_of_the_configured_quota(self):
+        self.research(usage_s=45, enter_ago=100, quota='500ms')   # 0.45 core of a 0.5 core quota: 90 %
+        (c,) = self.cpu(self.run_check()[1])
+        self.assertEqual(c['quota'], 0.5)
+        self.assertGreaterEqual(c['fraction'], 0.45)
+        for i in range(1, 3):
+            self.clock = NOW + 300 * i
+            self.research(usage_s=45 + 135 * i, enter_ago=100 + 300 * i, quota='500ms')
+            (c,) = self.cpu(self.run_check()[1])
+        self.assertEqual(c['severity'], 'WARN')
+
+    def seed(self, usage, ts, run_ago, streak=0, run=None):
+        self.state.write_text(json.dumps({self.UNIT: {'usage': usage, 'ts': ts, 'streak': streak,
+                                                      'run': run if run is not None else stamp(NOW - run_ago)}}))
+
+    def test_a_different_run_is_never_diffed_against_the_previous_one(self):
+        self.seed(usage=90, ts=NOW - 300, run_ago=2000)             # an earlier run of the oneshot
+        self.research(usage_s=95, enter_ago=100)                    # new run: 0.95 core over its own 100 s
+        (c,) = self.cpu(self.run_check()[1])
+        self.assertGreaterEqual(c['fraction'], 0.9)
+
+    def test_a_counter_that_went_backwards_in_the_same_run_uses_the_lifetime_average(self):
+        self.seed(usage=590, ts=NOW - 300, run_ago=600)
+        self.research(usage_s=580, enter_ago=600)                   # the seeded run, counter now lower than the sample
+        (c,) = self.cpu(self.run_check()[1])
+        self.assertGreaterEqual(c['fraction'], 0.9, 'negative delta must not be reported as a calm check')
+
+    def test_a_stale_previous_sample_is_not_used_for_a_delta(self):
+        self.seed(usage=49000, ts=NOW - 25000, run_ago=50000)
+        self.research(usage_s=49500, enter_ago=50000)
+        (c,) = self.cpu(self.run_check()[1])
+        self.assertGreaterEqual(c['fraction'], 0.9, 'a 7 h gap says nothing about the last interval; use the lifetime average')
+
+    def test_a_run_younger_than_ten_seconds_gives_no_sample(self):
+        self.research(usage_s=5, enter_ago=5)
+        self.assertEqual(self.cpu(self.run_check()[1]), [])
+
+    def test_accounting_off_uint64_max_gives_no_sample(self):
+        self.systemd.set(self.UNIT, ActiveState='active', CPUUsageNSec='18446744073709551615', CPUQuotaPerSecUSec='1s',
+                         ActiveEnterTimestamp=stamp(NOW - 100))
+        self.assertEqual(self.cpu(self.run_check()[1]), [])
+
+    def test_a_stored_streak_beyond_any_real_count_is_discarded(self):
+        self.seed(usage=0, ts=NOW - 300, run_ago=300, streak=5000)
+        self.research(usage_s=300, enter_ago=300)
+        (c,) = self.cpu(self.run_check()[1])
+        self.assertEqual(c['streak'], 1)
+
+    def test_missing_quota_is_itself_a_warning(self):
+        self.research(usage_s=1, quota='infinity')
+        (c,) = self.cpu(self.run_check()[1])
+        self.assertEqual(c['severity'], 'WARN')
+        self.assertIn('no CPUQuota', c['detail'])
+
+    def test_unit_that_is_not_installed_is_skipped(self):
+        self.assertEqual(self.cpu(self.run_check()[1]), [])
+        self.assertEqual(self.cpu(self.run_check()[1], 'desk-fill-realism-worker.service'), [])
+
+    def test_not_configured_without_cpu_state_and_nothing_is_written(self):
+        self.research(usage_s=500, enter_ago=500)
+        _, rep = self.run_check(state=False)
+        self.assertEqual(self.cpu(rep), [])
+        self.assertFalse(self.state.exists())
+
+    def test_no_systemd_skips_the_check(self):
+        self.research(usage_s=500, enter_ago=500)
+        _, rep = self.run_check('--no-systemd')
+        self.assertEqual(self.cpu(rep), [])
+
+    def test_corrupt_or_hostile_state_is_ignored_not_trusted(self):
+        for blob in (b'not json', b'[1,2]', json.dumps({self.UNIT: {'streak': 'x', 'usage': -1, 'ts': 'y'}}).encode(),
+                     json.dumps({self.UNIT: {'streak': 99, 'usage': 0, 'ts': NOW + 10 ** 9, 'run': 'z'}}).encode()):
+            self.state.write_bytes(blob)
+            self.research(usage_s=1, enter_ago=300)
+            code, rep = self.run_check()
+            (c,) = self.cpu(rep)
+            self.assertEqual(c['severity'], 'OK', blob)
+            self.assertIn(code, (0,))
+            self.assertEqual(json.loads(self.state.read_text())[self.UNIT]['streak'], 0, blob)
+
+    def test_symlinked_state_file_is_not_followed(self):
+        target = self.base / 'state' / 'elsewhere.json'
+        target.write_text(json.dumps({self.UNIT: {'streak': 2, 'usage': 0, 'ts': NOW - 300, 'run': stamp(NOW - 600)}}))
+        os.symlink(target, self.state)
+        self.research(usage_s=590, enter_ago=600)
+        _, rep = self.run_check()
+        self.assertEqual([c['severity'] for c in self.find(rep, 'research_cpu_state')], ['WARN'])
+        self.assertTrue(self.state.is_symlink(), 'the link is left alone')
+        self.assertEqual(json.loads(target.read_text())[self.UNIT]['streak'], 2, 'and nothing was written through it')
+        self.assertNotIn('3 consecutive', json.dumps(rep), 'the symlink target must not supply a streak')
+
+    def test_state_file_is_private_and_is_the_only_file_written(self):
+        self.research(usage_s=1, enter_ago=300)
+        before = sorted(p.name for p in (self.base / 'state').iterdir())
+        self.run_check()
+        self.assertEqual(oct(self.state.stat().st_mode & 0o777), '0o600')
+        after = sorted(p.name for p in (self.base / 'state').iterdir())
+        self.assertEqual(set(after) - set(before), {'cpu-state.json'})
+
+    def test_unwritable_state_is_a_visible_warning_not_a_crash(self):
+        self.research(usage_s=1, enter_ago=300)
+        missing = self.base / 'nope' / 'cpu-state.json'
+        argv = ['--root', str(self.root), '--discovery-db', str(self.discovery), '--pacing-db', str(self.pacing),
+                '--cpu-state', str(missing)]
+        out = io.StringIO()
+        with redirect_stdout(out):
+            code = healthcheck.main(argv, runner=self.systemd, clock=lambda: NOW,
+                                    usage=lambda p: SimpleNamespace(total=100 << 30, used=10 << 30, free=90 << 30))
+        rep = json.loads(out.getvalue())
+        warn = [c for c in rep['checks'] if c['check'] == 'research_cpu_state']
+        self.assertEqual([c['severity'] for c in warn], ['WARN'])
+
+    def test_other_checks_are_unchanged_by_a_cpu_warning(self):
+        for i in range(3):
+            self.clock = NOW + 300 * i
+            self.research(usage_s=0.99 * 300 * (i + 1), enter_ago=300 * (i + 1))
+            _, rep = self.run_check()
+        _, base = self.run_check(state=False)
+        self.assertEqual([c for c in rep['checks'] if not c['check'].startswith('research_cpu')], base['checks'])
+        self.assertEqual(self.cpu(rep)[0]['severity'], 'WARN')
+        self.assertNotEqual(rep['status'], 'OK')
+
+
 class NotifyTests(Fixture):
     def setUp(self):
         super().setUp()
@@ -694,7 +889,9 @@ class UnitTemplateTests(unittest.TestCase):
                     'desk-notify-daily.service', 'desk-notify-daily.timer',
                     'desk-held-watcher.service',   # T28 adds the held watcher
                     'desk-counterfactual.service', 'desk-counterfactual.timer',   # T26 research sampler
-                    'desk-notify-watchdog.service', 'desk-notify-watchdog.timer'}   # T32F item 9
+                    'desk-features.service', 'desk-features.timer',   # T40 feature store (research)
+                    'desk-notify-watchdog.service', 'desk-notify-watchdog.timer',   # T32F item 9
+                    'desk-daily-report.service', 'desk-daily-report.timer'}   # T41 research report
         self.assertEqual(set(self.units), expected)
         self.assertEqual(set(healthcheck.UNITS) - set(self.units), set())
 
@@ -820,6 +1017,41 @@ class UnitTemplateTests(unittest.TestCase):
             for rel in ('research.sqlite', 'evidence.sqlite', 'paper-ledger.sqlite', 'paper-decisions.sqlite', 'entry-dispatch/dispatch.sqlite'):
                 self.assertIn(rel, source)
 
+    # -- T39: research units are throttled, trading units never are ----------------------------------------------------
+    RESEARCH_UNITS = ('desk-counterfactual.service', 'desk-fill-realism-worker.service')
+    TRADING_UNITS = ('desk-paper-entry-dispatcher.service', 'desk-paper-held-cycle.service', 'desk-paper-monitor.service',
+                     'desk-decisions.service', 'desk-dashboard.service', 'desk-continuous-discovery.service',
+                     'desk-held-watcher.service')
+    THROTTLE_KEYS = ('CPUQuota', 'Nice', 'IOSchedulingClass', 'IOSchedulingPriority', 'CPUWeight', 'IOWeight', 'CPUAffinity')
+
+    def test_every_research_unit_is_throttled_and_bounded(self):
+        present = [n for n in self.RESEARCH_UNITS if n in self.units]
+        self.assertIn('desk-counterfactual.service', present)
+        for name in present:
+            (quota,) = self.directives(name, 'CPUQuota')
+            self.assertEqual(quota, '100%', name)
+            self.assertEqual(self.directives(name, 'Nice'), ['10'], name)
+            self.assertEqual(self.directives(name, 'CPUWeight'), ['20'], name)
+            self.assertEqual(self.directives(name, 'IOWeight'), ['20'], name)
+            self.assertEqual(self.directives(name, 'IOSchedulingClass'), ['idle'], name)
+            for key in ('MemoryMax', 'TasksMax'):
+                (value,) = self.directives(name, key)
+                self.assertRegex(value, r'^\d+[KMG]?$', '%s %s must be a finite limit' % (name, key))
+                self.assertNotEqual(int(re.match(r'\d+', value).group()), 0, name)
+
+    def test_trading_units_are_never_throttled(self):
+        for name in self.TRADING_UNITS:
+            self.assertIn(name, self.units)
+            for key in self.THROTTLE_KEYS:
+                self.assertEqual(self.directives(name, key), [], '%s must not set %s' % (name, key))
+
+    def test_held_watcher_is_bounded_but_not_throttled(self):
+        name = 'desk-held-watcher.service'
+        for key in ('MemoryMax', 'TasksMax'):
+            (value,) = self.directives(name, key)
+            self.assertNotEqual(int(re.match(r'\d+', value).group()), 0, key)
+        self.assertIn('Restart=on-failure', self.units[name])
+
     def test_hardening_present_on_every_service(self):
         for name, text in self.units.items():
             if name.endswith('.service'):
@@ -872,6 +1104,50 @@ class UnitTemplateTests(unittest.TestCase):
         for name in ('desk-paper-entry-dispatcher.service', 'desk-paper-held-cycle.service', 'desk-continuous-discovery.service'):
             old = (REPO / 'deploy' / name).read_text()
             self.assertNotIn('<FRESH_ROOT>', old)
+
+
+class WatchdogGraceTests(unittest.TestCase):
+    """T32G item 6: the watchdog must not alert at cutover just because health.json does not exist yet.
+
+    A timer with only OnBootSec has its elapse time long in the past when it is started mid-uptime, so systemd runs
+    it immediately - before the first healthcheck wrote health.json - and the notify step reports a false CRITICAL.
+    OnActiveSec counts from the moment the timer is started (cutover) or from boot (after a reboot, when the timer is
+    activated), so one directive gives a grace period in both cases.
+    """
+
+    def timer(self, name):
+        text = (REPO / 'deploy' / 'fresh' / name).read_text()
+        values = {}
+        for key, value in re.findall(r'(?m)^(On[A-Za-z]+Sec)=(\d+)$', text):
+            values[key] = int(value)
+        return text, values
+
+    def test_the_watchdog_first_runs_only_after_a_grace_period_counted_from_activation(self):
+        text, values = self.timer('desk-notify-watchdog.timer')
+        self.assertNotIn('OnBootSec', values)                       # it would fire at once when started mid-uptime
+        self.assertGreaterEqual(values['OnActiveSec'], 600)         # >= the staleness limit (2 x the 300 s healthcheck interval)
+        self.assertEqual(values['OnUnitInactiveSec'], 300)          # then every five minutes, as before
+        self.assertIn('Unit=desk-notify-watchdog.service', text)
+
+    def test_the_healthcheck_runs_before_the_watchdog_can(self):
+        _, watchdog = self.timer('desk-notify-watchdog.timer')
+        _, health = self.timer('desk-healthcheck.timer')
+        # the healthcheck timer keeps OnBootSec on purpose: it fires immediately at cutover and writes the first report
+        self.assertIn('OnBootSec', health)
+        self.assertLess(health['OnBootSec'], watchdog['OnActiveSec'])
+
+    def test_the_stale_limit_matches_the_grace(self):
+        interval = int(notify.DEFAULT_INTERVAL)
+        self.assertEqual(interval, 300)
+        self.assertGreaterEqual(self.timer('desk-notify-watchdog.timer')[1]['OnActiveSec'], 2 * interval)
+
+    def test_a_missing_report_is_still_critical_so_the_grace_is_not_a_silent_pass(self):
+        report = notify.check_freshness({}, 1000, notify.DEFAULT_INTERVAL)
+        self.assertEqual(report['status'], 'CRITICAL')
+
+    def test_the_runbook_names_the_grace_period(self):
+        text = (REPO / 'docs' / 'ops' / 'RUNBOOK.md').read_text()
+        self.assertRegex(text, r'(?i)watchdog[^.\n]*(grace|OnActiveSec)')
 
 
 if __name__ == '__main__':

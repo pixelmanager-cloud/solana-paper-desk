@@ -46,7 +46,7 @@ def _child(research,evidence,fence,mode,queue=None,go=None):
 class CommonBankJournalTests(unittest.TestCase):
     def setUp(self):
         self.fixture = projection.PoolClassificationProjectionTests()
-        self.fixture.setUp(); self.addCleanup(self.fixture.doCleanups)
+        self.addCleanup(self.fixture.doCleanups); self.fixture.setUp()
         f = self.fixture; self.root = f.root
         self.path = self.root/'journal-evidence.sqlite'; self.research = self.root/'journal-research.sqlite'
         self.store = EvidenceStore(self.path)

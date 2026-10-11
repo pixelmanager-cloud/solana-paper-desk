@@ -265,7 +265,7 @@ class PreflightDryrunTests(unittest.TestCase):
         real = os.lstat
         def stat(path, *a, **k):
             info = real(path, *a, **k)
-            return types.SimpleNamespace(st_mode=info.st_mode, st_nlink=info.st_nlink, st_uid=uid,
+            return types.SimpleNamespace(st_mode=info.st_mode, st_nlink=info.st_nlink, st_uid=uid, st_gid=info.st_gid,   # T32I: the sealed-shape rule reads the group
                                          st_size=info.st_size, st_mtime_ns=info.st_mtime_ns)
         return patch.object(tool, '_stat', side_effect=stat)
 
@@ -774,12 +774,13 @@ class FreshLayoutBase(unittest.TestCase):
             code = tool.main(argv or self.argv())
         return code, json.loads(out.getvalue())
 
-    def fake_stat(self, uid_for):
+    def fake_stat(self, uid_for, gid_for=None):
         real = os.lstat
 
         def stat(path, *a, **k):
             info = real(path, *a, **k)
             return types.SimpleNamespace(st_mode=info.st_mode, st_nlink=info.st_nlink, st_uid=uid_for(str(path), info.st_uid),
+                                         st_gid=(gid_for or (lambda p, g: g))(str(path), info.st_gid),
                                          st_size=info.st_size, st_mtime_ns=info.st_mtime_ns)
         return patch.object(tool, '_stat', side_effect=stat)
 
@@ -878,6 +879,37 @@ class FreshLayoutTests(FreshLayoutBase):
         self.addCleanup(os.chmod, self.d.discovery.parent, 0o755)
         code, report = self.run_tool()
         self.assertTrue(any(b.startswith('LIVE_external_discovery_db_dir:MODE_777') for b in report['blockers']), report['blockers'])
+
+    # --- T32I item 1: the shape `cutover seal-archive` gives the shared directories must not block step 6
+    def seal_shape(self, mode, *, uid=0, gid_delta=0):
+        """Make the directories that hold the shared stores look sealed: root-owned, the service group (the group of --data), `mode`."""
+        dirs = {str(self.d.pacer.parent), str(self.d.discovery.parent)}
+        for path in dirs:
+            os.chmod(path, mode)
+            self.addCleanup(os.chmod, path, 0o755)
+        return self.fake_stat(lambda path, owner: uid if path in dirs else owner,
+                              lambda path, group: group + gid_delta if path in dirs else group)
+
+    def dir_findings(self, report):
+        return [b for b in report['blockers'] if b.startswith('LIVE_external_') and '_dir:' in b]
+
+    def test_sealed_shared_directories_root_owned_service_group_sticky_1770_do_not_block(self):
+        with self.seal_shape(0o1770):
+            code, report = self.run_tool()
+        self.assertEqual((code, report['status'], report['blockers']), (0, 'PASS', []), report)
+        self.assertEqual(report['live_permission_findings'], [])
+
+    def test_every_other_shape_of_a_shared_directory_still_blocks(self):
+        for label, kwargs, mode in (('service-user owned 1770', dict(uid=4242), 0o1770),
+                                    ('no sticky bit', {}, 0o770),
+                                    ('other bits', {}, 0o1777),
+                                    ('other read', {}, 0o1774),
+                                    ('a foreign group', dict(gid_delta=77), 0o1770),
+                                    ('group write without root ownership, world writable', dict(uid=4242), 0o777)):
+            with self.subTest(label), self.seal_shape(mode, **kwargs):
+                code, report = self.run_tool()
+                self.assertEqual((code, report['status']), (2, 'BLOCKED'), report)
+                self.assertTrue(self.dir_findings(report), (label, report['blockers']))
 
     def test_sidecar_created_beside_an_external_store_is_a_blocker(self):
         original = tool._copy_external

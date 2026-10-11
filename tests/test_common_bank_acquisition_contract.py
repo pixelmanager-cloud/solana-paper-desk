@@ -174,7 +174,7 @@ class CommonBankRequestContractTests(unittest.TestCase):
 class ExistingPointFeasibilityTests(unittest.TestCase):
     def test_existing_matched_separate_fixture_path_works_but_advancement_cannot_retarget(self):
         from tests import test_pool_classification_projection as fixture
-        h=fixture.PoolClassificationProjectionTests();h.setUp();self.addCleanup(h.doCleanups)
+        h=fixture.PoolClassificationProjectionTests();self.addCleanup(h.doCleanups);h.setUp()
         result=h.project();self.assertTrue(result['point_binding_verified']);self.assertFalse(result['exclusion_allowed'])
         bank=HistoryProgress(h.h.store).bank('multi');before=copy.deepcopy(bank);calls=[]
         def forbidden(*args):calls.append(args);raise AssertionError('No recapture on restart')
@@ -186,7 +186,7 @@ class ExistingPointFeasibilityTests(unittest.TestCase):
         from tests import test_pool_classification_projection as fixture
         from desk.entry_evidence import continuation_snapshot
         from desk.security import holding_policy, mint_policy
-        h=fixture.PoolClassificationProjectionTests();h.setUp();self.addCleanup(h.doCleanups)
+        h=fixture.PoolClassificationProjectionTests();self.addCleanup(h.doCleanups);h.setUp()
         self.assertTrue(h.project()['point_binding_verified'])
         replay=continuation_snapshot(h.scan,json.loads(h.scan['result']),EvidenceStore(h.h.path,read_only=True),progress={'evidence_hash':h.head['evidence_hash']})
         self.assertTrue(replay['replay']['reconciled'])

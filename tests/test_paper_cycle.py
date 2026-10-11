@@ -41,7 +41,7 @@ def dump(path):
 
 class PaperCycleTests(unittest.TestCase):
     def setUp(self):
-        self.f=collector_fixtures.PaperObservationCollectorTests();self.f.setUp();self.addCleanup(self.f.doCleanups)
+        self.f=collector_fixtures.PaperObservationCollectorTests();self.addCleanup(self.f.doCleanups);self.f.setUp()
         self.target=self.f.target()
         raw,mint,pool=migration_fixture()
         self.assertEqual((mint,pool),(self.target.mint,self.target.pool))
@@ -618,9 +618,9 @@ class PaperCycleTests(unittest.TestCase):
 
 class QuoteOnlyCycleTests(unittest.TestCase):
     def setUp(self):
-        self.fx=execution_fixtures.QuoteV3SeamTests();self.fx.setUp();self.addCleanup(self.fx.doCleanups)
+        self.fx=execution_fixtures.QuoteV3SeamTests();self.addCleanup(self.fx.doCleanups);self.fx.setUp()
         self.f=self.fx.fixture;self.cfg=self.fx.cfg
-        self.admissions=collector_fixtures.PaperObservationCollectorTests();self.admissions.setUp();self.addCleanup(self.admissions.doCleanups)
+        self.admissions=collector_fixtures.PaperObservationCollectorTests();self.addCleanup(self.admissions.doCleanups);self.admissions.setUp()
         jobs=self.admissions.jobs;progress=self.admissions.progress
         scan=jobs.admit(self.f.mint,kind=BIRTH_ACQUISITION_V1,evidence_db=progress.store.path)
         d=jobs.descriptor(scan)

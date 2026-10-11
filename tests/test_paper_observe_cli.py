@@ -22,7 +22,7 @@ from tests.test_paper_read_sources import Response
 
 class ObservationCliTests(unittest.TestCase):
     def setUp(self):
-        self.f=fixtures.PaperObservationCollectorTests();self.f.setUp();self.addCleanup(self.f.doCleanups)
+        self.f=fixtures.PaperObservationCollectorTests();self.addCleanup(self.f.doCleanups);self.f.setUp()
         self.position=self.f.target(1234567);self.candidate=self.f.second_target(self.position)
         self.requests=[];self.price_raw=('{ "'+SOL+'": {"usdPrice":100.00,"decimals":9,"blockId":100}}\n').encode()
         self.block_time=self.f.at-5;self.transport_fail=False;self.clock_values=None

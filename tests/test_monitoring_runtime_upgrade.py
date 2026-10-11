@@ -23,7 +23,7 @@ from tests.helpers import T
 
 class MonitoringRuntimeUpgradeTests(unittest.TestCase):
     def setUp(self):
-        self.f=fixtures.MonitoringHandoffTests();self.f.setUp();self.addCleanup(self.f.doCleanups)
+        self.f=fixtures.MonitoringHandoffTests();self.addCleanup(self.f.doCleanups);self.f.setUp()
         self.root=self.f.root;self.source=runtime.implementation_hash()
         self.originroot=self.root/'synthetic-origin';self.originroot.mkdir()
         desk=Path(runtime.__file__).parent

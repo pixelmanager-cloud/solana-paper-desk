@@ -1,0 +1,32 @@
+[Unit]
+Description=Daily strategy research report (read-only, paper only, EXECUTION_UNVERIFIED)
+[Service]
+Type=oneshot
+User=solana-desk
+Group=solana-desk
+WorkingDirectory=<RELEASE_DIR>
+# One self-contained HTML + JSON per UTC day in <STATE_DIR>/reports (never overwritten). Reads the fresh stores and the shared
+# discovery/pacing databases read-only; makes no provider request and needs no credentials.
+ExecStart=/opt/solana-desk/.venv/bin/python -m tools.research.daily_report --root <FRESH_ROOT> --discovery-db <DISCOVERY_DB> --pacing-db <PACING_DB> --config <CONFIG> --out-dir <STATE_DIR>/reports
+UMask=0077
+NoNewPrivileges=true
+PrivateTmp=true
+ProtectSystem=strict
+ProtectHome=true
+# Only the reports directory is writable (not the whole state directory); create it before the first run (see below).
+ReadWritePaths=<STATE_DIR>/reports
+ReadOnlyPaths=<FRESH_ROOT> <DISCOVERY_DIR> <PACING_DIR>
+# No network at all: the report only reads local stores. AF_UNIX stays for `systemctl show` (healthcheck section); that
+# talks to systemd over a filesystem socket, which PrivateNetwork does not remove (not executable-verified without systemd).
+RestrictAddressFamilies=AF_UNIX
+PrivateNetwork=true
+# Research limits: it must never compete with the trading units.
+Nice=15
+CPUWeight=20
+IOWeight=20
+IOSchedulingClass=idle
+CPUQuota=50%
+MemoryMax=512M
+TasksMax=32
+TimeoutStartSec=900
+# Create once, as the service user:  install -d -m 0700 <STATE_DIR>/reports
