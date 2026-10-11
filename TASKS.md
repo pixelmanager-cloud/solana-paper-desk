@@ -2005,3 +2005,60 @@ Every variant is evaluated walk-forward and ranked out-of-sample only. The same 
 
 ## L17 — Telegram trade notifier
 STATUS: CLAIMED by coordinator (local agent, branch cloud/L17). Do not take.
+
+---
+
+# LEAN FIX ROUND (review 2026-10-11)
+L10, L11, L14 and L16 were all cut from the OLD L09 (78db6f3). They miss L09b (D1 quote-marks, D2 UNEXITABLE write-off, entry-only halts), L17 (notify.py) and the configurable entry spacing.
+
+For EVERY fix task below:
+- BASE `origin/integration/r1` (merge your old branch into a fresh branch from it, resolving onto the new code).
+- Acceptance: `python -m unittest discover -s tests/lean -t .` passes in one process, rc=0, on top of integration/r1.
+- Keep your hook inside the D2 try/except where it touches exits.
+- Shared files: additive edits only.
+- New behaviour: default OFF when the key is absent.
+
+## L10F — Fix L10 (latency fills)
+STATUS: OPEN
+OWNS: same as L10
+1. **HIGH:** `execution.py:240` `requote_exit` sleeps 3s serially in the only exit thread. With 15 exits per pass, 13 fail and the pass takes 50s. Make it two-phase: q0 for ALL triggered exits → ONE sleep → q1 for all. Alternatively, keep a non-blocking pending-exit queue with a due time. The deadline comes from q0, not from the pass-start mark. Non-exiting positions must never be evaluated on marks staler than `stale_mark_s` because of this.
+2. A q1 ProviderError must go through D2's `_exit_failed` so the write-off clock runs.
+3. Rent and fee accounting:
+   - Report the rent refund separately, not inside the sell `sol_lamports`, OR make report.py and notify.py subtract it, so exit price and PnL messages aren't inflated.
+   - A D2 write-off must clear `ata_rent_outstanding`.
+   - The strategy cost cap must include the priority fee + tip per tx.
+4. Restore the non-additive edits (`adapters.py:131`, the runner lines) to additive form.
+
+## L11F — Fix L11 (held rug handling) — build ON D2, do not duplicate it
+STATUS: OPEN
+OWNS: same as L11
+1. **HIGH:** UNSELLABLE is valued at the last good value. It must be 0 unless an executable quote younger than N s exists.
+2. **HIGH:** marks must be the L09b 3-tuple `(value, at, source)`.
+3. **HIGH:** use D2's persisted `exit_failing_since` and its single write-off path, with reason `RUG_WRITEOFF` vs `UNEXITABLE` chosen by the detector. `manage()` must not short-circuit `_manage`.
+4. Default `enabled` = false when the key is absent.
+5. Probes run AFTER the exit pass, or reuse the D1/exit quotes. Never queue ahead of stop exits.
+6. The baseline is the screen tied to the open fill (latest PASS before the BUY), not the oldest of 20 rows.
+7. POOL_GONE requires 2 consecutive missing reads. Restart-safe trigger counting.
+
+## L14F — Fix L14 (sources + watchlist)
+STATUS: OPEN
+OWNS: same as L14 + `lean/report.py` (per-source funnel section only)
+1. **Rescreen cost:**
+   - Check `portfolio_blockers` (no I/O) BEFORE any rescreen, so MAX_POSITIONS rejects are not rescreened while the book is full.
+   - Run rescreens AFTER the fresh scan.
+   - Document the calls per hour.
+   - Hard cap rescreen calls per hour (config).
+2. Per-source funnel in `report.py`.
+3. The watch ends on ANY fill for the mint, so no second buy is possible after a halt between BUY and after_handle.
+4. `watch_hours` must be consistent with `max_age_seconds`. TOO_OLD is labelled EXPIRED, not HAZARD.
+5. Queries that use `limit=100000` ascending must read the newest rows (DESC + reverse) or paginate.
+6. Hook: ≤30 lines, inside the delimiters, no edits to existing lines.
+7. **New AMM sources:** implement at least Raydium CPMM and Meteora DAMM v2 new-pool discovery, with decoders verified against REAL captured account fixtures. You may fetch fixtures with a public RPC in your environment, but never commit keys. Use signature polling or logs, NOT `getProgramAccounts`. If you cannot verify a layout, leave it TODO and say so plainly in the report.
+
+## L16F — Fix L16 (route check)
+STATUS: OPEN
+OWNS: same as L16
+1. **Merge blocker:** the no-signing AST test must flag only calls, attributes and imports, ignore `ast.arg` and keyword args named `sign`, and reuse the same walker in its self-test.
+2. Count once per trade. Transient errors (429, timeout, 5xx) are not NOT_ROUTABLE.
+3. `UNSUPPORTED_MARKERS`: match exact error codes only, or drop the branch.
+4. A non-dict config is handled. Don't call private `store._versions`. Example config: `enabled: false`.
