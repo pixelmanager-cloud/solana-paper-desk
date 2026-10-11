@@ -11,6 +11,13 @@ That table is added only by the explicit, idempotent `upgrade()` (`--upgrade DB`
 shared database must run the new code first (old code rejects the extra table). Without the upgrade nothing is
 ever reclaimed.
 
+Reviewed cadence changes (paid provider plans) are recorded append-only in `pacing_policy_changes`, added only by
+the explicit, idempotent `apply_policy()` (`python -m tools.ops.pacing_policy apply`). The original `policy` rows
+are NEVER edited: the Kraken migration receipt pins them, and the effective cadence/backoff of helius and jupiter is
+the newest change row, itself validated against the release's reviewed `config/provider-pacing-policy.json`. Kraken
+is not changeable here. Every process using the shared database must run code that knows the table before it is
+added (older code rejects the extra table, i.e. fails closed).
+
 Holder lock files (``<db>.holder-<provider>.lock``) are the owner proof: NEVER delete one. A lock file that is
 removed and recreated no longer names the inode a live owner holds, so a second process could take "its" lock and
 the live owner's slot would look orphaned. A forked child inherits the open lock descriptor (flock belongs to the
@@ -23,6 +30,8 @@ import argparse
 from contextlib import closing
 import fcntl
 from email.utils import parsedate_to_datetime
+import hashlib
+import json
 import math
 import os
 from pathlib import Path
@@ -53,6 +62,21 @@ RECLAIM_GUARDS = {
                                          "BEGIN SELECT RAISE(ABORT,'Immutable pacing reclaim record'); END")
     for op in ('UPDATE', 'DELETE')}
 MAX_RECLAIMS = 10000
+POLICY_TABLE = 'pacing_policy_changes'
+POLICY_FILE = Path(__file__).resolve().parents[1] / 'config' / 'provider-pacing-policy.json'
+POLICY_FILE_BOUND = 65536
+MAX_POLICY_CHANGES = 64
+POLICY_SQL = ('CREATE TABLE pacing_policy_changes(id INTEGER PRIMARY KEY,'
+              "provider TEXT NOT NULL CHECK(provider IN ('helius','jupiter')),"
+              'old_cadence REAL NOT NULL,new_cadence REAL NOT NULL,old_backoff REAL NOT NULL,new_backoff REAL NOT NULL,'
+              'reason TEXT NOT NULL,config_sha256 TEXT NOT NULL,policy_digest TEXT NOT NULL,applied_at REAL NOT NULL)')
+POLICY_GUARDS = {
+    **{f'pacing_policy_changes_no_{op.lower()}': (f'CREATE TRIGGER pacing_policy_changes_no_{op.lower()} BEFORE {op} ON '
+                                                  "pacing_policy_changes BEGIN SELECT RAISE(ABORT,'Immutable pacing policy record'); END")
+       for op in ('UPDATE', 'DELETE')},
+    'pacing_policy_changes_order': ('CREATE TRIGGER pacing_policy_changes_order BEFORE INSERT ON pacing_policy_changes '
+                                    'WHEN NEW.id IS NOT (SELECT COALESCE(MAX(id),0)+1 FROM pacing_policy_changes) '
+                                    "BEGIN SELECT RAISE(ABORT,'Pacing policy record order'); END")}
 # Holder locks of grants this PROCESS owns: (database path, st_dev, st_ino, provider) -> (ticket, fd, pid, committed). Only process exit (any
 # death, including SIGKILL) or finish()/throttle() releases them. Never a Pacer object's lifetime: a caller may
 # deliberately keep a ticket pending (pacing_release=False) while its Pacer is garbage-collected, and that owner is
@@ -129,6 +153,56 @@ def initialize(path, *, helius_seconds=2.0, jupiter_seconds=2.0, backoff_seconds
         c.commit()
 
 
+def _effective(c, provider):
+    """(cadence, backoff) in force for a provider: the newest reviewed change row, else the original policy row.
+    Kraken is pinned and never changes. The change rows are validated by Pacer._validate before this is trusted."""
+    row = c.execute('SELECT cadence,backoff FROM policy WHERE provider=?', (provider,)).fetchone()
+    if provider != 'kraken' and c.execute("SELECT 1 FROM sqlite_master WHERE type='table' AND name=?", (POLICY_TABLE,)).fetchone():
+        later = c.execute(f'SELECT new_cadence,new_backoff FROM {POLICY_TABLE} WHERE provider=? ORDER BY id DESC LIMIT 1',
+                          (provider,)).fetchone()
+        if later is not None:
+            return later
+    return row
+
+
+def _reviewed():
+    """{policy_digest: entry}, file sha256 of this release's reviewed policy file; anything malformed raises."""
+    from .model import digest
+    with POLICY_FILE.open('rb') as stream:
+        raw = stream.read(POLICY_FILE_BOUND + 1)
+    if len(raw) > POLICY_FILE_BOUND:
+        raise ValueError('Pacing policy file bound')
+    def unique(pairs):
+        out = {}
+        for key, value in pairs:
+            if key in out: raise ValueError('Duplicate key')
+            out[key] = value
+        return out
+    doc = json.loads(raw, object_pairs_hook=unique)
+    if type(doc) is not dict or set(doc) != {'version', 'policies'} or doc['version'] != 1 or type(doc['version']) is not int \
+            or type(doc['policies']) is not list or not 1 <= len(doc['policies']) <= 16:
+        raise ValueError('Pacing policy file shape')
+    out, ids = {}, set()
+    for entry in doc['policies']:
+        if type(entry) is not dict or set(entry) != {'id', 'reason', 'providers'}:
+            raise ValueError('Pacing policy entry shape')
+        if (type(entry['id']) is not str or not 1 <= len(entry['id']) <= 128 or entry['id'] in ids
+                or type(entry['reason']) is not str or not 1 <= len(entry['reason']) <= 512
+                or type(entry['providers']) is not dict or not entry['providers']
+                or not set(entry['providers']) <= set(PROVIDERS)):
+            raise ValueError('Pacing policy entry invalid')
+        ids.add(entry['id'])
+        for values in entry['providers'].values():
+            if type(values) is not dict or set(values) != {'cadence', 'backoff'}:
+                raise ValueError('Pacing policy provider shape')
+            cadence, backoff = values['cadence'], values['backoff']
+            if (type(cadence) not in (int, float) or type(backoff) not in (int, float) or isinstance(cadence, bool)
+                    or not _number(cadence) or not .05 <= cadence <= 60 or not _number(backoff) or not 1 <= backoff <= 3600):
+                raise ValueError('Pacing policy values')
+        out[digest(entry)] = entry
+    return out, hashlib.sha256(raw).hexdigest()
+
+
 # Lowest class: research/measurement processes (fill realism, counterfactual) queue behind trading quotes.
 PRIORITIES = ('held', 'investigation', 'research')
 
@@ -158,7 +232,7 @@ class Pacer:
                 from .kraken_pacing_migration import read as migration
                 receipt=migration(c,self.path)
                 self.providers=PROVIDERS+('kraken',) if receipt else PROVIDERS
-                reclaims = tables & {RECLAIM_TABLE, 'sqlite_sequence'}   # AUTOINCREMENT owns sqlite_sequence
+                reclaims = tables & {RECLAIM_TABLE, 'sqlite_sequence', POLICY_TABLE}   # AUTOINCREMENT owns sqlite_sequence
                 if ('sqlite_sequence' in tables) != (RECLAIM_TABLE in tables): raise ValueError()
                 if tables - reclaims != {'policy','state','waiters'}|({'kraken_pacing_migration'} if receipt else set()): raise ValueError()
                 if RECLAIM_TABLE in tables: self._validate_reclaims(c)
@@ -167,6 +241,8 @@ class Pacer:
                 for provider, version, cadence, backoff in rows:
                     if provider=='kraken' and (cadence<2 or cadence!=2 or backoff!=30):raise ValueError()
                     if version != 2 or not _number(cadence) or not .05 <= cadence <= 60 or not _number(backoff) or not 1 <= backoff <= 3600: raise ValueError()
+                if POLICY_TABLE in tables:
+                    self._validate_policy_changes(c, {r[0]: (r[2], r[3]) for r in rows if r[0] != 'kraken'})
                 rows = c.execute('SELECT provider,next_at,blocked_until,high_water,pending FROM state').fetchall()
                 if len(rows) != len(self.providers) or {r[0] for r in rows} != set(self.providers): raise ValueError()
                 if any(not _number(v) for r in rows for v in r[1:4]): raise ValueError()
@@ -178,8 +254,35 @@ class Pacer:
                     if (type(ticket) is not str or len(ticket) != 32 or provider not in self.providers
                             or priority not in PRIORITIES or not _number(created)
                             or not _number(expires) or not 0 < expires-created <= MAX_WAIT): raise ValueError()
-        except (sqlite3.Error, ValueError, TypeError):
+        except (sqlite3.Error, ValueError, TypeError, OSError):      # OSError: the reviewed policy file is unreadable
             raise PacingError('PACING_DATABASE_INVALID') from None
+
+    @staticmethod
+    def _validate_policy_changes(c, original):
+        """The change rows must be exactly the chain of reviewed policy entries: schema and guards pinned, ids 1..n,
+        every row starting from the previous effective value (the original policy row for the first), digest and values
+        equal to an entry of this release's reviewed file, reason equal to that entry's, times non-decreasing."""
+        if (dict(c.execute("SELECT name,sql FROM sqlite_master WHERE tbl_name=? AND type='table'", (POLICY_TABLE,))) != {POLICY_TABLE: POLICY_SQL}
+                or dict(c.execute("SELECT name,sql FROM sqlite_master WHERE tbl_name=? AND type='trigger'", (POLICY_TABLE,))) != POLICY_GUARDS):
+            raise ValueError()
+        if c.execute(f'SELECT COUNT(*) FROM {POLICY_TABLE}').fetchone()[0] > MAX_POLICY_CHANGES: raise ValueError()
+        reviewed, _ = _reviewed()
+        current, last = dict(original), 0.0
+        rows = c.execute(f'SELECT id,provider,old_cadence,new_cadence,old_backoff,new_backoff,reason,config_sha256,policy_digest,applied_at,'
+                         f'typeof(old_cadence),typeof(new_cadence),typeof(old_backoff),typeof(new_backoff),typeof(applied_at),'
+                         f'typeof(reason),typeof(config_sha256),typeof(policy_digest) FROM {POLICY_TABLE} ORDER BY id').fetchall()
+        for index, row in enumerate(rows, 1):
+            (ident, provider, old_c, new_c, old_b, new_b, reason, sha, policy_digest, at) = row[:10]
+            if (ident != index or provider not in PROVIDERS or any(t != 'real' for t in row[10:15])
+                    or any(t != 'text' for t in row[15:])): raise ValueError()
+            if (current[provider] != (old_c, old_b) or not all(_number(v) for v in (old_c, new_c, old_b, new_b, at)) or at < last
+                    or type(sha) is not str or len(sha) != 64 or any(ch not in '0123456789abcdef' for ch in sha)
+                    or type(policy_digest) is not str): raise ValueError()
+            entry = reviewed.get(policy_digest)
+            if (entry is None or provider not in entry['providers'] or reason != entry['reason']
+                    or (new_c, new_b) != (float(entry['providers'][provider]['cadence']), float(entry['providers'][provider]['backoff']))):
+                raise ValueError()
+            current[provider], last = (new_c, new_b), at
 
     @staticmethod
     def _validate_reclaims(c):
@@ -286,7 +389,7 @@ class Pacer:
                 old = False
                 for provider, next_at, pending in c.execute('SELECT provider,next_at,pending FROM state').fetchall():
                     if pending is None or provider not in self.providers: continue
-                    cadence = c.execute('SELECT cadence FROM policy WHERE provider=?', (provider,)).fetchone()[0]
+                    cadence = _effective(c, provider)[0]
                     if now - (next_at - cadence) >= max(RECLAIM_MIN_SECONDS, RECLAIM_INTERVALS * cadence): old = True
                 c.rollback()
                 if not old: return []
@@ -313,7 +416,7 @@ class Pacer:
         """
         if not c.execute("SELECT 1 FROM sqlite_master WHERE type='table' AND name=?", (RECLAIM_TABLE,)).fetchone():
             return False                        # not upgraded: the schema change is never a side effect of a reclaim
-        cadence, backoff = c.execute('SELECT cadence,backoff FROM policy WHERE provider=?', (provider,)).fetchone()
+        cadence, backoff = _effective(c, provider)
         granted = next_at - cadence
         if now - granted < max(RECLAIM_MIN_SECONDS, RECLAIM_INTERVALS * cadence): return False
         if c.execute('SELECT COUNT(*) FROM pacing_reclaims').fetchone()[0] >= MAX_RECLAIMS: return False
@@ -385,7 +488,7 @@ class Pacer:
                     due = max(row[:2])
                     c.execute('UPDATE state SET high_water=? WHERE provider=?',(now,provider))
                     if first and first[0] == ticket and now >= due:
-                        cadence = c.execute('SELECT cadence FROM policy WHERE provider=?',(provider,)).fetchone()[0]
+                        cadence = _effective(c, provider)[0]
                         c.execute('UPDATE state SET next_at=?,pending=? WHERE provider=?',(math.nextafter(now+cadence, math.inf),ticket,provider))
                         c.execute('DELETE FROM waiters WHERE ticket=?',(ticket,))
                         self._hold(provider, ticket)       # owner proof BEFORE the grant becomes visible
@@ -445,7 +548,7 @@ class Pacer:
             with closing(self._connect()) as c:
                 c.execute('BEGIN IMMEDIATE');now=self._now(c)
                 self._pending(c,provider,ticket)
-                fallback=c.execute('SELECT backoff FROM policy WHERE provider=?',(provider,)).fetchone()[0]
+                fallback=_effective(c, provider)[1]
                 until=now+fallback
                 values=headers.get_all('Retry-After') if hasattr(headers,'get_all') else None
                 if values is None:
@@ -492,6 +595,96 @@ def upgrade(path):
         raise PacingError('PACING_DATABASE_BUSY') from None
     Pacer(path)                                   # the result must validate under the strict schema check
     return 'UPGRADED'
+
+
+def _policy_entry(policy_id):
+    reviewed, sha = _reviewed()
+    entries = list(reviewed.values())                      # file order: the last entry is the newest
+    if policy_id is None:
+        return entries[-1], sha
+    for entry in entries:
+        if entry['id'] == policy_id: return entry, sha
+    raise PacingError('PACING_POLICY_UNKNOWN')
+
+
+def _policy_diff(c, entry):
+    changes, unchanged = [], []
+    for provider, values in entry['providers'].items():
+        old, new = tuple(_effective(c, provider)), (float(values['cadence']), float(values['backoff']))
+        item = {'provider': provider, 'old_cadence': old[0], 'new_cadence': new[0],
+                'old_backoff': old[1], 'new_backoff': new[1]}
+        (unchanged if old == new else changes).append(item)
+    return changes, unchanged
+
+
+def policy_plan(path, policy_id=None):
+    """Read-only: what apply_policy would record. Validates the database and the reviewed policy file first."""
+    from .model import digest
+    pacer = Pacer(path)
+    entry, sha = _policy_entry(policy_id)
+    try:
+        with closing(pacer._connect()) as c:
+            c.execute('BEGIN')
+            now = pacer.clock()
+            changes, unchanged = _policy_diff(c, entry)
+            pending = [r[0] for r in c.execute('SELECT provider FROM state WHERE pending IS NOT NULL ORDER BY provider')]
+            waiters = c.execute('SELECT COUNT(*) FROM waiters WHERE expires>?', (now,)).fetchone()[0]
+            present = bool(c.execute("SELECT 1 FROM sqlite_master WHERE type='table' AND name=?", (POLICY_TABLE,)).fetchone())
+            return {'status': 'PLAN', 'policy_id': entry['id'], 'reason': entry['reason'], 'config_sha256': sha,
+                    'policy_digest': digest(entry), 'table_present': present, 'changes': changes, 'unchanged': unchanged,
+                    'kraken': 'UNTOUCHED', 'pending_providers': pending, 'live_waiters': waiters,
+                    'quiescent_database': not pending and not waiters,
+                    'effective_now': {r: list(_effective(c, r)) for r in pacer.providers if r != 'kraken'}}
+    except sqlite3.Error:
+        raise PacingError('PACING_DATABASE_BUSY') from None
+
+
+def apply_policy(path, policy_id=None, *, clock=time.time):
+    """Record the reviewed cadence change(s) append-only; idempotent; the original policy rows are never edited.
+
+    Refuses unless no grant is pending and no live waiter exists (the caller must have stopped every writer; see
+    tools.ops.pacing_policy). Adds the `pacing_policy_changes` table and its guards the first time, then one row per
+    provider whose effective value differs from the reviewed policy. The Kraken row, state and migration receipt are
+    not touched. The change chain is validated inside the transaction before the commit (a failure rolls back), and the whole
+    database is validated again afterwards.
+    """
+    from .model import digest
+    pacer = Pacer(path, clock=clock)
+    entry, sha = _policy_entry(policy_id)
+    try:
+        with closing(pacer._connect()) as c:
+            c.execute('BEGIN IMMEDIATE')
+            try:
+                now = pacer._now(c)
+                if c.execute('SELECT 1 FROM state WHERE pending IS NOT NULL').fetchone() \
+                        or c.execute('SELECT 1 FROM waiters WHERE expires>?', (now,)).fetchone():
+                    raise PacingError('PACING_NOT_QUIESCENT')
+                present = bool(c.execute("SELECT 1 FROM sqlite_master WHERE type='table' AND name=?", (POLICY_TABLE,)).fetchone())
+                changes, unchanged = _policy_diff(c, entry)
+                if not changes:
+                    c.rollback()
+                    return {'status': 'ALREADY_APPLIED' if present else 'NOTHING_TO_DO', 'policy_id': entry['id'],
+                            'changes': [], 'unchanged': unchanged}
+                if not present:
+                    c.execute(POLICY_SQL)
+                    for sql in POLICY_GUARDS.values(): c.execute(sql)
+                last = c.execute(f'SELECT COALESCE(MAX(id),0) FROM {POLICY_TABLE}').fetchone()[0]
+                for offset, item in enumerate(changes, 1):
+                    c.execute(f'INSERT INTO {POLICY_TABLE} VALUES(?,?,?,?,?,?,?,?,?,?)',
+                              (last + offset, item['provider'], item['old_cadence'], item['new_cadence'], item['old_backoff'],
+                               item['new_backoff'], entry['reason'], sha, digest(entry), float(now)))
+                original = {r[0]: (r[1], r[2]) for r in c.execute("SELECT provider,cadence,backoff FROM policy WHERE provider!='kraken'")}
+                try: Pacer._validate_policy_changes(c, original)       # the chain must validate BEFORE it is committed
+                except ValueError: raise PacingError('PACING_POLICY_INVALID') from None
+                c.commit()
+            except BaseException:
+                if c.in_transaction: c.rollback()
+                raise
+    except sqlite3.Error:
+        raise PacingError('PACING_DATABASE_BUSY') from None
+    Pacer(path, clock=clock)                      # ... and the whole database must still validate afterwards
+    return {'status': 'APPLIED', 'policy_id': entry['id'], 'config_sha256': sha, 'policy_digest': digest(entry),
+            'changes': changes, 'unchanged': unchanged}
 
 
 def configured(*, priority='investigation'):

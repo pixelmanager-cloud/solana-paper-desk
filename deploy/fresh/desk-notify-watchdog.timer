@@ -1,7 +1,12 @@
 [Unit]
 Description=Healthcheck watchdog every five minutes (own timer, not the unit it watches)
 [Timer]
-OnBootSec=300
+# Grace period (T32G): a timer with only OnBootSec has its elapse time long in the past when it is STARTED mid-uptime
+# (the cutover), so systemd would run it at once - before the first healthcheck wrote health.json - and the alert step
+# would report a false CRITICAL "healthcheck not running". OnActiveSec counts from the moment this timer is started
+# (cutover) or activated at boot (after a reboot), so the first check happens only after the healthcheck had time to
+# write its first report (>= the 600 s staleness limit); then every five minutes as before.
+OnActiveSec=600
 OnUnitInactiveSec=300
 AccuracySec=5s
 Persistent=false

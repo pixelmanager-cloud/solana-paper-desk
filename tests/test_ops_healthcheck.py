@@ -874,5 +874,49 @@ class UnitTemplateTests(unittest.TestCase):
             self.assertNotIn('<FRESH_ROOT>', old)
 
 
+class WatchdogGraceTests(unittest.TestCase):
+    """T32G item 6: the watchdog must not alert at cutover just because health.json does not exist yet.
+
+    A timer with only OnBootSec has its elapse time long in the past when it is started mid-uptime, so systemd runs
+    it immediately - before the first healthcheck wrote health.json - and the notify step reports a false CRITICAL.
+    OnActiveSec counts from the moment the timer is started (cutover) or from boot (after a reboot, when the timer is
+    activated), so one directive gives a grace period in both cases.
+    """
+
+    def timer(self, name):
+        text = (REPO / 'deploy' / 'fresh' / name).read_text()
+        values = {}
+        for key, value in re.findall(r'(?m)^(On[A-Za-z]+Sec)=(\d+)$', text):
+            values[key] = int(value)
+        return text, values
+
+    def test_the_watchdog_first_runs_only_after_a_grace_period_counted_from_activation(self):
+        text, values = self.timer('desk-notify-watchdog.timer')
+        self.assertNotIn('OnBootSec', values)                       # it would fire at once when started mid-uptime
+        self.assertGreaterEqual(values['OnActiveSec'], 600)         # >= the staleness limit (2 x the 300 s healthcheck interval)
+        self.assertEqual(values['OnUnitInactiveSec'], 300)          # then every five minutes, as before
+        self.assertIn('Unit=desk-notify-watchdog.service', text)
+
+    def test_the_healthcheck_runs_before_the_watchdog_can(self):
+        _, watchdog = self.timer('desk-notify-watchdog.timer')
+        _, health = self.timer('desk-healthcheck.timer')
+        # the healthcheck timer keeps OnBootSec on purpose: it fires immediately at cutover and writes the first report
+        self.assertIn('OnBootSec', health)
+        self.assertLess(health['OnBootSec'], watchdog['OnActiveSec'])
+
+    def test_the_stale_limit_matches_the_grace(self):
+        interval = int(notify.DEFAULT_INTERVAL)
+        self.assertEqual(interval, 300)
+        self.assertGreaterEqual(self.timer('desk-notify-watchdog.timer')[1]['OnActiveSec'], 2 * interval)
+
+    def test_a_missing_report_is_still_critical_so_the_grace_is_not_a_silent_pass(self):
+        report = notify.check_freshness({}, 1000, notify.DEFAULT_INTERVAL)
+        self.assertEqual(report['status'], 'CRITICAL')
+
+    def test_the_runbook_names_the_grace_period(self):
+        text = (REPO / 'docs' / 'ops' / 'RUNBOOK.md').read_text()
+        self.assertRegex(text, r'(?i)watchdog[^.\n]*(grace|OnActiveSec)')
+
+
 if __name__ == '__main__':
     unittest.main()

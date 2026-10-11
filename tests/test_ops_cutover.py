@@ -112,7 +112,8 @@ class FakeSystemd:
             self.enabled[argv[2]] = 'enabled'
             return SimpleNamespace(returncode=0, stdout='', stderr='')
         if cmd == 'disable':
-            if argv[2] not in self.stuck_enabled:
+            # systemd: a unit without [Install] (`static`) has nothing to disable and stays static (exit 0)
+            if argv[2] not in self.stuck_enabled and self.enabled.get(argv[2]) != 'static':
                 self.enabled[argv[2]] = 'disabled'
             return SimpleNamespace(returncode=0, stdout='', stderr='')
         if cmd == 'cat':       # base unit then every drop-in in lexical order, like systemd
@@ -1539,7 +1540,15 @@ class ArchiveDropinsTests(Base):
 
     def test_refuses_existing_archive_active_unit_hardlink_and_bad_name(self):
         self.assertEqual(self.archive()[0], 0)
-        self.assertEqual(self.archive()[0], 2)                                      # the archive name is taken
+        # T32G item 7: an existing COMPLETE archive is resumed, not refused. Nothing is left to remove, so this is a no-op.
+        code, report = self.archive()
+        self.assertEqual((code, report['resumed'], report['removed_now']), (0, True, []))
+        # ...but once the rendered units were installed the tree no longer matches the manifest: the name is taken.
+        (self.units / 'desk-backup.service').write_text((self.fresh / 'desk-backup.service').read_text())
+        code, report = self.archive()
+        self.assertEqual(code, 2)
+        self.assertIn('differs from the archive manifest', report['error'])
+        (self.units / 'desk-backup.service').unlink()
         self.assertEqual(self.archive(name='no-prefix')[0], 2)
         self.systemd.state['desk-backup.service'] = 'active'
         (self.units / 'desk-backup.service').write_text('[Service]\n')
@@ -1554,6 +1563,119 @@ class ArchiveDropinsTests(Base):
         self.assertIn('hard-linked', report['error'])
         self.assertFalse((self.archives / 'systemd-archive-three').exists() and any(
             (self.archives / 'systemd-archive-three').iterdir()) and False)
+
+    # -- T32G item 7: uid/gid are verified; a crash while removing the originals is resumable and restorable ------------
+    def crash_removing(self, victim='desk-dashboard.service.d', children=2):
+        """Die while removing `victim`: everything before it is gone, `children` of its entries are gone, the rest stays."""
+        real = cutover.remove_tree
+
+        def crashing(path):
+            if path.parent == self.units and path.name == victim:
+                for child in sorted(path.iterdir())[:children]:
+                    real(child)
+                raise OSError('simulated crash while removing the originals')
+            real(path)
+        return mock.patch.object(cutover, 'remove_tree', crashing)
+
+    def crashed(self, **kw):
+        with self.crash_removing(**kw), self.assertRaises(OSError):
+            self.archive()
+        return tree(self.units)
+
+    def test_uid_and_gid_are_part_of_archive_verification(self):
+        self.archive()
+        archive = self.archives / 'systemd-archive-test'
+        records = json.loads((archive / 'manifest.json').read_text())['records']
+        cutover.verify_records(archive, records)                                    # the real copy verifies
+        files = [r for r in records if r['type'] == 'file']
+        for key in ('uid', 'gid'):
+            doctored = [dict(r, **{key: r[key] + 1}) if r is files[0] else r for r in records]
+            with self.subTest(key), self.assertRaisesRegex(cutover.CutoverError, 'Archive verification failed'):
+                cutover.verify_records(archive, doctored)
+        dirs = [r for r in records if r['type'] == 'dir']
+        with self.assertRaisesRegex(cutover.CutoverError, 'Archive verification failed'):
+            cutover.verify_records(archive, [dict(dirs[0], uid=dirs[0]['uid'] + 1)])
+        links = [r for r in records if r['type'] == 'symlink']
+        with self.assertRaisesRegex(cutover.CutoverError, 'Archive verification failed'):
+            cutover.verify_records(archive, [dict(links[0], gid=links[0]['gid'] + 1)])
+
+    def test_a_crash_part_way_through_removal_resumes_to_the_uninterrupted_result(self):
+        half = self.crashed()
+        self.assertNotEqual(half, self.before)
+        archive = self.archives / 'systemd-archive-test'
+        archived = tree(archive)
+        self.assertIn('manifest.json', archived)                                   # the archive was complete and verified
+        code, report = self.archive()
+        self.assertEqual(code, 0, report)
+        self.assertTrue(report['resumed'])
+        self.assertEqual(sorted(p.name for p in self.units.iterdir()),
+                         ['desk-dashboard.service', 'desk-discovery.service', 'unrelated.service'])
+        self.assertEqual(tree(archive), archived)                                  # the archive is untouched by the resume
+        self.assertEqual(self.archive()[0], 0)                                    # and a third run is a harmless no-op
+        self.assertFalse(any(self.units.glob('*.d')))
+
+    def test_resume_also_works_when_the_first_original_was_never_removed(self):
+        with mock.patch.object(cutover, 'remove_tree', side_effect=OSError('crash before the first removal')):
+            with self.assertRaises(OSError):
+                self.archive()
+        self.assertEqual(tree(self.units), self.before)
+        code, report = self.archive()
+        self.assertEqual((code, report['resumed']), (0, True))
+        self.assertEqual(sorted(p.name for p in self.units.iterdir()),
+                         ['desk-dashboard.service', 'desk-discovery.service', 'unrelated.service'])
+
+    def test_resume_refuses_an_original_that_no_longer_matches_the_manifest_and_removes_nothing_more(self):
+        self.crashed()
+        remaining = sorted(p for p in (self.units / 'desk-dashboard.service.d').iterdir() if p.is_file())
+        remaining[0].write_text('edited after the archive was taken\n')
+        before = tree(self.units)
+        code, report = self.archive()
+        self.assertEqual(code, 2)
+        self.assertIn('differs from the archive manifest', report['error'])
+        self.assertEqual(tree(self.units), before)
+
+    def test_an_archive_without_a_manifest_is_incomplete_and_refused_without_touching_anything(self):
+        stray = self.archives / 'systemd-archive-test'
+        stray.mkdir(mode=0o700)
+        (stray / 'partial.conf').write_text('half copied\n')
+        code, report = self.archive()
+        self.assertEqual(code, 2)
+        self.assertIn('incomplete', report['error'])
+        self.assertEqual(tree(self.units), self.before)
+        self.assertEqual((stray / 'partial.conf').read_text(), 'half copied\n')
+
+    def test_resume_refuses_a_manifest_for_another_unit_directory(self):
+        self.crashed()
+        manifest = self.archives / 'systemd-archive-test' / 'manifest.json'
+        data = json.loads(manifest.read_text())
+        data['unit_dir'] = '/somewhere/else'
+        manifest.write_text(json.dumps(data))
+        code, report = self.archive()
+        self.assertEqual(code, 2)
+        self.assertIn('does not match', report['error'])
+
+    def test_restore_accepts_a_half_removed_state_that_the_manifest_fully_describes(self):
+        self.crashed()
+        code, report = self.rollback()
+        self.assertEqual(code, 0, report)
+        self.assertEqual(tree(self.units), self.before)
+
+    def test_restore_accepts_an_original_unit_file_that_was_never_removed(self):
+        with mock.patch.object(cutover, 'remove_tree', side_effect=OSError('crash before the first removal')):
+            with self.assertRaises(OSError):
+                self.archive()
+        code, report = self.rollback()                      # the replaced unit file is still the ORIGINAL, not a rendered one
+        self.assertEqual(code, 0, report)
+        self.assertEqual(tree(self.units), self.before)
+
+    def test_restore_still_refuses_a_foreign_file_in_a_half_removed_directory(self):
+        self.crashed()
+        (self.units / 'desk-dashboard.service.d' / 'hand-written.conf').write_text('[Service]\n')
+        before = tree(self.units)
+        code, report = self.rollback()
+        self.assertEqual(code, 2)
+        self.assertIn('hand-written.conf', report['error'])
+        self.assertEqual(tree(self.units), before)
 
     def install_fresh(self):
         (self.units / 'desk-backup.service').write_text((self.fresh / 'desk-backup.service').read_text())
@@ -1665,7 +1787,16 @@ class ArchiveDropinsTests(Base):
 
 
 class SealArchiveTests(Base):
-    """T32F item 8: archived stores become root-owned read-only; the shared inputs stay usable."""
+    """T32F item 8 + T32G items 1/2: archived stores become root:solana-desk read-only; live files are never touched.
+
+    Seal changes only an explicit allow-list (the sqlite family); every `*.lock` (discovery, pacing holders, paper-cycle,
+    scheduler...) and every file outside the allow-list is left exactly as it is. Nothing is changed before a manifest
+    (path, uid, gid, mode, sha256) is on disk, and `unseal` puts every recorded entry back.
+    """
+    LOCKS = ('discovery/continuous.sqlite.discovery.lock', 'provider-pacing.sqlite.holder-helius.lock',
+             'provider-pacing.sqlite.holder-jupiter.lock', 'research.sqlite.paper-cycle.lock',
+             'evidence.sqlite.ownership-invocation.lock', 'paper-scheduler.lock', 'entry-dispatch/dispatch.sqlite.dispatcher.lock',
+             '.daily.lock')
 
     def setUp(self):
         super().setUp()
@@ -1674,50 +1805,202 @@ class SealArchiveTests(Base):
         (self.old / 'entry-dispatch').mkdir()
         self.pacing = self.old / 'provider-pacing.sqlite'
         self.cont = self.old / 'discovery' / 'continuous.sqlite'
-        for path in (self.pacing, self.cont, self.old / 'research.sqlite', self.old / 'entry-dispatch' / 'dispatch.sqlite',
-                     self.old / 'discovery' / 'launches.sqlite', self.old / 'demo.sqlite'):
+        self.stores = ('research.sqlite', 'demo.sqlite', 'entry-dispatch/dispatch.sqlite', 'discovery/launches.sqlite')
+        for path in (self.pacing, self.cont, *(self.old / n for n in self.stores)):
             path.write_bytes(path.name.encode())
-            path.chmod(0o600)
+            path.chmod(0o644)
+        for name in self.LOCKS:
+            (self.old / name).write_bytes(b'')
+            (self.old / name).chmod(0o600)
+        (self.old / 'notes.txt').write_text('operator note\n')
+        (self.old / 'notes.txt').chmod(0o644)
+        self.manifest = self.root / 'seal-manifest.json'
         self.chowns = []
         patcher = mock.patch.object(cutover.Ops, 'chown', side_effect=lambda path, owner, group: self.chowns.append((Path(path), owner, group)))
         patcher.start()
         self.addCleanup(patcher.stop)
+        # nobody is "root" unless a test says so (the suite itself may run as uid 0)
+        patcher = mock.patch.object(cutover, 'ROOT_UID', -1)
+        patcher.start()
+        self.addCleanup(patcher.stop)
 
-    def seal(self, *extra, apply=True):
-        return self.run_cli('seal-archive', '--root', str(self.old), '--shared-path', str(self.pacing),
-                            '--shared-path', str(self.cont), *extra, apply=apply)
+    def seal(self, *extra, apply=True, manifest=True):
+        args = ['seal-archive', '--root', str(self.old), '--shared-path', str(self.pacing), '--shared-path', str(self.cont)]
+        if manifest:
+            args += ['--manifest', str(self.manifest)]
+        return self.run_cli(*args, *extra, apply=apply)
 
-    def test_dry_run_changes_nothing(self):
+    def unseal(self, *extra, apply=True):
+        return self.run_cli('unseal', '--manifest', str(self.manifest), *extra, apply=apply)
+
+    def test_dry_run_changes_nothing_and_writes_no_manifest(self):
         before = tree(self.old)
         code, report = self.seal(apply=False)
         self.assertEqual((code, report['status'], tree(self.old), self.chowns), (0, 'DRY_RUN', before, []))
+        self.assertFalse(self.manifest.exists())
         self.assertEqual(report['files'], 4)
 
-    def test_archived_files_are_root_0444_dirs_0555_and_shared_inputs_untouched_with_sticky_group_dirs(self):
-        shared_before = (tree(self.old)['provider-pacing.sqlite'], tree(self.old)['discovery/continuous.sqlite'])
+    def test_files_are_root_group_0440_dirs_0550_shared_dirs_1770_not_world_accessible(self):
         code, report = self.seal()
         self.assertEqual(code, 0, report)
         after = tree(self.old)
-        for rel in ('research.sqlite', 'demo.sqlite', 'entry-dispatch/dispatch.sqlite', 'discovery/launches.sqlite'):
-            self.assertEqual(after[rel][1], '0o444', rel)
-            self.assertIn((self.old / rel, 'root', 'root'), self.chowns)
-        self.assertEqual(after['entry-dispatch'][1], '0o555')
-        self.assertIn((self.old / 'entry-dispatch', 'root', 'root'), self.chowns)
-        # directories that must stay creatable for the rollback journal: group-writable and sticky
-        self.assertEqual(oct(self.old.stat().st_mode & 0o7777), '0o1775')
-        self.assertEqual(after['discovery'][1], '0o1775')
+        for rel in self.stores:
+            self.assertEqual(after[rel][1], '0o440', rel)
+            self.assertIn((self.old / rel, 'root', 'solana-desk'), self.chowns)
+        self.assertEqual(after['entry-dispatch'][1], '0o550')
+        self.assertIn((self.old / 'entry-dispatch', 'root', 'solana-desk'), self.chowns)
+        # directories that must stay creatable for the rollback journal: group-writable, sticky, NO world access
+        self.assertEqual(oct(self.old.stat().st_mode & 0o7777), '0o1770')
+        self.assertEqual(after['discovery'][1], '0o1770')
         self.assertIn((self.old, 'root', 'solana-desk'), self.chowns)
         self.assertIn((self.old / 'discovery', 'root', 'solana-desk'), self.chowns)
-        # the shared databases themselves were not chmod'ed or chowned
-        self.assertEqual((after['provider-pacing.sqlite'], after['discovery/continuous.sqlite']), shared_before)
-        self.assertNotIn(self.pacing, [c[0] for c in self.chowns])
-        self.assertNotIn(self.cont, [c[0] for c in self.chowns])
+        self.assertEqual(sorted(report['shared_dirs']), sorted([str(self.old), str(self.old / 'discovery')]))
+
+    EVIDENCE = ('acquisition-2026-10-01.json', 'paper-target-SYNTH.json', 'x-intake-1.json', 'events.jsonl', 'discovery/frames.jsonl')
+
+    def test_json_and_jsonl_evidence_files_are_sealed_by_default_but_never_a_lock(self):
+        """T32I item 4: ~40 non-sqlite evidence files in the archived root were left writable by the service user."""
+        for name in self.EVIDENCE:
+            (self.old / name).write_text('{}\n')
+            (self.old / name).chmod(0o644)
+        (self.old / 'telegram.json.lock').write_text('')               # a lock keeps its identity whatever its extension looks like
+        (self.old / 'telegram.json.lock').chmod(0o600)
+        locks_before = {n: os.lstat(self.old / n) for n in (*self.LOCKS, 'telegram.json.lock')}
+        code, report = self.seal()
+        self.assertEqual(code, 0, report)
+        after = tree(self.old)
+        for name in self.EVIDENCE:
+            self.assertEqual(after[name][1], '0o440', name)
+            self.assertIn((self.old / name, 'root', 'solana-desk'), self.chowns, name)
+        self.assertEqual(after['notes.txt'][1], '0o644', 'still outside the allow-list')
+        self.assertIn(str(self.old / 'notes.txt'), report['unlisted'])
+        for name, before in locks_before.items():
+            self.assertEqual((os.lstat(self.old / name).st_mode, os.lstat(self.old / name).st_mtime_ns), (before.st_mode, before.st_mtime_ns), name)
+            self.assertNotIn(self.old / name, [c[0] for c in self.chowns], name)
+        sealed = {e['path'] for e in json.loads(self.manifest.read_text())['sealed']}
+        self.assertTrue(set(self.EVIDENCE) <= sealed)
+        self.assertEqual(self.unseal()[0], 0)                                       # and unseal puts them back
+        for name in self.EVIDENCE:
+            self.assertEqual(oct(os.lstat(self.old / name).st_mode & 0o777), '0o644', name)
+
+    def seal_without_shared_paths(self, *extra):
+        return self.run_cli('seal-archive', '--root', str(self.old), '--manifest', str(self.manifest), *extra, apply=True)
+
+    def test_a_root_without_shared_inputs_is_sealed_0550_not_1770(self):
+        """T32I item 6: rotating seals $NEW, which holds no shared database; it must not be left group-writable."""
+        code, report = self.seal_without_shared_paths()
+        self.assertEqual(code, 0, report)
+        self.assertEqual(report['shared_dirs'], [])
+        for directory in (self.old, self.old / 'discovery', self.old / 'entry-dispatch'):
+            self.assertEqual(oct(directory.stat().st_mode & 0o7777), '0o550', directory)
+        self.assertEqual(oct((self.old / 'research.sqlite').stat().st_mode & 0o777), '0o440')
+
+    def test_only_the_directory_that_holds_a_shared_database_gets_1770(self):
+        code, report = self.run_cli('seal-archive', '--root', str(self.old), '--shared-path', str(self.cont),
+                                    '--manifest', str(self.manifest), apply=True)
+        self.assertEqual(code, 0, report)
+        self.assertEqual(report['shared_dirs'], [str(self.old / 'discovery')])
+        self.assertEqual(oct((self.old / 'discovery').stat().st_mode & 0o7777), '0o1770')
+        self.assertEqual(oct(self.old.stat().st_mode & 0o7777), '0o550')
+
+    def test_shared_databases_and_every_live_lock_file_are_untouched(self):
+        before = tree(self.old)
+        names = ('provider-pacing.sqlite', 'discovery/continuous.sqlite', *self.LOCKS)
+        stats = {n: os.lstat(self.old / n) for n in names}
+        code, report = self.seal()
+        self.assertEqual(code, 0, report)
+        after = tree(self.old)
+        for rel in names:
+            self.assertEqual(after[rel], before[rel], rel)
+            self.assertNotIn(self.old / rel, [c[0] for c in self.chowns], rel)
+            now = os.lstat(self.old / rel)
+            self.assertEqual((now.st_mode, now.st_uid, now.st_gid, now.st_mtime_ns),
+                             (stats[rel].st_mode, stats[rel].st_uid, stats[rel].st_gid, stats[rel].st_mtime_ns), rel)
+        self.assertEqual(sorted(report['untouched_locks']), sorted(str(self.old / n) for n in self.LOCKS))
         self.assertEqual(report['untouched'], sorted([str(self.pacing), str(self.cont)]))
+
+    def test_files_outside_the_allow_list_are_left_alone_and_reported(self):
+        before = tree(self.old)['notes.txt']
+        code, report = self.seal()
+        self.assertEqual(tree(self.old)['notes.txt'], before)
+        self.assertEqual(report['unlisted'], [str(self.old / 'notes.txt')])
+        self.manifest.unlink()                                                   # one exclusive manifest per run
+        code, report = self.seal('--seal-pattern', '*.txt')                    # an explicit, per-run extension
+        self.assertEqual(code, 0, report)
+        self.assertEqual(tree(self.old)['notes.txt'][1], '0o440')
+
+    def test_an_extra_pattern_can_never_reach_a_lock_file(self):
+        code, report = self.seal('--seal-pattern', '*.lock', apply=False)
+        self.assertEqual(code, 2)
+        self.assertIn('lock', report['error'])
+        code, report = self.seal('--seal-pattern', '*', apply=True)
+        self.assertEqual(code, 0, report)
+        for name in self.LOCKS:
+            self.assertEqual(oct(os.lstat(self.old / name).st_mode & 0o7777), '0o600', name)
+
+    def test_a_root_only_0600_file_stays_0600_root(self):
+        secret = self.old / 'root-only.sqlite'
+        secret.write_bytes(b's')
+        secret.chmod(0o600)
+        with mock.patch.object(cutover, 'ROOT_UID', os.geteuid()):               # in this sandbox "root" is the current user
+            private = self.old / 'private-dir'
+            private.mkdir(mode=0o700)
+            code, report = self.seal()
+        self.assertEqual(code, 0, report)
+        self.assertEqual(oct(secret.stat().st_mode & 0o7777), '0o600')
+        self.assertNotIn(secret, [c[0] for c in self.chowns])
+        self.assertIn(str(secret), report['kept_root_only'])
+        self.assertEqual(oct(private.stat().st_mode & 0o7777), '0o700')
+
+    def test_the_manifest_is_complete_exclusive_0600_and_written_before_anything_changes(self):
+        order = []
+        real = cutover.Ops.do
+
+        def spy(ops, description, function):
+            order.append(('do', description, self.manifest.exists()))
+            return real(ops, description, function)
+        with mock.patch.object(cutover.Ops, 'do', spy):
+            code, report = self.seal()
+        self.assertEqual(code, 0, report)
+        self.assertEqual(oct(self.manifest.stat().st_mode & 0o777), '0o600')
+        data = json.loads(self.manifest.read_text())
+        self.assertEqual((data['kind'], data['version'], data['root']), ('seal_manifest_v1', 1, str(self.old)))
+        entries = {e['path']: e for e in data['sealed']}
+        for rel in self.stores:
+            e = entries[rel]
+            # T32I item 7: a new file's group is its parent directory's (BSD/macOS: /private/tmp is gid 0), not os.getegid()
+            self.assertEqual((e['type'], e['mode'], e['uid'], e['gid']),
+                             ('file', 0o644, os.geteuid(), (self.old / rel).parent.stat().st_gid))
+            self.assertEqual(e['sha256'], hashlib.sha256(rel.rsplit('/', 1)[-1].encode()).hexdigest())
+        self.assertEqual(entries['entry-dispatch']['type'], 'dir')
+        self.assertEqual(entries['.']['type'], 'dir')                              # the root itself
+        self.assertEqual(sorted(data['untouched']), sorted(['provider-pacing.sqlite', 'discovery/continuous.sqlite',
+                                                            *self.LOCKS, 'notes.txt']))
+        # the manifest write is the first filesystem mutation
+        mutations = [o for o in order if o[1].startswith('seal ')]
+        self.assertTrue(mutations)
+        self.assertTrue(all(exists for _, _, exists in mutations))
+
+    def test_an_existing_manifest_or_one_inside_the_root_is_refused_before_anything_changes(self):
+        self.manifest.write_text('{}')
+        before = tree(self.old)
+        code, report = self.seal()
+        self.assertEqual((code, tree(self.old), self.chowns), (2, before, []))
+        self.manifest.unlink()
+        code, report = self.run_cli('seal-archive', '--root', str(self.old), '--manifest', str(self.old / 'm.json'),
+                                    '--shared-path', str(self.pacing), apply=True)
+        self.assertEqual((code, tree(self.old), self.chowns), (2, before, []))
+        self.assertIn('inside', report['error'])
+        with mock.patch('sys.stderr', io.StringIO()), self.assertRaises(SystemExit) as caught:
+            self.seal(manifest=False)                                              # --manifest is mandatory (argparse exit 2)
+        self.assertEqual((caught.exception.code, tree(self.old)), (2, before))
 
     def test_second_seal_is_idempotent_and_refuses_unsafe_trees(self):
         self.assertEqual(self.seal()[0], 0)
+        self.manifest.unlink()
         self.assertEqual(self.seal()[0], 0)
         (self.old / 'link.sqlite').symlink_to(self.old / 'demo.sqlite')
+        self.manifest.unlink()
         code, report = self.seal()
         self.assertEqual(code, 2)
         self.assertIn('symlink', report['error'])
@@ -1727,9 +2010,58 @@ class SealArchiveTests(Base):
         os.unlink(self.old / 'hard.sqlite')
         outside = self.root / 'elsewhere.sqlite'
         outside.write_bytes(b'x')
-        code, report = self.run_cli('seal-archive', '--root', str(self.old), '--shared-path', str(outside), apply=True)
+        code, report = self.run_cli('seal-archive', '--root', str(self.old), '--manifest', str(self.manifest),
+                                    '--shared-path', str(outside), apply=True)
         self.assertEqual(code, 2)
         self.assertIn('inside --root', report['error'])
+
+    # -- unseal ---------------------------------------------------------------------------------------------
+    def test_unseal_restores_every_recorded_entry_exactly(self):
+        before = tree(self.old)
+        self.seal()
+        self.chowns.clear()
+        self.assertNotEqual(tree(self.old), before)
+        code, report = self.unseal()
+        self.assertEqual(code, 0, report)
+        self.assertEqual(tree(self.old), before)
+        recorded = {c[0]: (c[1], c[2]) for c in self.chowns}
+        self.assertEqual(recorded[self.old / 'research.sqlite'], (os.geteuid(), self.old.stat().st_gid))   # numeric uid/gid back (parent's group)
+        self.assertEqual(recorded[self.old], (os.geteuid(), self.old.parent.stat().st_gid))
+        for name in self.LOCKS:
+            self.assertNotIn(self.old / name, recorded)
+        self.assertEqual(self.unseal()[0], 0)                                      # idempotent
+        self.assertEqual(tree(self.old), before)
+
+    def test_unseal_dry_run_changes_nothing(self):
+        self.seal()
+        sealed = tree(self.old)
+        code, report = self.unseal(apply=False)
+        self.assertEqual((code, report['status'], tree(self.old)), (0, 'DRY_RUN', sealed))
+
+    def test_unseal_refuses_a_file_changed_while_sealed_a_missing_entry_and_a_bad_manifest(self):
+        self.seal()
+        sealed = tree(self.old)
+        victim = self.old / 'research.sqlite'
+        victim.chmod(0o644)
+        victim.write_bytes(b'tampered')
+        victim.chmod(0o440)
+        code, report = self.unseal()
+        self.assertEqual(code, 2)
+        self.assertIn('research.sqlite', report['error'])
+        victim.chmod(0o644)
+        victim.write_bytes(b'research.sqlite')
+        victim.chmod(0o440)
+        (self.old / 'demo.sqlite').unlink()
+        code, report = self.unseal()
+        self.assertEqual(code, 2)
+        self.assertIn('demo.sqlite', report['error'])
+        data = json.loads(self.manifest.read_text())
+        data['sealed'].append({'path': '../outside', 'type': 'file', 'mode': 0o644, 'uid': 0, 'gid': 0, 'sha256': '0' * 64})
+        self.manifest.write_text(json.dumps(data))
+        self.assertEqual(self.unseal()[0], 2)
+        self.manifest.write_text('not json')
+        self.assertEqual(self.unseal()[0], 2)
+        self.assertEqual(set(sealed), set(tree(self.old)) | {'demo.sqlite'})      # refusals changed nothing else
 
 
 class RealRuntimeDigestTests(unittest.TestCase):
