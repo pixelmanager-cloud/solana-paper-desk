@@ -117,6 +117,15 @@ class RouteCheckEndToEnd(unittest.TestCase):
         data = report.build(self.state / 'lean.sqlite', now=self.clock.time())['route_check']['data']
         self.assertEqual((data['exit']['checked'], data['exit']['pct'], data['inconclusive'], data['not_routable_reasons']), (1, 100.0, 1, {}))
 
+    def test_h_a_retried_candidate_has_one_inconclusive_entry_row_then_one_check(self):
+        token = Token(21)
+        self.make([token], [0])
+        down = (T0, T0 + 90)                                                    # the first two attempts (ticks 0 and 60) fail with 503
+        self.world.hook = lambda i, o, t: Resp(b'{"error":"overloaded"}', 503) if o == token.mint and down[0] <= t < down[1] else None
+        r = self.runner(); self.drive(r, 600)
+        self.assertEqual([(a, f['side']) for a, f, _ in self.checks(r)], [('INCONCLUSIVE', 'entry'), ('ROUTABLE', 'entry')])
+        self.assertEqual(len(r.store.positions()), 1)
+
     def test_g_a_buy_quote_without_a_route_is_one_entry_check_per_candidate(self):
         token = Token(21)
         self.make([token], [0])

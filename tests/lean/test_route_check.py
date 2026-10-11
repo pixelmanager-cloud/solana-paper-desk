@@ -71,6 +71,7 @@ class Analyze(unittest.TestCase):
                  'rate limited': (ProviderError('HTTP_429', True, raw=b'{"errorCode":"COULD_NOT_FIND_ANY_ROUTE"}'), False),
                  'server error': (ProviderError('HTTP_503', True), False),
                  'bad key': (ProviderError('AUTH_REJECTED', False), False),
+                 'bad key with a body code': (ProviderError('AUTH_REJECTED', False, raw=b'{"errorCode":"UNAUTHORIZED"}'), False),
                  'redirect': (ProviderError('REDIRECT_REFUSED', False), False),
                  'our own bad argument': (ProviderError('ARGUMENT_INVALID', False), False),
                  'unparseable body': (ProviderError('RESPONSE_MALFORMED', False), False),
