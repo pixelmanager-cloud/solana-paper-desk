@@ -154,6 +154,92 @@ class Fixture(unittest.TestCase):
         return {c['check']: c['severity'] for c in report['checks']}
 
 
+class CapacityWarningTests(Fixture):
+    """T24S item 3: every 80 % rotation warning is a WARN, with the exact boundary."""
+
+    def fill(self, table, rows):
+        with closing(sqlite3.connect(self.root / 'evidence.sqlite')) as c:
+            c.execute('CREATE TABLE IF NOT EXISTS "%s"(n INTEGER)' % table)
+            c.execute('DELETE FROM "%s"' % table)
+            c.executemany('INSERT INTO "%s" VALUES(?)' % table, [(i,) for i in range(rows)])
+            c.commit()
+
+    def sev(self, name):
+        return self.severities(self.report()[1])[name]
+
+    def test_a_healthy_desk_has_no_capacity_warning(self):
+        report = self.report()[1]
+        for name in ('capacity_evidence_pages', 'capacity_evidence_bytes', 'publish_refused', 'rotation_warnings'):
+            self.assertEqual(self.severities(report)[name], 'OK', name)
+
+    def test_each_table_warns_exactly_at_eighty_percent_of_its_ceiling(self):
+        from desk import history_preparation_rejection, paper_cycle_no_entry, paper_pass_closure
+        cases = (('paper_history_preparation_rejections', history_preparation_rejection.MAX_REJECTIONS),
+                 ('paper_cycle_no_entry', paper_cycle_no_entry.MAX_ROWS),
+                 ('paper_pass_closures', paper_pass_closure.PASS_CEILING))
+        self.assertEqual([c[1] for c in cases], [512, 8192, 10000])
+        for table, limit in cases:
+            with self.subTest(table=table):
+                self.fill(table, int(limit * 0.8) - 1)
+                self.assertEqual(self.sev('capacity_' + table), 'OK')
+                self.fill(table, int(limit * 0.8))
+                code, report = self.report()
+                self.assertEqual(self.severities(report)['capacity_' + table], 'WARN')
+                row = self.find(report, 'capacity_' + table)[0]
+                self.assertEqual((row['rows'], row['limit']), (int(limit * 0.8), limit))
+                self.assertEqual(code, 0)                                        # a rotation warning is advice, not a failure
+                with closing(sqlite3.connect(self.root / 'evidence.sqlite')) as c:
+                    c.execute('DROP TABLE "%s"' % table)
+
+    def test_original_passes_warn_too(self):
+        with closing(sqlite3.connect(self.root / 'evidence.sqlite')) as c:
+            c.executemany("INSERT INTO paper_observation_passes VALUES(?,?,?)", [('p%d' % i, 'i', 'o') for i in range(8000)])
+            c.commit()
+        self.assertEqual(self.sev('capacity_paper_observation_passes'), 'WARN')
+
+    def test_evidence_pages_and_bytes_warn_at_eighty_percent(self):
+        self.fill('pages', 80_000)
+        self.assertEqual(self.sev('capacity_evidence_pages'), 'WARN')
+        self.fill('pages', 79_999)
+        self.assertEqual(self.sev('capacity_evidence_pages'), 'OK')
+        size = (self.root / 'evidence.sqlite').stat().st_size
+        with mock.patch.object(healthcheck, 'EVIDENCE_BYTE_LIMIT', int(size / 0.8) + 4096):
+            self.assertEqual(self.sev('capacity_evidence_bytes'), 'OK')
+        with mock.patch.object(healthcheck, 'EVIDENCE_BYTE_LIMIT', int(size / 0.8) - 4096):
+            self.assertEqual(self.sev('capacity_evidence_bytes'), 'WARN')
+
+    def test_threshold_override(self):
+        self.fill('paper_cycle_no_entry', 5000)
+        self.assertEqual(self.sev('capacity_paper_cycle_no_entry'), 'OK')
+        self.assertEqual(self.severities(self.report('--threshold', 'rotation_warn_fraction=0.5')[1])['capacity_paper_cycle_no_entry'], 'WARN')
+
+    def write_log(self, *lines):
+        (self.root / 'evidence.sqlite.publish-refused.jsonl').write_text(''.join(line + '\n' for line in lines))
+
+    def test_the_publish_refused_log_is_surfaced(self):
+        self.write_log(json.dumps({'kind': 'publish_refused_v1', 'at': 1, 'pass_id': 'P' * 32, 'scan_id': 's', 'blocker': 'MARKET_PRODUCER_BLOCKED',
+                                   'reason': 'ValueError', 'detail': 'x'}))
+        row = self.find(self.report()[1], 'publish_refused')[0]
+        self.assertEqual((row['severity'], row['count'], row['last_blocker'], row['last_pass']), ('WARN', 1, 'MARKET_PRODUCER_BLOCKED', 'P' * 32))
+
+    def test_rotation_warning_rows_and_malformed_lines_and_a_nearly_full_log_warn(self):
+        self.write_log(json.dumps({'kind': 'rotation_warning_v1', 'table': 'paper_cycle_no_entry', 'rows': 7000, 'limit': 8192}))
+        row = self.find(self.report()[1], 'rotation_warnings')[0]
+        self.assertEqual((row['severity'], row['tables']), ('WARN', ['paper_cycle_no_entry']))
+        self.write_log('not json')
+        self.assertEqual(self.find(self.report()[1], 'publish_refused')[0]['severity'], 'WARN')
+        self.write_log(json.dumps({'kind': 'rotation_warning_v1', 'pad': 'x' * 900_000}))
+        self.assertEqual(self.sev('publish_refused_log_size'), 'WARN')
+
+    def test_a_symlinked_refusal_log_is_a_failed_probe_not_a_silent_pass(self):
+        target = self.root / 'elsewhere'
+        target.write_text('')
+        os.symlink(target, self.root / 'evidence.sqlite.publish-refused.jsonl')
+        code, report = self.report()
+        self.assertEqual(code, 2)
+        self.assertEqual(self.find(report, 'capacity')[0]['severity'], 'CRITICAL')
+
+
 class HealthcheckTests(Fixture):
     def test_healthy_desk_is_ok_and_exits_zero(self):
         code, report = self.report()

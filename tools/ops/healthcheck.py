@@ -58,6 +58,7 @@ DEFAULTS = {
     'backup_age_warn': 30 * 3600, 'backup_age_critical': 54 * 3600,
     'max_hold_seconds': 21600,
     'research_cpu_fraction': 0.9, 'research_cpu_consecutive': 3,
+    'rotation_warn_fraction': 0.8,
 }
 # Research/optional units that carry a CPUQuota (T39). Optional: a unit that is not installed is skipped.
 RESEARCH_UNITS = ('desk-counterfactual.service', 'desk-fill-realism-worker.service')
@@ -371,6 +372,100 @@ def check_evidence(evidence, now, t):
     return out
 
 
+# T24S item 3: every 80 % rotation warning the desk can raise, surfaced as WARN. (table, rows ceiling) - the ceilings are the desk's own
+# constants (imported when the desk package is importable, these literals otherwise): rejection cap 512, no-entry table 8192, original
+# passes / closure rows 10000, evidence pages 100000 and the store's 256 MiB write budget.
+CAPACITY = (
+    ('paper_history_preparation_rejections', 'history_preparation_rejection', 'MAX_REJECTIONS', 512),
+    ('paper_cycle_no_entry', 'paper_cycle_no_entry', 'MAX_ROWS', 8192),
+    ('paper_pass_closures', 'paper_pass_closure', 'PASS_CEILING', 10000),
+    ('paper_observation_passes', 'paper_pass_closure', 'PASS_CEILING', 10000),
+    ('paper_pass_inventory', 'pass_inventory', 'MAX_ROWS', 16384),
+)
+EVIDENCE_PAGE_LIMIT, EVIDENCE_BYTE_LIMIT = 100_000, 256 * 1024 * 1024
+REFUSAL_SUFFIX, REFUSAL_MAX_BYTES = '.publish-refused.jsonl', 1024 * 1024
+
+
+def _ceiling(module, name, fallback):
+    try:
+        import importlib
+        value = getattr(importlib.import_module('desk.' + module), name)
+        return value if type(value) is int and value > 0 else fallback
+    except (ImportError, AttributeError):
+        return fallback
+
+
+def read_refusal_log(path):
+    """Bounded read of ``<evidence>.publish-refused.jsonl`` without following a symlink: (rows, malformed, size) or None."""
+    try:
+        fd = os.open(str(path) + REFUSAL_SUFFIX, os.O_RDONLY | os.O_NOFOLLOW)
+    except FileNotFoundError:
+        return None
+    try:
+        info = os.fstat(fd)
+        if not stat_is_regular(info.st_mode):
+            raise OSError('refusal log is not a regular file')
+        raw = os.read(fd, REFUSAL_MAX_BYTES + 1)
+    finally:
+        os.close(fd)
+    rows, malformed = [], 0
+    for line in raw.splitlines():
+        try:
+            row = json.loads(line)
+            if type(row) is not dict or row.get('kind') not in ('publish_refused_v1', 'rotation_warning_v1'):
+                raise ValueError
+            rows.append(row)
+        except ValueError:
+            malformed += 1
+    return rows, malformed, info.st_size
+
+
+def stat_is_regular(mode):
+    import stat
+    return stat.S_ISREG(mode)
+
+
+def check_capacity(evidence, now, t):
+    """WARN at ``rotation_warn_fraction`` of every capacity the desk rotates on, and for every publish-refused / rotation row."""
+    out = []
+    fraction = t['rotation_warn_fraction']
+    with closing(ro(evidence)) as c:
+        tables = {r[0] for r in c.execute("SELECT name FROM sqlite_master WHERE type='table'")}
+        for table, module, name, fallback in CAPACITY:
+            if table not in tables:
+                continue
+            limit = _ceiling(module, name, fallback)
+            rows = c.execute('SELECT count(*) FROM "%s"' % table).fetchone()[0]
+            severity = WARN if rows >= int(limit * fraction) else OK
+            out.append(check('capacity_' + table, severity,
+                             '%d of %d rows (%.0f%%)%s' % (rows, limit, 100.0 * rows / limit,
+                                                        '; rotate the store set while flat (RUNBOOK "Rotate when flat")' if severity == WARN else ''),
+                             rows=rows, limit=limit))
+        pages = c.execute('SELECT count(*) FROM pages').fetchone()[0] if 'pages' in tables else 0
+        size = c.execute('PRAGMA page_count').fetchone()[0] * c.execute('PRAGMA page_size').fetchone()[0]
+    out.append(check('capacity_evidence_pages', WARN if pages >= int(EVIDENCE_PAGE_LIMIT * fraction) else OK,
+                     '%d of %d evidence pages' % (pages, EVIDENCE_PAGE_LIMIT), rows=pages, limit=EVIDENCE_PAGE_LIMIT))
+    out.append(check('capacity_evidence_bytes', WARN if size >= int(EVIDENCE_BYTE_LIMIT * fraction) else OK,
+                     '%d of %d evidence store bytes' % (size, EVIDENCE_BYTE_LIMIT), bytes=size, limit=EVIDENCE_BYTE_LIMIT))
+    log = read_refusal_log(evidence)
+    rows, malformed, log_size = log if log is not None else ([], 0, 0)
+    refused = [r for r in rows if r.get('kind') == 'publish_refused_v1']
+    warned = sorted({str(r.get('table')) for r in rows if r.get('kind') == 'rotation_warning_v1'})
+    if refused or malformed:
+        last = refused[-1] if refused else {}
+        out.append(check('publish_refused', WARN, '%d refused no-entry publication(s)%s%s' % (
+            len(refused), ', last %s/%s' % (last.get('blocker'), last.get('reason')) if refused else '',
+            ', %d malformed line(s)' % malformed if malformed else ''), count=len(refused), malformed=malformed,
+            last_pass=last.get('pass_id'), last_blocker=last.get('blocker')))
+    else:
+        out.append(check('publish_refused', OK, 'no refused publications'))
+    out.append(check('rotation_warnings', WARN if warned else OK,
+                     'rotation warning(s) logged for: %s' % ', '.join(warned) if warned else 'no rotation warnings logged', tables=warned))
+    out.append(check('publish_refused_log_size', WARN if log_size >= int(REFUSAL_MAX_BYTES * fraction) else OK,
+                     '%d of %d bytes (logging stops at the limit)' % (log_size, REFUSAL_MAX_BYTES), bytes=log_size))
+    return out
+
+
 def check_pacing(path, now, t):
     out = []
     with closing(ro(path)) as c:
@@ -444,6 +539,7 @@ def _build_report(args, runner, clock, usage):
     checks += guarded('discovery', check_discovery, args.discovery_db, now, t)
     checks += guarded('ledger', check_ledger, root / 'paper-ledger.sqlite', now, t, cfg)
     checks += guarded('evidence', check_evidence, root / 'evidence.sqlite', now, t)
+    checks += guarded('capacity', check_capacity, root / 'evidence.sqlite', now, t)
     checks += guarded('pacing', check_pacing, args.pacing_db, now, t)
     checks += guarded('disk', check_disk, root, t, usage)
     if args.backup_root:
