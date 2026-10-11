@@ -43,7 +43,7 @@ class _Halt(Exception):
 class Runner:
     def __init__(self, *, store, providers, exit_providers, strategy_cfg, discovery_db, state_dir, code_version,
                  screen_overrides=None, pool_fee_bps=25, taker=PAPER_TAKER, kill_switch=None, clock=time.time,
-                 scan_limit=500, max_retries=3, sol_usd_ttl_s=30):
+                 scan_limit=500, max_retries=3, sol_usd_ttl_s=30, extra_sources=None, watchlist=None):
         self.store, self.providers, self.exit_providers = store, providers, exit_providers
         self.cfg = strategy_cfg
         self.pcfg = A.paper_config(strategy_cfg)
@@ -68,6 +68,9 @@ class Runner:
         self._sol_usd = None                       # (Decimal, fetched_at)
         self.halted = None
         self.cursor = 0
+        # --- L14 hook ---
+        self.extra_sources, self.watch, self._source_of = extra_sources, watchlist, {}
+        # --- end L14 ---
         self.startup()
 
     # -- lifecycle ------------------------------------------------------------------------------------------------
@@ -186,6 +189,7 @@ class Runner:
                 self._count('retries')
                 self._isolated(candidate, attempt)
                 done += 1
+            done += self._l14_pass()
             try:
                 scan = C.scan_new(self.discovery_db, self.cursor, now=self.clock(), limit=self.scan_limit, cfg=self.screen_cfg)
             except C.DiscoveryUnavailable as error:
@@ -213,9 +217,39 @@ class Runner:
             pass
         return done
 
+    # --- L14 hook ---
+    def _l14_pass(self):
+        """Extra sources (own cursors), then watchlist re-screens; both bounded, both isolated from the pump scan."""
+        done = 0
+        if self.extra_sources is not None:
+            def handle(source, candidate):
+                self._source_of[candidate.mint] = source
+                try:
+                    self._isolated(candidate, 1)
+                finally:
+                    self._source_of.pop(candidate.mint, None)
+            done += self.extra_sources.poll(
+                handle, exists=lambda mint: self.store.candidate_id(mint) is not None,
+                stopped=lambda: self.stop.is_set() or not self.entries_allowed(),
+                on_error=lambda code, transient, source, message: self._error(code, transient=transient, scope='source', message='%s: %s' % (source, message)))
+        if self.watch is not None and not self.stop.is_set() and self.entries_allowed():
+            from lean.watchlist import RESCREEN_ATTEMPT
+            done += self.watch.rescreen(lambda candidate, source: self._rescreen(candidate, source, RESCREEN_ATTEMPT))
+        return done
+
+    def _rescreen(self, candidate, source, attempt):
+        self._source_of[candidate.mint] = source
+        try:
+            self._isolated(candidate, attempt)
+        finally:
+            self._source_of.pop(candidate.mint, None)
+    # --- end L14 ---
+
     def _isolated(self, candidate, attempt):
         try:
             self._handle_candidate(candidate, attempt)
+            if self.watch is not None:                                         # L14
+                self.watch.after_handle(candidate)
         except _Halt:
             raise
         except AccountingHalt as error:
@@ -238,7 +272,8 @@ class Runner:
             self._count('candidates')
         cid = self.store.add_candidate(mint, pool=candidate.pool, signature=candidate.signature, slot=candidate.slot,
                                        migrated_at=candidate.migrated_at, hint_seq=candidate.seq,
-                                       meta={'payload_hash': candidate.payload_hash}, ts=self.clock())
+                                       meta={'payload_hash': candidate.payload_hash, 'source': self._source_of.get(candidate.mint, 'pump_graduation')},
+                                       ts=self.clock())
         sol_usd = self._sol_usd_value()
         result = C.screen(candidate, self.providers, self.screen_cfg, now=self.clock(), sol_usd=sol_usd)
         self._count('screened')

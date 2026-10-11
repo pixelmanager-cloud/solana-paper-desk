@@ -14,5 +14,12 @@
     "token_profile_version": 2,
     "holder_check": true,
     "max_top10_pct": 60
+  },
+  "sources": [],
+  "watchlist": {
+    "enabled": true,
+    "watch_interval_s": 300,
+    "watch_hours": 6,
+    "watch_max_per_pass": 5
   }
 }

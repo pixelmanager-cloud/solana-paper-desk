@@ -20,6 +20,8 @@ CONFIG_KEYS = {
     'max_candidate_retries': 3,
     'sol_usd_ttl_s': 30,
     'screen': {},                      # lean.candidates settings other than the strategy-owned bands
+    'sources': [],                     # L14: extra candidate sources [{name, type, discovery_db}]; [] = pump discovery only
+    'watchlist': {},                   # L14: {enabled (default false), watch_interval_s 300, watch_hours 6, watch_max_per_pass 5}
 }
 REQUIRED = ('strategy_config', 'initial_cash_sol')
 
@@ -43,6 +45,12 @@ def load_config(path):
     cfg['strategy_config'] = str(strategy_path if strategy_path.is_absolute() else path.parent / strategy_path)
     if not isinstance(cfg['screen'], dict):
         raise ConfigError('screen must be an object')
+    from lean import sources, watchlist            # L14: validated at load, so a typo fails before the trader starts
+    try:
+        sources.build_sources(cfg['sources'])
+        watchlist.WatchConfig.from_dict(cfg['watchlist'])
+    except (sources.SourceConfigError, watchlist.WatchConfigError, TypeError) as error:
+        raise ConfigError(str(error)) from None
     return cfg
 
 
@@ -68,12 +76,21 @@ def build_runner(cfg, *, state_dir, discovery_db, keys, code_version, clock=None
     the_store = store.Store(os.path.join(state, 'lean.sqlite'), initial_cash_sol=str(cfg['initial_cash_sol']),
                             code_version=code_version, strategy_version=strategy_cfg.strategy_version, clock=clock)
     transport_kwargs = transport_kwargs or {}
+    # --- L14 wiring ---
+    from lean import adapters, sources, watchlist
+    extra = sources.build_sources(cfg['sources'], screen_cfg=adapters.screen_config(strategy_cfg, cfg['screen']),
+                                  limit=cfg['scan_limit'], clock=clock)
+    watch_cfg = watchlist.WatchConfig.from_dict(cfg['watchlist'])
+    l14 = {'extra_sources': sources.SourceSet(extra, state) if extra else None,
+           'watchlist': (watchlist.Watchlist(the_store, watch_cfg, clock=clock, code_version=code_version,
+                                             strategy_version=strategy_cfg.strategy_version) if watch_cfg.enabled else None)}
+    # --- end L14 ---
     return runner.Runner(
         store=the_store, providers=providers.build_providers(keys, lane='main', **transport_kwargs),
         exit_providers=providers.build_providers(keys, lane='exit', **transport_kwargs), strategy_cfg=strategy_cfg,
         discovery_db=discovery_db, state_dir=state, code_version=code_version, screen_overrides=cfg['screen'],
         pool_fee_bps=cfg['pool_fee_bps'], clock=clock, scan_limit=cfg['scan_limit'],
-        max_retries=cfg['max_candidate_retries'], sol_usd_ttl_s=cfg['sol_usd_ttl_s'])
+        max_retries=cfg['max_candidate_retries'], sol_usd_ttl_s=cfg['sol_usd_ttl_s'], **l14)
 
 
 def main(argv=None):
