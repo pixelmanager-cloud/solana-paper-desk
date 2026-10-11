@@ -414,6 +414,32 @@ class Helius:
             raise _fail('helius', 'RESPONSE_INVALID', raw=raw, meta=meta)
         return parsed['result'], raw, meta
 
+    def get_asset(self, mint):
+        """Helius DAS ``getAsset`` (read-only metadata of one mint): ``({'name': str|None, 'symbol': str|None}, raw, meta)``.
+
+        DAS takes its params as an object, so it does not go through ``rpc`` (whose allowlist is the plain RPC methods);
+        it uses the same transport, limiter, retries and redaction."""
+        _pubkey(mint)
+        body = json.dumps({'jsonrpc': '2.0', 'id': 1, 'method': 'getAsset', 'params': {'id': mint}}).encode()
+
+        def request():
+            return Request(self.URL + '?' + urlencode({'api-key': self._key}), data=body, method='POST',
+                           headers={'Content-Type': 'application/json', 'Accept': 'application/json'})
+        parsed, raw, meta = self.transport.json('das:getAsset', request, max_bytes=MAX_SMALL_RESPONSE_BYTES * 4)
+        if not isinstance(parsed, dict) or parsed.get('id') != 1 or 'error' in parsed or not isinstance(parsed.get('result'), dict):
+            raise _fail('helius', 'RESPONSE_INVALID', raw=raw, meta=meta)
+        result = parsed['result']
+        content = result.get('content') if isinstance(result.get('content'), dict) else {}
+        metadata = content.get('metadata') if isinstance(content.get('metadata'), dict) else {}
+        token_info = result.get('token_info') if isinstance(result.get('token_info'), dict) else {}
+
+        def text(*values):
+            for value in values:
+                if isinstance(value, str) and value.strip():
+                    return value.strip()[:64]
+            return None
+        return {'name': text(metadata.get('name')), 'symbol': text(metadata.get('symbol'), token_info.get('symbol'))}, raw, meta
+
     def get_multiple_accounts(self, pubkeys):
         keys = list(pubkeys)
         if not 1 <= len(keys) <= MAX_MULTIPLE_ACCOUNTS:
