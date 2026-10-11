@@ -1850,3 +1850,14 @@ A read-only report on `lean.sqlite`, as a single self-contained HTML plus JSON:
 - per-trade table, exit-reason breakdown and hold times;
 - rejection reasons with the forward price where counterfactual data exists (optional join to T26's `counterfactual.sqlite`);
 - an "insufficient sample" flag below 30 trades.
+
+---
+
+## T37H — Take over T37G (stalled worker; continue its branch)
+STATUS: OPEN
+DEPENDS: branch `cloud/T22J` has a `DONE T22J:` commit (T22J replaces T22I as the final T22-line fix)
+BASE: origin/cloud/T37G (last commit "correct the regression result"), then merge origin/cloud/T22J
+OWNS: the T37G files
+AVOID: desk/paper_pass_closure.py, desk/provider_pacing.py
+
+The T37G worker went silent for more than 3 hours. Read the T37G spec and `reports/T37G.md` on `origin/cloud/T37G`, finish every item (USD failures: transient-only closure; integrity causes HOLD; the Jupiter 401/403 exception only when the Kraken fallback was measured; the regime source), commit the coordinator probe table as tests, run the T37 and T22 test sets in ONE process (real exit code), then write `DONE T37H:`.
