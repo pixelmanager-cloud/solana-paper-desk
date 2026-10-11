@@ -174,6 +174,43 @@ class Pnl(Base):
         self.assertEqual(d['anomaly_count'], 6)
 
 
+class MixedVersions(Base):
+    """L06F: a position bought under A and sold after a restart under B belongs to A (its OPENING buy), completely."""
+
+    def mixed(self, s):
+        # A: TP rung under A, final sell under B (a restart in between). B: its own clean trade. A: a clean trade too.
+        s.add('fill', 'A', mint='m1', side='buy', qty=100, sol=1, fee_sol=.0001, at=NOW + 1)
+        s.add('fill', 'A', mint='m1', side='sell', qty=30, sol=.5, fee_sol=.0001, reason='TAKE_PROFIT', at=NOW + 10)
+        s.add('fill', 'B', mint='m1', side='sell', qty=70, sol=.6, fee_sol=.0001, reason='STOP', at=NOW + 20)
+        s.add('fill', 'B', mint='m2', side='buy', qty=100, sol=1, fee_sol=.0001, at=NOW + 30)
+        s.add('fill', 'B', mint='m2', side='sell', qty=100, sol=1.2, fee_sol=.0001, reason='TAKE_PROFIT', at=NOW + 40)
+        s.add('fill', 'A', mint='m3', side='buy', qty=100, sol=1, fee_sol=.0001, at=NOW + 50)
+        s.add('fill', 'A', mint='m3', side='sell', qty=100, sol=.9, fee_sol=.0001, reason='STOP', at=NOW + 60)
+        return s.done()
+
+    def test_pnl_is_grouped_by_the_opening_buys_version_and_mixed_trades_are_flagged(self):
+        summary = report.build(self.mixed(self.store()), now=NOW + 100)
+        by = summary['pnl_by_strategy']['data']
+        self.assertEqual(sorted(by), ['A', 'B'])                       # no phantom version for the sell of m1
+        self.assertEqual((by['A']['trades'], by['B']['trades']), (2, 1))
+        self.assertEqual((by['A']['mixed_version_trades'], by['B']['mixed_version_trades']), (1, 0))
+        # m1: cost 1.0001, proceeds .4999 + .5999; m3: cost 1.0001, proceeds .8999
+        self.assertAlmostEqual(by['A']['pnl_sol'], (.4999 + .5999 - 1.0001) + (.8999 - 1.0001), places=6)
+        self.assertAlmostEqual(by['B']['pnl_sol'], 1.1999 - 1.0001, places=6)
+        rows = {r['mint']: r for r in summary['trades']['data']['rows']}
+        self.assertEqual((rows['m1']['strategy_version'], rows['m1']['mixed_version'], rows['m1']['fill_versions']), ('A', 1, ['A', 'B']))
+        self.assertEqual((rows['m2']['strategy_version'], rows['m2']['mixed_version']), ('B', 0))
+        self.assertEqual((rows['m3']['strategy_version'], rows['m3']['mixed_version']), ('A', 0))
+        html = report.render_html(summary)
+        self.assertIn('mixed_version', html)
+        self.assertIn('OPENING buy', html)
+
+    def test_the_report_total_equals_the_sum_of_the_groups(self):
+        summary = report.build(self.mixed(self.store()), now=NOW + 100)
+        total = sum(v['pnl_sol'] for v in summary['pnl_by_strategy']['data'].values())
+        self.assertAlmostEqual(total, summary['trades']['data']['overall_pnl_sol'], places=6)
+
+
 class Robustness(Base):
     def test_corrupt_rows_are_counted_and_do_not_stop_the_report(self):
         s = self.store()
