@@ -33,6 +33,18 @@ Cost model (integer lamports):
     both conservative).
 
 Everything is OFF unless lean.json has an ``execution`` object (so today's behaviour is unchanged when the key is absent).
+
+L20 sellability evidence (``lean.sell_evidence``, OFF unless lean.json ``sell_evidence.enabled``): a quote proves a route, not that real
+traders can sell. When an exit defers in phase 1, a probe of the pool's recent sells starts on its own daemon thread (shared LOW lane).
+The pass then waits for the probes AT MOST until the instant its ONE delay would end anyway, and sleeps whatever is left, so an exit is
+never later than without the probe. Phase 2 attaches the verdict to the sell's meta (``sell_evidence``; ``UNKNOWN`` when the probe was
+shed, failed or is not finished), and ``finish_sell`` books it through the existing fill paths:
+  * VERIFIED / UNKNOWN, or UNVERIFIED with policy ``flag_only``: the normal paper SELL at q1 (flagged ``sell_status: SELL_UNVERIFIED``);
+  * UNVERIFIED with policy ``zero``: the fill is ``paper.write_off`` of the SAME quantity (zero proceeds, zero fee, the average cost
+    booked as the loss): the one write-off constructor the D2 path already uses, applied by the store's one ``apply_fill``. The payload is
+    a ``write_off`` payload (``write_off_reason: SELL_UNVERIFIED``, the quoted proceeds kept as ``unverified_quote_sol_lamports``); on a
+    full close the ATA rent is written off (the account cannot be closed with unsellable tokens in it).
+No fill is ever corrected after it was booked: there is exactly one accounting path and one fill per exit.
 """
 import base64
 import dataclasses
@@ -43,6 +55,7 @@ from dataclasses import dataclass
 from decimal import Decimal, ROUND_HALF_EVEN
 
 from lean import adapters as A, paper, strategy as S
+from lean import sell_evidence as SE
 from lean.paper import AccountingHalt
 from lean.providers import ProviderError
 from lean.store import StoreError
@@ -188,6 +201,10 @@ class Execution:
             raise ExecutionError('an ExecConfig is required')
         self.cfg, self.sleep = cfg, sleep
         self._phase, self._pending = None, {}
+        # --- L20 hook: sellability evidence (lean.sell_evidence.SellEvidence or None = off); handles of this pass's probes ---
+        self.sell_evidence = None
+        self._probes = {}
+        # --- end L20 ---
 
     def validate_against(self, strategy_cfg):
         """The re-quote must fit inside the strategy's price freshness window, or every entry would be BLOCKED as stale."""
@@ -270,7 +287,7 @@ class Execution:
             except (StoreError, sqlite3.Error) as error:
                 runner._halt('STORE_FAILURE: %s' % type(error).__name__)
 
-        self._phase, self._pending = 'collect', {}
+        self._phase, self._pending, self._probes = 'collect', {}, {}
         try:
             for mint, position in positions.items():          # phase 1: everything that is not an exit completes here
                 if runner.stop.is_set():
@@ -280,9 +297,15 @@ class Execution:
                     one(mint, position)
                 except _Deferred as wait:
                     deferred.append((mint, position, decided, wait.item))
+                    self._start_probe(mint, (states.get(mint) or {}).get('state'))          # L20: returns at once
             if deferred:
                 due = max(item[3][4] for item in deferred) + self.cfg.exec_delay_s     # every q0 is at least delay old
                 remaining = due - runner.clock()
+                # --- L20 hook: the probes may use the delay the exits pay anyway, never more (then the rest is slept) ---
+                if remaining > 0 and self.cfg.exec_delay_s and self._probes:
+                    self.sell_evidence.wait(list(self._probes.values()), remaining)
+                    remaining = due - runner.clock()
+                # --- end L20 ---
                 if remaining > 0 and self.cfg.exec_delay_s:
                     self.sleep(remaining)
                 self._phase = 'finish'
@@ -293,8 +316,32 @@ class Execution:
                     self._restamp(runner, mint, runner._now() - decided)
                     one(mint, position)
         finally:
-            self._phase, self._pending = None, {}
+            self._phase, self._pending, self._probes = None, {}, {}
         return exits
+
+    # --- L20: sellability evidence ---------------------------------------------------------------------------------------
+    def _start_probe(self, mint, state):
+        """Start (or reuse) the probe of a deferred exit's pool. Never raises, never blocks on the network."""
+        if self.sell_evidence is None or not isinstance(state, dict) or not isinstance(state.get('pool'), str):
+            return None
+        try:
+            handle = self._probes[mint] = self.sell_evidence.start(mint, state['pool'])
+            return handle
+        except Exception:                                   # noqa: BLE001 - a probe can never fail an exit
+            return None
+
+    def _evidence(self, mint):
+        """The sell-evidence meta of ``mint``'s fill NOW (never waits): {} when the feature is off."""
+        if self.sell_evidence is None:
+            return {}
+        try:
+            fields = SE.payload_fields(self.sell_evidence.verdict(self._probes.pop(mint, None)))
+        except Exception as error:                          # noqa: BLE001
+            fields = SE.payload_fields(SE.unknown('EVIDENCE_FAILED:' + type(error).__name__))
+        if fields.get('sell_status') == SE.SELL_UNVERIFIED:
+            fields['unverified_sell_policy'] = self.sell_evidence.policy
+        return fields
+    # --- end L20 ---
 
     @staticmethod
     def _restamp(runner, mint, elapsed):
@@ -312,13 +359,25 @@ class Execution:
         if self._phase == 'finish':
             q0 = self._pending.pop(mint, None)
             if q0 is not None and q0[3] == qty:
-                return quote, ref, at, self._exit_meta(q0[0].out_amount, q0[1], quote, ref)
+                return quote, ref, at, {**self._exit_meta(q0[0].out_amount, q0[1], quote, ref), **self._evidence(mint)}
             return quote, ref, at, {'delay_s': self.cfg.exec_delay_s, 'q0_ref': None, 'q0_out': None, 'q1_ref': ref,
-                                    'q1_out': quote.out_amount, 'fill': 'q1', 'fill_out': quote.out_amount, 'fill_ref': ref}
+                                    'q1_out': quote.out_amount, 'fill': 'q1', 'fill_out': quote.out_amount, 'fill_ref': ref,
+                                    **self._evidence(mint)}
+        # --- L20 hook: the serial fallback probes inside its own delay too (never longer than the delay) ---
+        handle = None
+        if self.sell_evidence is not None:
+            handle = self._start_probe(mint, (runner.store.position_states().get(mint) or {}).get('state'))
         if self.cfg.exec_delay_s:
-            self.sleep(self.cfg.exec_delay_s)
+            remaining = self.cfg.exec_delay_s
+            if handle is not None:
+                started = runner.clock()
+                self.sell_evidence.wait([handle], remaining)
+                remaining -= runner.clock() - started
+            if remaining > 0:
+                self.sleep(remaining)
+        # --- end L20 ---
         q1, ref1, at1 = runner._quote(runner.exit_providers, mint, SOL_MINT, qty, 'quote:exit_requote', mint)
-        return q1, ref1, at1, self._exit_meta(quote.out_amount, ref, q1, ref1)
+        return q1, ref1, at1, {**self._exit_meta(quote.out_amount, ref, q1, ref1), **self._evidence(mint)}
 
     def _exit_meta(self, q0_out, q0_ref, q1, q1_ref):
         return {'delay_s': self.cfg.exec_delay_s, 'q0_ref': q0_ref, 'q0_out': q0_out, 'q1_ref': q1_ref, 'q1_out': q1.out_amount,
@@ -329,6 +388,10 @@ class Execution:
         if meta is None:
             return fill, {}
         bps = int(state.get('transfer_fee_bps', 0))
+        # --- L20 hook: an UNVERIFIED sell under policy ``zero`` is the write-off of the same quantity (one fill, one accounting path) ---
+        if meta.get('sell_status') == SE.SELL_UNVERIFIED and meta.get('unverified_sell_policy') == 'zero':
+            return self._unverified_write_off(fill, position, state, meta, bps)
+        # --- end L20 ---
         sol = fill.sol_lamports * (MAX_BPS - bps) // MAX_BPS
         haircut = fill.sol_lamports - sol
         closing = fill.qty_raw == position.qty_raw
@@ -345,6 +408,22 @@ class Execution:
         if meta.get('q0_out'):
             payload['latency_tax_bps'] = tax_bps(meta['q0_out'], meta['fill_out'])
         return fill, {'execution': payload}
+
+    def _unverified_write_off(self, fill, position, state, meta, bps):
+        """L20: ``paper.write_off`` of the decided quantity: zero proceeds, zero fee, the average cost booked as the loss. The quote's
+        proceeds (after the transfer fee) are kept in the payload as ``unverified_quote_sol_lamports``. A full close writes the ATA rent
+        off; a partial one carries its share of the rent basis (``ata_rent_basis_sold_lamports``, so the presentation stays rent-free)."""
+        closing = fill.qty_raw == position.qty_raw
+        written = dataclasses.replace(paper.write_off(position, ts=fill.ts, qty_raw=fill.qty_raw), quote_ref=fill.quote_ref)
+        rent, initial = int(state.get('ata_rent_lamports', 0)), int(state.get('initial_qty_raw', 0))
+        basis = 0 if closing else rent_left(rent, position.qty_raw, initial) - rent_left(rent, position.qty_raw - fill.qty_raw, initial)
+        payload = {'side': 'sell', 'kind': 'write_off', 'write_off_reason': SE.SELL_UNVERIFIED, **_plain(meta),
+                   'unverified_quote_sol_lamports': fill.sol_lamports * (MAX_BPS - bps) // MAX_BPS,
+                   'ata_rent_written_off_lamports': rent if closing else 0, 'ata_refund_lamports': 0,
+                   'ata_rent_basis_sold_lamports': basis, 'transfer_fee_bps': bps}
+        if meta.get('q0_out'):
+            payload['latency_tax_bps'] = tax_bps(meta['q0_out'], meta['fill_out'])
+        return written, {'execution': payload}
 
     def write_off_state(self, state):
         """D2 write-off: the ATA can never be closed, so its rent is lost. Recorded so the outstanding rent is cleared."""
@@ -371,7 +450,14 @@ def economic(row, payload):
     own accounting are never changed (rent is real cash while it is out); only the presentation is. A write-off keeps its
     rent in the loss: the rent really is lost. Returns a NEW dict."""
     out = dict(row)
-    if not isinstance(payload, dict) or payload.get('kind') == 'write_off':
+    if not isinstance(payload, dict):
+        return out
+    if payload.get('kind') == 'write_off':
+        # L20: a PARTIAL unverified write-off carries its share of the (later refunded) rent basis; a D2 / full write-off has none
+        basis = int(payload.get('ata_rent_basis_sold_lamports') or 0)
+        if basis and row['side'] == 'sell':
+            out['cost_sold_lamports'] = row['cost_sold_lamports'] - basis
+            out['realized_lamports'] = row['realized_lamports'] + basis
         return out
     if row['side'] == 'buy':
         out['fee_lamports'] = row['fee_lamports'] - int(payload.get('ata_rent_paid_lamports', 0))

@@ -1,5 +1,5 @@
 {
-  "_comment": "PAPER ONLY lean trader config (python -m lean --config). Every key the runner reads is listed; unknown keys are refused. strategy_config is relative to this file. initial_cash_sol creates a NEW store; an existing store must match it. LINT1/LINT2: every merged feature is ON at paper-collection defaults (L07R paths, L10 execution, L11 held_risk, L14 watchlist, L15 ops, L16 route_check, L12F features, L13 wallet_signals). features and wallet_signals are FEATURES ONLY (never read by the strategy) and run on the shared LOW lane in their own threads (run mode only). route_check (L16) re-uses the quote response: no extra provider call, never signs or sends. watchlist (L14): soft rejects (incl. ENTRY_THROTTLE) are re-screened on the MAIN lane after the fresh scan, portfolio-blocked mints cost nothing, hard cap watch_max_rescreens_per_hour (<= 360 Helius + 240 Jupiter calls/h), watch_hours must be <= screen.max_age_seconds. held_risk (L11) probes and account checks run on the shared LOW lane after the exits.",
+  "_comment": "PAPER ONLY lean trader config (python -m lean --config). Every key the runner reads is listed; unknown keys are refused. strategy_config is relative to this file. initial_cash_sol creates a NEW store; an existing store must match it. LINT1/LINT2: every merged feature is ON at paper-collection defaults (L07R paths, L10 execution, L11 held_risk, L14 watchlist, L15 ops, L16 route_check, L12F features, L13 wallet_signals, L20 sell_evidence + flow). features and wallet_signals are FEATURES ONLY (never read by the strategy) and run on the shared LOW lane in their own threads (run mode only). route_check (L16) re-uses the quote response: no extra provider call, never signs or sends. watchlist (L14): soft rejects (incl. ENTRY_THROTTLE) are re-screened on the MAIN lane after the fresh scan, portfolio-blocked mints cost nothing, hard cap watch_max_rescreens_per_hour (<= 360 Helius + 240 Jupiter calls/h), watch_hours must be <= screen.max_age_seconds. held_risk (L11) probes and account checks run on the shared LOW lane after the exits.",
   "strategy_config": "strategy-default.json",
   "initial_cash_sol": "10",
   "candidate_interval_s": 5.0,
@@ -104,5 +104,36 @@
     "hub_window_s": 86400.0,
     "min_wins": 2,
     "smart_threshold": 0.7
+  },
+  "sell_evidence": {
+    "_comment": "L20 paper realism: before a paper SELL is booked, the pool must show >= min_organic_sells successful sells by DISTINCT signers (not the coin creator, not the paper taker) in the last sell_window_s. One getSignaturesForAddress + <= max_tx_samples getTransaction on the shared LOW lane, run on a daemon thread INSIDE the L10 exit delay (needs execution; an exit is never later than without it). VERIFIED: booked normally. UNVERIFIED (the probe completed and found too few): booked as SELL_UNVERIFIED, valued at 0 proceeds under policy zero (paper.write_off of the same qty), or at the quote and flagged under flag_only. Shed / failed / not finished in time: booked normally, sell_evidence UNKNOWN. Conclusive results cached per pool for cache_s; hard cap max_calls_per_hour. Absent / enabled false = off.",
+    "enabled": true,
+    "min_organic_sells": 2,
+    "sell_window_s": 300,
+    "unverified_sell_policy": "zero",
+    "max_tx_samples": 8,
+    "sig_limit": 1000,
+    "cache_s": 60,
+    "max_calls_per_hour": 400,
+    "pace_s": 0.25,
+    "probe_timeout_s": 20.0
+  },
+  "flow": {
+    "_comment": "L20 order-flow / bot-pump features (FEATURES ONLY, never read by the strategy): one observations(kind='flow') row per screen PASS decision with tx_rate_per_s, buy_sell_ratio, unique_buyers/sellers, trade_size_cv, monotonic_up_frac, max_drawdown_pre over the window_s BEFORE the decision (block_time + 1 <= decision_ts; decision_ts / late_s / flags like L12F v3). <= sig_pages + max_txs Helius calls per decision on the shared LOW lane (own thread, paced, leaves reserve_tokens for the other low-lane users), hard cap max_calls_per_hour. Absent / enabled false = off.",
+    "enabled": true,
+    "window_s": 180,
+    "sig_limit": 1000,
+    "sig_pages": 3,
+    "max_txs": 12,
+    "min_span_s": 5,
+    "max_per_pass": 2,
+    "pass_interval_s": 5.0,
+    "pace_s": 0.5,
+    "shed_wait_s": 20.0,
+    "reserve_tokens": 1,
+    "max_age_s": 900,
+    "max_retries": 3,
+    "retry_delay_s": 30.0,
+    "max_calls_per_hour": 900
   }
 }

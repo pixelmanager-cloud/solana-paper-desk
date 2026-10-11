@@ -39,6 +39,10 @@ CONFIG_KEYS = {
     # --- L13 ---
     'wallet_signals': None,            # lean.wallet_signals settings (an object, may be {}, turns it on); None = off
     # --- end L13 ---
+    # --- L20 ---
+    'sell_evidence': None,             # lean.sell_evidence settings ({"enabled", "min_organic_sells", ...}); None / absent = off. Needs execution.
+    'flow': None,                      # lean.flow settings ({"enabled", "window_s", ...}); None / absent = off
+    # --- end L20 ---
 }
 REQUIRED = ('strategy_config', 'initial_cash_sol')
 
@@ -119,6 +123,16 @@ def load_config(path):
         except wallet_signals.ConfigError as error:
             raise ConfigError(str(error)) from None
     # --- end L13 ---
+    # --- L20: strict at load; the sell-evidence probe uses the L10 delay window, so it needs the execution model ---
+    from lean import flow, sell_evidence
+    try:
+        cfg['sell_evidence'] = sell_evidence.config(cfg['sell_evidence'])
+        cfg['flow'] = flow.config(cfg['flow'])
+    except (sell_evidence.ConfigError, flow.ConfigError) as error:
+        raise ConfigError(str(error)) from None
+    if cfg['sell_evidence']['enabled'] and cfg['execution'] is None:
+        raise ConfigError('sell_evidence needs execution (the probe runs inside the L10 exit delay)')
+    # --- end L20 ---
     return cfg
 
 
@@ -213,6 +227,17 @@ def build_runner(cfg, *, state_dir, discovery_db, keys, code_version, clock=None
                                                 transport_kwargs=transport_kwargs,
                                                 paths_db=paths.db_path(paths_cfg, state) if paths_cfg['enabled'] else None)   # LINT2
     # --- end L13 ---
+    # --- L20: sellability evidence (inside the L10 exit delay) and the order-flow collector, both on the shared low lane ---
+    from lean import flow, sell_evidence
+    se_cfg = sell_evidence.config(cfg.get('sell_evidence'))
+    if se_cfg['enabled']:
+        if exec_model is None:
+            raise ConfigError('sell_evidence needs execution (the probe runs inside the L10 exit delay)')
+        exec_model.sell_evidence = sell_evidence.build(se_cfg, store=the_store, keys=keys, clock=clock, transport_kwargs=transport_kwargs)
+        exec_model.sell_evidence.stop = r.stop
+    r.flow = flow.build(flow.config(cfg.get('flow')), store=the_store, keys=keys, code_version=code_version,
+                        strategy_version=strategy_cfg.strategy_version, clock=clock, transport_kwargs=transport_kwargs)
+    # --- end L20 ---
     return r
 
 

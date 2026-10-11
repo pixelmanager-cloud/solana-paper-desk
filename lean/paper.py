@@ -174,14 +174,21 @@ def sell(position, quote, fraction=None, cfg=None, *, qty_raw=None):
                 realized_lamports=sol - cfg.fee_lamports - cost_sold, quote_ref=quote.ref)
 
 
-def write_off(position, ts):
+def write_off(position, ts, qty_raw=None):
     """A zero-proceeds paper SELL of the whole position (no route could ever be quoted for it): no fee, no slippage, the
-    whole remaining cost basis is booked as a realized loss. Still EXECUTION_UNVERIFIED; nothing is sent anywhere."""
+    whole remaining cost basis is booked as a realized loss. Still EXECUTION_UNVERIFIED; nothing is sent anywhere.
+
+    L20: ``qty_raw`` (0 < qty_raw <= held) writes off only that part (a SELL_UNVERIFIED take-profit rung), at the same
+    average cost as ``sell``. Omitted = the whole position, exactly as before."""
     if type(position.qty_raw) is not int or position.qty_raw <= 0:
         raise PaperError('nothing to write off')
-    return Fill(ts=float(ts), mint=position.mint, side='sell', qty_raw=position.qty_raw, sol_lamports=0, fee_lamports=0,
-                slippage_bps=0, decimals=position.decimals, cost_sold_lamports=position.cost_lamports,
-                realized_lamports=-position.cost_lamports, quote_ref=None)
+    qty = position.qty_raw if qty_raw is None else qty_raw
+    if type(qty) is not int or not 0 < qty <= position.qty_raw:
+        raise PaperError('qty_raw must be an integer in (0, held]')
+    cost_sold = position.cost_lamports if qty == position.qty_raw else position.cost_lamports * qty // position.qty_raw
+    return Fill(ts=float(ts), mint=position.mint, side='sell', qty_raw=qty, sol_lamports=0, fee_lamports=0,
+                slippage_bps=0, decimals=position.decimals, cost_sold_lamports=cost_sold,
+                realized_lamports=-cost_sold, quote_ref=None)
 
 
 def apply_fill(positions, cash, fill):

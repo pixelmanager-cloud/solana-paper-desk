@@ -625,6 +625,11 @@ def fill_event(view, row, *, sol_usd_max_age):
     if reason == 'TAKE_PROFIT' and isinstance(stage, int):
         stage = stage + 1 if full else stage          # a rung row carries the stage AFTER the fill
     out['reason'], out['reason_label'] = reason, exit_reason_label(reason, stage)
+    # --- L20 hook: a sell without evidence that real traders could sell (lean.sell_evidence) is flagged in the message ---
+    execution = state.get('execution') if isinstance(state.get('execution'), dict) else {}
+    out['sell_unverified'] = execution.get('sell_status') == 'SELL_UNVERIFIED'
+    out['unverified_sell_policy'] = execution.get('unverified_sell_policy')
+    # --- end L20 ---
     initial = state.get('initial_qty_raw')
     out['fraction_sold'] = Decimal(row['qty_raw']) / Decimal(int(initial)) if initial else None
     out['remaining_fraction'] = Decimal(row['qty_after']) / Decimal(int(initial)) if initial else None
@@ -675,6 +680,8 @@ def render_fill(event, label):
     if event['full'] and event.get('trade_pnl_sol') is not None:
         pct = ', %s' % fmt_pct(event['trade_pnl_pct']) if event.get('trade_pnl_pct') is not None else ''
         lines.append('<b>거래 총손익: %s</b> (수수료 포함%s)' % (fmt_sol(event['trade_pnl_sol'], sign=True), pct))
+    if event.get('sell_unverified'):                                    # --- L20 hook ---
+        lines.append('⚠️ 매도 검증 안됨' + (' (0 SOL로 처리)' if event.get('unverified_sell_policy') == 'zero' else ''))
     lines.append(links(mint))
     return '\n'.join(lines)
 
