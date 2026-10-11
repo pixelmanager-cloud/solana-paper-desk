@@ -157,7 +157,7 @@ class Runner:
     def day_start_equity(self, now):
         """The persisted UTC-day baseline, rolled over at midnight only with fresh marks (strategy.roll_day_start)."""
         with self._trade_lock:
-            equity, fresh = A.equity_and_freshness(self.store, now, self.marks, self.cfg.price_ttl_seconds)
+            equity, fresh = A.equity_and_freshness(self.store, now, dict(self.marks), self.cfg.price_ttl_seconds)
             last = self.store.latest_event('day_start')
             previous = (int(last[1]['day']), Decimal(last[1]['equity'])) if last else None
             current = S.roll_day_start(previous, now, equity, marks_fresh=fresh)
@@ -167,7 +167,8 @@ class Runner:
             return current[1]
 
     def portfolio(self, now):
-        return A.portfolio(self.store, self.cfg, now, marks=self.marks, day_start_equity=self.day_start_equity(now))
+        # the position thread updates self.marks: work on a snapshot
+        return A.portfolio(self.store, self.cfg, now, marks=dict(self.marks), day_start_equity=self.day_start_equity(now))
 
     # -- candidate loop -------------------------------------------------------------------------------------------
     def candidate_pass(self):
@@ -259,7 +260,7 @@ class Runner:
         features = A.entry_features(result.features, mint)
         now = self._now()
         gate = S.entry_decision(features, None, self.portfolio(now), self.cfg)
-        if gate.action != 'BUY':
+        if gate.action != 'BUY' or not gate.quote_required:
             self.store.add_decision('entry', gate.action, mint=mint, candidate_id=cid, reasons=gate.reasons,
                                     features=_jsonable(gate.detail), ts=self.clock())
             return
@@ -358,7 +359,7 @@ class Runner:
             held = A.strategy_position(position, state)
             if decision.action != 'SELL':
                 self.store.add_position_state(mint, open_id, state, ts=self.clock())
-        if decision.action != 'SELL':
+        if decision.action != 'SELL' or not decision.quote_required:
             return 0
         qty = A.sell_qty_raw(decision.qty, position.qty_raw)
         quote, ref, quote_at = self._quote(self.exit_providers, mint, SOL_MINT, qty, 'quote:exit', mint)
