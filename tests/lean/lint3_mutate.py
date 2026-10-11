@@ -36,7 +36,9 @@ MUTANTS = [
     ('learn', 'late AT_COLLECTION accepted', "if not _num(late) or late > policy.max_late_s:", "if not _num(late) or late > 10 ** 9:"),
     ('learn', 'unknown flags accepted', "elif flag is not None and flag not in OK_FLAGS:", "elif False:"),
     ('learn', 'pre-v3 rows accepted', "row['features_version'] < MIN_FEATURES_VERSION", "row['features_version'] < 0"),
-    ('learn', 'uncut wallet window accepted', "if not _num(after) or after > 0:", "if False:"),
+    # LINT4: + the trailing comment, so the pattern stays unique after L20 added the same guard to flow_values
+    ('learn', 'uncut wallet window accepted', "if not _num(after) or after > 0:                     # the window was not cut at the decision (unknown",
+     "if False:                     # the window was not cut at the decision (unknown"),
     ('learn', 'smart table after the decision accepted', "if name == 'smart_buyers_count' and (", "if False and ("),
     ('learn', 'post-decision supply accepted', "if name == 'bundled_supply_pct' and row.get('supply_source') != 'screen':", "if False:"),
     ('learn', 'old wallet versions accepted', "if row.get('version') != WALLET_VERSION:", "if False:"),

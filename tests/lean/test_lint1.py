@@ -128,7 +128,7 @@ class ShippedExampleConfig(unittest.TestCase):
         self.assertEqual(execution.ExecConfig.from_dict(cfg['execution']), execution.ExecConfig())
         self.assertTrue(held_risk.Config.from_dict(cfg['held_risk']).enabled)
         self.assertTrue(watchlist.WatchConfig.from_dict(cfg['watchlist']).enabled)
-        self.assertEqual(cfg['ops']['credit_budget_month'], 10_000_000)            # ASSUMED Helius Developer plan
+        self.assertEqual(cfg['ops']['credit_budget_month'], 9_000_000)             # LINT4: 90 % of the Helius Developer plan's 10M
         self.assertTrue(Path(cfg['strategy_config']).is_file())
 
     def test_python_m_lean_once_accepts_it(self):
@@ -156,7 +156,7 @@ class ShippedExampleConfig(unittest.TestCase):
             self.assertIsNone(health['halted'])
             self.assertTrue(health['paths']['enabled'])
             self.assertIsNotNone(health['held_risk'])
-            self.assertEqual(health['ops']['credits']['budget_month'], 10_000_000)
+            self.assertEqual(health['ops']['credits']['budget_month'], 9_000_000)          # LINT4
             self.assertNotIn('TEST-HELIUS-KEY', out.getvalue() + err.getvalue() + json.dumps(health))
 
 

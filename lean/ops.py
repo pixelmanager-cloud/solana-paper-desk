@@ -3,7 +3,8 @@
 * ``CreditTracker`` counts provider calls per method (every HTTP attempt), prices them with a config table of ESTIMATED
   credits, keeps the month's usage and an hourly history in the store (``events`` kind ``credit_usage``, flushed at most once a
   minute: a crash loses at most that minute), projects the month from the last 24 h and, when the projection exceeds
-  ``credit_budget_month``, SHEDS the low-priority data lanes (``paths``, ``features``, ``wallet_signals``): ``allow(lane)``
+  ``credit_budget_month``, SHEDS the low-priority data lanes (``paths``, ``features``, ``wallet_signals``; LINT4: ``flow``,
+  ``sell_evidence``, ``bot_exit``, ``clusters``): ``allow(lane)``
   returns False for them and a ``CREDIT_SHED`` error row is recorded once per lane and episode. Screening and exits are
   never shed or slowed.
 * ``Watchdog`` sends ``WATCHDOG=1`` through ``$NOTIFY_SOCKET`` (stdlib ``socket``, no dependency) only while BOTH loop
@@ -28,11 +29,16 @@ import tempfile
 import threading
 import time
 
-LOW_PRIORITY_LANES = frozenset({'low', 'paths', 'features', 'wallet_signals'})   # 'low' = the shared provider low lane (LINT1)
+# 'low' = the shared provider low lane (LINT1): shedding it sheds every data collector on it at once. LINT4: + the L20/L23/L24 collectors
+# (flow, sell_evidence, bot_exit, clusters), all on that lane. NEVER here: screening, honeypot_sim (an entry gate on the main lane), exits.
+LOW_PRIORITY_LANES = frozenset({'low', 'paths', 'features', 'wallet_signals', 'flow', 'sell_evidence', 'bot_exit', 'clusters'})
 PROVIDERS = ('helius', 'jupiter', 'kraken')
 # ESTIMATES, to be calibrated against the provider dashboard (operator-editable via ``ops.credit_costs``): a standard Helius
-# RPC request is 1 credit, getProgramAccounts is dearer; Jupiter and Kraken are rate limited, not credit billed here.
-DEFAULT_COSTS = {'helius': {'default': 1, 'getProgramAccounts': 10}, 'jupiter': {'default': 0}, 'kraken': {'default': 0}}
+# RPC request is 1 credit; getProgramAccounts and the DAS getAsset are 10 (LINT4); getTransactionsForAddress (not called by lean/ today)
+# is priced conservatively at 100. Jupiter and Kraken are rate limited, not credit billed here.
+DEFAULT_COSTS = {'helius': {'default': 1, 'getProgramAccounts': 10, 'getAsset': 10, 'getTransactionsForAddress': 100},
+                 'jupiter': {'default': 0}, 'kraken': {'default': 0},
+                 'rugcheck': {'default': 0}}            # L21: the public RugCheck report is free (counted, not billed)
 OPS_DEFAULTS = {
     'credit_budget_month': None,       # credits per UTC month; None = count and project but never shed
     'credit_costs': None,              # {provider: {method|default: credits}} merged over DEFAULT_COSTS
@@ -86,7 +92,7 @@ def merge_costs(overrides):
     costs = {p: dict(t) for p, t in DEFAULT_COSTS.items()}
     if overrides is None:
         return costs
-    if not isinstance(overrides, dict) or set(overrides) - set(PROVIDERS):
+    if not isinstance(overrides, dict) or set(overrides) - set(DEFAULT_COSTS):          # L21: + rugcheck
         raise OpsError('credit_costs must map known providers to cost tables')
     for provider, table in overrides.items():
         if not isinstance(table, dict):

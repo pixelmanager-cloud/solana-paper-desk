@@ -42,9 +42,11 @@ class ConfigTests(unittest.TestCase):
     def test_defaults_and_merged_costs(self):
         cfg = ops.load_ops_config({})
         self.assertEqual(cfg['watchdog_stale_s'], 180)
-        self.assertEqual(cfg['credit_costs']['helius'], {'default': 1, 'getProgramAccounts': 10})
+        self.assertEqual(cfg['credit_costs']['helius'], {'default': 1, 'getProgramAccounts': 10, 'getAsset': 10,     # LINT4
+                                                         'getTransactionsForAddress': 100})
         cfg = ops.load_ops_config({'credit_costs': {'helius': {'getProgramAccounts': 25, 'getBlock': 2.5}}})
-        self.assertEqual(cfg['credit_costs']['helius'], {'default': 1, 'getProgramAccounts': 25, 'getBlock': 2.5})
+        self.assertEqual(cfg['credit_costs']['helius'], {'default': 1, 'getProgramAccounts': 25, 'getBlock': 2.5, 'getAsset': 10,
+                                                         'getTransactionsForAddress': 100})
         self.assertEqual(cfg['credit_costs']['jupiter'], {'default': 0})
 
     def test_strict_validation(self):

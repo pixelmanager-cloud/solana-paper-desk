@@ -23,7 +23,7 @@ Error responses keep their (bounded) body in ``ProviderError.raw``.
 
 L07R adds a shared LOW-priority lane (``lane='low'``, ``low(keys)``) for data collection (path recorder, entry features,
 wallet signals). It is carved out of the same plan budget (default main 0.55 / exit 0.25 / low 0.20 of the provider
-rate; ``configure_lanes``) and it NEVER waits: without a token right now, or inside a shed window, a call fails at once
+rate; ``configure_lanes``; LINT4: the Helius rate itself is ``lanes.helius_rps``, default 10/s) and it NEVER waits: without a token right now, or inside a shed window, a call fails at once
 with ``ProviderError('LANE_SHED', transient=True)`` and sends nothing. Any HTTP 429 seen by ANY lane of a provider sheds
 its low lane for ``low_shed_s`` (default 30 s, longer if Retry-After says so). Low-lane calls are never retried.
 """
@@ -33,6 +33,7 @@ from decimal import Decimal, DecimalException
 import hashlib
 import json
 import logging
+import math
 import os
 from pathlib import Path
 import random
@@ -64,7 +65,14 @@ READ_ONLY_RPC = frozenset({
     'getAccountInfo', 'getMultipleAccounts', 'getTokenLargestAccounts', 'getTokenSupply',
     'getTokenAccountsByOwner', 'getSlot', 'getBlockTime', 'getBalance', 'getTransaction',
     'getSignaturesForAddress', 'getLatestBlockhash', 'getMinimumBalanceForRentExemption',
-    'getProgramAccounts', 'getTokenAccountBalance'})
+    'getProgramAccounts', 'getTokenAccountBalance',
+    # --- L22 hook: simulateTransaction executes a transaction against a COPY of the node's bank and returns logs; it never
+    # broadcasts and nothing lands on chain. Helius.rpc only lets it through UNSIGNED (every signature slot all-zero) with
+    # sigVerify=false and replaceRecentBlockhash=true (``_unsigned_simulation``); any other shape is METHOD_NOT_ALLOWED. ---
+    'simulateTransaction'})
+SIMULATION_OPTIONS = frozenset({'encoding', 'sigVerify', 'replaceRecentBlockhash', 'commitment', 'minContextSlot', 'innerInstructions'})
+MAX_SIMULATION_TX_BYTES = 1232
+# --- end L22 ---
 TRANSIENT_RPC_CODES = frozenset({-32005, -32004, -32016})
 _BASE58 = re.compile(r'[1-9A-HJ-NP-Za-km-z]{32,44}')
 
@@ -218,21 +226,51 @@ LANE_SHARES = dict(DEFAULT_LANE_SHARES)
 _SHARED = {}
 _SHARED_LOCK = threading.Lock()
 _LOW_SHED = {'seconds': LOW_SHED_SECONDS}
+# --- LINT4: the Helius plan rate is configurable (lean.json ``lanes.helius_rps``; absent = DEFAULT_RATES, i.e. 10/s as before). The
+# burst equals the rate (the default's shape: 10/s, burst 10). The lane shares still split it: e.g. 20/s x 0.35/0.20/0.45 = 7/4/9 req/s.
+HELIUS_RPS_RANGE = (1.0, 500.0)
+RATES = dict(DEFAULT_RATES)
 
 
-def configure_lanes(shares=None, *, low_shed_s=None):
-    """Set the process-wide lane shares (validated; None = the defaults) and the low lane's shed window. Call it once at
-    startup, before any client is built: it drops the cached limiters so the next ones use the new shares."""
+def validate_helius_rps(value):
+    """None (= the default rate) or a finite number of requests per second in HELIUS_RPS_RANGE; anything else raises ValueError."""
+    if value is None:
+        return None
+    if isinstance(value, bool) or not isinstance(value, (int, float, Decimal)):
+        raise ValueError('helius_rps must be a number')
+    value = float(value)
+    low, high = HELIUS_RPS_RANGE
+    if not math.isfinite(value) or not low <= value <= high:
+        raise ValueError('helius_rps must be between %s and %s' % (low, high))
+    return value
+# --- end LINT4 ---
+
+
+def configure_lanes(shares=None, *, low_shed_s=None, helius_rps=None):
+    """Set the process-wide lane shares (validated; None = the defaults), the low lane's shed window and (LINT4) the Helius plan
+    rate (None = DEFAULT_RATES). Call it once at startup, before any client is built: it drops the cached limiters so the next
+    ones use the new shares and rate."""
     checked = validate_lane_shares(dict(DEFAULT_LANE_SHARES) if shares is None else shares)
     shed = LOW_SHED_SECONDS if low_shed_s is None else low_shed_s
     if isinstance(shed, bool) or not isinstance(shed, (int, float)) or not 0 <= shed <= 3600:
         raise ValueError('low_shed_s out of range')
+    rps = validate_helius_rps(helius_rps)
     with _SHARED_LOCK:
         LANE_SHARES.clear()
         LANE_SHARES.update(checked)
         _LOW_SHED['seconds'] = float(shed)
+        RATES.clear()
+        RATES.update(DEFAULT_RATES)
+        if rps is not None:
+            RATES['helius'] = (rps, rps)
         _SHARED.clear()
     return dict(checked)
+
+
+def lane_rates(provider='helius'):
+    """LINT4: ``{lane: requests per second}`` of ``provider`` under the current configuration (for health and the report)."""
+    rate = RATES[provider][0]
+    return {lane: round(rate * LANE_SHARES[lane], 6) for lane in LANES}
 
 
 def shared_limiter(provider, lane='main', *, clock=time.monotonic, sleep=time.sleep):
@@ -248,8 +286,8 @@ def shared_limiter(provider, lane='main', *, clock=time.monotonic, sleep=time.sl
     with _SHARED_LOCK:
         limiter = _SHARED.get(key)
         if limiter is None:
-            rate, burst = DEFAULT_RATES[provider]
-            share = 1.0 if provider == 'kraken' else LANE_SHARES[lane]   # helius 5.5+2.5+2/s, jupiter 2.2+1+0.8/s
+            rate, burst = RATES[provider]                                  # LINT4: helius = lanes.helius_rps when set
+            share = 1.0 if provider == 'kraken' else LANE_SHARES[lane]   # default helius 5.5+2.5+2/s, jupiter 2.2+1+0.8/s
             if lane == 'low':
                 limiter = LowLaneLimiter(rate * share, max(1.0, burst * share), clock=clock, sleep=sleep,
                                          shed_s=_LOW_SHED['seconds'])
@@ -558,6 +596,8 @@ class Helius:
             raise _fail('helius', 'METHOD_NOT_ALLOWED')
         if not isinstance(params, (list, tuple)):
             raise _fail('helius', 'ARGUMENT_INVALID')
+        if method == 'simulateTransaction' and not _unsigned_simulation(params):       # --- L22 hook ---
+            raise _fail('helius', 'METHOD_NOT_ALLOWED')
         try:
             body = json.dumps({'jsonrpc': '2.0', 'id': 1, 'method': method, 'params': params},
                               allow_nan=False, default=_json_default).encode()
@@ -645,6 +685,38 @@ def validate_multiple_accounts(result, count, *, raw=None, meta=None):
     except (ValueError, TypeError, AttributeError):
         raise _fail('helius', 'RESPONSE_INVALID', raw=raw, meta=meta) from None
     return result
+
+
+# --- L22 hook ---
+def _unsigned_simulation(params):
+    """True only for ``[base64 tx, {encoding: 'base64', sigVerify: False, replaceRecentBlockhash: True, ...}]`` whose wire
+    transaction carries at least one signature slot and EVERY slot is 64 zero bytes (nothing was signed), within the packet size.
+    Pure; no I/O."""
+    try:
+        if len(params) != 2 or not isinstance(params[0], str) or not isinstance(params[1], dict):
+            return False
+        options = params[1]
+        if (set(options) - SIMULATION_OPTIONS or options.get('encoding') != 'base64' or options.get('sigVerify') is not False
+                or options.get('replaceRecentBlockhash') is not True):
+            return False
+        raw = base64.b64decode(params[0], validate=True)
+        if not 0 < len(raw) <= MAX_SIMULATION_TX_BYTES:
+            return False
+        count, offset, shift = 0, 0, 0                  # compact-u16 signature count
+        while True:
+            byte = raw[offset]
+            count |= (byte & 0x7F) << shift
+            offset += 1
+            if not byte & 0x80:
+                break
+            shift += 7
+            if offset >= 3:
+                return False
+        signatures = raw[offset:offset + 64 * count]
+        return 1 <= count <= 8 and len(signatures) == 64 * count and not any(signatures)
+    except (ValueError, TypeError, IndexError):
+        return False
+# --- end L22 ---
 
 
 def _json_default(value):
@@ -790,6 +862,53 @@ class Kraken:
                         bool(stale & set(observation.blockers)), raw=raw,
                         meta={**meta, 'blockers': list(observation.blockers)})
         return observation.usd_price, raw, {**meta, 'trade_at': observation.trade_at}
+
+
+# --- L21: RugCheck (public token report; no key) -------------------------------------------------------------------
+RUGCHECK_RATE = 1.0                       # requests per second (its own bucket; never a Helius / Jupiter lane)
+RUGCHECK_MAX_BYTES = 4 * 1024 * 1024      # a fresh pump token's report is ~10-50 KB; an old large token's can be ~2.5 MB
+RUGCHECK_UNKNOWN = frozenset({400, 404})  # {"error":"invalid token mint"} / not found: the mint has no report
+
+
+class RugCheck:
+    """Read-only ``GET https://api.rugcheck.xyz/v1/tokens/<mint>/report``. No key, no POST, no redirects (the shared
+    ``Transport``: typed errors, bounded reads, strict JSON). Its OWN token bucket (``rate_per_s``, burst 1, default 1/s): it
+    never draws on a Helius or Jupiter lane. ``max_attempts`` defaults to 1 (recording only: a failure is a gap, not a retry).
+    ``report`` returns ``(parsed, raw, meta)`` or raises ``ProviderError``: ``UNKNOWN_MINT`` (HTTP 400/404, non-transient),
+    ``HTTP_429`` / ``HTTP_5xx`` / ``TIMEOUT`` (transient), ``RESPONSE_MALFORMED`` (not strict JSON), ``RESPONSE_INVALID`` (not an
+    object for this mint), ``RESPONSE_OVERSIZED``, ``ARGUMENT_INVALID`` (not a base58 mint; nothing is sent)."""
+    BASE = 'https://api.rugcheck.xyz/v1/tokens/'
+
+    def __init__(self, transport=None, *, rate_per_s=RUGCHECK_RATE, max_bytes=RUGCHECK_MAX_BYTES, max_attempts=1,
+                 request_timeout=REQUEST_TIMEOUT, deadline_seconds=DEADLINE_SECONDS, **kwargs):
+        if type(max_bytes) is not int or not 1024 <= max_bytes <= MAX_RESPONSE_BYTES:
+            raise ValueError('max_bytes out of range')
+        if transport is None:
+            limiter = RateLimiter(rate_per_s, 1, clock=kwargs.get('monotonic', time.monotonic), sleep=kwargs.get('sleep', time.sleep))
+            kwargs.pop('lane', None)
+            transport = Transport('rugcheck', limiter, max_attempts=max_attempts, request_timeout=request_timeout,
+                                  deadline_seconds=deadline_seconds, **kwargs)
+        self.transport, self.max_bytes = transport, max_bytes
+
+    def __repr__(self):
+        return 'RugCheck()'
+
+    def report(self, mint):
+        _pubkey(mint)
+
+        def build():
+            return Request(self.BASE + mint + '/report', method='GET', headers={'Accept': 'application/json'})
+        try:
+            parsed, raw, meta = self.transport.json('report', build, max_bytes=self.max_bytes)
+        except ProviderError as error:
+            if error.meta.get('http_status') in RUGCHECK_UNKNOWN:
+                raise _fail('rugcheck', 'UNKNOWN_MINT', raw=error.raw, meta=error.meta) from None
+            error.provider = 'rugcheck'
+            raise
+        if not isinstance(parsed, dict) or parsed.get('mint') != mint:
+            raise _fail('rugcheck', 'RESPONSE_INVALID', raw=raw, meta=meta)
+        return parsed, raw, meta
+# --- end L21 ---
 
 
 # ---------------------------------------------------------------- the providers object

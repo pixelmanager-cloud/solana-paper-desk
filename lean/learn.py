@@ -19,6 +19,11 @@ there. No lookahead (``LookaheadPolicy``, every exclusion counted in ``stats['ex
   * a wallet-signals row is used only if it is ``wallet_signals_v2`` with a ``decision_ts`` at or before the decision and a window that
     ends at it (``window_after_decision_s == 0``); ``smart_buyers_count`` only when its table is as of that decision
     (``smart_asof_ts``); ``bundled_supply_pct`` only when the supply is the screen's (``supply_source == 'screen'``);
+  * an order-flow row (L20, ``observations(kind='flow')``) is used only if it is ``flow_v1`` with a ``decision_ts`` at or before the
+    decision and a window that ends at it (``window_after_decision_s == 0``); a ``TRUNCATED_SPAN`` rate is excluded;
+  * a ``risk_external`` row (L21: RugCheck, creator history, copycat) is used only if it is ``risk_external_v1`` with a ``decision_ts`` at
+    or before the decision; every value in it is an ``AT_COLLECTION`` snapshot, so it is used only when the row's ``late_s`` <=
+    ``max_late_s`` (a value without that flag is excluded);
   * the marks never become features, and no mark before the decision is ever read by a label.
 A feature that is unknown for a candidate never matches a rule condition.
 
@@ -53,6 +58,7 @@ from pathlib import Path
 from typing import Optional
 
 from lean import adapters as A, features as F, labels as LB, strategy as S
+from lean import flow as FLW
 
 SELECTION_VERSION = 2
 PROPOSAL_STATUS = 'SELECTION_PROPOSAL_NOT_APPLIED'
@@ -73,7 +79,24 @@ ROW_FEATURES = ('top10_pct', 'top1_pct', 'dev_holding_pct', 'seconds_graduation_
                 'liquidity_usd', 'age_seconds_at_screen', 'transfer_fee_bps')
 # L13 wallet-signal row figures
 WALLET_FEATURES = ('bundle_score', 'sniper_count', 'same_slot_buyers', 'bundled_supply_pct', 'smart_buyers_count')
-FEATURE_NAMES = ROW_FEATURES + WALLET_FEATURES
+# L20 order-flow / bot-pump figures (lean.flow), as of the decision
+FLOW_FEATURES = FLW.FEATURES                       # rate, buy/sell, wash trading (#1), path shape (#7)
+FLOW_VERSION = FLW.VERSION
+FLOW_OK_FLAGS = frozenset({'SAMPLE'})              # read off the pre-decision sample: pre-decision by construction
+# --- L24: linked-wallet cluster row figures (lean.clusters) ---
+CLUSTER_FEATURES = ('cluster_count', 'largest_cluster_supply_pct', 'top_cluster_holders', 'creator_cluster_supply_pct',
+                    'linked_supply_pct_total', 'jito_bundled_buys', 'fresh_wallet_share')
+CLUSTER_SUPPLY_FEATURES = frozenset({'largest_cluster_supply_pct', 'creator_cluster_supply_pct', 'linked_supply_pct_total'})
+CLUSTERS_VERSION = 'clusters_v1'
+# --- end L24 ---
+# --- L21: RugCheck / creator history / copycat (observations kind 'risk_external'; every value is an AT_COLLECTION snapshot) ---
+RISK_FEATURES = ('rc_score', 'rc_score_norm', 'rc_danger_count', 'rc_warn_count', 'rc_total_holders', 'rc_graph_insiders',
+                 'rc_insider_network_count', 'rc_insider_largest_pct', 'rc_top10_pct', 'rc_lp_locked_pct', 'rc_rugged',
+                 'creator_tokens_7d', 'creator_tokens_30d', 'creator_dead_30d', 'creator_rugged_sampled', 'copycat_of_recent',
+                 'same_image_count')
+RISK_VERSION = 'risk_external_v1'
+# --- end L21 ---
+FEATURE_NAMES = ROW_FEATURES + WALLET_FEATURES + FLOW_FEATURES + CLUSTER_FEATURES + RISK_FEATURES
 # known from the screen itself; the others come from the extra calls (L12F) or the wallet collector (L13) that run after it
 SCREEN_TIME_FEATURES = frozenset({'market_cap_usd', 'liquidity_usd', 'age_seconds_at_screen', 'transfer_fee_bps'})
 MIN_FEATURES_VERSION = 3
@@ -172,7 +195,7 @@ class LookaheadPolicy:
 
     def to_dict(self):
         return {'max_late_s': float(self.max_late_s), 'eps_s': float(self.eps_s), 'min_features_version': MIN_FEATURES_VERSION,
-                'wallet_version': WALLET_VERSION, 'ok_flags': sorted(OK_FLAGS)}
+                'wallet_version': WALLET_VERSION, 'clusters_version': CLUSTERS_VERSION, 'ok_flags': sorted(OK_FLAGS)}
 
 
 class _Counts:
@@ -300,6 +323,99 @@ def wallet_values(row, decision_ts, policy, counts, names=WALLET_FEATURES) -> di
     return out
 
 
+def flow_values(row, decision_ts, policy, counts, names=FLOW_FEATURES) -> dict:
+    """``{name: Decimal | None}`` of one L20 flow row, as of the decision only (and every exclusion counted)."""
+    out = {name: None for name in names}
+    if row is None:
+        return out
+    if row.get('version') != FLOW_VERSION:
+        counts.skip('FLOW_OLD_VERSION')
+        return out
+    after, flags = row.get('window_after_decision_s'), row.get('flags') or {}
+    for name in names:
+        value = _to_decimal(row.get(name))
+        if value is None:
+            continue
+        if not _num(after) or after > 0:                     # the window ran past the decision
+            counts.exclude(name, 'WINDOW_NOT_CUT_AT_DECISION')
+            continue
+        flag = flags.get(name) if isinstance(flags, dict) else None
+        if flag is not None and flag not in FLOW_OK_FLAGS:
+            counts.exclude(name, 'FLAG_' + str(flag)[:40])
+            continue
+        out[name] = value
+    return out
+
+
+# --- L24 ---
+def cluster_values(row, decision_ts, policy, counts, names=CLUSTER_FEATURES) -> dict:
+    """``{name: Decimal | None}`` of one L24 clusters row, as of the decision only (every exclusion counted): the pool-window figure
+    only when the window was cut at the decision; a holder snapshot read at collection (``AT_COLLECTION``) only within ``max_late_s``;
+    any other flag excluded; a supply share only with the screen's supply."""
+    out = {name: None for name in names}
+    if row is None:
+        return out
+    if row.get('version') != CLUSTERS_VERSION:
+        counts.skip('CLUSTERS_OLD_VERSION')
+        return out
+    flags, late = row.get('flags') or {}, row.get('late_s')
+    after = row.get('window_after_decision_s')
+    for name in names:
+        value = _to_decimal(row.get(name))
+        if value is None:
+            continue
+        flag = flags.get(name) if isinstance(flags, dict) else None
+        if flag == 'AT_COLLECTION':
+            if not (_num(late) and late <= policy.max_late_s):          # a snapshot read too long after the decision
+                counts.exclude(name, 'AT_COLLECTION_LATE')
+                continue
+        elif flag not in (None, *OK_FLAGS):
+            counts.exclude(name, 'FLAG_' + str(flag)[:40])
+            continue
+        elif name != 'jito_bundled_buys' and row.get('holders_source') != 'screen':
+            counts.exclude(name, 'HOLDERS_NOT_FROM_SCREEN')         # an unflagged holder figure must come from the screen's snapshot
+            continue
+        if name == 'jito_bundled_buys' and (not _num(after) or after > 0):
+            counts.exclude(name, 'WINDOW_NOT_CUT_AT_DECISION')
+            continue
+        if name in CLUSTER_SUPPLY_FEATURES and row.get('supply_source') != 'screen':
+            counts.exclude(name, 'SUPPLY_READ_AFTER_DECISION')
+            continue
+        out[name] = value
+    return out
+# --- end L24 ---
+
+
+# --- L21 ---
+def risk_values(row, decision_ts, policy, counts, names=RISK_FEATURES) -> dict:
+    """``{name: Decimal | None}`` of one L21 ``risk_external`` row under the same guard as the feature rows: the row's ``decision_ts`` is
+    at or before the decision (``_pick``), and every value is an ``AT_COLLECTION`` snapshot used only when ``late_s <= max_late_s``. A
+    value without that flag, or with any other flag, is excluded. ``rc_rugged`` (a bool) is 1 / 0."""
+    out = {name: None for name in names}
+    if row is None:
+        return out
+    if row.get('version') != RISK_VERSION:
+        counts.skip('RISK_EXTERNAL_OLD_VERSION')
+        return out
+    fields, flags = row.get('fields') or {}, row.get('flags') or {}
+    late = row.get('late_s')
+    for name in names:
+        raw = fields.get(name) if isinstance(fields, dict) else None
+        value = Decimal(int(raw)) if isinstance(raw, bool) else _to_decimal(raw)
+        if value is None:
+            continue
+        flag = flags.get(name) if isinstance(flags, dict) else None
+        if flag != 'AT_COLLECTION':
+            counts.exclude(name, 'FLAG_' + str(flag)[:40])
+            continue
+        if not (_num(late) and late <= policy.max_late_s):
+            counts.exclude(name, 'AT_COLLECTION_LATE')
+            continue
+        out[name] = value
+    return out
+# --- end L21 ---
+
+
 def enterable(path: LB.PathRecord) -> bool:
     """Entered, or passed the screen and refused ONLY by a portfolio limit (it would have been entered on its own merits)."""
     if path.entered:
@@ -336,6 +452,9 @@ def build_dataset(lean_db, paths_db, strategy: S.StrategyConfig, *, label_cfg=No
         decisions = read_decisions(live)
         feature_rows = _observations(live, 'features', counts, 'FEATURES')
         wallet_rows = _observations(live, 'wallet_signals', counts, 'WALLET_SIGNALS')
+        flow_rows = _observations(live, 'flow', counts, 'FLOW')                                 # L20
+        cluster_rows = _observations(live, 'clusters', counts, 'CLUSTERS')          # L24
+        risk_rows = _observations(live, 'risk_external', counts, 'RISK_EXTERNAL')                    # L21
         for path in LB.iter_paths(connections, load_skipped):           # one path's marks in memory at a time
             n_paths += 1
             decision = decision_time(decisions.get(path.mint, []), path.candidate_id, path.start_ts)
@@ -354,10 +473,16 @@ def build_dataset(lean_db, paths_db, strategy: S.StrategyConfig, *, label_cfg=No
                 continue
             frow = _pick(feature_rows.get(path.mint, []), decision, path.candidate_id, policy, counts, 'FEATURES')
             wrow = _pick(wallet_rows.get(path.mint, []), decision, path.candidate_id, policy, counts, 'WALLET_SIGNALS')
-            if frow is None and wrow is None:
+            xrow = _pick(flow_rows.get(path.mint, []), decision, path.candidate_id, policy, counts, 'FLOW')     # L20
+            crow = _pick(cluster_rows.get(path.mint, []), decision, path.candidate_id, policy, counts, 'CLUSTERS')     # L24
+            rrow = _pick(risk_rows.get(path.mint, []), decision, path.candidate_id, policy, counts, 'RISK_EXTERNAL')   # L21
+            if frow is None and wrow is None and xrow is None and crow is None and rrow is None:
                 counts.skip('NO_FEATURES_AT_DECISION')
                 continue
-            values = {**feature_values(frow, decision, policy, counts), **wallet_values(wrow, decision, policy, counts)}
+            values = {**feature_values(frow, decision, policy, counts), **wallet_values(wrow, decision, policy, counts),
+                      **flow_values(xrow, decision, policy, counts),
+                      **cluster_values(crow, decision, policy, counts),
+                      **risk_values(rrow, decision, policy, counts)}
             trade = LB.simulate_exits(path, decision, ref, strategy, pool_fee_bps=pool_fee_bps, pcfg=pcfg)
             rows.append(Row(path.mint, decision, label, {n: values[n] for n in feature_names}, trade.pnl_lamports, enterable(path),
                             trade.status))
@@ -682,10 +807,19 @@ def runner_changes(chosen):
     out = ['selection_rules'] if chosen else []
     enriched = sorted((names & set(ROW_FEATURES)) - SCREEN_TIME_FEATURES)
     wallet = sorted(names & set(WALLET_FEATURES))
+    cluster = sorted(names & set(CLUSTER_FEATURES))
     if enriched:
         out.append('wait_for_enrichment:' + ','.join(enriched))
     if wallet:
         out.append('wait_for_wallet_signals:' + ','.join(wallet))
+    flow = sorted(names & set(FLOW_FEATURES))                                            # L20: collected after the screen
+    if flow:
+        out.append('wait_for_flow:' + ','.join(flow))
+    if cluster:
+        out.append('wait_for_clusters:' + ','.join(cluster))           # L24
+    risk = sorted(names & set(RISK_FEATURES))                                                     # L21
+    if risk:
+        out.append('wait_for_risk_external:' + ','.join(risk))
     return out
 
 

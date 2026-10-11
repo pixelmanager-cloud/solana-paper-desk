@@ -123,9 +123,24 @@ class Runner:
         # --- L13 hook ---
         self.wallet_signals = None                 # lean.wallet_signals.WalletSignals (set by build_runner when configured)
         # --- end L13 ---
+        # --- L20 hook ---
+        self.flow = None                           # lean.flow.FlowCollector (set by build_runner when flow.enabled)
+        # --- end L20 ---
+        # --- L24 hook ---
+        self.clusters = None                       # lean.clusters.Clusters (set by build_runner when configured)
+        # --- end L24 ---
         # --- LINT2b hook: the feature / wallet-signal threads (health ``alive``; one shared shutdown deadline) ---
-        self._aux_threads = {}                     # 'features' / 'wallet_signals' -> Thread
+        self._aux_threads = {}                     # name -> Thread (features, wallet_signals, flow, bot_exit, clusters, risk_external)
         # --- end LINT2b ---
+        # --- L22 hook ---
+        self.honeypot = None                       # lean.honeypot_sim.HoneypotSim (set by build_runner when honeypot_sim.enabled)
+        # --- end L22 ---
+        # --- L23 hook ---
+        self.bot_exit = None                       # lean.bot_exit.BotExit (set by build_runner when bot_exit.enabled)
+        # --- end L23 ---
+        # --- L21 hook ---
+        self.risk_external = None                  # lean.risk_external.RiskExternal (set by build_runner when risk_external.enabled)
+        # --- end L21 ---
         self.startup()
         # --- L10 hook ---
         if execution is not None and self.halted is None:
@@ -375,6 +390,17 @@ class Runner:
             log.debug('feature recorder hook failed', exc_info=True)
     # --- end L12 ---
 
+    # --- L21 hook ---
+    def _l21_submit(self, candidate, cid, result):
+        """Hand the screened candidate to the risk_external recorder (it keeps hazard-free ones). Never raises, never blocks."""
+        if self.risk_external is None:
+            return
+        try:
+            self.risk_external.submit(candidate, cid, result)
+        except Exception:                                                       # the trader never notices
+            log.debug('risk_external hook failed', exc_info=True)
+    # --- end L21 ---
+
     # --- L07R hook ---
     def _l07r_note(self, **facts):
         """Remember what happened to the candidate being handled (memory only; the recorder never reads the store)."""
@@ -429,6 +455,9 @@ class Runner:
         # --- L12 hook ---
         self._l12_screened = (cid, result)
         # --- end L12 ---
+        # --- L21 hook: external risk collection starts right after the screen decision (non-blocking hand-over) ---
+        self._l21_submit(candidate, cid, result)
+        # --- end L21 ---
         if result.error:
             error = result.error
             self._error(error['code'], transient=error['transient'], mint=mint, scope='screen:%s' % error.get('stage'),
@@ -447,6 +476,10 @@ class Runner:
                                     features=_jsonable(gate.detail), ts=self.clock())
             self._l07r_note(entry_reasons=list(gate.reasons))                  # --- L07R hook (one line) ---
             return
+        # --- L22 hook: honeypot sell simulation (MAIN lane) before any entry quote; True = rejected, decision recorded ---
+        if self.honeypot is not None and self.honeypot.reject(self, candidate, cid, result, gate):
+            return
+        # --- end L22 ---
         # Quote at the decided size, then the sell leg for exactly the tokens the paper fill will hold.
         size_lamports = A.lamports(gate.size_sol)
         # --- L16 hook ---
@@ -646,13 +679,15 @@ class Runner:
         if rug and state.get('rug_trigger') != rug:
             state = dict(state, rug_trigger=rug)
         # --- end L11 ---
+        bot = None if self.bot_exit is None else self.bot_exit.trigger(mint, open_id)     # --- L23 hook (live mode only) ---
         now = self._now()
         since = state.get('exit_failing_since')
         if since is not None and now - int(since) >= self.unexitable_after_s:
             return self._write_off(mint, position, open_id, state)
         mark, mark_at, _source = self.marks.get(mint, (None, None, None))
         held = A.strategy_position(position, state)
-        decision = S.exit_decision(held, mark, None, now, self.cfg, mark_at=mark_at, liquidate=liquidate, danger=bool(rug))
+        decision = S.exit_decision(held, mark, None, now, self.cfg, mark_at=mark_at, liquidate=liquidate, danger=bool(rug),
+                                   bot_exit=bool(bot))                                    # L23
         if decision.position_updates:
             state = A.apply_updates(state, decision.position_updates)
             held = A.strategy_position(position, state)
@@ -681,7 +716,7 @@ class Runner:
         with self._trade_lock:
             now = self._now()
             final = S.exit_decision(held, mark, A.strategy_quote(quote, 'sell', quote_at), now, self.cfg, mark_at=mark_at,
-                                    liquidate=liquidate, danger=bool(rug))
+                                    liquidate=liquidate, danger=bool(rug), bot_exit=bool(bot))     # L23
             self.store.add_decision('exit', final.action, mint=mint, reasons=final.reasons, ts=self.clock(),
                                     features={**_jsonable(final.detail), 'qty_raw': qty, 'fraction_of_initial': str(final.fraction),
                                               'quote_ref': ref, 'mark_sol': None if mark is None else str(mark),
@@ -736,13 +771,36 @@ class Runner:
                 # --- L13 hook ---
                 'wallet_signals': self._aux_health('wallet_signals', self.wallet_signals),
                 # --- end L13 ---
+                # --- L20 hook ---
+                'flow': self._aux_health('flow', self.flow),
+                'sell_evidence': self._sell_evidence_health(),
+                # --- end L20 ---
+                # --- L24 hook ---
+                'clusters': self._aux_health('clusters', self.clusters),
+                # --- end L24 ---
+                # --- L21 hook ---
+                'risk_external': self._aux_health('risk_external', self.risk_external),
+                # --- end L21 ---
                 # --- L07R hook ---
                 'paths': self._l07r_health(),
                 # --- end L07R ---
                 'held_risk': None if self.held_risk is None else self.held_risk.health(),      # L11
+                'honeypot_sim': None if self.honeypot is None else self.honeypot.health(),     # L22
+                'bot_exit': self._aux_health('bot_exit', self.bot_exit),                        # L23
                 # --- L15 hook ---
                 **({} if self.ops is None else self.ops.health())}
                 # --- end L15 ---
+
+    # --- L20 hook ---
+    def _sell_evidence_health(self):
+        prober = getattr(self.execution, 'sell_evidence', None)
+        if prober is None:
+            return {'enabled': False}
+        try:
+            return prober.health()
+        except Exception as error:
+            return {'enabled': True, 'health_error': type(error).__name__}
+    # --- end L20 ---
 
     # --- LINT2b hook ---
     def _aux_health(self, name, worker):
@@ -810,6 +868,26 @@ class Runner:
             log.critical('%s loop DIED (%s): stopping the process', name, type(error).__name__)
             self.stop.set()
 
+    # --- LINT4 hook ---
+    def _aux_specs(self):
+        """``[(name, target, args)]`` of the auxiliary daemon threads ``run`` starts (only the configured ones), each wired to
+        ``self.stop``. The path recorder is started separately (it is built and resumed before the candidate loop)."""
+        specs = []
+        if self.features is not None:                                       # L12: on stop it writes the queued rows unenriched
+            specs.append(('features', self.features.run, (self.stop,)))
+        for name in ('wallet_signals', 'flow', 'clusters'):                 # L13, L20, L24: run_loop() polls their own .stop
+            worker = getattr(self, name)
+            if worker is not None:
+                worker.stop = self.stop
+                specs.append((name, worker.run_loop, ()))
+        if self.bot_exit is not None:                                       # L23 (shadow by default)
+            self.bot_exit.stop = self.stop
+            specs.append(('bot_exit', self.bot_exit.run_loop, (self,)))
+        if self.risk_external is not None:                                  # L21 (its own RugCheck bucket)
+            specs.append(('risk_external', self.risk_external.run, (self.stop,)))
+        return specs
+    # --- end LINT4 ---
+
     def run(self, *, candidate_interval=5.0, position_interval=10.0, install_signals=True):
         """Both loops until SIGTERM/SIGINT (or ``stop``). Returns True on a clean stop, False if a loop died."""
         if install_signals:
@@ -834,32 +912,24 @@ class Runner:
         # --- L15 hook ---
         threads += [] if self.ops is None else self.ops.start(self)      # Ops.start returns started threads
         # --- end L15 ---
-        # --- L12 hook: the feature recorder in its own daemon thread; on stop it writes the queued rows without enrichment ---
-        feature_thread = None
-        if self.features is not None:
-            feature_thread = self._aux_threads['features'] = threading.Thread(target=self.features.run, args=(self.stop,),
-                                                                              name='features', daemon=True)
-            feature_thread.start()
-        # --- end L12 ---
-        # --- L13 hook --- (data collection on its own daemon thread and the shared low lane; never blocks entries or exits)
-        signals_thread = None
-        if self.wallet_signals is not None:
-            self.wallet_signals.stop = self.stop
-            signals_thread = self._aux_threads['wallet_signals'] = threading.Thread(target=self.wallet_signals.run_loop,
-                                                                                    name='wallet_signals', daemon=True)
-            signals_thread.start()
-        # --- end L13 ---
+        # --- LINT4 hook: every auxiliary data-collection thread (L12 features, L13 wallet_signals, L20 flow, L23 bot_exit, L24
+        # clusters, L21 risk_external) is a daemon started here; none of them runs on the exit or candidate thread ---
+        aux = [] if recorder is None else [recorder]
+        for name, target, args in self._aux_specs():
+            thread = self._aux_threads[name] = threading.Thread(target=target, args=args, name=name, daemon=True)
+            thread.start()
+            aux.append(thread)
+        # --- end LINT4 ---
         for t in threads:
             while t.is_alive():
                 t.join(0.5)
-        # --- LINT2b hook: the auxiliary daemon threads (path recorder, features, wallet signals) share ONE deadline of
-        # AUX_JOIN_S in total, so a slow one can never push the stop past systemd's TimeoutStopSec (30 s); each checks
-        # ``stop`` before every request, so they normally end within one in-flight call ---
+        # --- LINT2b/LINT4 hook: the path recorder and EVERY auxiliary thread share ONE deadline of AUX_JOIN_S in total, so a slow one
+        # can never push the stop past systemd's TimeoutStopSec (30 s); each checks ``stop`` before every request, so they normally
+        # end within one in-flight call. A thread still alive at the deadline is a daemon: the process exits without it ---
         aux_deadline = time.monotonic() + AUX_JOIN_S
-        for aux in (recorder, feature_thread, signals_thread):
-            if aux is not None:
-                aux.join(max(0.0, aux_deadline - time.monotonic()))
-        # --- end LINT2b ---
+        for thread in aux:
+            thread.join(max(0.0, aux_deadline - time.monotonic()))
+        # --- end LINT2b/LINT4 ---
         try:
             self.write_health()
         except Exception:

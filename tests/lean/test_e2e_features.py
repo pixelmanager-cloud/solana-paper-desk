@@ -101,6 +101,8 @@ class E2E(unittest.TestCase):
         cfg['held_risk'] = {'enabled': False}           # LINT2: L11 probes share the low lane since LINT1; keep the lane count the recorder's own
         cfg['lanes'] = {'shares': providers.validate_lane_shares({'main': 0.5, 'exit': 0.2, 'low': 0.3}), 'low_shed_s': 1}
         cfg['features'] = F.config({'enabled': True}) if features else F.config(None)
+        from lean import flow, sell_evidence                                                    # L20: the shipped example turns
+        cfg['sell_evidence'], cfg['flow'] = sell_evidence.config(None), flow.config(None)       # them ON; the lane stays the recorder's
         r = build_runner(cfg, state_dir=root / 'state', discovery_db=world.discovery_db, keys=KEYS, code_version='e2e-features',
                          clock=clock.time, transport_kwargs={'opener': world.opener, 'clock': clock.time, 'monotonic': clock.monotonic,
                                                              'sleep': clock.sleep, 'rng': lambda: 0.5})

@@ -167,6 +167,10 @@ def load_store_events(connection):
             try:
                 state = json.loads(row['state'])
                 exit_reason[row['fill_id']] = str(state.get('reason') or state.get('last_reason') or 'UNSPECIFIED')
+                # --- L20 hook: an UNVERIFIED sell is its own exit reason (shown apart from the verified ones) ---
+                if (state.get('execution') or {}).get('sell_status') == 'SELL_UNVERIFIED':
+                    exit_reason[row['fill_id']] = 'SELL_UNVERIFIED:' + exit_reason[row['fill_id']]
+                # --- end L20 ---
             except (ValueError, AttributeError):
                 skipped['STATE_NOT_JSON:position_state'] += 1
     for row in select('fills', ('id', 'mint', 'side', 'qty_raw', 'sol_lamports', 'fee_lamports') + versions):
@@ -522,6 +526,24 @@ def _execution(db):
         connection.close()
 
 
+def _sell_evidence(db):
+    from lean import sell_evidence
+    connection = open_ro(db)
+    try:
+        return sell_evidence.report_section(connection)
+    finally:
+        connection.close()
+# --- L23 hook ---
+def _bot_exit(db):
+    from lean import bot_exit
+    connection = open_ro(db)
+    try:
+        return bot_exit.report_section(connection)
+    finally:
+        connection.close()
+# --- end L23 ---
+
+
 def _sources(db):
     from lean import sources
     connection = open_ro(db)
@@ -569,7 +591,11 @@ def build(db, *, counterfactual_db=None, horizon=3600, now=None):
     # --- L10 hook: latency-tax distribution, aborted entries, fee breakdown (read-only) ---
     summary['execution'] = _section(_execution, db)
     # --- end L10 ---
+    # --- L20 hook: sells by sellability evidence; UNVERIFIED sells listed separately (booked vs quoted proceeds) ---
+    summary['sell_evidence'] = _section(_sell_evidence, db)
+    # --- end L20 ---
     summary['held_risk'] = _section(held_risk_report, db)        # L11
+    summary['bot_exit'] = _section(_bot_exit, db)                 # L23
     # --- L14 hook: per-source funnel (candidates -> screened -> passed -> entered, rejection reasons, watchlist outcome) ---
     summary['sources'] = _section(_sources, db)
     # --- end L14 ---
@@ -653,6 +679,25 @@ def render_html(s):
             e(json.dumps(d['triggers'], sort_keys=True)), d['freeze_flags'], len(d['unsellable_open'])))
         if d['unsellable_open']:
             parts.append(table(['mint', 'failing since', 'trigger', 'why'], [[r['mint'], r['since'], r['trigger'], r['why']] for r in d['unsellable_open']]))
+    # --- L23 hook ---
+    b = s.get('bot_exit', {'status': 'NOT_PROVIDED'})
+    if b['status'] == 'ERROR':
+        parts.append('<h2>Bot-exit signals</h2>' + note(b))
+    elif b['status'] == 'OK' and b['data']['signals']:
+        d = b['data']
+        parts.append('<h2>Bot-exit signals (shadow: would they have saved money?)</h2>')
+        parts.append('<p>Signals: %d (%s) &middot; by rule: %s &middot; open: %d &middot; unvalued: %d &middot; scored: %d (%s)</p>' % (
+            d['signals'], e(json.dumps(d['by_mode'], sort_keys=True)), e(json.dumps(d['by_rule'], sort_keys=True)), d['open'], d['unvalued'],
+            d['scored'], flag('OK' if d['scored'] >= MIN_SAMPLE else 'INSUFFICIENT')))
+        parts.append(table(['saved (signal > actual)', 'cost (actual > signal)', 'signal value SOL', 'actual after signal SOL', 'saved SOL',
+                            'false-positive rate'], [[d['saved_count'], d['cost_count'], d['shadow_sum_sol'], d['actual_sum_sol'],
+                                                      d['saved_sum_sol'], d['false_positive_rate']]]))
+        parts.append('<p>Closed trades: %d &middot; without a signal: %d &middot; big losses (&le; -50%%): %d, of which signalled: %d</p>' % (
+            d['closed_trades'], d['closed_without_signal'], d['big_losses'], d['big_losses_signalled']))
+        parts.append(table(['mint', 'kind', 'rules', 'signal at', 'value source', 'signal SOL', 'actual SOL', 'saved SOL', 'status'],
+                           [[r['mint'], r['kind'], ','.join(r['rules']), r['signal_at'], r['value_source'], r['shadow_sol'], r['actual_sol'],
+                             r['saved_sol'], r['status']] for r in d['rows'][-100:]]))
+    # --- end L23 ---
     # --- L12 hook ---
     fe = s.get('features', {'status': 'NOT_PROVIDED'})
     if fe['status'] == 'OK' and fe['data']['rows']:
@@ -690,6 +735,22 @@ def render_html(s):
         parts.append(table(['side', 'n', 'tax bps p50', 'p90', 'mean', 'max'], [[k, v['n'], v['p50'], v['p90'], v['mean'], v['max']] for k, v in d['latency_tax_bps'].items()]))
         parts.append(table(['fee (SOL)', 'amount'], list(d['fees_sol'].items())))
     # --- end L10 ---
+    # --- L20 hook ---
+    se = s.get('sell_evidence', {'status': 'NOT_PROVIDED'})
+    if se['status'] != 'OK' or se['data']['sells'] - se['data']['verdicts']['NOT_CHECKED'] > 0:
+        parts.append('<h2>Sell evidence (could real traders sell?)</h2>' + note(se))
+    if se['status'] == 'OK' and se['data']['sells'] - se['data']['verdicts']['NOT_CHECKED'] > 0:
+        d = se['data']
+        parts.append(table(['verdict', 'sells'], list(d['verdicts'].items())))
+        if d['unknown_why']:
+            parts.append('<p>UNKNOWN (booked normally): %s</p>' % e(json.dumps(d['unknown_why'], sort_keys=True)))
+        if d['unverified']:
+            parts.append('<p class="flag">SELL_UNVERIFIED: %d sells without evidence of organic sellers; quoted proceeds not booked: %s SOL</p>'
+                         % (len(d['unverified']), e(d['forgone_sol'])))
+            parts.append(table(['fill', 'mint', 'exit', 'reason', 'policy', 'booked SOL', 'quoted SOL', 'realized SOL', 'sellers', 'sampled', 'why'],
+                               [[r['fill_id'], r['mint'], r['event'], r['reason'], r['policy'], r['booked_sol'], r['quoted_sol'], r['realized_sol'],
+                                 r['sellers'], r['sampled'], r['why']] for r in d['unverified']]))
+    # --- end L20 ---
     # --- L14 hook ---
     src = s.get('sources', {'status': 'NOT_PROVIDED'})
     parts.append('<h2>Funnel per source</h2>' + note(src))

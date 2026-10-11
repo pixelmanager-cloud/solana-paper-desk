@@ -399,18 +399,20 @@ def new_position_fields(cfg: StrategyConfig) -> dict:
 # ------------------------------------------------------------------------------------------------ exits
 
 def exit_decision(position: Position, mark: Optional[Decimal], quote: Optional[Quote], now: int,
-                  cfg: StrategyConfig, *, mark_at: Optional[int], liquidate: bool = False, danger: bool = False) -> Decision:
+                  cfg: StrategyConfig, *, mark_at: Optional[int], liquidate: bool = False, danger: bool = False,
+                  bot_exit: bool = False) -> Decision:
     """HOLD / SELL / BLOCKED for one open position.
 
     `mark` is the net SOL value of the whole remaining quantity. A stale (older than price_ttl_seconds) or missing
     mark BLOCKS (evidence unknown: never a silent hold, never a sale at a guessed price) except that `liquidate` and
     `danger` still sell when the quote is usable, because those exits must not wait for a fresh mark.
     Exit priority follows desk/engine.py manage_position: LIQUIDATE, DANGER, STOP, TRAILING_STOP, MAX_HOLD, TIME_STOP,
-    then at most one TAKE_PROFIT rung per observation.
+    then at most one TAKE_PROFIT rung per observation. L23: ``bot_exit`` (live bot-exit signal) is a forced full exit with
+    reason BOT_EXIT, ranked after DANGER and before STOP; False (the default) changes nothing.
 
     quote=None with a triggered exit returns SELL(quote_required=True): fetch a sell quote for `qty`, call again.
     """
-    forced = "LIQUIDATE" if liquidate else "DANGER" if danger else None
+    forced = "LIQUIDATE" if liquidate else "DANGER" if danger else "BOT_EXIT" if bot_exit else None
     # mark_at is required: a mark without a read time is never treated as fresh
     mark_ok = (isinstance(mark, Decimal) and mark.is_finite() and mark >= ZERO and position.cost_left > ZERO
                and type(mark_at) is int and 0 <= now - mark_at <= cfg.price_ttl_seconds)

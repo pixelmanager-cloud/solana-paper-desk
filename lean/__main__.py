@@ -24,7 +24,7 @@ CONFIG_KEYS = {
     'unexitable_after_s': 7200,        # a wanted exit failing (no route / 4xx) this long is written off at zero proceeds
     'screen': {},                      # lean.candidates settings other than the strategy-owned bands
     # --- L07R ---
-    'lanes': None,                     # {"main","exit","low"} shares of each provider rate (+ "low_shed_s"); None = 0.55/0.25/0.20
+    'lanes': None,                     # {"main","exit","low"} shares of each provider rate (+ "low_shed_s", LINT4 "helius_rps"); None = 0.55/0.25/0.20 of 10/s
     'paths': None,                     # lean.paths settings ({"enabled", "db", "path_hours", ...}); None = disabled
     # --- end L07R ---
     'route_check': {},                 # L16: {"enabled": true} records whether a real bot could build each BUY / full exit
@@ -39,6 +39,22 @@ CONFIG_KEYS = {
     # --- L13 ---
     'wallet_signals': None,            # lean.wallet_signals settings (an object, may be {}, turns it on); None = off
     # --- end L13 ---
+    # --- L20 ---
+    'sell_evidence': None,             # lean.sell_evidence settings ({"enabled", "min_organic_sells", ...}); None / absent = off. Needs execution.
+    'flow': None,                      # lean.flow settings ({"enabled", "window_s", ...}); None / absent = off
+    # --- end L20 ---
+    # --- L22 ---
+    'honeypot_sim': {},                # {enabled (false), max_per_hour 30, full_size true}: sell-simulation entry filter (main lane)
+    # --- end L22 ---
+    # --- L23 ---
+    'bot_exit': None,                  # lean.bot_exit settings ({"enabled", "mode": "shadow"|"live", ...}); None/absent = off
+    # --- end L23 ---
+    # --- L24 ---
+    'clusters': None,                  # lean.clusters settings (an object, may be {}, turns it on); None = off
+    # --- end L24 ---
+    # --- L21 ---
+    'risk_external': None,             # lean.risk_external settings ({"enabled", ...}): RugCheck / creator / copycat rows; None = off
+    # --- end L21 ---
 }
 REQUIRED = ('strategy_config', 'initial_cash_sol')
 
@@ -70,8 +86,9 @@ def load_config(path):
         if lanes is not None:
             if not isinstance(lanes, dict):
                 raise ValueError('lanes must be an object')
-            shares = {k: v for k, v in lanes.items() if k not in ('low_shed_s', '_comment')}
-            cfg['lanes'] = {'shares': providers.validate_lane_shares(shares), 'low_shed_s': lanes.get('low_shed_s')}
+            shares = {k: v for k, v in lanes.items() if k not in ('low_shed_s', 'helius_rps', '_comment')}
+            cfg['lanes'] = {'shares': providers.validate_lane_shares(shares), 'low_shed_s': lanes.get('low_shed_s'),
+                            'helius_rps': providers.validate_helius_rps(lanes.get('helius_rps'))}          # LINT4
     except ValueError as error:
         raise ConfigError(str(error)) from None
     # --- end L07R ---
@@ -119,6 +136,45 @@ def load_config(path):
         except wallet_signals.ConfigError as error:
             raise ConfigError(str(error)) from None
     # --- end L13 ---
+    # --- L20: strict at load; the sell-evidence probe uses the L10 delay window, so it needs the execution model ---
+    from lean import flow, sell_evidence
+    try:
+        cfg['sell_evidence'] = sell_evidence.config(cfg['sell_evidence'])
+        cfg['flow'] = flow.config(cfg['flow'])
+    except (sell_evidence.ConfigError, flow.ConfigError) as error:
+        raise ConfigError(str(error)) from None
+    if cfg['sell_evidence']['enabled'] and cfg['execution'] is None:
+        raise ConfigError('sell_evidence needs execution (the probe runs inside the L10 exit delay)')
+    # --- end L20 ---
+    # --- L22 ---
+    from lean import honeypot_sim
+    try:
+        cfg['honeypot_sim'] = honeypot_sim.config(cfg['honeypot_sim'])
+    except honeypot_sim.HoneypotConfigError as error:
+        raise ConfigError(str(error)) from None
+    # --- end L22 ---
+    # --- L23 --- (strict at load: unknown keys, bad rules and bad types fail before the trader starts)
+    from lean import bot_exit
+    try:
+        bot_exit.Config.from_dict(cfg['bot_exit'])
+    except bot_exit.BotExitConfigError as error:
+        raise ConfigError(str(error)) from None
+    # --- end L23 ---
+    # --- L24 ---
+    if cfg['clusters'] is not None:                                        # strict, validated at load
+        from lean import clusters
+        try:
+            clusters.make_config(cfg['clusters'])
+        except clusters.ConfigError as error:
+            raise ConfigError(str(error)) from None
+    # --- end L24 ---
+    # --- L21 ---
+    from lean import risk_external
+    try:
+        cfg['risk_external'] = risk_external.config(cfg['risk_external'])
+    except ValueError as error:
+        raise ConfigError(str(error)) from None
+    # --- end L21 ---
     return cfg
 
 
@@ -148,7 +204,7 @@ def build_runner(cfg, *, state_dir, discovery_db, keys, code_version, clock=None
     # --- L07R: lane shares before any client exists ---
     from lean import paths
     lanes = cfg.get('lanes') or {}
-    providers.configure_lanes(lanes.get('shares'), low_shed_s=lanes.get('low_shed_s'))
+    providers.configure_lanes(lanes.get('shares'), low_shed_s=lanes.get('low_shed_s'), helius_rps=lanes.get('helius_rps'))   # LINT4: + rate
     # --- end L07R ---
     # --- L10 hook: the optional execution model (latency-aware fills + cost model) ---
     exec_model = None
@@ -213,6 +269,38 @@ def build_runner(cfg, *, state_dir, discovery_db, keys, code_version, clock=None
                                                 transport_kwargs=transport_kwargs,
                                                 paths_db=paths.db_path(paths_cfg, state) if paths_cfg['enabled'] else None)   # LINT2
     # --- end L13 ---
+    # --- L20: sellability evidence (inside the L10 exit delay) and the order-flow collector, both on the shared low lane ---
+    from lean import flow, sell_evidence
+    se_cfg = sell_evidence.config(cfg.get('sell_evidence'))
+    if se_cfg['enabled']:
+        if exec_model is None:
+            raise ConfigError('sell_evidence needs execution (the probe runs inside the L10 exit delay)')
+        exec_model.sell_evidence = sell_evidence.build(se_cfg, store=the_store, keys=keys, clock=clock, transport_kwargs=transport_kwargs)
+        exec_model.sell_evidence.stop = r.stop
+    r.flow = flow.build(flow.config(cfg.get('flow')), store=the_store, keys=keys, code_version=code_version,
+                        strategy_version=strategy_cfg.strategy_version, clock=clock, transport_kwargs=transport_kwargs)
+    # --- end L20 ---
+    # --- L22: the honeypot sell-simulation entry filter (MAIN lane, before the entry quotes; None = off) ---
+    from lean import honeypot_sim
+    r.honeypot = honeypot_sim.build(cfg.get('honeypot_sim'), the_store, clock=clock)
+    # --- end L22 ---
+    # --- L23: the bot-exit monitor (low lane, own thread in run mode; None when absent/disabled) ---
+    from lean import bot_exit
+    r.bot_exit = bot_exit.build(cfg.get('bot_exit'), store=the_store, keys=keys, code_version=code_version,
+                                strategy_version=strategy_cfg.strategy_version, clock=clock, transport_kwargs=transport_kwargs)
+    # --- end L23 ---
+    # --- L24: the linked-wallet cluster collector (low lane, its own thread; recording only) ---
+    if cfg.get('clusters') is not None:
+        from lean import clusters
+        r.clusters = clusters.build(clusters.make_config(cfg['clusters']), store=the_store, keys=keys, code_version=code_version,
+                                    strategy_version=strategy_cfg.strategy_version, clock=clock, transport_kwargs=transport_kwargs,
+                                    signals_enabled=cfg.get('wallet_signals') is not None)
+    # --- end L24 ---
+    # --- L21: external risk rows (RugCheck, its own bucket; recording only) ---
+    from lean import risk_external
+    r.risk_external = risk_external.build(risk_external.config(cfg.get('risk_external')), store=the_store, code_version=code_version,
+                                          strategy_version=strategy_cfg.strategy_version, clock=clock, transport_kwargs=transport_kwargs)
+    # --- end L21 ---
     return r
 
 

@@ -1,5 +1,5 @@
 {
-  "_comment": "PAPER ONLY lean trader config (python -m lean --config). Every key the runner reads is listed; unknown keys are refused. strategy_config is relative to this file. initial_cash_sol creates a NEW store; an existing store must match it. LINT1/LINT2: every merged feature is ON at paper-collection defaults (L07R paths, L10 execution, L11 held_risk, L14 watchlist, L15 ops, L16 route_check, L12F features, L13 wallet_signals). features and wallet_signals are FEATURES ONLY (never read by the strategy) and run on the shared LOW lane in their own threads (run mode only). route_check (L16) re-uses the quote response: no extra provider call, never signs or sends. watchlist (L14): soft rejects (incl. ENTRY_THROTTLE) are re-screened on the MAIN lane after the fresh scan, portfolio-blocked mints cost nothing, hard cap watch_max_rescreens_per_hour (<= 360 Helius + 240 Jupiter calls/h), watch_hours must be <= screen.max_age_seconds. held_risk (L11) probes and account checks run on the shared LOW lane after the exits.",
+  "_comment": "PAPER ONLY lean trader config (python -m lean --config). Every key the runner reads is listed; unknown keys are refused. strategy_config is relative to this file. initial_cash_sol creates a NEW store; an existing store must match it. LINT1/LINT2/LINT4: every merged feature is ON at paper-collection defaults (L07R paths, L10 execution, L11 held_risk, L14 watchlist, L15 ops, L16 route_check, L12F features, L13 wallet_signals, L20 sell_evidence (flag_only) + flow, L21 risk_external, L22 honeypot_sim, L23 bot_exit (shadow), L24 clusters). features, wallet_signals, flow, clusters, bot_exit and risk_external are RECORDING ONLY (never read by the strategy) and run in their own threads (run mode only) on the shared Helius LOW lane (risk_external: its own RugCheck bucket); sell_evidence probes the low lane inside the L10 exit delay and, under flag_only, never changes a fill. honeypot_sim is the ONE new entry filter (MAIN lane, unsigned simulateTransaction only). route_check (L16) re-uses the quote response: no extra provider call, never signs or sends. watchlist (L14): soft rejects (incl. ENTRY_THROTTLE) are re-screened on the MAIN lane after the fresh scan, portfolio-blocked mints cost nothing, hard cap watch_max_rescreens_per_hour (<= 360 Helius + 240 Jupiter calls/h), watch_hours must be <= screen.max_age_seconds. held_risk (L11) probes and account checks run on the shared LOW lane after the exits.",
   "strategy_config": "strategy-default.json",
   "initial_cash_sol": "10",
   "candidate_interval_s": 5.0,
@@ -18,10 +18,11 @@
     "max_top10_pct": 60
   },
   "lanes": {
-    "_comment": "L07R: shares of each provider's rate (Helius 10/s: main 5.5, exit 2.5, low 2; Jupiter 4/s: 2.2 / 1 / 0.8). main + exit + low must be <= 1. The low lane never waits and is shed for low_shed_s after any 429 (and by ops while over the credit budget).",
-    "main": 0.55,
-    "exit": 0.25,
-    "low": 0.2,
+    "_comment": "L07R/LINT4: helius_rps is the Helius plan rate the process may use (Developer plan = 50 RPS; absent = 10/s as before; burst = rate). main/exit/low are shares of each provider's rate and must sum to <= 1: Helius 20/s -> main 7, exit 4, low 9 req/s; Jupiter keeps its 4/s -> 1.4 / 0.8 / 1.8. The low lane never waits and is shed for low_shed_s after any 429 (and by ops while over the credit budget).",
+    "helius_rps": 20,
+    "main": 0.35,
+    "exit": 0.2,
+    "low": 0.45,
     "low_shed_s": 30
   },
   "paths": {
@@ -64,12 +65,17 @@
     "watch_max_rescreens_per_hour": 120
   },
   "ops": {
-    "_comment": "L15: credit tracker (counts every lane at the transport; costs are ESTIMATES: calibrate against the Helius dashboard), systemd watchdog, regime log. credit_budget_month ASSUMES a Helius Developer plan of 10,000,000 credits/month: replace it with the real plan figure. Over budget the shared Helius low lane is shed; screening and exits never are.",
-    "credit_budget_month": 10000000,
+    "_comment": "L15: credit tracker (counts every lane at the transport; costs are ESTIMATES: calibrate against the Helius dashboard), systemd watchdog, regime log. LINT4: Helius Developer plan = 10,000,000 credits/month; the budget is 90 % of it. Standard RPC 1 credit, getProgramAccounts and DAS getAsset 10, getTransactionsForAddress 100 (unused today); RugCheck 0. Over budget the shared Helius low lane is shed (paths, features, wallet_signals, flow, sell_evidence, bot_exit, clusters); screening, honeypot_sim and exits never are.",
+    "credit_budget_month": 9000000,
     "credit_costs": {
       "helius": {
         "default": 1,
-        "getProgramAccounts": 10
+        "getProgramAccounts": 10,
+        "getAsset": 10,
+        "getTransactionsForAddress": 100
+      },
+      "rugcheck": {
+        "default": 0
       }
     },
     "credit_flush_s": 60,
@@ -104,5 +110,98 @@
     "hub_window_s": 86400.0,
     "min_wins": 2,
     "smart_threshold": 0.7
+  },
+  "sell_evidence": {
+    "_comment": "L20 paper realism: before a paper SELL is booked, the pool must show >= min_organic_sells successful sells by DISTINCT signers (not the coin creator, not the paper taker) in the last sell_window_s. One getSignaturesForAddress + <= max_tx_samples getTransaction on the shared LOW lane, run on a daemon thread INSIDE the L10 exit delay (needs execution; an exit is never later than without it). VERIFIED: booked normally. UNVERIFIED (the probe completed and found too few): booked as SELL_UNVERIFIED, valued at 0 proceeds under policy zero (paper.write_off of the same qty), or at the quote and flagged under flag_only. Shed / failed / not finished in time: booked normally, sell_evidence UNKNOWN. LINT4: the example ships flag_only (under zero a quiet pool would value a legitimate stop at 0 and distort the data; real honeypots are blocked at entry by L22 honeypot_sim). Conclusive results cached per pool for cache_s; hard cap max_calls_per_hour. Absent / enabled false = off.",
+    "enabled": true,
+    "min_organic_sells": 2,
+    "sell_window_s": 300,
+    "unverified_sell_policy": "flag_only",
+    "max_tx_samples": 8,
+    "sig_limit": 1000,
+    "cache_s": 60,
+    "max_calls_per_hour": 400,
+    "pace_s": 0.25,
+    "probe_timeout_s": 20.0
+  },
+  "flow": {
+    "_comment": "L20 order-flow / bot-pump features (FEATURES ONLY, never read by the strategy): one observations(kind='flow') row per screen PASS decision with tx_rate_per_s, buy_sell_ratio, unique_buyers/sellers, trade_size_cv, monotonic_up_frac, max_drawdown_pre over the window_s BEFORE the decision (block_time + 1 <= decision_ts; decision_ts / late_s / flags like L12F v3). <= sig_pages + max_txs Helius calls per decision on the shared LOW lane (own thread, paced, leaves reserve_tokens for the other low-lane users), hard cap max_calls_per_hour. Absent / enabled false = off.",
+    "enabled": true,
+    "window_s": 180,
+    "sig_limit": 1000,
+    "sig_pages": 3,
+    "max_txs": 12,
+    "min_span_s": 5,
+    "max_per_pass": 2,
+    "pass_interval_s": 5.0,
+    "pace_s": 0.5,
+    "shed_wait_s": 20.0,
+    "reserve_tokens": 1,
+    "max_age_s": 900,
+    "max_retries": 3,
+    "retry_delay_s": 30.0,
+    "max_calls_per_hour": 900
+  },
+  "honeypot_sim": {
+    "_comment": "L22 honeypot sell-simulation ENTRY FILTER (absent = off). Token-2022 / extension / live-authority mints and non-pump sources only: a plain pump-graduated SPL mint with revoked authorities is recorded SKIPPED_STANDARD_SPL with no call. A real top holder (pool vault, burn and creator excluded) is asked to SELL via Jupiter swap/v2/build (taker = holder) and the UNSIGNED transaction goes to Helius simulateTransaction (sigVerify false, replaceRecentBlockhash true): never signed, never sent. MAIN lane, before the entry quotes; at most max_per_hour simulated candidates (<= 5 Helius + 3 Jupiter calls each). SELL_SIM_BLOCKED = hazard reject HONEYPOT_SIM_BLOCKED; INCONCLUSIVE/NO_BUILD rejects only a Token-2022 mint with a transfer hook or a transfer fee > 10%. full_size also simulates our full paper size when the holder holds it.",
+    "enabled": true,
+    "max_per_hour": 30,
+    "full_size": true
+  },
+  "bot_exit": {
+    "_comment": "L23 bot-exit detection on held positions, SHADOW ONLY: records decisions(kind='shadow_exit') with the metrics and a hypothetical exit value; trading is NOT changed. mode \"live\" would exit through the normal two-phase path with reason BOT_EXIT: keep it shadow until the report shows the signals save money. Own thread, shared LOW lane, <= max_calls_per_pass Helius calls every poll_s (1 getSignaturesForAddress per position + sampled getTransaction + getTokenLargestAccounts every holders_every polls), paced pace_s, leaving reserve_tokens; a shed ends the pass. rules: a signal when every condition of any rule holds; a metric without enough evidence never holds.",
+    "enabled": true,
+    "mode": "shadow",
+    "poll_s": 10,
+    "window_s": 30,
+    "baseline_s": 180,
+    "min_baseline_tx": 30,
+    "min_sample": 4,
+    "pumper_window_s": 120,
+    "sig_limit": 300,
+    "sample_txs": 2,
+    "holders_every": 3,
+    "max_calls_per_pass": 6,
+    "reserve_tokens": 1,
+    "pace_s": 0.5,
+    "quote_ttl_s": 10,
+    "rules": [
+      {"name": "BOT_STOPPED", "all": [{"metric": "tx_rate_ratio", "op": "<", "value": "0.3"}, {"metric": "sell_share_30s", "op": ">", "value": "0.6"}]},
+      {"name": "WHALE_SELL", "all": [{"metric": "max_sell_reserve_frac", "op": ">", "value": "0.15"}]},
+      {"name": "CREATOR_SELL", "all": [{"metric": "creator_sold", "op": ">=", "value": "1"}]},
+      {"name": "PUMPERS_OUT", "all": [{"metric": "pumper_net_sol_30s", "op": "<", "value": "0"}, {"metric": "pumper_sellers_30s", "op": ">=", "value": "2"}, {"metric": "tx_rate_ratio", "op": "<", "value": "0.6"}]}
+    ]
+  },
+  "clusters": {
+    "_comment": "L24 linked-wallet clusters (this object turns it on; null/absent = off). RECORDING ONLY, never read by the strategy. Per screened candidate, as of its decision: a graph over the top-20 holders (the screen's own snapshot), the early buyers (L13) and the creator, linked by shared non-hub funders (L13's map + bounded lookups), direct SOL/token transfers, same-slot first buys, Jito bundles (adjacent same-slot pool signatures with a tip) and same-transaction co-signers; connected components -> cluster_count, largest_cluster_supply_pct, top_cluster_holders, creator_cluster_supply_pct, linked_supply_pct_total, jito_bundled_buys, fresh_wallet_share. <= max_calls Helius calls per candidate on the shared low lane (2 pool pages + owners + 4 window txs + 6 x (history page + funding tx)), only while reserve_tokens more tokens stay for the path recorder / L11 / L12F / L13, paced at 0.5 s, on its own thread; it waits up to signals_wait_s for L13's row.",
+    "top_n": 20,
+    "max_window_txs": 4,
+    "holder_lookups": 6,
+    "history_limit": 25,
+    "max_calls": 20,
+    "pace_s": 0.5,
+    "reserve_tokens": 1,
+    "shed_wait_s": 30.0,
+    "max_per_pass": 2,
+    "backfill_max_age_s": 1800,
+    "signals_wait_s": 600.0,
+    "hub_min_mints": 5,
+    "hub_window_s": 86400.0,
+    "ignore_funders": []
+  },
+  "risk_external": {
+    "_comment": "L21 external risk rows (RECORDING ONLY, never read by the strategy; absent/null = off): one observations(kind='risk_external') row per hazard-free screened candidate from the public RugCheck report (GET api.rugcheck.xyz/v1/tokens/<mint>/report, no key): score, risks, holders, insider networks, top-10 (AMM excluded), LP locked, rugged; the creator's other tokens in the 7/30 days before the decision (dead = marketCap < dead_mcap_usd) with rugged read from the newest creator_sample (<= 3) of them; copycat name/symbol/image matches against the tokens collected in the last copycat_window_s. Own RugCheck bucket (rate_per_s, never a Helius/Jupiter lane), own daemon thread, handed over right after the screen decision; ~1-4 calls per candidate (~70-280 calls/h at 70 candidates/h). Every value is flagged AT_COLLECTION; the learner uses it only when late_s <= its max_late_s. A 429 stops all calls for max(backoff_s, Retry-After). Raw bodies up to raw_max_bytes are kept as observations(kind='risk_external:rugcheck').",
+    "enabled": true,
+    "rate_per_s": 1.0,
+    "timeout_s": 10.0,
+    "max_attempts": 1,
+    "max_bytes": 4194304,
+    "queue_size": 200,
+    "max_late_s": 30.0,
+    "creator_sample": 3,
+    "dead_mcap_usd": 10000,
+    "copycat_window_s": 86400.0,
+    "raw_max_bytes": 16384,
+    "backoff_s": 60.0
   }
 }
