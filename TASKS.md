@@ -2108,7 +2108,7 @@ OWNS: lean/report.py, tests/lean/test_report.py (+ lean/notify.py: the `/pnl` an
 
 ## L19 — Selection learner: features at screen time → outcome labels → proposed screen rules
 STATUS: OPEN
-DEPENDS: `DONE L07R:` (path_mark rows) and `DONE L12F:` (features rows). Build against those REAL schemas, using synthetic data in tests until production data exists.
+DEPENDS: `DONE L07R2:` (path data in separate `paths.sqlite`) and `DONE L12F:` (features rows). Build against those REAL schemas, using synthetic data in tests until production data exists.
 BASE: origin/integration/r1 (after L07R and L12F are merged)
 OWNS: lean/learn.py, lean/labels.py, tests/lean/test_learn.py, tests/lean/test_labels.py, tests/lean/test_e2e_learn.py
 GOAL (CK): learn what winners vs rugs look like AT ENTRY TIME, so the trader keeps getting better at selection.
@@ -2135,3 +2135,6 @@ GOAL (CK): learn what winners vs rugs look like AT ENTRY TIME, so the trader kee
    - NEVER auto-apply. A proposal becomes a new strategy/screen version only after coordinator review and CK's OK.
 5. **Shadow (optional, if simple).** A `shadow_rules` config makes the runner log `decisions(kind='shadow')` with what a proposed rule set WOULD have done, with no effect on trading, so champion and challenger can be compared live.
 6. **Acceptance.** The full tests/lean suite passes, rc=0. An e2e test on fakeworld with planted structure (e.g. high dev_pct → rugs) must recover the planted rule, and a pure-noise dataset must produce NO confirmed rule. Try 3 mutations.
+
+## L07R2 — Path recorder storage moved to a separate paths.sqlite (review BLOCK fix)
+STATUS: CLAIMED by coordinator (local agent, branch cloud/L07R2). Do not take.
