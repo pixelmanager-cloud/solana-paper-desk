@@ -902,6 +902,10 @@ class LowLaneTests(unittest.TestCase):
             self.assertEqual(client.rpc('getSlot', [])[0], 7)
         self.assertGreaterEqual(seen[2] - seen[0], 2.0 - 1e-6)
         self.assertNotIn('TEST-HELIUS-KEY', repr(client))
+        self.assertEqual(client.transport.max_attempts, 1)                  # the cap counts requests actually sent
+        again = W.build_low_lane_helius('TEST-HELIUS-KEY-0000', W.make_config({}), opener=opener, clock=clock.time,
+                                        monotonic=clock.monotonic, sleep=clock.sleep, max_attempts=3)
+        self.assertEqual(again.transport.max_attempts, 3)
 
 
 class HookTests(unittest.TestCase):

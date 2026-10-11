@@ -312,7 +312,10 @@ class LowLaneLimiter:
 
 def build_low_lane_helius(key, cfg, *, shed=None, **transport_kwargs):
     """A Helius client on the low-priority lane. ``transport_kwargs`` (opener, clock, monotonic, sleep, rng) are shared with
-    the main providers so the whole process (and a test with a fake clock) sees one set of buckets."""
+    the main providers so the whole process (and a test with a fake clock) sees one set of buckets. One attempt per call
+    (no transport retries): the per-candidate cap then equals the requests actually sent, and a failed step is simply
+    reported as unavailable. Pass ``max_attempts`` explicitly to change that."""
+    transport_kwargs.setdefault('max_attempts', 1)
     monotonic = transport_kwargs.get('monotonic', time.monotonic)
     sleep = transport_kwargs.get('sleep', time.sleep)
     own = RateLimiter(cfg['low_rate_per_s'], cfg['low_burst'], clock=monotonic, sleep=sleep)
