@@ -1,0 +1,26 @@
+[Unit]
+Description=Lean paper trader (paper only: no signing, no broadcasting, no real funds)
+After=network-online.target
+Wants=network-online.target
+[Service]
+Type=simple
+User=solana-desk
+Group=solana-desk
+WorkingDirectory=/opt/solana-desk
+LoadCredential=provider-keys.json:/etc/solana-desk/provider-keys.json
+ExecStart=/opt/solana-desk/.venv/bin/python -m lean --config /etc/solana-paper/lean.json --state-dir /var/lib/solana-desk-lean --discovery-db /var/lib/solana-desk/discovery/continuous.sqlite --keys-file %d/provider-keys.json
+Restart=on-failure
+RestartSec=10
+UMask=0077
+NoNewPrivileges=true
+PrivateTmp=true
+ProtectSystem=strict
+ProtectHome=true
+StateDirectory=solana-desk-lean
+ReadWritePaths=/var/lib/solana-desk-lean
+RestrictAddressFamilies=AF_INET AF_INET6 AF_UNIX
+MemoryMax=512M
+TasksMax=64
+TimeoutStopSec=30
+[Install]
+WantedBy=multi-user.target
