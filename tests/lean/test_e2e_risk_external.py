@@ -274,6 +274,8 @@ class LearnWorld:
         cfg = load_config(ROOT / 'config' / 'lean' / 'lean.example.json')
         cfg['strategy_config'] = str(root / 'strategy.json')
         cfg['execution'], cfg['held_risk'], cfg['wallet_signals'] = None, {'enabled': False}, None
+        from lean import sell_evidence as SE                                  # LINT4: the merged example turns L20 sell_evidence
+        cfg['sell_evidence'] = SE.config(None)                                # on, and it needs execution (switched off here)
         from lean import features as F
         cfg['features'] = F.config(None)
         cfg['paths'] = L.config({'enabled': True, 'path_hours': 0.5, 'interval_s': 15})
