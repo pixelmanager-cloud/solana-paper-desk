@@ -17,7 +17,7 @@
   },
   "sources": [],
   "watchlist": {
-    "enabled": true,
+    "enabled": false,
     "watch_interval_s": 300,
     "watch_hours": 6,
     "watch_max_per_pass": 5
