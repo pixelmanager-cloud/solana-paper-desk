@@ -442,6 +442,10 @@ def gate(store, research, scan_ids, *, ledger_locked=None, review_source=None, f
         raise ValueError('Cycle no-entry inventory incomplete')
     seed = digest({'passes': newest[0], 'last': newest[1]})
     replay, quick = verified_index.plan(index, INDEX_KIND, retired, seed=seed, full=full)
+    quick, rest = verified_index.split_quick(quick, seed=seed, kind=INDEX_KIND)
+    with closing(store.connect()) as c:
+        if verified_index.missing_pages(c, [item[3] for item in rest]):
+            raise ValueError('Cycle no-entry row/outcome conflict')
     for identity, scan, intent_key, outcome_key in quick:
         rec = terminal._load(store, outcome_key)
         if digest(rec) != outcome_key or (rec.get('pass_id'), rec.get('scan_id'), rec.get('intent_hash')) != (identity, scan, intent_key):

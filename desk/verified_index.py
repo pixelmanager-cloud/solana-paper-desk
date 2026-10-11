@@ -20,6 +20,7 @@ from .model import digest
 TABLE = 'paper_verified_receipts'
 VERSION = 1
 SAMPLE = 8                       # indexed receipts re-proved per kind per gate call
+QUICK_SAMPLE = 8                 # of the others, how many get the page-level binding check per gate call (T24S); the rest a presence check
 MAX_ROWS = 16384
 SQL = (f'CREATE TABLE {TABLE}(id INTEGER PRIMARY KEY,kind TEXT NOT NULL,pass_id TEXT NOT NULL,'
        'outcome_hash TEXT NOT NULL,proof_digest TEXT NOT NULL,UNIQUE(kind,pass_id))')
@@ -99,3 +100,32 @@ def plan(index, kind, items, *, seed, full=False, sample=None):
     chosen = ranked[:max(0, sample)]
     picked = {i[0] for i in chosen}
     return full_items + chosen, [i for i in indexed if i[0] not in picked]
+
+
+def distinct_picks(upto, seed, k):
+    """``min(k, upto)`` DISTINCT numbers in 1..upto, pseudo-randomly but deterministically in ``seed`` (bounded draws)."""
+    chosen, i = set(), 0
+    while len(chosen) < min(k, upto) and i < 64 * max(1, k):
+        chosen.add(int(digest({'seed': seed, 'i': i})[:12], 16) % upto + 1)
+        i += 1
+    n = 1
+    while len(chosen) < min(k, upto):        # vanishingly unlikely: fill deterministically
+        chosen.add(n)
+        n += 1
+    return chosen
+
+
+def split_quick(quick, *, seed, kind, sample=None):
+    """T24S: of the indexed receipts that are not replayed, a bounded deterministic sample gets the page-level binding check
+    (outcome page loads, hashes to its key, identity fields agree); the others are checked as SQL scalars only (``missing_pages``
+    plus the index digest ``plan`` already compared), so a gate call decodes a bounded number of pages whatever the receipt count.
+    Returns (checked, rest); the sample moves with ``seed`` so every receipt is checked over time."""
+    ordered = sorted(quick, key=lambda i: i[0])
+    k = QUICK_SAMPLE if sample is None else sample
+    picks = distinct_picks(len(ordered), {'seed': seed, 'kind': kind, 'quick': True}, max(0, k)) if ordered else set()
+    return [item for n, item in enumerate(ordered, 1) if n in picks], [item for n, item in enumerate(ordered, 1) if n not in picks]
+
+
+def missing_pages(c, hashes):
+    """Hashes that are not retained evidence pages (a primary-key lookup each; nothing is decoded)."""
+    return [h for h in hashes if not c.execute('SELECT 1 FROM pages WHERE hash=?', (h,)).fetchone()]

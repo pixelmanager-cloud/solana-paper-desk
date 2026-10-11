@@ -153,7 +153,7 @@ def completed(store, kinds, *, persist=True, full=False):
         else:
             seed = digest({'passes': done, 'indexed': n})
             picks = {n - k for k in range(NEWEST) if n - k >= 1}
-            picks |= {int(digest({'seed': seed, 'i': i})[:12], 16) % n + 1 for i in range(SAMPLE)} if n else set()
+            picks |= verified_index.distinct_picks(n, {'seed': seed, 'inventory': True}, SAMPLE) if n else set()
             sample_ids = sorted(picks)
         sampled = []
         for rid in sample_ids:

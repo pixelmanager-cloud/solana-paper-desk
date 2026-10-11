@@ -294,6 +294,9 @@ def gate(store,research,scan_ids,*,ledger_locked=None,review_source=None,full=Fa
     if bound!=set(retired):raise ValueError('Preparation rejection inventory incomplete')
     seed=digest({'passes':total,'last':last})
     replay,quick=verified_index.plan(index,KIND,retired,seed=seed,full=full)
+    quick,rest=verified_index.split_quick(quick,seed=seed,kind=KIND)
+    with closing(store.connect()) as c:
+        if verified_index.missing_pages(c,[item[3] for item in rest]):raise ValueError('Preparation rejection binding changed')
     for identity,scan,intent_key,outcome_key in quick:
         value=terminal._load(store,outcome_key)
         if digest(value)!=outcome_key or (value['pass_id'],value['scan_id'],value['intent_hash'])!=(identity,scan,intent_key):
