@@ -126,7 +126,7 @@ class L20E2E(unittest.TestCase):
             return TP.only_by(start, end, t.coin_creator)
         self.world([('normal', 0, normal), ('honeypot', 420, honeypot), ('creator_only', 840, creator_only)], T0 + 3000)
         off = self.run_once('off')
-        on = self.run_once('on', sell=SELL)
+        on = self.run_once('on', sell={**SELL, 'unverified_sell_policy': 'zero'})   # the policy default is flag_only since LINT4 review
         sells = self.sells(on)
         by = {}
         for role, fill, payload, event, state in sells:

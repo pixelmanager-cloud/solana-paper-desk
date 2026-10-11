@@ -31,7 +31,7 @@ class ConfigTests(unittest.TestCase):
     def test_absent_is_off_and_the_defaults(self):
         self.assertFalse(SE.config(None)['enabled'])
         self.assertEqual((CFG['min_organic_sells'], CFG['sell_window_s'], CFG['unverified_sell_policy'], CFG['max_tx_samples'], CFG['cache_s']),
-                         (2, 300, 'zero', 8, 60))
+                         (2, 300, 'flag_only', 8, 60))
         self.assertEqual(SE.config(CFG), CFG)
 
     def test_unknown_and_wrong_values_are_refused(self):
@@ -82,6 +82,16 @@ class ProbeTests(unittest.TestCase):
         self.assertEqual((result['verdict'], result['sellers']), ('VERIFIED', 1))
         result, _ = self.run_probe(trades, exclude=set())
         self.assertEqual(result['verdict'], 'VERIFIED')                            # sanity: without the exclusion they would count
+
+    def test_a_full_page_that_does_not_reach_the_window_start_is_unknown_not_unverified(self):
+        # LINT4 review: on a busy pool a 1000-signature page covers ~90 s of the 300 s window; absence is not proven
+        trades = [(T + 1000 - 50 + i // 10, TP.wallet(800 + i % 7), 'buy', 10 ** 8, False) for i in range(60)]
+        result, _ = self.run_probe(trades, sig_limit=40)
+        self.assertEqual((result['verdict'], result['why']), ('UNKNOWN', 'WINDOW_NOT_COVERED'))
+        result, _ = self.run_probe(trades, sig_limit=1000)
+        self.assertEqual(result['verdict'], 'UNVERIFIED')                           # the whole window was seen: absence is proven
+        result, _ = self.run_probe(trades, max_unverified_window=30)
+        self.assertEqual((result['verdict'], result['why']), ('UNKNOWN', 'SAMPLE_TOO_SMALL'))
 
     def test_one_wallet_selling_many_times_is_one_seller(self):
         trades = TP.only_by(T + 700, T + 1000, TP.wallet(4343))                          # many sells, ONE signer

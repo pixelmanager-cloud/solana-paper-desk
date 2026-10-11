@@ -39,7 +39,8 @@ DEFAULTS = {
     'enabled': False,
     'min_organic_sells': 2,        # distinct organic sellers needed
     'sell_window_s': 300,          # ... in this many seconds before the probe
-    'unverified_sell_policy': 'zero',   # zero: an UNVERIFIED sell is valued at 0 proceeds; flag_only: booked at the quote, flagged
+    'unverified_sell_policy': 'flag_only',   # flag_only (default): booked at the quote, flagged; zero: valued at 0 proceeds
+    'max_unverified_window': 1000,  # more successful window txs than this with too few sellers found = UNKNOWN (sample too small); 1000 = off
     'max_tx_samples': 8,           # getTransaction per probe (+ 1 getSignaturesForAddress)
     'sig_limit': 1000,
     'cache_s': 60,                 # a conclusive result is reused for this long per pool
@@ -66,7 +67,7 @@ def config(raw):
         raise ConfigError('sell_evidence.enabled must be true or false')
     if out['unverified_sell_policy'] not in POLICIES:
         raise ConfigError('sell_evidence.unverified_sell_policy must be zero or flag_only')
-    for key, low, high in (('min_organic_sells', 1, 20), ('sell_window_s', 10, 86400), ('max_tx_samples', 1, 50), ('sig_limit', 1, 1000),
+    for key, low, high in (('min_organic_sells', 1, 20), ('sell_window_s', 10, 86400), ('max_tx_samples', 1, 50), ('sig_limit', 1, 1000), ('max_unverified_window', 1, 100000),
                            ('cache_s', 0, 3600), ('max_calls_per_hour', 1, 100_000)):
         if type(out[key]) is not int or not low <= out[key] <= high:
             raise ConfigError('sell_evidence.%s must be an integer in [%d, %d]' % (key, low, high))
@@ -118,6 +119,11 @@ def probe(calls, pool, mint, *, now, cfg, exclude):
         return {'verdict': VERIFIED, 'why': None, **out}
     if failed:                                  # the planned sample was not fully read: absence is not proven
         return {**unknown('SAMPLE_INCOMPLETE'), **out}
+    oldest = min((r['block_time'] for r in rows if r['block_time'] is not None), default=None)
+    if len(rows) >= cfg['sig_limit'] and (oldest is None or oldest > now - cfg['sell_window_s']):
+        return {**unknown('WINDOW_NOT_COVERED'), **out}      # a full page that ends inside the window: absence is not proven
+    if len(window) > cfg['max_unverified_window']:
+        return {**unknown('SAMPLE_TOO_SMALL'), **out}        # a busy pool: a handful of samples cannot prove there are no sellers
     return {'verdict': UNVERIFIED, 'why': 'NO_SELLS_IN_WINDOW' if not window else 'TOO_FEW_ORGANIC_SELLERS', **out}
 
 
