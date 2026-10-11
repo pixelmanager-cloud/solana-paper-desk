@@ -1,5 +1,5 @@
 {
-  "_comment": "PAPER ONLY lean trader config (python -m lean --config). Every key the runner reads is listed; unknown keys are refused. strategy_config is relative to this file. initial_cash_sol creates a NEW store; an existing store must match it. LINT1: every merged feature is ON at paper-collection defaults (L07R paths, L10 execution, L11 held_risk, L14 watchlist, L15 ops, L16 route_check). L13 wallet_signals was NOT merged (see reports/LINT1.md), so it has no key here. route_check (L16) re-uses the quote response: no extra provider call, never signs or sends. watchlist (L14): soft rejects (incl. ENTRY_THROTTLE) are re-screened on the MAIN lane after the fresh scan, portfolio-blocked mints cost nothing, hard cap watch_max_rescreens_per_hour (<= 360 Helius + 240 Jupiter calls/h), watch_hours must be <= screen.max_age_seconds. held_risk (L11) probes and account checks run on the shared LOW lane after the exits.",
+  "_comment": "PAPER ONLY lean trader config (python -m lean --config). Every key the runner reads is listed; unknown keys are refused. strategy_config is relative to this file. initial_cash_sol creates a NEW store; an existing store must match it. LINT1/LINT2: every merged feature is ON at paper-collection defaults (L07R paths, L10 execution, L11 held_risk, L14 watchlist, L15 ops, L16 route_check, L12F features, L13 wallet_signals). features and wallet_signals are FEATURES ONLY (never read by the strategy) and run on the shared LOW lane in their own threads (run mode only). route_check (L16) re-uses the quote response: no extra provider call, never signs or sends. watchlist (L14): soft rejects (incl. ENTRY_THROTTLE) are re-screened on the MAIN lane after the fresh scan, portfolio-blocked mints cost nothing, hard cap watch_max_rescreens_per_hour (<= 360 Helius + 240 Jupiter calls/h), watch_hours must be <= screen.max_age_seconds. held_risk (L11) probes and account checks run on the shared LOW lane after the exits.",
   "strategy_config": "strategy-default.json",
   "initial_cash_sol": "10",
   "candidate_interval_s": 5.0,
@@ -76,5 +76,28 @@
     "watchdog_stale_s": 180,
     "regime_interval_s": 300,
     "housekeeping_s": 5
+  },
+  "features": {
+    "_comment": "L12F entry feature capture: one observations(kind='features') row per screened candidate (a small row in lean.sqlite), <= 3 extra Helius calls per hazard-free candidate on the shared low lane (dev balance, pool signatures, holders of a soft reject); hazard rejects cost nothing. Absent = off; enrich=false writes only the free fields.",
+    "enabled": true,
+    "enrich": true,
+    "queue_size": 500
+  },
+  "wallet_signals": {
+    "_comment": "L13 bundle/sniper + smart-wallet signal (this object turns it on; null/absent = off). Every screened candidate, ~125 s after graduation: <= max_calls Helius calls on the shared low lane (2 signature pages + supply + 6 txs + 3 x 2 funding). Smart-wallet outcomes come from the L07R2 paths.sqlite (read-only) or the desk's own closed trades. retain_raw none keeps the 1000-row signature pages (~170 KB each) out of lean.sqlite; backfill_max_age_s 1800 bounds the catch-up after a restart so it cannot hog the low lane the path recorder shares.",
+    "window_s": 120,
+    "sniper_slots": 3,
+    "max_swap_txs": 6,
+    "sig_pages": 2,
+    "funding_wallets": 3,
+    "max_calls": 16,
+    "pace_s": 0.25,
+    "shed_wait_s": 30.0,
+    "max_per_pass": 2,
+    "backfill_max_age_s": 1800,
+    "retain_raw": "none",
+    "ignore_funders": [],
+    "min_wins": 2,
+    "smart_threshold": 0.7
   }
 }

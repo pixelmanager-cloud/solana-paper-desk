@@ -33,6 +33,12 @@ CONFIG_KEYS = {
     'sources': [],                     # L14: extra candidate sources [{name, type, discovery_db}]; [] = pump discovery only
     'watchlist': {},                   # L14: {enabled (false), watch_interval_s 300, watch_hours 2, watch_max_per_pass 5, watch_max_rescreens_per_hour 120}
     'ops': None,                       # L15: credit tracker / watchdog / regime log (see lean.ops); absent = off
+    # --- L12 ---
+    'features': None,                  # lean.features settings ({"enabled", "enrich", "queue_size"}); None = disabled
+    # --- end L12 ---
+    # --- L13 ---
+    'wallet_signals': None,            # lean.wallet_signals settings (an object, may be {}, turns it on); None = off
+    # --- end L13 ---
 }
 REQUIRED = ('strategy_config', 'initial_cash_sol')
 
@@ -98,6 +104,21 @@ def load_config(path):
         cfg['ops'] = _ops.load_ops_config(cfg['ops'])
     except _ops.OpsError as error:
         raise ConfigError(str(error)) from None
+    # --- L12 ---
+    from lean import features
+    try:
+        cfg['features'] = features.config(cfg['features'])
+    except ValueError as error:
+        raise ConfigError(str(error)) from None
+    # --- end L12 ---
+    # --- L13 ---
+    if cfg['wallet_signals'] is not None:                                  # strict, validated at load
+        from lean import wallet_signals
+        try:
+            wallet_signals.make_config(cfg['wallet_signals'])
+        except wallet_signals.ConfigError as error:
+            raise ConfigError(str(error)) from None
+    # --- end L13 ---
     return cfg
 
 
@@ -179,6 +200,19 @@ def build_runner(cfg, *, state_dir, discovery_db, keys, code_version, clock=None
     if r.held_risk is not None:
         r.held_risk.low = providers.low(keys, **transport_kwargs)
     # --- end LINT1 ---
+    # --- L12: the entry feature recorder (low lane) ---
+    from lean import features
+    r.features = features.build(features.config(cfg.get('features')), store=the_store, keys=keys, code_version=code_version,
+                                strategy_version=strategy_cfg.strategy_version, clock=clock, transport_kwargs=transport_kwargs)
+    # --- end L12 ---
+    # --- L13: the wallet-signal collector (low lane) ---
+    if cfg.get('wallet_signals') is not None:
+        from lean import wallet_signals
+        r.wallet_signals = wallet_signals.build(wallet_signals.make_config(cfg['wallet_signals']), store=the_store, keys=keys,
+                                                code_version=code_version, strategy_version=strategy_cfg.strategy_version, clock=clock,
+                                                transport_kwargs=transport_kwargs,
+                                                paths_db=paths.db_path(paths_cfg, state) if paths_cfg['enabled'] else None)   # LINT2
+    # --- end L13 ---
     return r
 
 

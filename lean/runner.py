@@ -115,6 +115,13 @@ class Runner:
         if self.ops is not None:
             self.ops.attach(self)
         # --- end L15 ---
+        # --- L12 hook ---
+        self.features = None                       # lean.features.FeatureRecorder (set by build_runner when features.enabled)
+        self._l12_screened = None                  # (candidate_id, Screen) of the candidate being handled
+        # --- end L12 ---
+        # --- L13 hook ---
+        self.wallet_signals = None                 # lean.wallet_signals.WalletSignals (set by build_runner when configured)
+        # --- end L13 ---
         self.startup()
         # --- L10 hook ---
         if execution is not None and self.halted is None:
@@ -345,6 +352,24 @@ class Runner:
         # --- L07R hook ---
         self._l07r_after(candidate)
         # --- end L07R ---
+        # --- L12 hook ---
+        self._l12_after(candidate)
+        # --- end L12 ---
+
+    # --- L12 hook ---
+    def _l12_after(self, candidate):
+        """Feature recorder: hand a handled candidate (entered or not) to the recorder, which reads what became of it from the
+        store. A candidate that will be retried writes no row now (its final attempt does). Never raises, never blocks."""
+        screened, self._l12_screened = self._l12_screened, None
+        if self.features is None or screened is None or screened[1].error:
+            return
+        try:
+            if any(queued.mint == candidate.mint for queued, _attempt in self.retry):
+                return
+            self.features.on_candidate(candidate, screened[0], screened[1])
+        except Exception:                                                       # the trader never notices
+            log.debug('feature recorder hook failed', exc_info=True)
+    # --- end L12 ---
 
     # --- L07R hook ---
     def _l07r_note(self, **facts):
@@ -397,6 +422,9 @@ class Runner:
         # --- L07R hook ---
         self._l07r = {'mint': mint, 'cid': cid, 'screen': result, 'entry_reasons': None, 'fill': None, 'error': None}
         # --- end L07R ---
+        # --- L12 hook ---
+        self._l12_screened = (cid, result)
+        # --- end L12 ---
         if result.error:
             error = result.error
             self._error(error['code'], transient=error['transient'], mint=mint, scope='screen:%s' % error.get('stage'),
@@ -698,6 +726,12 @@ class Runner:
                 'marks': {m: {'source': v[2], 'at': v[1]} for m, v in marks.items()},
                 'cost_basis_mints': list(self.cost_basis_mints), 'cash_lamports': cash, 'cursor': self.cursor,
                 'retry_queue': len(self.retry), 'execution_status': 'EXECUTION_UNVERIFIED', 'live_readiness': False,
+                # --- L12 hook ---
+                'features': self.features.health() if self.features is not None else {'enabled': False},
+                # --- end L12 ---
+                # --- L13 hook ---
+                'wallet_signals': dict(self.wallet_signals.counts) if self.wallet_signals is not None else {'enabled': False},
+                # --- end L13 ---
                 # --- L07R hook ---
                 'paths': self._l07r_health(),
                 # --- end L07R ---
@@ -783,6 +817,19 @@ class Runner:
         # --- L15 hook ---
         threads += [] if self.ops is None else self.ops.start(self)      # Ops.start returns started threads
         # --- end L15 ---
+        # --- L12 hook: the feature recorder in its own daemon thread; it drains its queue on stop ---
+        feature_thread = None
+        if self.features is not None:
+            feature_thread = threading.Thread(target=self.features.run, args=(self.stop,), name='features', daemon=True)
+            feature_thread.start()
+        # --- end L12 ---
+        # --- L13 hook --- (data collection on its own daemon thread and the shared low lane; never blocks entries or exits)
+        signals_thread = None
+        if self.wallet_signals is not None:
+            self.wallet_signals.stop = self.stop
+            signals_thread = threading.Thread(target=self.wallet_signals.run_loop, name='wallet_signals', daemon=True)
+            signals_thread.start()
+        # --- end L13 ---
         for t in threads:
             while t.is_alive():
                 t.join(0.5)
@@ -790,6 +837,14 @@ class Runner:
         if recorder is not None:
             recorder.join(30.0)                    # bounded: one in-flight low-lane call at most
         # --- end L07R ---
+        # --- L12 hook ---
+        if feature_thread is not None:
+            feature_thread.join(30.0)              # bounded: the queue is drained on stop, one in-flight low-lane call at most
+        # --- end L12 ---
+        # --- L13 hook ---
+        if signals_thread is not None:
+            signals_thread.join(30.0)              # bounded: one in-flight low-lane call at most
+        # --- end L13 ---
         try:
             self.write_health()
         except Exception:
