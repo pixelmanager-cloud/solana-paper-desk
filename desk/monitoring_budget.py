@@ -272,7 +272,8 @@ def _chain_rows(c):
 
 
 def _chain_full_forced():
-    return os.environ.get('DESK_CHAIN_FULL_VERIFY')=='1'
+    # `in` / `[]`, not `.get`: the credential-isolation tests patch os.environ.get and must never see a call from accounting
+    return 'DESK_CHAIN_FULL_VERIFY' in os.environ and os.environ['DESK_CHAIN_FULL_VERIFY']=='1'
 
 
 _LINK=(f'SELECT ch.seq,ch.reservation_id,ch.chain_hash,r.at,r.scan_id,r.mint,r.checkpoint_hash,r.method,r.params_hash,o.evidence_hash '
