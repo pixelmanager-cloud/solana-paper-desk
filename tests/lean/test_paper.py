@@ -168,5 +168,43 @@ class ApplyFillTests(unittest.TestCase):
         self.assertEqual(original, snapshot)
 
 
+class RawQuantitySellTests(unittest.TestCase):
+    """L09: ladder fractions are of the INITIAL quantity, so the runner sells an exact raw quantity."""
+
+    def test_tp1_tp2_tp3_sequential_fills_then_full_exit(self):
+        fill = buy(bq(), '0.02', CFG)
+        positions, cash = apply_fill({}, 20 * 10 ** 9, fill)
+        initial = positions[MINT].qty_raw                                  # 995,000,000
+        sold = 0
+        for rung, fraction in enumerate((Decimal('0.3'), Decimal('0.3'), Decimal('0.2')), start=1):
+            held = positions[MINT]
+            qty = min(held.qty_raw, int(initial * fraction))                  # floor, never above held
+            part = sell(held, sq(qty, 10_000_000 * rung, ts=200.0 + rung), cfg=CFG, qty_raw=qty)
+            self.assertEqual(part.qty_raw, qty)
+            positions, cash = apply_fill(positions, cash, part)
+            sold += qty
+            self.assertEqual(positions[MINT].qty_raw, initial - sold)
+        self.assertEqual(sold, int(initial * Decimal('0.3')) * 2 + int(initial * Decimal('0.2')))
+        held = positions[MINT]
+        last = sell(held, sq(held.qty_raw, 1_000_000, ts=300.0), cfg=CFG, qty_raw=held.qty_raw)
+        positions, cash = apply_fill(positions, cash, last)
+        self.assertEqual(positions, {})
+        # a fraction of the CURRENT position would have been the wrong size at TP2 (0.3 of 70% = 21% of initial)
+        held_after_tp1 = initial - int(initial * Decimal('0.3'))
+        self.assertNotEqual(int(Decimal(held_after_tp1) * Decimal('0.3')), int(initial * Decimal('0.3')))
+
+    def test_qty_raw_bounds_and_exactly_one_size(self):
+        fill = buy(bq(), '0.02', CFG)
+        positions, _ = apply_fill({}, 20 * 10 ** 9, fill)
+        held = positions[MINT]
+        for bad in (0, -1, held.qty_raw + 1, 1.5, True, Decimal(5)):
+            with self.subTest(bad=bad), self.assertRaises(PaperError):
+                sell(held, sq(5, 1000), cfg=CFG, qty_raw=bad)
+        with self.assertRaises(PaperError):
+            sell(held, sq(5, 1000), Decimal('0.5'), CFG, qty_raw=5)
+        with self.assertRaises(PaperError):
+            sell(held, sq(5, 1000), cfg=None, qty_raw=5)
+
+
 if __name__ == '__main__':
     unittest.main()

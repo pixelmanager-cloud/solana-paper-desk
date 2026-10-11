@@ -11,6 +11,7 @@ Tables (all append-only: UPDATE and DELETE are refused by triggers):
   decisions     screen / entry / exit decisions with reasons and features
   fills         paper fills with the running balances AFTER each fill (tamper evidence)
   errors        typed per-candidate / per-check failures
+  position_state  per-position strategy state (pool/vault keys, initial qty, TP stage, stop, peak, close reason, cooldown)
 
 Positions and cash are DERIVED from fills by replaying ``lean.paper.apply_fill`` (the one implementation of the accounting rules).
 Each fill row also stores ``cash_after`` / ``qty_after`` / ``cost_after``; ``check_invariants`` replays the whole history and compares, so
@@ -81,12 +82,21 @@ TABLES = {
     'errors': ('CREATE TABLE errors(id INTEGER PRIMARY KEY AUTOINCREMENT, ts REAL NOT NULL, code TEXT NOT NULL, transient INTEGER NOT NULL '
                'CHECK(transient IN (0,1)), mint TEXT, scope TEXT NOT NULL, message TEXT NOT NULL, '
                'code_version TEXT NOT NULL CHECK(length(code_version)>0), strategy_version TEXT NOT NULL CHECK(length(strategy_version)>0))'),
+    # Strategy state of each position lifecycle (pool/vault keys, initial quantity, TP stage, stop, peak, cooldown...).
+    # ``open`` is written in the same transaction as the opening BUY, ``rung``/``closed`` with their SELL, ``update`` alone
+    # (peak/touched changes). The latest row of a mint is its current state; ``open_fill_id`` binds rows to one lifecycle.
+    'position_state': ('CREATE TABLE position_state(id INTEGER PRIMARY KEY AUTOINCREMENT, ts REAL NOT NULL, mint TEXT NOT NULL, '
+                       'open_fill_id INTEGER NOT NULL, fill_id INTEGER, '
+                       "event TEXT NOT NULL CHECK(event IN ('open','update','rung','closed')), state TEXT NOT NULL, "
+                       'code_version TEXT NOT NULL CHECK(length(code_version)>0), strategy_version TEXT NOT NULL CHECK(length(strategy_version)>0))'),
 }
 INDEXES = {
     'fills_mint': 'CREATE INDEX fills_mint ON fills(mint, id)',
     'decisions_mint': 'CREATE INDEX decisions_mint ON decisions(mint, id)',
     'observations_mint': 'CREATE INDEX observations_mint ON observations(mint, id)',
     'errors_code': 'CREATE INDEX errors_code ON errors(code, id)',
+    'events_kind': 'CREATE INDEX events_kind ON events(kind, id)',
+    'position_state_mint': 'CREATE INDEX position_state_mint ON position_state(mint, id)',
 }
 
 
@@ -131,6 +141,9 @@ class Store:
         self.db.execute('PRAGMA journal_mode=WAL')
         self.db.execute('PRAGMA synchronous=FULL')
         self.db.execute('PRAGMA busy_timeout=10000')
+        # REPLACE conflict resolution deletes rows WITHOUT firing delete triggers unless recursive triggers are on: with
+        # this, ``INSERT OR REPLACE`` on any table hits the append-only DELETE guard and is refused.
+        self.db.execute('PRAGMA recursive_triggers=ON')
         try:
             if not existing:
                 self._create(to_lamports(initial_cash_sol))
@@ -138,6 +151,12 @@ class Store:
                 self._validate(None if initial_cash_sol is None else to_lamports(initial_cash_sol))
         except BaseException:
             self.db.close()
+            if not existing:             # never leave a half-created store behind (it would be refused forever)
+                for suffix in ('', '-wal', '-shm', '-journal'):
+                    try:
+                        os.unlink(str(self.path) + suffix)
+                    except FileNotFoundError:
+                        pass
             raise
 
     # -- schema ------------------------------------------------------------------------------------------------------------
@@ -269,11 +288,21 @@ class Store:
             'INSERT INTO errors(ts,code,transient,mint,scope,message,code_version,strategy_version) VALUES(?,?,?,?,?,?,?,?)',
             (stamp, str(code)[:96], 1 if transient else 0, mint, str(scope)[:32], text, cv, sv)).lastrowid)
 
-    def add_fill(self, fill, *, candidate_id=None, code_version=None, strategy_version=None):
-        """Append a paper fill. Raises AccountingHalt (and writes nothing) if it would break an invariant."""
+    def add_fill(self, fill, *, candidate_id=None, state=None, code_version=None, strategy_version=None):
+        """Append a paper fill. Raises AccountingHalt (and writes nothing) if it would break an invariant.
+
+        ``state`` (optional) is the position-state row written in the SAME transaction: ``{'event': 'open'|'rung'|'closed',
+        'state': {...}, 'open_fill_id': id}`` (``open_fill_id`` is this fill's own id for ``open``). So a crash can never
+        leave a position without its pool/vault keys, or a TP rung filled without its stage advanced."""
         if not isinstance(fill, Fill):
             raise StoreError('a lean.paper.Fill is required')
         code, strategy = self._versions(code_version, strategy_version)
+        if state is not None:
+            event = state.get('event') if isinstance(state, dict) else None
+            if event not in ('open', 'rung', 'closed') or (event == 'open') != (fill.side == 'buy') or \
+                    not isinstance(state.get('state'), dict) or (event != 'open' and type(state.get('open_fill_id')) is not int):
+                raise StoreError('position state does not match the fill')
+            state_text = _json(state['state'])
 
         def write():
             positions, cash, _ = self._replay_locked()
@@ -290,8 +319,69 @@ class Store:
             except sqlite3.IntegrityError as error:
                 raise AccountingHalt('store refused the fill: %s' % error) from None
             self._cache = None
+            if state is not None:
+                opened = row.lastrowid if state['event'] == 'open' else state['open_fill_id']
+                self.db.execute('INSERT INTO position_state(ts,mint,open_fill_id,fill_id,event,state,code_version,strategy_version) '
+                                'VALUES(?,?,?,?,?,?,?,?)', (self._ts(fill.ts), fill.mint, opened, row.lastrowid, state['event'],
+                                                            state_text, code, strategy))
             return row.lastrowid
         return self._write(write)
+
+    def add_position_state(self, mint, open_fill_id, state, *, code_version=None, strategy_version=None, ts=None):
+        """An ``update`` row (peak / touched changes between fills). Refused unless it continues the mint's open lifecycle."""
+        code, cv = self._versions(code_version, strategy_version)
+        text, stamp = _json(state), self._ts(ts)
+
+        def write():
+            last = self.db.execute('SELECT open_fill_id,event FROM position_state WHERE mint=? ORDER BY id DESC LIMIT 1', (mint,)).fetchone()
+            if last is None or last[1] == 'closed' or last[0] != open_fill_id:
+                raise StoreError('no open position lifecycle for this state update')
+            return self.db.execute('INSERT INTO position_state(ts,mint,open_fill_id,fill_id,event,state,code_version,strategy_version) '
+                                   "VALUES(?,?,?,NULL,'update',?,?,?)", (stamp, mint, open_fill_id, text, code, cv)).lastrowid
+        return self._write(write)
+
+    def position_states(self):
+        """{mint: {'open_fill_id', 'event', 'state', 'ts'}}: the latest state row of every mint whose lifecycle is open."""
+        with self._lock:
+            rows = self.db.execute('SELECT mint,open_fill_id,event,state,ts FROM position_state WHERE id IN '
+                                   '(SELECT MAX(id) FROM position_state GROUP BY mint)').fetchall()
+        return {m: {'open_fill_id': o, 'event': e, 'state': json.loads(t), 'ts': ts} for m, o, e, t, ts in rows if e != 'closed'}
+
+    def closed_positions(self):
+        """Every ``closed`` row in order: [{'mint', 'open_fill_id', 'fill_id', 'ts', 'state'}] (cooldowns, loss streak, reports)."""
+        with self._lock:
+            rows = self.db.execute("SELECT mint,open_fill_id,fill_id,ts,state FROM position_state WHERE event='closed' ORDER BY id").fetchall()
+        return [{'mint': m, 'open_fill_id': o, 'fill_id': f, 'ts': ts, 'state': json.loads(t)} for m, o, f, ts, t in rows]
+
+    def check_position_states(self):
+        """Raise AccountingHalt unless every held position has exactly one open lifecycle state and vice versa (the runner
+        cannot manage a position without its pool/vault keys and stage)."""
+        with self._lock:
+            held = set(self._replay_locked()[0])
+            states = self.position_states()
+        if held != set(states):
+            raise AccountingHalt('position state differs from the fills: missing=%d orphaned=%d'
+                                 % (len(held - set(states)), len(set(states) - held)))
+        return True
+
+    def latest_event(self, *kinds):
+        """(kind, payload) of the newest generic event among ``kinds``, or None."""
+        if not kinds or not all(isinstance(k, str) for k in kinds):
+            raise StoreError('kinds required')
+        with self._lock:
+            row = self.db.execute('SELECT kind,payload FROM events WHERE kind IN (%s) ORDER BY id DESC LIMIT 1'
+                                  % ','.join('?' * len(kinds)), kinds).fetchone()
+        return None if row is None else (row[0], json.loads(row[1]))
+
+    def halt_reason(self):
+        """The persisted halt reason, or None when there is none or an operator cleared it (``halt_cleared``)."""
+        last = self.latest_event('halt', 'halt_cleared')
+        return last[1].get('reason', 'HALTED') if last and last[0] == 'halt' else None
+
+    def last_fill_ts(self, side):
+        with self._lock:
+            row = self.db.execute('SELECT MAX(ts) FROM fills WHERE side=?', (side,)).fetchone()
+        return row[0]
 
     # -- derived state ---------------------------------------------------------------------------------------------------------
     def _fill_rows(self):
@@ -363,12 +453,22 @@ class Store:
         with self._lock:
             return {t: self.db.execute(f'SELECT COUNT(*) FROM {t}').fetchone()[0] for t in TABLES if t != 'meta'}
 
-    def rows(self, table, *, where='', args=(), limit=1000):
-        """Read-only rows of one table as dicts (``table`` must be one of the store's own tables)."""
-        if table not in TABLES or table == 'meta' or not isinstance(limit, int) or not 0 < limit <= 100000:
+    def rows(self, table, *, id=None, mint=None, kind=None, limit=1000):
+        """Read-only rows of one table as dicts (``table`` must be one of the store's own tables). Filters are bound
+        parameters only (no SQL text from callers): ``id``, ``mint``, ``kind``."""
+        if table not in TABLES or table == 'meta' or type(limit) is not int or not 0 < limit <= 100000:
             raise StoreError('unknown table or limit')
+        clauses, args = [], []
+        for column, value in (('id', id), ('mint', mint), ('kind', kind)):
+            if value is None:
+                continue
+            if (column == 'mint' and table == 'events') or (column == 'kind' and table not in ('events', 'observations', 'decisions')):
+                raise StoreError('filter not available on this table')
+            clauses.append(column + '=?')
+            args.append(value)
+        where = ('WHERE ' + ' AND '.join(clauses)) if clauses else ''
         with self._lock:
-            cur = self.db.execute(f'SELECT * FROM {table} {where} ORDER BY id LIMIT {limit}', args)
+            cur = self.db.execute(f'SELECT * FROM {table} {where} ORDER BY id LIMIT ?', (*args, limit))
             names = [d[0] for d in cur.description]
             return [dict(zip(names, r)) for r in cur.fetchall()]
 

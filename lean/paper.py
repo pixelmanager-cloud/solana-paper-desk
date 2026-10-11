@@ -139,17 +139,30 @@ def buy(quote, size_sol, cfg):
                 slippage_bps=cfg.slippage_bps, decimals=quote.decimals, quote_ref=quote.ref)
 
 
-def sell(position, quote, fraction, cfg):
-    """A paper SELL of ``fraction`` (0 < f <= 1) of the position. The quote must be for exactly the quantity sold."""
+def sell(position, quote, fraction=None, cfg=None, *, qty_raw=None):
+    """A paper SELL of exactly ``qty_raw`` raw token units (0 < qty_raw <= held), or of ``fraction`` (0 < f <= 1) of the
+    CURRENT position. Give exactly one. The quote must be for exactly the quantity sold.
+
+    The runner always passes ``qty_raw``: the strategy's ladder fractions are of the INITIAL quantity, so a fraction of
+    the current position would be the wrong size after the first rung."""
+    if not isinstance(cfg, PaperConfig):
+        raise PaperError('a PaperConfig is required')
     if quote.side != 'sell' or quote.mint != position.mint:
         raise PaperError('a sell needs a sell quote of the same mint')
-    try:
-        f = Decimal(str(fraction)) if isinstance(fraction, float) else Decimal(fraction)
-    except (InvalidOperation, TypeError, ValueError):
-        raise PaperError('fraction must be a number') from None
-    if isinstance(fraction, bool) or not f.is_finite() or not 0 < f <= 1:
-        raise PaperError('fraction must be in (0, 1]')
-    qty = position.qty_raw if f == 1 else int(Decimal(position.qty_raw) * f)
+    if (fraction is None) == (qty_raw is None):
+        raise PaperError('give exactly one of fraction or qty_raw')
+    if qty_raw is not None:
+        if type(qty_raw) is not int or not 0 < qty_raw <= position.qty_raw:
+            raise PaperError('qty_raw must be an integer in (0, held]')
+        qty = qty_raw
+    else:
+        try:
+            f = Decimal(str(fraction)) if isinstance(fraction, float) else Decimal(fraction)
+        except (InvalidOperation, TypeError, ValueError):
+            raise PaperError('fraction must be a number') from None
+        if isinstance(fraction, bool) or not f.is_finite() or not 0 < f <= 1:
+            raise PaperError('fraction must be in (0, 1]')
+        qty = position.qty_raw if f == 1 else int(Decimal(position.qty_raw) * f)
     if qty <= 0:
         raise PaperError('fraction sells nothing')
     if quote.in_amount != qty:

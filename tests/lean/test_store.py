@@ -146,7 +146,7 @@ class TypedHelperTests(Base):
                              message='GET https://rpc.example/?api-key=SUPERSECRET&x=1 failed; Authorization: Bearer TOP.SECRET.TOKEN')
         oid = self.store.add_observation('rpc', b'{}', meta={'url': 'https://h/?api-key=SUPERSECRET', 'nested': [{'h': 'x-api-key: SUPERSECRET'}]})
         (row,) = self.store.rows('errors')
-        meta = self.store.rows('observations', where='WHERE id=?', args=(oid,))[0]['meta']
+        meta = self.store.rows('observations', id=oid)[0]['meta']
         for text in (row['message'], meta):
             self.assertNotIn('SUPERSECRET', text)
             self.assertNotIn('TOP.SECRET.TOKEN', text)
@@ -459,6 +459,99 @@ class ThreadTests(Base):
         self.assertEqual(errors, [])
         counts = self.store.counts()
         self.assertEqual((counts['errors'], counts['candidates'], counts['events']), (200, 200, 200))
+
+
+class L09StoreTests(Base):
+    """Integration fixes: REPLACE bypass, half-created stores, parameterized reads, position state, halts."""
+
+    def test_insert_or_replace_cannot_bypass_the_append_only_guards(self):
+        self.store.add_candidate(MINTS[0], meta={'v': 1})
+        self.store.record('k', {'a': 1}, code_version=CODE, strategy_version=STRATEGY)
+        did = self.store.add_decision('screen', 'PASS', mint=MINTS[0])
+        db = self.store.db
+        attempts = [
+            ("INSERT OR REPLACE INTO candidates(ts,mint,meta,code_version,strategy_version) VALUES(1,?,'{}','c','s')", (MINTS[0],)),
+            ("INSERT OR REPLACE INTO events(id,ts,kind,payload,code_version,strategy_version) VALUES(1,1,'k','{}','c','s')", ()),
+            ("INSERT OR REPLACE INTO decisions(id,ts,kind,action,reasons,features,code_version,strategy_version) "
+             "VALUES(?,1,'screen','REJECT','[]','{}','c','s')", (did,)),
+            ("INSERT OR REPLACE INTO meta VALUES('initial_cash_lamports','1')", ()),
+            ("REPLACE INTO meta VALUES('store_version','9')", ()),
+        ]
+        for sql, args in attempts:
+            with self.assertRaisesRegex(sqlite3.IntegrityError, 'append-only'):
+                db.execute(sql, args)
+        self.assertEqual(self.store.rows('candidates')[0]['meta'], '{"v":1}')
+        self.assertEqual(self.store.initial_cash, START)
+
+    def test_a_failed_create_leaves_no_file_behind(self):
+        path = Path(self.tmp.name) / 'half.sqlite'
+        original = Store._create
+
+        def boom(self, lamports):
+            raise sqlite3.OperationalError('disk I/O error')
+        Store._create = boom
+        try:
+            with self.assertRaises(sqlite3.OperationalError):
+                Store(path, initial_cash_sol=1)
+        finally:
+            Store._create = original
+        self.assertFalse(path.exists())
+        Store(path, initial_cash_sol=1).close()                 # and a retry works
+
+    def test_rows_filters_are_bound_parameters_only(self):
+        self.store.add_candidate(MINTS[0])
+        self.assertEqual(len(self.store.rows('candidates', mint=MINTS[0])), 1)
+        self.assertEqual(self.store.rows('candidates', mint="x' OR '1'='1"), [])
+        with self.assertRaises(TypeError):
+            self.store.rows('candidates', where='WHERE 1=1')
+        with self.assertRaises(StoreError):
+            self.store.rows('fills', kind='buy')
+
+    def test_position_state_is_written_with_its_fill_and_survives_reopen(self):
+        fill = buy(bq(MINTS[0], 20_000_000, 1_000_000, 1.0), '0.02', CFG)
+        open_id = self.store.add_fill(fill, state={'event': 'open', 'state': {'pool': 'P', 'stage': 0}})
+        self.assertEqual(self.store.position_states()[MINTS[0]], {'open_fill_id': open_id, 'event': 'open',
+                                                                  'state': {'pool': 'P', 'stage': 0}, 'ts': 1.0})
+        self.store.add_position_state(MINTS[0], open_id, {'pool': 'P', 'stage': 0, 'peak_ratio': '1.2'}, ts=2.0)
+        with self.assertRaises(StoreError):
+            self.store.add_position_state(MINTS[0], open_id + 99, {'x': 1})        # not this lifecycle
+        (pos,) = self.store.positions().values()
+        part = sell(pos, sq(MINTS[0], 300_000, 9_000_000, 3.0), cfg=CFG, qty_raw=300_000)
+        self.store.add_fill(part, state={'event': 'rung', 'open_fill_id': open_id, 'state': {'pool': 'P', 'stage': 1}})
+        self.store.close()
+        self.store = Store(self.path, code_version=CODE, strategy_version=STRATEGY)
+        self.assertEqual(self.store.position_states()[MINTS[0]]['state'], {'pool': 'P', 'stage': 1})
+        self.assertTrue(self.store.check_position_states())
+        (pos,) = self.store.positions().values()
+        rest = sell(pos, sq(MINTS[0], pos.qty_raw, 9_000_000, 4.0), cfg=CFG, qty_raw=pos.qty_raw)
+        self.store.add_fill(rest, state={'event': 'closed', 'open_fill_id': open_id, 'state': {'reason': 'STOP'}})
+        self.assertEqual(self.store.position_states(), {})
+        self.assertEqual([c['state'] for c in self.store.closed_positions()], [{'reason': 'STOP'}])
+        self.assertTrue(self.store.check_position_states())
+        with self.assertRaises(StoreError):
+            self.store.add_position_state(MINTS[0], open_id, {'x': 1})             # the lifecycle is closed
+
+    def test_mismatched_state_is_refused_and_writes_nothing(self):
+        fill = buy(bq(MINTS[0], 20_000_000, 1_000_000, 1.0), '0.02', CFG)
+        counts = self.store.counts()
+        for state in ({'event': 'closed', 'state': {}, 'open_fill_id': 1}, {'event': 'open', 'state': 'x'}, {'event': 'nope', 'state': {}}):
+            with self.assertRaises(StoreError):
+                self.store.add_fill(fill, state=state)
+        self.assertEqual(self.store.counts(), counts)
+
+    def test_a_position_without_state_is_an_accounting_halt(self):
+        self.fill_buy()
+        with self.assertRaisesRegex(AccountingHalt, 'position state'):
+            self.store.check_position_states()
+
+    def test_halt_is_persisted_until_cleared(self):
+        self.assertIsNone(self.store.halt_reason())
+        self.store.record('halt', {'reason': 'ACCOUNTING_INVARIANT: x'}, code_version=CODE, strategy_version=STRATEGY)
+        self.store.close()
+        self.store = Store(self.path, code_version=CODE, strategy_version=STRATEGY)
+        self.assertEqual(self.store.halt_reason(), 'ACCOUNTING_INVARIANT: x')
+        self.store.record('halt_cleared', {'by': 'operator'}, code_version=CODE, strategy_version=STRATEGY)
+        self.assertIsNone(self.store.halt_reason())
 
 
 if __name__ == '__main__':
