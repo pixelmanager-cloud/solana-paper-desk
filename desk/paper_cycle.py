@@ -18,7 +18,7 @@ import sqlite3
 import time
 import uuid
 
-from . import engine, quote_execution as qe, paper_concurrency as concurrency, fill_realism, regime
+from . import engine, quote_execution as qe, paper_concurrency as concurrency, fill_realism, regime, usd_valuation
 from .graduation_witness import extract_graduation
 from .ledger import Ledger
 from .model import canonical, digest, validate_event
@@ -307,7 +307,61 @@ def _history(progress, item, budget, source_factory):
     return as_of, pairs.records(), pairs
 
 
-def _usd(progress, source, scan, budget, refs=(), *, valuation_version=0):
+def _usd_v2(progress, source, scan, budget, refs, purpose, cross_check=usd_valuation.DEFAULT_CROSS_CHECK):
+    """Version 2: Jupiter PriceV3 primary; Kraken for every ENTRY (cross-check) and for any exit whose primary failed.
+
+    A provider failure of either source is a VALUE here (its request is charged and its attempt retained with the
+    failure code, and that retained attempt is what the saved valuation cites); budget, admission and clock failures
+    still raise exactly as for any other read. Nothing is retried. Kraken is fetched at most once per cycle.
+    """
+    uv = usd_valuation
+    from decimal import Decimal
+    def load(key):
+        record = progress.store.load(key)
+        if digest(record) != key:
+            raise CycleBlocked('USD_ORIGINAL_BINDING_INVALID')
+        return record
+    def fetch(invoke):
+        try:
+            return budget.call(scan, invoke)['evidence_hash']
+        except CycleBlocked as error:
+            key = getattr(error.__cause__, 'evidence_hash', None)
+            if error.code in uv.PRE_CHECK_CODES or key is None:
+                raise
+            return key
+    if refs:
+        if len(refs) not in (1, 2):
+            raise CycleBlocked('EXACT_USD_ORIGINAL_REFS_REQUIRED')
+        records = [load(key) for key in refs]
+        by_source = {r.get('source_id'): r for r in records}
+        if len(by_source) != len(records) or not set(by_source) <= {uv.JUPITER_SOURCE_ID, kraken_source_id()}:
+            raise CycleBlocked('EXACT_USD_ORIGINAL_REFS_REQUIRED')
+        primary, fallback, keys = by_source.get(uv.JUPITER_SOURCE_ID), by_source.get(kraken_source_id()), tuple(refs)
+    else:
+        key = fetch(lambda timeout: source.sol_price(timeout_seconds=timeout))
+        primary, fallback, keys = load(key), None, (key,)
+        now = format(Decimal(str(budget.wall_clock())), 'f')
+        usable = uv.observe_jupiter(primary, now=int(now.split('.')[0]), scan=scan).status == 'MEASURED'
+        # Kraken is fetched when the primary is unusable (fallback), and on an ENTRY when no Kraken attempt (success or
+        # failure) was acquired within the configured cross-check interval (default 5 min). A skipped
+        # cross-check is recorded exactly like a failed one: primary only, no fallback observation.
+        due = purpose == 'entry' and usd_valuation.last_kraken_attempt_at(
+            progress.store.path, int(now.split('.')[0]), cross_check) is None
+        if due or not usable:
+            kraken_key = fetch(lambda timeout: source.kraken_sol_price(timeout_seconds=timeout))
+            fallback, keys = load(kraken_key), keys + (kraken_key,)
+    attempts = {'primary': primary, 'fallback': fallback}
+    return attempts, None, None, None, (), attempts, keys
+
+
+def kraken_source_id():
+    from .kraken_usd_observation import SOURCE
+    return SOURCE
+
+
+def _usd(progress, source, scan, budget, refs=(), *, valuation_version=0, purpose='entry', cross_check=None):
+    if valuation_version==2:
+        return _usd_v2(progress, source, scan, budget, refs, purpose, usd_valuation.DEFAULT_CROSS_CHECK if cross_check is None else cross_check)
     if valuation_version==1:
         from .kraken_usd_observation import from_attempt
         if refs:
@@ -493,7 +547,7 @@ def run_once(research_db, evidence_db, ledger_db, cfg, *, position_targets=(), c
             or type(dependency_blockers) is not tuple or len(dependency_blockers)>16
             or any(type(x) is not str or not 1<=len(x)<=128 for x in dependency_blockers)
             or type(controls) is not tuple or len(controls)>18
-            or type(usd_evidence_refs) is not tuple or len(usd_evidence_refs) not in ((0,1) if valuation_version else (0,3))):
+            or type(usd_evidence_refs) is not tuple or len(usd_evidence_refs) not in (((0,1,2) if valuation_version==2 else (0,1)) if valuation_version else (0,3))):
         raise ValueError('Explicit bounded cycle inputs required')
     result = {'kind':'paper_cycle_v1','status':'BLOCKED','execution_status':'EXECUTION_UNVERIFIED',
               'live_readiness':False,'attempted_requests':0,'outcomes':[],'events':[],
@@ -667,7 +721,8 @@ def run_once(research_db, evidence_db, ledger_db, cfg, *, position_targets=(), c
                                 as_of, raw, pages = _history(progress,item,budget,history_source_factory)
                                 if usd is None or valuation_version:
                                     try:
-                                        usd = _usd(progress,source,target.scan_id,budget,usd_evidence_refs,valuation_version=valuation_version)
+                                        usd = _usd(progress,source,target.scan_id,budget,usd_evidence_refs,valuation_version=valuation_version,
+                                                   cross_check=usd_valuation.cross_check_seconds(cfg) if valuation_version==2 else None)
                                     except CycleBlocked:
                                         raise
                                     except (ValueError,TypeError,KeyError,AttributeError):
@@ -675,7 +730,7 @@ def run_once(research_db, evidence_db, ledger_db, cfg, *, position_targets=(), c
                                     result['usd_evidence_refs']=list(usd[-1])
                             if is_position and valuation_version:
                                 held_budget=_HeldBudget(budget,allowance) if allowance else budget
-                                usd=_usd(progress,source,target.scan_id,held_budget,valuation_version=valuation_version)
+                                usd=_usd(progress,source,target.scan_id,held_budget,valuation_version=valuation_version,purpose='exit')
                                 result['usd_evidence_refs']=list(usd[-1])
                             diagnostic = None
                             def event_builder():
@@ -696,11 +751,20 @@ def run_once(research_db, evidence_db, ledger_db, cfg, *, position_targets=(), c
                                         from decimal import Decimal
                                         event=diagnostic['event']
                                         event['source_evidence']['scan_id']=target.scan_id
-                                        event['paper_usd_valuation']=usd_evidence(usd[-2],now=decision_at,scan=target.scan_id)
-                                        event['event_id']='paper-exit:'+digest({k:v for k,v in event.items() if k!='event_id'})
+                                        if valuation_version==2:
+                                            try:
+                                                event['paper_usd_valuation']=usd_valuation.evidence(usd[-2],now=decision_at,scan=target.scan_id,purpose='exit',cfg=cfg)
+                                            except usd_valuation.ValuationUnavailable as unavailable:
+                                                # Neither source usable for this exit: a normal blocked exit (never a latch).
+                                                diagnostic['event']=None
+                                                diagnostic['blockers']=sorted(set(diagnostic['blockers'])|set(unavailable.blockers))
+                                        else:event['paper_usd_valuation']=usd_evidence(usd[-2],now=decision_at,scan=target.scan_id)
+                                        if diagnostic['event'] is not None:
+                                            event['event_id']='paper-exit:'+digest({k:v for k,v in event.items() if k!='event_id'})
                                 else:
                                     context = MarketContext(now,target,source.rpc_source_id,source.quote_source_id,
-                                        item.provenance,graduation['graduated_at'],item.holder_at,item.known_hazards,item.pool_fee_bps,as_of,selected(cfg),valuation_version)
+                                        item.provenance,graduation['graduated_at'],item.holder_at,item.known_hazards,item.pool_fee_bps,as_of,selected(cfg),valuation_version,
+                                        **({'usd_divergence':str(usd_valuation.max_divergence(cfg))} if valuation_version==2 else {}))
                                     if valuation_version:
                                         response,at,low,high,times,usd_attempt,_refs=usd
                                         from .kraken_usd_observation import TrustedTimeBounds
@@ -715,7 +779,7 @@ def run_once(research_db, evidence_db, ledger_db, cfg, *, position_targets=(), c
                                 if not is_position and diagnostic['event'] is not None and regime.enabled(cfg):
                                     from . import regime_producer
                                     event=diagnostic['event']
-                                    found=regime_producer.evidence(research,evidence,event['ts'],regime.policy(cfg)['ttl_seconds'])
+                                    found=regime_producer.evidence(research,evidence,event['ts'],regime.policy(cfg)['ttl_seconds'],**({'valuation_version':2,'source':event['paper_usd_valuation'].get('selected_source')} if valuation_version==2 else {}))
                                     if found is not None:
                                         event['regime']=found
                                         event['event_id']='paper-market:'+digest({k:v for k,v in event.items() if k!='event_id'})
@@ -759,6 +823,13 @@ def run_once(research_db, evidence_db, ledger_db, cfg, *, position_targets=(), c
                                 result['monitoring_budget']={'status':'RECOVERY_REQUIRED','blockers':['MONITORING_SNAPSHOT_UNAVAILABLE']}
                         result['budget']={scan:{'used':progress.admission(scan)['requests_used'],
                             'ceiling':progress.admission(scan)['request_ceiling']} for scan in intent['admissions']}
+                    if valuation_version==2 and result['status']!='COMPLETE':
+                        # T37G: a pass that did not finish and cites a SOL/USD provider FAULT (TLS, unclassified, 4xx, a malformed
+                        # answer; a Jupiter 401/403 only counts when Kraken did not carry the valuation) is not an ordinary
+                        # outcome: the fault diagnostic is not producer vocabulary, so the no-entry proof refuses and the
+                        # closure HOLDS instead of retiring the pass.
+                        for faulted in usd_valuation.faulted_scans(store.load,list(attempt_refs)+list(result['usd_evidence_refs'])):
+                            result['diagnostics'].append({'scan_id':faulted,'blockers':[usd_valuation.BLOCKER_SOURCE_FAULT]})
                     if result['status']!='COMPLETE' and (budget.attempted>0 or budget.monitoring_attempted>0):
                         # T22H L4: when this pass can not be closed, the hold goes to disk BEFORE the result is saved, so a kill in
                         # between cannot leave a NULL pass that a later recovery would abandon.

@@ -1,0 +1,498 @@
+"""SOL/USD valuation v2: Jupiter PriceV3 primary, Kraken fallback and cross-check (`paper_usd_valuation_version: 2`).
+
+Valuation only, never execution or safety evidence. Pure functions over RETAINED attempt records (the same
+`paper_read_attempt_v1` records the transport saves for every request, successful or not): no network, no
+filesystem, no clock of its own. Everything here is a deterministic function of (records, decision time, config),
+so saved events replay byte-identically.
+
+Source selection (see `choose`):
+  * the primary (Jupiter PriceV3) is used when it is fresh and strictly valid;
+  * otherwise the fallback (Kraken SOLUSD recent trade) when that is fresh and valid;
+  * when both are fresh and differ by more than `usd_divergence_max_fraction` (default 0.01) NEW ENTRIES get the
+    normal no-entry blocker USD_SOURCE_DIVERGENCE (never a latch); exits are never blocked by divergence and use
+    the primary (or the fallback when the primary is unavailable);
+  * neither fresh: SOL_USD_UNAVAILABLE (entries: normal no-entry; exits: the held pass reports it as usual).
+
+PriceV3 carries a Solana `blockId` but this valuation does not date the price by chain time (that needs two extra
+RPC reads, the reason the Kraken-only version 1 exists): freshness is the acquisition time of the retained
+attempt against the price TTL, and `blockId` is only required to be present and sane. A price therefore proves
+"the provider said X when we asked", not "the chain was at slot Y", and the Kraken cross-check is what bounds a
+wrong primary on entries.
+"""
+import base64
+from dataclasses import dataclass
+from decimal import Decimal, DecimalException, localcontext
+import hashlib
+import json
+from urllib.parse import urlencode
+
+from . import kraken_usd_observation as kraken
+from .model import digest
+from .sol_usd_observation import (SOL_MINT, MAX_RESPONSE_BYTES, _json_decimal, _json_integer, _reject_constant,
+                                  _unique_object)
+
+VERSION = 2
+SOURCE = 'usd-valuation-v2'
+JUPITER_SOURCE_ID = 'jupiter-price-v3-sol-paper-v1'     # PaperReadSources.price_source_id
+JUPITER_METHOD = 'jupiter_price_v3'
+JUPITER_PARAMS = {'ids': SOL_MINT}
+KEY_DIVERGENCE = 'usd_divergence_max_fraction'
+DEFAULT_DIVERGENCE = Decimal('0.01')
+MAX_DIVERGENCE = Decimal('0.25')
+PRICE_TTL_SECONDS = 10                                    # the same TTL as the other observations
+# Conservative sanity range for a SOL/USD price. A provider value outside it is treated as malformed (fail closed);
+# it is not a market bound and never clamps or replaces a value.
+PRICE_RANGE = (Decimal('0.01'), Decimal('1000000'))
+PRE_CHECK_CODES = frozenset({'PERSISTED_ADMISSION_REQUIRED', 'INVESTIGATION_REQUEST_BUDGET_EXHAUSTED',
+                             'CYCLE_REQUEST_BUDGET_EXHAUSTED', 'CYCLE_DEADLINE_UNAVAILABLE', 'WALL_CLOCK_UNAVAILABLE',
+                             'SHARED_BUDGET_CHARGE_OR_IDENTITY_MISMATCH', 'MONITORING_CHARGE_OR_ADMISSION_MISMATCH',
+                             'MONITORING_REQUEST_BUDGET_EXHAUSTED'})
+BLOCKER_DIVERGENCE = 'USD_SOURCE_DIVERGENCE'
+BLOCKER_UNAVAILABLE = 'SOL_USD_UNAVAILABLE'
+# The only blockers this module can produce. Both are ORDINARY outcomes: a divergence between two verified
+# observations, or no usable observation because a provider failed (the failure itself is a charged, retained
+# attempt original). They are valuation-only facts about a provider, never evidence about our own stores, so the
+# no-entry vocabulary (paper_cycle_no_entry.producer_blocker_is_normal) and the pass closure accept them.
+NORMAL_BLOCKERS = frozenset({BLOCKER_DIVERGENCE, BLOCKER_UNAVAILABLE})
+# T37G: NOT ordinary. A cited SOL/USD attempt that failed for a reason other than a transient one (TLS, an unclassified
+# exception, a 4xx rejection, a malformed or contradictory answer) is evidence about the provider or the path to it, not
+# a market fact. It is never part of NORMAL_BLOCKERS: a pass that cites one is held, not retired (see `faulted_scans`).
+BLOCKER_SOURCE_FAULT = 'SOL_USD_SOURCE_FAULT'
+AUTH_REJECTIONS = frozenset({401, 403})
+# The only parse-level blockers that are ordinary: the answer was fine but old (a quiet market, a slow path). Every other
+# parse blocker (malformed JSON, a missing/extra mint, a bad price, wrong decimals, a missing blockId, an invalid Kraken
+# answer, a non-200 body) says the answer itself is wrong.
+ORDINARY_PARSE_BLOCKERS = frozenset({'ACQUISITION_STALE_OR_FUTURE', 'TRADE_STALE_OR_FUTURE'})
+KEY_CROSS_CHECK = 'usd_cross_check_seconds'
+DEFAULT_CROSS_CHECK = 300           # Kraken cross-check at most every 5 minutes (T37 spec item 4)
+MIN_CROSS_CHECK = 1                 # the config loader requires every numeric key to be positive
+MAX_CROSS_CHECK = 3600
+SCAN_PAGES = 600                    # newest evidence pages read by the bounded retained-attempt scans
+SCAN_PAGE_BYTES = 262144
+REQUESTS = {'jupiter': 1, 'kraken': 1}
+
+
+def selected(cfg):
+    """0 when the key is absent, 1 for the Kraken-only version, 2 for this one; anything else fails closed."""
+    if 'paper_usd_valuation_version' not in cfg:
+        return 0
+    version = cfg['paper_usd_valuation_version']
+    if type(version) is int and version == 1:
+        return kraken.selected(cfg)
+    if (type(version) is not int or version != VERSION or cfg.get('mode') != 'paper'
+            or type(cfg.get('paper_signal_policy_version')) is not int or cfg['paper_signal_policy_version'] != 3
+            or type(cfg.get('paper_quote_execution_version')) is not int or cfg['paper_quote_execution_version'] != 1):
+        raise ValueError('USD valuation 2 requires explicit paper USD2/signal3/quote1')
+    max_divergence(cfg)
+    cross_check_seconds(cfg)
+    return VERSION
+
+
+def max_divergence(cfg):
+    value = cfg.get(KEY_DIVERGENCE, DEFAULT_DIVERGENCE)
+    if type(value) is bool or type(value) not in (int, float, str, Decimal):
+        raise ValueError('Divergence limit must be a number')
+    try:
+        number = Decimal(str(value))
+    except DecimalException:
+        raise ValueError('Divergence limit must be a number') from None
+    if not number.is_finite() or not Decimal(0) < number <= MAX_DIVERGENCE:
+        raise ValueError('Divergence limit outside (0, 0.25]')
+    return number
+
+
+def cross_check_seconds(cfg):
+    """Minimum seconds between Kraken cross-check attempts on entries (1 = effectively every entry)."""
+    value = cfg.get(KEY_CROSS_CHECK, DEFAULT_CROSS_CHECK)
+    if type(value) is not int or not MIN_CROSS_CHECK <= value <= MAX_CROSS_CHECK:
+        raise ValueError('usd_cross_check_seconds must be an integer in [1, 3600]')
+    return value
+
+
+def fresh_requests(version):
+    """Requests a fresh entry reserves: 9 (version 0), 7 (Kraken only), 8 (Jupiter + one Kraken cross-check)."""
+    return {1: 7, 2: 8}.get(version, 9) if type(version) is int else 9
+
+
+@dataclass(frozen=True)
+class Observation:
+    source: str                  # 'JUPITER' | 'KRAKEN'
+    status: str                  # 'MEASURED' | 'UNKNOWN'
+    usd_price: Decimal | None
+    blockers: tuple
+    attempt_hash: str
+    payload_sha256: str | None
+    request_sha256: str
+    price_at: int | None = None  # Jupiter: acquisition second; Kraken: the trade second (the event's freshness anchor)
+
+
+@dataclass(frozen=True)
+class Decision:
+    status: str                  # PRIMARY | FALLBACK | DIVERGENCE | UNAVAILABLE
+    source: str | None
+    usd_price: Decimal | None
+    divergence: Decimal | None
+    blockers: tuple
+    price_at: int | None = None
+
+
+@dataclass(frozen=True)
+class Measured:
+    """What the market adapter needs from a decision: the price and its freshness anchor."""
+    usd_price: Decimal
+    price_at: int
+    status: str = 'MEASURED'
+    blockers: tuple = ()
+
+
+def _request_hash(url):
+    return hashlib.sha256(json.dumps({'method': 'GET', 'url': url}, sort_keys=True, separators=(',', ':')).encode()).hexdigest()
+
+
+def _record_shape(record, *, scan, source_id, method, params):
+    expected = {'kind', 'scan_id', 'requests_used', 'source_id', 'method', 'params', 'request_bytes_base64',
+                'response_bytes_base64', 'observed_at', 'http_status', 'failure_code'}
+    if source_id == kraken.SOURCE:
+        expected = expected | {'acquired_at_decimal'}
+    if type(record) is not dict or set(record) not in (expected, expected | {'monitoring_reservation'}):
+        raise ValueError('USD attempt exact shape')
+    if (record['kind'] != 'paper_read_attempt_v1' or record['scan_id'] != scan or record['source_id'] != source_id
+            or record['method'] != method or record['params'] != params
+            or type(record['requests_used']) is not int or not 0 <= record['requests_used'] <= 18
+            or record['request_bytes_base64'] != base64.b64encode(urlencode(params).encode('ascii')).decode()):
+        raise ValueError('USD attempt binding')
+    if record['failure_code'] is not None and type(record['failure_code']) is not str:
+        raise ValueError('USD attempt failure code')
+
+
+def _wire(record, limit):
+    wire = record['response_bytes_base64']
+    if wire is None:
+        return None
+    if type(wire) is not str or len(wire) > 4 * ((limit + 2) // 3):
+        raise ValueError('USD wire byte bound')
+    raw = base64.b64decode(wire, validate=True)
+    if base64.b64encode(raw).decode() != wire:
+        raise ValueError('USD wire canonical encoding')
+    return raw
+
+
+def parse_jupiter(raw, *, acquired_at, http_status, now, ttl=PRICE_TTL_SECONDS):
+    """(price | None, blockers, block_id). Strict: finite positive usdPrice, present blockId, 9 decimals, fresh."""
+    blockers = []
+    price = block = None
+    if type(acquired_at) is not int or type(now) is not int or not 0 <= acquired_at < 2**63 or not 0 <= now < 2**63:
+        raise ValueError('Integer acquisition and decision times required')
+    if not 0 <= now - acquired_at <= ttl:
+        blockers.append('ACQUISITION_STALE_OR_FUTURE')
+    if http_status != 200:
+        blockers.append('HTTP_NOT_200')
+    try:
+        if type(raw) is not bytes or not 0 < len(raw) <= MAX_RESPONSE_BYTES:
+            raise ValueError('bytes')
+        with localcontext() as ctx:
+            ctx.prec = 512
+            payload = json.loads(raw.decode('utf-8'), object_pairs_hook=_unique_object, parse_float=_json_decimal,
+                                 parse_int=_json_integer, parse_constant=_reject_constant)
+    except (ValueError, UnicodeError, RecursionError, DecimalException):
+        return None, tuple(blockers + ['MALFORMED_JSON']), None
+    if type(payload) is not dict:
+        return None, tuple(blockers + ['RESPONSE_OBJECT_REQUIRED']), None
+    item = payload.get(SOL_MINT)
+    if item is None:
+        return None, tuple(blockers + ['SOL_PRICE_MISSING']), None
+    if set(payload) != {SOL_MINT}:
+        # The request names exactly one id. Any other mint in the answer means the response is not the one we asked
+        # for (a different endpoint contract, a proxy, a mixed reply): refuse it whole rather than pick our key out.
+        return None, tuple(blockers + ['UNEXPECTED_EXTRA_MINTS']), None
+    if type(item) is not dict:
+        return None, tuple(blockers + ['SOL_PRICE_OBJECT_REQUIRED']), None
+    value = item.get('usdPrice')
+    if type(value) not in (int, Decimal) or not Decimal(value).is_finite() or value <= 0:
+        blockers.append('USD_PRICE_FINITE_POSITIVE_NUMBER_REQUIRED')
+    elif not PRICE_RANGE[0] <= Decimal(value) <= PRICE_RANGE[1]:
+        blockers.append('USD_PRICE_OUT_OF_SANITY_RANGE')
+    else:
+        price = Decimal(value)
+    if type(item.get('decimals')) is not int or item['decimals'] != 9:
+        blockers.append('SOL_DECIMALS_9_REQUIRED')
+    candidate = item.get('blockId')
+    if type(candidate) is not int or not 0 < candidate < 2**63:
+        blockers.append('PRICE_BLOCK_ID_REQUIRED')
+    else:
+        block = candidate
+    if blockers:
+        price = None
+    return price, tuple(blockers), block
+
+
+def observe_jupiter(record, *, now, scan):
+    """Observation of a retained PriceV3 attempt (failed attempts are UNKNOWN with their transport code)."""
+    _record_shape(record, scan=scan, source_id=JUPITER_SOURCE_ID, method=JUPITER_METHOD, params=JUPITER_PARAMS)
+    key = digest(record)
+    request = _request_hash('https://api.jup.ag/price/v3?' + urlencode(JUPITER_PARAMS))
+    raw = _wire(record, MAX_RESPONSE_BYTES)
+    if record['failure_code'] is not None or raw is None:
+        return Observation('JUPITER', 'UNKNOWN', None, (record['failure_code'] or 'NO_RESPONSE',), key,
+                           None if raw is None else hashlib.sha256(raw).hexdigest(), request)
+    if type(record['observed_at']) is not int or type(record['http_status']) is not int:
+        raise ValueError('USD attempt transport metadata')
+    price, blockers, _block = parse_jupiter(raw, acquired_at=record['observed_at'], http_status=record['http_status'], now=now)
+    return Observation('JUPITER', 'UNKNOWN' if blockers else 'MEASURED', price, blockers, key,
+                       hashlib.sha256(raw).hexdigest(), request, None if blockers else record['observed_at'])
+
+
+def observe_kraken(record, *, now, scan):
+    """Observation of a retained Kraken attempt through the unchanged Kraken parser."""
+    _record_shape(record, scan=scan, source_id=kraken.SOURCE, method=kraken.METHOD, params=kraken.PARAMS)
+    key = digest(record)
+    raw = _wire(record, kraken.MAX_BYTES)
+    request = _request_hash(kraken.URL)
+    if record['failure_code'] is not None or raw is None:
+        return Observation('KRAKEN', 'UNKNOWN', None, (record['failure_code'] or 'NO_RESPONSE',), key,
+                           None if raw is None else hashlib.sha256(raw).hexdigest(), request)
+    if (type(record['observed_at']) is not int or record['observed_at'] != int(kraken.timestamp(record['acquired_at_decimal']))
+            or type(record['http_status']) is not int):
+        raise ValueError('USD attempt transport metadata')
+    parsed = kraken.parse_kraken_usd(kraken.KrakenTradesResponse('GET', kraken.URL, raw, record['acquired_at_decimal'],
+                                                                 record['http_status']),
+                                     bounds=kraken.TrustedTimeBounds(now))
+    return Observation('KRAKEN', parsed.status, parsed.usd_price, parsed.blockers, key, parsed.payload_sha256, request,
+                       parsed.price_at)
+
+
+def _observe_at_acquisition(record):
+    """The attempt judged at its OWN acquisition second (decision-time freshness was enforced when it was used)."""
+    if record.get('method') == JUPITER_METHOD:
+        return observe_jupiter(record, now=record['observed_at'], scan=record['scan_id'])
+    return observe_kraken(record, now=record['acquired_at_decimal'], scan=record['scan_id'])
+
+
+def _is_usd_attempt(record):
+    return (type(record) is dict and record.get('kind') == 'paper_read_attempt_v1'
+            and (record.get('source_id'), record.get('method')) in ((JUPITER_SOURCE_ID, JUPITER_METHOD),
+                                                                   (kraken.SOURCE, kraken.METHOD)))
+
+
+def fallback_measured(records):
+    """True iff one of the retained attempts is a Kraken observation that is valid (MEASURED at its own second)."""
+    for record in records:
+        try:
+            if (_is_usd_attempt(record) and record.get('method') == kraken.METHOD and record.get('failure_code') is None
+                    and _observe_at_acquisition(record).status == 'MEASURED'):
+                return True
+        except (ValueError, TypeError, KeyError, AttributeError, ArithmeticError):
+            continue
+    return False
+
+
+def attempt_fault(record, *, kraken_measured=False):
+    """None when this retained SOL/USD attempt is an ORDINARY outcome, else a short reason (T37G).
+
+    Ordinary: it measured a price; the transport failed in a way the monitoring allowance already treats as non-latching
+    (network errors, 408/429/5xx, pacing contention: `monitoring_budget._latching_failure`); or the answer was only
+    stale. Exception: a Jupiter 401/403 is ordinary ONLY when a valid Kraken observation of the same pass carried the
+    valuation (`kraken_measured`; the persistent-rejection health WARNING covers the key). Everything else is a fault.
+    """
+    from .monitoring_budget import _latching_failure
+    try:
+        if record.get('failure_code') is not None:
+            if not _latching_failure(record):
+                return None
+            if (kraken_measured and record.get('method') == JUPITER_METHOD and record.get('failure_code') == 'HTTP_REJECTED'
+                    and record.get('http_status') in AUTH_REJECTIONS):
+                return None
+            return str(record.get('failure_code'))[:64] + (':%s' % record['http_status'] if type(record.get('http_status')) is int else '')
+        observation = _observe_at_acquisition(record)
+    except (ValueError, TypeError, KeyError, AttributeError, ArithmeticError):
+        return 'ATTEMPT_UNREADABLE'
+    if observation.status == 'MEASURED' or all(code in ORDINARY_PARSE_BLOCKERS for code in observation.blockers):
+        return None
+    return ','.join(observation.blockers)[:96]
+
+
+def faulted_scans(load, refs):
+    """Scans whose retained SOL/USD attempts (among `refs`) contain a fault. `load(ref)` returns the retained original.
+
+    Unreadable refs are skipped (they are not USD evidence of ours); the verdict is per scan, with `kraken_measured`
+    taken from the same scan's attempts, so one scan's measured fallback can never excuse another scan's rejection."""
+    by_scan = {}
+    for ref in refs:
+        try:
+            record = load(ref)
+        except (ValueError, TypeError, OSError, KeyError):
+            continue
+        if _is_usd_attempt(record) and type(record.get('scan_id')) is str:
+            by_scan.setdefault(record['scan_id'], []).append(record)
+    faulted = []
+    for scan, records in by_scan.items():
+        measured = fallback_measured(records)
+        if any(attempt_fault(r, kraken_measured=measured) is not None for r in records):
+            faulted.append(scan)
+    return sorted(faulted)
+
+
+def divergence(primary_price, fallback_price):
+    """|primary - fallback| / primary, exact."""
+    with localcontext() as ctx:
+        ctx.prec = 60
+        return abs(primary_price - fallback_price) / primary_price
+
+
+def choose(primary, fallback, *, purpose, limit):
+    """Pure source selection. `purpose` is 'entry' or 'exit'; `limit` the divergence fraction (Decimal)."""
+    if purpose not in ('entry', 'exit'):
+        raise ValueError('USD purpose entry/exit required')
+    good_primary = primary is not None and primary.status == 'MEASURED'
+    good_fallback = fallback is not None and fallback.status == 'MEASURED'
+    if good_primary and good_fallback:
+        gap = divergence(primary.usd_price, fallback.usd_price)
+        if gap > limit and purpose == 'entry':
+            return Decision('DIVERGENCE', None, None, gap, (BLOCKER_DIVERGENCE,))
+        return Decision('PRIMARY', 'JUPITER', primary.usd_price, gap, (), primary.price_at)
+    if good_primary:
+        return Decision('PRIMARY', 'JUPITER', primary.usd_price, None, (), primary.price_at)
+    if good_fallback:
+        return Decision('FALLBACK', 'KRAKEN', fallback.usd_price, None, (), fallback.price_at)
+    return Decision('UNAVAILABLE', None, None, None, (BLOCKER_UNAVAILABLE,))
+
+
+def _summary(observation, record):
+    return None if observation is None else {
+        'attempt_hash': observation.attempt_hash, 'attempt': record, 'status': observation.status,
+        'blockers': list(observation.blockers),
+        'usd_price': None if observation.usd_price is None else str(observation.usd_price),
+        'price_at': observation.price_at, 'payload_sha256': observation.payload_sha256, 'request_sha256': observation.request_sha256}
+
+
+def decide(attempts, *, now, scan, purpose, cfg):
+    """(Decision, evidence-without-decision-fields) from {'primary': record|None, 'fallback': record|None}."""
+    if type(attempts) is not dict or set(attempts) != {'primary', 'fallback'}:
+        raise ValueError('USD attempts exact shape')
+    now_int = int(kraken.timestamp(now))
+    primary = None if attempts['primary'] is None else observe_jupiter(attempts['primary'], now=now_int, scan=scan)
+    fallback = None if attempts['fallback'] is None else observe_kraken(attempts['fallback'], now=now, scan=scan)
+    limit = max_divergence(cfg)
+    decision = choose(primary, fallback, purpose=purpose, limit=limit)
+    return decision, {'primary': _summary(primary, attempts['primary']), 'fallback': _summary(fallback, attempts['fallback']),
+                      'divergence': None if decision.divergence is None else str(decision.divergence),
+                      'divergence_max_fraction': str(limit)}
+
+
+class ValuationUnavailable(ValueError):
+    """No price may be used; `blockers` are the ordinary blocker codes (NORMAL_BLOCKERS) the caller records."""
+    def __init__(self, blockers):
+        self.blockers = tuple(blockers)
+        super().__init__('USD valuation unavailable: ' + ','.join(self.blockers))
+
+
+def evidence(attempts, *, now, scan, purpose, cfg):
+    """The saved event valuation. Raises ValuationUnavailable when no price may be used."""
+    decision, body = decide(attempts, now=now, scan=scan, purpose=purpose, cfg=cfg)
+    if decision.usd_price is None:
+        raise ValuationUnavailable(decision.blockers)
+    return {'version': VERSION, 'source': SOURCE, 'purpose': 'USD_VALUATION_ONLY', 'scan_id': scan,
+            'decision_at': now, 'decision_purpose': purpose, 'selection': decision.status,
+            'selected_source': decision.source, 'usd_price': str(decision.usd_price),
+            'price_at': decision.price_at, **body,
+            'source_authentication': 'PROVIDER_OBSERVATION_NOT_CRYPTOGRAPHIC', 'solana_slot_witness': None}
+
+
+def purpose_of(event):
+    return 'entry' if event.get('kind') == 'market' else 'exit'
+
+
+def validate_event(event, cfg):
+    """Rebuild the saved valuation from its retained originals; any difference refuses the event."""
+    value = event.get('paper_usd_valuation')
+    if event.get('kind') not in ('market', 'quote_exit'):
+        if value is not None:
+            raise ValueError('USD valuation on unsupported event')
+        return
+    if type(value) is not dict or type(value.get('decision_at')) is not str or int(kraken.timestamp(value['decision_at'])) != event['ts']:
+        raise ValueError('USD event clock/config binding')
+    if value.get('version') != VERSION or value.get('source') != SOURCE:
+        raise ValueError('USD valuation version binding')
+    attempts = {'primary': (value.get('primary') or {}).get('attempt'), 'fallback': (value.get('fallback') or {}).get('attempt')}
+    rebuilt = evidence(attempts, now=value['decision_at'], scan=value['scan_id'], purpose=purpose_of(event), cfg=cfg)
+    if rebuilt != value:
+        raise ValueError('USD saved valuation modified')
+    source = event['paper_source_evidence'] if event['kind'] == 'market' else event['source_evidence']
+    if value['scan_id'] != source.get('scan_id'):
+        raise ValueError('USD event scan binding')
+    if event['kind'] == 'market':
+        if event.get('sol_usd') != value['usd_price'] or source.get('usd') != summary_for_source(value):
+            raise ValueError('USD market valuation binding')
+
+
+def summary_for_source(value):
+    """The attempt-free projection stored beside the event's other source evidence."""
+    return {k: v for k, v in value.items() if k not in ('primary', 'fallback')} | {
+        'primary': None if value['primary'] is None else {k: v for k, v in value['primary'].items() if k != 'attempt'},
+        'fallback': None if value['fallback'] is None else {k: v for k, v in value['fallback'].items() if k != 'attempt'}}
+
+
+# -- bounded, read-only scans of RETAINED attempt originals --------------------------------------------------
+# Used by the cross-check schedule, the regime producer and the health probe. They never write, never call a
+# provider, read at most SCAN_PAGES newest pages of at most SCAN_PAGE_BYTES each, and skip anything unreadable:
+# a page that does not parse can only make a probe quieter, never make a trading decision.
+def recent_attempts(evidence_db):
+    """Newest-first iterator of retained `paper_read_attempt_v1` records (decoded dicts) of the USD sources."""
+    import sqlite3
+    import zlib
+    from contextlib import closing
+    from pathlib import Path
+    with closing(sqlite3.connect(Path(evidence_db).resolve().as_uri() + '?mode=ro', uri=True, timeout=5)) as c:
+        rows = c.execute('SELECT payload,raw_bytes FROM pages WHERE raw_bytes<=? ORDER BY rowid DESC LIMIT ?',
+                         (SCAN_PAGE_BYTES, SCAN_PAGES)).fetchall()
+    for blob, size in rows:
+        try:
+            inflater = zlib.decompressobj()
+            raw = inflater.decompress(blob, size + 1)
+            if not inflater.eof or len(raw) != size:
+                continue
+            record = json.loads(raw)
+        except (ValueError, TypeError, zlib.error, RecursionError):
+            continue
+        if (type(record) is dict and record.get('kind') == 'paper_read_attempt_v1'
+                and record.get('source_id') in (JUPITER_SOURCE_ID, kraken.SOURCE)):
+            yield record
+
+
+def last_kraken_attempt_at(evidence_db, ts, window):
+    """Acquisition second of the newest retained Kraken attempt (success OR failure) within `window` s before `ts`.
+
+    A failed cross-check counts: when Kraken is down, retrying it on every entry would only burn requests, and a
+    skipped cross-check is recorded as primary-only exactly like a failed one. None when there is none.
+    """
+    newest = None
+    for record in recent_attempts(evidence_db):
+        if record['source_id'] != kraken.SOURCE:
+            continue
+        at = record.get('observed_at')
+        if type(at) is int and ts - window <= at <= ts and (newest is None or at > newest):
+            newest = at
+    return newest
+
+
+def persistent_auth_failure(evidence_db, *, minimum=3):
+    """Health probe: the newest `minimum`+ Jupiter attempts were ALL HTTP 401/403 rejections.
+
+    Under valuation v2 a rejected primary silently falls back to Kraken, so a revoked or wrong API key would
+    otherwise stay invisible. Returns {'consecutive', 'last_status', 'last_at'} or None (including when the newest
+    Jupiter attempt succeeded, or there are fewer than `minimum` attempts). Read-only, bounded, never raises.
+    """
+    try:
+        consecutive, last_status, last_at = 0, None, None
+        for record in recent_attempts(evidence_db):
+            if record['source_id'] != JUPITER_SOURCE_ID:
+                continue
+            if record.get('failure_code') == 'HTTP_REJECTED' and record.get('http_status') in (401, 403):
+                consecutive += 1
+                if last_status is None:
+                    last_status, last_at = record['http_status'], record.get('observed_at')
+            else:
+                break
+        return {'consecutive': consecutive, 'last_status': last_status, 'last_at': last_at} if consecutive >= minimum else None
+    except Exception:
+        return None

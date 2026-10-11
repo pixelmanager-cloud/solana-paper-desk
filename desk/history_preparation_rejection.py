@@ -12,6 +12,7 @@ from desk import paper_preparation_retirement as historical
 from desk.evidence import EvidenceStore
 from desk.history_progress import HistoryProgress
 from desk.live_strategy_features import MAX_RECORDS, MAX_RECORD_BYTES, MAX_TOTAL_BYTES, calculate
+from desk.usd_valuation import fresh_requests
 from desk.model import canonical,digest
 from desk.replay_history import replay_history
 
@@ -42,7 +43,7 @@ def intent(store,ledger,cfg,item,admission,context):
         'admission':admission,'context':context,'source_hash':runtime.implementation_hash(),
         'ledger_anchors':anchors,'ledger_original_hash':originals,'ledger_prefix_hash':prefix,
         'pass_cutoff':rows[-1][0] if rows else 0,'passes_hash':digest(rows),'preparation_seconds':18,
-        'fresh_requests_reserved':7 if cfg.get('paper_usd_valuation_version',0)==1 else 9}
+        'fresh_requests_reserved':fresh_requests(cfg.get('paper_usd_valuation_version',0))}
 
 
 def bounds(store,coverage,*,cfg=None,as_of=None,semantics_version=1,required_measurements=False):
@@ -135,7 +136,7 @@ def _proof(store,progress,value,*,publishing=False,cfg=None,review_source=None):
     ctx=original['context'];scan=value['scan_id'];item=original['target'];before=original['admission'];after=value['admission_after']
     with closing(sqlite3.connect(Path(ctx['ledger_db']).as_uri()+'?mode=ro',uri=True)) as c:
         saved_cfg=runtime._parse(c.execute("SELECT value FROM metadata WHERE key='config'").fetchone()[0])
-    reserve=7 if saved_cfg.get('paper_usd_valuation_version',0)==1 else 9
+    reserve=fresh_requests(saved_cfg.get('paper_usd_valuation_version',0))
     if digest(saved_cfg)!=original['config_hash'] or original['fresh_requests_reserved']!=reserve:
         raise ValueError('Preparation policy reserve conflict')
     if type(value['rejected_at']) is not int or value['rejected_at']<item['history_as_of']:

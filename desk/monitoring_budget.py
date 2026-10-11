@@ -715,7 +715,10 @@ class MonitoringBudget:
                 if old is None:
                     c.execute('INSERT INTO paper_monitoring_outcomes VALUES(?,?)', (reservation['id'], evidence_hash))
                 self._accounting(c,checkpoint=True)
-                if _latching_failure(record):
+                # Version 2 (T37): a failed Jupiter PriceV3 read has a defined fallback (Kraken) in the same pass. It is
+                # charged and retained like any failure but never latches the shared allowance; every other failure,
+                # and a failed Kraken read, still does.
+                if _latching_failure(record) and not (self.usd_valuation_version == 2 and record.get('method') == 'jupiter_price_v3'):
                     c.execute("UPDATE paper_monitoring_budget SET blocked='SOURCE_FAILURE' WHERE id=1 AND blocked IS NULL")
                 c.commit()
             except BaseException:

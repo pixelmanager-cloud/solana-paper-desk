@@ -143,7 +143,7 @@ def plan(*, config, research_db, evidence_db, ledger_db, discovery_db,
         paths['watchlist_db'] = _path(watchlist_db, private=True)
     if len(set(paths.values()) | {Path(journal)}) != len(paths) + 1:
         raise ValueError('Distinct context paths required')
-    if cfg.get('paper_usd_valuation_version') != 1:
+    if cfg.get('paper_usd_valuation_version') not in (1, 2):
         raise ValueError('Explicit Kraken experiment required')
     # Reuse actual strict target size/taker/fee grammar without granting evidence.
     row = {'scan_id': 'grammar-only', 'mint': taker, 'pool': taker, 'taker': taker,

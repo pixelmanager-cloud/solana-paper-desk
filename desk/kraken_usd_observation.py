@@ -25,6 +25,10 @@ MAX_BYTES=65536
 def selected(cfg):
     if 'paper_usd_valuation_version' not in cfg:return 0
     v=cfg['paper_usd_valuation_version']
+    if type(v) is int and v==2:
+        # Shared interface: version 2 (Jupiter primary, this module as the fallback) validates itself.
+        from .usd_valuation import selected as selected_v2
+        return selected_v2(cfg)
     if (type(v) is not int or v!=1 or cfg.get('mode')!='paper'
             or type(cfg.get('paper_signal_policy_version')) is not int or cfg['paper_signal_policy_version']!=3
             or type(cfg.get('paper_quote_execution_version')) is not int or cfg['paper_quote_execution_version']!=1):
@@ -151,6 +155,9 @@ def evidence(record,*,now,scan):
 
 def validate_event(event,cfg):
     version=selected(cfg)
+    if version==2:
+        from .usd_valuation import validate_event as validate_v2
+        return validate_v2(event,cfg)
     value=event.get('paper_usd_valuation')
     if event.get('kind') not in ('market','quote_exit'):
         if value is not None:raise ValueError('USD valuation on unsupported event')

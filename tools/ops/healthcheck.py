@@ -371,6 +371,18 @@ def check_evidence(evidence, now, t):
     return out
 
 
+def check_usd_auth(evidence):
+    """WARN when the newest Jupiter PriceV3 attempts were all HTTP 401/403 (T37F): valuation v2 silently falls back to
+    Kraken, so a revoked or wrong key would otherwise stay invisible. Read-only, bounded; no config needed (an
+    experiment that never calls PriceV3 simply has no such attempts)."""
+    from desk import usd_valuation
+    failure = usd_valuation.persistent_auth_failure(evidence)
+    if failure is None:
+        return [check('usd_auth', OK, 'no persistent Jupiter PriceV3 authorization failure')]
+    return [check('usd_auth', WARN, 'Jupiter PriceV3 rejected the last %d requests with HTTP %s (key or plan); valuation is '
+                  'falling back to Kraken' % (failure['consecutive'], failure['last_status']), **failure)]
+
+
 def check_pacing(path, now, t):
     out = []
     with closing(ro(path)) as c:
@@ -444,6 +456,7 @@ def _build_report(args, runner, clock, usage):
     checks += guarded('discovery', check_discovery, args.discovery_db, now, t)
     checks += guarded('ledger', check_ledger, root / 'paper-ledger.sqlite', now, t, cfg)
     checks += guarded('evidence', check_evidence, root / 'evidence.sqlite', now, t)
+    checks += guarded('usd_auth', check_usd_auth, root / 'evidence.sqlite')
     checks += guarded('pacing', check_pacing, args.pacing_db, now, t)
     checks += guarded('disk', check_disk, root, t, usage)
     if args.backup_root:

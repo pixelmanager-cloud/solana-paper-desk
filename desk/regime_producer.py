@@ -2,9 +2,12 @@
 
 Pure, read-only and non-raising: it makes no provider call and charges no request. It reads
   * graduation rate  - scans created in the trailing hour in the research (scan) database, and
-  * SOL/USD change   - retained Kraken attempt records already in the evidence store (the same
-                       exact-shape parser the USD valuation uses), newest vs the oldest record
-                       inside the window that is at least MIN_SPAN seconds older.
+  * SOL/USD change   - retained SOL/USD attempt records already in the evidence store (the same
+                       exact-shape parsers the USD valuation uses), newest vs the oldest record
+                       inside the window that is at least MIN_SPAN seconds older. Under USD valuation 2 the
+                       series is the PRIMARY (Jupiter PriceV3) one, which every pass refreshes, and Kraken only
+                       when that has too little history (Kraken is cross-checked on a 5-minute schedule, so a
+                       Kraken-only series would starve the regime). A series never mixes the two sources.
 Any problem (missing store, no/too-short Kraken history, parse failure) returns None, which the gate
 turns into REGIME_EVIDENCE_REQUIRED (entry rejected, fail closed). The result is written INTO the
 market event, so the gate itself stays a pure function of the event and replays deterministically.
@@ -65,8 +68,45 @@ def _kraken_prices(evidence_db, ts):
     return out
 
 
-def sol_usd_change_pct(evidence_db, ts, ttl):
-    prices = _kraken_prices(evidence_db, ts)
+def _jupiter_prices(evidence_db, ts):
+    """{second: price} of strictly valid retained PriceV3 observations (each judged at its own acquisition second)."""
+    from . import usd_valuation as uv
+    import base64
+    out = {}
+    for record in uv.recent_attempts(evidence_db):
+        try:
+            if (record["source_id"] != uv.JUPITER_SOURCE_ID or record.get("method") != uv.JUPITER_METHOD
+                    or record.get("failure_code") is not None or record.get("params") != uv.JUPITER_PARAMS
+                    or type(record.get("observed_at")) is not int or type(record.get("http_status")) is not int):
+                continue
+            at = record["observed_at"]
+            if not ts - KRAKEN_WINDOW <= at <= ts:
+                continue
+            price, blockers, _block = uv.parse_jupiter(base64.b64decode(record["response_bytes_base64"], validate=True),
+                                                       acquired_at=at, http_status=record["http_status"], now=at)
+            if price is not None and not blockers:
+                out[at] = price
+        except (ValueError, TypeError, KeyError, UnicodeError, ArithmeticError, RecursionError):
+            continue
+    return out
+
+
+def sol_usd_change_pct(evidence_db, ts, ttl, valuation_version=1, source=None):
+    if valuation_version == 2 and source == "KRAKEN":
+        # T37G: the valuation used the Kraken fallback (the primary failed this pass), so the regime reads THAT series.
+        # A Jupiter price up to `ttl` old must not stand in for the observation the decision actually used; too little
+        # Kraken history means no regime evidence (the gate fails closed), never a silent switch back.
+        return _change(_kraken_prices(evidence_db, ts), ts, ttl)
+    if valuation_version == 2:
+        for series in (_jupiter_prices, _kraken_prices):
+            change = _change(series(evidence_db, ts), ts, ttl)
+            if change[0] is not None:
+                return change
+        return None, None
+    return _change(_kraken_prices(evidence_db, ts), ts, ttl)
+
+
+def _change(prices, ts, ttl):
     if not prices:
         return None, None
     newest = max(prices)
@@ -82,12 +122,12 @@ def sol_usd_change_pct(evidence_db, ts, ttl):
         return format(change.quantize(Decimal("0.0001")), "f"), newest
 
 
-def evidence(research_db, evidence_db, ts, ttl):
+def evidence(research_db, evidence_db, ts, ttl, valuation_version=1, source=None):
     """Regime evidence dict for decision second ``ts`` or None. Never raises."""
     try:
         if type(ts) is not int or ts < 0:
             return None
-        change, as_of = sol_usd_change_pct(evidence_db, ts, ttl)
+        change, as_of = sol_usd_change_pct(evidence_db, ts, ttl, valuation_version, source)
         if change is None:
             return None
         return {"version": 1, "as_of": as_of, "graduations_per_hour": graduations_per_hour(research_db, ts),

@@ -45,7 +45,7 @@ PRODUCER_INTEGRITY = frozenset({
     'COLLECTOR_TARGET_OBSERVATION_REQUIRED', 'COORDINATOR_TARGET_BINDING_MISMATCH', 'COLLECTOR_OBSERVATION_REJECTED',
     'COLLECTOR_SOURCE_BINDING_OR_CONTENT_INVALID', 'BOUNDED_RAW_TRADE_SEQUENCE_REQUIRED',
     'CAPTURED_HISTORY_WINDOW_STALE_OR_FUTURE', 'SOL_USD_SOURCE_OR_EXACT_BLOCK_TIME_MISSING',
-    'SOL_USD_TRUSTED_INPUT_INVALID', 'EXPLICIT_OBSERVABLE_SIGNAL_PROFILE_REQUIRED',
+    'SOL_USD_TRUSTED_INPUT_INVALID', 'SOL_USD_SOURCE_FAULT', 'EXPLICIT_OBSERVABLE_SIGNAL_PROFILE_REQUIRED',
     'EXPLICIT_PAPER_FEE_ASSUMPTION_REQUIRED', 'PAPER_EVENT_BYTE_LIMIT_EXCEEDED', 'EXPERIMENTAL_EVENT_CONTRACT_INVALID'})
 RESERVED_PREFIXES = WINDOW_BLOCKER_PREFIXES + ('SOL_USD:', 'ORIGINAL_', 'COLLECTOR_', 'COORDINATOR_')
 
@@ -59,7 +59,8 @@ def producer_blocker_is_normal(code, declared_hazards=()):
             return code[len(prefix):] in WINDOW_MEASUREMENTS
     if code in PRODUCER_INTEGRITY or code.startswith(RESERVED_PREFIXES):
         return False
-    return code in declared_hazards
+    from .usd_valuation import NORMAL_BLOCKERS as USD_NORMAL      # T37F: ordinary valuation outcomes (divergence, unavailable)
+    return code in USD_NORMAL or code in declared_hazards
 
 
 RESULT_FIELDS = {'kind', 'status', 'execution_status', 'live_readiness', 'attempted_requests', 'outcomes',
@@ -189,6 +190,34 @@ def _index(store, scan, refs):
     return {scan: found}
 
 
+NEWEST_PAGES = 2048     # bound of the targeted lookup for charged attempts that were not reported by their source
+
+
+def _recent_scan_attempts(store, scan, wanted):
+    """Keys of the attempt originals of `scan` numbered in `wanted`, found among the newest NEWEST_PAGES pages."""
+    import zlib
+    found = {}
+    with closing(store.connect()) as c:
+        rows = c.execute('SELECT hash,payload,raw_bytes FROM pages ORDER BY rowid DESC LIMIT ?', (NEWEST_PAGES,)).fetchall()
+    for key, blob, size in rows:
+        if type(size) is not int or not 1 <= size <= terminal.MAX_PROOF_RAW_BYTES or type(blob) is not bytes:
+            continue
+        try:
+            inflater = zlib.decompressobj()
+            raw = inflater.decompress(blob, size + 1)
+            if not inflater.eof or len(raw) != size:
+                continue
+            record = json.loads(raw)
+        except (ValueError, TypeError, zlib.error, RecursionError):
+            continue
+        if (type(record) is dict and record.get('kind') == 'paper_read_attempt_v1' and record.get('scan_id') == scan
+                and record.get('requests_used') in wanted):
+            if record['requests_used'] in found:
+                raise ValueError('Cycle no-entry attempt charge ambiguous')
+            found[record['requests_used']] = key
+    return [found[n] for n in sorted(found)]
+
+
 def _check_result(result, blocker, scan, before, after, hazards=()):
     if (type(result) is not dict or set(result) != RESULT_FIELDS or result['kind'] != 'paper_cycle_v1'
             or result['status'] != 'BLOCKED' or result['blockers'] != [blocker] or blocker not in NORMAL
@@ -222,6 +251,21 @@ def _check_result(result, blocker, scan, before, after, hazards=()):
                 type(d['blockers']) is list and all(producer_blocker_is_normal(x, hazards) for x in d['blockers']))
             for d in result['diagnostics']):
         raise ValueError('Producer blockers outside the normal vocabulary')
+
+
+def _cited_usd_failure(key, record, result, scan, *, kraken_measured=False):
+    """A failed charged attempt that `result` cites as USD evidence, is a SOL/USD attempt of `scan`, AND is an ORDINARY failure.
+
+    T37G: ordinary = transient (the monitoring allowance's non-latching vocabulary) or, for a Jupiter 401/403 only, a pass
+    whose valuation was carried by a valid Kraken observation (`kraken_measured`). TLS, unclassified, other 4xx
+    rejections and every malformed answer are provider/path FAULTS: they are never a normal no-entry."""
+    from . import usd_valuation as usd
+    from . import kraken_usd_observation as kraken
+    return (key in result['usd_evidence_refs'] and record.get('scan_id') == scan
+            and (record.get('source_id'), record.get('method')) in ((usd.JUPITER_SOURCE_ID, usd.JUPITER_METHOD),
+                                                                   (kraken.SOURCE, kraken.METHOD))
+            and type(record.get('failure_code')) is str
+            and usd.attempt_fault(record, kraken_measured=kraken_measured) is None)
 
 
 def _consistent(blocker, before, after, records):
@@ -265,6 +309,18 @@ def _proof(store, progress, rec, *, publishing=False):
     if type(rec['attempt_refs']) is not list:
         raise ValueError('Cycle no-entry attempt inventory mismatch')
     index = _index(store, scan, rec['attempt_refs'])
+    from . import usd_valuation as usd
+    cited = []
+    for ref in result['usd_evidence_refs']:
+        try:
+            cited.append(terminal._load(store, ref))
+        except (ValueError, OSError, sqlite3.Error):
+            raise ValueError('Cycle no-entry cited USD attempt unreadable') from None
+    measured = usd.fallback_measured(cited)
+    # Valuation v2 only (it always cites its Jupiter primary); a v0/v1 result keeps its previous proof untouched.
+    if (any(type(r) is dict and r.get('method') == usd.JUPITER_METHOD for r in cited)
+            and usd.faulted_scans(lambda ref: terminal._load(store, ref), result['usd_evidence_refs'])):
+        raise ValueError('Cycle no-entry cites a SOL/USD provider fault')
     refs = []
     for n in range(before['requests_used']+1, after['requests_used']+1):
         if n not in index.get(scan, {}):
@@ -272,7 +328,10 @@ def _proof(store, progress, rec, *, publishing=False):
         key, record = index[scan][n]
         if (record.get('failure_code') is not None or type(record.get('http_status')) is not int or record['http_status'] != 200
                 or type(record.get('observed_at')) is not int):
-            raise ValueError('Cycle no-entry charged attempt incomplete or failed')
+            # T37F: a failed attempt is acceptable only when the result CITES it as USD evidence and it is a SOL/USD
+            # attempt of this scan (valuation v2 treats a provider failure as a retained value, never as a latch).
+            if not _cited_usd_failure(key, record, result, scan, kraken_measured=measured):
+                raise ValueError('Cycle no-entry charged attempt incomplete or failed')
         refs.append(key)
     if refs != rec['attempt_refs'] or not set(result['attempt_refs']+result['usd_evidence_refs']) <= set(refs):
         raise ValueError('Cycle no-entry attempt inventory mismatch')
@@ -329,6 +388,12 @@ def publish(store, progress, *, pass_id, intent_hash, result, ledger):
         raise ValueError('Cycle no-entry attempt refs required')
     unique = list(dict.fromkeys(supplied+usd))
     indexed = _index(store, scan, unique)[scan]
+    missing = {n for n in range(before['requests_used']+1, after['requests_used']+1) if n not in indexed}
+    if missing:
+        # Charged requests whose source did not report a ref (the in-cycle history pager keeps its own): they were
+        # written moments ago, so they are among the NEWEST pages. Bounded to NEWEST_PAGES, never the whole store.
+        unique += _recent_scan_attempts(store, scan, missing)
+        indexed = _index(store, scan, unique)[scan]
     attempts = [indexed[n][0] for n in range(before['requests_used']+1, after['requests_used']+1) if n in indexed]
     rec = {'kind': KIND, 'version': 1, 'status': 'NO_ENTRY', 'execution_status': 'EXECUTION_UNVERIFIED',
            'live_readiness': False, 'entry_authorized': False, 'mode': 'single_candidate', 'pass_id': pass_id,
