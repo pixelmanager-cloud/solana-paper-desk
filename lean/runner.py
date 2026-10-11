@@ -79,7 +79,7 @@ def reserve_mark(position, accounts):
 class Runner:
     def __init__(self, *, store, helius, jupiter, kraken, candidates, strategy, paper, cfg,
                  discovery_db, health_path, code_version, strategy_version, kill_switch=None,
-                 taker='LEAN_PAPER', clock=time.time, mark_fn=None, strategy_cfg=None):
+                 taker='LEAN_PAPER', clock=time.time, mark_fn=None, strategy_cfg=None, path_recorder=None):
         self.store, self.helius, self.jupiter, self.kraken = store, helius, jupiter, kraken
         self.candidates, self.strategy, self.paper, self.cfg = candidates, strategy, paper, cfg
         self.strategy_cfg = strategy_cfg if strategy_cfg is not None else cfg
@@ -87,6 +87,7 @@ class Runner:
         self.code_version, self.strategy_version = code_version, strategy_version
         self.kill_switch, self.taker, self.clock = kill_switch, taker, clock
         self.mark_fn = mark_fn or self._default_marks
+        self.path_recorder = path_recorder               # lean.paths.PathRecorder or None (L07)
         self.cursor = None
         self.stop = threading.Event()
         self.lock = threading.RLock()                    # serialises store use across the two loops
@@ -96,6 +97,15 @@ class Runner:
         self.last = {'candidate_loop': None, 'position_loop': None}
 
     # -- plumbing ----------------------------------------------------------
+    def _track(self, candidate, screen, entered, reason=None):
+        """Hand a screened candidate to the price-path recorder (L07). Never raises: a recorder bug must not touch an entry."""
+        if self.path_recorder is None:
+            return
+        try:
+            self.path_recorder.start(candidate, screen, entered=entered, reason=reason)
+        except Exception:                                # noqa: BLE001
+            pass
+
     def _record(self, kind, payload):
         with self.lock:
             return self.store.record(kind, payload, code_version=self.code_version, strategy_version=self.strategy_version)
@@ -171,13 +181,18 @@ class Runner:
         self._record('screen', {'mint': mint, 'passed': bool(_get(screen, 'passed')), 'reasons': list(_get(screen, 'reasons', [])),
                                 'features': _get(screen, 'features', {})})
         if not _get(screen, 'passed'):
+            self._track(candidate, screen, False)
             return
         self.counts['screened_passed'] += 1
         if any(_get(p, 'mint') == mint for p in self.store.positions()):
             return
         features = _get(screen, 'features', {})
         probe_sol = self.cfg.get('entry_probe_sol', 0.02)
-        quote, raw, meta = self.jupiter.quote(SOL_MINT, mint, int(probe_sol * LAMPORTS), self.taker)
+        try:
+            quote, raw, meta = self.jupiter.quote(SOL_MINT, mint, int(probe_sol * LAMPORTS), self.taker)
+        except Exception:
+            self._track(candidate, screen, False, 'QUOTE_FAILED')
+            raise
         self._record('observation', {'mint': mint, 'kind': 'entry_quote', 'raw_bytes_len': len(raw or b''),
                                      'raw_base64': _b64(raw)})
         with self.lock:
@@ -186,10 +201,12 @@ class Runner:
         self._record('decision', {'mint': mint, 'side': 'entry', 'enter': bool(_get(decision, 'enter')),
                                   'reason': _get(decision, 'reason'), 'size_sol': _get(decision, 'size_sol')})
         if not _get(decision, 'enter'):
+            self._track(candidate, screen, False, str(_get(decision, 'reason')))
             return
         fill = self.paper.buy(quote, _get(decision, 'size_sol'), self.strategy_cfg)
         self._record('fill', {**_payload(fill), 'execution_status': 'EXECUTION_UNVERIFIED'})
         self.counts['entered'] += 1
+        self._track(candidate, screen, True)
         self._check()
 
     # -- position loop -----------------------------------------------------
@@ -297,6 +314,8 @@ class Runner:
                 self.stop.wait(interval)
         threads = [threading.Thread(target=loop, args=(self.candidate_pass, candidate_interval), name='candidates'),
                    threading.Thread(target=loop, args=(self.position_pass, position_interval), name='positions')]
+        if self.path_recorder is not None:
+            threads.append(threading.Thread(target=self.path_recorder.run, args=(self.stop,), name='paths'))
         for t in threads:
             t.start()
         for t in threads:
