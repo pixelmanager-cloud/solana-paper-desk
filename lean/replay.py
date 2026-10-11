@@ -3,25 +3,31 @@ no clock, no randomness: the same paths and config always give the same trades.
 
 Nothing here re-implements a rule. Entry and exit decisions are `lean.strategy.entry_decision` / `exit_decision`
 called directly, fills are `lean.paper.buy` / `sell` / `apply_fill` (integer lamports, the same fee and adverse
-slippage as the live trader), so a change to either module changes the replay with it.
+slippage as the live trader), and EVERY MARK is `lean.adapters.mark` applied to the recorded vault amounts: the very
+function the live position loop marks with, with no extra haircut and no reserve rebuilt from a price or a liquidity
+figure. A change to the strategy, the paper rules or the mark changes the replay with it.
 
-Input contract (what L07 `lean/paths.py` writes into `observations`; this module only reads):
-  * `kind='path_start'`, `mint`, `ts`; `raw` = canonical JSON {"features": <the screen features>, "reason": str|null, ...},
-    `meta` = {"entered": bool, "reason": str|null, ...}. Features are turned into strategy features with
-    `lean.adapters.entry_features` (the runner's own conversion), `decimals` comes from the features.
-  * `kind='path_mark'`, `mint`, `ts`; `meta` (and `raw`) = {"price_sol", "liquidity_sol", "status", ...}. `liquidity_sol` is
-    TWO-SIDED (2 x the SOL reserve), so the replay uses half of it as the pool's SOL reserve. `status` is OK, or
-    ACCOUNT_MISSING / EMPTY_POOL (the pool is gone: a rug signal, price null), or MALFORMED (unknown, skipped and counted).
-A path without a usable start, or with fewer than 2 usable marks, is skipped and counted; a corrupt mark (non-finite, <= 0)
-is skipped and counted. Corrupt evidence never becomes an entry. A DEAD mark (ACCOUNT_MISSING / EMPTY_POOL) blocks any entry
-or exit at that mark and values an open position at 0; a position still in a dead pool when its path ends is written off as
-`RUG_WRITEOFF` (a closed trade with its whole remaining cost lost) so rugs are never silently censored out of the statistics.
+Input contract (what the L07R2 recorder, `lean/paths.py`, writes into its own `paths.sqlite`; this module only reads):
+  * table `paths`: one row per recorded mint: `start_ts`, `features` (the screen features, JSON), `target` (JSON: `decimals`,
+    `fee_raw` = the pool fees inside the quote vault at the screen), `entered`, `reason` (why it was not entered, live).
+  * table `path_marks`: `(mint, ts, base_raw, quote_raw, status)`; `base_raw` / `quote_raw` are the pool's vault amounts, status
+    is OK, or ACCOUNT_MISSING / EMPTY_POOL (the pool is gone: a rug signal, no amounts), or MALFORMED (unknown, skipped, counted).
+  A path without a usable start or with fewer than 2 usable marks is skipped and counted; a corrupt mark (a non-integer or a
+  non-positive vault amount) is skipped and counted. Corrupt evidence never becomes an entry. A DEAD mark (ACCOUNT_MISSING /
+  EMPTY_POOL) blocks any entry or exit at that mark and values an open position at 0; a position still in a dead pool when its
+  path ends is written off as `RUG_WRITEOFF` (a closed trade with its whole remaining cost lost) so rugs are never silently
+  censored out of the statistics.
 
 Simulation model (every item is an ASSUMPTION the calibration test and the report make visible):
-  * Quotes are synthesised from the recorded spot price and SOL reserve with a constant-product pool and a pool fee of
-    `pool_fee_bps` (default 30). Real Jupiter routes can differ (multi-hop, different impact).
-  * A candidate is considered once, at the first mark with ts >= start ts + `entry_delay_s` (default 0 = optimistic: live
-    entry has latency). If a portfolio gate blocks it at that moment it is dropped, like the live loop.
+  * Quotes are synthesised from the recorded vault amounts with a constant-product pool and a pool fee of `pool_fee_bps`
+    (default 30; the runner's `pool_fee_bps`). Real Jupiter routes can differ (multi-hop, different impact). The mark of a held
+    position is `adapters.mark` of its quantity at the same reserves.
+  * An entry is decided at the screen's features RE-COMPUTED at the entry mark: market cap, liquidity and the spendable reserve
+    come from that mark's vault amounts (the pool fees, the virtual reserves, the supply and SOL/USD stay the screen's values).
+    The band `min/max_market_cap_usd`, `min_liquidity_usd` is therefore judged when the order would be placed, not at the screen.
+  * `first_mark` fills AT the first mark with ts >= start ts + `entry_delay_s`; `pullback` and `momentum` are decided at the
+    trigger mark and FILL AT THE NEXT recorded mark (the order cannot fill at the very price that triggered it). If a portfolio
+    gate blocks the candidate at that moment it is dropped, like the live loop.
   * The marks are ~15 s apart, so a stop can only fire at the next recorded mark; live held checks run every <= 10 s.
   * All paths are merged in time order into ONE portfolio (positions cap, exposure, cooldowns, loss streak, UTC-day
     loss stop), so concurrent paths compete for the same caps exactly as live.
@@ -34,7 +40,7 @@ import json
 import math
 import sqlite3
 from dataclasses import dataclass, field
-from decimal import Decimal, InvalidOperation
+from decimal import Decimal, InvalidOperation, localcontext
 from typing import Optional, Sequence
 
 from lean import adapters as A
@@ -56,13 +62,18 @@ class ReplayError(ValueError):
 @dataclass(frozen=True)
 class Point:
     ts: float
-    price_sol: Optional[Decimal]  # SOL per whole token; None only for a dead mark
-    liquidity_sol: Optional[Decimal] = None  # SOL-side reserve (half of L07's two-sided figure); None = unknown (no impact)
+    base_raw: Optional[int] = None  # the pool's base (token) vault amount, raw units; None only for a dead mark
+    quote_raw: Optional[int] = None  # the pool's quote (SOL) vault amount, lamports; None only for a dead mark
     status: str = 'OK'  # OK | ACCOUNT_MISSING | EMPTY_POOL (dead)
 
     @property
     def dead(self) -> bool:
         return self.status != 'OK'
+
+    @property
+    def price(self) -> Optional[Decimal]:
+        """The pool's spot price in raw units (quote per base vault amount): only ratios of it are used, by the entry timing."""
+        return None if self.dead else Decimal(self.quote_raw) / Decimal(self.base_raw)
 
 
 @dataclass(frozen=True)
@@ -73,6 +84,10 @@ class Path:
     points: tuple
     decimals: int = DEFAULT_DECIMALS
     not_entered_reason: Optional[str] = None  # what the live trader said; informational only
+    fee_raw: int = 0  # pool fees inside the quote vault at the screen (not spendable)
+    virtual_quote_raw: int = 0  # virtual quote reserves of the pool (boosted pools), from the screen
+    supply_raw: Optional[int] = None
+    sol_usd: Optional[Decimal] = None
 
 
 TIMING_KINDS = ('first_mark', 'pullback', 'momentum')
@@ -150,12 +165,12 @@ class _Watch:
         t = self.timing
         if point.dead:
             return False
-        self.samples.append((point.ts, point.price_sol))
-        self.high = point.price_sol if self.high is None else max(self.high, point.price_sol)
+        self.samples.append((point.ts, point.price))
+        self.high = point.price if self.high is None else max(self.high, point.price)
         if t.kind == 'first_mark':
             return True
         if t.kind == 'pullback':
-            return (self.high - point.price_sol) / self.high >= t.pullback_pct
+            return (self.high - point.price) / self.high >= t.pullback_pct
         chain = []
         for k in range(t.momentum_minutes + 1):
             target = point.ts - 60 * k
@@ -171,7 +186,6 @@ class ReplayConfig:
     initial_cash_sol: Decimal = Decimal(5)
     pool_fee_bps: int = 30
     entry_delay_s: float = 0
-    decimals: int = DEFAULT_DECIMALS
     entry_timing: EntryTiming = EntryTiming()
 
     def __post_init__(self):
@@ -198,30 +212,37 @@ def paper_config(cfg: S.StrategyConfig) -> paper.PaperConfig:
 
 
 # ------------------------------------------------------------------------------------------------- pool maths
-def _tokens(raw, decimals):
-    return Decimal(raw) / (Decimal(10) ** decimals)
+def quote_buy(point: Point, lamports: int, pool_fee_bps: int) -> int:
+    """Raw tokens out for `lamports` SOL in: constant product on the recorded vault amounts, after the pool fee (rounded down)."""
+    eff = lamports * (paper.MAX_BPS - pool_fee_bps) // paper.MAX_BPS
+    return point.base_raw * eff // (point.quote_raw + eff)
 
 
-def quote_buy(point: Point, lamports: int, decimals: int, pool_fee_bps: int) -> int:
-    """Raw tokens out for `lamports` SOL in (rounded down)."""
-    eff = Decimal(lamports) / LAMPORTS * (ONE - Decimal(pool_fee_bps) / 10000)
-    if point.liquidity_sol is None:
-        out = eff / point.price_sol
-    else:
-        reserve_tokens = point.liquidity_sol / point.price_sol
-        out = reserve_tokens * eff / (point.liquidity_sol + eff)
-    return int((out * Decimal(10) ** decimals).to_integral_value(rounding='ROUND_DOWN'))
+def quote_sell(point: Point, qty_raw: int, pool_fee_bps: int) -> int:
+    """Lamports out for `qty_raw` tokens in: the same constant-product output `adapters.mark` uses, after the pool fee."""
+    return point.quote_raw * qty_raw // (point.base_raw + qty_raw) * (paper.MAX_BPS - pool_fee_bps) // paper.MAX_BPS
 
 
-def quote_sell(point: Point, qty_raw: int, decimals: int, pool_fee_bps: int) -> int:
-    """Lamports out for `qty_raw` tokens in (rounded down)."""
-    eff = _tokens(qty_raw, decimals) * (ONE - Decimal(pool_fee_bps) / 10000)
-    if point.liquidity_sol is None:
-        out = eff * point.price_sol
-    else:
-        reserve_tokens = point.liquidity_sol / point.price_sol
-        out = point.liquidity_sol * eff / (reserve_tokens + eff)
-    return int((out * LAMPORTS).to_integral_value(rounding='ROUND_DOWN'))
+def features_at(path: Path, point: Point) -> Optional[dict]:
+    """The strategy's entry features as they are AT `point`: the screen's features with the reserve-dependent ones re-computed
+    from the mark's vault amounts exactly as `lean.candidates` computes them (price from the EFFECTIVE quote reserve, liquidity
+    from the SPENDABLE one). None when the pool state cannot be priced."""
+    gross = point.quote_raw
+    spendable = gross - path.fee_raw
+    effective = gross + path.virtual_quote_raw
+    if spendable <= 0 or effective <= 0 or point.base_raw <= 0:
+        return None
+    out = dict(path.features)
+    with localcontext() as ctx:
+        ctx.prec = 60
+        supply_ui = Decimal(path.supply_raw) / (Decimal(10) ** path.decimals)
+        base_ui = Decimal(point.base_raw) / (Decimal(10) ** path.decimals)
+        price = (Decimal(effective) / Decimal(10) ** 9) / base_ui
+        out.update(base_reserve_raw=str(point.base_raw), quote_gross_raw=str(gross), quote_spendable_raw=str(spendable),
+                   quote_effective_raw=str(effective), price_sol_per_token=format(price, 'f'),
+                   market_cap_usd=format(supply_ui * price * path.sol_usd, 'f'),
+                   liquidity_usd=format(2 * (Decimal(spendable) / Decimal(10) ** 9) * path.sol_usd, 'f'))
+    return A.entry_features(out, path.mint)
 
 
 def finite_positive(value) -> Optional[Decimal]:
@@ -321,20 +342,22 @@ def replay(paths: Sequence[Path], cfg: S.StrategyConfig, rcfg: Optional[ReplayCo
                            day_start_equity=state['day_start'], open_mints=frozenset(positions), cooldowns=dict(cooldowns),
                            last_entry_minute=state['last_entry_minute'], loss_streak=state['loss_streak'])
 
-    def net_mark(path, point, pos):
-        gross = quote_sell(point, pos.qty_raw, path.decimals, rcfg.pool_fee_bps)
-        return max(0, gross * (paper.MAX_BPS - pcfg.slippage_bps) // paper.MAX_BPS - pcfg.fee_lamports)
+    def net_mark(point, pos):
+        """EXACTLY the live mark: adapters.mark of the held quantity at the recorded vault amounts (no extra haircut)."""
+        return int(A.mark(pos.qty_raw, point.base_raw, point.quote_raw, pool_fee_bps=rcfg.pool_fee_bps, pcfg=pcfg) * LAMPORTS)  # 0 when nothing is left after the fees
 
     def try_enter(path, point, now):
         nonlocal cash, positions
-        feats = dict(path.features)
-        feats['mint'] = path.mint
+        feats = features_at(path, point)
+        if feats is None:
+            skipped.append({'mint': path.mint, 'ts': point.ts, 'reasons': ['POOL_STATE_UNPRICEABLE']})
+            return
         pre = S.entry_decision(feats, None, portfolio(now), cfg)
         if pre.action != 'BUY':
             skipped.append({'mint': path.mint, 'ts': point.ts, 'reasons': list(pre.reasons)})
             return
         lamports = paper.to_lamports(pre.size_sol)
-        tokens = quote_buy(point, lamports, path.decimals, rcfg.pool_fee_bps)
+        tokens = quote_buy(point, lamports, rcfg.pool_fee_bps)
         if tokens <= 0:
             skipped.append({'mint': path.mint, 'ts': point.ts, 'reasons': ['ZERO_OUTPUT']})
             return
@@ -344,7 +367,7 @@ def replay(paths: Sequence[Path], cfg: S.StrategyConfig, rcfg: Optional[ReplayCo
         except paper.PaperError:
             skipped.append({'mint': path.mint, 'ts': point.ts, 'reasons': ['PAPER_REFUSED']})
             return
-        back = quote_sell(point, fill.qty_raw, path.decimals, rcfg.pool_fee_bps)
+        back = quote_sell(point, fill.qty_raw, rcfg.pool_fee_bps)
         if back <= 0:
             skipped.append({'mint': path.mint, 'ts': point.ts, 'reasons': ['SELL_QUOTE_INVALID']})
             return
@@ -359,13 +382,13 @@ def replay(paths: Sequence[Path], cfg: S.StrategyConfig, rcfg: Optional[ReplayCo
         h = _Held(path, point.ts, fill.qty_raw, cfg, pos.cost_lamports)
         held[path.mint] = h
         state['last_entry_minute'] = now // 60
-        h.last_mark = net_mark(path, point, pos)
+        h.last_mark = net_mark(point, pos)
 
     def try_exit(path, point, now):
         nonlocal cash, positions
         pos = positions[path.mint]
         h = held[path.mint]
-        h.last_mark = net_mark(path, point, pos)
+        h.last_mark = net_mark(point, pos)
         port = portfolio(now)
         liquidate = S.should_liquidate(port, cfg)
 
@@ -386,7 +409,7 @@ def replay(paths: Sequence[Path], cfg: S.StrategyConfig, rcfg: Optional[ReplayCo
         except A.AdapterError:
             bump('ZERO_SELL')
             return
-        out = quote_sell(point, sell_qty, path.decimals, rcfg.pool_fee_bps)
+        out = quote_sell(point, sell_qty, rcfg.pool_fee_bps)
         if out <= 0:
             bump('BLOCKED_EXIT')
             return
@@ -411,9 +434,9 @@ def replay(paths: Sequence[Path], cfg: S.StrategyConfig, rcfg: Optional[ReplayCo
             cooldowns[path.mint] = S.cooldown_until(d2.reason, now, cfg)
             del held[path.mint]
         else:
-            h.last_mark = net_mark(path, point, positions[path.mint])
+            h.last_mark = net_mark(point, positions[path.mint])
 
-    watches = {}
+    watches, pending = {}, set()
     for ts, i, j in events:
         path = paths[i]
         point = path.points[j]
@@ -428,19 +451,34 @@ def replay(paths: Sequence[Path], cfg: S.StrategyConfig, rcfg: Optional[ReplayCo
                 bump('POOL_DEAD_MARK')
             else:
                 try_exit(path, point, now)
+        elif i in pending and i not in considered:
+            # pullback / momentum: the trigger was the PREVIOUS mark; the order fills at this one
+            considered.add(i)
+            pending.discard(i)
+            if point.dead:
+                skipped.append({'mint': path.mint, 'ts': ts, 'reasons': ['ENTRY_MARK_DEAD']})
+            elif path.mint in held:
+                skipped.append({'mint': path.mint, 'ts': ts, 'reasons': ['ALREADY_HELD']})
+            else:
+                try_enter(path, point, now)
         elif i not in considered:
             triggered = watches.setdefault(i, _Watch(rcfg.entry_timing)).update(point)
             if ts - path.start_ts > rcfg.entry_timing.max_wait_s:
                 considered.add(i)
                 skipped.append({'mint': path.mint, 'ts': ts, 'reasons': ['ENTRY_TIMING_NO_TRIGGER']})
             elif triggered and not point.dead and ts >= path.start_ts + rcfg.entry_delay_s:
+                if rcfg.entry_timing.kind != 'first_mark':
+                    pending.add(i)  # decided now, filled at the next recorded mark
+                    continue
                 considered.add(i)
                 if path.mint in held:
                     skipped.append({'mint': path.mint, 'ts': ts, 'reasons': ['ALREADY_HELD']})
                 else:
                     try_enter(path, point, now)
     for i, path in enumerate(paths):
-        if i not in considered and path.points:
+        if i in pending and i not in considered and path.points:
+            skipped.append({'mint': path.mint, 'ts': path.points[-1].ts, 'reasons': ['ENTRY_NO_NEXT_MARK']})
+        elif i not in considered and path.points:
             skipped.append({'mint': path.mint, 'ts': path.points[-1].ts, 'reasons': ['ENTRY_TIMING_NO_TRIGGER']})
 
     for mint, h in held.items():
@@ -501,54 +539,59 @@ def _json_or_none(value):
         return None
 
 
-def load_paths(connection, *, since: Optional[float] = None, until: Optional[float] = None, default_decimals: int = DEFAULT_DECIMALS):
-    """Build Paths from a lean store (any sqlite3 connection, read-only is enough). Returns (paths, skipped) where
-    `skipped` counts every row/path that could not be used and why."""
+def _int_or_none(value):
+    if isinstance(value, bool):
+        return None
+    if isinstance(value, int):
+        return value
+    if isinstance(value, str) and value.isdecimal():
+        return int(value)
+    return None
+
+
+def load_paths(connections, *, since: Optional[float] = None, until: Optional[float] = None, default_decimals: int = DEFAULT_DECIMALS):
+    """Build Paths from the recorder's `paths.sqlite` (one sqlite3 connection, or several: the rolled-over archives followed by
+    the live file; read-only is enough). Returns (paths, skipped) where `skipped` counts every row/path that could not be used
+    and why. A path carried over into a newer file keeps its first (oldest) start; marks are merged by timestamp."""
+    if isinstance(connections, sqlite3.Connection):
+        connections = [connections]
     skipped: dict = {}
 
     def bump(name):
         skipped[name] = skipped.get(name, 0) + 1
 
     starts, marks = {}, {}
-    cur = connection.execute("SELECT ts, kind, mint, raw, meta FROM observations WHERE kind IN ('path_start','path_mark') ORDER BY ts, id")
-    for ts, kind, mint, raw, meta in cur:
-        if not isinstance(mint, str) or not mint:
-            bump('ROW_NO_MINT')
-            continue
-        if kind == 'path_start':
-            payload = {**(_json_or_none(meta) or {}), **(_json_or_none(raw) or {})}  # L07: features in raw, entered/reason in meta
-            if not isinstance(payload.get('features'), dict):
+    for connection in connections:
+        for mint, start_ts, features, target, reason in connection.execute('SELECT mint, start_ts, features, target, reason FROM paths ORDER BY start_ts, mint'):
+            if not isinstance(mint, str) or not mint:
+                bump('ROW_NO_MINT')
+                continue
+            if mint in starts:
+                bump('START_DUPLICATE')  # first one wins; a carried-over duplicate never moves the entry point
+                continue
+            features, target = _json_or_none(features), _json_or_none(target)
+            if not isinstance(features, dict) or not isinstance(target, dict) or not isinstance(start_ts, (int, float)) or isinstance(start_ts, bool) \
+                    or not math.isfinite(start_ts):
                 bump('START_UNREADABLE')
-            elif mint in starts:
-                bump('START_DUPLICATE')  # first one wins; a later duplicate never moves the entry point
+                continue
+            starts[mint] = (float(start_ts), features, target, reason)
+        for mint, ts, base, quote, status in connection.execute('SELECT mint, ts, base_raw, quote_raw, status FROM path_marks ORDER BY mint, ts'):
+            if not isinstance(mint, str) or not mint or not isinstance(ts, (int, float)) or isinstance(ts, bool) or not math.isfinite(ts):
+                bump('ROW_NO_MINT' if not isinstance(mint, str) or not mint else 'MARK_BAD_TS')
+                continue
+            if status in DEAD_STATUSES:
+                marks.setdefault(mint, []).append(Point(float(ts), None, None, status))
+            elif status != 'OK':
+                bump('MARK_' + (status if status == 'MALFORMED' else 'UNKNOWN_STATUS'))
+            elif type(base) is not int or type(quote) is not int or base <= 0 or quote <= 0:
+                bump('MARK_BAD_RESERVES')  # a corrupt vault amount must never become a price
             else:
-                starts[mint] = (float(ts), payload)
-            continue
-        body = _json_or_none(meta) or {}
-        if 'price_sol' not in body and 'status' not in body:
-            body = {**(_json_or_none(raw) or {}), **body}
-        status = body.get('status', 'OK')
-        if status in DEAD_STATUSES:
-            marks.setdefault(mint, []).append(Point(float(ts), None, None, status))
-            continue
-        if status != 'OK':
-            bump('MARK_' + (status if status == 'MALFORMED' else 'UNKNOWN_STATUS'))
-            continue
-        price = finite_positive(body.get('price_sol'))
-        liq_raw = body.get('liquidity_sol')
-        liq = finite_positive(liq_raw)
-        if price is None:
-            bump('MARK_BAD_PRICE')
-        elif liq_raw is not None and liq is None:
-            bump('MARK_BAD_LIQUIDITY')  # a corrupt reserve must not silently turn into "no price impact"
-        else:
-            marks.setdefault(mint, []).append(Point(float(ts), price, None if liq is None else liq / 2))  # two-sided -> SOL side
+                marks.setdefault(mint, []).append(Point(float(ts), base, quote))
     paths = []
-    for mint, (start_ts, body) in starts.items():
+    for mint, (start_ts, features, target, reason) in starts.items():
         if (since is not None and start_ts < since) or (until is not None and start_ts >= until):
             continue
-        points = []
-        seen = set()
+        points, seen = [], set()
         for p in marks.get(mint, []):
             if p.ts < start_ts:
                 bump('MARK_BEFORE_START')
@@ -557,19 +600,42 @@ def load_paths(connection, *, since: Optional[float] = None, until: Optional[flo
             else:
                 seen.add(p.ts)
                 points.append(p)
+        points.sort(key=lambda p: p.ts)
         if len(points) < MIN_MARKS:
             bump('PATH_TOO_FEW_MARKS')
             continue
-        decimals = body['features'].get('decimals', default_decimals)
+        decimals = target.get('decimals', features.get('decimals', default_decimals))
+        fee_raw, virtual = _int_or_none(target.get('fee_raw', 0)), _int_or_none(features.get('virtual_quote_reserves_raw', 0))
+        supply, sol_usd = _int_or_none(features.get('supply_raw')), finite_positive(features.get('sol_usd'))
         if type(decimals) is not int or not 0 <= decimals <= 18:
             bump('PATH_BAD_DECIMALS')
             continue
-        paths.append(Path(mint, start_ts, A.entry_features(body['features'], mint), tuple(points), decimals, body.get('reason')))
+        if fee_raw is None or virtual is None or supply is None or supply <= 0 or sol_usd is None:
+            bump('PATH_FEATURES_INCOMPLETE')  # the entry band cannot be judged at the entry mark without the supply and SOL/USD
+            continue
+        reasons = _json_list(reason)
+        paths.append(Path(mint, start_ts, A.entry_features(features, mint), tuple(points), decimals, ','.join(map(str, reasons)) or None,
+                          fee_raw, virtual, supply, sol_usd))
     for mint in marks:
         if mint not in starts:
             bump('MARKS_WITHOUT_START')
     paths.sort(key=lambda p: (p.start_ts, p.mint))
     return paths, skipped
+
+
+def _json_list(value):
+    try:
+        out = json.loads(value)
+        return out if isinstance(out, list) else []
+    except (ValueError, TypeError):
+        return []
+
+
+def open_paths(*files):
+    """Read-only connections (plain `mode=ro`, `query_only`) to the recorder's files, oldest first. A plain read-only open of a
+    WAL file may leave `-wal` / `-shm` beside it; the data file is never modified."""
+    from lean.report import open_ro
+    return [open_ro(f) for f in files]
 
 
 # ---------------------------------------------------------------------------------------------- calibration
@@ -605,12 +671,13 @@ def store_initial_cash_sol(connection) -> Optional[Decimal]:
         return None
 
 
-def calibrate(connection, cfg: S.StrategyConfig, rcfg: Optional[ReplayConfig] = None) -> dict:
-    """Replay `cfg` on the paths of the tokens the live trader actually bought and compare the ordered sell reasons.
-    Mismatches are listed, never hidden. Live positions that are still open compare as a PREFIX of the replay."""
+def calibrate(connection, path_connections, cfg: S.StrategyConfig, rcfg: Optional[ReplayConfig] = None) -> dict:
+    """Replay `cfg` on the paths (the recorder's `paths.sqlite`, via `path_connections`) of the tokens the live trader (the store
+    `connection`) actually bought and compare the ordered sell reasons. Mismatches are listed, never hidden. Live positions that
+    are still open compare as a PREFIX of the replay."""
     rcfg = rcfg or ReplayConfig(initial_cash_sol=store_initial_cash_sol(connection) or ReplayConfig().initial_cash_sol)
     live = live_sells(connection)
-    paths, skipped = load_paths(connection)
+    paths, skipped = load_paths(path_connections)
     by_mint = {p.mint: p for p in paths}
     traded = [by_mint[m] for m in live['bought'] if m in by_mint]
     result = replay(traded, cfg, rcfg)

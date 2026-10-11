@@ -1,17 +1,23 @@
 """Walk-forward tuning report for the lean strategy. PAPER ONLY, EXECUTION_UNVERIFIED. Never promotes anything.
 
-`tune(db, grid, split)` replays every candidate config (the base config plus the grid product) on recorded price paths
-(`lean.replay`), once on the OLDER `split` share of the paths (in-sample) and once on the NEWEST remainder
-(out-of-sample, an independent portfolio starting from the same cash). Configs are RANKED BY OUT-OF-SAMPLE RESULT ONLY
-(total PnL, then trade count); in-sample numbers are shown for overfitting diagnosis and never used to rank. A config
-with fewer than `min_oos` (default 50) out-of-sample trades is flagged INSUFFICIENT and ranked below every sufficient one.
+`tune(db, paths, grid, fractions)` replays every candidate config (the base config plus the grid product) on the recorded price
+paths (`lean.replay`) in THREE windows by candidate start time, each an independent portfolio starting from the same cash:
 
-Selection bias: ranking N configs on the same out-of-sample set makes the winner's OOS number optimistic. The result says
-so; a proposal is evidence for a forward paper run under a new strategy_version, not proof.
+  TRAIN   (oldest, default 50%)   shown for overfitting diagnosis
+  SELECT  (middle, default 25%)   the ONLY window configs are ranked and the winner is chosen on
+  CONFIRM (newest, default 25%)   untouched by the selection: it can only ACCEPT or REJECT the winner, never pick it
 
-Promotion: a proposal file `<proposals_dir>/<UTC timestamp>.json` is written only when a non-base, sufficient config beats
-the base out-of-sample (total PnL and positive mean). It carries the diff against the current strategy_version and the
-evidence, and is `status: PROPOSAL_NOT_APPLIED`. Nothing reads it automatically; a human or the coordinator decides.
+A config with fewer than `min_select` trades in the select window is flagged INSUFFICIENT and ranked below every sufficient one.
+A winner is confirmed only when, on the confirm window, it has at least `min_confirm` trades, a positive mean PnL and a higher
+total PnL than the base config; otherwise the status is NOT_CONFIRMED and nothing is proposed. The confirm numbers of the other
+configs are printed for transparency and marked as not used for selection.
+
+Selection bias still exists (N configs ranked on one select window); the confirm window removes the optimism of the winner's
+number but not the multiple-comparison problem. A proposal is evidence for a forward paper run under a new strategy_version.
+
+Promotion: a proposal file `<proposals_dir>/<UTC timestamp>.json` is written only for a confirmed non-base winner. It carries
+the diff against the current strategy_version and the evidence, and is `status: PROPOSAL_NOT_APPLIED`. Nothing reads it
+automatically; a human or the coordinator decides.
 """
 from __future__ import annotations
 
@@ -21,6 +27,7 @@ import dataclasses
 import datetime
 import itertools
 import json
+import math
 import os
 import sqlite3
 import sys
@@ -32,7 +39,9 @@ from typing import Mapping, Optional
 from lean import replay as R
 from lean import strategy as S
 
-MIN_OOS = 50
+MIN_SELECT = 50
+MIN_CONFIRM = 30
+DEFAULT_FRACTIONS = (0.5, 0.25, 0.25)
 MAX_CONFIGS = 2000
 PROPOSAL_STATUS = 'PROPOSAL_NOT_APPLIED'
 LABEL = 'PAPER ONLY / EXECUTION_UNVERIFIED'
@@ -151,22 +160,27 @@ def expand_grid(grid: Mapping, base: S.StrategyConfig, max_configs: int = MAX_CO
     return candidates, invalid
 
 
-def split_paths(paths, split: float, embargo_s: float = 0):
-    """Older `split` share (by candidate start time) vs the newest rest. `embargo_s` drops out-of-sample paths that start
-    within that many seconds of the boundary so the two sides share no overlapping holding period."""
-    if isinstance(split, bool) or not isinstance(split, (int, float)) or not 0 < split < 1:
-        raise TuneError('split must be in (0, 1)')
+def split_paths(paths, fractions=DEFAULT_FRACTIONS, embargo_s: float = 0):
+    """Train / select / confirm by candidate start time (oldest first). `fractions` are three positive numbers summing to 1.
+    `embargo_s` drops select and confirm paths that start within that many seconds of the window's start boundary so that no two
+    windows share an overlapping holding period. Returns (train, select, confirm, boundaries) with boundaries = (select_start,
+    confirm_start)."""
+    if not isinstance(fractions, (tuple, list)) or len(fractions) != 3 or any(isinstance(f, bool) or not isinstance(f, (int, float)) or not math.isfinite(f) or f <= 0 for f in fractions) \
+            or abs(sum(fractions) - 1) > 1e-9:
+        raise TuneError('fractions must be three positive numbers summing to 1')
     ordered = sorted(paths, key=lambda p: (p.start_ts, p.mint))
-    k = int(len(ordered) * split)
-    if k < 1 or k >= len(ordered):
-        raise TuneError('need at least 2 paths so that both sides are non-empty (have %d)' % len(ordered))
-    older, newer = ordered[:k], ordered[k:]
-    boundary = newer[0].start_ts
+    n = len(ordered)
+    a, b = int(n * fractions[0]), int(n * (fractions[0] + fractions[1]))
+    train, select, confirm = ordered[:a], ordered[a:b], ordered[b:]
+    if not (train and select and confirm):
+        raise TuneError('need at least 3 paths so that all three windows are non-empty (have %d)' % n)
+    bounds = (select[0].start_ts, confirm[0].start_ts)
     if embargo_s:
-        newer = [p for p in newer if p.start_ts >= boundary + embargo_s]
-        if not newer:
-            raise TuneError('embargo removed every out-of-sample path')
-    return older, newer, boundary
+        select = [p for p in select if p.start_ts >= bounds[0] + embargo_s]
+        confirm = [p for p in confirm if p.start_ts >= bounds[1] + embargo_s]
+        if not select or not confirm:
+            raise TuneError('embargo removed every select or confirm path')
+    return train, select, confirm, bounds
 
 
 def _evaluate(paths, cfg, rcfg):
@@ -178,75 +192,97 @@ def _evaluate(paths, cfg, rcfg):
     return out
 
 
-def _total(entry) -> Decimal:
-    return Decimal(entry['out_of_sample']['total_pnl_sol'])
+def _total(entry, window='select') -> Decimal:
+    return Decimal(entry[window]['total_pnl_sol'])
 
 
-def tune(db, grid: Mapping, split: float = 0.7, *, base: Optional[S.StrategyConfig] = None, rcfg: Optional[R.ReplayConfig] = None,
-         min_oos: int = MIN_OOS, embargo_s: float = 0, now: Optional[float] = None, proposals_dir=None,
+def tune(db, paths, grid: Mapping, fractions=DEFAULT_FRACTIONS, *, base: Optional[S.StrategyConfig] = None, rcfg: Optional[R.ReplayConfig] = None,
+         min_select: int = MIN_SELECT, min_confirm: int = MIN_CONFIRM, embargo_s: float = 0, now: Optional[float] = None, proposals_dir=None,
          max_configs: int = MAX_CONFIGS) -> dict:
+    """`db` = the live trader's lean.sqlite (only its starting cash is read); `paths` = the recorder's paths.sqlite file(s) or open
+    connection(s) (rolled-over archives first)."""
     base = base or S.StrategyConfig.load(Path(__file__).resolve().parents[1] / 'config' / 'lean' / 'strategy-default.json')
-    connection, owned = _connect(db)
+    live, live_owned = _connect(db)
     try:
         # the replay starts from the cash the live store started from unless the caller says otherwise
-        rcfg = rcfg or R.ReplayConfig(initial_cash_sol=R.store_initial_cash_sol(connection) or R.ReplayConfig().initial_cash_sol)
-        paths, load_skipped = R.load_paths(connection)
+        rcfg = rcfg or R.ReplayConfig(initial_cash_sol=R.store_initial_cash_sol(live) or R.ReplayConfig().initial_cash_sol)
+    finally:
+        if live_owned:
+            live.close()
+    connections, owned = _path_connections(paths)
+    try:
+        loaded, load_skipped = R.load_paths(connections)
     finally:
         if owned:
-            connection.close()
-    older, newer, boundary = split_paths(paths, split, embargo_s)
+            for connection in connections:
+                connection.close()
+    train, select, confirm, bounds = split_paths(loaded, fractions, embargo_s)
     candidates, invalid = expand_grid(grid, base, max_configs, rcfg)
     entries = []
     for c in candidates:
-        ins = _evaluate(older, c['cfg'], c['rcfg'])
-        oos = _evaluate(newer, c['cfg'], c['rcfg'])
-        flags = ['INSUFFICIENT'] if oos['n_trades'] < min_oos else []
-        entries.append({'label': c['label'], 'is_base': c['label'] == 'base', 'overrides': c['overrides'], 'config_hash': c['cfg'].config_hash, 'replay': c['rcfg'].to_dict(),
-                        'in_sample': ins, 'out_of_sample': oos, 'flags': flags})
-    entries.sort(key=lambda e: ('INSUFFICIENT' in e['flags'], -_total(e), -e['out_of_sample']['n_trades'], e['label']))
+        tr, se, co = (_evaluate(window, c['cfg'], c['rcfg']) for window in (train, select, confirm))
+        flags = ['INSUFFICIENT'] if se['n_trades'] < min_select else []
+        entries.append({'label': c['label'], 'is_base': c['label'] == 'base', 'overrides': c['overrides'], 'config_hash': c['cfg'].config_hash,
+                        'replay': c['rcfg'].to_dict(), 'train': tr, 'select': se, 'confirm': co, 'flags': flags,
+                        'confirm_used_for_selection': False})
+    entries.sort(key=lambda e: ('INSUFFICIENT' in e['flags'], -_total(e), -e['select']['n_trades'], e['label']))
     for rank, entry in enumerate(entries, 1):
         entry['rank'] = rank
     stamp = datetime.datetime.fromtimestamp(time.time() if now is None else now, datetime.timezone.utc)
     result = {
         'label': LABEL, 'generated_at': stamp.strftime('%Y-%m-%dT%H:%M:%SZ'),
         'base': {'strategy_version': base.strategy_version, 'config_hash': base.config_hash},
-        'split': {'fraction': split, 'paths_total': len(paths), 'in_sample_paths': len(older), 'out_of_sample_paths': len(newer),
-                  'boundary_ts': boundary, 'embargo_s': embargo_s},
-        'min_oos_trades': min_oos, 'replay_assumptions': rcfg.to_dict(), 'load_skipped': load_skipped,
-        'configs': entries, 'invalid_configs': invalid, 'warnings': _warnings(entries, older, newer, load_skipped), 'proposal': None,
-        'proposal_status': None,
+        'split': {'fractions': list(fractions), 'paths_total': len(loaded), 'train_paths': len(train), 'select_paths': len(select),
+                  'confirm_paths': len(confirm), 'select_start_ts': bounds[0], 'confirm_start_ts': bounds[1], 'embargo_s': embargo_s},
+        'min_select_trades': min_select, 'min_confirm_trades': min_confirm, 'replay_assumptions': rcfg.to_dict(), 'load_skipped': load_skipped,
+        'configs': entries, 'invalid_configs': invalid, 'warnings': _warnings(entries, select, confirm, load_skipped), 'proposal': None,
+        'proposal_status': None, 'winner': None,
     }
-    _maybe_propose(result, entries, base, proposals_dir, now)
+    _maybe_propose(result, entries, base, proposals_dir, now, min_confirm)
     return result
 
 
-def _warnings(entries, older, newer, skipped):
-    out = ['Replay is a SIMULATION on synthesised constant-product quotes from recorded marks (EXECUTION_UNVERIFIED); see replay_assumptions.']
+def _path_connections(paths):
+    """-> (connections, owned). Accepts a path, a connection, or a list of those."""
+    items = list(paths) if isinstance(paths, (list, tuple)) else [paths]
+    if not items:
+        raise TuneError('no paths database given')
+    if all(isinstance(i, sqlite3.Connection) for i in items):
+        return items, False
+    return R.open_paths(*items), True
+
+
+def _warnings(entries, select, confirm, skipped):
+    out = ['Replay is a SIMULATION on synthesised constant-product quotes from recorded vault amounts (EXECUTION_UNVERIFIED); see replay_assumptions.']
     if len(entries) > 1:
-        out.append('%d configs were ranked on the same out-of-sample set: the best one is optimistic (selection bias). '
-                   'Confirm any proposal with a forward paper run under a new strategy_version.' % len(entries))
-    if len(newer) < 30:
-        out.append('Only %d out-of-sample paths: results are noise-dominated.' % len(newer))
+        out.append('%d configs were ranked on the same select window: the best one is optimistic (selection bias). The confirm window only '
+                   'accepts or rejects the winner; confirm any proposal with a forward paper run under a new strategy_version.' % len(entries))
+    if len(select) < 30 or len(confirm) < 30:
+        out.append('Only %d select / %d confirm paths: results are noise-dominated.' % (len(select), len(confirm)))
     if skipped:
         out.append('Some rows/paths were unusable (see load_skipped).')
     if all('INSUFFICIENT' in e['flags'] for e in entries):
-        out.append('Every config has fewer than the minimum out-of-sample trades: no ranking is reliable and no proposal is emitted.')
+        out.append('Every config has fewer than the minimum select-window trades: no ranking is reliable and no proposal is emitted.')
     return out
 
 
-def _maybe_propose(result, entries, base, proposals_dir, now):
+def _maybe_propose(result, entries, base, proposals_dir, now, min_confirm):
     base_entry = next(e for e in entries if e['is_base'])
     best = next((e for e in entries if not e['is_base'] and 'INSUFFICIENT' not in e['flags']), None)
     if best is None:
         result['proposal_status'] = 'NO_SUFFICIENT_ALTERNATIVE'
         return
-    oos, base_oos = best['out_of_sample'], base_entry['out_of_sample']
     if 'INSUFFICIENT' in base_entry['flags']:
-        # a base with too few out-of-sample trades gives nothing reliable to beat
+        # a base with too few select-window trades gives nothing reliable to beat
         result['proposal_status'] = 'BASE_INSUFFICIENT'
         return
-    if not (_total(best) > Decimal(base_oos['total_pnl_sol']) and Decimal(oos['mean_pnl_sol']) > 0):
-        result['proposal_status'] = 'NO_OUT_OF_SAMPLE_IMPROVEMENT'
+    result['winner'] = best['label']                                  # chosen on the SELECT window alone
+    if not (_total(best) > _total(base_entry) and Decimal(best['select']['mean_pnl_sol']) > 0):
+        result['proposal_status'] = 'NO_SELECTION_IMPROVEMENT'
+        return
+    co, base_co = best['confirm'], base_entry['confirm']
+    if co['n_trades'] < min_confirm or co['mean_pnl_sol'] is None or Decimal(co['mean_pnl_sol']) <= 0 or _total(best, 'confirm') <= _total(base_entry, 'confirm'):
+        result['proposal_status'] = 'NOT_CONFIRMED'                    # the untouched window does not support the winner
         return
     if proposals_dir is None:
         result['proposal_status'] = 'WOULD_PROPOSE_NO_DIRECTORY_GIVEN'
@@ -262,9 +298,10 @@ def _maybe_propose(result, entries, base, proposals_dir, now):
            'diff': {k: {'from': _get(config_to_dict(base), k), 'to': v} for k, v in strategy_overrides.items()},
            'replay_overrides': replay_overrides,
            'requires_runner_change': sorted(replay_overrides),  # entry timing is not a runner setting yet: code change needed
-           'proposed_config': raw, 'evidence': {'in_sample': best['in_sample'], 'out_of_sample': oos,
-                                                'base_out_of_sample': base_oos, 'split': result['split'],
-                                                'configs_evaluated': len(entries), 'replay_assumptions': result['replay_assumptions']},
+           'proposed_config': raw, 'evidence': {'train': best['train'], 'select': best['select'], 'confirm': co,
+                                                'base_select': base_entry['select'], 'base_confirm': base_co, 'split': result['split'],
+                                                'configs_evaluated': len(entries), 'replay_assumptions': result['replay_assumptions'],
+                                                'chosen_on': 'select', 'confirmed_on': 'confirm'},
            'warnings': result['warnings']}
     out = Path(proposals_dir)
     if out.is_symlink():
@@ -305,18 +342,23 @@ def render_html(result: dict, calibration: Optional[dict] = None) -> str:
     parts = ['<h1>Lean tuning report</h1><p class="flag">%s</p><p>Generated %s &middot; base %s (%s)</p>' % (
         e(LABEL), e(result['generated_at']), e(result['base']['strategy_version']), e(result['base']['config_hash'][:12]))]
     sp = result['split']
-    parts.append('<p>Walk-forward split: %d paths, older %d in-sample / newest %d out-of-sample (boundary %s). '
-                 'Ranked by OUT-OF-SAMPLE total PnL only; INSUFFICIENT below %d OOS trades.</p>' % (
-                     sp['paths_total'], sp['in_sample_paths'], sp['out_of_sample_paths'], e(sp['boundary_ts']), result['min_oos_trades']))
+    parts.append('<p>Walk-forward split: %d paths = %d train / %d select / %d confirm (select starts %s, confirm starts %s). '
+                 'Ranked and the winner chosen on the SELECT window only; the CONFIRM window can only accept or reject the winner '
+                 '(at least %d trades, positive mean, more than the base). INSUFFICIENT below %d select trades.</p>' % (
+                     sp['paths_total'], sp['train_paths'], sp['select_paths'], sp['confirm_paths'], e(sp['select_start_ts']), e(sp['confirm_start_ts']),
+                     result['min_confirm_trades'], result['min_select_trades']))
     parts.append('<h2>Warnings</h2><ul>%s</ul>' % ''.join('<li>%s</li>' % e(w) for w in result['warnings']))
 
     def cells(m):
         pf = m['profit_factor'] if m['profit_factor'] is not None else m['profit_factor_note']
         return [m['n_trades'], _pct(m['win_rate']), _num(m['mean_pnl_sol']), _num(m['median_pnl_sol']), _num(m['max_drawdown_sol']), _num(pf)]
-    headers = ['rank', 'config', 'flags'] + ['IS ' + h for h in ('n', 'win', 'mean', 'median', 'max DD', 'PF')] + ['OOS ' + h for h in ('n', 'win', 'mean', 'median', 'max DD', 'PF')]
-    rows = [[x['rank'], x['label'], ' '.join(x['flags']) or 'ok'] + cells(x['in_sample']) + cells(x['out_of_sample']) for x in result['configs']]
-    parts.append('<h2>Configs (ranked out-of-sample)</h2>' + table(headers, rows))
-    parts.append('<h2>Proposal</h2><p>%s%s</p><p>Never applied automatically.</p>' % (e(result['proposal_status']), (' &middot; ' + e(result['proposal'])) if result['proposal'] else ''))
+    headers = ['rank', 'config', 'flags'] + [w + ' ' + h for w in ('TRAIN', 'SELECT', 'CONFIRM*') for h in ('n', 'win', 'mean', 'median', 'max DD', 'PF')]
+    rows = [[x['rank'], x['label'], ' '.join(x['flags']) or 'ok'] + cells(x['train']) + cells(x['select']) + cells(x['confirm']) for x in result['configs']]
+    parts.append('<h2>Configs (ranked on the select window)</h2>' + table(headers, rows)
+                 + '<p>* the confirm window is NOT used for ranking or for choosing the winner.</p>')
+    parts.append('<h2>Proposal</h2><p>%s%s%s</p><p>Never applied automatically.</p>' % (
+        e(result['proposal_status']), (' &middot; winner on select: ' + e(result['winner'])) if result['winner'] else '',
+        (' &middot; ' + e(result['proposal'])) if result['proposal'] else ''))
     if result['invalid_configs']:
         parts.append('<h2>Invalid grid combinations</h2>' + table(['combination', 'error'], [[i['label'], i['error']] for i in result['invalid_configs']]))
     parts.append('<h2>Replay assumptions</h2><pre>%s</pre>' % e(json.dumps(result['replay_assumptions'], sort_keys=True)))
@@ -363,12 +405,14 @@ def write_report(out_dir, result, calibration=None):
 
 def main(argv=None):
     p = argparse.ArgumentParser(description=__doc__.split('\n')[0])
-    p.add_argument('--db', required=True, help='lean.sqlite (opened read-only)')
+    p.add_argument('--db', required=True, help="the live trader's lean.sqlite (opened read-only; only its starting cash and exit reasons are read)")
+    p.add_argument('--paths-db', required=True, action='append', help="the recorder's paths.sqlite; repeat for rolled-over archives (oldest first)")
     p.add_argument('--grid', required=True, help='JSON file: {"param": [values, ...]}')
     p.add_argument('--out-dir', required=True)
     p.add_argument('--proposals-dir', help='where a proposal may be written (default: none = never write one)')
-    p.add_argument('--split', type=float, default=0.7)
-    p.add_argument('--min-oos', type=int, default=MIN_OOS)
+    p.add_argument('--fractions', default='0.5,0.25,0.25', help='train,select,confirm shares of the paths by start time')
+    p.add_argument('--min-select', type=int, default=MIN_SELECT)
+    p.add_argument('--min-confirm', type=int, default=MIN_CONFIRM)
     p.add_argument('--embargo-s', type=float, default=0)
     p.add_argument('--pool-fee-bps', type=int, default=30, help='pool fee assumed when synthesising quotes (the runner config\'s pool_fee_bps)')
     p.add_argument('--calibrate', action='store_true', help='also compare replay with the live exit reasons')
@@ -377,17 +421,26 @@ def main(argv=None):
     try:
         with open(args.grid, 'r', encoding='utf-8') as stream:
             grid = json.load(stream)
+        try:
+            fractions = tuple(float(x) for x in args.fractions.split(','))
+        except ValueError:
+            raise TuneError('fractions must be three numbers like 0.5,0.25,0.25') from None
         rcfg = R.ReplayConfig(pool_fee_bps=args.pool_fee_bps)
-        result = tune(args.db, grid, args.split, rcfg=rcfg, min_oos=args.min_oos, embargo_s=args.embargo_s, now=args.now, proposals_dir=args.proposals_dir)
+        result = tune(args.db, args.paths_db, grid, fractions, rcfg=rcfg, min_select=args.min_select, min_confirm=args.min_confirm,
+                      embargo_s=args.embargo_s, now=args.now, proposals_dir=args.proposals_dir)
         calibration = None
         if args.calibrate:
             from lean.report import open_ro
             connection = open_ro(args.db)
+            path_connections = R.open_paths(*args.paths_db)
             try:
-                calibration = R.calibrate(connection, S.StrategyConfig.load(Path(__file__).resolve().parents[1] / 'config' / 'lean' / 'strategy-default.json'),
+                calibration = R.calibrate(connection, path_connections,
+                                          S.StrategyConfig.load(Path(__file__).resolve().parents[1] / 'config' / 'lean' / 'strategy-default.json'),
                                           R.ReplayConfig(initial_cash_sol=R.store_initial_cash_sol(connection) or R.ReplayConfig().initial_cash_sol, pool_fee_bps=args.pool_fee_bps))
             finally:
                 connection.close()
+                for c in path_connections:
+                    c.close()
         html_path, json_path = write_report(args.out_dir, result, calibration)
     except (TuneError, R.ReplayError, S.ConfigError, sqlite3.Error, OSError, ValueError) as error:
         print(json.dumps({'status': 'ERROR', 'code': type(error).__name__, 'detail': str(error)[:200]}))
