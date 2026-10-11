@@ -165,6 +165,16 @@ class LowLaneLimiter(RateLimiter):
             self.stats['granted'] += 1
         return 0.0
 
+    # --- LINT2b hook: a read-only peek, so a bulk collector (L13) can leave tokens for the other low-lane users ---
+    def available(self):
+        """Tokens a call could take RIGHT NOW (0.0 inside a shed window). Takes nothing, changes nothing."""
+        with self._lock:
+            now = self._clock()
+            if now < self._blocked_until:
+                return 0.0
+            return min(self.burst, self._tokens + (now - self._stamp) * self.rate)
+    # --- end LINT2b ---
+
     def shed(self, seconds=None):
         """Shed the low lane for ``max(shed_s, seconds)``: every call fails fast with LANE_SHED until then."""
         with self._lock:

@@ -166,7 +166,10 @@ class E2E(unittest.TestCase):
         # graduation: the BLOCK time, not the discovery receive time (25 s later)
         self.assertEqual(f['graduation_block_time'], int(T0 - 300 - BLOCK_BEFORE_RECEIPT))
         self.assertEqual(f['seconds_graduation_to_screen'], float(f['age_seconds_at_screen']) + BLOCK_BEFORE_RECEIPT)
-        self.assertEqual(f['tx_count_first_10m'], 3)                                       # 3, 40, 599; the failed, the late and the creation tx are out
+        # LINT2b: 3 and 40 s; 599 s is AFTER the entry decision (~325 s after graduation) and is never counted; the window is flagged
+        self.assertEqual(f['tx_count_first_10m'], 2)
+        self.assertEqual(ok['flags']['tx_count_first_10m'], 'CUT_AT_DECISION')
+        self.assertEqual(ok['flags']['tx_count_window_s'], round(ok['decision_ts'] - f['graduation_block_time'], 3))
         # holders: the ten 1 % holders; the pool vault (half the supply) is excluded, and so would the burn accounts be
         self.assertEqual((f['top1_pct'], f['top10_pct']), ('1.0000', '10.0000'))
         self.assertEqual(ok['calls'], 2)
@@ -260,7 +263,7 @@ class E2E(unittest.TestCase):
         self.assertIsNone(without.features)
         without.write_health()
         self.assertEqual(without.store.rows('observations', kind='features'), [])
-        self.assertEqual(json.loads((Path(without.state_dir) / 'health.json').read_text())['features'], {'enabled': False})
+        self.assertEqual(json.loads((Path(without.state_dir) / 'health.json').read_text())['features'], {'enabled': False, 'alive': False})
 
     def test_health_and_the_report_show_the_features(self):
         r, role, world, calls, clock = self.build_world(features=True)

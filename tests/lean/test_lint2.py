@@ -42,7 +42,7 @@ class ShippedExample(unittest.TestCase):
         raw = json.loads(EXAMPLE.read_text())
         self.assertEqual(set(raw) - {'_comment'}, set(entry.CONFIG_KEYS))
         cfg = entry.load_config(EXAMPLE)
-        self.assertEqual(cfg['features'], {'enabled': True, 'enrich': True, 'queue_size': 500})
+        self.assertEqual(cfg['features'], {'enabled': True, 'enrich': True, 'queue_size': 500, 'shed_wait_s': 10.0, 'max_late_s': 30.0})
         ws = wallet_signals.make_config(cfg['wallet_signals'])
         self.assertEqual((ws['retain_raw'], ws['backfill_max_age_s'], ws['max_calls']), ('none', 1800, 16))
         self.assertTrue(cfg['paths']['enabled'])                       # the smart-wallet outcome source is on

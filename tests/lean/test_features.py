@@ -142,9 +142,10 @@ class Base(unittest.TestCase):
 
 class TestConfig(unittest.TestCase):
     def test_defaults_off_and_validation(self):
-        self.assertEqual(F.config(None), {'enabled': False, 'enrich': True, 'queue_size': 500})
+        self.assertEqual(F.config(None), {'enabled': False, 'enrich': True, 'queue_size': 500, 'shed_wait_s': 10.0, 'max_late_s': 30.0})
         self.assertEqual(F.config({'enabled': True})['enabled'], True)
-        for bad in ({'enabled': 1}, {'enrich': 'yes'}, {'queue_size': 0}, {'queue_size': True}, {'queue_size': 10 ** 7}, {'nope': 1}, [], 'on'):
+        for bad in ({'enabled': 1}, {'enrich': 'yes'}, {'queue_size': 0}, {'queue_size': True}, {'queue_size': 10 ** 7}, {'nope': 1}, [], 'on',
+                    {'shed_wait_s': -1}, {'shed_wait_s': 61}, {'max_late_s': True}, {'max_late_s': 'x'}):
             with self.subTest(bad=bad), self.assertRaises(ValueError):
                 F.config(bad)
 
@@ -174,7 +175,7 @@ class TestSchema(Base):
         self.assertFalse(set(F.REMOVED_FIELDS) & set(F.FIELDS))
         for name, why in F.REMOVED_FIELDS.items():
             self.assertTrue(why and name not in F.build_row(self.fx.candidate, self.fx.screen(), entered=False)['fields'])
-        self.assertEqual(F.FEATURES_VERSION, 2)
+        self.assertEqual(F.FEATURES_VERSION, 3)                                 # LINT2b: decision_ts / late_s / flags
 
     def test_the_cheap_fields_cost_no_request(self):
         row = F.build_row(self.fx.candidate, self.fx.screen(), entered=True)
@@ -407,10 +408,10 @@ class TestRecorder(Base):
         (obs,) = self.store.rows('observations', kind='features')
         self.assertEqual((obs['candidate_id'], obs['code_version'], obs['strategy_version']), (5, CODE, STRATEGY))
         self.assertEqual(json.loads(obs['meta']), row)                                          # the report reads meta, never the blob
-        self.assertEqual((row['entered'], row['not_entered_reason'], row['calls'], row['features_version']), (True, None, 2, 2))
+        self.assertEqual((row['entered'], row['not_entered_reason'], row['calls'], row['features_version']), (True, None, 2, 3))
         self.assertEqual((row['screen_at'], row['collected_at']), (T0, T0 + 7))                  # the enrichment is later than the decision
         self.assertEqual(row['fields']['dev_holding_pct'], '1.0000')
-        self.assertEqual(row['fields']['seconds_graduation_to_screen'], 430.0)
+        self.assertEqual(row['fields']['seconds_graduation_to_screen'], T0 - GRAD_TIME)            # LINT2b: from screen_at, the screen decision itself
 
     def test_what_became_of_the_candidate_is_read_from_the_store(self):
         fx, mint = self.fx, self.fx.token.mint
@@ -524,6 +525,76 @@ class TestRecorder(Base):
         self.rec.run(stop)
         self.assertEqual(len(self.rows()), 3)
         self.assertEqual(self.rec.health()['queued'], 0)
+        self.assertEqual(self.helius.calls, [])                                  # LINT2b: the stop drain sends nothing
+        self.assertEqual({r['missing']['dev_holding_pct'] for r in self.rows()}, {'STOPPED'})
+
+
+def no_token():
+    return ProviderError(LANE_SHED, True, meta={'why': 'no_token'})
+
+
+class TestLINT2b(Base):
+    """Pre-deploy fixes: nothing after the decision, bounded shed retries, stop, the real decision times."""
+
+    def enrich(self, **kw):
+        kw.setdefault('need_holders', False)
+        return F.enrich(self.fx.candidate, self.fx.screen(), self.helius, creator=self.fx.token.coin_creator,
+                        screen_time=GRAD_TIME + 100, **kw)
+
+    def test_LINT2b_no_post_decision_transaction_is_counted(self):
+        self.helius = ScriptedHelius(self.fx, tx_offsets=(5, 60, 100, 101, 599))
+        flags = {}
+        fields, missing, _ = self.enrich(decision_ts=GRAD_TIME + 100, flags=flags)
+        self.assertEqual(fields['tx_count_first_10m'], 3)                        # 5, 60, 100; 101 and 599 are after the decision
+        self.assertEqual((flags['tx_count_first_10m'], flags['tx_count_window_s']), ('CUT_AT_DECISION', 100.0))
+        self.assertEqual(flags['dev_holding_pct'], 'AT_COLLECTION')               # a snapshot, labelled as such
+        fields, _, _ = self.enrich(decision_ts=GRAD_TIME + 700, flags={})
+        self.assertEqual(fields['tx_count_first_10m'], 5)                        # a decision after the 10 minutes cuts nothing
+
+    def test_a_late_snapshot_is_not_read(self):
+        fields, missing, calls = self.enrich(need_holders=True, decision_ts=GRAD_TIME + 100, late_s=31.0, max_late_s=30.0)
+        self.assertEqual((missing['dev_holding_pct'], missing['top10_pct']), ('COLLECTED_TOO_LATE', 'COLLECTED_TOO_LATE'))
+        self.assertEqual(self.helius.methods(), ['getSignaturesForAddress'])      # only the historical (block-time) call
+        self.assertEqual(calls, 1)
+
+    def test_a_no_token_shed_is_retried_bounded_and_not_counted_as_a_call(self):
+        sleeps = []
+        self.helius.fail['getTokenAccountsByOwner'] = [no_token(), no_token()]
+        fields, missing, calls = self.enrich(sleep=sleeps.append, shed_wait_s=10.0)
+        self.assertEqual((sleeps, calls, fields['dev_holding_pct']), ([0.5, 0.5], 2, '1.0000'))
+        self.helius = ScriptedHelius(self.fx)
+        self.helius.fail['getTokenAccountsByOwner'] = [no_token()] * 50
+        sleeps.clear()
+        fields, missing, calls = self.enrich(sleep=sleeps.append, shed_wait_s=2.0)
+        self.assertEqual((len(sleeps), missing['dev_holding_pct'], calls), (4, LANE_SHED, 0))   # 2 s of patience, then the shed reason
+        self.assertNotIn('getSignaturesForAddress', self.helius.methods())
+
+    def test_a_shed_window_is_never_waited(self):
+        sleeps = []
+        self.helius.fail['getTokenAccountsByOwner'] = [ProviderError(LANE_SHED, True, meta={'why': 'backoff'})]
+        _, missing, _ = self.enrich(sleep=sleeps.append, shed_wait_s=10.0)
+        self.assertEqual((sleeps, missing['dev_holding_pct']), ([], LANE_SHED))
+
+    def test_a_stop_sends_nothing_more(self):
+        stop = threading.Event()
+        sleeps = []
+        self.helius.fail['getTokenAccountsByOwner'] = [no_token()] * 5
+        fields, missing, calls = self.enrich(sleep=lambda s: (sleeps.append(s), stop.set()), shed_wait_s=10.0, stop=stop)
+        self.assertEqual((len(self.helius.calls), calls, len(sleeps)), (1, 0, 1))
+        self.assertEqual({missing[n] for n in ('dev_holding_pct', 'tx_count_first_10m')}, {'STOPPED'})
+
+    def test_the_row_carries_the_real_screen_and_entry_decision_times(self):
+        fx, mint = self.fx, self.fx.token.mint
+        cid = self.store.add_candidate(mint, pool=fx.candidate.pool, slot=GRAD_SLOT, ts=T0)
+        self.store.add_decision('screen', 'PASS', mint=mint, candidate_id=cid, reasons=[], ts=T0 + 1)
+        self.store.add_decision('entry', 'SKIP', mint=mint, candidate_id=cid, reasons=['COST_BUDGET'], ts=T0 + 4)
+        self.clock.t = T0 + 9
+        self.rec.on_candidate(fx.candidate, cid, fx.screen())
+        self.clock.t = T0 + 12
+        self.rec.process_one()
+        (row,) = self.rows()
+        self.assertEqual((row['screen_at'], row['decision_ts'], row['collected_at'], row['late_s']), (T0 + 1, T0 + 4, T0 + 12, 8.0))
+        self.assertEqual(row['fields']['seconds_graduation_to_screen'], T0 + 1 - GRAD_TIME)
 
 
 class TestQuantileTies(unittest.TestCase):

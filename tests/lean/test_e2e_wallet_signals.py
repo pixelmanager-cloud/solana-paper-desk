@@ -173,6 +173,23 @@ class WalletSignalsEndToEnd(unittest.TestCase):
         self.assertEqual(screened['hazard'], 'REJECT')
         self.assertEqual(len(r.store.rows('observations', kind='wallet_signals', limit=1000)), len(SCENARIO))
 
+        # LINT2b: no post-decision data. decision_ts is the first screen decision; every fetched swap of a pool and every funding
+        # transaction is at or before it; late_s is collected_at - decision_ts
+        first_screen = {}
+        for d in r.store.rows('decisions', kind='screen', limit=1000):
+            if d['action'] in ('PASS', 'REJECT'):
+                first_screen.setdefault(role[d['mint']], d['ts'])
+        fetched = {p for m, p in chain.calls if m == 'getTransaction'}
+        tokens = {role[m]: m for m in role}
+        for name, row in rows.items():
+            self.assertEqual(row['decision_ts'], first_screen[name], name)
+            self.assertEqual(row['late_s'], round(row['collected_at'] - row['decision_ts'], 3))
+            pool_sigs = {s['signature'] for s in chain.addresses[row['pool']]}
+            buyer_sigs = {s['signature'] for w in row['buyer_wallets'] for s in chain.addresses.get(w, [])}
+            for signature in fetched & (pool_sigs | buyer_sigs):
+                self.assertLessEqual(chain.bodies[signature]['blockTime'], row['decision_ts'], (name, signature))
+        self.assertTrue(tokens)
+
         # bundle: 4 same-slot buyers, one 3-wallet funding cluster, a 5th buyer outside the window is never counted
         b = rows['bundle']
         self.assertEqual((b['buyers'], b['same_slot_buyers'], b['sniper_count'], b['bundled_wallets']), (5, 4, 4, 4))
@@ -230,7 +247,7 @@ class WalletSignalsEndToEnd(unittest.TestCase):
         self.assertEqual(a, b)
         self.assertIsNone(without.wallet_signals)
         self.assertEqual(without.store.rows('observations', kind='wallet_signals'), [])
-        self.assertEqual(json.loads((Path(without.state_dir) / 'health.json').read_text())['wallet_signals'], {'enabled': False})
+        self.assertEqual(json.loads((Path(without.state_dir) / 'health.json').read_text())['wallet_signals'], {'enabled': False, 'alive': False})
 
     def test_run_starts_the_collector_on_its_own_thread_and_stops_it_with_the_runner(self):
         r, *_ = self.run_world(True)
