@@ -2138,3 +2138,18 @@ GOAL (CK): learn what winners vs rugs look like AT ENTRY TIME, so the trader kee
 
 ## L07R2 — Path recorder storage moved to a separate paths.sqlite (review BLOCK fix)
 STATUS: CLAIMED by coordinator (local agent, branch cloud/L07R2). Do not take.
+
+## L13F — Rework L13 (bundle/sniper + smart wallets) onto the current runner
+STATUS: OPEN
+BASE: origin/integration/r1 (it has L07R2 + LINT1), merging your old cloud/L13
+OWNS: same as L13
+The LINT1 integrator skipped L13 for three reasons:
+- every call takes a blocking token from the MAIN screening bucket plus a private bucket;
+- `path_outcome` reads `observations(kind='path_mark')` with `meta.price_sol`, a schema that never existed and is now gone;
+- it was cut from the old L09 base.
+
+Fix:
+1. Every Helius call goes through the SHARED low lane, `providers.low(keys)`, which is non-blocking. Treat `LANE_SHED` as "skip, retry next time". Delete the private buckets.
+2. Smart-wallet outcomes come from the L07R2 path data in `paths.sqlite` (tables `paths`/`path_marks`, read-only, plus the archived `paths-*.sqlite`), via ONE reader function.
+3. The hook is delimited and additive; the default is OFF when the key is absent; add a `wallet_signals` key to the example config.
+4. The full suite passes in one process (rc=0). Add an e2e test on fakeworld, and try mutations.
