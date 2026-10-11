@@ -21,9 +21,12 @@ and a Laplace score (wins + 1) / (wins + rugs + 2) >= ``smart_threshold``. A can
 outcomes recorded BEFORE its row is written (the row stores the event id it was computed as of), and the candidate's own
 buys are written after it, so a wallet is never rated by the token it is being scored on.
 
-Budget: every provider call goes through ``LowLaneLimiter`` (its own small bucket PLUS the shared main-lane bucket, shed
-first by ``shed()``) and a hard per-candidate cap ``max_calls``. A missing field is null with a reason in ``unavailable``,
-never an error. A failure here never touches entries, exits or the accounting.
+Budget: every provider call goes through the shared LOW lane (``lean.providers.low``, L07R): a call goes out at once or fails with
+``LANE_SHED`` and sends nothing, and any 429 on any lane sheds the low lane for a while. A ``no_token`` shed is paced (``pace_s``
+sleeps, up to ``shed_wait_s`` per request) because this collector has its own thread; a shed window (429) or lost patience ends
+the candidate with what it learned (``unavailable['stopped'] = 'LANE_SHED'``), or retries it later when nothing was learned yet.
+A hard per-candidate cap ``max_calls`` counts the requests actually SENT; ``shed()`` (credit shedding, L15) refuses before a request.
+A missing field is null with a reason in ``unavailable``, never an error. A failure here never touches entries, exits or the accounting.
 
 Storage: one ``observations(kind='wallet_signals')`` row per candidate (canonical JSON bytes + the same figures in ``meta``),
 append-only ``events`` rows of kind ``wallet_buy`` / ``wallet_outcome``. The store schema is untouched (a lean store is
@@ -36,7 +39,7 @@ import threading
 import time
 from decimal import Decimal
 
-from lean.providers import Helius, ProviderError, RateLimiter, Transport, shared_limiter
+from lean.providers import LANE_SHED, ProviderError
 from lean.store import StoreError
 
 log = logging.getLogger('lean.wallet_signals')
@@ -61,8 +64,8 @@ DEFAULTS = {
     'min_cluster': 2,
     'ignore_funders': [],          # known hubs (exchanges, airdrop services) that must not form a cluster
     'max_calls': 16,               # HARD cap per candidate: 2 pages + supply + 6 txs + 3 x 2 funding = 15 (+1 spare)
-    'low_rate_per_s': 1.0,         # own bucket of the low-priority lane (on top of the shared main-lane bucket)
-    'low_burst': 2,
+    'pace_s': 0.25,                # wait between tries when the shared low lane has no token right now
+    'shed_wait_s': 30.0,           # total patience per request for a token; then the candidate stops (or is retried later)
     'max_per_pass': 2,             # candidates per signals pass
     'pass_interval_s': 5.0,
     'max_retries': 2,              # transient failure before anything was learned
@@ -116,7 +119,7 @@ def make_config(overrides=None):
         elif isinstance(value, bool) or not isinstance(value, int):
             raise ConfigError('%s must be an integer' % key)
     positive = ('window_s', 'max_swap_txs', 'sig_limit', 'sig_pages', 'funding_history', 'min_cluster', 'max_calls', 'max_per_pass',
-                'backfill_max_age_s', 'backfill_limit', 'resolve_batch', 'outcome_max_age_s', 'min_wins', 'low_burst')
+                'backfill_max_age_s', 'backfill_limit', 'resolve_batch', 'outcome_max_age_s', 'min_wins')
     for key in positive:
         if cfg[key] < 1:
             raise ConfigError('%s must be at least 1' % key)
@@ -124,8 +127,9 @@ def make_config(overrides=None):
         raise ConfigError('call sizes out of range')
     if cfg['sniper_slots'] < 0 or cfg['funding_wallets'] < 0 or cfg['max_retries'] < 0 or cfg['min_funding_lamports'] < 0:
         raise ConfigError('negative setting')
-    if not 0 < cfg['low_rate_per_s'] <= 10 or cfg['pass_interval_s'] <= 0 or cfg['retry_delay_s'] < 0 or cfg['resolve_interval_s'] <= 0:
-        raise ConfigError('rate or interval out of range')
+    if not 0 < cfg['pace_s'] <= 60 or not 0 <= cfg['shed_wait_s'] <= 600 or cfg['pass_interval_s'] <= 0 or cfg['retry_delay_s'] < 0 \
+            or cfg['resolve_interval_s'] <= 0:
+        raise ConfigError('pace or interval out of range')
     if cfg['win_multiple'] <= 1 or not 0 < cfg['rug_price_frac'] < 1 or not 0 < cfg['rug_loss_frac'] <= 1 or not 0 < cfg['smart_threshold'] < 1:
         raise ConfigError('outcome thresholds out of range')
     cfg['ignore_funders'] = list(cfg['ignore_funders'])
@@ -289,40 +293,6 @@ def analyze(*, grad_slot, txs, funding, supply_raw, cfg):
     return out
 
 
-# ------------------------------------------------------------------------------------------------- the low-priority lane
-
-class LowLaneLimiter:
-    """Drop-in for ``Transport(limiter=...)``: a small bucket of its own AND a token of the shared main-lane bucket, so data
-    collection can never exceed ``own`` per second and always queues behind (and is bounded by) the screening budget.
-    ``shed()`` returning true refuses the call before any token is taken (credit shedding, L15)."""
-
-    def __init__(self, own, base, shed=None):
-        self.own, self.base, self.shed = own, base, shed
-
-    def acquire(self, deadline=None):
-        if self.shed is not None and self.shed():
-            raise ProviderError('CREDIT_SHED', True, provider='helius')
-        waited = self.own.acquire(deadline)
-        return waited + self.base.acquire(deadline)
-
-    def block_for(self, seconds):
-        self.base.block_for(seconds)
-        self.own.block_for(seconds)
-
-
-def build_low_lane_helius(key, cfg, *, shed=None, **transport_kwargs):
-    """A Helius client on the low-priority lane. ``transport_kwargs`` (opener, clock, monotonic, sleep, rng) are shared with
-    the main providers so the whole process (and a test with a fake clock) sees one set of buckets. One attempt per call
-    (no transport retries): the per-candidate cap then equals the requests actually sent, and a failed step is simply
-    reported as unavailable. Pass ``max_attempts`` explicitly to change that."""
-    transport_kwargs.setdefault('max_attempts', 1)
-    monotonic = transport_kwargs.get('monotonic', time.monotonic)
-    sleep = transport_kwargs.get('sleep', time.sleep)
-    own = RateLimiter(cfg['low_rate_per_s'], cfg['low_burst'], clock=monotonic, sleep=sleep)
-    base = shared_limiter('helius', 'main', clock=monotonic, sleep=sleep)
-    return Helius(key, Transport('helius', LowLaneLimiter(own, base, shed), lane='main', **transport_kwargs))
-
-
 # --------------------------------------------------------------------------------------------------------- collection
 
 class _Cap(Exception):
@@ -334,14 +304,14 @@ class _Cap(Exception):
 
 class _Calls:
     def __init__(self, limit, shed):
-        self.limit, self.used, self.shed = limit, 0, shed
+        self.limit, self.used, self.shed, self.learned = limit, 0, shed, False
 
-    def take(self):
+    def check(self):
+        """Raise _Cap before a request that the cap or the credit shed forbids."""
         if self.shed is not None and self.shed():
             raise _Cap('CREDIT_SHED')
         if self.used >= self.limit:
             raise _Cap('CALL_CAP')
-        self.used += 1
 
 
 def _canonical(value):
@@ -354,8 +324,8 @@ class WalletSignals:
     ``signals_pass()`` does a bounded amount of work and is meant for its own thread (``run_loop``). It finds candidates
     straight from the store (screened, no ``wallet_signals`` row yet), so a restart loses nothing and no queue can overflow."""
 
-    def __init__(self, *, store, helius, cfg=None, code_version, strategy_version, clock=time.time, shed=None, stop=None):
-        self.store, self.helius, self.clock, self.shed = store, helius, clock, shed
+    def __init__(self, *, store, helius, cfg=None, code_version, strategy_version, clock=time.time, shed=None, stop=None, sleep=time.sleep):
+        self.store, self.helius, self.clock, self.shed, self.sleep = store, helius, clock, shed, sleep
         self.cfg = make_config(cfg)
         self.code_version, self.strategy_version = code_version, strategy_version
         self.stop = stop or threading.Event()
@@ -367,7 +337,7 @@ class WalletSignals:
         self._wallet_lock = threading.RLock()
         self._last_resolve = 0.0
         self.counts = {'collected': 0, 'partial': 0, 'transient_failures': 0, 'calls': 0, 'cap_stops': 0, 'shed_stops': 0,
-                       'outcomes': 0, 'errors': 0}
+                       'lane_sheds': 0, 'outcomes': 0, 'errors': 0}
 
     # -- plumbing -------------------------------------------------------------------------------------------------------
     def _query(self, sql, args=()):
@@ -443,9 +413,29 @@ class WalletSignals:
 
     # -- one candidate --------------------------------------------------------------------------------------------------
     def _rpc(self, calls, method, params, label, retained, mint, cid):
-        calls.take()
+        """One request on the shared low lane. ``LANE_SHED`` sent nothing and costs nothing against the cap: a ``no_token`` shed is
+        paced (this collector has its own thread) up to ``shed_wait_s``; a shed window or lost patience stops the candidate (or, when
+        nothing was learned yet, raises a transient error so it is retried later)."""
+        calls.check()
+        waited = 0.0
+        while True:
+            try:
+                result, raw, meta = self.helius.rpc(method, params)
+                break
+            except ProviderError as error:
+                if error.code != LANE_SHED:
+                    calls.used += 1
+                    self.counts['calls'] += 1
+                    raise
+                self.counts['lane_sheds'] += 1
+                if error.meta.get('why') != 'no_token' or waited >= self.cfg['shed_wait_s'] or self.stop.is_set():
+                    if not calls.learned:
+                        raise
+                    raise _Cap(LANE_SHED) from None
+                self.sleep(self.cfg['pace_s'])
+                waited += self.cfg['pace_s']
+        calls.used += 1
         self.counts['calls'] += 1
-        result, raw, meta = self.helius.rpc(method, params)
         keep = self.cfg['retain_raw']
         if keep == 'all' or (keep == 'signatures' and retained):
             self._write(self.store.add_observation, 'wallet_signals:raw:' + label, raw, mint=mint, candidate_id=cid,
@@ -465,7 +455,6 @@ class WalletSignals:
         calls = _Calls(cfg['max_calls'], self.shed)
         unavailable, notes = {}, {}
         txs, funding, supply, window = [], {}, None, []
-        learned = False
         try:
             # -- 1. the pool's signatures back to the graduation slot (oldest first afterwards)
             seen, before, reached = [], None, False
@@ -477,7 +466,7 @@ class WalletSignals:
                         raise
                     unavailable['window'] = 'SIGNATURES_PAGE_%d:%s' % (page, error.code)
                     break
-                learned = True
+                calls.learned = True
                 seen.extend(rows)
                 if len(rows) < cfg['sig_limit']:
                     reached = True                    # the store of signatures ends here: nothing older exists
@@ -527,9 +516,9 @@ class WalletSignals:
                     funding[wallet] = self._funder(calls, wallet, signature, mint, cid, unavailable)
         except _Cap as stop:
             unavailable['stopped'] = stop.code
-            self.counts['shed_stops' if stop.code == 'CREDIT_SHED' else 'cap_stops'] += 1
+            self.counts['shed_stops' if stop.code in ('CREDIT_SHED', LANE_SHED) else 'cap_stops'] += 1
         except ProviderError as error:
-            if not learned and error.transient:           # the very first call failed: nothing learned, try again later
+            if not calls.learned and error.transient:     # the very first call failed: nothing learned, try again later
                 attempts = self._attempts.get(mint, (0, 0.0))[0] + 1
                 if attempts <= cfg['max_retries']:
                     self._attempts[mint] = (attempts, self.clock() + cfg['retry_delay_s'])
@@ -639,6 +628,15 @@ class WalletSignals:
             self._write(self.store.record, 'wallet_outcome', {'mint': mint, 'outcome': outcome, 'source': source, 'detail': detail}, ts=self.clock())
             self.counts['outcomes'] += 1
         self.wallet_table()
+
+
+def build(cfg, *, store, keys, code_version, strategy_version, clock=time.time, transport_kwargs=None, shed=None):
+    """The collector of a validated config, on the shared LOW lane (``lean.providers.low``)."""
+    from lean import providers
+    transport_kwargs = dict(transport_kwargs or {})
+    helius = providers.low(keys, **transport_kwargs).helius
+    return WalletSignals(store=store, helius=helius, cfg=cfg, code_version=code_version, strategy_version=strategy_version, clock=clock,
+                         shed=shed, sleep=transport_kwargs.get('sleep', time.sleep))
 
 
 def _meta_summary(features):

@@ -13,7 +13,7 @@ from pathlib import Path
 from desk.security import base58
 from lean import wallet_signals as W
 from lean.paper import Fill, LABEL
-from lean.providers import ProviderError, RateLimiter
+from lean.providers import LANE_SHED, ProviderError
 from lean.store import Store
 
 GRAD = 1_000
@@ -124,10 +124,15 @@ class Chain:
 class ChainHelius:
     """``Helius.rpc`` convention: (result, raw bytes, meta) or a typed ProviderError."""
 
-    def __init__(self, chain):
-        self.chain = chain
+    def __init__(self, chain, gate=None):
+        self.chain, self.gate, self.attempts = chain, gate, 0      # gate(attempt_number) -> an exception to raise, or None
 
     def rpc(self, method, params):
+        self.attempts += 1
+        if self.gate is not None:
+            error = self.gate(self.attempts)
+            if error is not None:
+                raise error
         result = self.chain.handle(method, params)
         return result, json.dumps(result, sort_keys=True).encode(), {'attempts': 1}
 
@@ -150,10 +155,12 @@ class Tmp(unittest.TestCase):
             self.store.add_decision('screen', screen, mint=mint, candidate_id=cid, reasons=[], features={}, ts=self.now - age)
         return cid, mint
 
-    def collector(self, chain, cfg=None, **kwargs):
+    def collector(self, chain, cfg=None, gate=None, **kwargs):
         cfg = {'max_per_pass': 10, **(cfg or {})}
-        return W.WalletSignals(store=self.store, helius=ChainHelius(chain), cfg=cfg, code_version='t', strategy_version='s',
-                               clock=lambda: self.now, **kwargs)
+        self.sleeps = getattr(self, 'sleeps', [])
+        self.helius = ChainHelius(chain, gate)
+        return W.WalletSignals(store=self.store, helius=self.helius, cfg=cfg, code_version='t', strategy_version='s',
+                               clock=lambda: self.now, sleep=self.sleeps.append, **kwargs)
 
     def signals(self, mint=MINT):
         rows = self.store.rows('observations', mint=mint, kind='wallet_signals')
@@ -175,13 +182,13 @@ class ConfigTests(unittest.TestCase):
     def test_unknown_wrong_typed_and_impossible_values_are_refused(self):
         for bad in ({'max_cals': 5}, {'max_calls': True}, {'max_calls': 2.5}, {'max_calls': '16'}, {'max_calls': 0}, {'max_calls': 500},
                     {'window_s': -1}, {'retain_raw': 'raw'}, {'ignore_funders': 'abc'}, {'ignore_funders': ['not an address']},
-                    {'low_rate_per_s': 0}, {'low_rate_per_s': 50}, {'win_multiple': 1}, {'rug_price_frac': 1},
+                    {'pace_s': 0}, {'pace_s': 61}, {'shed_wait_s': -1}, {'low_rate_per_s': 1}, {'win_multiple': 1}, {'rug_price_frac': 1},
                     {'smart_threshold': 1.5}, {'sig_limit': 5000}, {'win_multiple': float('nan')}, {'sniper_slots': -1}, 'text', []):
             with self.subTest(bad=bad), self.assertRaises(W.ConfigError):
                 W.make_config(bad)
 
     def test_comment_key_is_allowed_and_floats_may_be_ints(self):
-        self.assertEqual(W.make_config({'_comment': 'x', 'low_rate_per_s': 2, 'win_multiple': 3})['win_multiple'], 3)
+        self.assertEqual(W.make_config({'_comment': 'x', 'pace_s': 2, 'win_multiple': 3})['win_multiple'], 3)
 
 
 class ParseTests(unittest.TestCase):
@@ -858,79 +865,90 @@ class SmartWalletTests(Tmp):
 
 # ------------------------------------------------------------------------------------------------- the low-priority lane
 
-class FakeClock:
-    def __init__(self):
-        self.t = 0.0
-
-    def time(self):
-        return self.t
-
-    def sleep(self, seconds):
-        self.t += seconds
+def no_token():
+    return ProviderError(LANE_SHED, True, meta={'why': 'no_token'})
 
 
-class LowLaneTests(unittest.TestCase):
-    def limiter(self, shed=None, own_rate=1.0, own_burst=2, base_rate=10.0, base_burst=10):
-        clock = FakeClock()
-        own = RateLimiter(own_rate, own_burst, clock=clock.time, sleep=clock.sleep)
-        base = RateLimiter(base_rate, base_burst, clock=clock.time, sleep=clock.sleep)
-        return clock, own, base, W.LowLaneLimiter(own, base, shed)
+def backoff():
+    return ProviderError(LANE_SHED, True, meta={'why': 'backoff', 'shed_s': 30})
 
-    def test_the_low_lane_never_exceeds_its_own_rate(self):
-        clock, _own, _base, limiter = self.limiter()
-        for _ in range(12):
-            limiter.acquire()
-        self.assertGreaterEqual(clock.t, 10.0 - 1e-9)                       # burst 2, then 1 per second
 
-    def test_it_also_consumes_the_shared_main_lane_budget(self):
-        clock, _own, base, limiter = self.limiter(own_rate=10, own_burst=10, base_rate=1.0, base_burst=2)
-        limiter.acquire(); limiter.acquire()                                # the shared bucket (burst 2) is now empty
-        before = clock.t
-        base.acquire()                                                      # a main-lane caller must wait for the refill
-        self.assertGreaterEqual(clock.t - before, 1.0 - 1e-9)
-        limiter.acquire()                                                   # and the low lane waits behind the shared bucket too
-        self.assertGreaterEqual(clock.t - before, 2.0 - 1e-9)
+class SharedLowLaneTests(Tmp):
+    """The collector runs on the shared low lane: a request goes out at once or fails with LANE_SHED and sends nothing."""
 
-    def test_shedding_refuses_before_any_token_is_taken(self):
-        clock, own, base, limiter = self.limiter(shed=lambda: True)
-        with self.assertRaises(ProviderError) as caught:
-            limiter.acquire()
-        self.assertEqual((caught.exception.code, caught.exception.transient), ('CREDIT_SHED', True))
-        self.assertEqual(clock.t, 0.0)
-        self.assertEqual((own._tokens, base._tokens), (2.0, 10.0))
+    def test_a_no_token_shed_is_paced_and_costs_nothing_against_the_cap(self):
+        chain, _ = bundle_chain()
+        self.candidate()
+        collector = self.collector(chain, gate=lambda n: no_token() if n % 3 else None)     # two sheds before every request that goes out
+        collector.signals_pass()
+        row = self.signals()[0]
+        self.assertEqual((row['calls'], chain.count()), (12, 12))                           # the same 12 requests as without sheds
+        self.assertFalse(row['partial'], row['unavailable'])
+        self.assertEqual(len(self.sleeps), 24)                                              # 2 paced waits per request
+        self.assertTrue(all(s == collector.cfg['pace_s'] for s in self.sleeps))
+        self.assertEqual(collector.counts['lane_sheds'], 24)
+        self.assertEqual(collector.counts['calls'], 12)
 
-    def test_a_429_block_reaches_both_buckets(self):
-        clock, own, base, limiter = self.limiter()
-        limiter.block_for(7)
-        limiter.acquire()
-        self.assertGreaterEqual(clock.t, 7.0)
+    def test_lost_patience_stops_the_candidate_and_keeps_what_was_learned(self):
+        chain, _ = bundle_chain()
+        self.candidate()
+        collector = self.collector(chain, {'shed_wait_s': 1.0, 'pace_s': 0.25}, gate=lambda n: no_token() if n > 4 else None)
+        collector.signals_pass()
+        row = self.signals()[0]
+        self.assertEqual(row['unavailable']['stopped'], LANE_SHED)
+        self.assertEqual((row['calls'], row['examined_txs']), (4, 2))                       # sigs, supply, two transactions
+        self.assertEqual(len(self.sleeps), 4)                                               # waited 4 x 0.25 s = shed_wait_s, then gave up
+        self.assertIsNotNone(row['bundle_score'])
+        self.assertEqual(collector.counts['shed_stops'], 1)
 
-    def test_a_deadline_applies_to_the_whole_wait(self):
-        clock, *_, limiter = self.limiter()
-        limiter.acquire(); limiter.acquire()
-        with self.assertRaises(ProviderError) as caught:
-            limiter.acquire(deadline=clock.t + 0.1)
-        self.assertEqual(caught.exception.code, 'RATE_LIMITED')
+    def test_a_shed_window_after_a_429_stops_at_once_without_waiting(self):
+        chain, _ = bundle_chain()
+        self.candidate()
+        collector = self.collector(chain, gate=lambda n: backoff() if n > 2 else None)
+        collector.signals_pass()
+        row = self.signals()[0]
+        self.assertEqual((row['unavailable']['stopped'], row['calls'], self.sleeps), (LANE_SHED, 2, []))
 
-    def test_the_real_client_runs_on_the_low_lane(self):
-        from lean.providers import Helius
-        from tests.lean.fakeworld import FakeTime, Resp
-        clock, seen = FakeTime(), []
+    def test_a_first_request_that_is_shed_is_retried_later_then_recorded(self):
+        chain, _ = bundle_chain()
+        self.candidate()
+        collector = self.collector(chain, {'max_retries': 1, 'retry_delay_s': 30}, gate=lambda n: backoff())
+        collector.signals_pass()
+        self.assertEqual((self.signals(), chain.count()), ([], 0))                          # nothing learned, nothing written
+        self.now += 31
+        collector.signals_pass()                                                            # the one retry is shed too: recorded as unavailable
+        self.assertEqual(self.signals()[0]['unavailable']['window'], 'SIGNATURES_UNAVAILABLE:' + LANE_SHED)
+        self.assertEqual(collector.counts['calls'], 0)
 
-        def opener(request, timeout):
-            seen.append(clock.time())
-            return Resp({'jsonrpc': '2.0', 'id': 1, 'result': 7})
-        client = W.build_low_lane_helius('TEST-HELIUS-KEY-0000', W.make_config({'low_rate_per_s': 1, 'low_burst': 1}), opener=opener,
-                                         clock=clock.time, monotonic=clock.monotonic, sleep=clock.sleep)
-        self.assertIsInstance(client, Helius)
-        for _ in range(3):
-            self.assertEqual(client.rpc('getSlot', [])[0], 7)
-        self.assertGreaterEqual(seen[2] - seen[0], 2.0 - 1e-6)
-        self.assertNotIn('TEST-HELIUS-KEY', repr(client))
-        self.assertEqual(client.transport.max_attempts, 1)                  # the cap counts requests actually sent
-        again = W.build_low_lane_helius('TEST-HELIUS-KEY-0000', W.make_config({}), opener=opener, clock=clock.time,
-                                        monotonic=clock.monotonic, sleep=clock.sleep, max_attempts=3)
-        self.assertEqual(again.transport.max_attempts, 3)
+    def test_stopping_the_runner_ends_the_wait(self):
+        chain, _ = bundle_chain()
+        self.candidate()
+        collector = self.collector(chain, gate=lambda n: no_token())
+        collector.stop.set()
+        collector.signals_pass()
+        self.assertEqual(self.sleeps, [])
+
+    def test_credit_shedding_still_refuses_before_any_request(self):
+        chain, _ = bundle_chain()
+        self.candidate()
+        collector = self.collector(chain, shed=lambda: True)
+        collector.signals_pass()
+        self.assertEqual((chain.count(), self.helius.attempts), (0, 0))
+
+    def test_the_built_collector_uses_the_shared_low_lane_and_never_retries(self):
+        from tests.lean.fakeworld import FakeTime
+        clock = FakeTime()
+        collector = W.build(W.make_config({}), store=self.store, keys={'helius': 'TEST-HELIUS-KEY-0000', 'jupiter': 'TEST-JUPITER-KEY-0000'},
+                            code_version='t', strategy_version='s', clock=clock.time,
+                            transport_kwargs={'opener': lambda request, timeout: None, 'clock': clock.time, 'monotonic': clock.monotonic,
+                                              'sleep': clock.sleep})
+        self.assertEqual(collector.helius.transport.lane, 'low')
+        self.assertNotIn('TEST-HELIUS-KEY', repr(collector.helius))
+        self.assertEqual(collector.sleep, clock.sleep)
+
+    def test_no_private_lane_is_left_in_the_module(self):
+        for name in ('LowLaneLimiter', 'build_low_lane_helius'):
+            self.assertFalse(hasattr(W, name), name)
 
 
 class HookTests(unittest.TestCase):

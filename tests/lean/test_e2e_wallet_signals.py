@@ -117,8 +117,11 @@ class WalletSignalsEndToEnd(unittest.TestCase):
         self.failures = failures
         world.extra_rpc = chain.rpc_handlers()
         cfg = load_config(ROOT / 'config' / 'lean' / 'lean.example.json')
+        from lean import paths, providers
+        cfg['paths'] = paths.config({'enabled': False})                       # the L07R recorder is not under test here
+        cfg['lanes'] = {'shares': providers.validate_lane_shares({'main': 0.3, 'exit': 0.2, 'low': 0.5}), 'low_shed_s': 1}
         if signals:
-            cfg['wallet_signals'] = {'low_rate_per_s': 5, 'low_burst': 5, 'retry_delay_s': 60, 'max_per_pass': 3}
+            cfg['wallet_signals'] = {'pace_s': 0.25, 'retry_delay_s': 60, 'max_per_pass': 3}
         r = build_runner(cfg, state_dir=root / 'state', discovery_db=world.discovery_db, keys=KEYS, code_version='e2e-wallets',
                          clock=clock.time, transport_kwargs={'opener': world.opener, 'clock': clock.time, 'monotonic': clock.monotonic,
                                                              'sleep': clock.sleep, 'rng': lambda: 0.5})
@@ -224,7 +227,7 @@ class WalletSignalsEndToEnd(unittest.TestCase):
         self.assertEqual(a, b)
         self.assertIsNone(without.wallet_signals)
         self.assertEqual(without.store.rows('observations', kind='wallet_signals'), [])
-        self.assertNotIn('wallet_signals', json.loads((Path(without.state_dir) / 'health.json').read_text()))
+        self.assertEqual(json.loads((Path(without.state_dir) / 'health.json').read_text())['wallet_signals'], {'enabled': False})
 
     def test_run_starts_the_collector_on_its_own_thread_and_stops_it_with_the_runner(self):
         r, *_ = self.run_world(True)

@@ -20,6 +20,12 @@ the ``main`` lane (candidate screening) and the ``exit`` lane (held-position mar
 exit quotes) split the plan budget, so screening and the 429 blocks it provokes never
 starve exits. A wait is bounded by the call's deadline (``RATE_LIMITED``, transient).
 Error responses keep their (bounded) body in ``ProviderError.raw``.
+
+L07R adds a shared LOW-priority lane (``lane='low'``, ``low(keys)``) for data collection (path recorder, entry features,
+wallet signals). It is carved out of the same plan budget (default main 0.55 / exit 0.25 / low 0.20 of the provider
+rate; ``configure_lanes``) and it NEVER waits: without a token right now, or inside a shed window, a call fails at once
+with ``ProviderError('LANE_SHED', transient=True)`` and sends nothing. Any HTTP 429 seen by ANY lane of a provider sheds
+its low lane for ``low_shed_s`` (default 30 s, longer if Retry-After says so). Low-lane calls are never retried.
 """
 import base64
 from dataclasses import dataclass
@@ -123,29 +129,142 @@ class RateLimiter:
             self._blocked_until = max(self._blocked_until, self._clock() + max(0.0, float(seconds)))
 
 
+# --- L07R: the shared low-priority lane ---------------------------------------------------------------------------
+LANE_SHED = 'LANE_SHED'          # typed, transient: the low lane had no token now (or is shed); nothing was sent
+LOW_SHED_SECONDS = 30.0          # a 429 on ANY lane of a provider sheds its low lane at least this long
+
+
+class LowLaneLimiter(RateLimiter):
+    """The low lane's bucket. NON-BLOCKING: ``acquire`` never sleeps. It takes a token that is available right now, or
+    raises ``ProviderError('LANE_SHED', transient=True)`` at once (no token, or inside a shed window). ``shed`` (and a
+    429 ``block_for`` on the low lane itself) opens a shed window of at least ``shed_s``. ``stats`` counts what happened."""
+
+    def __init__(self, rate_per_second, burst=None, *, clock=time.monotonic, sleep=time.sleep, shed_s=LOW_SHED_SECONDS):
+        super().__init__(rate_per_second, burst, clock=clock, sleep=sleep)
+        if isinstance(shed_s, bool) or not isinstance(shed_s, (int, float)) or not 0 <= shed_s <= 3600:
+            raise ValueError('shed_s out of range')
+        self.shed_s = float(shed_s)
+        self.stats = {'granted': 0, 'shed_no_token': 0, 'shed_backoff': 0, 'sheds': 0}
+
+    def acquire(self, deadline=None):
+        """Return 0.0 with a token taken, or raise LANE_SHED. Never waits (``deadline`` is ignored)."""
+        with self._lock:
+            now = self._clock()
+            if now < self._blocked_until:
+                self.stats['shed_backoff'] += 1
+                raise ProviderError(LANE_SHED, True, meta={'why': 'backoff', 'shed_s': round(self._blocked_until - now, 3)})
+            tokens = min(self.burst, self._tokens + (now - self._stamp) * self.rate)
+            self._stamp = now
+            if tokens < 1.0:
+                self._tokens = tokens
+                self.stats['shed_no_token'] += 1
+                raise ProviderError(LANE_SHED, True, meta={'why': 'no_token'})
+            self._tokens = tokens - 1.0
+            self.stats['granted'] += 1
+        return 0.0
+
+    def shed(self, seconds=None):
+        """Shed the low lane for ``max(shed_s, seconds)``: every call fails fast with LANE_SHED until then."""
+        with self._lock:
+            window = max(self.shed_s, float(seconds or 0.0))
+            self._blocked_until = max(self._blocked_until, self._clock() + window)
+            self.stats['sheds'] += 1
+
+    def block_for(self, seconds):
+        self.shed(seconds)
+
+
+LANES = ('main', 'exit', 'low')
+DEFAULT_LANE_SHARES = {'main': 0.55, 'exit': 0.25, 'low': 0.20}
+
+
+def validate_lane_shares(shares):
+    """``{'main', 'exit', 'low'}`` -> floats, each in (0, 1], summing to at most 1 (the lanes of one provider never
+    exceed its plan rate). Anything else raises ValueError."""
+    if not isinstance(shares, dict) or set(shares) != set(LANES):
+        raise ValueError('lane shares must be exactly %s' % (LANES,))
+    out = {}
+    for lane in LANES:
+        value = shares[lane]
+        if isinstance(value, bool) or not isinstance(value, (int, float, Decimal)):
+            raise ValueError('lane share %s must be a number' % lane)
+        value = float(value)
+        if not 0 < value <= 1:
+            raise ValueError('lane share %s must be in (0, 1]' % lane)
+        out[lane] = value
+    if sum(out.values()) > 1.0 + 1e-9:
+        raise ValueError('lane shares sum above 1: main + exit + low must stay within the provider rate')
+    return out
+# --- end L07R ---
+
+
 # One limiter per (provider, lane) for the whole process: two client instances never double the budget. The ``exit``
 # lane is a reserved share of the plan budget for held-position marks and exit quotes, so candidate screening (and a 429
-# it provokes) can never starve exits. The lane shares of one provider sum to its plan rate.
-LANE_SHARES = {'main': 0.75, 'exit': 0.25}
+# it provokes) can never starve exits. The ``low`` lane (L07R) is a non-blocking share for data collection. The lane
+# shares of one provider sum to at most its plan rate.
+LANE_SHARES = dict(DEFAULT_LANE_SHARES)
 _SHARED = {}
 _SHARED_LOCK = threading.Lock()
+_LOW_SHED = {'seconds': LOW_SHED_SECONDS}
+
+
+def configure_lanes(shares=None, *, low_shed_s=None):
+    """Set the process-wide lane shares (validated; None = the defaults) and the low lane's shed window. Call it once at
+    startup, before any client is built: it drops the cached limiters so the next ones use the new shares."""
+    checked = validate_lane_shares(dict(DEFAULT_LANE_SHARES) if shares is None else shares)
+    shed = LOW_SHED_SECONDS if low_shed_s is None else low_shed_s
+    if isinstance(shed, bool) or not isinstance(shed, (int, float)) or not 0 <= shed <= 3600:
+        raise ValueError('low_shed_s out of range')
+    with _SHARED_LOCK:
+        LANE_SHARES.clear()
+        LANE_SHARES.update(checked)
+        _LOW_SHED['seconds'] = float(shed)
+        _SHARED.clear()
+    return dict(checked)
 
 
 def shared_limiter(provider, lane='main', *, clock=time.monotonic, sleep=time.sleep):
     """The process-wide limiter of ``provider``/``lane``. Keyed by clock and sleep too, so a test with a fake clock gets
     its own limiter while every real client in the process shares one."""
-    if lane not in LANE_SHARES:
+    if lane not in LANES:
         raise ValueError('unknown lane')
     if provider == 'kraken':
+        if lane == 'low':
+            raise ValueError('kraken has no low lane')
         lane = 'main'            # exits never need SOL/USD: Kraken keeps one undivided bucket
     key = (provider, lane, clock, sleep)
     with _SHARED_LOCK:
         limiter = _SHARED.get(key)
         if limiter is None:
             rate, burst = DEFAULT_RATES[provider]
-            share = 1.0 if provider == 'kraken' else LANE_SHARES[lane]   # helius 7.5+2.5/s, jupiter 3+1/s
-            limiter = _SHARED[key] = RateLimiter(rate * share, max(1.0, burst * share), clock=clock, sleep=sleep)
+            share = 1.0 if provider == 'kraken' else LANE_SHARES[lane]   # helius 5.5+2.5+2/s, jupiter 2.2+1+0.8/s
+            if lane == 'low':
+                limiter = LowLaneLimiter(rate * share, max(1.0, burst * share), clock=clock, sleep=sleep,
+                                         shed_s=_LOW_SHED['seconds'])
+            else:
+                limiter = RateLimiter(rate * share, max(1.0, burst * share), clock=clock, sleep=sleep)
+            _SHARED[key] = limiter
         return limiter
+
+
+def shed_low(provider, seconds=None, *, clock=time.monotonic, sleep=time.sleep):
+    """Shed ``provider``'s low lane (the one sharing this clock/sleep) for at least its shed window. Never raises."""
+    if provider == 'kraken':
+        return
+    try:
+        shared_limiter(provider, 'low', clock=clock, sleep=sleep).shed(seconds)
+    except Exception:                                   # shedding is best effort; it must never fail a call
+        log.debug('low lane shed failed for %s', provider)
+
+
+def low_lane_stats(provider, *, clock=time.monotonic, sleep=time.sleep):
+    """Counters of ``provider``'s low lane: granted / shed_no_token / shed_backoff / sheds."""
+    return dict(shared_limiter(provider, 'low', clock=clock, sleep=sleep).stats)
+
+
+def is_shed(error):
+    """True when ``error`` is a low-lane LANE_SHED (nothing was sent; try again on the next cycle)."""
+    return isinstance(error, ProviderError) and error.code == LANE_SHED
 
 
 def backoff_delay(attempt, *, rng=random.random, base=BACKOFF_BASE, cap=BACKOFF_CAP):
@@ -243,6 +362,8 @@ class Transport:
                  request_timeout=REQUEST_TIMEOUT, lane='main'):
         self.provider, self.lane = provider, lane
         self.limiter = limiter or shared_limiter(provider, lane, clock=monotonic, sleep=sleep)
+        if lane == 'low':
+            max_attempts = 1     # L07R: the low lane never retries (a retry would wait); a failed call is a gap
         self.opener = opener or default_opener          # resolved at construction (patchable in tests)
         self.clock, self.monotonic, self.sleep, self.rng = clock, monotonic, sleep, rng
         self.max_attempts, self.deadline, self.request_timeout = max_attempts, deadline_seconds, request_timeout
@@ -315,6 +436,13 @@ class Transport:
                 retry_after = error.meta.get('retry_after')
                 if retry_after is not None:
                     self.limiter.block_for(retry_after)
+                # --- L07R hook: a 429 on ANY lane sheds this provider's low lane (data collection yields first) ---
+                if error.code == 'HTTP_429':
+                    if not isinstance(self.limiter, LowLaneLimiter):
+                        shed_low(self.provider, retry_after, clock=self.monotonic, sleep=self.sleep)
+                    elif retry_after is None:                    # with Retry-After, block_for above already shed it
+                        self.limiter.shed()
+                # --- end L07R ---
                 delay = retry_after if retry_after is not None else backoff_delay(attempts - 1, rng=self.rng)
                 if attempts >= self.max_attempts or self.monotonic() - started + delay >= self.deadline:
                     break
@@ -638,8 +766,15 @@ class Providers:
 
 
 def build_providers(keys, *, lane='main', **transport_kwargs):
-    """Clients for one lane (``main`` for candidates, ``exit`` for held positions), on the process-wide limiters."""
+    """Clients for one lane (``main`` for candidates, ``exit`` for held positions, ``low`` for data collection), on the
+    process-wide limiters. The low lane has no Kraken client (``kraken`` is None) and never retries."""
     def transport(provider):
         return Transport(provider, lane=lane, **transport_kwargs)
     return Providers(Helius(keys['helius'], transport('helius')), Jupiter(keys['jupiter'], transport('jupiter')),
-                     Kraken(transport('kraken')))
+                     None if lane == 'low' else Kraken(transport('kraken')))
+
+
+def low(keys, **transport_kwargs):
+    """L07R: Helius + Jupiter clients on the shared LOW lane. Every call either goes out at once or raises
+    ``ProviderError('LANE_SHED', transient=True)`` without sending (see ``is_shed``); never retried, never waits."""
+    return build_providers(keys, lane='low', **transport_kwargs)

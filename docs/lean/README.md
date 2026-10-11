@@ -68,7 +68,7 @@ cd /opt/solana-desk-lean && /opt/solana-desk/.venv/bin/python -m lean --config /
   valued at cost and listed in health `cost_basis_mints`. The UTC-day baseline rolls over only with fresh marks.
 * **Provider budget:** one token bucket per provider and lane for the whole process. The `exit` lane (marks, exit and
   mark quotes) is a reserved share of the plan budget, so screening and its 429s never starve exits. A wait never
-  exceeds the call deadline.
+  exceeds the call deadline. Data collection uses the non-blocking `low` lane; see "Provider lanes" below.
 * **Isolation:** a provider error, malformed response or bad evidence fails that candidate or position check. It is
   recorded as an `errors` row, with the raw bytes kept as an observation, and the loop moves on. Details:
   * Transient screening failures, including `HOLDERS_UNAVAILABLE`, are retried on the next passes. This retry is in
@@ -88,8 +88,73 @@ cd /opt/solana-desk-lean && /opt/solana-desk/.venv/bin/python -m lean --config /
   time). It holds the per-loop `heartbeat`, `dead_loops`, mark sources, `cost_basis_mints`, counts, errors by code
   and the halt state.
 
+## Provider lanes (L07R): main / exit / low
+Each provider's plan rate is split into three process-wide token buckets (`lean.providers.shared_limiter`). Helius at
+10 req/s by default: **main 5.5/s** (candidate screening), **exit 2.5/s** (held-position marks, exit and mark quotes),
+**low 2/s** (data collection). Jupiter (4 req/s) splits the same way. Kraken keeps one undivided bucket and has no low lane.
+* **Config:** `lean.json` `lanes` = `{"main": 0.55, "exit": 0.25, "low": 0.20, "low_shed_s": 30}`. Absent = these
+  defaults. Each share must be in (0, 1], and main + exit + low must be ≤ 1. A bad value is refused at startup
+  (`ConfigError`). `providers.configure_lanes(shares, low_shed_s=...)` is the API; call it once, before any client exists.
+* **The low lane never waits.** Without a token right now, or inside a shed window, a call fails at once with
+  `ProviderError('LANE_SHED', transient=True)`. Nothing is sent in that case. `meta['why']` is `no_token` or `backoff`.
+* **429 shedding:** any HTTP 429 seen by ANY lane of a provider sheds its low lane for `low_shed_s`, or longer when
+  Retry-After asks for more (capped at 30 s). A 429 on the low lane blocks nobody else.
+* **No retries:** low-lane calls are never retried inside the call. A failed call is a gap for the caller to count.
+* **Exits never wait behind low traffic:** the lanes are separate buckets. `tests/lean/test_low_lane.py` floods the low
+  lane (1,000 calls, and 8 threads) and checks that the exit lane is untouched and acquires with zero wait.
+
+**For other workers (entry features, wallet signals, ...):** put every data-collection call on the low lane and treat
+`LANE_SHED` as "skip this cycle", never as an error worth retrying at once:
+```python
+from lean import providers
+low = providers.low(keys)                  # Providers(helius, jupiter, kraken=None) on the low lane
+try:
+    result, raw, meta = low.helius.get_multiple_accounts(keys)
+except providers.ProviderError as error:
+    if providers.is_shed(error):           # nothing was sent; error.meta['why'] in ('no_token', 'backoff')
+        ...                                # count it, try again next cycle (your own thread may pace on 'no_token')
+    else:
+        ...                                # a real provider failure: count it, never raise into the trader
+```
+* `providers.build_providers(keys, lane='low')` is the same thing as `providers.low(keys)`.
+* `providers.low_lane_stats('helius')` returns the counters `granted`, `shed_no_token`, `shed_backoff` and `sheds`.
+* All low-lane users share the one 2/s bucket. Keep your calls batched (`getMultipleAccounts` ≤ 100 accounts).
+
+## Price-path recorder (L07R, `lean/paths.py`)
+Every candidate that passes the HAZARD checks gets its pool marked every `interval_s` (15 s) for `path_hours` (6 h),
+whether it was entered or not. This is data for strategy tuning (L08 replay).
+* **Recorded:**
+  * entered candidates;
+  * screen rejects for market cap or liquidity out of band only (these stop before the holder check, so they carry
+    `holders_checked: false`);
+  * passed screens that were not entered: the cost cap, portfolio limits, the entry throttle, a cooldown, a quote that
+    failed, or entries stopped.
+* **Never recorded:** hazard rejects (authorities, extensions, pool/vault/LP evidence, holder concentration) and failed
+  screens. A candidate queued for a retry is decided on its final attempt.
+* **Rows (append-only `observations`):**
+  * `path_start` holds the screen features, `entered`, `not_entered` (`{stage, reasons}`) and the `target` (vault keys,
+    reference quantity and its cost).
+  * `path_mark` holds `{ts, slot, base_raw, quote_raw, net_sol, liquidity_sol, status}`. `net_sol` is
+    `adapters.mark`, the same function the position loop marks with. It values the filled quantity for an entered
+    candidate, otherwise the tokens `ref_size_sol` (0.2 SOL) buys at the path-start reserves.
+  * `path_end` is written once, after `path_hours`.
+  * The event `paths_active` lists the live `path_start` ids. On restart, `build_runner` resumes the live paths from it.
+* **Polling:**
+  * One `getMultipleAccounts` per 50 pools (100 accounts, the RPC limit), on the LOW lane, in its own daemon thread
+    started by `Runner.run`.
+  * The marks of a poll are written in one store transaction (`Store.add_observations`).
+  * When the low lane has no token, the recorder's thread paces its own calls within 80% of the interval. A 429 shed
+    ends the poll, and the missed marks count as gaps.
+* **Isolation:** recorder failures are counted in `health.json` under `paths` (`errors_by_code`, `gaps`, `shed`,
+  `write_failures`, `low_lane`) and never raised. It never takes a runner lock and does no provider I/O under any lock.
+* **Config:** `lean.json` `paths` = `{"enabled": true, "path_hours": 6, "interval_s": 15, "ref_size_sol": "0.2",
+  "max_paths": 2000}`. When `paths` is absent, the recorder is disabled.
+* **Budget at ~70 recorded candidates/h:** about 420 live paths, 9 calls per poll, so about 2,160 Helius calls per hour
+  (0.6 req/s of the 2 req/s low lane). Storage is about 650 B per mark, so about 65 MB/h (see `reports/L07R.md`).
+
 ## Modules
-* `providers`: HTTP clients and limiters.
+* `providers`: HTTP clients and limiters (main / exit / low lanes).
+* `paths`: the price-path recorder (low lane).
 * `candidates`: discovery and the screen.
 * `strategy`: pure decisions.
 * `paper`: integer fills, including the write-off.

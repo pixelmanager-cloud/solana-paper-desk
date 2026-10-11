@@ -23,7 +23,13 @@ CONFIG_KEYS = {
     'stale_mark_s': 30,                # a mark older than this is not used; the position is quote-marked instead (3x interval)
     'unexitable_after_s': 7200,        # a wanted exit failing (no route / 4xx) this long is written off at zero proceeds
     'screen': {},                      # lean.candidates settings other than the strategy-owned bands
-    'wallet_signals': None,            # L13: null/absent = off; an object (may be {}) turns it on, see lean.wallet_signals.DEFAULTS
+    # --- L07R ---
+    'lanes': None,                     # {"main","exit","low"} shares of each provider rate (+ "low_shed_s"); None = 0.55/0.25/0.20
+    'paths': None,                     # lean.paths settings ({"enabled", "path_hours", "interval_s", ...}); None = disabled
+    # --- end L07R ---
+    # --- L13 ---
+    'wallet_signals': None,            # lean.wallet_signals settings (an object, may be {}, turns it on); None = off
+    # --- end L13 ---
 }
 REQUIRED = ('strategy_config', 'initial_cash_sol')
 
@@ -47,12 +53,27 @@ def load_config(path):
     cfg['strategy_config'] = str(strategy_path if strategy_path.is_absolute() else path.parent / strategy_path)
     if not isinstance(cfg['screen'], dict):
         raise ConfigError('screen must be an object')
-    if cfg['wallet_signals'] is not None:                                  # L13: strict, validated at load
+    # --- L07R ---
+    from lean import paths, providers
+    try:
+        cfg['paths'] = paths.config(cfg['paths'])
+        lanes = cfg['lanes']
+        if lanes is not None:
+            if not isinstance(lanes, dict):
+                raise ValueError('lanes must be an object')
+            shares = {k: v for k, v in lanes.items() if k not in ('low_shed_s', '_comment')}
+            cfg['lanes'] = {'shares': providers.validate_lane_shares(shares), 'low_shed_s': lanes.get('low_shed_s')}
+    except ValueError as error:
+        raise ConfigError(str(error)) from None
+    # --- end L07R ---
+    # --- L13 ---
+    if cfg['wallet_signals'] is not None:                                  # strict, validated at load
         from lean import wallet_signals
         try:
             wallet_signals.make_config(cfg['wallet_signals'])
         except wallet_signals.ConfigError as error:
             raise ConfigError(str(error)) from None
+    # --- end L13 ---
     return cfg
 
 
@@ -79,20 +100,33 @@ def build_runner(cfg, *, state_dir, discovery_db, keys, code_version, clock=None
     the_store = store.Store(os.path.join(state, 'lean.sqlite'), initial_cash_sol=str(cfg['initial_cash_sol']),
                             code_version=code_version, strategy_version=strategy_cfg.strategy_version, clock=clock)
     transport_kwargs = transport_kwargs or {}
-    signals = None
-    if cfg.get('wallet_signals') is not None:                              # --- L13 hook ---
-        from lean import wallet_signals
-        signals = wallet_signals.WalletSignals(
-            store=the_store, helius=wallet_signals.build_low_lane_helius(keys['helius'], wallet_signals.make_config(cfg['wallet_signals']),
-                                                                         **transport_kwargs),
-            cfg=cfg['wallet_signals'], code_version=code_version, strategy_version=strategy_cfg.strategy_version, clock=clock)
-    return runner.Runner(                                                  # --- end L13 ---
+    # --- L07R: lane shares before any client exists ---
+    from lean import paths
+    lanes = cfg.get('lanes') or {}
+    providers.configure_lanes(lanes.get('shares'), low_shed_s=lanes.get('low_shed_s'))
+    # --- end L07R ---
+    r = runner.Runner(
         store=the_store, providers=providers.build_providers(keys, lane='main', **transport_kwargs),
         exit_providers=providers.build_providers(keys, lane='exit', **transport_kwargs), strategy_cfg=strategy_cfg,
         discovery_db=discovery_db, state_dir=state, code_version=code_version, screen_overrides=cfg['screen'],
         pool_fee_bps=cfg['pool_fee_bps'], clock=clock, scan_limit=cfg['scan_limit'],
         max_retries=cfg['max_candidate_retries'], sol_usd_ttl_s=cfg['sol_usd_ttl_s'], stale_mark_s=cfg['stale_mark_s'],
-        unexitable_after_s=cfg['unexitable_after_s'], wallet_signals=signals)
+        unexitable_after_s=cfg['unexitable_after_s'])
+    # --- L07R: the path recorder (low lane), resumed from the store before any loop runs ---
+    r.paths = paths.build(paths.config(cfg.get('paths')), store=the_store, keys=keys, pcfg=r.pcfg,
+                          code_version=code_version, strategy_version=strategy_cfg.strategy_version,
+                          pool_fee_bps=cfg['pool_fee_bps'], clock=clock, transport_kwargs=transport_kwargs)
+    if r.paths is not None:
+        r.paths.resume()
+    # --- end L07R ---
+    # --- L13: the wallet-signal collector (low lane) ---
+    if cfg.get('wallet_signals') is not None:
+        from lean import wallet_signals
+        r.wallet_signals = wallet_signals.build(wallet_signals.make_config(cfg['wallet_signals']), store=the_store, keys=keys,
+                                                code_version=code_version, strategy_version=strategy_cfg.strategy_version, clock=clock,
+                                                transport_kwargs=transport_kwargs)
+    # --- end L13 ---
+    return r
 
 
 def main(argv=None):
