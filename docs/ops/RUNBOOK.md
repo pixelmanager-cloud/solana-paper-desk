@@ -518,6 +518,14 @@ are append-only and are kept.
 
 ## Rotate when flat
 
+**When to rotate on capacity.** The retired-rejection table (`paper_cycle_no_entry`) holds at most 8192 rows. At 80% (6553 rows)
+every new publication logs `rotation_warning` and appends a `rotation_warning_v1` line to `<evidence db>.publish-refused.jsonl`;
+read it with `desk.paper_cycle_no_entry.read_refusals(<evidence db>)` (the healthcheck should alert on any line of that kind).
+Rotate while flat when it appears. At 100% only the NEXT no-entry publication is refused (`publish_refused_v1`, reason
+`RotationRequired`): that pass is closed `FAILED_CHARGED` instead of being left NULL, every retained row still replays, and no
+position or pass is latched, so the store stays flat-rotatable. Every other refused publication (`publish_refused_v1`, with the
+exception class and a bounded detail) is recorded in the same file, so a silent refusal cannot hide.
+
 Code under `desk/` changed (or a new experiment version starts) and the ledger holds no position: do not pin a successor. Roll
 to a new store set. The previous fresh root becomes an archived root too.
 

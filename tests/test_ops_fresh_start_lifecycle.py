@@ -131,7 +131,7 @@ class FreshStoreScenario(FreshFixture):
 
     def blocked_first_candidate(self):
         """Real run_once with the market producer blocked: a charged, non-COMPLETE (NULL) pass."""
-        with patch.object(cycle, 'build_market_event', return_value={'event': None, 'blockers': ['SYNTHETIC_PRODUCER_BLOCK']}):
+        with patch.object(cycle, 'build_market_event', return_value={'event': None, 'blockers': ['MISSING_WINDOW_MEASUREMENT:net_buy_ratio']}):
             try:
                 result = self.live()
             except ValueError as error:  # dispatcher may surface the unresolved dispatch as an error

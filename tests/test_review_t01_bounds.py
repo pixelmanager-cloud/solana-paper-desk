@@ -3,6 +3,7 @@
 ``expectedFailure`` = RED demonstration of a real defect (remove the decorator when fixed).
 """
 import unittest
+import unittest.mock
 from contextlib import closing
 
 from desk import paper_cycle_no_entry as no_entry, paper_terminal_reconciliation as terminal
@@ -30,7 +31,6 @@ class PageInventoryBoundTests(unittest.TestCase):
         pages = page_count(t.store)
         self.assertTrue(15 <= pages <= 40, pages)
 
-    @unittest.expectedFailure   # DEFECT R2 (HIGH): gate re-indexes EVERY page of the store and raises above 4096
     def test_unrelated_pages_must_not_latch_the_gate_for_a_retired_rejection(self):
         t = fixture()
         self.addCleanup(t.doCleanups)
@@ -38,7 +38,6 @@ class PageInventoryBoundTests(unittest.TestCase):
         self.assertGreater(page_count(t.store), no_entry_limit)
         self.assertIsNone(terminal.gate(t.store, t.ctx['research_db'], ()))
 
-    @unittest.expectedFailure   # DEFECT R2: publication itself refuses, so the NEXT rejection also latches the store
     def test_unrelated_pages_must_not_prevent_publishing_a_normal_rejection(self):
         t = fixture(legacy=True)
         self.addCleanup(t.doCleanups)
@@ -48,6 +47,34 @@ class PageInventoryBoundTests(unittest.TestCase):
         forged = {k: v for k, v in t.result.items() if k != 'evidence_hash'}
         add_unrelated_pages(t.store, no_entry_limit + 10)
         no_entry.publish(t.store, t.progress, pass_id=pending[0], intent_hash=pending[1], result=forged, ledger=ledger)
+
+    def test_gate_cost_is_flat_in_unrelated_store_size(self):
+        """T22F R2: the gate loads only the bound refs of each retained rejection, never every page.
+
+        Generous bound: with ~40x more unrelated pages the gate must not take 10x longer (it used to be linear in
+        pages and raised outright above 4096). Page loads are counted too, which is the deterministic signal.
+        """
+        import time
+        t = fixture()
+        self.addCleanup(t.doCleanups)
+        args = (t.store, t.ctx['research_db'], ())
+
+        def measure():
+            loads = []
+            real = terminal._load
+
+            def counting(store, key):
+                loads.append(key)
+                return real(store, key)
+            with unittest.mock.patch.object(terminal, '_load', counting):
+                started = time.perf_counter()
+                self.assertIsNone(terminal.gate(*args))
+                return time.perf_counter() - started, len(loads)
+        small_time, small_loads = measure()
+        add_unrelated_pages(t.store, 1500)
+        big_time, big_loads = measure()
+        self.assertEqual(big_loads, small_loads)
+        self.assertLess(big_time, 10 * max(small_time, 0.05))
 
 
 if __name__ == '__main__':

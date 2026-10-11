@@ -28,6 +28,25 @@ def ownership_lock_path(store,invocation=False):
     return str(path)+('.ownership-invocation.lock' if invocation else '.ownership.lock')
 
 
+def _retained_failed_attempt(store,evidence):
+    from .paper_terminal_reconciliation import _load
+    try:record=_load(store,evidence)
+    except (ValueError,OSError,KeyError,TypeError):return False
+    return type(record) is dict and record.get('kind')=='paper_read_attempt_v1' and record.get('failure_code') is not None
+
+
+def _pre_transport_transient(error):
+    """T22I: a TYPED transient raised by the desk's own history source BEFORE any transport call has no attempt original.
+
+    `PaperHistorySource` raises `PaperReadError('DEADLINE_EXCEEDED')` after the reservation was charged and before it sends
+    anything, so there is nothing to retain. That one exact typed error (no evidence hash, exact class, exactly that code) is the pager's RETRYABLE_ERROR; any other evidence-less failure (a bare OSError,
+    a digest or binding conflict, a cached-request mismatch, a free-text ValueError) still propagates and is held.
+    """
+    from .paper_read_sources import PaperReadError
+    return (type(error) is PaperReadError and error.evidence_hash is None and type(error.code) is str
+            and error.code == 'DEADLINE_EXCEEDED')
+
+
 class HistoryProgress:
     def __init__(self,store):
         if store.read_only:raise ValueError('Writable evidence store required')
@@ -264,7 +283,11 @@ class HistoryProgress:
         if not row:raise ValueError('History job missing')
         return {'id':key,'query':json.loads(row[0]),'coverage':json.loads(row[1]) if row[1] else None,
                 'status':row[2],'attempts':row[3],'requests_used':row[4],'request_ceiling':row[5]}
-    def advance(self,key,rpc):
+    def advance(self,key,rpc,*,strict=False):
+        # T22J: `strict` (the paper cycle's history path only, desk/paper_cycle.py `_history`, which history_first's prepare
+        # also runs) narrows the failure classification below (T22H/T22I). Every other pager caller (ownership worker and
+        # acquisition, migration slot intake, the paper history source's own callers) keeps the original pager contract:
+        # any provider/parse failure is the RETRYABLE_ERROR checkpoint state with the reserved request spent.
         # One process lock per evidence store. Concurrent processes fail quickly;
         # process death releases the lock, while the reserved request stays spent.
         import fcntl
@@ -302,7 +325,27 @@ class HistoryProgress:
                 with self.store.connect() as c:
                     c.execute('UPDATE ownership_history SET coverage=?,status=? WHERE id=?',
                         (canonical(updated),'DONE' if updated['query_range_exhausted'] else 'PENDING',key))
-            except (ValueError,KeyError,TypeError,IndexError,OSError):
-                # Never save provider error bodies or pretend a failed page advanced.
+            except (ValueError,KeyError,TypeError,IndexError,OSError) as error:
+                if not strict:
+                    # Never save provider error bodies or pretend a failed page advanced.
+                    with self.store.connect() as c:c.execute("UPDATE ownership_history SET status='RETRYABLE_ERROR' WHERE id=?",(key,))
+                    return self.snapshot(key)
+                # T22H: only a failure PROVEN transient by its retained attempt original is the pager's RETRYABLE_ERROR state.
+                # Everything else (a digest conflict, a binding or cached-request mismatch, TLS, an unclassified or bare
+                # OSError, a failure without an original) propagates so the enclosing pass is classified (and held) by its
+                # real cause instead of being laundered into HISTORY_RECOVERY_REQUIRED. Never save provider error bodies.
+                evidence=getattr(error,'evidence_hash',None)
+                from .paper_pass_closure import failed_reads_transient
+                if type(evidence) is str:
+                    if not failed_reads_transient(self.store,[evidence]):
+                        # T22I: a failure that has a RETAINED failed attempt original keeps the pager's RETRYABLE_ERROR checkpoint
+                        # state (the historical production state the retirement receipts certify), but it is NOT closable: the
+                        # error still propagates, so the pass is classified (and held) by its real cause, and a later
+                        # RETRYABLE_ERROR found at entry carries no evidence and holds.
+                        if _retained_failed_attempt(self.store,evidence):
+                            with self.store.connect() as c:c.execute("UPDATE ownership_history SET status='RETRYABLE_ERROR' WHERE id=?",(key,))
+                        raise
+                elif not _pre_transport_transient(error):raise
                 with self.store.connect() as c:c.execute("UPDATE ownership_history SET status='RETRYABLE_ERROR' WHERE id=?",(key,))
+                return {**self.snapshot(key),'failure_evidence':evidence}
             return self.snapshot(key)
