@@ -16,5 +16,14 @@
     "token_profile_version": 2,
     "holder_check": true,
     "max_top10_pct": 60
+  },
+  "held_risk": {
+    "enabled": true,
+    "rug_liq_drop_frac": "0.7",
+    "unsellable_after_s": 120,
+    "unsellable_writeoff_s": 21600,
+    "route_probe_s": 60,
+    "freeze_check_every": 6,
+    "freeze_forces_exit": false
   }
 }

@@ -59,7 +59,8 @@ class Token:
     """One migrated PumpSwap pool. ``hazard`` / ``route_fee_bps`` / ``path`` shape the scenario."""
 
     def __init__(self, tag, *, quote_sol=80, base_raw=2 * 10 ** 14, hazard=None, route_fee_bps=0, path=None,
-                 no_route=False):
+                 no_route=False, no_route_from=None, route_back_at=None, pool_closed_from=None, freeze_from=None,
+                 owner_change_from=None):
         from solders.pubkey import Pubkey
         self.tag = tag
         self.mint_pk = Pubkey.from_bytes(bytes([tag]) * 32)
@@ -79,6 +80,10 @@ class Token:
         self.hazard, self.route_fee_bps, self.no_route = hazard, route_fee_bps, no_route
         self.path = path or (lambda age: Decimal(1))
         self.anchor = None                 # time of the first buy quote
+        # L11 (all in seconds since the first buy quote; None = never): the SELL route disappears / comes back, the pool account
+        # is closed, the pool changes owner program (migrated), the mint gets a freeze authority
+        self.no_route_from, self.route_back_at = no_route_from, route_back_at
+        self.pool_closed_from, self.freeze_from, self.owner_change_from = pool_closed_from, freeze_from, owner_change_from
 
     # -- state at time t
     def multiplier(self, t):
@@ -93,12 +98,26 @@ class Token:
         return {'data': [base64.b64encode(bytes(data)).decode(), 'base64'], 'executable': False, 'lamports': 2_039_280,
                 'owner': owner, 'rentEpoch': 18446744073709551615, 'space': len(data)}
 
-    def mint_account(self):
+    def age(self, t):
+        return None if self.anchor is None else t - self.anchor
+
+    def _since(self, start, t):
+        age = self.age(t)
+        return start is not None and age is not None and age >= start
+
+    def sell_route_open(self, t):
+        if self.no_route:
+            return False
+        if self._since(self.no_route_from, t):
+            return self.route_back_at is not None and self._since(self.route_back_at, t)
+        return True
+
+    def mint_account(self, t=None):
         d = bytearray(82)
         d[36:44] = SUPPLY.to_bytes(8, 'little'); d[44] = DECIMALS; d[45] = 1
         if self.hazard == 'mint_authority':
             d[0:4] = (1).to_bytes(4, 'little'); d[4:36] = bytes([3]) * 32
-        if self.hazard == 'freeze_authority':
+        if self.hazard == 'freeze_authority' or (t is not None and self._since(self.freeze_from, t)):
             d[46:50] = (1).to_bytes(4, 'little'); d[50:82] = bytes([4]) * 32
         return self.account(d, TOKEN_PROGRAM)
 
@@ -118,9 +137,14 @@ class Token:
 
     def accounts(self, t):
         base, quote = self.reserves(t)
-        return {self.mint: self.mint_account(), self.pool: self.account(self.pool_raw, PUMPSWAP),
-                self.base_vault: self.vault_account('base', base), self.quote_vault: self.vault_account('quote', quote),
-                self.lp: self.lp_account()}
+        owner = 'MigratedPoolProgram1111111111111111111111111' if self._since(self.owner_change_from, t) else PUMPSWAP
+        accounts = {self.mint: self.mint_account(t), self.pool: self.account(self.pool_raw, owner),
+                    self.base_vault: self.vault_account('base', base), self.quote_vault: self.vault_account('quote', quote),
+                    self.lp: self.lp_account()}
+        if self._since(self.pool_closed_from, t):
+            for key in (self.pool, self.base_vault, self.quote_vault):
+                del accounts[key]
+        return accounts
 
     def holders(self):
         rows = [{'address': self.base_vault, 'amount': str(self.base_raw)}]
@@ -224,7 +248,7 @@ class World:
         self.calls.append(('jupiter', 'quote', t))
         input_mint, output_mint, amount = q['inputMint'], q['outputMint'], int(q['amount'])
         token = self.tokens[output_mint if input_mint == SOL else input_mint]
-        if token.no_route:
+        if token.no_route or (input_mint != SOL and not token.sell_route_open(t)):
             return Resp(b'{"error":"Could not find any route","errorCode":"COULD_NOT_FIND_ANY_ROUTE"}', 400)
         if input_mint == SOL and token.anchor is None:
             token.anchor = t

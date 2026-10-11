@@ -99,3 +99,24 @@ cd /opt/solana-desk-lean && /opt/solana-desk/.venv/bin/python -m lean --config /
 * `report`: the read-only report.
 
 The end-to-end test `tests/lean/test_e2e_real.py` runs the real modules with only HTTP faked.
+
+## Held-position rug / unsellable handling (L11, `lean/held_risk.py`)
+Configured by the `held_risk` object of `lean.json` (all keys optional; unknown keys are refused; `"enabled": false` gives exactly the
+previous behaviour). For every held mint the position loop watches:
+* **LIQUIDITY_DROP**: the pool's quote vault fell by MORE than `rug_liq_drop_frac` (0.7) since entry (baseline = the reserve the screen saw);
+* **NO_ROUTE**: the Jupiter sell quote has had no route for longer than `unsellable_after_s` (120 s); probed every `route_probe_s` (60 s) with a
+  full-size sell quote on the exit lane. A provider outage (timeout, 5xx, 429) is NOT "no route". About one Jupiter call per position per minute;
+* **POOL_GONE**: a vault account is missing, the pool account is closed, or its owner program changed (migrated); one batched read of
+  `[mint, pool]` per held position every `freeze_check_every` (6) position passes, which also reads the mint's freeze authority;
+* **freeze authority** set after entry: recorded as a flag and reported; it forces an exit only with `freeze_forces_exit: true`.
+
+Any of the first three sells the whole position at a FRESH quote (`RUG_EXIT`, cooldown as after a stop) before the normal strategy looks at it.
+If no executable route exists (a non-transient quote failure, or a route worth less than the fee) the position is **UNSELLABLE**: valued in the
+equity at the best executable quote seen (0 if there never was one), re-tried every pass (a route that comes back is used,
+`trigger: ROUTE_RESTORED`) and, after `unsellable_writeoff_s` (6 h), closed in the books at that value with exit reason `RUG_WRITEOFF` and no fee
+(nothing is sent). A transient quote failure while exiting is retried, never turned into UNSELLABLE.
+
+State lives in generic `events` rows of kind `held_risk` (no schema change) and is rebuilt at start, so UNSELLABLE, the no-route clock and the
+write-off clock survive a restart. `health.json` has a `held_risk` block (trigger / rug-exit / write-off / freeze counts and the UNSELLABLE mints).
+The report has a "Rugs and write-offs" section: counts and PnL of `RUG_EXIT` and `RUG_WRITEOFF` apart from the ordinary exit reasons, the triggers
+that fired, freeze flags, and the positions that are UNSELLABLE now with their value.
