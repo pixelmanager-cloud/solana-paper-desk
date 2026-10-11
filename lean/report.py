@@ -101,20 +101,18 @@ def sample_flag(n):
 
 # --------------------------------------------------------------------------- read-only access
 def open_ro(path):
-    """Read-only. ``immutable`` only for a quiet WAL file (a plain ro open would create -wal/-shm beside a
-    live store); a rollback-journal store can change under the read, so it is always ``mode=ro``."""
+    """Read-only, always plain ``mode=ro`` (never ``immutable=1``: lean.sqlite is live while the trader runs, and an
+    immutable open could read a torn state). The connection is also ``query_only``."""
     path = Path(path)
     if path.is_symlink() or not path.is_file():
         raise ReportError('DB_MISSING_OR_NOT_REGULAR: %s' % path.name)
     resolved = path.resolve()
     try:
-        with open(resolved, 'rb') as stream:
-            header = stream.read(20)
-        wal = len(header) >= 20 and header[18] == 2 and header[19] == 2
+        with open(resolved, 'rb'):
+            pass
     except OSError as error:
         raise ReportError('DB_UNREADABLE') from error
-    flag = 'immutable=1' if wal and not Path(str(resolved) + '-wal').exists() else 'mode=ro'
-    connection = sqlite3.connect(resolved.as_uri() + '?' + flag, uri=True, timeout=5)
+    connection = sqlite3.connect(resolved.as_uri() + '?mode=ro', uri=True, timeout=5)
     connection.execute('PRAGMA query_only=1')
     return connection
 

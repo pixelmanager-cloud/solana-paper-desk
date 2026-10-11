@@ -1,0 +1,15 @@
+{
+  "_comment": "lean.notify config (python -m lean.notify --config). Unknown keys are refused. No secrets here: they live in the telegram.json / provider-keys.json systemd credentials. mode is the tag on every message (PAPER or LIVE). Times are local to timezone. quiet_hours null = off; during quiet hours BUY/SELL are batched into one digest sent when they end (HALT is always immediate). allowed_chat_ids null = only the telegram.json chat_id may use /status /today /pnl. daily_summary_at null = no daily summary.",
+  "mode": "PAPER",
+  "timezone": "Asia/Seoul",
+  "daily_summary_at": "09:00",
+  "quiet_hours": null,
+  "allowed_chat_ids": null,
+  "commands": true,
+  "poll_interval_s": 5,
+  "max_outbox": 200,
+  "max_sends_per_cycle": 10,
+  "pool_fee_bps": 25,
+  "name_lookup": true,
+  "sol_usd_max_age_s": 3600
+}

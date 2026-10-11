@@ -7,6 +7,7 @@ import tempfile
 import threading
 from decimal import Decimal
 import unittest
+from unittest import mock
 from pathlib import Path
 
 from lean import paper, store as store_module
@@ -136,10 +137,53 @@ class TypedHelperTests(Base):
             self.store.observation(oid)
 
     def test_observation_bounds_and_types(self):
-        for bad in ('text', None, b'x' * (store_module.MAX_RAW_BYTES + 1)):
+        for bad in ('text', None):
             with self.assertRaises(StoreError):
                 self.store.add_observation('k', bad)
-        self.store.add_observation('k', b'x' * store_module.MAX_RAW_BYTES)
+        exact = self.store.observation(self.store.add_observation('k', b'x' * store_module.MAX_RAW_BYTES))
+        self.assertEqual((exact['raw_truncated'], exact['full_bytes']), (False, store_module.MAX_RAW_BYTES))
+
+    def test_oversized_observation_is_truncated_and_flagged_never_refused(self):
+        """L09b D5: a body above MAX_RAW_BYTES is kept truncated with the full size and sha256 (never a StoreError)."""
+        import hashlib
+        from lean import providers
+        self.assertEqual(store_module.MAX_RAW_BYTES, providers.MAX_RESPONSE_BYTES)     # the size limits are aligned
+        body = b'y' * (store_module.MAX_RAW_BYTES + 12345)
+        got = self.store.observation(self.store.add_observation('big', body))
+        self.assertEqual((len(got['raw']), got['raw_truncated'], got['full_bytes'], got['full_sha256']),
+                         (store_module.MAX_RAW_BYTES, True, len(body), hashlib.sha256(body).hexdigest()))
+        self.assertEqual(self.store.rows('observations', kind='big')[0]['raw_truncated'], 1)
+
+    def test_transient_lock_is_retried_and_a_persistent_lock_propagates(self):
+        """L09b D4: 'database is locked' is retried a few times before it becomes an error (and only then a halt)."""
+        real = self.store.db
+
+        class Locked:
+            def __init__(self, failures):
+                self.failures = failures
+
+            def execute(self, sql, *args):
+                if sql == 'BEGIN IMMEDIATE' and self.failures:
+                    self.failures -= 1
+                    raise sqlite3.OperationalError('database is locked')
+                return real.execute(sql, *args)
+
+            def __getattr__(self, name):
+                return getattr(real, name)
+        self.store.db = Locked(store_module.BUSY_RETRIES)
+        try:
+            self.store.add_error('X', transient=True)
+            self.assertEqual(self.store.counts()['errors'], 1)
+            self.store.db = Locked(store_module.BUSY_RETRIES + 1)
+            with self.assertRaisesRegex(sqlite3.OperationalError, 'locked'):
+                self.store.add_error('Y', transient=True)
+            self.store.db = Locked(1)
+            with mock.patch.object(store_module.time, 'sleep') as sleep:
+                self.store.add_error('Z', transient=True)
+            sleep.assert_called_once()
+        finally:
+            self.store.db = real
+        self.assertEqual([r['code'] for r in self.store.rows('errors')], ['X', 'Z'])
 
     def test_errors_and_metadata_never_keep_a_credential(self):
         self.store.add_error('HTTP_500', transient=True, mint='A' * 32,

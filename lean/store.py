@@ -31,7 +31,11 @@ from pathlib import Path
 from lean.paper import AccountingHalt, Fill, LABEL, LAMPORTS, Position, apply_fill, to_lamports
 
 STORE_VERSION = 1
-MAX_RAW_BYTES = 4 * 1024 * 1024
+# Aligned with lean.providers.MAX_RESPONSE_BYTES (the largest body a provider call can return). Anything larger is
+# truncated and flagged, never refused: a big response must not become a store failure (a halt).
+MAX_RAW_BYTES = 8 * 1024 * 1024
+BUSY_RETRIES = 3          # a transient 'database is locked/busy' is retried this many times before it is an error
+BUSY_BACKOFF = 0.05
 MAX_JSON_BYTES = 256 * 1024
 MAX_MESSAGE = 500
 _BEARER = re.compile(r'(?i)(bearer\s+)[A-Za-z0-9._~+/=-]+')
@@ -50,6 +54,11 @@ def redact(text):
     return _KEYED.sub(r'\1\2[REDACTED]', text)[:MAX_MESSAGE * 4]
 
 
+def _busy(error):
+    text = str(error).lower()
+    return 'locked' in text or 'busy' in text
+
+
 def _json(value, limit=MAX_JSON_BYTES):
     text = json.dumps(value, sort_keys=True, separators=(',', ':'), allow_nan=False, default=str)
     if len(text.encode()) > limit:
@@ -65,7 +74,9 @@ TABLES = {
                    'signature TEXT, slot INTEGER, migrated_at REAL, hint_seq INTEGER, meta TEXT NOT NULL, '
                    'code_version TEXT NOT NULL CHECK(length(code_version)>0), strategy_version TEXT NOT NULL CHECK(length(strategy_version)>0))'),
     'observations': ('CREATE TABLE observations(id INTEGER PRIMARY KEY AUTOINCREMENT, ts REAL NOT NULL, kind TEXT NOT NULL, mint TEXT, '
-                     'candidate_id INTEGER, raw BLOB NOT NULL, sha256 TEXT NOT NULL, meta TEXT NOT NULL, '
+                     'candidate_id INTEGER, raw BLOB NOT NULL, sha256 TEXT NOT NULL, '
+                     'raw_truncated INTEGER NOT NULL CHECK(raw_truncated IN (0,1)), full_bytes INTEGER NOT NULL, full_sha256 TEXT NOT NULL, '
+                     'meta TEXT NOT NULL, '
                      'code_version TEXT NOT NULL CHECK(length(code_version)>0), strategy_version TEXT NOT NULL CHECK(length(strategy_version)>0))'),
     'decisions': ('CREATE TABLE decisions(id INTEGER PRIMARY KEY AUTOINCREMENT, ts REAL NOT NULL, kind TEXT NOT NULL, mint TEXT, '
                   'candidate_id INTEGER, action TEXT NOT NULL, reasons TEXT NOT NULL, features TEXT NOT NULL, '
@@ -207,15 +218,26 @@ class Store:
         return str(code), str(strategy)
 
     def _write(self, function):
-        with self._lock:
-            self.db.execute('BEGIN IMMEDIATE')
+        """One BEGIN IMMEDIATE transaction. A transient 'database is locked/busy' (beyond the busy timeout) is retried
+        ``BUSY_RETRIES`` times with a short backoff before it propagates; the whole transaction is re-run, so a retry
+        never half-applies anything."""
+        for attempt in range(BUSY_RETRIES + 1):
             try:
-                value = function()
-                self.db.execute('COMMIT')
-                return value
-            except BaseException:
-                self.db.execute('ROLLBACK')
-                raise
+                with self._lock:
+                    self.db.execute('BEGIN IMMEDIATE')
+                    try:
+                        value = function()
+                        self.db.execute('COMMIT')
+                        return value
+                    except BaseException:
+                        if self.db.in_transaction:
+                            self.db.execute('ROLLBACK')
+                        raise
+            except sqlite3.OperationalError as error:
+                if attempt >= BUSY_RETRIES or not _busy(error):
+                    raise
+                self._cache = None
+                time.sleep(BUSY_BACKOFF * (2 ** attempt))
 
     def _ts(self, ts):
         value = self.clock() if ts is None else ts
@@ -254,23 +276,33 @@ class Store:
         return row[0] if row else None
 
     def add_observation(self, kind, raw, *, mint=None, candidate_id=None, meta=None, code_version=None, strategy_version=None, ts=None):
-        """Retain the exact bytes of a provider response (up to 4 MiB) with its sha256. Returns the id (use it as a quote ``ref``)."""
-        if not isinstance(raw, (bytes, bytearray)) or len(raw) > MAX_RAW_BYTES:
-            raise StoreError('raw must be bytes of at most 4 MiB')
+        """Retain the bytes of a provider response with their sha256. Returns the id (use it as a quote ``ref``).
+
+        Up to ``MAX_RAW_BYTES`` the bytes are kept exactly. A larger body is TRUNCATED to ``MAX_RAW_BYTES`` and flagged
+        (``raw_truncated=1``, ``full_bytes``, ``full_sha256`` of the whole body): never refused, so it can never halt."""
+        if not isinstance(raw, (bytes, bytearray)):
+            raise StoreError('raw must be bytes')
         code, strategy = self._versions(code_version, strategy_version)
-        raw, text, stamp = bytes(raw), _json(self._clean(meta or {})), self._ts(ts)
+        full = bytes(raw)
+        kept = full[:MAX_RAW_BYTES]
+        text, stamp = _json(self._clean(meta or {})), self._ts(ts)
+        full_sha = hashlib.sha256(full).hexdigest()
         return self._write(lambda: self.db.execute(
-            'INSERT INTO observations(ts,kind,mint,candidate_id,raw,sha256,meta,code_version,strategy_version) VALUES(?,?,?,?,?,?,?,?,?)',
-            (stamp, str(kind)[:64], mint, candidate_id, raw, hashlib.sha256(raw).hexdigest(), text, code, strategy)).lastrowid)
+            'INSERT INTO observations(ts,kind,mint,candidate_id,raw,sha256,raw_truncated,full_bytes,full_sha256,meta,code_version,strategy_version) '
+            'VALUES(?,?,?,?,?,?,?,?,?,?,?,?)',
+            (stamp, str(kind)[:64], mint, candidate_id, kept, hashlib.sha256(kept).hexdigest(), int(len(full) > len(kept)), len(full),
+             full_sha, text, code, strategy)).lastrowid)
 
     def observation(self, observation_id):
         with self._lock:
-            row = self.db.execute('SELECT raw,sha256,kind,mint,meta FROM observations WHERE id=?', (observation_id,)).fetchone()
+            row = self.db.execute('SELECT raw,sha256,kind,mint,meta,raw_truncated,full_bytes,full_sha256 FROM observations WHERE id=?',
+                                  (observation_id,)).fetchone()
         if row is None:
             return None
-        if hashlib.sha256(row[0]).hexdigest() != row[1]:
+        if hashlib.sha256(row[0]).hexdigest() != row[1] or (not row[5] and row[1] != row[7]):
             raise StoreError('observation bytes do not match their hash')
-        return {'raw': bytes(row[0]), 'sha256': row[1], 'kind': row[2], 'mint': row[3], 'meta': json.loads(row[4])}
+        return {'raw': bytes(row[0]), 'sha256': row[1], 'kind': row[2], 'mint': row[3], 'meta': json.loads(row[4]),
+                'raw_truncated': bool(row[5]), 'full_bytes': row[6], 'full_sha256': row[7]}
 
     def add_decision(self, kind, action, *, mint=None, candidate_id=None, reasons=(), features=None, code_version=None,
                      strategy_version=None, ts=None):
