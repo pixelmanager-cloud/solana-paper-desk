@@ -545,6 +545,7 @@ class DispatcherClosureTests(unittest.TestCase):
         self.h = fixture.DispatcherTests('test_dry_run_no_admission_credentials_or_io_and_context_activation')
         self.h.setUp()
         self.addCleanup(self.h.doCleanups)
+        lock_sources.free(self)       # T22H M1: owner evidence is injected, so the kill/abandon tests also pass on macOS (no /proc/locks)
 
     def results(self):
         with sqlite3.connect(self.h.journal) as c:
