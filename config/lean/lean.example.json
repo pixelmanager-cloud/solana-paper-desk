@@ -78,25 +78,30 @@
     "housekeeping_s": 5
   },
   "features": {
-    "_comment": "L12F entry feature capture: one observations(kind='features') row per screened candidate (a small row in lean.sqlite), <= 3 extra Helius calls per hazard-free candidate on the shared low lane (dev balance, pool signatures, holders of a soft reject); hazard rejects cost nothing. Absent = off; enrich=false writes only the free fields.",
+    "_comment": "L12F entry feature capture: one observations(kind='features') row per screened candidate (a small row in lean.sqlite), <= 3 extra Helius calls per hazard-free candidate on the shared low lane (dev balance, pool signatures, holders of a soft reject); hazard rejects cost nothing. Absent = off; enrich=false writes only the free fields. LINT2b: nothing after the decision is counted (decision_ts, late_s, flags in every row); a no_token shed is retried every 0.5 s for up to shed_wait_s; the dev balance / soft-reject holders are snapshots read at collection and not read at all when the row is later than max_late_s after the decision.",
     "enabled": true,
     "enrich": true,
-    "queue_size": 500
+    "queue_size": 500,
+    "shed_wait_s": 10.0,
+    "max_late_s": 30.0
   },
   "wallet_signals": {
-    "_comment": "L13 bundle/sniper + smart-wallet signal (this object turns it on; null/absent = off). Every screened candidate, ~125 s after graduation: <= max_calls Helius calls on the shared low lane (2 signature pages + supply + 6 txs + 3 x 2 funding). Smart-wallet outcomes come from the L07R2 paths.sqlite (read-only) or the desk's own closed trades. retain_raw none keeps the 1000-row signature pages (~170 KB each) out of lean.sqlite; backfill_max_age_s 1800 bounds the catch-up after a restart so it cannot hog the low lane the path recorder shares.",
+    "_comment": "L13 bundle/sniper + smart-wallet signal (this object turns it on; null/absent = off). Every screened candidate, ~125 s after graduation: <= max_calls Helius calls on the shared low lane (2 signature pages + supply + 6 txs + 3 x 2 funding). Smart-wallet outcomes come from the L07R2 paths.sqlite (read-only) or the desk's own closed trades. retain_raw none keeps the 1000-row signature pages (~170 KB each) out of lean.sqlite; backfill_max_age_s 1800 (by graduation time) bounds the catch-up after a restart. LINT2b: the swap window ends at the screen decision (window_s must stay <= screen.min_age_seconds or every row flags window_cut_by_decision); smart_buyers_count uses only outcomes resolved before the decision; a funder of buyers of >= hub_min_mints mints in hub_window_s is a detected hub, never a cluster; calls only while reserve_tokens more tokens stay for the path recorder / L11 / L12F, paced at 0.5 s.",
     "window_s": 120,
     "sniper_slots": 3,
     "max_swap_txs": 6,
     "sig_pages": 2,
     "funding_wallets": 3,
     "max_calls": 16,
-    "pace_s": 0.25,
+    "pace_s": 0.5,
+    "reserve_tokens": 1,
     "shed_wait_s": 30.0,
     "max_per_pass": 2,
     "backfill_max_age_s": 1800,
     "retain_raw": "none",
     "ignore_funders": [],
+    "hub_min_mints": 5,
+    "hub_window_s": 86400.0,
     "min_wins": 2,
     "smart_threshold": 0.7
   }

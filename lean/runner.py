@@ -43,6 +43,7 @@ from lean.store import StoreError
 log = logging.getLogger('lean.runner')
 SOL_MINT = A.SOL_MINT
 MAX_KEYS_PER_CALL = 100
+AUX_JOIN_S = 10.0             # LINT2b: total wait for the auxiliary threads on stop (TimeoutStopSec is 30 s)
 UNEXITABLE_BLOCKS = ('NO_ROUTE', 'STUCK_POSITION', 'SELL_QUOTE_INVALID', 'SELL_QUOTE_MISSING')
 
 
@@ -122,6 +123,9 @@ class Runner:
         # --- L13 hook ---
         self.wallet_signals = None                 # lean.wallet_signals.WalletSignals (set by build_runner when configured)
         # --- end L13 ---
+        # --- LINT2b hook: the feature / wallet-signal threads (health ``alive``; one shared shutdown deadline) ---
+        self._aux_threads = {}                     # 'features' / 'wallet_signals' -> Thread
+        # --- end LINT2b ---
         self.startup()
         # --- L10 hook ---
         if execution is not None and self.halted is None:
@@ -727,10 +731,10 @@ class Runner:
                 'cost_basis_mints': list(self.cost_basis_mints), 'cash_lamports': cash, 'cursor': self.cursor,
                 'retry_queue': len(self.retry), 'execution_status': 'EXECUTION_UNVERIFIED', 'live_readiness': False,
                 # --- L12 hook ---
-                'features': self.features.health() if self.features is not None else {'enabled': False},
+                'features': self._aux_health('features', self.features),
                 # --- end L12 ---
                 # --- L13 hook ---
-                'wallet_signals': dict(self.wallet_signals.counts) if self.wallet_signals is not None else {'enabled': False},
+                'wallet_signals': self._aux_health('wallet_signals', self.wallet_signals),
                 # --- end L13 ---
                 # --- L07R hook ---
                 'paths': self._l07r_health(),
@@ -739,6 +743,19 @@ class Runner:
                 # --- L15 hook ---
                 **({} if self.ops is None else self.ops.health())}
                 # --- end L15 ---
+
+    # --- LINT2b hook ---
+    def _aux_health(self, name, worker):
+        """A feature thread's own health (counters + queue depth) plus ``alive``. Never raises."""
+        thread = self._aux_threads.get(name)
+        alive = thread is not None and thread.is_alive()
+        if worker is None:
+            return {'enabled': False, 'alive': alive}
+        try:
+            return {**worker.health(), 'alive': alive}
+        except Exception as error:
+            return {'enabled': True, 'alive': alive, 'health_error': type(error).__name__}
+    # --- end LINT2b ---
 
     # --- L07R hook ---
     def _l07r_health(self):
@@ -817,34 +834,32 @@ class Runner:
         # --- L15 hook ---
         threads += [] if self.ops is None else self.ops.start(self)      # Ops.start returns started threads
         # --- end L15 ---
-        # --- L12 hook: the feature recorder in its own daemon thread; it drains its queue on stop ---
+        # --- L12 hook: the feature recorder in its own daemon thread; on stop it writes the queued rows without enrichment ---
         feature_thread = None
         if self.features is not None:
-            feature_thread = threading.Thread(target=self.features.run, args=(self.stop,), name='features', daemon=True)
+            feature_thread = self._aux_threads['features'] = threading.Thread(target=self.features.run, args=(self.stop,),
+                                                                              name='features', daemon=True)
             feature_thread.start()
         # --- end L12 ---
         # --- L13 hook --- (data collection on its own daemon thread and the shared low lane; never blocks entries or exits)
         signals_thread = None
         if self.wallet_signals is not None:
             self.wallet_signals.stop = self.stop
-            signals_thread = threading.Thread(target=self.wallet_signals.run_loop, name='wallet_signals', daemon=True)
+            signals_thread = self._aux_threads['wallet_signals'] = threading.Thread(target=self.wallet_signals.run_loop,
+                                                                                    name='wallet_signals', daemon=True)
             signals_thread.start()
         # --- end L13 ---
         for t in threads:
             while t.is_alive():
                 t.join(0.5)
-        # --- L07R hook ---
-        if recorder is not None:
-            recorder.join(30.0)                    # bounded: one in-flight low-lane call at most
-        # --- end L07R ---
-        # --- L12 hook ---
-        if feature_thread is not None:
-            feature_thread.join(30.0)              # bounded: the queue is drained on stop, one in-flight low-lane call at most
-        # --- end L12 ---
-        # --- L13 hook ---
-        if signals_thread is not None:
-            signals_thread.join(30.0)              # bounded: one in-flight low-lane call at most
-        # --- end L13 ---
+        # --- LINT2b hook: the auxiliary daemon threads (path recorder, features, wallet signals) share ONE deadline of
+        # AUX_JOIN_S in total, so a slow one can never push the stop past systemd's TimeoutStopSec (30 s); each checks
+        # ``stop`` before every request, so they normally end within one in-flight call ---
+        aux_deadline = time.monotonic() + AUX_JOIN_S
+        for aux in (recorder, feature_thread, signals_thread):
+            if aux is not None:
+                aux.join(max(0.0, aux_deadline - time.monotonic()))
+        # --- end LINT2b ---
         try:
             self.write_health()
         except Exception:

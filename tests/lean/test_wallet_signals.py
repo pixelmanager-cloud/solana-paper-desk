@@ -20,6 +20,12 @@ from lean.store import Store
 GRAD = 1_000
 SUPPLY = 10 ** 15
 WINDOW_SLOTS = int(120 / 0.4)
+GRAD_TIME = 1_800_000_000 - 1_000           # LINT2b: graduation 1000 s before the tests' "now" (decisions are at now - age)
+
+
+def block_time(slot):
+    """Consistent chain time: 0.4 s per slot from the graduation slot."""
+    return int(GRAD_TIME + (slot - GRAD) * 0.4)
 
 
 def addr(n):
@@ -37,13 +43,13 @@ def tb(owner, amount, index, mint=MINT):
     return {'accountIndex': index, 'mint': mint, 'owner': owner, 'programId': 'Tokenkeg', 'uiTokenAmount': {'amount': str(amount), 'decimals': 6}}
 
 
-def swap_body(signature, slot, buyers, *, mint=MINT, pool=POOL, pool_pre=10 ** 14, err=None, payer=None, block_time=1_800_000_000):
+def swap_body(signature, slot, buyers, *, mint=MINT, pool=POOL, pool_pre=10 ** 14, err=None, payer=None, block_time=None):
     """A buy: the pool pays out ``sum(buyers.values())``; ``buyers`` = {wallet: tokens received}."""
     out = sum(buyers.values())
     pre = [tb(pool, pool_pre, 1, mint)] + [tb(w, 0, 10 + i, mint) for i, w in enumerate(buyers)]
     post = [tb(pool, pool_pre - out, 1, mint)] + [tb(w, a, 10 + i, mint) for i, (w, a) in enumerate(buyers.items())]
     first = payer or next(iter(buyers), addr(250))
-    return {'slot': slot, 'blockTime': block_time, 'version': 0,
+    return {'slot': slot, 'blockTime': globals()['block_time'](slot) if block_time is None else block_time, 'version': 0,
             'transaction': {'signatures': [signature], 'message': {'accountKeys': [{'pubkey': first, 'signer': True, 'writable': True, 'source': 'transaction'}],
                                                                    'instructions': []}},
             'meta': {'err': err, 'fee': 5000, 'preTokenBalances': pre, 'postTokenBalances': post, 'innerInstructions': []}}
@@ -73,7 +79,7 @@ class Chain:
         """Index ``signature`` under ``address``; oldest first insertion order is irrelevant (kept sorted newest first)."""
         rows = self.addresses.setdefault(address, [])
         self._seq += 1
-        rows.append({'signature': signature, 'slot': slot, 'err': err, 'blockTime': 1_800_000_000 + slot, 'memo': None,
+        rows.append({'signature': signature, 'slot': slot, 'err': err, 'blockTime': block_time(slot), 'memo': None,
                      'confirmationStatus': 'finalized', '_seq': self._seq})
         rows.sort(key=lambda r: (-r['slot'], -r['_seq']))                      # newest first; later in the slot = newer
         if body is not None:
@@ -298,7 +304,7 @@ class AnalyzeTests(unittest.TestCase):
         self.assertEqual(figures['bundled_wallets'], 2)
         self.assertEqual(figures['bundle_score'], 0.4)
         self.assertEqual(figures['bundled_supply_pct'], 3.0)            # (1e13 + 2e13) / 1e15
-        self.assertEqual(figures['bundle_score_basis'], 'same_slot')
+        self.assertEqual(figures['bundle_score_basis'], 'same_slot_only')         # LINT2b: no funding source found = honest basis
 
     def test_a_shared_funder_bundles_wallets_that_are_not_in_the_same_slot(self):
         a, b, c = addr(1), addr(2), addr(3)
@@ -672,7 +678,7 @@ class CollectTests(Tmp):
             self.candidate(i + 1, mint=addr(40 + i))
         collector = self.collector(chain, {'max_per_pass': 1, 'max_retries': 5, 'retry_delay_s': 1000})
         real = collector.collect
-        collector.collect = lambda cid, mint, pool, slot: 1 / 0 if mint == addr(40) else real(cid, mint, pool, slot)
+        collector.collect = lambda cid, mint, pool, slot, **kw: 1 / 0 if mint == addr(40) else real(cid, mint, pool, slot, **kw)
         for _ in range(4):
             collector.signals_pass()
         self.assertEqual(sorted(r['mint'] for r in self.store.rows('observations', kind='wallet_signals')), [addr(41), addr(42)])
@@ -830,10 +836,24 @@ class SmartWalletTests(Tmp):
         for tag, prices in ((1, [1, 3]), (2, [1, 2]), (3, [1, 0.1])):
             add_path(self.store, self.launches[tag], prices)
         collector.signals_pass()
+        self.now += 1000                       # LINT2b: the late launch is DECIDED after the outcomes were resolved
         late = self.launch(4, [self.n1, self.s1, self.r1, self.s2])
         collector.signals_pass()
         row = self.signals(late)[0]
         self.assertEqual((row['smart_buyers_count'], row['smart_wallets']), (2, [self.s1, self.s2]))
+
+    def test_LINT2b_an_outcome_resolved_after_the_decision_is_never_counted(self):
+        collector = self.collector(self.chain, {'funding_wallets': 0})
+        for tag, buyers in ((1, [self.s1, self.s2]), (2, [self.s1, self.s2])):
+            self.launch(tag, buyers)
+        for tag in (1, 2):
+            add_path(self.store, self.launches[tag], [1, 3])
+        collector.signals_pass()                                                # outcomes resolved at "now"
+        late = self.launch(4, [self.s1, self.s2])                               # ... but this one was decided 300 s BEFORE now
+        collector.signals_pass()
+        row = self.signals(late)[0]
+        self.assertLess(row['decision_ts'], min(json.loads(e['payload']) and e['ts'] for e in self.store.rows('events', kind='wallet_outcome')))
+        self.assertEqual((row['smart_buyers_count'], row['smart_asof_ts']), (0, row['decision_ts']))
 
     def test_no_look_ahead_the_candidate_is_scored_only_with_outcomes_known_before_it(self):
         collector = self.collector(self.chain, {'funding_wallets': 0})
@@ -995,6 +1015,193 @@ class SharedLowLaneTests(Tmp):
     def test_no_private_lane_is_left_in_the_module(self):
         for name in ('LowLaneLimiter', 'build_low_lane_helius'):
             self.assertFalse(hasattr(W, name), name)
+
+
+class LINT2bTests(Tmp):
+    """Pre-deploy fixes: stop, no lookahead, hub funders, sharing the low lane, outcome resolution, health."""
+
+    def screened(self, mint, *, age=300, action='PASS', reasons=(), supply=None, migrated_age=None, row_age=None):
+        cid = self.store.add_candidate(mint, pool=POOL, slot=GRAD, migrated_at=self.now - (age if migrated_age is None else migrated_age),
+                                       ts=self.now - (age if row_age is None else row_age))
+        self.store.add_decision('screen', action, mint=mint, candidate_id=cid, reasons=list(reasons),
+                                features={} if supply is None else {'supply_raw': str(supply)}, ts=self.now - age)
+        return cid
+
+    def funding_event(self, funder, wallet, mint, ts):
+        self.store.record('wallet_funding', {'funder': funder, 'wallet': wallet, 'mint': mint, 'candidate_id': 0},
+                          code_version='t', strategy_version='s', ts=ts)
+
+    def buy_event(self, mint):
+        self.store.record('wallet_buy', {'wallet': addr(1), 'mint': mint, 'candidate_id': 0, 'slot_offset': 0},
+                          code_version='t', strategy_version='s', ts=self.now)
+
+    # -- 1. shutdown
+    def test_a_stop_mid_collection_sends_nothing_more_and_writes_no_row(self):
+        chain, _ = bundle_chain()
+        self.candidate()
+        collector = self.collector(chain)
+        collector.helius.gate = lambda n: (collector.stop.set() if n == 3 else None)       # the runner stops during the 3rd request
+        self.assertEqual(collector.signals_pass(), 1)
+        self.assertEqual(chain.count(), 3)                                                   # nothing after the stop was seen
+        self.assertEqual(self.signals(), [])                                                 # no partial row: it is collected again
+        self.assertEqual(self.store.rows('events', kind='wallet_buy'), [])
+        self.assertEqual(collector.counts['stopped'], 1)
+        again = self.collector(chain)                                                        # the next start collects it in full
+        again.signals_pass()
+        self.assertFalse(self.signals()[0]['partial'])
+
+    def test_a_stop_ends_a_paced_wait_without_another_request(self):
+        chain, _ = bundle_chain()
+        self.candidate()
+        collector = self.collector(chain, gate=lambda n: no_token() if n > 1 else None)
+        collector.sleep = lambda s: (self.sleeps.append(s), collector.stop.set())
+        collector.signals_pass()
+        self.assertEqual((len(self.sleeps), self.helius.attempts, self.signals()), (1, 2, []))
+
+    # -- 2. no lookahead
+    def test_LINT2b_no_post_decision_data_in_the_row(self):
+        """The decision falls 40 s after graduation: swaps after it are never fetched or counted; the supply is the screen's."""
+        chain, w = bundle_chain()                                   # buyers at GRAD (+0 s) and GRAD + 60 slots (+24 s)
+        late_buyer = addr(121)
+        chain.swap(GRAD + 150, {late_buyer: 10 ** 12})             # +60 s: AFTER the decision, inside window_s = 120
+        decision = block_time(GRAD) + 40
+        self.screened(MINT, age=self.now - decision, supply=SUPPLY)
+        collector = self.collector(chain)
+        collector.signals_pass()
+        (row,) = self.signals()
+        self.assertEqual(row['decision_ts'], decision)
+        self.assertEqual((row['window_cut_by_decision'], row['window_s_effective'], row['window_after_decision_s']), (True, 40.0, 0.0))
+        self.assertNotIn(late_buyer, row['buyer_wallets'])
+        fetched = [p for m, p in chain.calls if m == 'getTransaction']
+        times = {r['signature']: r['blockTime'] for r in chain.addresses[POOL]}
+        self.assertTrue(all(times[s] <= decision for s in fetched if s in times), 'a post-decision swap was fetched')
+        self.assertEqual(chain.count('getTokenSupply'), 0)                                   # the screen's (pre-decision) supply
+        self.assertEqual(row['supply_source'], 'screen')
+        self.assertEqual(row['late_s'], round(row['collected_at'] - decision, 3))
+        self.assertGreater(row['late_s'], 0)
+
+    def test_a_signature_without_block_time_is_never_assumed_pre_decision(self):
+        chain, w = bundle_chain()
+        for r in chain.addresses[POOL]:
+            if r['slot'] == GRAD + 60:
+                r['blockTime'] = None
+        self.screened(MINT, age=300)
+        collector = self.collector(chain)
+        collector.signals_pass()
+        (row,) = self.signals()
+        self.assertNotIn(w['org'], row['buyer_wallets'])
+        self.assertEqual(row['window_unknown_time_skipped'], 1)
+
+    def test_the_backfill_cutoff_is_graduation_time_not_the_row_time(self):
+        self.screened(addr(31), migrated_age=30000, row_age=300)          # a fresh row of an OLD launch: never collected
+        old_row_fresh_launch = self.screened(addr(32), migrated_age=300, row_age=30000)
+        collector = self.collector(Chain())
+        self.assertEqual([r[0] for r in collector.pending(self.now, 10)], [old_row_fresh_launch])
+
+    # -- 3. hubs and honesty
+    def test_a_funder_of_many_mints_is_a_detected_hub_not_a_bundle(self):
+        hub = addr(90)                                              # funds a, b, c in bundle_chain
+        for i in range(4):                                          # ... and buyers of 4 other mints in the last 24 h
+            self.funding_event(hub, addr(60 + i), addr(70 + i), self.now - 3600)
+        chain, w = bundle_chain()
+        self.screened(MINT, age=300)
+        collector = self.collector(chain)
+        collector.signals_pass()
+        (row,) = self.signals()
+        self.assertEqual(row['funding_clusters'], [])                                        # the hub never forms a cluster
+        self.assertEqual(row['hub_funders'], [hub])
+        self.assertEqual(row['funders'], {w['a']: hub, w['b']: hub, w['c']: hub})            # the map is in the row
+        self.assertEqual(row['bundled_wallets'], 4)                                          # the same-slot evidence is kept
+        self.assertEqual([json.loads(e['payload'])['funder'] for e in self.store.rows('events', kind='wallet_hub')], [hub])
+        self.assertEqual(len(self.store.rows('events', kind='wallet_funding')), 4 + 3)     # every lookup is persisted
+
+    def test_four_mints_or_old_fundings_are_not_a_hub(self):
+        hub = addr(90)
+        for i in range(3):
+            self.funding_event(hub, addr(60 + i), addr(70 + i), self.now - 3600)
+        self.funding_event(hub, addr(63), addr(73), self.now - 300 - 86400 - 1)          # outside the 24 h window
+        chain, w = bundle_chain()
+        self.screened(MINT, age=300)
+        collector = self.collector(chain)
+        collector.signals_pass()
+        self.assertEqual(self.signals()[0]['funding_clusters'][0]['source'], hub)
+
+    def test_the_basis_is_same_slot_only_when_every_funding_lookup_failed(self):
+        chain, _ = bundle_chain()
+        chain.fail['getSignaturesForAddress'] = lambda params: ProviderError('HTTP_500', False) if params[0] != POOL else None
+        self.screened(MINT, age=300)
+        collector = self.collector(chain)
+        collector.signals_pass()
+        row = self.signals()[0]
+        self.assertTrue(row['funders'] and all(v is None for v in row['funders'].values()))
+        self.assertEqual(row['bundle_score_basis'], 'same_slot_only')
+
+    # -- 4. sharing the low lane
+    def test_it_yields_while_fewer_than_reserve_plus_one_tokens_are_left(self):
+        chain, _ = bundle_chain()
+        self.candidate()
+        tokens = {'n': 1.5}
+
+        class Limiter:
+            def available(self):
+                return tokens['n']
+        collector = self.collector(chain, {'shed_wait_s': 2.0})
+        collector.helius.transport = type('T', (), {'limiter': Limiter()})()
+        collector.sleep = lambda s: (self.sleeps.append(s), tokens.__setitem__('n', 2.0 if len(self.sleeps) >= 3 else 1.5))
+        collector.signals_pass()
+        self.assertEqual(self.sleeps, [0.5, 0.5, 0.5])                                       # paced at 0.5 s, nothing sent meanwhile
+        self.assertEqual(collector.counts['yielded'], 3)
+        self.assertFalse(self.signals()[0]['partial'])
+        self.assertEqual(W.DEFAULTS['pace_s'], 0.5)
+
+    def test_the_real_low_lane_limiter_reports_what_is_available_without_taking_it(self):
+        from lean.providers import LowLaneLimiter
+        t = {'now': 0.0}
+        limiter = LowLaneLimiter(2.0, 2, clock=lambda: t['now'])
+        self.assertEqual(limiter.available(), 2.0)
+        self.assertEqual(limiter.available(), 2.0)                                           # a peek takes nothing
+        limiter.acquire()
+        self.assertEqual(limiter.available(), 1.0)
+        t['now'] = 0.25
+        self.assertEqual(limiter.available(), 1.5)
+        limiter.shed(5)
+        self.assertEqual(limiter.available(), 0.0)
+
+    # -- 6. outcomes
+    def test_hazard_rejects_close_at_once_and_soft_rejects_wait(self):
+        collector = self.collector(Chain())
+        for mint, reasons in ((addr(81), ['ACTIVE_MINT_AUTHORITY']), (addr(82), ['MARKET_CAP_BELOW_MIN'])):
+            self.screened(mint, action='REJECT', reasons=reasons)
+            self.buy_event(mint)
+        collector.resolve_outcomes(self.now)
+        outcomes = {json.loads(e['payload'])['mint']: json.loads(e['payload']) for e in self.store.rows('events', kind='wallet_outcome')}
+        self.assertEqual((outcomes[addr(81)]['outcome'], outcomes[addr(81)]['source']), ('UNKNOWN', 'NEVER_RESOLVABLE'))
+        self.assertNotIn(addr(82), outcomes)
+
+    def test_unresolved_mints_are_visited_round_robin(self):
+        collector = self.collector(Chain(), {'resolve_batch': 1})
+        mints = [addr(84 + i) for i in range(3)]
+        for mint in mints:
+            self.screened(mint)
+            self.buy_event(mint)
+        seen = []
+        real = W.path_outcome
+        try:
+            W.path_outcome = lambda db, mint, cfg: (seen.append(mint), (None, 'PATH', {}))[1]
+            for _ in range(3):
+                collector.resolve_outcomes(self.now)
+        finally:
+            W.path_outcome = real
+        self.assertEqual(sorted(seen), sorted(mints))                                        # not the oldest one three times
+        self.assertEqual(collector.health()['unresolved'], 3)
+
+    def test_health_reports_the_queue_depth(self):
+        chain, _ = bundle_chain()
+        self.candidate()
+        collector = self.collector(chain, {'max_per_pass': 1})
+        collector.signals_pass()
+        health = collector.health()
+        self.assertEqual((health['enabled'], health['pending'], health['collected']), (True, 1, 1))
 
 
 class HookTests(unittest.TestCase):

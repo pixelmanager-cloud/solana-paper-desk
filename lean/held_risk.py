@@ -131,6 +131,8 @@ class HeldRisk:
         # nothing and is skipped silently (retried next pass). None = the exit lane (unit tests that build a bare Runner).
         self.low = None
         self.counts['shed'] = 0
+        self.counts['account_retries'] = 0
+        self._account_retry = False          # LINT2b: a shed scheduled account check is retried ONCE on the next pass
         self._replay()
 
     def _lane(self, runner):
@@ -290,8 +292,11 @@ class HeldRisk:
         positions, states = runner.store.positions(), runner.store.position_states()
         held = {m: states[m] for m in positions if m in states}
         now = runner._now()
-        if self.passes % self.cfg.freeze_check_every == 1 or self.cfg.freeze_check_every == 1:
-            self._account_checks(runner, held)
+        due = self.passes % self.cfg.freeze_check_every == 1 or self.cfg.freeze_check_every == 1
+        retry, self._account_retry = self._account_retry and not due, False
+        if due or retry:                     # LINT2b: a shed check is not skipped until the next freeze_check_every cycle
+            self.counts['account_retries'] += 1 if retry else 0
+            self._account_checks(runner, held, retry=retry)
         probes = 0
         for mint, row in held.items():
             if runner.stop.is_set() or probes >= self.cfg.max_probes_per_pass:
@@ -338,7 +343,7 @@ class HeldRisk:
             return
         self._route_ok(mint, row, life, net_lamports(quote.out_amount, runner.pcfg), now)
 
-    def _account_checks(self, runner, held):
+    def _account_checks(self, runner, held, retry=False):
         """ONE batched read of [mint, pool] per held position on the low lane (LINT1): freeze authority, pool closed or migrated."""
         mints = list(held)
         for start in range(0, len(mints), 50):
@@ -349,8 +354,9 @@ class HeldRisk:
             try:
                 result, _raw, _meta = self._lane(runner).helius.get_multiple_accounts(keys)
             except ProviderError as error:
-                if providers.is_shed(error):                          # LINT1: nothing was sent; the next check retries
+                if providers.is_shed(error):                          # LINT1: nothing was sent
                     self.counts['shed'] += 1
+                    self._account_retry = not retry                   # LINT2b: retried once on the next pass, not 6 passes later
                     continue
                 runner._error(error.code, transient=error.transient, scope='held_risk', message='%d positions' % len(chunk), raw=error.raw)
                 continue

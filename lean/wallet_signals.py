@@ -29,8 +29,25 @@ the candidate with what it learned (``unavailable['stopped'] = 'LANE_SHED'``), o
 A hard per-candidate cap ``max_calls`` counts the requests actually SENT; ``shed()`` (credit shedding, L15) refuses before a request.
 A missing field is null with a reason in ``unavailable``, never an error. A failure here never touches entries, exits or the accounting.
 
+LINT2b (pre-deploy fixes):
+* No lookahead. Every row records ``decision_ts`` (the candidate's first PASS/REJECT screen decision), ``collected_at`` and
+  ``late_s``. The swap window ends at ``min(graduation + window_s, decision_ts)`` by BLOCK time (a window signature without a
+  block time is skipped); ``window_cut_by_decision`` / ``window_s_effective`` say how much was left, and
+  ``window_after_decision_s`` is how far the examined window runs past the decision (always 0 when the decision is known; null
+  when it is not). The supply is the one the screen read (``supply_source``); ``smart_buyers_count`` uses only outcomes
+  resolved, and buys recorded, BEFORE ``decision_ts``. The backfill cutoff is ``migrated_at``, not the row time.
+* Bundle poisoning. The row stores the buyer -> funder map (``funders``). A funder that funded buyers of at least
+  ``hub_min_mints`` distinct mints within ``hub_window_s`` before the decision is a HUB (an exchange or a service, detected,
+  never hard-coded) and never forms a cluster; every lookup is persisted as a ``wallet_funding`` event and a newly seen hub as
+  a ``wallet_hub`` event. ``bundle_score_basis`` is ``same_slot_only`` unless at least one funding source was found.
+* Sharing the low lane: a call is only made while at least ``reserve_tokens`` more tokens would remain for the other low-lane
+  users (path recorder, L11 checks, L12F), paced at ``pace_s`` (0.5 s).
+* Shutdown: ``stop`` is checked before every request; a stopped collection writes NOTHING (it is collected again later).
+* Outcomes: candidates that can never resolve (hazard rejects with no path and no fill) are closed at once as UNKNOWN, and the
+  unresolved mints are visited round-robin, so new WIN/RUG outcomes are not stuck behind a 12 h backlog.
+
 Storage: one ``observations(kind='wallet_signals')`` row per candidate (canonical JSON bytes + the same figures in ``meta``),
-append-only ``events`` rows of kind ``wallet_buy`` / ``wallet_outcome``. The store schema is untouched (a lean store is
+append-only ``events`` rows of kind ``wallet_buy`` / ``wallet_outcome`` / ``wallet_funding`` / ``wallet_hub``. The store schema is untouched (a lean store is
 never migrated), so ``lean_wallets`` is a view over those events, not a table.
 """
 import json
@@ -48,7 +65,7 @@ from lean.store import StoreError
 
 log = logging.getLogger('lean.wallet_signals')
 
-VERSION = 'wallet_signals_v1'
+VERSION = 'wallet_signals_v2'
 SLOT_SECONDS = 0.4
 CAVEAT = 'shared funding source is a signal, not proof of common ownership'
 OBSERVATION_KIND = 'wallet_signals'
@@ -68,7 +85,8 @@ DEFAULTS = {
     'min_cluster': 2,
     'ignore_funders': [],          # known hubs (exchanges, airdrop services) that must not form a cluster
     'max_calls': 16,               # HARD cap per candidate: 2 pages + supply + 6 txs + 3 x 2 funding = 15 (+1 spare)
-    'pace_s': 0.25,                # wait between tries when the shared low lane has no token right now
+    'pace_s': 0.5,                 # wait between tries when the shared low lane has no token right now (LINT2b: 0.5)
+    'reserve_tokens': 1,           # LINT2b: only call while this many MORE tokens would remain for the other low-lane users
     'shed_wait_s': 30.0,           # total patience per request for a token; then the candidate stops (or is retried later)
     'max_per_pass': 2,             # candidates per signals pass
     'pass_interval_s': 5.0,
@@ -85,7 +103,10 @@ DEFAULTS = {
     'resolve_interval_s': 300.0,
     'resolve_batch': 200,
     'outcome_max_age_s': 43200,    # unresolved after this long -> outcome UNKNOWN (never scored)
+    'hub_min_mints': 5,            # LINT2b: a funder of buyers of >= this many distinct mints ...
+    'hub_window_s': 86400.0,       # ... within this window before the decision is a hub (never a cluster)
 }
+SOFT_SCREEN_REASONS = frozenset({'MARKET_CAP_BELOW_MIN', 'MARKET_CAP_ABOVE_MAX', 'LIQUIDITY_BELOW_MIN'})
 
 
 class SignalError(Exception):
@@ -134,6 +155,8 @@ def make_config(overrides=None):
     if not 0 < cfg['pace_s'] <= 60 or not 0 <= cfg['shed_wait_s'] <= 600 or cfg['pass_interval_s'] <= 0 or cfg['retry_delay_s'] < 0 \
             or cfg['resolve_interval_s'] <= 0:
         raise ConfigError('pace or interval out of range')
+    if not 0 <= cfg['reserve_tokens'] <= 10 or cfg['hub_min_mints'] < 2 or not 0 < cfg['hub_window_s'] <= 30 * 86400:
+        raise ConfigError('reserve_tokens, hub_min_mints or hub_window_s out of range')
     if cfg['win_multiple'] <= 1 or not 0 < cfg['rug_price_frac'] < 1 or not 0 < cfg['rug_loss_frac'] <= 1 or not 0 < cfg['smart_threshold'] < 1:
         raise ConfigError('outcome thresholds out of range')
     cfg['ignore_funders'] = list(cfg['ignore_funders'])
@@ -251,11 +274,12 @@ def parse_supply(result):
     return int(amount)
 
 
-def analyze(*, grad_slot, txs, funding, supply_raw, cfg):
+def analyze(*, grad_slot, txs, funding, supply_raw, cfg, hubs=()):
     """The figures of one candidate from already parsed window transactions (oldest first). Pure.
 
-    ``funding`` = {wallet: source or None} for the wallets whose funding was looked up. Returns a dict whose figures are
-    null (with a reason in ``unavailable``) when they cannot be computed."""
+    ``funding`` = {wallet: source or None} for the wallets whose funding was looked up. ``hubs`` are detected hub funders (LINT2b):
+    like ``ignore_funders`` they never form a cluster. Returns a dict whose figures are null (with a reason in ``unavailable``) when
+    they cannot be computed. ``funders`` is the buyer -> funder map as looked up (null = no source found)."""
     unavailable = {}
     first = {}                                   # buyer -> (slot, order)
     last_post = {}
@@ -267,7 +291,8 @@ def analyze(*, grad_slot, txs, funding, supply_raw, cfg):
     buyers = sorted(first, key=lambda w: first[w])
     out = {'buyers': len(buyers), 'same_slot_buyers': None, 'sniper_count': None, 'bundle_score': None,
            'bundled_supply_pct': None, 'bundled_wallets': None, 'funding_checked': len(funding), 'funding_clusters': [],
-           'buyer_wallets': buyers}
+           'buyer_wallets': buyers, 'funders': dict(sorted(funding.items())),
+           'hub_funders': sorted({s for s in funding.values() if s is not None and s in set(hubs)})}
     if not buyers:
         out.update(same_slot_buyers=0, sniper_count=0, bundled_wallets=0)
         unavailable['bundle_score'] = unavailable['bundled_supply_pct'] = 'NO_BUYERS_IN_WINDOW'
@@ -275,7 +300,7 @@ def analyze(*, grad_slot, txs, funding, supply_raw, cfg):
         return out
     same_slot = [w for w in buyers if first[w][0] == grad_slot]
     snipers = [w for w in buyers if first[w][0] - grad_slot <= cfg['sniper_slots']]
-    ignore = set(cfg['ignore_funders'])
+    ignore = set(cfg['ignore_funders']) | set(hubs)
     by_source = {}
     for wallet, source in funding.items():
         if source is not None and source not in ignore:
@@ -285,7 +310,7 @@ def analyze(*, grad_slot, txs, funding, supply_raw, cfg):
     bundled = set(same_slot) | {w for c in clusters for w in c['wallets']}
     out.update(same_slot_buyers=len(same_slot), sniper_count=len(snipers), bundled_wallets=len(bundled),
                bundle_score=round(len(bundled) / len(buyers), 4), funding_clusters=clusters,
-               bundle_score_basis='same_slot+funding' if funding else 'same_slot')
+               bundle_score_basis='same_slot+funding' if any(s is not None for s in funding.values()) else 'same_slot_only')
     if cfg['funding_wallets'] and not funding:
         unavailable['funding'] = 'NOT_CHECKED'
     if supply_raw is None:
@@ -307,11 +332,13 @@ class _Cap(Exception):
 
 
 class _Calls:
-    def __init__(self, limit, shed):
-        self.limit, self.used, self.shed, self.learned = limit, 0, shed, False
+    def __init__(self, limit, shed, stop=None):
+        self.limit, self.used, self.shed, self.learned, self.stop = limit, 0, shed, False, stop
 
     def check(self):
-        """Raise _Cap before a request that the cap or the credit shed forbids."""
+        """Raise _Cap before a request that the stop (LINT2b), the cap or the credit shed forbids."""
+        if self.stop is not None and self.stop.is_set():
+            raise _Cap('STOPPED')
         if self.shed is not None and self.shed():
             raise _Cap('CREDIT_SHED')
         if self.used >= self.limit:
@@ -336,14 +363,19 @@ class WalletSignals:
         self.code_version, self.strategy_version = code_version, strategy_version
         self.stop = stop or threading.Event()
         self._attempts = {}                        # mint -> (count, not_before)
-        self._wallets = {}                         # wallet -> {'buys': {mint: slot_offset}}
-        self._outcomes = {}                        # mint -> outcome
+        self._wallets = {}                         # wallet -> {mint: ts of its wallet_buy event}
+        self._outcomes = {}                        # mint -> (outcome, ts of its wallet_outcome event)
         self._buy_mints = {}                       # mint -> first wallet_buy ts
+        self._fundings = {}                        # LINT2b: funder -> {mint: first wallet_funding ts}
+        self._hubs = set()                         # LINT2b: funders already recorded as hubs (wallet_hub events)
         self._watermark = 0
         self._wallet_lock = threading.RLock()
         self._last_resolve = 0.0
+        self._resolve_cursor = 0
+        self.last_pending = None                   # LINT2b: health (queue depth = candidates waiting for a row)
+        self.last_unresolved = None
         self.counts = {'collected': 0, 'partial': 0, 'transient_failures': 0, 'calls': 0, 'cap_stops': 0, 'shed_stops': 0,
-                       'lane_sheds': 0, 'outcomes': 0, 'errors': 0}
+                       'lane_sheds': 0, 'outcomes': 0, 'errors': 0, 'stopped': 0, 'yielded': 0, 'never_resolvable': 0}
 
     # -- plumbing -------------------------------------------------------------------------------------------------------
     def _query(self, sql, args=()):
@@ -353,14 +385,20 @@ class WalletSignals:
     def _write(self, function, *args, **kwargs):
         return function(*args, code_version=self.code_version, strategy_version=self.strategy_version, **kwargs)
 
+    def health(self):
+        """LINT2b: counters + queue depth (``pending``: candidates waiting for their row at the last pass) + unresolved mints."""
+        return {'enabled': True, **self.counts, 'pending': self.last_pending, 'unresolved': self.last_unresolved}
+
     def pending(self, now, limit):
-        """[(candidate_id, mint, pool, slot, migrated_at)]: screened (PASS or REJECT), old enough that the window is
-        complete, within the age limit, with no ``wallet_signals`` row yet. Oldest first."""
+        """[(candidate_id, mint, pool, slot, migrated_at, decision_ts)]: screened (PASS or REJECT), old enough that the window is
+        complete, graduated within ``backfill_max_age_s`` (LINT2b: by ``migrated_at``, not the row time), with no
+        ``wallet_signals`` row yet. ``decision_ts`` is the FIRST PASS/REJECT screen decision. Oldest first."""
         cutoff = now - self.cfg['backfill_max_age_s']
         rows = self._query(
-            "SELECT c.id,c.mint,c.pool,c.slot,c.migrated_at FROM candidates c WHERE c.ts>? AND c.pool IS NOT NULL AND c.slot IS NOT NULL "
-            "AND c.migrated_at IS NOT NULL AND c.migrated_at<=? AND NOT EXISTS (SELECT 1 FROM observations o WHERE o.mint=c.mint AND o.kind=?) "
-            "AND EXISTS (SELECT 1 FROM decisions d WHERE d.mint=c.mint AND d.candidate_id=c.id AND d.kind='screen' AND d.action IN ('PASS','REJECT')) "
+            "SELECT c.id,c.mint,c.pool,c.slot,c.migrated_at,(SELECT MIN(d.ts) FROM decisions d WHERE d.mint=c.mint AND d.candidate_id=c.id "
+            "AND d.kind='screen' AND d.action IN ('PASS','REJECT')) AS decision_ts FROM candidates c WHERE c.migrated_at>? "
+            "AND c.pool IS NOT NULL AND c.slot IS NOT NULL AND c.migrated_at<=? "
+            "AND NOT EXISTS (SELECT 1 FROM observations o WHERE o.mint=c.mint AND o.kind=?) AND decision_ts IS NOT NULL "
             'ORDER BY c.id LIMIT ?', (cutoff, now - self.cfg['window_s'] - 5, OBSERVATION_KIND, int(limit)))
         return rows
 
@@ -368,22 +406,24 @@ class WalletSignals:
         """One bounded pass: collect up to ``max_per_pass`` candidates, then (throttled) resolve token outcomes."""
         now = self.clock()
         done = 0
-        for cid, mint, pool, slot, _migrated in self.pending(now, self.cfg['backfill_limit']):
+        rows = self.pending(now, self.cfg['backfill_limit'])
+        self.last_pending = len(rows)
+        for cid, mint, pool, slot, _migrated, decision_ts in rows:
             if self.stop.is_set() or done >= self.cfg['max_per_pass']:
                 break
             attempts, not_before = self._attempts.get(mint, (0, 0.0))
             if now < not_before:
                 continue
             try:
-                self.collect(cid, mint, pool, slot)
+                self.collect(cid, mint, pool, slot, decision_ts=decision_ts)
             except Exception as error:               # recorded; a recorder failure never reaches entries or exits
                 self.counts['errors'] += 1
                 self._record_error('WALLET_SIGNALS_FAILED', mint, type(error).__name__)
                 self._attempts[mint] = (attempts + 1, now + self.cfg['retry_delay_s'])
                 if attempts + 1 > self.cfg['max_retries']:       # never retried forever: close it out with the reason
-                    self._close_out(cid, mint, pool, slot, 'COLLECT_FAILED:' + type(error).__name__)
+                    self._close_out(cid, mint, pool, slot, 'COLLECT_FAILED:' + type(error).__name__, decision_ts)
             done += 1
-        if now - self._last_resolve >= self.cfg['resolve_interval_s']:
+        if not self.stop.is_set() and now - self._last_resolve >= self.cfg['resolve_interval_s']:
             self._last_resolve = now
             try:
                 self.resolve_outcomes(now)
@@ -392,12 +432,14 @@ class WalletSignals:
                 self._record_error('WALLET_OUTCOMES_FAILED', None, type(error).__name__)
         return done
 
-    def _close_out(self, cid, mint, pool, slot, reason):
+    def _close_out(self, cid, mint, pool, slot, reason, decision_ts=None):
         try:
             self._attempts.pop(mint, None)
+            now = self.clock()
             features = {'version': VERSION, 'caveat': CAVEAT, 'mint': mint, 'pool': pool, 'grad_slot': slot, 'partial': True,
                         'unavailable': {'window': reason}, 'bundle_score': None, 'sniper_count': None, 'same_slot_buyers': None,
-                        'bundled_supply_pct': None, 'smart_buyers_count': None, 'calls': 0, 'collected_at': self.clock()}
+                        'bundled_supply_pct': None, 'smart_buyers_count': None, 'calls': 0, 'collected_at': now,
+                        'decision_ts': decision_ts, 'late_s': None if decision_ts is None else round(now - decision_ts, 3)}
             self._write(self.store.add_observation, OBSERVATION_KIND, _canonical(features), mint=mint, candidate_id=cid,
                         meta=_meta_summary(features), ts=self.clock())
         except Exception:
@@ -418,28 +460,44 @@ class WalletSignals:
             self.stop.wait(self.cfg['pass_interval_s'])
 
     # -- one candidate --------------------------------------------------------------------------------------------------
+    def _yield_lane(self):
+        """LINT2b: True when taking a token now would leave fewer than ``reserve_tokens`` for the other low-lane users (path
+        recorder, L11 account checks, L12F). Best effort: a peek at the shared bucket, nothing is taken."""
+        reserve = self.cfg['reserve_tokens']
+        limiter = getattr(getattr(self.helius, 'transport', None), 'limiter', None)
+        available = getattr(limiter, 'available', None)
+        if not reserve or available is None:
+            return False
+        return available() < 1 + reserve
+
     def _rpc(self, calls, method, params, label, retained, mint, cid):
-        """One request on the shared low lane. ``LANE_SHED`` sent nothing and costs nothing against the cap: a ``no_token`` shed is
-        paced (this collector has its own thread) up to ``shed_wait_s``; a shed window or lost patience stops the candidate (or, when
-        nothing was learned yet, raises a transient error so it is retried later)."""
-        calls.check()
+        """One request on the shared low lane. ``LANE_SHED`` sent nothing and costs nothing against the cap: a ``no_token`` shed (or
+        a yield to the other low-lane users) is paced (this collector has its own thread) up to ``shed_wait_s``; a shed window or
+        lost patience stops the candidate (or, when nothing was learned yet, raises a transient error so it is retried later).
+        ``stop`` is checked before every try (LINT2b)."""
         waited = 0.0
         while True:
-            try:
-                result, raw, meta = self.helius.rpc(method, params)
-                break
-            except ProviderError as error:
-                if error.code != LANE_SHED:
-                    calls.used += 1
-                    self.counts['calls'] += 1
-                    raise
-                self.counts['lane_sheds'] += 1
-                if error.meta.get('why') != 'no_token' or waited >= self.cfg['shed_wait_s'] or self.stop.is_set():
-                    if not calls.learned:
+            calls.check()                                              # stop, call cap, credit shed: before ANY request
+            if self._yield_lane():
+                self.counts['yielded'] += 1
+                why, error = 'no_token', ProviderError(LANE_SHED, True, meta={'why': 'yield'})
+            else:
+                try:
+                    result, raw, meta = self.helius.rpc(method, params)
+                    break
+                except ProviderError as failure:
+                    if failure.code != LANE_SHED:
+                        calls.used += 1
+                        self.counts['calls'] += 1
                         raise
-                    raise _Cap(LANE_SHED) from None
-                self.sleep(self.cfg['pace_s'])
-                waited += self.cfg['pace_s']
+                    self.counts['lane_sheds'] += 1
+                    why, error = failure.meta.get('why'), failure
+            if why != 'no_token' or waited >= self.cfg['shed_wait_s']:
+                if not calls.learned:
+                    raise error
+                raise _Cap(LANE_SHED) from None
+            self.sleep(self.cfg['pace_s'])
+            waited += self.cfg['pace_s']
         calls.used += 1
         self.counts['calls'] += 1
         keep = self.cfg['retain_raw']
@@ -454,13 +512,25 @@ class WalletSignals:
             options['before'] = before
         return parse_signatures(self._rpc(calls, 'getSignaturesForAddress', [address, options], label, True, mint, cid))
 
-    def collect(self, cid, mint, pool, grad_slot):
-        """Collect, analyze and record one candidate. A transient failure before anything was learned is retried later
-        (up to ``max_retries``); everything else is recorded with its reasons."""
+    def _screen_supply(self, cid, mint):
+        """The supply the SCREEN read (pre-decision), from its first PASS/REJECT decision, or None."""
+        for row in self.store.rows('decisions', mint=mint, kind='screen', limit=100):
+            if row['candidate_id'] == cid and row['action'] in ('PASS', 'REJECT'):
+                try:
+                    value = json.loads(row['features']).get('supply_raw')
+                    return int(value) if value is not None and int(value) > 0 else None
+                except (ValueError, TypeError, AttributeError):
+                    return None
+        return None
+
+    def collect(self, cid, mint, pool, grad_slot, *, decision_ts=None):
+        """Collect, analyze and record one candidate AS OF ``decision_ts`` (LINT2b). A transient failure before anything was learned
+        is retried later (up to ``max_retries``); a stop writes nothing; everything else is recorded with its reasons."""
         cfg, started = self.cfg, self.clock()
-        calls = _Calls(cfg['max_calls'], self.shed)
+        calls = _Calls(cfg['max_calls'], self.shed, self.stop)
         unavailable, notes = {}, {}
         txs, funding, supply, window = [], {}, None, []
+        supply_source = None
         try:
             # -- 1. the pool's signatures back to the graduation slot (oldest first afterwards)
             seen, before, reached = [], None, False
@@ -488,15 +558,22 @@ class WalletSignals:
                 notes['oldest_slot_seen'] = ordered[0]['slot'] if ordered else None
             else:
                 window = [s for s in ordered if not s['failed'] and grad_slot <= s['slot'] <= grad_slot + window_slots]
+                notes.update(_window_cut(window, ordered, grad_slot, decision_ts, cfg['window_s']))
+                if decision_ts is not None:           # LINT2b: nothing after the decision (unknown block time = unknown = out)
+                    window = [s for s in window if s['block_time'] is not None and s['block_time'] <= decision_ts]
             notes.update(signatures_seen=len(seen), window_txs=len(window), examined_txs=0)
             if 'window' not in unavailable:
-                # -- 2. the supply (for bundled_supply_pct)
-                try:
-                    supply = parse_supply(self._rpc(calls, 'getTokenSupply', [mint], 'supply', False, mint, cid))
-                except ProviderError as error:
-                    unavailable['supply'] = 'SUPPLY_UNAVAILABLE:' + error.code
-                except SignalError as error:
-                    unavailable['supply'] = error.code
+                # -- 2. the supply (for bundled_supply_pct): the one the screen read, else a call (flagged: read after the decision)
+                supply = self._screen_supply(cid, mint)
+                supply_source = 'screen' if supply is not None else None
+                if supply is None:
+                    try:
+                        supply = parse_supply(self._rpc(calls, 'getTokenSupply', [mint], 'supply', False, mint, cid))
+                        supply_source = 'rpc_after_decision'
+                    except ProviderError as error:
+                        unavailable['supply'] = 'SUPPLY_UNAVAILABLE:' + error.code
+                    except SignalError as error:
+                        unavailable['supply'] = error.code
                 # -- 3. the earliest window transactions
                 notes['tx_skipped'] = 0
                 for entry in window[:cfg['max_swap_txs']]:
@@ -507,12 +584,14 @@ class WalletSignals:
                         view = parse_swap_tx(body, entry['signature'], mint, pool)
                     except (ProviderError, SignalError):
                         view = None
+                    if view is not None and decision_ts is not None and (view['block_time'] is None or view['block_time'] > decision_ts):
+                        view = None                   # LINT2b: defensive, the body disagrees with its signature's time
                     if view is None or view['failed']:
                         notes['tx_skipped'] += 1
                         continue
                     txs.append(view)
                 notes['truncated_by_cap'] = len(window) > cfg['max_swap_txs']
-                # -- 4. funding sources (1 hop) of the earliest buyers
+                # -- 4. funding sources (1 hop) of the earliest buyers (their history BEFORE their buy: pre-decision)
                 firsts = []
                 for tx in txs:
                     for owner in tx['buyers']:
@@ -521,6 +600,9 @@ class WalletSignals:
                 for wallet, signature in firsts[:cfg['funding_wallets']]:
                     funding[wallet] = self._funder(calls, wallet, signature, mint, cid, unavailable)
         except _Cap as stop:
+            if stop.code == 'STOPPED':                # LINT2b: the runner is stopping: no row, collected again next start
+                self.counts['stopped'] += 1
+                return None
             unavailable['stopped'] = stop.code
             self.counts['shed_stops' if stop.code in ('CREDIT_SHED', LANE_SHED) else 'cap_stops'] += 1
         except ProviderError as error:
@@ -536,20 +618,27 @@ class WalletSignals:
         self._attempts.pop(mint, None)
         notes['examined_txs'] = len(txs)
         window_ok = 'window' not in unavailable
+        wallets, watermark = self.wallet_table(asof=decision_ts)
+        hubs = self.hubs_asof(decision_ts if decision_ts is not None else started, mint, funding.values())
         figures = analyze(grad_slot=grad_slot, txs=txs, funding=funding,
-                          supply_raw=supply, cfg=cfg) if window_ok else {
+                          supply_raw=supply, cfg=cfg, hubs=hubs) if window_ok else {
             'buyers': None, 'same_slot_buyers': None, 'sniper_count': None, 'bundle_score': None, 'bundled_supply_pct': None,
-            'bundled_wallets': None, 'funding_checked': 0, 'funding_clusters': [], 'buyer_wallets': [], 'unavailable': {}}
+            'bundled_wallets': None, 'funding_checked': 0, 'funding_clusters': [], 'buyer_wallets': [], 'funders': {},
+            'hub_funders': [], 'unavailable': {}}
         unavailable = {**figures.pop('unavailable'), **unavailable}
         if not window_ok:
             for field in ('same_slot_buyers', 'sniper_count', 'bundle_score', 'bundled_supply_pct'):
                 unavailable.setdefault(field, unavailable['window'])
-        wallets, watermark = self.wallet_table()
+        if decision_ts is None:
+            unavailable['decision_ts'] = 'UNKNOWN'
         smart = [w for w in figures['buyer_wallets'] if self.is_smart(wallets.get(w))] if window_ok else None
         features = {'version': VERSION, 'caveat': CAVEAT, 'mint': mint, 'pool': pool, 'grad_slot': grad_slot,
                     'window_s': cfg['window_s'], **notes, **figures, 'smart_buyers_count': None if smart is None else len(smart),
-                    'smart_wallets': smart, 'smart_asof_event_id': watermark, 'calls': calls.used, 'call_cap': cfg['max_calls'],
-                    'unavailable': unavailable, 'partial': bool(unavailable), 'collected_at': started}
+                    'smart_wallets': smart, 'smart_asof_event_id': watermark, 'smart_asof_ts': decision_ts,
+                    'calls': calls.used, 'call_cap': cfg['max_calls'], 'supply_source': supply_source,
+                    'decision_ts': decision_ts, 'collected_at': started,
+                    'late_s': None if decision_ts is None else round(started - decision_ts, 3),
+                    'unavailable': unavailable, 'partial': bool(unavailable)}
         row_id = self._write(self.store.add_observation, OBSERVATION_KIND, _canonical(features), mint=mint, candidate_id=cid,
                              meta=_meta_summary(features), ts=self.clock())
         # the candidate's own buys are written AFTER its smart count: a wallet is never rated by the token being scored
@@ -557,6 +646,17 @@ class WalletSignals:
             first = next(tx for tx in txs if wallet in tx['buyers'])
             self._write(self.store.record, 'wallet_buy', {'wallet': wallet, 'mint': mint, 'candidate_id': cid, 'slot_offset': first['slot'] - grad_slot,
                                                          'signals_observation': row_id}, ts=self.clock())
+        # LINT2b: the funding lookups persist (hub detection); a newly detected hub is recorded once
+        for wallet, source in sorted(figures['funders'].items()):
+            if source is not None:
+                self._write(self.store.record, 'wallet_funding', {'funder': source, 'wallet': wallet, 'mint': mint, 'candidate_id': cid},
+                            ts=self.clock())
+        for hub in figures['hub_funders']:
+            if hub not in self._hubs:
+                self._hubs.add(hub)
+                self._write(self.store.record, 'wallet_hub', {'funder': hub, 'detected_on': mint, 'asof_ts': decision_ts,
+                                                             'min_mints': cfg['hub_min_mints'], 'window_s': cfg['hub_window_s']},
+                            ts=self.clock())
         self.counts['collected'] += 1
         self.counts['partial'] += 1 if features['partial'] else 0
         return features
@@ -589,28 +689,54 @@ class WalletSignals:
         return max(options, key=lambda t: t[1])[0]
 
     # -- the smart-wallet table ----------------------------------------------------------------------------------------------
-    def wallet_table(self):
-        """({wallet: {'wins', 'rugs', 'flat', 'unresolved', 'buys'}}, watermark) from the append-only events (incremental)."""
+    def _load_events(self):
+        rows = self._query("SELECT id,kind,payload,ts FROM events WHERE kind IN ('wallet_buy','wallet_outcome','wallet_funding','wallet_hub') "
+                           "AND id>? ORDER BY id", (self._watermark,))
+        for event_id, kind, payload, ts in rows:
+            self._watermark = event_id
+            data = json.loads(payload)
+            if kind == 'wallet_buy':
+                self._wallets.setdefault(data['wallet'], {}).setdefault(data['mint'], ts)
+                self._buy_mints.setdefault(data['mint'], ts)
+            elif kind == 'wallet_outcome':
+                self._outcomes.setdefault(data['mint'], (data['outcome'], ts))
+            elif kind == 'wallet_funding':
+                self._fundings.setdefault(data['funder'], {}).setdefault(data['mint'], ts)
+            else:
+                self._hubs.add(data['funder'])
+
+    def wallet_table(self, asof=None):
+        """({wallet: {'wins', 'rugs', 'flat', 'unresolved', 'buys'}}, watermark) from the append-only events (incremental).
+        With ``asof`` (LINT2b) only buys and outcomes recorded BEFORE that time count: no outcome resolved after a decision."""
         with self._wallet_lock:
-            rows = self._query("SELECT id,kind,payload,ts FROM events WHERE kind IN ('wallet_buy','wallet_outcome') AND id>? ORDER BY id",
-                               (self._watermark,))
-            for event_id, kind, payload, ts in rows:
-                self._watermark = event_id
-                data = json.loads(payload)
-                if kind == 'wallet_buy':
-                    self._wallets.setdefault(data['wallet'], {})[data['mint']] = data.get('slot_offset')
-                    self._buy_mints.setdefault(data['mint'], ts)
-                else:
-                    self._outcomes.setdefault(data['mint'], data['outcome'])
+            self._load_events()
             table = {}
             for wallet, mints in self._wallets.items():
-                record = {'wins': 0, 'rugs': 0, 'flat': 0, 'unresolved': 0, 'buys': len(mints)}
-                for mint in mints:
-                    outcome = self._outcomes.get(mint)
+                bought = [m for m, ts in mints.items() if asof is None or ts < asof]
+                if not bought:
+                    continue
+                record = {'wins': 0, 'rugs': 0, 'flat': 0, 'unresolved': 0, 'buys': len(bought)}
+                for mint in bought:
+                    outcome, at = self._outcomes.get(mint, (None, None))
+                    if outcome is not None and asof is not None and not at < asof:
+                        outcome = None
                     key = {'WIN': 'wins', 'RUG': 'rugs', 'FLAT': 'flat'}.get(outcome, 'unresolved')
                     record[key] += 1
                 table[wallet] = record
             return table, self._watermark
+
+    def hubs_asof(self, asof, mint, sources):
+        """LINT2b: the funders among ``sources`` that funded buyers of >= ``hub_min_mints`` distinct mints (this one included)
+        within ``hub_window_s`` before ``asof``, from the persisted ``wallet_funding`` events. Detected, never hard-coded."""
+        with self._wallet_lock:
+            self._load_events()
+            out = set()
+            for source in {s for s in sources if s is not None}:
+                prior = {m for m, ts in self._fundings.get(source, {}).items()
+                         if m != mint and asof - self.cfg['hub_window_s'] < ts <= asof}
+                if len(prior) + 1 >= self.cfg['hub_min_mints']:
+                    out.add(source)
+            return out
 
     def score(self, record):
         return (record['wins'] + 1) / (record['wins'] + record['rugs'] + 2)
@@ -618,14 +744,37 @@ class WalletSignals:
     def is_smart(self, record):
         return bool(record) and record['wins'] >= self.cfg['min_wins'] and self.score(record) >= self.cfg['smart_threshold']
 
+    def never_resolvable(self, mint):
+        """LINT2b: a hazard reject (never a PASS, a REJECT for a non-market reason) that the desk never bought: no path is ever
+        recorded for it (L07R2 skips hazards) and no trade exists, so it can never get an outcome."""
+        screens = [d for d in self.store.rows('decisions', mint=mint, kind='screen', limit=1000) if d['action'] in ('PASS', 'REJECT')]
+        if not screens or any(d['action'] == 'PASS' for d in screens):
+            return False
+        if any(f['side'] == 'buy' for f in self.store.rows('fills', mint=mint, limit=1000)):
+            return False
+        return all(not set(json.loads(d['reasons'])) <= SOFT_SCREEN_REASONS for d in screens)
+
     def resolve_outcomes(self, now):
-        """Write one ``wallet_outcome`` event per token whose outcome became known (oldest buys first, bounded)."""
+        """Write one ``wallet_outcome`` event per token whose outcome became known. Bounded per pass and ROUND-ROBIN over the
+        unresolved mints (LINT2b), so a new WIN/RUG never waits behind a backlog; hazard rejects close at once as UNKNOWN."""
         self.wallet_table()
-        todo = [m for m in self._buy_mints if m not in self._outcomes][:self.cfg['resolve_batch']]
-        for mint in todo:
+        todo = [m for m in self._buy_mints if m not in self._outcomes]
+        self.last_unresolved = len(todo)
+        if not todo:
+            return
+        start = self._resolve_cursor % len(todo)
+        batch = (todo[start:] + todo[:start])[:self.cfg['resolve_batch']]
+        self._resolve_cursor = start + len(batch)
+        closed = self.store.closed_positions()                         # once per pass, not once per mint
+        for mint in batch:
+            if self.stop.is_set():
+                break
             outcome, source, detail = path_outcome(self.paths_db, mint, self.cfg)
             if outcome is None:
-                outcome, source, detail = trade_outcome(self.store, mint, self.cfg)
+                outcome, source, detail = trade_outcome(self.store, mint, self.cfg, closed=closed)
+            if outcome is None and self.never_resolvable(mint):
+                outcome, source, detail = 'UNKNOWN', 'NEVER_RESOLVABLE', {}
+                self.counts['never_resolvable'] += 1
             if outcome is None:
                 if now - self._buy_mints[mint] >= self.cfg['outcome_max_age_s']:
                     outcome, source, detail = 'UNKNOWN', 'AGE_LIMIT', {}
@@ -634,7 +783,6 @@ class WalletSignals:
             self._write(self.store.record, 'wallet_outcome', {'mint': mint, 'outcome': outcome, 'source': source, 'detail': detail}, ts=self.clock())
             self.counts['outcomes'] += 1
         self.wallet_table()
-
 
 def build(cfg, *, store, keys, code_version, strategy_version, clock=time.time, transport_kwargs=None, shed=None, paths_db=None):
     """The collector of a validated config, on the shared LOW lane (``lean.providers.low``)."""
@@ -645,9 +793,29 @@ def build(cfg, *, store, keys, code_version, strategy_version, clock=time.time, 
                          shed=shed, sleep=transport_kwargs.get('sleep', time.sleep), paths_db=paths_db)
 
 
+def _window_cut(window, ordered, grad_slot, decision_ts, window_s):
+    """LINT2b notes: where the examined swap window ends relative to the decision (by block time)."""
+    grad_time = next((s['block_time'] for s in ordered if s['slot'] == grad_slot and s['block_time'] is not None), None)
+    if grad_time is None:
+        times = [s['block_time'] for s in window if s['block_time'] is not None]
+        grad_time = min(times) if times else None
+    out = {'grad_block_time': grad_time, 'window_cut_by_decision': None, 'window_s_effective': None,
+           'window_after_decision_s': None, 'window_unknown_time_skipped': 0}
+    if decision_ts is None:
+        return out                                     # unknown decision: the window may run past it (flag stays null)
+    out['window_unknown_time_skipped'] = sum(1 for s in window if s['block_time'] is None)
+    out['window_after_decision_s'] = 0.0               # the window is cut at the decision below
+    if grad_time is not None:
+        out['window_cut_by_decision'] = grad_time + window_s > decision_ts
+        out['window_s_effective'] = round(max(0.0, min(float(window_s), decision_ts - grad_time)), 3)
+    return out
+
+
 def _meta_summary(features):
     keys = ('version', 'bundle_score', 'sniper_count', 'same_slot_buyers', 'bundled_supply_pct', 'bundled_wallets', 'buyers',
-            'smart_buyers_count', 'smart_asof_event_id', 'calls', 'partial', 'unavailable', 'window_txs', 'examined_txs', 'funding_checked')
+            'smart_buyers_count', 'smart_asof_event_id', 'calls', 'partial', 'unavailable', 'window_txs', 'examined_txs', 'funding_checked',
+            'decision_ts', 'collected_at', 'late_s', 'bundle_score_basis', 'window_cut_by_decision', 'window_s_effective',
+            'window_after_decision_s', 'hub_funders', 'supply_source')
     return {k: features.get(k) for k in keys}
 
 
@@ -703,10 +871,11 @@ def path_outcome(paths_db, mint, cfg):
     return None, 'PATH', {}
 
 
-def trade_outcome(store, mint, cfg):
+def trade_outcome(store, mint, cfg, *, closed=None):
     """The desk's own closed trade on the token: realized PnL / cost >= win_multiple - 1 is a WIN, a loss of at least
-    ``rug_loss_frac`` of the cost a RUG, anything else FLAT. An open or never entered token is unresolved."""
-    closed = [c for c in store.closed_positions() if c['mint'] == mint]
+    ``rug_loss_frac`` of the cost a RUG, anything else FLAT. An open or never entered token is unresolved. ``closed`` = a
+    ``store.closed_positions()`` list already read this pass (LINT2b: read once per pass, not once per mint)."""
+    closed = [c for c in (store.closed_positions() if closed is None else closed) if c['mint'] == mint]
     if not closed:
         return None, 'TRADE', {}
     buys = [f for f in store.rows('fills', mint=mint, limit=100000) if f['side'] == 'buy']

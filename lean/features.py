@@ -41,8 +41,9 @@ import time
 from decimal import Decimal, InvalidOperation, localcontext
 
 from desk.security import TOKEN_2022, TOKEN_PROGRAM
+from lean.providers import ProviderError
 
-FEATURES_VERSION = 2
+FEATURES_VERSION = 3              # LINT2b: decision_ts / late_s / flags; screen_at is the screen decision; nothing past it
 KIND = 'features'
 MAX_EXTRA_CALLS = 3
 EARLY_WINDOW_S = 600
@@ -68,7 +69,8 @@ REMOVED_FIELDS = {'holder_count': 'REQUIRES_FULL_HOLDER_SCAN', 'buys_first_10m':
                   'has_telegram': 'METADATA_RPC_NOT_ALLOWED', 'has_website': 'METADATA_RPC_NOT_ALLOWED',
                   'seconds_creation_to_graduation': 'MINT_HISTORY_TOO_LONG_TO_PAGE'}
 SOFT_REJECTS = frozenset({'MARKET_CAP_BELOW_MIN', 'MARKET_CAP_ABOVE_MAX', 'LIQUIDITY_BELOW_MIN'})
-DEFAULTS = {'enabled': False, 'enrich': True, 'queue_size': 500}
+DEFAULTS = {'enabled': False, 'enrich': True, 'queue_size': 500, 'shed_wait_s': 10.0, 'max_late_s': 30.0}
+PACE_S = 0.5
 
 
 def config(raw):
@@ -85,6 +87,10 @@ def config(raw):
             raise ValueError('features.%s must be true or false' % key)
     if type(out['queue_size']) is not int or not 1 <= out['queue_size'] <= 100_000:
         raise ValueError('features.queue_size out of range')
+    for key, low, high in (('shed_wait_s', 0, 60), ('max_late_s', 0, 3600)):          # LINT2b
+        if isinstance(out[key], bool) or not isinstance(out[key], (int, float)) or not low <= out[key] <= high:
+            raise ValueError('features.%s out of range' % key)
+        out[key] = float(out[key])
     return out
 
 
@@ -288,10 +294,22 @@ class _Budget(Exception):
     pass
 
 
-def enrich(candidate, screen, helius, *, creator, need_holders, screen_time=None):
+class _Stopped(Exception):
+    pass
+
+
+def enrich(candidate, screen, helius, *, creator, need_holders, screen_time=None, decision_ts=None, flags=None, late_s=None,
+           max_late_s=None, sleep=None, stop=None, pace_s=PACE_S, shed_wait_s=0.0):
     """Up to ``MAX_EXTRA_CALLS`` read-only calls on the low lane. Returns ``(fields, missing, calls)``; never raises. A provider
-    failure becomes the reason of its fields; ``LANE_SHED`` ends the enrichment (nothing was sent) with that reason on the rest."""
+    failure becomes the reason of its fields; ``LANE_SHED`` ends the enrichment (nothing was sent) with that reason on the rest.
+
+    LINT2b: a ``no_token`` shed is retried every ``pace_s`` (``sleep``, this recorder's own thread, no lock) for up to
+    ``shed_wait_s`` per call before giving up; a shed WINDOW (429) is never waited. ``stop`` is checked before every try (the rest
+    is recorded as STOPPED). Nothing after ``decision_ts`` is counted: the first-10-minute transaction count ends at the decision
+    (``flags['tx_count_first_10m'] = 'CUT_AT_DECISION'``). The dev balance and the soft-reject holder list are SNAPSHOTS read at
+    collection (``flags[...] = 'AT_COLLECTION'``, ``late_s`` after the decision); later than ``max_late_s`` they are not read."""
     fields, missing, calls = {}, {}, 0
+    flags = {} if flags is None else flags
     f = _get(screen, 'features', {}) or {}
     mint, pool = _get(candidate, 'mint'), _get(candidate, 'pool')
     pending = {'dev': ('dev_holding_pct',), 'pool': ('graduation_block_time', 'seconds_graduation_to_screen', 'tx_count_first_10m')}
@@ -300,6 +318,10 @@ def enrich(candidate, screen, helius, *, creator, need_holders, screen_time=None
     if creator is None:
         missing['dev_holding_pct'] = 'CREATOR_UNKNOWN'
         del pending['dev']
+    if late_s is not None and max_late_s is not None and late_s > max_late_s:      # LINT2b: a late snapshot is not a feature
+        for group in ('dev', 'holders'):
+            for name in pending.pop(group, ()):
+                missing[name] = 'COLLECTED_TOO_LATE'
     supply = f.get('supply_raw')
     shed = [None]
 
@@ -309,12 +331,31 @@ def enrich(candidate, screen, helius, *, creator, need_holders, screen_time=None
 
     def rpc(method, params):
         nonlocal calls
-        if calls >= MAX_EXTRA_CALLS:
-            raise _Budget
-        calls += 1
-        return helius.rpc(method, params)[0]
+        waited = 0.0
+        while True:
+            if stop is not None and stop.is_set():
+                raise _Stopped
+            if calls >= MAX_EXTRA_CALLS:
+                raise _Budget
+            try:
+                result = helius.rpc(method, params)[0]
+            except ProviderError as error:
+                if error.code != LANE_SHED:
+                    calls += 1
+                    raise
+                if error.meta.get('why') != 'no_token' or sleep is None or waited >= shed_wait_s:
+                    raise                                           # nothing was sent: not counted as a call
+                sleep(pace_s)                                       # LINT2b: bounded retry, own thread, no lock
+                waited += pace_s
+                continue
+            calls += 1
+            return result
 
     def failed(group, error):
+        if isinstance(error, _Stopped):                         # LINT2b: the runner is stopping; nothing more is sent
+            shed[0] = 'STOPPED'
+            finish(group, 'STOPPED')
+            return
         code = str(getattr(error, 'code', type(error).__name__))[:40]
         if code == LANE_SHED:
             shed[0] = LANE_SHED
@@ -328,6 +369,7 @@ def enrich(candidate, screen, helius, *, creator, need_holders, screen_time=None
             if supply is None or int(supply) <= 0 or total < 0 or total > int(supply):
                 raise ValueError('amount')
             fields['dev_holding_pct'] = _pct(total, supply)
+            flags['dev_holding_pct'] = 'AT_COLLECTION'
             pending.pop('dev')
         except (KeyError, IndexError, TypeError, ValueError):
             finish('dev', 'DEV_BALANCE_UNREADABLE')
@@ -350,8 +392,13 @@ def enrich(candidate, screen, helius, *, creator, need_holders, screen_time=None
                     finish('pool', 'GRADUATION_BLOCK_TIME_UNKNOWN')
                 else:
                     fields['graduation_block_time'] = born
+                    end = born + EARLY_WINDOW_S
+                    if decision_ts is not None and decision_ts < end:   # LINT2b: never count a transaction after the decision
+                        end = decision_ts
+                        flags['tx_count_first_10m'] = 'CUT_AT_DECISION'
+                        flags['tx_count_window_s'] = round(max(0.0, float(decision_ts) - born), 3)
                     fields['tx_count_first_10m'] = sum(1 for s in sigs if s is not oldest and s.get('err') is None and type(s.get('blockTime')) is int
-                                                       and 0 <= s['blockTime'] - born <= EARLY_WINDOW_S)      # the pool-creation tx itself is not a trade
+                                                       and 0 <= s['blockTime'] - born and s['blockTime'] <= end)      # the pool-creation tx itself is not a trade
                     if screen_time is not None:
                         fields['seconds_graduation_to_screen'] = round(float(screen_time) - born, 3)
                     else:
@@ -369,6 +416,7 @@ def enrich(candidate, screen, helius, *, creator, need_holders, screen_time=None
             if skip is None or supply is None:
                 raise ValueError('mint')
             fields['top1_pct'], fields['top10_pct'] = holder_shares(rows, supply, skip)
+            flags['top10_pct'] = flags['top1_pct'] = 'AT_COLLECTION'
             pending.pop('holders')
         except (KeyError, IndexError, TypeError, ValueError):
             finish('holders', 'HOLDER_ROWS_MALFORMED')
@@ -381,7 +429,7 @@ def enrich(candidate, screen, helius, *, creator, need_holders, screen_time=None
 
 # ------------------------------------------------------------------------------------------------ the row
 def build_row(candidate, screen, *, entered, reason=None, extra=None, extra_missing=None, default_why=None, screen_at=None,
-              collected_at=None, calls=0):
+              collected_at=None, calls=0, decision_ts=None, flags=None):
     """The features row payload. ``extra`` / ``extra_missing`` come from ``enrich``; fields it did not cover get ``default_why``."""
     fields, missing = base_fields(candidate, screen)
     for name, value in (extra or {}).items():
@@ -400,7 +448,10 @@ def build_row(candidate, screen, *, entered, reason=None, extra=None, extra_miss
             missing.pop(name, None)
     return {'features_version': FEATURES_VERSION, 'mint': _get(candidate, 'mint'), 'entered': bool(entered),
             'not_entered_reason': None if entered else reason, 'screen_passed': bool(_get(screen, 'passed')),
-            'screen_at': screen_at, 'collected_at': collected_at, 'calls': calls, 'fields': fields, 'missing': missing}
+            'screen_at': screen_at, 'collected_at': collected_at, 'calls': calls, 'fields': fields, 'missing': missing,
+            # LINT2b: when the desk decided (the entry decision if one followed the screen, else the screen), how late the row is
+            'decision_ts': decision_ts, 'late_s': None if decision_ts is None or collected_at is None else round(collected_at - decision_ts, 3),
+            'flags': {k: v for k, v in (flags or {}).items() if k not in fields or fields[k] is not None}}
 
 
 def hazard_free(screen):
@@ -414,12 +465,15 @@ def hazard_free(screen):
 class FeatureRecorder:
     """Writes one ``features`` row per candidate. ``submit`` / ``on_candidate`` are non-blocking and never raise."""
 
-    def __init__(self, *, store, helius, code_version, strategy_version, clock=time.time, queue_size=500, enrich_enabled=True):
+    def __init__(self, *, store, helius, code_version, strategy_version, clock=time.time, queue_size=500, enrich_enabled=True,
+                 sleep=None, shed_wait_s=10.0, max_late_s=30.0):
         self.store, self.helius, self.clock = store, helius, clock
+        self.sleep, self.shed_wait_s, self.max_late_s = sleep, shed_wait_s, max_late_s      # LINT2b
+        self._stop = None
         self.code_version, self.strategy_version = code_version, strategy_version
         self.enrich_enabled = enrich_enabled
         self.queue = queue.Queue(maxsize=queue_size)
-        self.stats = {'rows': 0, 'enriched': 0, 'shed': 0, 'queue_full': 0, 'errors': 0, 'calls': 0, 'dropped': 0}
+        self.stats = {'rows': 0, 'enriched': 0, 'shed': 0, 'queue_full': 0, 'errors': 0, 'calls': 0, 'dropped': 0, 'stopped': 0}
         self.last_error = None
         self._written = set()
         self._lock = threading.Lock()
@@ -428,8 +482,9 @@ class FeatureRecorder:
         self.stats['errors'] += 1
         self.last_error = type(error).__name__
 
-    def _write(self, candidate, candidate_id, screen, entered, reason, screen_at, **kwargs):
-        payload = build_row(candidate, screen, entered=entered, reason=reason, screen_at=screen_at, collected_at=self.clock(), **kwargs)
+    def _write(self, candidate, candidate_id, screen, entered, reason, screen_at, decision_ts=None, **kwargs):
+        payload = build_row(candidate, screen, entered=entered, reason=reason, screen_at=screen_at, collected_at=self.clock(),
+                            decision_ts=decision_ts, **kwargs)
         # the same payload in ``meta`` (queryable; the report never selects the ``raw`` blob) and as canonical bytes in ``raw``
         self.store.add_observation(KIND, canonical(payload), mint=payload['mint'], candidate_id=candidate_id, meta=payload,
                                    code_version=self.code_version, strategy_version=self.strategy_version, ts=self.clock())
@@ -449,17 +504,29 @@ class FeatureRecorder:
             return False, ','.join(str(r) for r in (_get(screen, 'reasons', ()) or ())) or None
         return False, 'ABORTED_BY_ERROR'
 
+    def decision_times(self, candidate_id, mint):
+        """LINT2b: ``(screen_at, decision_ts)`` from the store: the LAST screen decision of this candidate (the one just handled) and
+        the last entry decision after it (else the screen decision again). ``(None, None)`` without a stored screen decision."""
+        rows = [d for d in self.store.rows('decisions', mint=mint, limit=1000) if d['candidate_id'] == candidate_id] if candidate_id is not None else []
+        screens = [d['ts'] for d in rows if d['kind'] == 'screen']
+        if not screens:
+            return None, None
+        entries = [d['ts'] for d in rows if d['kind'] == 'entry' and d['ts'] >= screens[-1]]
+        return screens[-1], (entries[-1] if entries else screens[-1])
+
     def on_candidate(self, candidate, candidate_id, screen):
         """Runner hook: the candidate has been handled; record what became of it. Never raises."""
         try:
             entered, reason = self.outcome(candidate_id, _get(candidate, 'mint'), screen)
-            return self.submit(candidate, screen, entered=entered, reason=reason, candidate_id=candidate_id, screen_at=self.clock())
+            screen_at, decision_ts = self.decision_times(candidate_id, _get(candidate, 'mint'))
+            return self.submit(candidate, screen, entered=entered, reason=reason, candidate_id=candidate_id,
+                               screen_at=self.clock() if screen_at is None else screen_at, decision_ts=decision_ts)
         except Exception as error:                       # noqa: BLE001 - a recorder failure never reaches the trader
             self._count_error(error)
             self.stats['dropped'] += 1
             return False
 
-    def submit(self, candidate, screen, *, entered, reason=None, candidate_id=None, screen_at=None):
+    def submit(self, candidate, screen, *, entered, reason=None, candidate_id=None, screen_at=None, decision_ts=None):
         """Queue the candidate for its row. Never raises, never blocks; True when accepted (queued or written)."""
         try:
             mint = _get(candidate, 'mint')
@@ -471,29 +538,34 @@ class FeatureRecorder:
                 if len(self._written) > 100000:
                     self._written.clear()
             if not self.enrich_enabled or self.helius is None:
-                self._write(candidate, candidate_id, screen, entered, reason, screen_at, default_why='ENRICHMENT_DISABLED')
+                self._write(candidate, candidate_id, screen, entered, reason, screen_at, decision_ts, default_why='ENRICHMENT_DISABLED')
                 return True
             try:
-                self.queue.put_nowait((candidate, screen, entered, reason, candidate_id, screen_at))
+                self.queue.put_nowait((candidate, screen, entered, reason, candidate_id, screen_at, decision_ts))
             except queue.Full:
                 self.stats['queue_full'] += 1
-                self._write(candidate, candidate_id, screen, entered, reason, screen_at, default_why='QUEUE_FULL')
+                self._write(candidate, candidate_id, screen, entered, reason, screen_at, decision_ts, default_why='QUEUE_FULL')
             return True
         except Exception as error:                       # noqa: BLE001
             self._count_error(error)
             self.stats['dropped'] += 1
             return False
 
-    def process_one(self, timeout=0.0):
-        """Take one queued candidate and write its row. Returns True when one was handled."""
+    def process_one(self, timeout=0.0, *, enrich_now=True):
+        """Take one queued candidate and write its row. Returns True when one was handled. ``enrich_now=False`` (the stop drain,
+        LINT2b) writes the free fields only, with no request."""
         try:
-            candidate, screen, entered, reason, candidate_id, screen_at = self.queue.get(timeout=timeout) if timeout else self.queue.get_nowait()
+            candidate, screen, entered, reason, candidate_id, screen_at, decision_ts = (self.queue.get(timeout=timeout) if timeout
+                                                                                      else self.queue.get_nowait())
         except queue.Empty:
             return False
         try:
-            extra, extra_missing, why, calls = None, None, None, 0
+            extra, extra_missing, why, calls, flags = None, None, None, 0, {}
             f = _get(screen, 'features', {}) or {}
-            if not hazard_free(screen):
+            if not enrich_now or (self._stop is not None and self._stop.is_set()):
+                why = 'STOPPED'
+                self.stats['stopped'] += 1
+            elif not hazard_free(screen):
                 why = 'NOT_ENRICHED_HAZARD_REJECT'       # a hazard reject keeps its cheap row; no spending on it
             elif f.get('supply_raw') is None:
                 why = 'MINT_STAGE_NOT_REACHED'
@@ -501,29 +573,34 @@ class FeatureRecorder:
                 creator, _ = dev_wallet(screen)
                 need_holders = _screen_rows(screen) is None
                 age = _num(f.get('age_seconds'))
-                screen_time = None if age is None or not isinstance(_get(candidate, 'migrated_at'), (int, float)) else float(candidate.migrated_at) + float(age)
+                screen_time = screen_at if screen_at is not None else (
+                    None if age is None or not isinstance(_get(candidate, 'migrated_at'), (int, float)) else float(candidate.migrated_at) + float(age))
                 extra, extra_missing, calls = enrich(candidate, screen, self.helius, creator=creator, need_holders=need_holders,
-                                                     screen_time=screen_time)
+                                                     screen_time=screen_time, decision_ts=decision_ts, flags=flags,
+                                                     late_s=None if decision_ts is None else self.clock() - decision_ts,
+                                                     max_late_s=self.max_late_s, sleep=self.sleep, stop=self._stop,
+                                                     shed_wait_s=self.shed_wait_s)
                 self.stats['calls'] += calls
                 self.stats['enriched'] += 1
                 if extra_missing and LANE_SHED in extra_missing.values():
                     self.stats['shed'] += 1
-            self._write(candidate, candidate_id, screen, entered, reason, screen_at, extra=extra, extra_missing=extra_missing,
-                        default_why=why, calls=calls)
+            self._write(candidate, candidate_id, screen, entered, reason, screen_at, decision_ts, extra=extra, extra_missing=extra_missing,
+                        default_why=why, calls=calls, flags=flags)
         except Exception as error:                       # noqa: BLE001
             self._count_error(error)
             try:
-                self._write(candidate, candidate_id, screen, entered, reason, screen_at, default_why='ENRICHMENT_FAILED')
+                self._write(candidate, candidate_id, screen, entered, reason, screen_at, decision_ts, default_why='ENRICHMENT_FAILED')
             except Exception as again:                   # noqa: BLE001
                 self._count_error(again)
                 self.stats['dropped'] += 1
         return True
 
     def run(self, stop, tick=0.5):
+        self._stop = stop                                 # LINT2b: enrich() checks it before every request
         while not stop.is_set():
             if not self.process_one(timeout=tick):
                 continue
-        while self.process_one():                         # drain on shutdown: every accepted candidate gets its row
+        while self.process_one(enrich_now=False):         # drain on shutdown: every accepted candidate gets its FREE row, no request
             pass
 
     def health(self):
@@ -535,9 +612,11 @@ def build(cfg, *, store, keys, code_version, strategy_version, clock=time.time, 
     if not cfg['enabled']:
         return None
     from lean import providers
-    helius = providers.low(keys, **dict(transport_kwargs or {})).helius
+    transport_kwargs = dict(transport_kwargs or {})
+    helius = providers.low(keys, **transport_kwargs).helius
     return FeatureRecorder(store=store, helius=helius, code_version=code_version, strategy_version=strategy_version, clock=clock,
-                           queue_size=cfg['queue_size'], enrich_enabled=cfg['enrich'])
+                           queue_size=cfg['queue_size'], enrich_enabled=cfg['enrich'], sleep=transport_kwargs.get('sleep', time.sleep),
+                           shed_wait_s=cfg.get('shed_wait_s', DEFAULTS['shed_wait_s']), max_late_s=cfg.get('max_late_s', DEFAULTS['max_late_s']))
 
 
 # ------------------------------------------------------------------------------------------------ feature vs outcome
