@@ -345,6 +345,18 @@ class KeyFileTests(unittest.TestCase):
     def test_loads_private_file(self):
         self.assertEqual(P.load_keys(self.write(json.dumps({'helius': KEY, 'jupiter': 'j'}))), {'helius': KEY, 'jupiter': 'j'})
 
+    def test_loads_production_credential_names_and_systemd_modes(self):
+        """The desk's %d/provider-keys.json format (desk/paper_cycle_cli.py _credentials): HELIUS_API_KEY / JUPITER_API_KEY."""
+        for mode in (0o400, 0o440, 0o600):
+            path = self.write(json.dumps({'HELIUS_API_KEY': ' ' + KEY + '\n', 'JUPITER_API_KEY': 'jup', 'OTHER': 1}), mode,
+                              'prod-%o.json' % mode)
+            self.assertEqual(P.load_keys(path), {'helius': KEY, 'jupiter': 'jup'})
+        for body in ({'HELIUS_API_KEY': KEY}, {'HELIUS_API_KEY': KEY, 'JUPITER_API_KEY': ''},
+                     {'HELIUS_API_KEY': KEY, 'helius': KEY, 'JUPITER_API_KEY': 'j'}):
+            with self.assertRaises(P.ProviderError) as cm:
+                P.load_keys(self.write(json.dumps(body), name='x.json'))
+            self.assertNotIn(KEY, str(cm.exception) + repr(cm.exception))
+
     def test_refuses_group_world_readable_symlink_and_bad_content(self):
         good = self.write(json.dumps({'helius': KEY}), name='good.json')
         link = self.dir / 'link.json'
@@ -413,16 +425,18 @@ class HeliusTests(unittest.TestCase):
         value = [account(), None, account(b'\x00' * 82)]
         o = Opener(rpc_ok({'context': {'slot': 77}, 'value': value}))
         parsed, raw, meta = P.Helius(KEY, transport('helius', o)).get_multiple_accounts([MINT_A, MINT_B, TAKER])
-        self.assertEqual(parsed['slot'], 77)
-        self.assertEqual(parsed['accounts'][0]['data'], b'\x01\x02')
-        self.assertIsNone(parsed['accounts'][1])
-        self.assertEqual(len(parsed['accounts'][2]['data']), 82)
+        # the validated RPC result, unchanged: the shape lean.candidates and the desk decoders read
+        self.assertEqual(parsed, {'context': {'slot': 77}, 'value': value})
+        from desk.security import account_bytes
+        self.assertEqual(account_bytes(parsed['value'][0]), b'\x01\x02')
         params = json.loads(o.requests[0][0].data)['params']
         self.assertEqual(params[0], [MINT_A, MINT_B, TAKER])
         self.assertEqual(params[1]['encoding'], 'base64')
 
     def test_get_multiple_accounts_rejects_bad_shapes(self):
-        bad = [rpc_ok({'value': [account(), account()]}), rpc_ok({'value': 'x'}), rpc_ok({'value': [None, None]}),
+        bad = [rpc_ok({'value': [account()]}), rpc_ok({'context': {'slot': -1}, 'value': [account()]}),
+               rpc_ok({'context': {'slot': 1}, 'value': [{**account(), 'executable': None}]}),
+               rpc_ok({'value': [account(), account()]}), rpc_ok({'value': 'x'}), rpc_ok({'value': [None, None]}),
                rpc_ok({'value': [{'data': ['!!!', 'base64'], 'lamports': 1, 'owner': MINT_B}]}),
                rpc_ok({'value': [{'data': ['AA==', 'base58'], 'lamports': 1, 'owner': MINT_B}]}),
                rpc_ok({'value': [{'data': ['AA==', 'base64'], 'lamports': 1.5, 'owner': MINT_B}]}),
@@ -443,8 +457,10 @@ class HeliusTests(unittest.TestCase):
         self.assertEqual(o.requests, [])
 
 
-def build_response(in_amount='1000', out='5000', threshold='4900', route=None):
-    r = {'inAmount': in_amount, 'outAmount': out, 'otherAmountThreshold': threshold, 'priceImpactPct': '0.01',
+def build_response(in_amount='1000', out='5000', threshold='4900', route=None, input_mint=MINT_A, output_mint=MINT_B,
+                   mode='ExactIn'):
+    r = {'inputMint': input_mint, 'outputMint': output_mint, 'swapMode': mode, 'inAmount': in_amount, 'outAmount': out,
+         'otherAmountThreshold': threshold, 'priceImpactPct': '0.01',
          'routePlan': [{'swapInfo': {'label': 'PumpSwap'}}] if route is None else route}
     return {k: v for k, v in r.items() if v is not None}
 
@@ -467,7 +483,10 @@ class JupiterTests(unittest.TestCase):
     def test_quote_rejects_malformed_and_contradictory(self):
         bad = [build_response(in_amount='999'), build_response(out='0'), build_response(out='-5'), build_response(out='1.5'),
                build_response(out=5000), build_response(threshold='9999999'), build_response(route=[]),
-               build_response(route=[{}]), build_response(out=str(2 ** 64)), build_response(in_amount=None), [1], 'x']
+               build_response(route=[{}]), build_response(out=str(2 ** 64)), build_response(in_amount=None), [1], 'x',
+               # the response must echo the request: same mints, ExactIn
+               build_response(input_mint=MINT_B), build_response(output_mint=MINT_A), build_response(input_mint=None),
+               build_response(mode='ExactOut'), build_response(mode=None)]
         for body in bad:
             with self.assertRaises(P.ProviderError) as cm:
                 self.quote(body)
@@ -558,6 +577,98 @@ class KrakenTests(unittest.TestCase):
         with self.assertRaises(P.ProviderError) as cm:
             P.Kraken(transport('kraken', Opener(Resp(status=500)), Clock(1002.0))).sol_usd()
         self.assertEqual((cm.exception.code, cm.exception.transient), ('HTTP_500', True))
+
+
+class SharedBudgetAndDeadlineTests(unittest.TestCase):
+    """L09: one limiter per provider per process, a reserved exit lane, deadline-bounded waits, error bodies kept."""
+
+    def test_lock_prevents_over_issue_under_contention(self):
+        """Fails if RateLimiter's lock is removed: with a frozen clock exactly `burst` non-waiting tokens exist."""
+        import sys
+        old = sys.getswitchinterval()
+        sys.setswitchinterval(1e-6)
+        self.addCleanup(sys.setswitchinterval, old)
+        for _ in range(20):
+            r = P.RateLimiter(0.001, 5, clock=lambda: 1000.0, sleep=lambda s: None)
+            ok, barrier = [], threading.Barrier(16)
+
+            def work():
+                barrier.wait()
+                for _ in range(3):
+                    try:
+                        r.acquire(deadline=1000.0)
+                        ok.append(1)
+                    except P.ProviderError:
+                        pass
+            threads = [threading.Thread(target=work) for _ in range(16)]
+            [t.start() for t in threads]; [t.join() for t in threads]
+            self.assertEqual(len(ok), 5)
+
+    def test_acquire_respects_the_deadline_and_takes_no_token_when_it_cannot_wait(self):
+        c = Clock()
+        r = P.RateLimiter(1, 1, clock=c.now, sleep=c.sleep)
+        r.acquire()
+        with self.assertRaises(P.ProviderError) as cm:
+            r.acquire(deadline=c.now() + 0.5)               # needs 1s
+        self.assertEqual((cm.exception.code, cm.exception.transient), ('RATE_LIMITED', True))
+        self.assertEqual(c.sleeps, [])
+        self.assertEqual(r.acquire(deadline=c.now() + 5), 1.0)   # the refused call reserved nothing
+
+    def test_429_block_blocks_other_callers_bounded_by_their_deadline(self):
+        c = Clock()
+        r = P.RateLimiter(10, 10, clock=c.now, sleep=c.sleep)
+        r.block_for(5)
+        with self.assertRaises(P.ProviderError) as cm:
+            r.acquire(deadline=c.now() + 2)
+        self.assertEqual(cm.exception.code, 'RATE_LIMITED')
+        self.assertEqual(c.sleeps, [])                       # never slept past its own deadline
+        r.acquire(deadline=c.now() + 10)
+        self.assertEqual(c.sleeps, [5.0])                    # a caller with time waits the block out
+
+    def test_429_on_screening_blocks_the_main_lane_but_never_the_exit_lane(self):
+        c = Clock()
+        screening = transport('jupiter', Opener(Resp(status=429, headers={'Retry-After': '25'})), c)
+        other = Opener(Resp(b'{}'))
+        second = transport('jupiter', other, c)
+        exits = transport('jupiter', Opener(Resp(b'{}')), c, lane='exit')
+        self.assertIs(screening.limiter, second.limiter)
+        self.assertIsNot(screening.limiter, exits.limiter)
+        with self.assertRaises(P.ProviderError):
+            screening.call('quote', lambda: P.Request('https://x.invalid/'))
+        with self.assertRaises(P.ProviderError) as cm:      # blocked 25s > its 20s deadline: fails fast, sends nothing
+            second.call('quote', lambda: P.Request('https://x.invalid/'))
+        self.assertEqual(cm.exception.code, 'RATE_LIMITED')
+        self.assertEqual(other.requests, [])
+        raw, meta = exits.call('quote', lambda: P.Request('https://x.invalid/'))
+        self.assertEqual(meta['attempts'], 1)
+        self.assertEqual(c.sleeps, [])
+
+    def test_one_shared_limiter_per_provider_and_lane_for_real_clients(self):
+        a, b = P.Helius(KEY), P.Helius(KEY)
+        self.assertIs(a.transport.limiter, b.transport.limiter)
+        self.assertIs(P.Jupiter(KEY).transport.limiter, P.build_providers({'helius': KEY, 'jupiter': KEY}).jupiter.transport.limiter)
+        exit_lane = P.build_providers({'helius': KEY, 'jupiter': KEY}, lane='exit')
+        self.assertIsNot(exit_lane.helius.transport.limiter, a.transport.limiter)
+        for provider in ('helius', 'jupiter'):
+            total = sum(P.shared_limiter(provider, lane).rate for lane in P.LANE_SHARES)
+            self.assertAlmostEqual(total, P.DEFAULT_RATES[provider][0])
+        self.assertIs(exit_lane.kraken.transport.limiter, P.Kraken().transport.limiter)
+
+    def test_error_body_is_kept_for_research(self):
+        body = b'{"error":"No routes found","errorCode":"COULD_NOT_FIND_ANY_ROUTE"}'
+        with self.assertRaises(P.ProviderError) as cm:
+            P.Jupiter(KEY, transport('jupiter', Opener(Resp(body, status=400)))).quote(MINT_A, MINT_B, 1000, TAKER)
+        self.assertEqual((cm.exception.code, cm.exception.raw), ('HTTP_400', body))
+        error = HTTPError('https://x.invalid/?api-key=' + KEY, 500, 'x', {}, None)
+        error.read = lambda n=-1: b'busy'
+        with self.assertRaises(P.ProviderError) as cm:
+            transport('helius', Opener(error), max_attempts=1).call('e', lambda: P.Request('https://x.invalid/'))
+        self.assertEqual(cm.exception.raw, b'busy')
+        self.assertNotIn(KEY, str(cm.exception) + repr(cm.exception))
+
+    def test_paper_taker_is_a_valid_pubkey(self):
+        from solders.pubkey import Pubkey
+        self.assertEqual(str(Pubkey.from_string(P.PAPER_TAKER)), P.PAPER_TAKER)
 
 
 class NoNetworkTests(unittest.TestCase):

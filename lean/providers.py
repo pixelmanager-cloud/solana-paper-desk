@@ -14,7 +14,12 @@ placed in the outgoing request. It never reaches an exception message, a log
 record, a ``repr`` or a chained exception (all provider errors are raised
 ``from None`` and carry only a stable code and a bounded metadata dict).
 
-Rate limiting is an in-process token bucket per provider: no shared database.
+Rate limiting is an in-process token bucket per provider: no shared database. Every
+client in the process shares one bucket per provider and lane (``shared_limiter``):
+the ``main`` lane (candidate screening) and the ``exit`` lane (held-position marks and
+exit quotes) split the plan budget, so screening and the 429 blocks it provokes never
+starve exits. A wait is bounded by the call's deadline (``RATE_LIMITED``, transient).
+Error responses keep their (bounded) body in ``ProviderError.raw``.
 """
 import base64
 from dataclasses import dataclass
@@ -94,14 +99,20 @@ class RateLimiter:
         self._blocked_until = 0.0
         self._lock = threading.Lock()
 
-    def acquire(self):
-        """Block until a request may be sent; return the seconds waited."""
+    def acquire(self, deadline=None):
+        """Block until a request may be sent; return the seconds waited.
+
+        ``deadline`` is an absolute time on this limiter's clock. If the wait (token debt or a 429 block) would run past
+        it, no token is taken and ``ProviderError('RATE_LIMITED', transient=True)`` is raised at once: a caller never
+        sleeps beyond its own call deadline."""
         with self._lock:
             now = self._clock()
-            self._tokens = min(self.burst, self._tokens + (now - self._stamp) * self.rate)
-            self._stamp = now
-            self._tokens -= 1.0
-            wait = max(0.0, -self._tokens / self.rate, self._blocked_until - now)
+            tokens = min(self.burst, self._tokens + (now - self._stamp) * self.rate) - 1.0
+            wait = max(0.0, -tokens / self.rate, self._blocked_until - now)
+            if deadline is not None and now + wait > deadline:
+                self._tokens, self._stamp = tokens + 1.0, now
+                raise ProviderError('RATE_LIMITED', True, meta={'wait_s': round(wait, 3)})
+            self._tokens, self._stamp = tokens, now
         if wait > 0:
             self._sleep(wait)
         return wait
@@ -110,6 +121,31 @@ class RateLimiter:
         """Provider asked us to back off (429 Retry-After): delay every caller."""
         with self._lock:
             self._blocked_until = max(self._blocked_until, self._clock() + max(0.0, float(seconds)))
+
+
+# One limiter per (provider, lane) for the whole process: two client instances never double the budget. The ``exit``
+# lane is a reserved share of the plan budget for held-position marks and exit quotes, so candidate screening (and a 429
+# it provokes) can never starve exits. The lane shares of one provider sum to its plan rate.
+LANE_SHARES = {'main': 0.75, 'exit': 0.25}
+_SHARED = {}
+_SHARED_LOCK = threading.Lock()
+
+
+def shared_limiter(provider, lane='main', *, clock=time.monotonic, sleep=time.sleep):
+    """The process-wide limiter of ``provider``/``lane``. Keyed by clock and sleep too, so a test with a fake clock gets
+    its own limiter while every real client in the process shares one."""
+    if lane not in LANE_SHARES:
+        raise ValueError('unknown lane')
+    if provider == 'kraken':
+        lane = 'main'            # exits never need SOL/USD: Kraken keeps one undivided bucket
+    key = (provider, lane, clock, sleep)
+    with _SHARED_LOCK:
+        limiter = _SHARED.get(key)
+        if limiter is None:
+            rate, burst = DEFAULT_RATES[provider]
+            share = 1.0 if provider == 'kraken' else LANE_SHARES[lane]   # helius 7.5+2.5/s, jupiter 3+1/s
+            limiter = _SHARED[key] = RateLimiter(rate * share, max(1.0, burst * share), clock=clock, sleep=sleep)
+        return limiter
 
 
 def backoff_delay(attempt, *, rng=random.random, base=BACKOFF_BASE, cap=BACKOFF_CAP):
@@ -141,20 +177,36 @@ def parse_json(raw):
 
 # ---------------------------------------------------------------- credentials
 
+KEY_NAMES = {'HELIUS_API_KEY': 'helius', 'JUPITER_API_KEY': 'jupiter', 'helius': 'helius', 'jupiter': 'jupiter'}
+
+
 def load_keys(path):
-    """Read ``{"helius": "...", "jupiter": "..."}`` from a private credential file."""
+    """Read the provider keys from a private credential file and return ``{'helius': ..., 'jupiter': ...}``.
+
+    Accepts the production systemd credential format ``{"HELIUS_API_KEY": "...", "JUPITER_API_KEY": "..."}`` (the one
+    ``desk/paper_cycle_cli.py`` loads from ``%d/provider-keys.json``) and the short ``{"helius", "jupiter"}`` form. Both
+    keys are required; values are stripped. The file must be a regular non-symlink file readable only by its owner (or
+    group-read, as systemd ``LoadCredential`` may install it: 0400/0440/0600)."""
     try:
         p = Path(path)
         info = os.lstat(p)
-        if not stat.S_ISREG(info.st_mode) or info.st_mode & 0o077:
+        if not stat.S_ISREG(info.st_mode) or info.st_mode & 0o037 or info.st_size > 16384:
             raise ValueError
-        value = json.loads(p.read_text())
-        if (not isinstance(value, dict) or not value
-                or any(not isinstance(k, str) or not isinstance(v, str)
-                       or not 1 <= len(v) <= 512 or any(not 33 <= ord(c) <= 126 for c in v)
-                       for k, v in value.items())):
+        value = json.loads(p.read_text(), object_pairs_hook=_unique)
+        if not isinstance(value, dict):
             raise ValueError
-        return value
+        keys = {}
+        for name, key in value.items():
+            if name not in KEY_NAMES:
+                continue
+            key = key.strip() if isinstance(key, str) else key
+            if (not isinstance(key, str) or not 1 <= len(key) <= 512 or any(not 33 <= ord(c) <= 126 for c in key)
+                    or KEY_NAMES[name] in keys):
+                raise ValueError
+            keys[KEY_NAMES[name]] = key
+        if set(keys) != {'helius', 'jupiter'}:
+            raise ValueError
+        return keys
     except (OSError, ValueError):
         # Deliberately generic: never echo file contents or the parse error.
         raise ProviderError('KEY_FILE_INVALID', False) from None
@@ -188,10 +240,9 @@ class Transport:
     def __init__(self, provider, limiter=None, *, opener=default_opener, clock=time.time,
                  monotonic=time.monotonic, sleep=time.sleep, rng=random.random,
                  max_attempts=MAX_ATTEMPTS, deadline_seconds=DEADLINE_SECONDS,
-                 request_timeout=REQUEST_TIMEOUT):
-        rate, burst = DEFAULT_RATES[provider]
-        self.provider = provider
-        self.limiter = limiter or RateLimiter(rate, burst, clock=monotonic, sleep=sleep)
+                 request_timeout=REQUEST_TIMEOUT, lane='main'):
+        self.provider, self.lane = provider, lane
+        self.limiter = limiter or shared_limiter(provider, lane, clock=monotonic, sleep=sleep)
         self.opener, self.clock, self.monotonic, self.sleep, self.rng = opener, clock, monotonic, sleep, rng
         self.max_attempts, self.deadline, self.request_timeout = max_attempts, deadline_seconds, request_timeout
 
@@ -205,7 +256,7 @@ class Transport:
             if type(status) is not int:
                 raise ProviderError('RESPONSE_INVALID', False)
             if status != 200:
-                raise _http_error(status, headers)
+                raise _http_error(status, headers, _body(response, max_bytes))
             encoding = (headers.get('Content-Encoding') or 'identity').lower()
             if encoding != 'identity':
                 raise ProviderError('RESPONSE_HEADERS_INVALID', False)
@@ -221,7 +272,7 @@ class Transport:
         except ProviderError:
             raise
         except HTTPError as error:
-            raise _http_error(error.code, error.headers or {}) from None
+            raise _http_error(error.code, error.headers or {}, _body(error, max_bytes)) from None
         except (TimeoutError, OSError, URLError, EOFError) as error:
             transient_timeout = isinstance(error, TimeoutError) or 'timed out' in str(getattr(error, 'reason', error))
             raise ProviderError('TIMEOUT' if transient_timeout else 'CONNECTION_ERROR', True) from None
@@ -245,8 +296,12 @@ class Transport:
             remaining = self.deadline - (self.monotonic() - started)
             if remaining <= 0:
                 break
+            try:
+                self.limiter.acquire(deadline=started + self.deadline)
+            except ProviderError as error:
+                last = last or error
+                break
             attempts += 1
-            self.limiter.acquire()
             sent_at = self.clock()
             try:
                 status, raw = self._once(request_factory(), min(self.request_timeout, max(0.1, remaining)), max_bytes)
@@ -285,20 +340,29 @@ class Transport:
             raise ProviderError('RESPONSE_MALFORMED', False, provider=self.provider, raw=raw, meta=meta) from None
 
 
-def _http_error(code, headers):
+def _body(response, max_bytes):
+    """The (bounded) body of an error response, kept for research (e.g. a Jupiter 400 "no route"); None if unreadable."""
+    try:
+        raw = response.read(min(max_bytes, MAX_SMALL_RESPONSE_BYTES))
+    except Exception:
+        return None
+    return raw if type(raw) is bytes and raw else None
+
+
+def _http_error(code, headers, raw=None):
     retry_after = None
     value = headers.get('Retry-After') if hasattr(headers, 'get') else None
     if isinstance(value, str) and value.isdecimal():
         retry_after = min(float(int(value)), MAX_RETRY_AFTER)
     if code == 429:
-        return ProviderError('HTTP_429', True, meta={'http_status': code, 'retry_after': retry_after})
+        return ProviderError('HTTP_429', True, raw=raw, meta={'http_status': code, 'retry_after': retry_after})
     if code == 408 or 500 <= code <= 599:
-        return ProviderError(f'HTTP_{code}', True, meta={'http_status': code, 'retry_after': retry_after})
+        return ProviderError(f'HTTP_{code}', True, raw=raw, meta={'http_status': code, 'retry_after': retry_after})
     if code in (401, 403):
-        return ProviderError('AUTH_REJECTED', False, meta={'http_status': code})
+        return ProviderError('AUTH_REJECTED', False, raw=raw, meta={'http_status': code})
     if 300 <= code <= 399:
-        return ProviderError('REDIRECT_REFUSED', False, meta={'http_status': code})
-    return ProviderError(f'HTTP_{code}', False, meta={'http_status': code})
+        return ProviderError('REDIRECT_REFUSED', False, raw=raw, meta={'http_status': code})
+    return ProviderError(f'HTTP_{code}', False, raw=raw, meta={'http_status': code})
 
 
 def _pubkey(value):
@@ -356,26 +420,33 @@ class Helius:
         for k in keys:
             _pubkey(k)
         result, raw, meta = self.rpc('getMultipleAccounts', [keys, {'encoding': 'base64', 'commitment': 'confirmed'}])
-        value = result.get('value') if isinstance(result, dict) else None
-        if not isinstance(value, list) or len(value) != len(keys):
-            raise _fail('helius', 'RESPONSE_INVALID', raw=raw, meta=meta)
-        accounts = []
+        validate_multiple_accounts(result, len(keys), raw=raw, meta=meta)
+        return result, raw, meta
+
+
+def validate_multiple_accounts(result, count, *, raw=None, meta=None):
+    """THE getMultipleAccounts shape, used by every lean caller: the RPC ``result`` object unchanged,
+    ``{'context': {'slot': int}, 'value': [None | {'data': [base64, 'base64'], 'owner': str, 'lamports': int,
+    'executable': bool, ...}]}``, exactly as the desk decoders (``account_bytes``, ``mint_policy``, ``parse_pool``)
+    expect it. Raises ``RESPONSE_INVALID`` (with the raw bytes) otherwise."""
+    try:
+        if not isinstance(result, dict) or not isinstance(result.get('context'), dict):
+            raise ValueError
+        slot, value = result['context'].get('slot'), result.get('value')
+        if type(slot) is not int or slot < 0 or not isinstance(value, list) or len(value) != count:
+            raise ValueError
         for item in value:
             if item is None:
-                accounts.append(None)
                 continue
             data = item.get('data') if isinstance(item, dict) else None
-            try:
-                if (not isinstance(data, list) or len(data) != 2 or data[1] != 'base64'
-                        or not isinstance(item.get('owner'), str) or type(item.get('lamports')) is not int):
-                    raise ValueError
-                decoded = base64.b64decode(data[0], validate=True)
-            except (ValueError, TypeError):
-                raise _fail('helius', 'RESPONSE_INVALID', raw=raw, meta=meta) from None
-            accounts.append({'owner': item['owner'], 'lamports': item['lamports'], 'data': decoded,
-                             'executable': item.get('executable') is True})
-        slot = result.get('context', {}).get('slot') if isinstance(result.get('context'), dict) else None
-        return {'slot': slot if type(slot) is int else None, 'accounts': accounts}, raw, meta
+            if (not isinstance(data, list) or len(data) != 2 or data[1] != 'base64' or not isinstance(data[0], str)
+                    or not isinstance(item.get('owner'), str) or type(item.get('lamports')) is not int
+                    or type(item.get('executable')) is not bool):
+                raise ValueError
+            base64.b64decode(data[0], validate=True)
+    except (ValueError, TypeError, AttributeError):
+        raise _fail('helius', 'RESPONSE_INVALID', raw=raw, meta=meta) from None
+    return result
 
 
 def _json_default(value):
@@ -404,10 +475,15 @@ def _u64(value):
     raise ValueError('u64')
 
 
-def parse_quote(parsed, requested_amount):
-    """Pure strict parser; raises ValueError on malformed or contradictory quotes."""
+def parse_quote(parsed, requested_amount, *, input_mint, output_mint):
+    """Pure strict parser; raises ValueError on malformed or contradictory quotes. The response must echo the request:
+    same input and output mint, ``swapMode`` ExactIn and ``inAmount`` equal to the requested amount."""
     if not isinstance(parsed, dict):
         raise ValueError('object')
+    if parsed.get('inputMint') != input_mint or parsed.get('outputMint') != output_mint:
+        raise ValueError('mints')
+    if parsed.get('swapMode') != 'ExactIn':
+        raise ValueError('swap mode')
     in_amount, out_amount = _u64(parsed.get('inAmount')), _u64(parsed.get('outAmount'))
     if in_amount != requested_amount or out_amount <= 0:
         raise ValueError('amounts')
@@ -456,7 +532,7 @@ class Jupiter:
                  'slippageBps': str(slippage_bps), 'transactionVersion': '0'}
         parsed, raw, meta = self.transport.json('quote', self._request('/swap/v2/build', query))
         try:
-            quote = parse_quote(parsed, amount)
+            quote = parse_quote(parsed, amount, input_mint=input_mint, output_mint=output_mint)
         except (ValueError, TypeError, DecimalException):
             raise _fail('jupiter', 'QUOTE_INVALID', raw=raw, meta=meta) from None
         return quote, raw, meta
@@ -516,3 +592,27 @@ class Kraken:
                         bool(stale & set(observation.blockers)), raw=raw,
                         meta={**meta, 'blockers': list(observation.blockers)})
         return observation.usd_price, raw, {**meta, 'trade_at': observation.trade_at}
+
+
+# ---------------------------------------------------------------- the providers object
+
+# Jupiter's swap/v2/build quote needs a syntactically valid taker. PAPER ONLY: this is the public address the desk's paper
+# quotes already use (config/*.json "taker"). It is only an identity for route building; no private key for it exists in
+# this repository, nothing here signs or submits, and the built transaction is discarded.
+PAPER_TAKER = '6E2G75Z3uJEnPo9EvzmLTxp8KB78m3RDsFBjoCTVHZD2'
+
+
+@dataclass(frozen=True)
+class Providers:
+    """What ``lean.candidates.screen`` and the runner expect: ``.helius``, ``.jupiter``, ``.kraken``."""
+    helius: object
+    jupiter: object
+    kraken: object
+
+
+def build_providers(keys, *, lane='main', **transport_kwargs):
+    """Clients for one lane (``main`` for candidates, ``exit`` for held positions), on the process-wide limiters."""
+    def transport(provider):
+        return Transport(provider, lane=lane, **transport_kwargs)
+    return Providers(Helius(keys['helius'], transport('helius')), Jupiter(keys['jupiter'], transport('jupiter')),
+                     Kraken(transport('kraken')))
