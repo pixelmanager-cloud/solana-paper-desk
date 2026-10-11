@@ -1972,7 +1972,7 @@ STATUS: OPEN
 OWNS: lean/sources.py, lean/watchlist.py, tests/lean/test_sources.py, tests/lean/test_watchlist.py, tests/lean/test_e2e_sources.py
 - **Source interface.** Abstract a `Source` (`iter_new(cursor) -> (candidates, next_cursor)`). The existing discovery DB becomes `PumpGraduationSource`.
 - **New pools.** Add Raydium CPMM / Raydium AMM v4 / Meteora DAMM and DLMM new-pool discovery for SOL-quoted pools, polling the program accounts or signatures via Helius with a bounded budget (document the cost per hour). Decode pool accounts with pure decoders. If a program's layout is not certain, implement only the ones you can verify against fixtures, and list the rest as TODO.
-- **Watchlist.** Candidates rejected for soft reasons (market cap too low or high, liquidity, cost cap, portfolio full, cooldown) are re-screened every `watch_interval_s` (default 300s) for up to `watch_hours` (default 6). Hazard rejects are NEVER re-screened.
+- **Watchlist.** Candidates rejected for soft reasons (market cap too low or high, liquidity, cost cap, portfolio full, cooldown) are (INCLUDING `ENTRY_THROTTLE` skips — live data shows throttled PASS candidates are currently lost forever) re-screened every `watch_interval_s` (default 300s) for up to `watch_hours` (default 6). Hazard rejects are NEVER re-screened.
 - **Record keeping.** Each candidate row records its `source`. The funnel in the report is per source.
 
 ## L15 — Ops: credit tracker, watchdog, regime log, morning report (P3)
