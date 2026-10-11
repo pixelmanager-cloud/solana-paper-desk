@@ -20,6 +20,7 @@ CONFIG_KEYS = {
     'max_candidate_retries': 3,
     'sol_usd_ttl_s': 30,
     'screen': {},                      # lean.candidates settings other than the strategy-owned bands
+    'held_risk': {},                   # lean.held_risk settings (L11): rug / unsellable handling of held positions
 }
 REQUIRED = ('strategy_config', 'initial_cash_sol')
 
@@ -43,6 +44,8 @@ def load_config(path):
     cfg['strategy_config'] = str(strategy_path if strategy_path.is_absolute() else path.parent / strategy_path)
     if not isinstance(cfg['screen'], dict):
         raise ConfigError('screen must be an object')
+    if not isinstance(cfg['held_risk'], dict):
+        raise ConfigError('held_risk must be an object')
     return cfg
 
 
@@ -73,7 +76,7 @@ def build_runner(cfg, *, state_dir, discovery_db, keys, code_version, clock=None
         exit_providers=providers.build_providers(keys, lane='exit', **transport_kwargs), strategy_cfg=strategy_cfg,
         discovery_db=discovery_db, state_dir=state, code_version=code_version, screen_overrides=cfg['screen'],
         pool_fee_bps=cfg['pool_fee_bps'], clock=clock, scan_limit=cfg['scan_limit'],
-        max_retries=cfg['max_candidate_retries'], sol_usd_ttl_s=cfg['sol_usd_ttl_s'])
+        max_retries=cfg['max_candidate_retries'], sol_usd_ttl_s=cfg['sol_usd_ttl_s'], held_risk=cfg['held_risk'])
 
 
 def main(argv=None):

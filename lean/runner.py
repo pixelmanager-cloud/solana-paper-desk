@@ -27,7 +27,7 @@ import threading
 import time
 from decimal import Decimal
 
-from lean import adapters as A, candidates as C, paper, strategy as S
+from lean import adapters as A, candidates as C, held_risk as H, paper, strategy as S
 from lean.paper import AccountingHalt
 from lean.providers import PAPER_TAKER, ProviderError
 from lean.store import StoreError
@@ -43,7 +43,7 @@ class _Halt(Exception):
 class Runner:
     def __init__(self, *, store, providers, exit_providers, strategy_cfg, discovery_db, state_dir, code_version,
                  screen_overrides=None, pool_fee_bps=25, taker=PAPER_TAKER, kill_switch=None, clock=time.time,
-                 scan_limit=500, max_retries=3, sol_usd_ttl_s=30):
+                 scan_limit=500, max_retries=3, sol_usd_ttl_s=30, held_risk=None):
         self.store, self.providers, self.exit_providers = store, providers, exit_providers
         self.cfg = strategy_cfg
         self.pcfg = A.paper_config(strategy_cfg)
@@ -68,6 +68,9 @@ class Runner:
         self._sol_usd = None                       # (Decimal, fetched_at)
         self.halted = None
         self.cursor = 0
+        # --- L11 hook ---
+        self.held_risk = H.build(held_risk, self.store, code_version=code_version, strategy_version=self.strategy_version, clock=clock)
+        # --- end L11 ---
         self.startup()
 
     # -- lifecycle ------------------------------------------------------------------------------------------------
@@ -295,6 +298,10 @@ class Runner:
                 return 0
             self._read_marks(positions, states)
             now = self._now()
+            # --- L11 hook ---
+            if self.held_risk is not None:
+                self.held_risk.tick_safe(self, positions, states, now)
+            # --- end L11 ---
             liquidate = S.should_liquidate(self.portfolio(now), self.cfg)
             exits = 0
             for mint, position in positions.items():
@@ -329,7 +336,15 @@ class Runner:
                     base, quote = A.vault_amount(result['value'][2 * i]), A.vault_amount(result['value'][2 * i + 1])
                     self.marks[mint] = (A.mark(positions[mint].qty_raw, base, quote, pool_fee_bps=self.pool_fee_bps, pcfg=self.pcfg),
                                         mark_at)
+                    # --- L11 hook ---
+                    if self.held_risk is not None:
+                        self.held_risk.observe(mint, base, quote, mark_at)
+                    # --- end L11 ---
                 except A.AdapterError as error:
+                    # --- L11 hook ---
+                    if self.held_risk is not None and None in (result['value'][2 * i], result['value'][2 * i + 1]):
+                        self.held_risk.observe_missing(mint, mark_at)
+                    # --- end L11 ---
                     self._error('MARK_INVALID', transient=False, mint=mint, scope='marks', message=str(error))
         for mint in list(self.marks):
             if mint not in positions:
@@ -339,6 +354,12 @@ class Runner:
         try:
             if state is None:
                 raise AccountingHalt('position %s has no state' % mint[:8])
+            # --- L11 hook ---
+            if self.held_risk is not None:
+                handled = self.held_risk.manage(self, mint, position, state)
+                if handled is not None:
+                    return handled
+            # --- end L11 ---
             return self._manage(mint, position, state, liquidate)
         except (_Halt, AccountingHalt, StoreError, sqlite3.Error):
             raise
@@ -401,7 +422,8 @@ class Runner:
                 'strategy_version': self.strategy_version, 'halted': self.halted,
                 'kill_switch': os.path.exists(self.kill_switch), 'last_loop': dict(self.last), 'counts': counts,
                 'errors_by_code': errors, 'open_positions': sorted(positions), 'cash_lamports': cash, 'cursor': self.cursor,
-                'retry_queue': len(self.retry), 'execution_status': 'EXECUTION_UNVERIFIED', 'live_readiness': False}
+                'retry_queue': len(self.retry), 'execution_status': 'EXECUTION_UNVERIFIED', 'live_readiness': False,
+                'held_risk': None if self.held_risk is None else self.held_risk.health()}
 
     def write_health(self):
         """Atomic: a unique temp file in the state dir, fsync, rename; one writer at a time."""
