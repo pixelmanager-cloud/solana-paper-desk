@@ -136,6 +136,11 @@ class SourcesAndWatchlistEndToEnd(unittest.TestCase):
         self.assertTrue(4 <= len(low) <= 8, len(low))
         self.assertTrue(all(a == 'REJECT' and set(rs) <= {'MARKET_CAP_BELOW_MIN', 'LIQUIDITY_BELOW_MIN'} for a, rs in low), low)
 
+        # a re-screen is not a new candidate and is never queued for the runner's own transient retry
+        self.assertEqual(r.counts['candidates'], 7)
+        self.assertEqual(r.counts['retries'], 0)
+        self.assertEqual(r.retry, [])
+
         # the extra source: its own cursor, its name on the rows, one handling for the shared mint
         self.assertEqual(S_cursor(self.state, 'pump_b'), 3)
         rows = {self.role[c['mint']]: __import__('json').loads(c['meta'])['source'] for c in store.rows('candidates', limit=100)}
