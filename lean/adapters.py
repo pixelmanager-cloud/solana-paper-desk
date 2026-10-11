@@ -123,8 +123,12 @@ def apply_updates(state, *updates):
 
 def strategy_position(position, state):
     """store Position (ints) + its position_state -> strategy.Position (cost in Decimal SOL, quantities in raw units)."""
+    # --- L10 hook: the refundable ATA rent paid with the first buy is not part of the trade's cost basis ---
+    rent = int(state.get('ata_rent_lamports', 0))
+    rent_left = rent * position.qty_raw // int(state['initial_qty_raw']) if rent else 0
+    # --- end L10 ---
     return S.Position(mint=position.mint, opened_at=int(position.opened_at), qty=Decimal(position.qty_raw),
-                      initial_qty=Decimal(int(state['initial_qty_raw'])), cost_left=sol(position.cost_lamports),
+                      initial_qty=Decimal(int(state['initial_qty_raw'])), cost_left=sol(position.cost_lamports - rent_left),
                       stop_ratio=Decimal(state['stop_ratio']), stage=int(state['stage']),
                       peak_ratio=Decimal(state['peak_ratio']), touched_15=bool(state['touched_15']))
 
