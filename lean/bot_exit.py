@@ -351,6 +351,7 @@ class BotExit:
         self._rr = 0
         self.counts = {'passes': 0, 'polls': 0, 'calls': 0, 'sheds': 0, 'yields': 0, 'signals': 0, 'shadow_signals': 0,
                        'live_signals': 0, 'errors': 0, 'quotes': 0, 'quote_sheds': 0, 'swaps_parsed': 0, 'tx_not_ready': 0}
+        self.tx_errors = {}
         self._replay()
 
     # -- persistence ------------------------------------------------------------------------------------------------------------
@@ -386,7 +387,8 @@ class BotExit:
         with self._lock:
             counts = dict(self.counts)
             live = len(self._live)
-        return {'enabled': True, 'mode': self.cfg.mode, 'watching': len(self.watches), 'live_triggers': live, **counts}
+            tx_errors = dict(self.tx_errors)
+        return {'enabled': True, 'mode': self.cfg.mode, 'watching': len(self.watches), 'live_triggers': live, 'tx_errors': tx_errors, **counts}
 
     # -- thread ---------------------------------------------------------------------------------------------------------------------
     def run_loop(self, runner):
@@ -557,10 +559,18 @@ class BotExit:
         except _Skip:
             raise
         except ProviderError as error:
-            if error.transient:                                   # a just-landed signature the node cannot serve yet: count, don't log
-                self._count('tx_not_ready')
-                return
-            self._error(runner, error.code, watch.mint, 'transaction')
+            # a sampled swap that cannot be read is a lost sample, not a desk error: count it by RPC code in health only
+            # (live: ~120/h RPC_ERROR on just-landed signatures were flooding the errors table)
+            self._count('tx_not_ready')
+            key = error.code
+            try:
+                rpc = json.loads(error.raw or b'{}').get('error', {}).get('code')
+                if isinstance(rpc, int):
+                    key = '%s:%d' % (error.code, rpc)
+            except (ValueError, AttributeError, TypeError):
+                pass
+            with self._lock:
+                self.tx_errors[key] = self.tx_errors.get(key, 0) + 1
             return
         except BotExitError as error:
             self._error(runner, getattr(error, 'code', str(error)), watch.mint, 'transaction')

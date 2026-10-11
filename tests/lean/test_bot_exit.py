@@ -455,9 +455,10 @@ class Budget(Scenario):
         with mock.patch.object(r.bot_exit, '_call', side_effect=providers.ProviderError('RPC_ERROR', True)):
             r.bot_exit._sample(r, watch, 'sig', None)
         self.assertEqual((errors, r.bot_exit.health()['tx_not_ready']), ([], 1))
-        with mock.patch.object(r.bot_exit, '_call', side_effect=providers.ProviderError('RPC_ERROR', False)):
+        with mock.patch.object(r.bot_exit, '_call', side_effect=providers.ProviderError('RPC_ERROR', False, raw=b'{"error":{"code":-32603}}')):
             r.bot_exit._sample(r, watch, 'sig', None)
-        self.assertEqual(errors, ['RPC_ERROR'])                                    # a permanent failure is still logged
+        self.assertEqual(errors, [])                                               # a lost sample is never a desk error...
+        self.assertEqual(r.bot_exit.health()['tx_errors'], {'RPC_ERROR': 1, 'RPC_ERROR:-32603': 1})   # ...it is counted by code
 
     def test_a_lane_shed_answer_ends_the_pass_without_a_reserve_too(self):
         r = self.build(Token(31, path=BOT_PATH), bot_pump_events(), bot_exit={'reserve_tokens': 0})
