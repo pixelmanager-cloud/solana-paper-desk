@@ -1,0 +1,28 @@
+[Unit]
+Description=Lean selection learner (L19): labels + walk-forward rules -> proposals only (never applied automatically)
+After=desk-lean.service
+
+[Service]
+Type=oneshot
+User=solana-desk
+Group=solana-desk
+WorkingDirectory=/opt/solana-desk-lean
+Environment=PYTHONDONTWRITEBYTECODE=1
+# Read-only on lean.sqlite and paths.sqlite (plain mode=ro, the trader keeps writing). Writes only learn/.
+# --embargo-s = paths.path_hours x 3600, so only fully observed paths are labelled.
+ExecStart=/opt/solana-desk/.venv/bin/python -m lean.learn --lean-db /var/lib/solana-desk-lean/lean.sqlite --paths-db /var/lib/solana-desk-lean/paths.sqlite --config /etc/solana-paper/lean.json --out-dir /var/lib/solana-desk-lean/learn --embargo-s 21600
+UMask=0077
+ProtectSystem=strict
+ProtectHome=true
+PrivateTmp=true
+PrivateDevices=true
+NoNewPrivileges=true
+PrivateNetwork=true
+RestrictAddressFamilies=AF_UNIX
+ReadOnlyPaths=/var/lib/solana-desk-lean
+ReadWritePaths=/var/lib/solana-desk-lean/learn
+MemoryMax=1G
+CPUQuota=50%
+Nice=10
+IOSchedulingClass=idle
+TimeoutStartSec=1800
