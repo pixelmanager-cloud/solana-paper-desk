@@ -6,27 +6,41 @@ budget or pacing DB. No signing, no broadcasting, no real funds; every fill is q
 ## Run
 ```
 python -m lean --config /etc/solana-paper/lean.json --state-dir /var/lib/solana-desk-lean \
-  --discovery-db /var/lib/solana-desk/discovery/continuous.sqlite --keys-file <provider-keys.json>
+  --discovery-db /var/lib/solana-desk/discovery/continuous.sqlite [--keys-file KEYS.json] [--once] [--clear-halt]
 ```
-`--once` does one candidate pass and one position pass. The unit is `deploy/lean/desk-lean.service` (user `solana-desk`,
-`LoadCredential` keys, writes only `/var/lib/solana-desk-lean`, `Restart=on-failure`, MemoryMax 512M).
-Config JSON: `strategy_config` (path), `strategy_version`, `entry_probe_sol`, `candidate_interval_s`, `position_interval_s` (capped at 10 s).
+* **Config:** copy `config/lean/lean.example.json` (every key the runner reads; unknown keys are refused) next to a copy
+  of `config/lean/strategy-default.json` (`strategy_config` is relative to the lean.json file). `initial_cash_sol`
+  creates the store on first start; an existing store must match it.
+* **Keys:** `--keys-file` defaults to the systemd credential `$CREDENTIALS_DIRECTORY/provider-keys.json`, the same file
+  the desk uses: `{"HELIUS_API_KEY": "...", "JUPITER_API_KEY": "..."}` (mode 0400/0440/0600). Keys are never printed.
+* **Unit:** `deploy/lean/desk-lean.service`. At install, set `Environment=LEAN_CODE_VERSION=<deployed git sha>` (every
+  stored row carries it). It writes only `/var/lib/solana-desk-lean`; the discovery DB is read through its existing
+  `-wal`/`-shm` with a read-only directory (see the comment in the unit).
+* `--once`: one position pass and one candidate pass. `--clear-halt`: an operator records that a persisted halt is
+  cleared (the store invariants must pass first).
+* Report: `python -m lean.report --db /var/lib/solana-desk-lean/lean.sqlite --out-dir DIR`.
 
 ## Behaviour
-* **Two concurrent loops** (threads): candidates (discovery → screen → entry quote → entry decision → paper BUY) and positions
-  (every <=10 s: ONE batched `getMultipleAccounts` for all open positions → exit decisions → sell quote only when an exit triggers → paper SELL).
-* **Isolation:** a provider error, malformed response or exception marks that candidate / position check as failed (an `error` row,
-  counted by code) and the loop moves on. Only these stop entries: an `AccountingHalt` (invariant violation), a store write failure,
-  or the kill-switch file `<state-dir>/KILL` (remove it to resume). Held-position checks keep running while entries are stopped.
-* **Every row** carries `code_version` and `strategy_version` (`LEAN_CODE_VERSION` env or `git rev-parse HEAD`). No pins or migrations.
-* **Health:** `<state-dir>/health.json`, written atomically every loop: last loop times, counts, errors by code, open positions, cash,
-  cursor, halt reason, kill-switch state. SIGTERM/SIGINT stop both loops, join, and write a final health file.
+* **Candidate loop:** discovery (`lean.candidates.scan_new`, cursor in `<state>/cursor.json`, an int from 0) → screen →
+  entry gate (no quote) → buy quote at the decided size → sell-leg quote for exactly the tokens the fill will hold →
+  entry decision on the round trip (cost cap) → paper BUY. The fill and the position's state (pool and vault keys,
+  initial quantity, stage, stop, peak) are written in one transaction.
+* **Position loop (≤10 s):** one batched `getMultipleAccounts` of all held vaults → net marks (constant product less the
+  pool fee and the fixed fee) → exit decision → only when an exit triggers, a sell quote for the exact raw quantity →
+  decision on the quote → paper SELL (TP rung / close written with the fill). Peak and touched changes are persisted, so
+  rungs never re-fire and trailing arms across restarts.
+* **Provider budget:** one token bucket per provider and lane for the process. The `exit` lane (marks, exit quotes) is
+  a reserved share of the plan budget, so screening and its 429s never starve exits. Waits never exceed a call deadline.
+* **Isolation:** a provider error, malformed response or bad evidence fails that candidate / position check (an
+  `errors` row, raw bytes kept as an observation) and the loop moves on. Transient screening failures (including
+  `HOLDERS_UNAVAILABLE`) are retried on the next passes (in memory, up to `max_candidate_retries`). A missing or locked
+  discovery DB is `DISCOVERY_UNAVAILABLE`, retried next pass.
+* **Halts:** only an accounting invariant violation or a store failure. The halt is written to the store, survives
+  restarts and stops all new fills until `--clear-halt`. Startup runs `check_invariants` and `check_position_states`.
+  The kill-switch file `<state-dir>/KILL` stops new entries only; held positions keep being managed.
+* **Health:** `<state-dir>/health.json`, written atomically (unique temp file, fsync, rename, one writer at a time).
 
-## Interfaces the runner expects (duck-typed; integration points for L01-L04)
-* store: `record(kind, payload, *, code_version, strategy_version)`; `positions()` (objects/dicts with `mint`, `qty_raw`, `vault_base`,
-  `vault_quote`); `cash()`; `check_invariants()` raising `AccountingHalt`. Fills are recorded as kind `fill`.
-* candidates: `iter_new_candidates(db, cursor)` -> list, each with a monotonic `cursor` (else `seq`/`id`); `screen(c, providers, cfg)` -> `.passed .reasons .features`.
-* strategy: `entry_decision(features, quote, portfolio, cfg)` -> `.enter .size_sol .reason`; `exit_decision(position, mark, quote, now, cfg)` -> `.exit .fraction .reason`.
-* paper: `buy(quote, size_sol, cfg)`, `sell(position, quote, fraction, cfg)` -> fill (dataclass/dict/`as_dict`).
-* providers: `helius.get_multiple_accounts(pubkeys)`, `jupiter.quote(in, out, amount, taker)` -> `(parsed, raw_bytes, meta)` or `ProviderError(code, transient)`.
-* Default mark = constant-product spot value from the two pool vault balances (`reserve_mark`); inject `mark_fn` to change it.
+## Modules
+`providers` (HTTP clients, limiters) · `candidates` (discovery + screen) · `strategy` (pure decisions) · `paper`
+(integer fills) · `store` (append-only SQLite) · `adapters` (the ONE place units/types are converted) · `runner` ·
+`report`. The end-to-end test `tests/lean/test_e2e_real.py` runs the real modules with only HTTP faked.

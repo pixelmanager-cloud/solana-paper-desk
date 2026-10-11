@@ -237,13 +237,14 @@ class Transport:
     so tests need no network.
     """
 
-    def __init__(self, provider, limiter=None, *, opener=default_opener, clock=time.time,
+    def __init__(self, provider, limiter=None, *, opener=None, clock=time.time,
                  monotonic=time.monotonic, sleep=time.sleep, rng=random.random,
                  max_attempts=MAX_ATTEMPTS, deadline_seconds=DEADLINE_SECONDS,
                  request_timeout=REQUEST_TIMEOUT, lane='main'):
         self.provider, self.lane = provider, lane
         self.limiter = limiter or shared_limiter(provider, lane, clock=monotonic, sleep=sleep)
-        self.opener, self.clock, self.monotonic, self.sleep, self.rng = opener, clock, monotonic, sleep, rng
+        self.opener = opener or default_opener          # resolved at construction (patchable in tests)
+        self.clock, self.monotonic, self.sleep, self.rng = clock, monotonic, sleep, rng
         self.max_attempts, self.deadline, self.request_timeout = max_attempts, deadline_seconds, request_timeout
 
     def _once(self, request, timeout, max_bytes):

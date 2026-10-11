@@ -1,0 +1,18 @@
+{
+  "_comment": "PAPER ONLY lean trader config (python -m lean --config). Every key the runner reads is listed; unknown keys are refused. strategy_config is relative to this file. initial_cash_sol creates a NEW store; an existing store must match it.",
+  "strategy_config": "strategy-default.json",
+  "initial_cash_sol": "10",
+  "candidate_interval_s": 5.0,
+  "position_interval_s": 10.0,
+  "pool_fee_bps": 25,
+  "scan_limit": 500,
+  "max_candidate_retries": 3,
+  "sol_usd_ttl_s": 30,
+  "screen": {
+    "min_age_seconds": 300,
+    "max_age_seconds": 7200,
+    "token_profile_version": 2,
+    "holder_check": true,
+    "max_top10_pct": 60
+  }
+}

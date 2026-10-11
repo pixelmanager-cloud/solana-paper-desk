@@ -2,25 +2,59 @@
 Description=Lean paper trader (paper only: no signing, no broadcasting, no real funds)
 After=network-online.target
 Wants=network-online.target
+
 [Service]
 Type=simple
 User=solana-desk
 Group=solana-desk
 WorkingDirectory=/opt/solana-desk
+# Filled at install with the deployed git sha (every stored row carries it); empty => the runner falls back to git.
+Environment=LEAN_CODE_VERSION=
+Environment=PYTHONDONTWRITEBYTECODE=1
+# Provider keys: {"HELIUS_API_KEY": "...", "JUPITER_API_KEY": "..."}, read only via %d, never logged.
 LoadCredential=provider-keys.json:/etc/solana-desk/provider-keys.json
 ExecStart=/opt/solana-desk/.venv/bin/python -m lean --config /etc/solana-paper/lean.json --state-dir /var/lib/solana-desk-lean --discovery-db /var/lib/solana-desk/discovery/continuous.sqlite --keys-file %d/provider-keys.json
 Restart=on-failure
 RestartSec=10
+TimeoutStopSec=30
+
+# Filesystem: everything read-only except the lean state dir.
+# The discovery store is a live WAL database written by the discovery service. lean opens it with
+# SQLite mode=ro (immutable=1 only when no -wal exists). A read-only WAL open needs the EXISTING
+# continuous.sqlite-wal and -shm files to be readable by solana-desk: SQLite (>= 3.22) then maps the -shm
+# read-only and never writes it, so /var/lib/solana-desk/discovery stays read-only here (ProtectSystem=strict).
+# Do not add it to ReadWritePaths. If discovery is down and the -shm is missing/uninitialised, the scan fails
+# with DISCOVERY_UNAVAILABLE and is retried on the next pass (never a crash, never a halt).
 UMask=0077
-NoNewPrivileges=true
-PrivateTmp=true
 ProtectSystem=strict
 ProtectHome=true
+PrivateTmp=true
 StateDirectory=solana-desk-lean
+StateDirectoryMode=0700
 ReadWritePaths=/var/lib/solana-desk-lean
+
+# Privileges and kernel surface.
+NoNewPrivileges=true
+CapabilityBoundingSet=
+AmbientCapabilities=
+PrivateDevices=true
+ProtectKernelTunables=true
+ProtectKernelModules=true
+ProtectKernelLogs=true
+ProtectControlGroups=true
+ProtectClock=true
+ProtectHostname=true
+RestrictNamespaces=true
+RestrictRealtime=true
+RestrictSUIDSGID=true
+LockPersonality=true
+SystemCallArchitectures=native
+SystemCallFilter=@system-service
 RestrictAddressFamilies=AF_INET AF_INET6 AF_UNIX
+
+# Limits.
 MemoryMax=512M
 TasksMax=64
-TimeoutStopSec=30
+
 [Install]
 WantedBy=multi-user.target
