@@ -244,7 +244,15 @@ class ReadOnly(Base):
                 path = Path(s.done())
                 before = self.digest(path)
                 report.build(path, now=NOW)
-                self.assertEqual(self.digest(path), before)
+                after = self.digest(path)
+                if wal:
+                    # L09b D10: plain mode=ro (never immutable). On an idle WAL store SQLite may create the empty -wal
+                    # and the -shm index (as the running trader's own connection does); the database file is untouched.
+                    extra = {name: data for name, data in after if name not in dict(before)}
+                    self.assertLessEqual(set(extra), {path.name + '-wal', path.name + '-shm'})
+                    self.assertEqual(extra.get(path.name + '-wal', b''), b'')
+                    after = [(name, data) for name, data in after if name not in extra]
+                self.assertEqual(after, before)
 
     def test_write_attempt_through_the_report_connection_fails(self):
         s = self.store()

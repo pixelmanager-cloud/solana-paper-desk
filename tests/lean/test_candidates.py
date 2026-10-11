@@ -198,6 +198,23 @@ class IntakeTests(DiscoveryFixture):
         result = lc.scan_new(self.db, 0, now=NOW)
         self.assertEqual([c.mint for c in result.candidates], [mint, later_mint])
 
+    def test_initial_cursor_starts_at_the_first_frame_inside_the_age_window(self):
+        """L09b D7: a first start skips history older than max_age_seconds."""
+        self.assertEqual(lc.initial_cursor(self.db, now=NOW, max_age_seconds=7200), 0)          # empty
+        self.add_migration(21, 20_000); second = self.add_migration(23, 9_000)
+        self.assertEqual(lc.initial_cursor(self.db, now=NOW, max_age_seconds=7200), second[0])    # all old: past them all
+        fresh = self.add_migration(25, 900)
+        self.assertEqual(lc.initial_cursor(self.db, now=NOW, max_age_seconds=7200), fresh[0] - 1)
+        self.assertEqual([c.mint for c in lc.scan_new(self.db, fresh[0] - 1, now=NOW).candidates], [fresh[1]])
+        with self.assertRaises(lc.DiscoveryUnavailable):
+            lc.initial_cursor(self.root / 'missing.sqlite', now=NOW, max_age_seconds=7200)
+
+    def test_discovery_and_report_never_open_immutable(self):
+        """L09b D10: discovery is a live DELETE-journal DB and lean.sqlite is live: plain mode=ro only."""
+        from lean import report
+        for module in (lc, report):
+            self.assertNotIn("'?immutable", Path(module.__file__).read_text())
+
     def test_iter_new_candidates_keeps_the_cursor_past_batches_without_candidates(self):
         for _ in range(4):
             self.add({'method': 'x'}, NOW - 900)
