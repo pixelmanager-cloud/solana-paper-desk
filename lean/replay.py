@@ -33,6 +33,7 @@ from dataclasses import dataclass, field
 from decimal import Decimal, InvalidOperation
 from typing import Optional, Sequence
 
+from lean import adapters as A
 from lean import paper
 from lean import strategy as S
 
@@ -84,12 +85,11 @@ class ReplayConfig:
 
 
 def paper_config(cfg: S.StrategyConfig) -> paper.PaperConfig:
-    """The fee and slippage the live trader would use for this strategy config (exact conversion or an error)."""
-    fee = cfg.fixed_fee_sol * LAMPORTS
-    bps = cfg.adverse_slippage_bps
-    if fee != fee.to_integral_value() or bps != bps.to_integral_value():
-        raise ReplayError('fixed_fee_sol / adverse_slippage_bps are not whole lamports / bps')
-    return paper.PaperConfig(fee_lamports=int(fee), slippage_bps=int(bps))
+    """The fee and slippage the live trader uses for this strategy config (lean.adapters.paper_config, the runner's own)."""
+    try:
+        return A.paper_config(cfg)
+    except A.AdapterError as error:
+        raise ReplayError(str(error)) from None
 
 
 # ------------------------------------------------------------------------------------------------- pool maths
@@ -243,8 +243,7 @@ def replay(paths: Sequence[Path], cfg: S.StrategyConfig, rcfg: Optional[ReplayCo
         if back <= 0:
             skipped.append({'mint': path.mint, 'ts': point.ts, 'reasons': ['SELL_QUOTE_INVALID']})
             return
-        rt = S.RoundTrip(S.Quote('buy', Decimal(lamports) / LAMPORTS, _tokens(tokens, path.decimals), now),
-                         S.Quote('sell', _tokens(fill.qty_raw, path.decimals), Decimal(back) / LAMPORTS, now))
+        rt = A.roundtrip(buy_q, now, paper.Quote(path.mint, 'sell', fill.qty_raw, back, path.decimals, point.ts), now)
         decision = S.entry_decision(feats, rt, portfolio(now), cfg)
         if decision.action != 'BUY':
             skipped.append({'mint': path.mint, 'ts': point.ts, 'reasons': list(decision.reasons)})
@@ -266,35 +265,33 @@ def replay(paths: Sequence[Path], cfg: S.StrategyConfig, rcfg: Optional[ReplayCo
         liquidate = S.should_liquidate(port, cfg)
 
         def view():
-            return S.Position(mint=path.mint, opened_at=int(h.opened_ts), qty=_tokens(pos.qty_raw, path.decimals),
-                              initial_qty=_tokens(h.initial_qty, path.decimals), cost_left=Decimal(pos.cost_lamports) / LAMPORTS,
-                              stop_ratio=h.stop_ratio, stage=h.stage, peak_ratio=h.peak_ratio, touched_15=h.touched_15)
+            state = {'initial_qty_raw': h.initial_qty, 'stop_ratio': h.stop_ratio, 'stage': h.stage,
+                     'peak_ratio': h.peak_ratio, 'touched_15': h.touched_15}
+            return A.strategy_position(pos, state)
 
-        mark = Decimal(h.last_mark) / LAMPORTS
-        d = S.exit_decision(view(), mark, None, now, cfg, liquidate=liquidate, mark_at=now)
+        mark = A.sol(h.last_mark)
+        d = S.exit_decision(view(), mark, None, now, cfg, mark_at=now, liquidate=liquidate)
         _apply_updates(h, d)
         if d.action == 'BLOCKED':
             bump('BLOCKED_EXIT')
         if not (d.action == 'SELL' and d.quote_required):
             return
-        fraction = d.qty / _tokens(pos.qty_raw, path.decimals)
-        fraction = ONE if fraction >= ONE else fraction
-        sell_qty = pos.qty_raw if fraction == ONE else int(Decimal(pos.qty_raw) * fraction)  # the formula paper.sell uses
-        if sell_qty <= 0:
+        try:
+            sell_qty = A.sell_qty_raw(d.qty, pos.qty_raw)
+        except A.AdapterError:
             bump('ZERO_SELL')
             return
         out = quote_sell(point, sell_qty, path.decimals, rcfg.pool_fee_bps)
         if out <= 0:
             bump('BLOCKED_EXIT')
             return
-        sq = S.Quote('sell', d.qty, Decimal(out) / LAMPORTS, now)
-        d2 = S.exit_decision(view(), mark, sq, now, cfg, liquidate=liquidate, mark_at=now)
+        pq = paper.Quote(path.mint, 'sell', sell_qty, out, path.decimals, point.ts)
+        d2 = S.exit_decision(view(), mark, A.strategy_quote(pq, 'sell', now), now, cfg, mark_at=now, liquidate=liquidate)
         _apply_updates(h, d2)
         if d2.action != 'SELL':
             bump('BLOCKED_EXIT')
             return
-        pq = paper.Quote(path.mint, 'sell', sell_qty, out, path.decimals, point.ts)
-        fill = paper.sell(pos, pq, fraction, pcfg)
+        fill = paper.sell(pos, pq, cfg=pcfg, qty_raw=sell_qty)
         positions, cash = paper.apply_fill(positions, cash, fill)
         fills.append(fill)
         h.realized += fill.realized_lamports
