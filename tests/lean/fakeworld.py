@@ -60,7 +60,7 @@ class Token:
 
     def __init__(self, tag, *, quote_sol=80, base_raw=2 * 10 ** 14, hazard=None, route_fee_bps=0, path=None,
                  no_route=False, no_route_from=None, route_back_at=None, pool_closed_from=None, freeze_from=None,
-                 owner_change_from=None, pool_closed_until=None):
+                 owner_change_from=None, pool_closed_until=None, coin_creator_tag=None):
         from solders.pubkey import Pubkey
         self.tag = tag
         self.mint_pk = Pubkey.from_bytes(bytes([tag]) * 32)
@@ -75,7 +75,8 @@ class Token:
         self._pool_pk, self._vault_pks = pool, vaults
         self.pool_raw = (bytes([241, 154, 109, 4, 17, 177, 109, 188]) + bytes([bump]) + bytes(2)
                          + b''.join(bytes(x) for x in (creator, self.mint_pk, sol_pk, lp, *vaults))
-                         + (1000).to_bytes(8, 'little') + bytes(32))
+                         + (1000).to_bytes(8, 'little') + (bytes([coin_creator_tag]) * 32 if coin_creator_tag is not None else bytes(32)))
+        self.coin_creator = str(Pubkey.from_bytes(bytes([coin_creator_tag]) * 32)) if coin_creator_tag is not None else None        # L12F
         self.quote_lamports, self.base_raw = int(quote_sol * 10 ** 9), int(base_raw)
         self.hazard, self.route_fee_bps, self.no_route = hazard, route_fee_bps, no_route
         self.path = path or (lambda age: Decimal(1))
@@ -175,6 +176,7 @@ class World:
         self.root, self.tokens, self.clock = root, {t.mint: t for t in tokens}, clock
         self.order = list(tokens)
         self.outages = {}
+        self.extra_rpc = {}                                  # L13/L12: {method: fn(params, t) -> result} for methods the base world lacks
         self.calls = []                                      # (provider, method, t)
         self.slot = 300_000_000
         self.discovery_db = root / 'continuous.sqlite'
@@ -239,6 +241,8 @@ class World:
             result = {'context': {'apiVersion': '2.2.7', 'slot': self.slot}, 'value': [copy.deepcopy(known.get(k)) for k in params[0]]}
         elif method == 'getTokenLargestAccounts':
             result = {'context': {'apiVersion': '2.2.7', 'slot': self.slot}, 'value': self.tokens[params[0]].holders()}
+        elif method in self.extra_rpc:
+            result = self.extra_rpc[method](params, t)
         else:
             raise AssertionError('unexpected RPC ' + method)
         return Resp({'jsonrpc': '2.0', 'id': body['id'], 'result': result})
