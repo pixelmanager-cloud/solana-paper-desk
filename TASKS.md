@@ -2002,3 +2002,6 @@ Add entry-timing variants to the replay grid:
 - enter after N minutes of positive momentum.
 
 Every variant is evaluated walk-forward and ranked out-of-sample only. The same acceptance rules as L10–L16 apply.
+
+## L17 — Telegram trade notifier
+STATUS: CLAIMED by coordinator (local agent, branch cloud/L17). Do not take.
