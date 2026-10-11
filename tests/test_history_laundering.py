@@ -132,10 +132,30 @@ class AdvanceItself(unittest.TestCase):
                 def fail(*args, error=error):
                     raise error
                 with self.assertRaises(type(error)):
-                    self.t.progress.advance(key, fail)
+                    self.t.progress.advance(key, fail, strict=True)
                 after = self.t.progress.snapshot(key)
                 self.assertEqual((after['coverage'], after['requests_used']), (before['coverage'], before['requests_used'] + 1))
                 self.assertNotEqual(after['status'], 'RETRYABLE_ERROR')
+
+    def test_non_strict_callers_keep_the_shared_pager_contract(self):
+        # T22J: only the paper cycle's history path is strict. The ownership worker/acquisition, migration slot intake and the
+        # other shared-pager callers keep the pre-T22H contract: any failure is RETRYABLE_ERROR, charge kept, no error body.
+        from desk.paper_read_sources import PaperReadError
+        for error in (ValueError('History page digest conflict'), OSError('sensitive provider error'), KeyError('x'),
+                      TypeError('x'), IndexError('x'), PaperReadError('TLS_ERROR'),
+                      PaperReadError('INTAKE_DEADLINE_BEFORE_TRANSPORT'), ValueError('Cached request mismatch')):
+            with self.subTest(repr(error)):
+                self.setUp()
+                key = self.t.seed()
+                before = self.t.progress.snapshot(key)
+
+                def fail(*args, error=error):
+                    raise error
+                result = self.t.progress.advance(key, fail)
+                self.assertEqual(result, self.t.progress.snapshot(key))
+                self.assertEqual((result['status'], result['coverage'], result['requests_used']),
+                                 ('RETRYABLE_ERROR', before['coverage'], before['requests_used'] + 1))
+                self.assertNotIn('sensitive', str(result))
 
     def test_an_error_proven_transient_by_its_original_is_the_retryable_state(self):
         from desk.paper_read_sources import PaperReadError
@@ -145,7 +165,7 @@ class AdvanceItself(unittest.TestCase):
 
         def fail(*args):
             raise PaperReadError('TRANSPORT_ERROR', original)
-        result = self.t.progress.advance(key, fail)
+        result = self.t.progress.advance(key, fail, strict=True)
         self.assertEqual((result['status'], result['failure_evidence']), ('RETRYABLE_ERROR', original))
         self.assertNotIn('sensitive', str(result))
 
@@ -158,7 +178,7 @@ class AdvanceItself(unittest.TestCase):
                 def fail(*args, evidence=evidence):
                     raise PaperReadError('TRANSPORT_ERROR', evidence)
                 with self.assertRaises(PaperReadError):
-                    self.t.progress.advance(key, fail)
+                    self.t.progress.advance(key, fail, strict=True)
 
 
 if __name__ == '__main__':

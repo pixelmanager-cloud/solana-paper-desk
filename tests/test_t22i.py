@@ -30,7 +30,7 @@ class PreTransportTransient(unittest.TestCase):
 
         def fail(*args):
             raise error
-        return key, self.t.progress.advance(key, fail)
+        return key, self.t.progress.advance(key, fail, strict=True)
 
     def test_the_sources_own_deadline_before_any_transport_is_the_retryable_state(self):
         before = self.t.progress.snapshot(self.t.seed())['requests_used']
@@ -62,7 +62,7 @@ class PreTransportTransient(unittest.TestCase):
                 def fail(*args, error=error):
                     raise error
                 with self.assertRaises(type(error)):
-                    self.t.progress.advance(key, fail)
+                    self.t.progress.advance(key, fail, strict=True)
                 after = self.t.progress.snapshot(key)
                 self.assertNotEqual(after['status'], 'RETRYABLE_ERROR')
                 self.assertEqual((after['coverage'], after['requests_used']), (before['coverage'], before['requests_used'] + 1))
@@ -76,7 +76,7 @@ class PreTransportTransient(unittest.TestCase):
                 def fail(*args, code=code):
                     raise PaperReadError(code)
                 with self.assertRaises(PaperReadError):
-                    self.t.progress.advance(key, fail)
+                    self.t.progress.advance(key, fail, strict=True)
                 self.assertNotEqual(self.t.progress.snapshot(key)['status'], 'RETRYABLE_ERROR')
 
     def test_a_retained_latching_original_keeps_the_checkpoint_state_but_is_never_closable(self):
@@ -87,7 +87,7 @@ class PreTransportTransient(unittest.TestCase):
         def fail(*args):
             raise PaperReadError('RESPONSE_OVERSIZED', tls)
         with self.assertRaises(PaperReadError):
-            self.t.progress.advance(key, fail)
+            self.t.progress.advance(key, fail, strict=True)
         self.assertEqual(self.t.progress.snapshot(key)['status'], 'RETRYABLE_ERROR')
         from desk import paper_pass_closure as closure
         error = PaperReadError('RESPONSE_OVERSIZED', tls)
@@ -102,7 +102,7 @@ class PreTransportTransient(unittest.TestCase):
                 def fail(*args, evidence=evidence):
                     raise PaperReadError('RESPONSE_OVERSIZED', evidence)
                 with self.assertRaises(PaperReadError):
-                    self.t.progress.advance(key, fail)
+                    self.t.progress.advance(key, fail, strict=True)
                 self.assertNotEqual(self.t.progress.snapshot(key)['status'], 'RETRYABLE_ERROR')
 
 

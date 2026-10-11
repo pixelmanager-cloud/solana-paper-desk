@@ -292,7 +292,8 @@ def _history(progress, item, budget, source_factory):
             raise CycleBlocked('HISTORY_RECOVERY_REQUIRED')
         def advance(timeout):
             source = source_factory(progress, target.scan_id, key, timeout_seconds=timeout)
-            return progress.advance(key, source)
+            # T22J: only this path (and history_first, which calls _history) uses the strict classification.
+            return progress.advance(key, source, strict=True)
         state = budget.call(target.scan_id, advance)
         if state.get('busy') or state.get('blocked') or state['status'] == 'RETRYABLE_ERROR':
             # T22H: HISTORY_RECOVERY_REQUIRED carries the failed page's retained attempt original; the closure accepts it

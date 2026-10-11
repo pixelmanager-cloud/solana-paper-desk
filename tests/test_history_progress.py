@@ -22,16 +22,22 @@ class HistoryProgressTests(unittest.TestCase):
         self.assertEqual(result['status'],'DONE');self.assertEqual(result['requests_used'],3)
         self.assertEqual(self.progress.advance(key,lambda *a:self.fail('Already complete'))['requests_used'],3)
     def test_failure_consumes_budget_and_keeps_checkpoint(self):
-        # T22H: a failure is the pager's RETRYABLE_ERROR state only when its retained attempt original proves it transient;
-        # the bare OSError this test used propagates instead (tests/test_history_laundering.py has the full matrix).
-        from desk.paper_read_sources import PaperReadError
         key=self.seed();before=self.progress.snapshot(key)['coverage']
-        original=self.store.save({'kind':'paper_read_attempt_v1','scan_id':'s','failure_code':'TRANSPORT_ERROR','requests_used':1})
-        def fail(*args):raise PaperReadError('TRANSPORT_ERROR',original)
+        def fail(*args):raise OSError('sensitive provider error')
         result=self.progress.advance(key,fail)
         self.assertEqual(result['coverage'],before);self.assertEqual(result['requests_used'],3)
         self.assertEqual(result['status'],'RETRYABLE_ERROR');self.assertNotIn('sensitive',str(result))
         self.assertEqual(self.progress.advance(key,lambda *a:{'data':[]})['requests_used'],4)
+    def test_strict_failure_needs_a_transient_original(self):
+        # T22H/T22J: the paper cycle's strict path accepts a failure as RETRYABLE_ERROR only with a transient original.
+        from desk.paper_read_sources import PaperReadError
+        key=self.seed();before=self.progress.snapshot(key)['coverage']
+        with self.assertRaises(OSError):self.progress.advance(key,lambda *a:(_ for _ in ()).throw(OSError('sensitive')),strict=True)
+        original=self.store.save({'kind':'paper_read_attempt_v1','scan_id':'s','failure_code':'TRANSPORT_ERROR','requests_used':1})
+        def fail(*args):raise PaperReadError('TRANSPORT_ERROR',original)
+        result=self.progress.advance(key,fail,strict=True)
+        self.assertEqual(result['coverage'],before);self.assertEqual(result['requests_used'],4)
+        self.assertEqual((result['status'],result['failure_evidence']),('RETRYABLE_ERROR',original));self.assertNotIn('sensitive',str(result))
     def test_budget_is_shared_across_accounts_and_survives_reopen(self):
         self.progress.budget('small',digest({'scan':2}),17)
         a=self.progress.create('small',MINT,10,20)
