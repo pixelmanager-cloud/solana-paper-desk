@@ -833,6 +833,53 @@ class Kraken:
         return observation.usd_price, raw, {**meta, 'trade_at': observation.trade_at}
 
 
+# --- L21: RugCheck (public token report; no key) -------------------------------------------------------------------
+RUGCHECK_RATE = 1.0                       # requests per second (its own bucket; never a Helius / Jupiter lane)
+RUGCHECK_MAX_BYTES = 4 * 1024 * 1024      # a fresh pump token's report is ~10-50 KB; an old large token's can be ~2.5 MB
+RUGCHECK_UNKNOWN = frozenset({400, 404})  # {"error":"invalid token mint"} / not found: the mint has no report
+
+
+class RugCheck:
+    """Read-only ``GET https://api.rugcheck.xyz/v1/tokens/<mint>/report``. No key, no POST, no redirects (the shared
+    ``Transport``: typed errors, bounded reads, strict JSON). Its OWN token bucket (``rate_per_s``, burst 1, default 1/s): it
+    never draws on a Helius or Jupiter lane. ``max_attempts`` defaults to 1 (recording only: a failure is a gap, not a retry).
+    ``report`` returns ``(parsed, raw, meta)`` or raises ``ProviderError``: ``UNKNOWN_MINT`` (HTTP 400/404, non-transient),
+    ``HTTP_429`` / ``HTTP_5xx`` / ``TIMEOUT`` (transient), ``RESPONSE_MALFORMED`` (not strict JSON), ``RESPONSE_INVALID`` (not an
+    object for this mint), ``RESPONSE_OVERSIZED``, ``ARGUMENT_INVALID`` (not a base58 mint; nothing is sent)."""
+    BASE = 'https://api.rugcheck.xyz/v1/tokens/'
+
+    def __init__(self, transport=None, *, rate_per_s=RUGCHECK_RATE, max_bytes=RUGCHECK_MAX_BYTES, max_attempts=1,
+                 request_timeout=REQUEST_TIMEOUT, deadline_seconds=DEADLINE_SECONDS, **kwargs):
+        if type(max_bytes) is not int or not 1024 <= max_bytes <= MAX_RESPONSE_BYTES:
+            raise ValueError('max_bytes out of range')
+        if transport is None:
+            limiter = RateLimiter(rate_per_s, 1, clock=kwargs.get('monotonic', time.monotonic), sleep=kwargs.get('sleep', time.sleep))
+            kwargs.pop('lane', None)
+            transport = Transport('rugcheck', limiter, max_attempts=max_attempts, request_timeout=request_timeout,
+                                  deadline_seconds=deadline_seconds, **kwargs)
+        self.transport, self.max_bytes = transport, max_bytes
+
+    def __repr__(self):
+        return 'RugCheck()'
+
+    def report(self, mint):
+        _pubkey(mint)
+
+        def build():
+            return Request(self.BASE + mint + '/report', method='GET', headers={'Accept': 'application/json'})
+        try:
+            parsed, raw, meta = self.transport.json('report', build, max_bytes=self.max_bytes)
+        except ProviderError as error:
+            if error.meta.get('http_status') in RUGCHECK_UNKNOWN:
+                raise _fail('rugcheck', 'UNKNOWN_MINT', raw=error.raw, meta=error.meta) from None
+            error.provider = 'rugcheck'
+            raise
+        if not isinstance(parsed, dict) or parsed.get('mint') != mint:
+            raise _fail('rugcheck', 'RESPONSE_INVALID', raw=raw, meta=meta)
+        return parsed, raw, meta
+# --- end L21 ---
+
+
 # ---------------------------------------------------------------- the providers object
 
 # Jupiter's swap/v2/build quote needs a syntactically valid taker. PAPER ONLY: this is the public address the desk's paper

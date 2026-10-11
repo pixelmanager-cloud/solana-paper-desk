@@ -182,5 +182,20 @@
     "hub_min_mints": 5,
     "hub_window_s": 86400.0,
     "ignore_funders": []
+  },
+  "risk_external": {
+    "_comment": "L21 external risk rows (RECORDING ONLY, never read by the strategy; absent/null = off): one observations(kind='risk_external') row per hazard-free screened candidate from the public RugCheck report (GET api.rugcheck.xyz/v1/tokens/<mint>/report, no key): score, risks, holders, insider networks, top-10 (AMM excluded), LP locked, rugged; the creator's other tokens in the 7/30 days before the decision (dead = marketCap < dead_mcap_usd) with rugged read from the newest creator_sample (<= 3) of them; copycat name/symbol/image matches against the tokens collected in the last copycat_window_s. Own RugCheck bucket (rate_per_s, never a Helius/Jupiter lane), own daemon thread, handed over right after the screen decision; ~1-4 calls per candidate (~70-280 calls/h at 70 candidates/h). Every value is flagged AT_COLLECTION; the learner uses it only when late_s <= its max_late_s. A 429 stops all calls for max(backoff_s, Retry-After). Raw bodies up to raw_max_bytes are kept as observations(kind='risk_external:rugcheck').",
+    "enabled": true,
+    "rate_per_s": 1.0,
+    "timeout_s": 10.0,
+    "max_attempts": 1,
+    "max_bytes": 4194304,
+    "queue_size": 200,
+    "max_late_s": 30.0,
+    "creator_sample": 3,
+    "dead_mcap_usd": 10000,
+    "copycat_window_s": 86400.0,
+    "raw_max_bytes": 16384,
+    "backoff_s": 60.0
   }
 }

@@ -52,6 +52,9 @@ CONFIG_KEYS = {
     # --- L24 ---
     'clusters': None,                  # lean.clusters settings (an object, may be {}, turns it on); None = off
     # --- end L24 ---
+    # --- L21 ---
+    'risk_external': None,             # lean.risk_external settings ({"enabled", ...}): RugCheck / creator / copycat rows; None = off
+    # --- end L21 ---
 }
 REQUIRED = ('strategy_config', 'initial_cash_sol')
 
@@ -164,6 +167,13 @@ def load_config(path):
         except clusters.ConfigError as error:
             raise ConfigError(str(error)) from None
     # --- end L24 ---
+    # --- L21 ---
+    from lean import risk_external
+    try:
+        cfg['risk_external'] = risk_external.config(cfg['risk_external'])
+    except ValueError as error:
+        raise ConfigError(str(error)) from None
+    # --- end L21 ---
     return cfg
 
 
@@ -285,6 +295,11 @@ def build_runner(cfg, *, state_dir, discovery_db, keys, code_version, clock=None
                                     strategy_version=strategy_cfg.strategy_version, clock=clock, transport_kwargs=transport_kwargs,
                                     signals_enabled=cfg.get('wallet_signals') is not None)
     # --- end L24 ---
+    # --- L21: external risk rows (RugCheck, its own bucket; recording only) ---
+    from lean import risk_external
+    r.risk_external = risk_external.build(risk_external.config(cfg.get('risk_external')), store=the_store, code_version=code_version,
+                                          strategy_version=strategy_cfg.strategy_version, clock=clock, transport_kwargs=transport_kwargs)
+    # --- end L21 ---
     return r
 
 
