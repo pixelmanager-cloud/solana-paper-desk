@@ -13,6 +13,7 @@ Scenario (12 launches, ticks of 60 s; after each tick the recorder's queue is dr
   truncated      the pool has 1000+ signatures: HISTORY_TRUNCATED, no paging
   no_creator     the pool's coin_creator is the system address: no dev call
   outage         Helius answers 503 during its screen: a retried candidate gets ONE row, from its final attempt
+  quote_retry    passed, then Jupiter answers 503 to its entry quote: retried and entered; ONE row (entered), none from the failed attempt
 and the trading result is IDENTICAL with the recorder switched off.
 """
 import json
@@ -27,16 +28,19 @@ from unittest import mock
 from lean import features as F, providers, report
 from lean.__main__ import build_runner, load_config
 from tests.lean.fakeworld import FakeTime, SUPPLY, T0, Token, World
+from tests.lean.test_e2e_real import steps
 
 ROOT = Path(__file__).resolve().parents[2]
 KEYS = {'helius': 'TEST-HELIUS-KEY-0000', 'jupiter': 'TEST-JUPITER-KEY-0000'}
-SCENARIO = [('ok_1', dict(coin_creator_tag=71), 0), ('cost', dict(route_fee_bps=600, coin_creator_tag=72), 50),
+SCENARIO = [('ok_1', dict(coin_creator_tag=71, path=steps((300, 0.7))), 0), ('cost', dict(route_fee_bps=600, coin_creator_tag=72), 50),
             ('mint_authority', dict(hazard='mint_authority', coin_creator_tag=73), 100), ('mcap_high', dict(quote_sol=3000, coin_creator_tag=74), 150),
-            ('no_route', dict(no_route=True, coin_creator_tag=75), 200), ('ok_2', dict(coin_creator_tag=76), 250),
+            ('no_route', dict(no_route=True, coin_creator_tag=75), 200), ('ok_2', dict(coin_creator_tag=76, path=steps((300, 0.7))), 250),
             ('concentrated', dict(hazard='concentrated', coin_creator_tag=77), 300),
             ('liquidity_low', dict(quote_sol=20, base_raw=2 * 10 ** 13, coin_creator_tag=78), 400),
-            ('truncated', dict(coin_creator_tag=79), 450), ('no_creator', dict(), 500), ('outage', dict(coin_creator_tag=80), 600)]
+            ('truncated', dict(coin_creator_tag=79), 450), ('no_creator', dict(), 500), ('outage', dict(coin_creator_tag=80), 600),
+            ('quote_retry', dict(coin_creator_tag=81), 700)]
 OUTAGE = (T0 + 590, T0 + 650)
+JUPITER_OUTAGE = (T0 + 690, T0 + 760)
 END = T0 + 2400
 BLOCK_BEFORE_RECEIPT = 25                      # the graduation block time is 25 s before the discovery receive time
 DEV_UNITS = 2 * 10 ** 13                       # every dev wallet holds 2 % of the supply
@@ -69,6 +73,7 @@ class E2E(unittest.TestCase):
         offsets = [off for _, _, off in SCENARIO]
         world.add_frames([T0 + off for off in offsets])
         world.outages['helius'] = OUTAGE
+        world.outages['jupiter'] = JUPITER_OUTAGE
         slot = grad_slot(world)
         pools = {t.pool: (t, T0 + off - 300 - BLOCK_BEFORE_RECEIPT) for t, off in zip(tokens, offsets)}
         calls = []
@@ -205,6 +210,14 @@ class E2E(unittest.TestCase):
         outage_screens = [d for d in r.store.rows('decisions', kind='screen', limit=100000) if role[d['mint']] == 'outage']
         self.assertEqual([d['action'] for d in outage_screens], ['FAILED', 'PASS'])
         self.assertEqual(sum(1 for o in r.store.rows('observations', kind='features', limit=100000) if role[o['mint']] == 'outage'), 1)
+        # a PASSED candidate whose entry quote failed transiently is retried: its single row says entered, the failed attempt wrote none
+        retry_decisions = [d for d in r.store.rows('decisions', kind='entry', limit=100000) if role[d['mint']] == 'quote_retry']
+        self.assertEqual([d['action'] for d in retry_decisions], ['BUY'])
+        quote_failures = [e for e in r.store.rows('errors', limit=100000) if role.get(e['mint']) == 'quote_retry' and e['code'].startswith('HTTP_5')]
+        self.assertTrue(quote_failures)
+        rows = self.rows(r, role)
+        self.assertEqual((rows['quote_retry']['entered'], rows['quote_retry']['not_entered_reason']), (True, None))
+        self.assertEqual(sum(1 for o in r.store.rows('observations', kind='features', limit=100000) if role[o['mint']] == 'quote_retry'), 1)
 
     def test_every_extra_call_went_through_the_low_lane(self):
         r, role, world, calls, clock = self.build_world(features=True)
@@ -286,6 +299,34 @@ class E2E(unittest.TestCase):
             thread.join(10)
         self.assertTrue(started)
         self.assertFalse(thread.is_alive())
+
+    def test_the_runner_hook_skips_failed_screens_and_never_reuses_a_screen(self):
+        from lean.candidates import Candidate, Screen
+        r, role, world, calls, clock = self.build_world(features=True)
+        seen = []
+
+        class Stub:
+            def on_candidate(self, candidate, cid, screen):
+                seen.append((candidate.mint, cid))
+
+            def health(self):
+                return {'enabled': True}
+        r.features = Stub()
+        candidate = Candidate(seq=1, mint='M' * 32, pool='P' * 32, signature='s', slot=1, migrated_at=T0, payload_hash='h')
+        ok = Screen(True, (), {}, (), ())
+        failed = Screen(False, ('HOLDERS_UNAVAILABLE',), {}, (), (), {'stage': 'holders', 'code': 'HTTP_503', 'transient': True})
+        r._l12_screened = (5, failed)
+        r._l12_after(candidate)
+        self.assertEqual(seen, [])                                                          # a failed screen has no result to record
+        r._l12_screened = (6, ok)
+        r._l12_after(candidate)
+        r._l12_after(candidate)                                                             # the stored screen is consumed once
+        self.assertEqual(seen, [(candidate.mint, 6)])
+        self.assertIsNone(r._l12_screened)
+        r._l12_screened = (7, ok)
+        r.retry.append((candidate, 2))                                                      # it will be retried: the final attempt writes the row
+        r._l12_after(candidate)
+        self.assertEqual(seen, [(candidate.mint, 6)])
 
     def test_a_broken_recorder_changes_no_entry(self):
         r, role, world, calls, clock = self.build_world(features=True)

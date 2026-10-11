@@ -427,6 +427,7 @@ class TestRecorder(Base):
         self.store.add_fill(buy(Quote(mint, 'buy', 20_000_000, 10 ** 9, 6, T0, ref='r'), '0.02', PaperConfig()), candidate_id=cid,
                             state={'event': 'open', 'state': {}})
         self.assertEqual(self.rec.outcome(cid, mint, fx.screen()), (True, None))
+        self.assertEqual(self.rec.outcome(other, mint, fx.screen()), (False, 'ABORTED_BY_ERROR'))          # another candidate's BUY is not ours
 
     def test_on_candidate_hands_the_outcome_to_the_queue(self):
         cid = self.store.add_candidate(self.fx.token.mint, pool=self.fx.candidate.pool, slot=GRAD_SLOT, ts=T0)
