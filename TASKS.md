@@ -1,5 +1,8 @@
 # ⚠️ FREEZE (2026-10-11): `desk/` is FROZEN. No new T-tasks; T16J/T24S/T37G/T37H are stopped.
 # All workers: take OPEN `L*` tasks only (the lean desk in `lean/`). If none is OPEN, stop and wait.
+# NOTE (lean): L01–L06 pieces were built against stubs and do NOT fit together. L09 (coordinator-owned, branch cloud/L09) is integrating them with an adapter layer.
+# L07/L08 workers: build against the REAL modules from origin/cloud/L01..L04 (not stubs); when cloud/L09 has a DONE commit, merge it and adapt.
+
 
 # solana-paper-desk cloud task queue
 
