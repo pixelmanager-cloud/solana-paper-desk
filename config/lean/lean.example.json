@@ -135,5 +135,11 @@
     "max_retries": 3,
     "retry_delay_s": 30.0,
     "max_calls_per_hour": 900
+  },
+  "honeypot_sim": {
+    "_comment": "L22 honeypot sell-simulation ENTRY FILTER (absent = off). Token-2022 / extension / live-authority mints and non-pump sources only: a plain pump-graduated SPL mint with revoked authorities is recorded SKIPPED_STANDARD_SPL with no call. A real top holder (pool vault, burn and creator excluded) is asked to SELL via Jupiter swap/v2/build (taker = holder) and the UNSIGNED transaction goes to Helius simulateTransaction (sigVerify false, replaceRecentBlockhash true): never signed, never sent. MAIN lane, before the entry quotes; at most max_per_hour simulated candidates (<= 5 Helius + 3 Jupiter calls each). SELL_SIM_BLOCKED = hazard reject HONEYPOT_SIM_BLOCKED; INCONCLUSIVE/NO_BUILD rejects only a Token-2022 mint with a transfer hook or a transfer fee > 10%. full_size also simulates our full paper size when the holder holds it.",
+    "enabled": true,
+    "max_per_hour": 30,
+    "full_size": true
   }
 }

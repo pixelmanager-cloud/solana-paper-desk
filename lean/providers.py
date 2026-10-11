@@ -64,7 +64,14 @@ READ_ONLY_RPC = frozenset({
     'getAccountInfo', 'getMultipleAccounts', 'getTokenLargestAccounts', 'getTokenSupply',
     'getTokenAccountsByOwner', 'getSlot', 'getBlockTime', 'getBalance', 'getTransaction',
     'getSignaturesForAddress', 'getLatestBlockhash', 'getMinimumBalanceForRentExemption',
-    'getProgramAccounts', 'getTokenAccountBalance'})
+    'getProgramAccounts', 'getTokenAccountBalance',
+    # --- L22 hook: simulateTransaction executes a transaction against a COPY of the node's bank and returns logs; it never
+    # broadcasts and nothing lands on chain. Helius.rpc only lets it through UNSIGNED (every signature slot all-zero) with
+    # sigVerify=false and replaceRecentBlockhash=true (``_unsigned_simulation``); any other shape is METHOD_NOT_ALLOWED. ---
+    'simulateTransaction'})
+SIMULATION_OPTIONS = frozenset({'encoding', 'sigVerify', 'replaceRecentBlockhash', 'commitment', 'minContextSlot', 'innerInstructions'})
+MAX_SIMULATION_TX_BYTES = 1232
+# --- end L22 ---
 TRANSIENT_RPC_CODES = frozenset({-32005, -32004, -32016})
 _BASE58 = re.compile(r'[1-9A-HJ-NP-Za-km-z]{32,44}')
 
@@ -558,6 +565,8 @@ class Helius:
             raise _fail('helius', 'METHOD_NOT_ALLOWED')
         if not isinstance(params, (list, tuple)):
             raise _fail('helius', 'ARGUMENT_INVALID')
+        if method == 'simulateTransaction' and not _unsigned_simulation(params):       # --- L22 hook ---
+            raise _fail('helius', 'METHOD_NOT_ALLOWED')
         try:
             body = json.dumps({'jsonrpc': '2.0', 'id': 1, 'method': method, 'params': params},
                               allow_nan=False, default=_json_default).encode()
@@ -645,6 +654,38 @@ def validate_multiple_accounts(result, count, *, raw=None, meta=None):
     except (ValueError, TypeError, AttributeError):
         raise _fail('helius', 'RESPONSE_INVALID', raw=raw, meta=meta) from None
     return result
+
+
+# --- L22 hook ---
+def _unsigned_simulation(params):
+    """True only for ``[base64 tx, {encoding: 'base64', sigVerify: False, replaceRecentBlockhash: True, ...}]`` whose wire
+    transaction carries at least one signature slot and EVERY slot is 64 zero bytes (nothing was signed), within the packet size.
+    Pure; no I/O."""
+    try:
+        if len(params) != 2 or not isinstance(params[0], str) or not isinstance(params[1], dict):
+            return False
+        options = params[1]
+        if (set(options) - SIMULATION_OPTIONS or options.get('encoding') != 'base64' or options.get('sigVerify') is not False
+                or options.get('replaceRecentBlockhash') is not True):
+            return False
+        raw = base64.b64decode(params[0], validate=True)
+        if not 0 < len(raw) <= MAX_SIMULATION_TX_BYTES:
+            return False
+        count, offset, shift = 0, 0, 0                  # compact-u16 signature count
+        while True:
+            byte = raw[offset]
+            count |= (byte & 0x7F) << shift
+            offset += 1
+            if not byte & 0x80:
+                break
+            shift += 7
+            if offset >= 3:
+                return False
+        signatures = raw[offset:offset + 64 * count]
+        return 1 <= count <= 8 and len(signatures) == 64 * count and not any(signatures)
+    except (ValueError, TypeError, IndexError):
+        return False
+# --- end L22 ---
 
 
 def _json_default(value):

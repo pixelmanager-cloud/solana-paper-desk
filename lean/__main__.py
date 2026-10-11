@@ -43,6 +43,9 @@ CONFIG_KEYS = {
     'sell_evidence': None,             # lean.sell_evidence settings ({"enabled", "min_organic_sells", ...}); None / absent = off. Needs execution.
     'flow': None,                      # lean.flow settings ({"enabled", "window_s", ...}); None / absent = off
     # --- end L20 ---
+    # --- L22 ---
+    'honeypot_sim': {},                # {enabled (false), max_per_hour 30, full_size true}: sell-simulation entry filter (main lane)
+    # --- end L22 ---
 }
 REQUIRED = ('strategy_config', 'initial_cash_sol')
 
@@ -133,6 +136,13 @@ def load_config(path):
     if cfg['sell_evidence']['enabled'] and cfg['execution'] is None:
         raise ConfigError('sell_evidence needs execution (the probe runs inside the L10 exit delay)')
     # --- end L20 ---
+    # --- L22 ---
+    from lean import honeypot_sim
+    try:
+        cfg['honeypot_sim'] = honeypot_sim.config(cfg['honeypot_sim'])
+    except honeypot_sim.HoneypotConfigError as error:
+        raise ConfigError(str(error)) from None
+    # --- end L22 ---
     return cfg
 
 
@@ -238,6 +248,10 @@ def build_runner(cfg, *, state_dir, discovery_db, keys, code_version, clock=None
     r.flow = flow.build(flow.config(cfg.get('flow')), store=the_store, keys=keys, code_version=code_version,
                         strategy_version=strategy_cfg.strategy_version, clock=clock, transport_kwargs=transport_kwargs)
     # --- end L20 ---
+    # --- L22: the honeypot sell-simulation entry filter (MAIN lane, before the entry quotes; None = off) ---
+    from lean import honeypot_sim
+    r.honeypot = honeypot_sim.build(cfg.get('honeypot_sim'), the_store, clock=clock)
+    # --- end L22 ---
     return r
 
 
