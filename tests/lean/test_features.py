@@ -443,6 +443,15 @@ class TestRecorder(Base):
             pass
         self.assertEqual(len(self.rows()), 1)
 
+    def test_a_watchlist_rescreen_that_enters_gets_its_entered_row(self):
+        """LINT2: L14 re-screens a soft reject under the SAME candidate id; when that re-screen enters, the entry gets its own
+        row (entered=True, the features at entry), else the feature-vs-outcome table never sees watchlist entries."""
+        for entered in (False, False, True, True):
+            self.rec.submit(self.fx.candidate, self.fx.screen(), entered=entered, candidate_id=5)
+        while self.rec.process_one():
+            pass
+        self.assertEqual([r['entered'] for r in self.rows()], [False, True])
+
     def test_hazard_reject_gets_its_cheap_row_and_no_spend(self):
         self.rec.submit(self.fx.candidate, self.fx.screen(False, ['ACTIVE_MINT_AUTHORITY'], raw=()), entered=False, reason='r')
         self.rec.process_one()

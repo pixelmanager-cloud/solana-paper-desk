@@ -464,7 +464,7 @@ class FeatureRecorder:
         try:
             mint = _get(candidate, 'mint')
             with self._lock:
-                key = (mint, candidate_id)
+                key = (mint, candidate_id, bool(entered))     # LINT2: an L14 re-screen that ENTERS gets its own row
                 if key in self._written:
                     return False
                 self._written.add(key)
