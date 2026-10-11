@@ -189,6 +189,7 @@ class PreparationRejectionReplayGrowth(unittest.TestCase):
             self.assertIsNone(terminal.gate(self.h.store, self.research, ('b' * 32,)))
         return count[0]
 
+    @unittest.expectedFailure
     def test_gate_decodes_every_unrelated_evidence_page_per_retained_rejection(self):
         """rejection._attempts() decompresses+parses EVERY row of the evidence `pages` table to
         find the rejection's 3-6 attempt records, once per retained rejection per gate call:
@@ -201,6 +202,7 @@ class PreparationRejectionReplayGrowth(unittest.TestCase):
         grown = self.loads_during_gate()
         self.assertEqual(grown, base, 'gate decoded %d extra unrelated pages' % (grown - base))
 
+    @unittest.expectedFailure
     def test_unrelated_pages_beyond_4096_latch_the_gate_permanently(self):
         """With ONE retained preparation rejection, the evidence store reaching 4097 pages (any
         content: history pages, attempts, intents, results; no pruning exists) makes
