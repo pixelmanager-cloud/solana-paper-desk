@@ -1991,3 +1991,14 @@ OWNS: lean/route_check.py, tests/lean/test_route_check.py
 - **Never sign, never send.** Add a test that greps `lean/` for signing and broadcast primitives (`sign`, `send_transaction`, `sendTransaction`, a Keypair import) and fails if any are found.
 - **If the endpoint requires a funded taker,** record `ROUTE_CHECK_UNSUPPORTED` once and disable the check (config). Do not work around it.
 - **Report.** Show the routable % at entry and at exit.
+
+## L08B — Entry-timing variants in replay (follow-up to L08, which is already DONE)
+STATUS: OPEN
+BASE: origin/cloud/L08 merged onto origin/cloud/L09 (resolve the conflicts against L09's real modules)
+OWNS: lean/replay.py, lean/tune.py, tests/lean/test_replay.py, tests/lean/test_tune.py
+Add entry-timing variants to the replay grid:
+- enter at the first path mark;
+- enter after the first pullback of at least X% from the local high;
+- enter after N minutes of positive momentum.
+
+Every variant is evaluated walk-forward and ranked out-of-sample only. The same acceptance rules as L10–L16 apply.
