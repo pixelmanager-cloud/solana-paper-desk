@@ -1,47 +1,58 @@
-"""Held-position rug / unsellable handling for the lean paper trader (L11). PAPER ONLY: nothing here signs, builds or sends a transaction.
+"""Held-position rug detection for the lean paper trader (L11, reworked in L11F on top of the D1 quote marks and the D2 write-off).
+PAPER ONLY: nothing here signs, builds or sends a transaction.
 
-For every held mint the position loop watches four things:
+This module only DETECTS and VALUES. It never sells and never closes a position: a detected rug becomes a forced ``DANGER`` exit
+inside ``Runner._manage`` (so the quote, the fee and slippage, the D2 ``exit_failing_since`` clock and the D2 write-off are the
+ordinary ones, and exits never go through a second code path). Four triggers per held mint:
 
-  (a) LIQUIDITY_DROP  the pool's quote vault fell by more than ``rug_liq_drop_frac`` (default 0.7) since entry;
-  (b) FREEZE          the mint's freeze authority is set (a cheap account read every ``freeze_check_every`` position passes);
-                      recorded and reported; it forces an exit only when ``freeze_forces_exit`` is true (default false);
-  (c) NO_ROUTE        the Jupiter sell quote has had no route for longer than ``unsellable_after_s`` (default 120 s), probed
-                      every ``route_probe_s`` (default 60 s); a provider OUTAGE (timeout, 5xx, 429) is not "no route";
-  (d) POOL_GONE       the pool account is closed (or a vault is gone), or its owner program changed (migrated).
+  LIQUIDITY_DROP  the pool's quote vault fell by more than ``rug_liq_drop_frac`` (default 0.7) since the screen that opened the
+                  position (read from the marks the position loop already makes: no extra request);
+  POOL_GONE       the vault accounts were missing from the marks read, or the pool account was closed, or its owner program
+                  changed (migrated), in ``pool_gone_confirmations`` (default 2) CONSECUTIVE reads: one empty read is a node
+                  hiccup, not a rug;
+  NO_ROUTE        no Jupiter sell route for ``unsellable_after_s`` (default 120 s), probed every ``route_probe_s`` (60 s). A probe
+                  is skipped when a D1 quote mark younger than that already proves a route. A provider outage (timeout, 5xx,
+                  429) is never "no route";
+  FREEZE          the mint's freeze authority is set: recorded as a flag; it forces an exit only with ``freeze_forces_exit``.
 
-On (a), (c) or (d) the position is sold in full at a fresh quote (q1) with the exit reason ``RUG_EXIT``. If no executable route
-exists (a non-transient quote failure, or a route worth less than the fee) the position is marked UNSELLABLE: it is valued at the
-best executable quote seen so far, or 0 if there never was one, and written off in the books after ``unsellable_writeoff_s``
-(default 6 h) at that value with the exit reason ``RUG_WRITEOFF``. While UNSELLABLE the exit is re-attempted every pass, so a route
-that comes back is used.
+Order inside one position pass (so detection never queues ahead of a stop exit): marks read -> ``after_marks`` (no I/O: baselines,
+trigger detection from the marks just read, valuation of rug positions whose exit is failing) -> D1 quote marks -> the exit loop (a
+position with a trigger is wanted out as ``DANGER``) -> ``after_exits`` (the only I/O of this module: route probes and the batched
+account check, whose findings take effect on the next pass).
 
-State is persisted as generic ``events`` rows of kind ``held_risk`` (no schema change: a lean store is never migrated) and rebuilt
-from them at start, so UNSELLABLE state, the no-route clock and the entry baseline survive a restart. Each lifecycle is keyed by
-``(mint, open_fill_id)``, so a later re-entry of the same mint starts clean.
+Valuation: a position with a trigger whose exit is failing (D2's persisted ``exit_failing_since``) is worth 0 in the equity unless
+an executable sell quote younger than ``unsellable_value_ttl_s`` exists; it is never valued at its last good price or at cost. D2's
+write-off then books it after ``unexitable_after_s`` with the reason ``RUG_WRITEOFF`` (``UNEXITABLE`` when no trigger fired).
+
+State is persisted as generic ``events`` rows of kind ``held_risk`` (no schema change: a lean store is never migrated) and the
+trigger is also stamped on the position state (``rug_trigger``), so a trigger, the POOL_GONE confirmation count and the no-route
+clock all survive a restart. Each lifecycle is keyed by ``(mint, open_fill_id)``: a later re-entry of the same mint starts clean.
 
 A failure in this module is isolated like any other position check (an ``errors`` row, the loop moves on); it never touches the
-entry path. The only things that halt the trader are still an accounting violation or a store failure.
+entry path. Off unless ``held_risk.enabled`` is true.
 """
 import json
+import sqlite3
 from decimal import Decimal, InvalidOperation
 
-from lean import adapters as A, paper, strategy as S
+from lean import adapters as A, paper
 from lean.providers import ProviderError
+from lean.store import StoreError
 
 KIND = 'held_risk'
 SOL_MINT = A.SOL_MINT
-REASON_RUG_EXIT = 'RUG_EXIT'
-REASON_WRITEOFF = 'RUG_WRITEOFF'
 TRIGGERS = ('LIQUIDITY_DROP', 'NO_ROUTE', 'POOL_GONE', 'FREEZE')
 DEFAULTS = {
-    'enabled': True,
+    'enabled': False,
     'rug_liq_drop_frac': '0.7',
     'unsellable_after_s': 120,
-    'unsellable_writeoff_s': 21600,
+    'unsellable_value_ttl_s': 30,
     'route_probe_s': 60,
     'freeze_check_every': 6,
     'freeze_forces_exit': False,
+    'pool_gone_confirmations': 2,
 }
+REPLAY_PAGE = 1000
 
 
 class HeldRiskConfigError(ValueError):
@@ -60,18 +71,18 @@ class Config:
             raise HeldRiskConfigError('rug_liq_drop_frac must be a number') from None
         if not frac.is_finite() or not Decimal(0) < frac < Decimal(1):
             raise HeldRiskConfigError('rug_liq_drop_frac must be in (0, 1)')
-        for name in ('unsellable_after_s', 'unsellable_writeoff_s', 'route_probe_s', 'freeze_check_every'):
+        for name in ('unsellable_after_s', 'unsellable_value_ttl_s', 'route_probe_s', 'freeze_check_every'):
             if type(merged[name]) is not int or not 1 <= merged[name] <= 10 ** 7:
                 raise HeldRiskConfigError('%s must be a positive integer' % name)
+        if type(merged['pool_gone_confirmations']) is not int or not 1 <= merged['pool_gone_confirmations'] <= 20:
+            raise HeldRiskConfigError('pool_gone_confirmations must be an integer from 1 to 20')
         for name in ('enabled', 'freeze_forces_exit'):
             if type(merged[name]) is not bool:
                 raise HeldRiskConfigError('%s must be true or false' % name)
         self.enabled, self.rug_liq_drop_frac = merged['enabled'], frac
-        self.unsellable_after_s, self.unsellable_writeoff_s = merged['unsellable_after_s'], merged['unsellable_writeoff_s']
+        self.unsellable_after_s, self.unsellable_value_ttl_s = merged['unsellable_after_s'], merged['unsellable_value_ttl_s']
         self.route_probe_s, self.freeze_check_every = merged['route_probe_s'], merged['freeze_check_every']
-        self.freeze_forces_exit = merged['freeze_forces_exit']
-        if self.unsellable_writeoff_s < self.unsellable_after_s:
-            raise HeldRiskConfigError('unsellable_writeoff_s must not be below unsellable_after_s')
+        self.freeze_forces_exit, self.pool_gone_confirmations = merged['freeze_forces_exit'], merged['pool_gone_confirmations']
 
     @classmethod
     def from_dict(cls, value):
@@ -89,15 +100,16 @@ class Life:
     """The risk state of one position lifecycle."""
 
     def __init__(self):
-        self.baseline_quote = None          # quote-vault lamports at entry
+        self.baseline_quote = None          # quote-vault lamports at the screen that opened the position
         self.pool_owner = None
+        self.trigger = None                 # (reason, detail) once an exit is wanted; sticky until the position closes
+        self.vault_misses = 0               # consecutive marks reads with a missing vault account
+        self.last_miss_at = None
+        self.account_misses = 0             # consecutive account checks with the pool closed / migrated
         self.no_route_since = None
-        self.last_good_value = None         # lamports: net proceeds of the last executable full-size sell quote
-        self.trigger = None                 # (reason, detail) while an exit is wanted
-        self.unsellable = None              # {'since', 'value_lamports', 'reason'}
+        self.last_good = None               # (net lamports of an executable full-size sell quote, observed at)
         self.freeze_flagged = False
         self.last_probe = None
-        self.closed = False
 
 
 class HeldRisk:
@@ -105,114 +117,144 @@ class HeldRisk:
         self.store, self.cfg, self.clock = store, cfg, clock
         self.code_version, self.strategy_version = code_version, strategy_version
         self.lives = {}                     # (mint, open_fill_id) -> Life
-        self.reserves = {}                  # mint -> (quote vault lamports, mark_at) from the latest marks read
-        self.vault_missing = {}             # mint -> mark_at when a vault account was missing
         self.passes = 0
-        self.counts = {'triggers': 0, 'rug_exits': 0, 'unsellable': 0, 'writeoffs': 0, 'freeze_flags': 0}
+        self.counts = {'triggers': 0, 'freeze_flags': 0}
+        self._fresh = {}                    # mint -> quote vault lamports of THIS pass's marks read
+        self._missing = {}                  # mint -> mark_at of THIS pass's read when a vault account was missing
+        self._reserve_seen = {}             # mint -> latest quote vault lamports (baseline fallback)
         self._replay()
 
     # -- persistence ----------------------------------------------------------------------------------------------
     def _write(self, payload):
         self.store.record(KIND, payload, code_version=self.code_version, strategy_version=self.strategy_version, ts=self.clock())
 
+    def _events(self):
+        """Every held_risk event in id order, in pages (no row cap: a long run must not lose its oldest rows)."""
+        last = 0
+        while True:
+            with self.store._lock:
+                rows = self.store.db.execute('SELECT id,payload FROM events WHERE kind=? AND id>? ORDER BY id LIMIT ?',
+                                             (KIND, last, REPLAY_PAGE)).fetchall()
+            if not rows:
+                return
+            for row_id, payload in rows:
+                last = row_id
+                yield payload
+
     def _replay(self):
-        for row in self.store.rows('events', kind=KIND, limit=100000):
+        for payload in self._events():
             try:
-                p = json.loads(row['payload'])
-                life = self.lives.setdefault((p['mint'], int(p['open_fill_id'])), Life())
+                p = json.loads(payload)
+                life = self.life(p['mint'], int(p['open_fill_id']))
             except (ValueError, KeyError, TypeError):
                 continue
             ev = p.get('ev')
             if ev == 'baseline':
-                life.baseline_quote, life.pool_owner = p.get('quote_reserve_lamports'), p.get('pool_owner')
+                life.baseline_quote = p.get('quote_reserve_lamports')
+                if p.get('pool_owner') is not None:
+                    life.pool_owner = p['pool_owner']
             elif ev == 'pool_owner':
                 life.pool_owner = p.get('pool_owner')
+            elif ev == 'trigger':
+                life.trigger = (p.get('reason'), p.get('detail') or {})
+                self.counts['triggers'] += 1
+            elif ev == 'vault_miss':
+                life.vault_misses, life.last_miss_at = int(p.get('n', 0)), p.get('at')
+            elif ev == 'vault_seen':
+                life.vault_misses = 0
+            elif ev == 'account_miss':
+                life.account_misses = int(p.get('n', 0))
+            elif ev == 'account_seen':
+                life.account_misses = 0
             elif ev == 'no_route':
                 life.no_route_since = p.get('since')
-                if p.get('last_good_value_lamports') is not None:
-                    life.last_good_value = p['last_good_value_lamports']
             elif ev == 'route_ok':
                 life.no_route_since = None
             elif ev == 'freeze_flag':
                 life.freeze_flagged = True
                 self.counts['freeze_flags'] += 1
-            elif ev == 'unsellable':
-                life.unsellable = {'since': p['since'], 'value_lamports': p['value_lamports'], 'reason': p.get('reason')}
-            elif ev == 'trigger':
-                self.counts['triggers'] += 1
-            elif ev == 'closed':
-                life.closed = True
-                if p.get('reason') == REASON_WRITEOFF:
-                    self.counts['writeoffs'] += 1
-                elif p.get('reason') == REASON_RUG_EXIT:
-                    self.counts['rug_exits'] += 1
-        self.counts['unsellable'] = sum(1 for l in self.lives.values() if l.unsellable)
 
     def life(self, mint, open_fill_id):
         return self.lives.setdefault((mint, int(open_fill_id)), Life())
 
-    # -- inputs from the marks read (runner hook) -----------------------------------------------------------------
+    def trigger(self, mint, open_fill_id):
+        """The trigger name that wants this lifecycle out as a DANGER exit, or None."""
+        life = self.lives.get((mint, int(open_fill_id)))
+        return life.trigger[0] if life is not None and life.trigger is not None else None
+
+    # -- inputs from the marks read (runner hook inside ``_read_marks``) ---------------------------------------------------
     def observe(self, mint, base_raw, quote_lamports, mark_at):
-        self.reserves[mint] = (int(quote_lamports), mark_at)
-        self.vault_missing.pop(mint, None)
+        self._fresh[mint] = int(quote_lamports)
+        self._reserve_seen[mint] = int(quote_lamports)
+        self._missing.pop(mint, None)
 
     def observe_missing(self, mint, mark_at):
-        self.vault_missing[mint] = mark_at
+        self._missing[mint] = mark_at
+        self._fresh.pop(mint, None)
 
-    # -- the periodic work (runner hook, once per position pass) -----------------------------------------------------
-    def tick(self, runner, positions, states, now):
-        """Baselines, the account checks, the route probes, the triggers; and the valuation of UNSELLABLE positions."""
-        self.passes += 1
-        held = {m: states[m] for m in positions if m in states}
-        for mint, row in held.items():
+    # -- after the marks, before any I/O of this module -------------------------------------------------------------------
+    def after_marks(self, runner, positions, states):
+        """Baselines, trigger detection from the marks just read, and the valuation of rug positions whose exit is failing.
+        No request is made here."""
+        now = runner._now()
+        for mint in [m for m in positions if m in states]:
+            row = states[mint]
             life = self.life(mint, row['open_fill_id'])
             if life.baseline_quote is None:
-                self._baseline(runner, mint, row, life, now)
-            if life.unsellable:
-                value = life.unsellable['value_lamports']
-                runner.marks[mint] = (A.sol(int(value)), now)         # valued at the best executable quote, or 0
-                continue
+                self._baseline(runner, mint, row, life)
             if life.trigger is None:
-                self._detect_reserves(mint, row, life)
-        if self.passes % self.cfg.freeze_check_every == 1 or self.cfg.freeze_check_every == 1:
-            self._account_checks(runner, held, now)
-        for mint, row in held.items():
-            life = self.life(mint, row['open_fill_id'])
-            if life.unsellable or life.trigger is not None:
-                continue
-            if life.last_probe is None or now - life.last_probe >= self.cfg.route_probe_s:
-                self._probe(runner, mint, positions[mint], row, life, now)
+                self._detect(mint, row, life)
+            if life.trigger is not None and row['state'].get('exit_failing_since') is not None:
+                self._value(runner, mint, life, now)
+        self._fresh.clear()
+        self._missing.clear()
 
-    def _baseline(self, runner, mint, row, life, now):
+    def _baseline(self, runner, mint, row, life):
+        """The quote reserve at the screen tied to THIS position: the latest PASS screen decided no later than the opening fill."""
         quote, source = None, None
         try:
-            for decision in reversed(self.store.rows('decisions', mint=mint, kind='screen', limit=20)):
-                if decision['action'] == 'PASS':
-                    features = json.loads(decision['features'])
+            fill = runner.store.rows('fills', id=row['open_fill_id'], limit=1)
+            if fill:
+                with runner.store._lock:
+                    found = runner.store.db.execute(
+                        "SELECT features FROM decisions WHERE mint=? AND kind='screen' AND action='PASS' AND ts<=? ORDER BY id DESC LIMIT 1",
+                        (mint, fill[0]['ts'])).fetchone()
+                if found is not None:
+                    features = json.loads(found[0])
                     if features.get('quote_gross_raw') is not None:
                         quote, source = int(features['quote_gross_raw']), 'screen'
-                    break
         except (ValueError, TypeError, KeyError):
             quote = None
-        if quote is None and mint in self.reserves:
-            quote, source = self.reserves[mint][0], 'first_mark'
+        if quote is None and mint in self._reserve_seen:
+            quote, source = self._reserve_seen[mint], 'first_mark'
         if quote is None:
             return                                                    # no evidence yet: try again next pass
         life.baseline_quote = quote
         self._write({'ev': 'baseline', 'mint': mint, 'open_fill_id': row['open_fill_id'], 'quote_reserve_lamports': quote,
                      'pool_owner': life.pool_owner, 'source': source})
 
-    def _detect_reserves(self, mint, row, life):
-        if mint in self.vault_missing:
-            self._trigger(mint, row, life, 'POOL_GONE', {'why': 'vault account missing'})
+    def _detect(self, mint, row, life):
+        open_id = row['open_fill_id']
+        if mint in self._missing:
+            at = self._missing[mint]
+            if life.last_miss_at != at:
+                life.vault_misses += 1
+                life.last_miss_at = at
+                self._write({'ev': 'vault_miss', 'mint': mint, 'open_fill_id': open_id, 'n': life.vault_misses, 'at': at})
+            if life.vault_misses >= self.cfg.pool_gone_confirmations:
+                self._trigger(mint, row, life, 'POOL_GONE', {'why': 'vault account missing', 'reads': life.vault_misses})
             return
-        seen = self.reserves.get(mint)
-        if seen is None or life.baseline_quote is None or life.baseline_quote <= 0:
+        if mint not in self._fresh:
+            return                                                    # no read this pass (provider failure): nothing to conclude
+        if life.vault_misses:
+            life.vault_misses = 0
+            self._write({'ev': 'vault_seen', 'mint': mint, 'open_fill_id': open_id})
+        if life.baseline_quote is None or life.baseline_quote <= 0:
             return
         keep = Decimal(1) - self.cfg.rug_liq_drop_frac
-        if Decimal(seen[0]) < Decimal(life.baseline_quote) * keep:
-            self._trigger(mint, row, life, 'LIQUIDITY_DROP',
-                          {'baseline_lamports': life.baseline_quote, 'now_lamports': seen[0], 'drop_frac': str(self.cfg.rug_liq_drop_frac)})
+        if Decimal(self._fresh[mint]) < Decimal(life.baseline_quote) * keep:
+            self._trigger(mint, row, life, 'LIQUIDITY_DROP', {'baseline_lamports': life.baseline_quote, 'now_lamports': self._fresh[mint],
+                                                              'drop_frac': str(self.cfg.rug_liq_drop_frac)})
 
     def _trigger(self, mint, row, life, reason, detail):
         if life.trigger is not None:
@@ -221,41 +263,44 @@ class HeldRisk:
         self.counts['triggers'] += 1
         self._write({'ev': 'trigger', 'mint': mint, 'open_fill_id': row['open_fill_id'], 'reason': reason, 'detail': detail})
 
-    def _account_checks(self, runner, held, now):
-        """ONE batched read of [mint, pool] per held position on the exit lane: freeze authority, pool closed or migrated."""
-        mints = list(held)
-        for start in range(0, len(mints), 50):
-            chunk = mints[start:start + 50]
-            keys = [k for m in chunk for k in (m, held[m]['state']['pool'])]
-            try:
-                result, raw, _meta = runner.exit_providers.helius.get_multiple_accounts(keys)
-            except ProviderError as error:
-                runner._error(error.code, transient=error.transient, scope='held_risk', message='%d positions' % len(chunk), raw=error.raw)
-                continue
-            for i, mint in enumerate(chunk):
-                row = held[mint]
-                life = self.life(mint, row['open_fill_id'])
-                if life.unsellable:
-                    continue
-                self._read_accounts(mint, row, life, result['value'][2 * i], result['value'][2 * i + 1])
+    def _value(self, runner, mint, life, now):
+        """A rug position whose exit is failing is worth 0 unless an executable quote younger than the ttl exists."""
+        value = 0
+        if life.last_good is not None and 0 <= now - life.last_good[1] <= self.cfg.unsellable_value_ttl_s:
+            value = life.last_good[0]
+        runner.marks[mint] = (A.sol(int(value)), now, 'held_risk')
 
-    def _read_accounts(self, mint, row, life, mint_account, pool_account):
-        if pool_account is None:
-            self._trigger(mint, row, life, 'POOL_GONE', {'why': 'pool account closed'})
-        else:
-            owner = pool_account.get('owner') if isinstance(pool_account, dict) else None
-            if life.pool_owner is None and isinstance(owner, str):
-                life.pool_owner = owner
-                self._write({'ev': 'pool_owner', 'mint': mint, 'open_fill_id': row['open_fill_id'], 'pool_owner': owner})
-            elif isinstance(owner, str) and owner != life.pool_owner:
-                self._trigger(mint, row, life, 'POOL_GONE', {'why': 'pool owner changed', 'from': life.pool_owner, 'to': owner})
-        authority = freeze_authority_set(mint_account)
-        if authority and not life.freeze_flagged:
-            life.freeze_flagged = True
-            self.counts['freeze_flags'] += 1
-            self._write({'ev': 'freeze_flag', 'mint': mint, 'open_fill_id': row['open_fill_id']})
-            if self.cfg.freeze_forces_exit:
-                self._trigger(mint, row, life, 'FREEZE', {'why': 'freeze authority set'})
+    # -- after the exit loop: the only requests of this module ----------------------------------------------------------------
+    def after_exits(self, runner):
+        """Route probes (skipped where a fresh D1 quote mark already proves a route) and the batched account check. A finding
+        takes effect on the NEXT pass: nothing here ever delays an exit of this one."""
+        self.passes += 1
+        positions, states = runner.store.positions(), runner.store.position_states()
+        held = {m: states[m] for m in positions if m in states}
+        now = runner._now()
+        if self.passes % self.cfg.freeze_check_every == 1 or self.cfg.freeze_check_every == 1:
+            self._account_checks(runner, held)
+        for mint, row in held.items():
+            if runner.stop.is_set():
+                return
+            life = self.life(mint, row['open_fill_id'])
+            if life.trigger is not None:
+                continue
+            if life.last_probe is not None and now - life.last_probe < self.cfg.route_probe_s:
+                continue
+            mark = runner.marks.get(mint)
+            if mark is not None and len(mark) >= 3 and mark[2] == 'quote' and 0 <= now - mark[1] < self.cfg.route_probe_s:
+                life.last_probe = now                                  # a D1 quote mark IS a full-size sell quote: reuse it
+                self._route_ok(mint, row, life, int(mark[0] * 10 ** 9), mark[1])
+                continue
+            self._probe(runner, mint, positions[mint], row, life, now)
+
+    def _route_ok(self, mint, row, life, value_lamports, at):
+        if value_lamports > 0:
+            life.last_good = (value_lamports, at)
+        if life.no_route_since is not None:
+            life.no_route_since = None
+            self._write({'ev': 'route_ok', 'mint': mint, 'open_fill_id': row['open_fill_id']})
 
     def _probe(self, runner, mint, position, row, life, now):
         """A full-size sell quote on the exit lane. A non-transient failure starts the no-route clock; success clears it.
@@ -269,128 +314,85 @@ class HeldRisk:
                 return                                                # an outage is not "no route"
             if life.no_route_since is None:
                 life.no_route_since = now
-                self._write({'ev': 'no_route', 'mint': mint, 'open_fill_id': row['open_fill_id'], 'since': now, 'code': error.code,
-                             'last_good_value_lamports': life.last_good_value})
+                self._write({'ev': 'no_route', 'mint': mint, 'open_fill_id': row['open_fill_id'], 'since': now, 'code': error.code})
             if now - life.no_route_since >= self.cfg.unsellable_after_s:
                 self._trigger(mint, row, life, 'NO_ROUTE', {'since': life.no_route_since, 'code': error.code})
             return
-        value = _net_lamports(quote.out_amount, runner.pcfg)
-        if value > 0:
-            life.last_good_value = value
-        if life.no_route_since is not None:
-            life.no_route_since = None
-            self._write({'ev': 'route_ok', 'mint': mint, 'open_fill_id': row['open_fill_id']})
+        self._route_ok(mint, row, life, net_lamports(quote.out_amount, runner.pcfg), now)
 
-    def tick_safe(self, runner, positions, states, now):
-        """``tick`` isolated like any other position check: only an accounting or store failure may escape."""
-        import sqlite3
-        from lean.store import StoreError
+    def _account_checks(self, runner, held):
+        """ONE batched read of [mint, pool] per held position on the exit lane: freeze authority, pool closed or migrated."""
+        mints = list(held)
+        for start in range(0, len(mints), 50):
+            if runner.stop.is_set():
+                return
+            chunk = mints[start:start + 50]
+            keys = [k for m in chunk for k in (m, held[m]['state']['pool'])]
+            try:
+                result, _raw, _meta = runner.exit_providers.helius.get_multiple_accounts(keys)
+            except ProviderError as error:
+                runner._error(error.code, transient=error.transient, scope='held_risk', message='%d positions' % len(chunk), raw=error.raw)
+                continue
+            for i, mint in enumerate(chunk):
+                row = held[mint]
+                self._read_accounts(mint, row, self.life(mint, row['open_fill_id']), result['value'][2 * i], result['value'][2 * i + 1])
+
+    def _read_accounts(self, mint, row, life, mint_account, pool_account):
+        open_id = row['open_fill_id']
+        if life.trigger is None:
+            owner = pool_account.get('owner') if isinstance(pool_account, dict) else None
+            wrong = None
+            if pool_account is None:
+                wrong = 'pool account closed'
+            elif isinstance(owner, str):
+                if life.pool_owner is None:
+                    life.pool_owner = owner
+                    self._write({'ev': 'pool_owner', 'mint': mint, 'open_fill_id': open_id, 'pool_owner': owner})
+                elif owner != life.pool_owner:
+                    wrong = 'pool owner changed'
+            if wrong is not None:
+                life.account_misses += 1
+                self._write({'ev': 'account_miss', 'mint': mint, 'open_fill_id': open_id, 'n': life.account_misses, 'why': wrong})
+                if life.account_misses >= self.cfg.pool_gone_confirmations:
+                    self._trigger(mint, row, life, 'POOL_GONE', {'why': wrong, 'reads': life.account_misses})
+            elif life.account_misses:
+                life.account_misses = 0
+                self._write({'ev': 'account_seen', 'mint': mint, 'open_fill_id': open_id})
+        if freeze_authority_set(mint_account) and not life.freeze_flagged:
+            life.freeze_flagged = True
+            self.counts['freeze_flags'] += 1
+            self._write({'ev': 'freeze_flag', 'mint': mint, 'open_fill_id': open_id})
+            if self.cfg.freeze_forces_exit:
+                self._trigger(mint, row, life, 'FREEZE', {'why': 'freeze authority set'})
+
+    # -- isolation ---------------------------------------------------------------------------------------------------------
+    def _isolated(self, runner, work, *args):
+        """Isolated like any other position check: only an accounting or store failure may escape."""
         try:
-            self.tick(runner, positions, states, now)
+            work(runner, *args)
         except (paper.AccountingHalt, StoreError, sqlite3.Error):
             raise
         except Exception as error:
             runner._error('HELD_RISK_FAILED', transient=False, scope='held_risk', message=type(error).__name__)
 
-    # -- the exit (runner hook, per position, before the normal strategy) -----------------------------------------------
-    def manage(self, runner, mint, position, row):
-        """None = carry on with the normal strategy; otherwise the number of fills made (0 or 1)."""
-        life = self.life(mint, row['open_fill_id'])
-        now = int(runner.clock())
-        if life.unsellable:
-            return self._retry_unsellable(runner, mint, position, row, life, now)
-        if life.trigger is None:
-            return None
-        reason, detail = life.trigger
-        return self._force_exit(runner, mint, position, row, life, now, reason, detail)
+    def after_marks_safe(self, runner, positions, states):
+        self._isolated(runner, self.after_marks, positions, states)
 
-    def _force_exit(self, runner, mint, position, row, life, now, reason, detail):
-        qty = position.qty_raw
-        try:
-            quote, ref, quote_at = runner._quote(runner.exit_providers, mint, SOL_MINT, qty, 'quote:rug_exit', mint)
-        except ProviderError as error:
-            runner._error(error.code, transient=error.transient, mint=mint, scope='rug_exit', raw=error.raw)
-            if error.transient:
-                return 0                                              # retried next pass; an outage is not "no route"
-            self._mark_unsellable(runner, mint, row, life, now, reason='NO_ROUTE:%s' % error.code)
-            return 0
-        if _net_lamports(quote.out_amount, runner.pcfg) <= 0:          # a route worth less than the fee: nothing executable
-            self._mark_unsellable(runner, mint, row, life, now, reason='WORTHLESS_ROUTE')
-            return 0
-        return self._sell(runner, mint, position, row, life, quote, ref, now, REASON_RUG_EXIT, reason, detail)
+    def after_exits_safe(self, runner):
+        self._isolated(runner, self.after_exits)
 
-    def _sell(self, runner, mint, position, row, life, quote, ref, now, exit_reason, trigger, detail):
-        open_id, state = row['open_fill_id'], row['state']
-        with runner._trade_lock:
-            fill = paper.sell(position, A.paper_quote(quote, mint=mint, side='sell', decimals=position.decimals, ts=runner.clock(), ref=ref),
-                              cfg=runner.pcfg, qty_raw=position.qty_raw)
-            runner.store.add_decision('exit', 'SELL', mint=mint, reasons=[exit_reason, trigger], ts=runner.clock(),
-                                      features={'trigger': trigger, 'detail': detail, 'qty_raw': position.qty_raw, 'quote_ref': ref})
-            closed = dict(state, reason=exit_reason, trigger=trigger, trade_pnl_lamports=position.realized_lamports + fill.realized_lamports,
-                          cooldown_until=S.cooldown_until('STOP', now, runner.cfg))
-            runner.store.add_fill(fill, state={'event': 'closed', 'open_fill_id': open_id, 'state': closed})
-            self._write({'ev': 'closed', 'mint': mint, 'open_fill_id': open_id, 'reason': exit_reason})
-            life.closed = True
-            runner.marks.pop(mint, None)
-            runner._count('closed')
-            runner._count('exits')
-            self.counts['rug_exits'] += 1
-            runner._check()
-        return 1
-
-    def _mark_unsellable(self, runner, mint, row, life, now, *, reason):
-        value = int(life.last_good_value or 0)
-        life.unsellable = {'since': now, 'value_lamports': value, 'reason': reason}
-        self.counts['unsellable'] += 1
-        runner.marks[mint] = (A.sol(value), now)                       # equity values it there from this very pass
-        self._write({'ev': 'unsellable', 'mint': mint, 'open_fill_id': row['open_fill_id'], 'since': now, 'value_lamports': value,
-                     'reason': reason, 'trigger': life.trigger[0] if life.trigger else None})
-        runner.store.add_decision('exit', 'UNSELLABLE', mint=mint, reasons=[reason], ts=runner.clock(),
-                                  features={'value_lamports': value, 'trigger': life.trigger[0] if life.trigger else None})
-
-    def _retry_unsellable(self, runner, mint, position, row, life, now):
-        """A route that comes back is used; otherwise, after ``unsellable_writeoff_s``, the position is closed in the books."""
-        try:
-            quote, ref, _at = runner._quote(runner.exit_providers, mint, SOL_MINT, position.qty_raw, 'quote:rug_exit', mint)
-            if _net_lamports(quote.out_amount, runner.pcfg) > 0:
-                return self._sell(runner, mint, position, row, life, quote, ref, now, REASON_RUG_EXIT, 'ROUTE_RESTORED',
-                                  {'unsellable_since': life.unsellable['since']})
-        except ProviderError as error:
-            runner._error(error.code, transient=error.transient, mint=mint, scope='rug_exit', raw=error.raw)
-        if now - life.unsellable['since'] >= self.cfg.unsellable_writeoff_s:
-            return self._writeoff(runner, mint, position, row, life, now)
-        return 0
-
-    def _writeoff(self, runner, mint, position, row, life, now):
-        """Close the position in the books at the best executable value (0 if there never was one). No fee: nothing was sent."""
-        value = int(life.unsellable['value_lamports'])
-        open_id, state = row['open_fill_id'], row['state']
-        with runner._trade_lock:
-            cost = position.cost_lamports
-            fill = paper.Fill(ts=runner.clock(), mint=mint, side='sell', qty_raw=position.qty_raw, sol_lamports=value, fee_lamports=0,
-                              slippage_bps=0, decimals=position.decimals, cost_sold_lamports=cost, realized_lamports=value - cost,
-                              quote_ref=None)
-            runner.store.add_decision('exit', 'WRITEOFF', mint=mint, reasons=[REASON_WRITEOFF], ts=runner.clock(),
-                                      features={'value_lamports': value, 'unsellable_since': life.unsellable['since'], 'cost_lamports': cost})
-            closed = dict(state, reason=REASON_WRITEOFF, trigger=life.unsellable.get('reason'),
-                          trade_pnl_lamports=position.realized_lamports + fill.realized_lamports,
-                          cooldown_until=S.cooldown_until('STOP', now, runner.cfg))
-            runner.store.add_fill(fill, state={'event': 'closed', 'open_fill_id': open_id, 'state': closed})
-            self._write({'ev': 'closed', 'mint': mint, 'open_fill_id': open_id, 'reason': REASON_WRITEOFF, 'value_lamports': value})
-            life.closed = True
-            runner.marks.pop(mint, None)
-            runner._count('closed')
-            runner._count('exits')
-            self.counts['writeoffs'] += 1
-            runner._check()
-        return 1
-
-    # -- health -------------------------------------------------------------------------------------------------------------
+    # -- health ------------------------------------------------------------------------------------------------------------------
     def health(self):
-        return {'enabled': True, **self.counts, 'unsellable_now': sorted(m for (m, _), l in self.lives.items() if l.unsellable and not l.closed)}
+        try:
+            states = self.store.position_states()
+        except Exception:
+            states = {}
+        failing = sorted(m for m, row in states.items()
+                         if self.trigger(m, row['open_fill_id']) and row['state'].get('exit_failing_since') is not None)
+        return {'enabled': True, **self.counts, 'failing_now': failing}
 
 
-def _net_lamports(out_amount, pcfg):
+def net_lamports(out_amount, pcfg):
     """Net proceeds of a paper sell of ``out_amount`` lamports: the slippage haircut, less the fixed fee. Never negative."""
     return max(0, out_amount * (paper.MAX_BPS - pcfg.slippage_bps) // paper.MAX_BPS - pcfg.fee_lamports)
 

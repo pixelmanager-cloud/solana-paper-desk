@@ -60,7 +60,7 @@ class Token:
 
     def __init__(self, tag, *, quote_sol=80, base_raw=2 * 10 ** 14, hazard=None, route_fee_bps=0, path=None,
                  no_route=False, no_route_from=None, route_back_at=None, pool_closed_from=None, freeze_from=None,
-                 owner_change_from=None):
+                 owner_change_from=None, pool_closed_until=None):
         from solders.pubkey import Pubkey
         self.tag = tag
         self.mint_pk = Pubkey.from_bytes(bytes([tag]) * 32)
@@ -84,6 +84,7 @@ class Token:
         # is closed, the pool changes owner program (migrated), the mint gets a freeze authority
         self.no_route_from, self.route_back_at = no_route_from, route_back_at
         self.pool_closed_from, self.freeze_from, self.owner_change_from = pool_closed_from, freeze_from, owner_change_from
+        self.pool_closed_until = pool_closed_until          # L11F: the pool comes back at this age (a transient empty read)
 
     # -- state at time t
     def multiplier(self, t):
@@ -141,7 +142,7 @@ class Token:
         accounts = {self.mint: self.mint_account(t), self.pool: self.account(self.pool_raw, owner),
                     self.base_vault: self.vault_account('base', base), self.quote_vault: self.vault_account('quote', quote),
                     self.lp: self.lp_account()}
-        if self._since(self.pool_closed_from, t):
+        if self._since(self.pool_closed_from, t) and not self._since(self.pool_closed_until, t):
             for key in (self.pool, self.base_vault, self.quote_vault):
                 del accounts[key]
         return accounts

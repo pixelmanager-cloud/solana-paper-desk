@@ -49,6 +49,11 @@ def load_config(path):
         raise ConfigError('screen must be an object')
     if not isinstance(cfg['held_risk'], dict):
         raise ConfigError('held_risk must be an object')
+    from lean import held_risk                                              # L11: strict at load (unknown keys, bad types)
+    try:
+        held_risk.Config.from_dict(cfg['held_risk'])
+    except held_risk.HeldRiskConfigError as error:
+        raise ConfigError(str(error)) from None
     return cfg
 
 
