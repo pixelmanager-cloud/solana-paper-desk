@@ -116,6 +116,30 @@ class RugExits(Scenario):
         self.assertEqual(r.held_risk.counts['rug_exits'], 1)
         self.assertEqual(json.loads((self.state / 'health.json').read_text())['held_risk']['rug_exits'], 1)
 
+    def test_the_exit_pass_makes_one_quote_and_no_route_probe(self):
+        token = Token(21, path=steps((600, 0.15)))
+        r = self.build(token)
+        per_tick, last = {}, [0]
+
+        def check(r, t):
+            jupiter = sum(1 for p, m, _ in self.world.calls if p == 'jupiter')
+            per_tick[t], last[0] = jupiter - last[0], jupiter
+        self.run_until(r, 1500, check=check)
+        sold_at = next(f['ts'] for f in self.fills(r, token.mint, 'sell')) - T0
+        self.assertEqual(per_tick[sold_at], 1)                                              # the exit quote only: no probe in that pass
+
+    def test_a_transient_failure_of_the_exit_quote_is_retried_not_unsellable(self):
+        token = Token(21, path=steps((600, 0.15)))
+        r = self.build(token, outages={'jupiter': (T0 + 590, T0 + 1200)})
+        self.run_until(r, 2000)
+        self.assertEqual(self.events(r, 'unsellable'), [])
+        (closed,) = self.closed(r)
+        self.assertEqual((closed['state']['reason'], closed['state']['trigger']), ('RUG_EXIT', 'LIQUIDITY_DROP'))
+        (sell,) = self.fills(r, token.mint, 'sell')
+        self.assertGreaterEqual(sell['ts'], T0 + 1200)                                      # sold only once the provider answered
+        codes = [e['code'] for e in r.store.rows('errors', limit=10000) if e['scope'] == 'rug_exit']
+        self.assertTrue(codes and set(codes) == {'HTTP_503'})
+
     def test_a_small_drop_is_left_to_the_normal_strategy(self):
         token = Token(21, path=steps((600, 0.5)))                                             # 50 % < 70 %: the plain STOP
         r = self.build(token)
