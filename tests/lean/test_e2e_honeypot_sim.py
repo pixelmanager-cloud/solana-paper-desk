@@ -46,7 +46,8 @@ class Token22(Token):
         self.base_vault, self._vault_pks = str(new), [new, self._vault_pks[1]]
         self.honeypot = honeypot
         self.holder_owners = [_key('t%d-owner-%d' % (tag, i)) for i in range(4)]
-        self.holder_accounts = [_key('t%d-ata-%d' % (tag, i), False) for i in range(4)]
+        self.t22_holder_accounts = [   # LINT4: renamed, L24 made holder_accounts a fakeworld.Token METHOD
+            _key('t%d-ata-%d' % (tag, i), False) for i in range(4)]
 
     def _t22_account(self, owner_bytes, amount, mint_bytes):
         d = bytearray(165)
@@ -76,13 +77,13 @@ class Token22(Token):
     def holders(self):
         from decimal import Decimal
         rows = [{'address': self.base_vault, 'amount': str(self.base_raw)}]
-        rows += [{'address': a, 'amount': str(10 ** 13)} for a in self.holder_accounts]
+        rows += [{'address': a, 'amount': str(10 ** 13)} for a in self.t22_holder_accounts]
         return [dict(r, decimals=DECIMALS, uiAmountString=str(Decimal(r['amount']) / 10 ** DECIMALS)) for r in rows]
 
     def accounts(self, t):
         from solders.pubkey import Pubkey
         out = super().accounts(t)
-        for owner, address in zip(self.holder_owners, self.holder_accounts):
+        for owner, address in zip(self.holder_owners, self.t22_holder_accounts):
             out[address] = self._t22_account(bytes(Pubkey.from_string(owner)), 10 ** 13, bytes(self.mint_pk))
         return out
 
