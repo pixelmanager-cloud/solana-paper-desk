@@ -6,7 +6,8 @@ with ``lean.providers.load_keys`` (production names HELIUS_API_KEY / JUPITER_API
 import argparse
 import json
 import os
-import subprocess
+import hashlib
+import logging
 import sys
 from pathlib import Path
 
@@ -19,6 +20,8 @@ CONFIG_KEYS = {
     'scan_limit': 500,
     'max_candidate_retries': 3,
     'sol_usd_ttl_s': 30,
+    'stale_mark_s': 30,                # a mark older than this is not used; the position is quote-marked instead (3x interval)
+    'unexitable_after_s': 7200,        # a wanted exit failing (no route / 4xx) this long is written off at zero proceeds
     'screen': {},                      # lean.candidates settings other than the strategy-owned bands
     'route_check': {},                 # L16: {"enabled": true} records whether a real bot could build each BUY / full exit
 }
@@ -51,15 +54,16 @@ def load_config(path):
     return cfg
 
 
-def _code_version():
-    """LEAN_CODE_VERSION (set at install by the unit) or the git sha of this checkout."""
-    if os.environ.get('LEAN_CODE_VERSION'):
-        return os.environ['LEAN_CODE_VERSION']
-    try:
-        return subprocess.run(['git', 'rev-parse', 'HEAD'], capture_output=True, text=True, timeout=5, check=True,
-                              cwd=Path(__file__).resolve().parent).stdout.strip() or 'unknown'
-    except Exception:
-        return 'unknown'
+def code_version():
+    """LEAN_CODE_VERSION (set at install by the unit), else ``h:`` + sha256 over the sorted ``lean/*.py`` files (name and
+    contents). Never 'unknown' and no version-control dependency: the deployed tree is a root-owned copy."""
+    value = os.environ.get('LEAN_CODE_VERSION', '').strip()
+    if value:
+        return value
+    digest = hashlib.sha256()
+    for path in sorted(Path(__file__).resolve().parent.glob('*.py')):
+        digest.update(path.name.encode() + b'\0' + path.read_bytes() + b'\0')
+    return 'h:' + digest.hexdigest()
 
 
 def build_runner(cfg, *, state_dir, discovery_db, keys, code_version, clock=None, transport_kwargs=None):
@@ -78,7 +82,8 @@ def build_runner(cfg, *, state_dir, discovery_db, keys, code_version, clock=None
         exit_providers=providers.build_providers(keys, lane='exit', **transport_kwargs), strategy_cfg=strategy_cfg,
         discovery_db=discovery_db, state_dir=state, code_version=code_version, screen_overrides=cfg['screen'],
         pool_fee_bps=cfg['pool_fee_bps'], clock=clock, scan_limit=cfg['scan_limit'],
-        max_retries=cfg['max_candidate_retries'], sol_usd_ttl_s=cfg['sol_usd_ttl_s'], route_check=cfg['route_check'])
+        max_retries=cfg['max_candidate_retries'], sol_usd_ttl_s=cfg['sol_usd_ttl_s'], stale_mark_s=cfg['stale_mark_s'],
+        unexitable_after_s=cfg['unexitable_after_s'], route_check=cfg['route_check'])
 
 
 def main(argv=None):
@@ -90,6 +95,7 @@ def main(argv=None):
     p.add_argument('--once', action='store_true', help='one candidate pass and one position pass, then exit')
     p.add_argument('--clear-halt', action='store_true', help='operator: record that the persisted halt is cleared, then exit')
     a = p.parse_args(argv)
+    logging.basicConfig(level=logging.INFO, format='%(asctime)s %(levelname)s %(name)s: %(message)s')
     from lean import providers
     cfg = load_config(a.config)
     keys_file = a.keys_file or os.path.join(os.environ.get('CREDENTIALS_DIRECTORY', ''), 'provider-keys.json')
@@ -98,7 +104,7 @@ def main(argv=None):
     except providers.ProviderError as error:
         print(json.dumps({'status': 'ERROR', 'code': error.code}), file=sys.stderr)
         return 2
-    r = build_runner(cfg, state_dir=a.state_dir, discovery_db=a.discovery_db, keys=keys, code_version=_code_version())
+    r = build_runner(cfg, state_dir=a.state_dir, discovery_db=a.discovery_db, keys=keys, code_version=code_version())
     if a.clear_halt:
         r.store.check_invariants()
         r.store.check_position_states()
@@ -106,12 +112,13 @@ def main(argv=None):
         print(json.dumps({'status': 'HALT_CLEARED', 'previous': r.halted}))
         return 0
     if a.once:
-        r.candidate_pass()
         r.position_pass()
+        r.candidate_pass()
         r.write_health()
         return 0 if r.halted is None else 3
-    r.run(candidate_interval=float(cfg['candidate_interval_s']), position_interval=min(10.0, float(cfg['position_interval_s'])))
-    return 0 if r.halted is None else 3
+    # A halt does NOT end the process (exits keep running); only a dead loop does, non-zero, so systemd restarts it.
+    clean = r.run(candidate_interval=float(cfg['candidate_interval_s']), position_interval=min(10.0, float(cfg['position_interval_s'])))
+    return 0 if clean else 4
 
 
 if __name__ == '__main__':

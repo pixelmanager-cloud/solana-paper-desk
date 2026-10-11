@@ -307,6 +307,20 @@ class EntryTests(unittest.TestCase):
         self.assertIn("ENTRY_THROTTLE", self.decide(portfolio=port(last_entry_minute=now // 60)).reasons)
         self.assertEqual(self.decide(portfolio=port(last_entry_minute=now // 60 - 1)).action, "BUY")
 
+    def test_configurable_entry_spacing(self):
+        # min_entry_interval_seconds replaces the per-minute rule; absent keeps it (above).
+        now = port().now
+        spaced = cfg(min_entry_interval_seconds=10)
+        decide = lambda p, c: S.entry_decision(FEATURES, roundtrip(p.now), p, c)
+        self.assertIn("ENTRY_THROTTLE", decide(port(last_entry_at=now - 9, last_entry_minute=now // 60), spaced).reasons)
+        self.assertEqual(decide(port(last_entry_at=now - 10, last_entry_minute=now // 60), spaced).action, "BUY")
+        free = cfg(min_entry_interval_seconds=0)
+        self.assertEqual(decide(port(last_entry_at=now, last_entry_minute=now // 60), free).action, "BUY")
+        self.assertEqual(decide(port(), spaced).action, "BUY")
+        with self.assertRaises(S.ConfigError):
+            cfg(min_entry_interval_seconds=-1)
+        self.assertIsNone(cfg().min_entry_interval_seconds)
+
     def test_daily_loss_stop_and_liquidation_thresholds(self):
         stop = lambda eq: self.decide(quote=None, portfolio=port(equity=D(eq)))  # pre-quote gate: sizing shrinks with equity
         self.assertEqual(stop("4.7001").action, "BUY")

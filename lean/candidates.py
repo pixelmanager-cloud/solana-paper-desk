@@ -107,13 +107,10 @@ def _connect_ro(path):
     if not stat.S_ISREG(info.st_mode):
         raise ValueError('DISCOVERY_NOT_A_REGULAR_FILE')
     p = p.resolve()
-    with open(p, 'rb') as stream:
-        head = stream.read(100)
-    wal = len(head) >= 20 and head[:16] == b'SQLite format 3\x00' and head[18] == 2
-    # immutable=1 only for a quiet WAL file (a plain read would create -wal/-shm beside a live store);
-    # a rollback-journal store can change under the read, so it is always opened mode=ro.
-    quiet = wal and not Path(str(p) + '-wal').exists()
-    c = sqlite3.connect(p.as_uri() + ('?immutable=1' if quiet else '?mode=ro'), uri=True, timeout=DISCOVERY_TIMEOUT)
+    # Always plain mode=ro, never immutable=1: discovery is a live DELETE-journal database. A mode=ro reader takes the
+    # normal SHARED lock (so it never reads a half-written page), waits up to DISCOVERY_TIMEOUT while the writer holds
+    # its lock, and never creates or writes a file (a rollback-journal store has no -wal/-shm).
+    c = sqlite3.connect(p.as_uri() + '?mode=ro', uri=True, timeout=DISCOVERY_TIMEOUT)
     c.execute('PRAGMA query_only=1')
     return c
 
@@ -274,6 +271,20 @@ def _scan(discovery_db, cursor, now, limit, low, high, stats, out, seen, next_cu
             seen.add(candidate.mint)
             out.append(candidate)
     return ScanResult(out, next_cursor, stats)
+
+
+def initial_cursor(discovery_db, *, now, max_age_seconds):
+    """The cursor for a FIRST start (no cursor file yet): just before the first frame newer than ``now -
+    max_age_seconds``, so a new desk does not wade through the whole history. 0 for an empty database."""
+    cutoff = now - max_age_seconds
+    try:
+        with closing(_connect_ro(discovery_db)) as d:
+            first = d.execute('SELECT MIN(seq) FROM raw_events WHERE received_at>=?', (cutoff,)).fetchone()[0]
+            if first is None:
+                return d.execute('SELECT COALESCE(MAX(seq),0) FROM raw_events').fetchone()[0]
+            return max(0, first - 1)
+    except (FileNotFoundError, PermissionError, sqlite3.Error) as error:
+        raise DiscoveryUnavailable('DISCOVERY_UNAVAILABLE: %s' % type(error).__name__) from None
 
 
 def iter_new_candidates(discovery_db_path, cursor=0, **kwargs):

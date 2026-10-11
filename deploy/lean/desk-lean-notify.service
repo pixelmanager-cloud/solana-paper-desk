@@ -1,0 +1,62 @@
+[Unit]
+Description=Lean paper desk Telegram notifier (reads the lean store read-only; never trades, never writes the store)
+After=network-online.target desk-lean.service
+Wants=network-online.target
+
+[Service]
+Type=simple
+User=solana-desk
+Group=solana-desk
+WorkingDirectory=/opt/solana-desk
+Environment=PYTHONDONTWRITEBYTECODE=1
+Environment=PYTHONUNBUFFERED=1
+# Credentials, read only via %d and never logged:
+#   telegram.json      {"bot_token": "...", "chat_id": "..."}
+#   provider-keys.json {"HELIUS_API_KEY": "...", "JUPITER_API_KEY": "..."}  (one cached DAS getAsset per traded mint)
+LoadCredential=telegram.json:/etc/solana-desk/telegram.json
+LoadCredential=provider-keys.json:/etc/solana-desk/provider-keys.json
+ExecStart=/opt/solana-desk/.venv/bin/python -m lean.notify --db /var/lib/solana-desk-lean/lean.sqlite --config /etc/solana-paper/lean-notify.json --credentials %d --state-dir /var/lib/solana-desk-lean-notify
+# Telegram or store trouble is handled inside (backoff, bounded outbox); a crash just restarts the notifier.
+Restart=always
+RestartSec=10
+TimeoutStopSec=30
+
+# Filesystem: the trading store is READ-ONLY here. lean.notify opens it with SQLite mode=ro (immutable=1 only while no
+# -wal exists) and PRAGMA query_only. The trader's live WAL is read through its EXISTING lean.sqlite-wal / -shm, which
+# SQLite (>= 3.22) maps read-only when the directory is read-only, exactly as desk-lean.service reads the discovery
+# store. Never add /var/lib/solana-desk-lean to ReadWritePaths. If the trader is stopped and the -wal/-shm are gone, the
+# poll reads the quiet file immutably; a failed read is retried on the next cycle and never stops the notifier.
+UMask=0077
+ProtectSystem=strict
+ProtectHome=true
+PrivateTmp=true
+StateDirectory=solana-desk-lean-notify
+StateDirectoryMode=0700
+ReadOnlyPaths=/var/lib/solana-desk-lean
+ReadWritePaths=/var/lib/solana-desk-lean-notify
+
+# Privileges and kernel surface (same hardening as desk-lean.service).
+NoNewPrivileges=true
+CapabilityBoundingSet=
+AmbientCapabilities=
+PrivateDevices=true
+ProtectKernelTunables=true
+ProtectKernelModules=true
+ProtectKernelLogs=true
+ProtectControlGroups=true
+ProtectClock=true
+ProtectHostname=true
+RestrictNamespaces=true
+RestrictRealtime=true
+RestrictSUIDSGID=true
+LockPersonality=true
+SystemCallArchitectures=native
+SystemCallFilter=@system-service
+RestrictAddressFamilies=AF_INET AF_INET6 AF_UNIX
+
+# Limits.
+MemoryMax=256M
+TasksMax=32
+
+[Install]
+WantedBy=multi-user.target

@@ -81,6 +81,9 @@ class StrategyConfig:
     daily_liquidate_fraction: Decimal
     loss_streak_halve_after: int
     loss_streak_pause_at: int
+    # Optional. None (key absent) keeps the original rule: at most one entry per wall-clock minute.
+    # An int N means: at least N seconds between entries (0 = no spacing).
+    min_entry_interval_seconds: Optional[int] = None
     config_hash: str = field(default="", compare=False)
 
     _DECIMALS = ("min_market_cap_usd", "max_market_cap_usd", "min_liquidity_usd", "max_roundtrip_cost_fraction",
@@ -97,7 +100,8 @@ class StrategyConfig:
         if not isinstance(raw, Mapping):
             raise ConfigError("config must be an object")
         names = {"strategy_version", "tp_ladder", *cls._DECIMALS, *cls._INTS}
-        extra, missing = set(raw) - names, names - set(raw)
+        optional = {"min_entry_interval_seconds"}
+        extra, missing = set(raw) - names - optional, names - set(raw)
         if extra or missing:
             raise ConfigError(f"config keys: unknown={sorted(extra)} missing={sorted(missing)}")
         version = raw["strategy_version"]
@@ -113,6 +117,11 @@ class StrategyConfig:
             if not isinstance(r, Mapping) or set(r) != {"trigger", "fraction", "stop_ratio"}:
                 raise ConfigError(f"tp_ladder[{i}] needs trigger, fraction, stop_ratio")
             rungs.append(Rung(*(_dec(r[k], f"tp_ladder[{i}].{k}") for k in ("trigger", "fraction", "stop_ratio"))))
+        if "min_entry_interval_seconds" in raw:
+            spacing = _int(raw["min_entry_interval_seconds"], "min_entry_interval_seconds")
+            if spacing < 0:
+                raise ConfigError("min_entry_interval_seconds must be >= 0")
+            values["min_entry_interval_seconds"] = spacing
         cfg = cls(strategy_version=version, tp_ladder=tuple(rungs), **values)
         cfg._validate()
         digest = hashlib.sha256(json.dumps(raw, sort_keys=True, separators=(",", ":"), default=str).encode()).hexdigest()
@@ -198,6 +207,7 @@ class Portfolio:
     cooldowns: Mapping = field(default_factory=dict)  # mint -> epoch until which re-entry is refused
     last_entry_minute: int = -1
     loss_streak: int = 0
+    last_entry_at: Optional[int] = None  # epoch seconds of the last BUY fill (used by min_entry_interval_seconds)
 
 
 @dataclass(frozen=True)
@@ -265,7 +275,10 @@ def portfolio_blockers(portfolio: Portfolio, cfg: StrategyConfig, mint: Optional
             reasons.append("ALREADY_HELD")
         if portfolio.cooldowns.get(mint, 0) > portfolio.now:
             reasons.append("COOLDOWN")
-    if portfolio.last_entry_minute == portfolio.now // 60:
+    if cfg.min_entry_interval_seconds is None:
+        if portfolio.last_entry_minute == portfolio.now // 60:
+            reasons.append("ENTRY_THROTTLE")
+    elif portfolio.last_entry_at is not None and portfolio.now - portfolio.last_entry_at < cfg.min_entry_interval_seconds:
         reasons.append("ENTRY_THROTTLE")
     return reasons
 

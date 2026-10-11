@@ -174,6 +174,16 @@ def sell(position, quote, fraction=None, cfg=None, *, qty_raw=None):
                 realized_lamports=sol - cfg.fee_lamports - cost_sold, quote_ref=quote.ref)
 
 
+def write_off(position, ts):
+    """A zero-proceeds paper SELL of the whole position (no route could ever be quoted for it): no fee, no slippage, the
+    whole remaining cost basis is booked as a realized loss. Still EXECUTION_UNVERIFIED; nothing is sent anywhere."""
+    if type(position.qty_raw) is not int or position.qty_raw <= 0:
+        raise PaperError('nothing to write off')
+    return Fill(ts=float(ts), mint=position.mint, side='sell', qty_raw=position.qty_raw, sol_lamports=0, fee_lamports=0,
+                slippage_bps=0, decimals=position.decimals, cost_sold_lamports=position.cost_lamports,
+                realized_lamports=-position.cost_lamports, quote_ref=None)
+
+
 def apply_fill(positions, cash, fill):
     """Pure transition: ``(positions, cash)`` after ``fill``. Raises AccountingHalt on anything that cannot be true.
 
