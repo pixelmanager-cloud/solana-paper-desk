@@ -330,6 +330,8 @@ class TimingGridTests(Tmp):
         by = {c['label']: c for c in r['configs']}
         self.assertLess(D(by['base']['out_of_sample']['total_pnl_sol']), 0)
         self.assertGreater(D(top['out_of_sample']['total_pnl_sol']), 0)
+        self.assertGreater(D(top['in_sample']['total_pnl_sol']), 0)   # the variant is applied in-sample too, not just out-of-sample
+        self.assertLess(D(by['base']['in_sample']['total_pnl_sol']), 0)
         self.assertEqual(by['entry_timing=momentum(3m)']['out_of_sample']['n_trades'], 0)  # the dump path never builds 3 rising minutes
         self.assertIn('INSUFFICIENT', by['entry_timing=momentum(3m)']['flags'])
         self.assertEqual(r['configs'][-1]['label'], 'entry_timing=momentum(3m)')  # insufficient ranks last even though it never lost

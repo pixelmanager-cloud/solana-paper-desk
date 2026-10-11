@@ -324,6 +324,17 @@ class DeadPoolTests(Tmp):
         self.assertEqual([(p.status, p.dead) for p in paths[0].points], [('OK', False)] * 4 + [('ACCOUNT_MISSING', True), ('EMPTY_POOL', True)])
         self.assertEqual(skipped, {'MARK_MALFORMED': 1, 'MARK_UNKNOWN_STATUS': 1})
 
+    def test_the_reason_the_live_trader_gave_for_not_entering_is_kept(self):
+        store = Store(self.dir / 'r.sqlite', initial_cash_sol=5, code_version=CV, strategy_version=SV, clock=lambda: float(T0))
+        store.add_observation('path_start', start_raw(reason='COST_BUDGET'), mint='M', ts=T0, meta={'entered': False, 'reason': 'COST_BUDGET'})
+        for k in range(2):
+            store.add_observation('path_mark', b'{}', mint='M', ts=T0 + 15 * k, meta=mark_meta(1))
+        store.close()
+        c = ro(store.path)
+        paths, _ = R.load_paths(c)
+        c.close()
+        self.assertEqual(paths[0].not_entered_reason, 'COST_BUDGET')
+
     def test_loader_halves_the_two_sided_liquidity_and_uses_entry_features(self):
         store = build_store(self.dir, [('M', T0, [1, 1], {'features': {'quote_spendable_raw': '50000000000'}})])
         store.close()
@@ -427,6 +438,12 @@ class EntryTimingTests(unittest.TestCase):
         self.assertEqual(at, T0 + 60)  # k=4 (1.04) beats k=0 (1.0): the later dip does not matter, only the sampled minutes
         at2, _ = self.entry_ts([1.0, 1.01, 1.02, 1.03, 0.99, 1.05, 1.06, 1.07, 1.08, 1.09], R.EntryTiming('momentum', momentum_minutes=1))
         self.assertEqual(at2, T0 + 75)  # at k=4 the sample a minute ago (k=0, 1.0) is above 0.99: no momentum; k=5 passes
+
+    def test_a_trigger_exactly_at_max_wait_still_enters(self):
+        at, _ = self.entry_ts([1, 1, 1, 1, 0.8, 0.8], R.EntryTiming('pullback', pullback_pct=D('0.15'), max_wait_s=60))
+        self.assertEqual(at, T0 + 60)  # the dip is the mark at 60 s: waiting up to 60 s is allowed
+        late, _ = self.entry_ts([1, 1, 1, 1, 1, 0.8, 0.8], R.EntryTiming('pullback', pullback_pct=D('0.15'), max_wait_s=60))
+        self.assertIsNone(late)        # one mark later it is too late
 
     def test_timeout_drops_the_candidate_once(self):
         timing = R.EntryTiming('pullback', pullback_pct=D('0.9'), max_wait_s=60)

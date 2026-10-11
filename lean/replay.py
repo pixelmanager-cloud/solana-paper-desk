@@ -88,7 +88,9 @@ class EntryTiming:
       * momentum:  the first mark at which prices sampled every minute for the last `momentum_minutes` minutes (the latest
                    mark at or before t, t-60 s, ..., t-N*60 s) are STRICTLY increasing; needs N minutes of history.
     A candidate that has not triggered within `max_wait_s` of its start (or before its path ends) is dropped and recorded as
-    ENTRY_TIMING_NO_TRIGGER. Once triggered it is considered exactly once: a portfolio block at that moment drops it, as live."""
+    ENTRY_TIMING_NO_TRIGGER. Once triggered it is considered exactly once: a portfolio block at that moment drops it, as live.
+    `ReplayConfig.entry_delay_s` still counts from the path start, and the trigger must hold at the mark where the delay has
+    elapsed (it is not a latency after the signal)."""
     kind: str = 'first_mark'
     pullback_pct: Optional[Decimal] = None
     momentum_minutes: Optional[int] = None
