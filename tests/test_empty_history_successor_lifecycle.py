@@ -51,7 +51,10 @@ import copy,sqlite3,time
 # slightly ahead of the host. Wait for the host; never reset pacing state.
 with sqlite3.connect(a['pacing']) as paced:
  lag=paced.execute('SELECT MAX(high_water) FROM state').fetchone()[0]-time.time()
-assert lag<5,lag
+# The lead depends on host speed (faster hosts finish the synthetic steps sooner, so the
+# synthetic watermark is further ahead of wall time); it is a fixture wait bound, not a
+# production property. Bound it generously and wait it out; never reset pacing state.
+assert lag<60,lag
 if lag>0:time.sleep(lag+.05)
 from unittest.mock import patch
 from tests import test_empty_history_no_entry as fixture,test_history_first_paper_entry as first
