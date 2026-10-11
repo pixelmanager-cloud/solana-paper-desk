@@ -7,24 +7,29 @@ Wants=network-online.target
 Type=simple
 User=solana-desk
 Group=solana-desk
-WorkingDirectory=/opt/solana-desk
-# Filled at install with the deployed git sha (every stored row carries it); empty => the runner falls back to git.
+# The lean code is a root-owned checkout at /opt/solana-desk-lean; the interpreter is the desk's venv, and
+# `python -m lean` resolves lean/ (and the pure desk/ helpers it imports) from this working directory.
+WorkingDirectory=/opt/solana-desk-lean
+# Filled at install with the deployed commit sha (every stored row carries it). Empty => 'h:' + sha256 of lean/*.py.
 Environment=LEAN_CODE_VERSION=
 Environment=PYTHONDONTWRITEBYTECODE=1
 # Provider keys: {"HELIUS_API_KEY": "...", "JUPITER_API_KEY": "..."}, read only via %d, never logged.
 LoadCredential=provider-keys.json:/etc/solana-desk/provider-keys.json
 ExecStart=/opt/solana-desk/.venv/bin/python -m lean --config /etc/solana-paper/lean.json --state-dir /var/lib/solana-desk-lean --discovery-db /var/lib/solana-desk/discovery/continuous.sqlite --keys-file %d/provider-keys.json
-Restart=on-failure
+# always: a dead loop thread exits non-zero (4); a halt never exits (exits keep running while entries are stopped).
+Restart=always
 RestartSec=10
 TimeoutStopSec=30
 
 # Filesystem: everything read-only except the lean state dir.
-# The discovery store is a live WAL database written by the discovery service. lean opens it with
-# SQLite mode=ro (immutable=1 only when no -wal exists). A read-only WAL open needs the EXISTING
-# continuous.sqlite-wal and -shm files to be readable by solana-desk: SQLite (>= 3.22) then maps the -shm
-# read-only and never writes it, so /var/lib/solana-desk/discovery stays read-only here (ProtectSystem=strict).
-# Do not add it to ReadWritePaths. If discovery is down and the -shm is missing/uninitialised, the scan fails
-# with DISCOVERY_UNAVAILABLE and is retried on the next pass (never a crash, never a halt).
+# The discovery store is a live DELETE-journal (rollback-journal) SQLite database written by the discovery service.
+# lean opens it with plain SQLite mode=ro, never immutable=1: the reader takes only the normal SHARED file lock
+# (fcntl on a read-only descriptor), never creates a -journal/-wal/-shm file and never writes, so
+# /var/lib/solana-desk/discovery stays read-only here (ProtectSystem=strict). Do not add it to ReadWritePaths.
+# While the discovery writer holds its lock, a read waits up to 2 s, then the pass is DISCOVERY_UNAVAILABLE and is
+# retried next pass. A hot journal left by a crashed writer cannot be rolled back by a read-only reader: scans stay
+# DISCOVERY_UNAVAILABLE until discovery restarts and recovers it (never a crash, never a halt).
+# The database and its directory must be readable by solana-desk.
 UMask=0077
 ProtectSystem=strict
 ProtectHome=true
