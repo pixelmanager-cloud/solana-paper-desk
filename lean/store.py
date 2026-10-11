@@ -293,30 +293,6 @@ class Store:
             (stamp, str(kind)[:64], mint, candidate_id, kept, hashlib.sha256(kept).hexdigest(), int(len(full) > len(kept)), len(full),
              full_sha, text, code, strategy)).lastrowid)
 
-    # --- L07R: batched observations ---
-    def add_observations(self, rows, *, code_version=None, strategy_version=None):
-        """Append many observations in ONE transaction (the path recorder writes hundreds of small rows per poll).
-        ``rows``: iterable of ``{'kind', 'raw', 'mint'?, 'candidate_id'?, 'meta'?, 'ts'?}``, each stored exactly as
-        ``add_observation`` would store it. All or nothing; returns the number of rows written."""
-        code, strategy = self._versions(code_version, strategy_version)
-        values = []
-        for row in rows:
-            raw = row.get('raw') if isinstance(row, dict) else None
-            if not isinstance(raw, (bytes, bytearray)):
-                raise StoreError('raw must be bytes')
-            full = bytes(raw)
-            kept = full[:MAX_RAW_BYTES]
-            values.append((self._ts(row.get('ts')), str(row['kind'])[:64], row.get('mint'), row.get('candidate_id'), kept,
-                           hashlib.sha256(kept).hexdigest(), int(len(full) > len(kept)), len(full), hashlib.sha256(full).hexdigest(),
-                           _json(self._clean(row.get('meta') or {})), code, strategy))
-        if not values:
-            return 0
-        self._write(lambda: self.db.executemany(
-            'INSERT INTO observations(ts,kind,mint,candidate_id,raw,sha256,raw_truncated,full_bytes,full_sha256,meta,code_version,strategy_version) '
-            'VALUES(?,?,?,?,?,?,?,?,?,?,?,?)', values))
-        return len(values)
-    # --- end L07R ---
-
     def observation(self, observation_id):
         with self._lock:
             row = self.db.execute('SELECT raw,sha256,kind,mint,meta,raw_truncated,full_bytes,full_sha256 FROM observations WHERE id=?',
