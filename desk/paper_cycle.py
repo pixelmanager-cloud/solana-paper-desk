@@ -599,6 +599,9 @@ def run_once(research_db, evidence_db, ledger_db, cfg, *, position_targets=(), c
                     intent['monitoring_total'] = monitoring_total
                 identity = uuid.uuid4().hex; key = store.save(intent)
                 attempt_refs=[]; terminal_hazards=(); realism_jobs=[]
+                # T22J: the failed read's retained original (T22H) binds only the CLOSURE record, never the published
+                # result's attempt_refs, whose exact inventory the reviewed retirement receipts certify.
+                failure_refs=[]
                 result.update(pass_id=identity,intent_hash=key,attempt_refs=attempt_refs)
                 with store.connect() as c:c.execute('INSERT INTO paper_observation_passes VALUES(?,?,NULL)',(identity,key))
                 # Category (a) rejections may retire this pass; only a lone,
@@ -733,8 +736,8 @@ def run_once(research_db, evidence_db, ledger_db, cfg, *, position_targets=(), c
                         result['blockers'].append('HELD_OBSERVATION_CONTENT_REJECTED')
                     except (CycleBlocked, MonitoringBlocked) as error:
                         result['blockers'].append(error.code)
-                        if getattr(error,'evidence_hash',None) and error.evidence_hash not in attempt_refs:
-                            attempt_refs.append(error.evidence_hash)    # the failed read's original can classify the closure
+                        if getattr(error,'evidence_hash',None) and error.evidence_hash not in attempt_refs+failure_refs:
+                            failure_refs.append(error.evidence_hash)    # the failed read's original can classify the closure
                     except RecoveryRequired as error:
                         result['status']='RECOVERY_REQUIRED';result['blockers'].append(str(error))
                     except ValueError as error:
@@ -760,7 +763,7 @@ def run_once(research_db, evidence_db, ledger_db, cfg, *, position_targets=(), c
                         # T22H L4: when this pass can not be closed, the hold goes to disk BEFORE the result is saved, so a kill in
                         # between cannot leave a NULL pass that a later recovery would abandon.
                         from . import paper_pass_closure as closure
-                        if closure.result_requires_hold(store,result,key,attempt_refs):
+                        if closure.result_requires_hold(store,result,key,attempt_refs+failure_refs):
                             closure.write_sentinel(store,identity,(result['blockers'] or [result['status']])[0])
                     outcome = store.save(result)
                     if realism_jobs:fill_realism.enqueue(path,realism_jobs,digest(cfg))  # opt-in; result page durable; before every early return; never raises
@@ -788,10 +791,10 @@ def run_once(research_db, evidence_db, ledger_db, cfg, *, position_targets=(), c
                             progress.admission(scan)==admission for scan,admission in intent['admissions'].items())):
                         with store.connect() as c:c.execute('UPDATE paper_observation_passes SET outcome_hash=? WHERE id=? AND outcome_hash IS NULL',(outcome,identity))
                     if result['status']!='COMPLETE':
-                        _close_unfinished(store,progress,identity,result,outcome,attempt_refs,ledger_before)
+                        _close_unfinished(store,progress,identity,result,outcome,attempt_refs+failure_refs,ledger_before)
                     return {**result,'evidence_hash':outcome}
                 except BaseException as error:
                     # The pass died with a charge outstanding: retire it as FAILED_CHARGED when that is provable
                     # (never for integrity causes). The exception still propagates unchanged.
-                    _close_failed(store,progress,identity,error,attempt_refs,ledger_before)
+                    _close_failed(store,progress,identity,error,attempt_refs+failure_refs,ledger_before)
                     raise
