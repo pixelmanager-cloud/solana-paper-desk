@@ -1,0 +1,32 @@
+{
+  "strategy_version": "lean-1",
+  "min_market_cap_usd": "50000",
+  "max_market_cap_usd": "2000000",
+  "min_liquidity_usd": "8000",
+  "max_roundtrip_cost_fraction": "0.08",
+  "fixed_fee_sol": "0.00005",
+  "adverse_slippage_bps": "50",
+  "price_ttl_seconds": 10,
+  "stop_fraction": "0.18",
+  "trailing_fraction": "0.30",
+  "time_stop_seconds": 2700,
+  "max_hold_seconds": 21600,
+  "touched_ratio": "1.15",
+  "tp_ladder": [
+    {"trigger": "1.4", "fraction": "0.3", "stop_ratio": "1"},
+    {"trigger": "2", "fraction": "0.3", "stop_ratio": "1.4"},
+    {"trigger": "3", "fraction": "0.2", "stop_ratio": "2"}
+  ],
+  "cooldown_seconds": 1800,
+  "stop_cooldown_seconds": 7200,
+  "max_positions": 4,
+  "max_position_fraction": "0.02",
+  "max_exposure_fraction": "0.08",
+  "liquidity_fraction": "0.015",
+  "min_order_sol": "0.01",
+  "fee_reserve_sol": "0.3",
+  "daily_loss_stop_fraction": "0.06",
+  "daily_liquidate_fraction": "0.10",
+  "loss_streak_halve_after": 4,
+  "loss_streak_pause_at": 6
+}
