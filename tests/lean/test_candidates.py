@@ -165,6 +165,34 @@ class IntakeTests(DiscoveryFixture):
             with self.assertRaises(ValueError):
                 lc.scan_new(self.db, bad.get('cursor'), now=NOW, **({'limit': bad['limit']} if 'limit' in bad else {}))
 
+    def test_missing_corrupt_or_locked_discovery_is_typed_unavailable(self):
+        with self.assertRaises(lc.DiscoveryUnavailable) as cm:
+            lc.scan_new(self.root / 'missing.sqlite', 0, now=NOW)
+        self.assertEqual((cm.exception.code, cm.exception.transient), ('DISCOVERY_UNAVAILABLE', True))
+        junk = self.root / 'junk.sqlite'; junk.write_bytes(b'not a database' * 100)
+        with self.assertRaises(lc.DiscoveryUnavailable):
+            lc.scan_new(junk, 0, now=NOW)
+        locked = self.root / 'locked.sqlite'
+        holder = sqlite3.connect(locked, isolation_level=None)
+        self.addCleanup(holder.close)
+        holder.execute('CREATE TABLE raw_events(seq INTEGER PRIMARY KEY, received_at REAL, slot INTEGER, payload TEXT, payload_hash TEXT)')
+        holder.execute('BEGIN EXCLUSIVE')
+        with patch.object(lc, 'DISCOVERY_TIMEOUT', 0.05), self.assertRaises(lc.DiscoveryUnavailable):
+            lc.scan_new(locked, 0, now=NOW)
+        holder.execute('ROLLBACK')
+        self.assertEqual(lc.scan_new(locked, 0, now=NOW).candidates, [])     # retried next pass: works again
+
+    def test_iter_new_candidates_keeps_the_cursor_past_batches_without_candidates(self):
+        for _ in range(4):
+            self.add({'method': 'x'}, NOW - 900)
+        first = lc.iter_new_candidates(self.db, 0, now=NOW, limit=2)
+        self.assertEqual((list(first), first.next_cursor), ([], 2))         # nothing found, cursor still advances
+        second = lc.iter_new_candidates(self.db, first.next_cursor, now=NOW, limit=2)
+        self.assertEqual(second.next_cursor, 4)
+        seq, mint, *_ = self.add_migration(21, 900)
+        third = lc.iter_new_candidates(self.db, second.next_cursor, now=NOW)
+        self.assertEqual(([c.mint for c in third], len(third), third[0].seq, third.next_cursor), ([mint], 1, seq, seq))
+
     def test_limit_truncates_and_cursor_resumes(self):
         for i in range(5):
             self.add_migration(21 + 2 * i, 900)
@@ -534,11 +562,16 @@ class ScreenRobustnessTests(ScreenBase):
         self.world.holders = [{'address': base58(bytes([1]) * 32), 'amount': str(10**16)}]                        # more than supply
         self.assertRejected(self.screen(), 'HOLDER_EVIDENCE_MALFORMED')
         self.setUp()
-        self.providers.helius.holder_fail = ProviderError('TIMEOUT', True)
-        result = self.screen()
-        self.assertTrue(result.passed)                       # optional cheap check: unknown, recorded, not a rejection
-        self.assertIn('HOLDER_CONCENTRATION', result.unknowns)
-        self.assertEqual(result.features['holder_check'], 'UNAVAILABLE:TIMEOUT')
+        for failure in (ProviderError('TIMEOUT', True), ProviderError('HTTP_400', False)):
+            self.setUp()
+            self.providers.helius.holder_fail = failure
+            result = self.screen()
+            # L09: a holder-lookup failure is a typed transient reject (retried by the runner), never a pass
+            self.assertFalse(result.passed)
+            self.assertEqual(result.reasons, ('HOLDERS_UNAVAILABLE',))
+            self.assertEqual(result.error, {'code': 'HOLDERS_UNAVAILABLE', 'transient': True, 'stage': 'holders',
+                                            'provider_code': failure.code})
+            self.assertEqual(result.features['holder_check'], 'UNAVAILABLE:' + failure.code)
 
     def test_pool_vault_excluded_from_holder_concentration(self):
         result = self.screen()          # the fake lists the pool vault with 80% of supply

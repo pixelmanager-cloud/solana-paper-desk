@@ -65,9 +65,30 @@ class Candidate:
 
 @dataclass
 class ScanResult:
+    """The candidates of one scan plus the cursor to persist. Iterable/indexable like the candidate list, so a caller of
+    ``iter_new_candidates`` can never lose ``next_cursor`` (it must persist it even when the batch had no candidate,
+    e.g. 500 non-migration or too-old frames, or the scan never moves forward)."""
     candidates: list
     next_cursor: int
     stats: dict
+
+    def __iter__(self):
+        return iter(self.candidates)
+
+    def __len__(self):
+        return len(self.candidates)
+
+    def __getitem__(self, index):
+        return self.candidates[index]
+
+
+class DiscoveryUnavailable(OSError):
+    """The discovery database is missing, locked or unreadable right now: retry on the next pass (never a halt)."""
+    code = 'DISCOVERY_UNAVAILABLE'
+    transient = True
+
+
+DISCOVERY_TIMEOUT = 2.0
 
 
 def _cfg(cfg, name):
@@ -92,7 +113,7 @@ def _connect_ro(path):
     # immutable=1 only for a quiet WAL file (a plain read would create -wal/-shm beside a live store);
     # a rollback-journal store can change under the read, so it is always opened mode=ro.
     quiet = wal and not Path(str(p) + '-wal').exists()
-    c = sqlite3.connect(p.as_uri() + ('?immutable=1' if quiet else '?mode=ro'), uri=True, timeout=2)
+    c = sqlite3.connect(p.as_uri() + ('?immutable=1' if quiet else '?mode=ro'), uri=True, timeout=DISCOVERY_TIMEOUT)
     c.execute('PRAGMA query_only=1')
     return c
 
@@ -212,6 +233,15 @@ def scan_new(discovery_db, cursor=0, *, now=None, limit=500, min_age_seconds=Non
     stats = {'frames': 0, 'altered': 0, 'undecodable': 0, 'not_migration': 0, 'ambiguous': 0,
              'unsupported_pool': 0, 'too_old': 0, 'duplicate_mint': 0, 'waiting_for_age': False, 'truncated': False}
     out, seen, next_cursor = [], set(), cursor
+    try:
+        return _scan(discovery_db, cursor, now, limit, low, high, stats, out, seen, next_cursor)
+    except DiscoveryUnavailable:
+        raise
+    except (FileNotFoundError, PermissionError, sqlite3.Error) as error:
+        raise DiscoveryUnavailable('DISCOVERY_UNAVAILABLE: %s' % type(error).__name__) from None
+
+
+def _scan(discovery_db, cursor, now, limit, low, high, stats, out, seen, next_cursor):
     with closing(_connect_ro(discovery_db)) as d:
         d.execute('BEGIN')
         rows = d.execute('SELECT seq,received_at,slot,payload_hash,typeof(payload),length(CAST(payload AS BLOB)) '
@@ -247,7 +277,8 @@ def scan_new(discovery_db, cursor=0, *, now=None, limit=500, min_age_seconds=Non
 
 
 def iter_new_candidates(discovery_db_path, cursor=0, **kwargs):
-    return scan_new(discovery_db_path, cursor, **kwargs).candidates
+    """The ``ScanResult`` (iterable like the candidate list); persist ``.next_cursor`` after handling it."""
+    return scan_new(discovery_db_path, cursor, **kwargs)
 
 
 # --------------------------------------------------------------------------------------------- screening
@@ -263,6 +294,14 @@ class Screen:
 
 class _Stop(Exception):
     """Internal: stop screening this candidate (reasons already recorded)."""
+
+
+class _Unavailable(Exception):
+    """Internal: evidence that is required could not be fetched now (typed transient reject, never a pass)."""
+
+    def __init__(self, code, provider_code, raw=None):
+        super().__init__(code)
+        self.code, self.provider_code, self.raw = code, provider_code, raw
 
 
 def _dec(value):
@@ -305,10 +344,17 @@ def screen(candidate, providers, cfg=None, *, now=None, sol_usd=None):
         return _screen(candidate, providers, cfg, now, sol_usd, reasons, unknowns, raw, features)
     except _Stop:
         pass
+    except _Unavailable as error:
+        if isinstance(error.raw, (bytes, bytearray)):
+            raw.append((features.get('stage') or 'unavailable', bytes(error.raw)))
+        return Screen(False, tuple(dict.fromkeys(reasons)), features, tuple(unknowns), tuple(raw),
+                      {'code': error.code, 'transient': True, 'stage': features.get('stage'), 'provider_code': error.provider_code})
     except Exception as error:   # per-candidate isolation: record, never halt the desk
         code = getattr(error, 'code', None)
         transient = getattr(error, 'transient', None)
         if type(code) is str and type(transient) is bool:
+            if isinstance(getattr(error, 'raw', None), (bytes, bytearray)):
+                raw.append((features.get('stage') or 'error', bytes(error.raw)))
             return Screen(False, tuple(reasons) + ('PROVIDER_ERROR:' + code,), features, tuple(unknowns), tuple(raw),
                           {'code': code, 'transient': transient, 'stage': features.get('stage')})
         reasons.append('SCREEN_INTERNAL_ERROR:' + type(error).__name__)
@@ -365,8 +411,10 @@ def _screen(candidate, providers, cfg, now, sol_usd, reasons, unknowns, raw, fea
     fields = _pool(candidate, pool_account, reasons)
     if reasons or policy is None or fields is None:
         raise _Stop
-    features.update(token_program=policy['program'], decimals=policy['decimals'], supply_raw=policy['supply_raw'],
-                    mint_snapshot_slot=slot_a)
+    features.update(mint=candidate.mint, pool=candidate.pool, token_program=policy['program'], decimals=policy['decimals'],
+                    supply_raw=policy['supply_raw'], mint_snapshot_slot=slot_a,
+                    pool_base_token_account=fields['pool_base_token_account'],
+                    pool_quote_token_account=fields['pool_quote_token_account'])
     # Snapshot B: vaults + LP mint.
     parsed = _call('accounts_vaults_lp', features, raw, providers.helius.get_multiple_accounts,
                    [fields['pool_base_token_account'], fields['pool_quote_token_account'], fields['lp_mint']])
@@ -534,16 +582,17 @@ def _market(candidate, policy, fields, base, quote, sol_usd, cfg, features, reas
 
 
 def _holders(candidate, providers, policy, fields, cfg, features, raw, reasons, unknowns):
-    """One getTokenLargestAccounts call. A provider failure leaves concentration UNKNOWN (cheap, optional check);
-    a malformed or contradictory answer rejects the candidate."""
+    """One getTokenLargestAccounts call. A provider failure is a typed transient reject (HOLDERS_UNAVAILABLE, retried
+    by the runner); a malformed or contradictory answer rejects the candidate."""
     features['stage'] = 'holders'
     try:
         parsed, body, _meta = providers.helius.rpc('getTokenLargestAccounts', [candidate.mint, {'commitment': 'confirmed'}])
     except Exception as error:
         if type(getattr(error, 'code', None)) is str and type(getattr(error, 'transient', None)) is bool:
+            # Not a pass with concentration UNKNOWN: a typed transient reject, so the runner retries the candidate.
             features['holder_check'] = 'UNAVAILABLE:' + error.code
-            unknowns.append('HOLDER_CONCENTRATION')
-            return
+            reasons.append('HOLDERS_UNAVAILABLE')
+            raise _Unavailable('HOLDERS_UNAVAILABLE', error.code, getattr(error, 'raw', None)) from None
         raise
     if isinstance(body, (bytes, bytearray)):
         raw.append(('holders', bytes(body)))
