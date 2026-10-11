@@ -1715,3 +1715,21 @@ AVOID: desk/provider_pacing.py
 6. **(LOW) Closed-vault confirmations.** The N=2 "closed" confirmation needs a minimum spacing (e.g. ≥5s between observations), so back-to-back refreshes cannot confirm a transient null.
 
 Run every listed module plus test_watchlist in ONE process on macOS, with the real exit code.
+
+---
+
+## T24S — Make the gate and the monitoring chain truly O(new) (from the T24R review) — needed for multi-day 24/7
+STATUS: OPEN
+DEPENDS: branch `cloud/T22I` has a `DONE T22I:` commit
+BASE: origin/cloud/T24R, then merge origin/cloud/T22I and origin/integration/r1 (the conflicts are inherited from T22G; keep integration's T38/T25F versions plus the T22H/T22I additions)
+OWNS: desk/history_preparation_rejection.py, desk/paper_cycle_no_entry.py (inventory only), desk/monitoring_budget.py (chain/accounting only), tools/ops/healthcheck.py (warning wiring only), tools/research/bench_history_scale.py, tests
+AVOID: desk/provider_pacing.py
+
+The T24R review measured gate loads of 17 + 2×(completed passes). Passes grow by 288 or more per day, so the gate passes the 10s deadline within a few days of 24/7 operation and starves entries AND held exits. `_chain_rows` recomputes the whole monitoring chain on every accounting call: O(N), about 1.7s per call at 30 days.
+
+1. **Pass inventory.** Store each completed pass's outcome kind in an append-only, indexed table, written in the same transaction as the outcome. The gate then reads only new passes since a stored, verified high-water mark, plus a bounded deterministic sample. Cost must stay flat as passes grow.
+2. **Monitoring chain.** Keep a stored chain head (digest plus row count) and verify only the new rows from the head on each call, plus a bounded sample. Running totals per window are stored. A property test with ≥200 random sequences mixing ok/transient/latching/abandoned outcomes must show the incremental result equals an INDEPENDENT full recompute written separately in the test, not `_accounting` with a larger sample.
+3. **Warnings.** Feed every 80% warning (rejection cap 512, closure 8192, the publish-refused log) into the healthcheck as WARN, with a test.
+4. **Benchmark.** It must grow PASSES and RECEIPTS (1×/10×/30× of a 7-day profile at 288+ passes/day) and run each scale in a FRESH process. Assert flat gate and accounting cost.
+5. **F9 worst case.** Use the 18-read maximum per pass, not the 9-read reserve. Include pacer contention between units and gate cost. Check the decisions unit timeout against its deadline.
+6. **(LOW)** Close the unclosed `open()` at `tests/test_cycle_deadline.py:100`; `setUp` inside subTests must clean up.
