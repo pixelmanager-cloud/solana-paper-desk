@@ -429,11 +429,24 @@ def _section(function, *args):
         return {'status': 'ERROR', 'code': type(error).__name__, 'detail': str(error)[:200]}
 
 
+def _execution(db):
+    from lean import execution
+    connection = open_ro(db)
+    try:
+        return execution.report_section(connection, percentile=percentile, min_sample=MIN_SAMPLE)
+    finally:
+        connection.close()
+
+
 def build(db, *, counterfactual_db=None, horizon=3600, now=None):
     now = time.time() if now is None else now
     connection = open_ro(db)
     try:
         events, skipped, truncated, used = load_events(connection)
+        # --- L10 hook: refundable ATA rent out of the buy fee / sell proceeds, so prices and returns are not inflated ---
+        from lean import execution
+        events = execution.adjust_report_events(connection, events)
+        # --- end L10 ---
     finally:
         connection.close()
     summary = {'kind': 'lean_report_v1', 'label': LABEL, 'generated_at': datetime.datetime.fromtimestamp(now, datetime.timezone.utc).isoformat(),
@@ -460,6 +473,9 @@ def build(db, *, counterfactual_db=None, horizon=3600, now=None):
     # --- L16 hook ---
     summary['route_check'] = _section(_route_check_section, db)
     # --- end L16 ---
+    # --- L10 hook: latency-tax distribution, aborted entries, fee breakdown (read-only) ---
+    summary['execution'] = _section(_execution, db)
+    # --- end L10 ---
     if counterfactual_db is None:
         summary['counterfactual'] = {'status': 'NOT_PROVIDED'}
     elif funnel_result['status'] != 'OK':
@@ -542,6 +558,15 @@ def render_html(s):
             [[k, d[k]['checked'], d[k]['routable'], d[k]['pct']] for k in ('entry', 'exit')]) +
             ('<p class="flag">ROUTE_CHECK_UNSUPPORTED: the build endpoint needs a funded taker; the check disabled itself.</p>' if d['unsupported'] else '') +
             (table(['not routable: reason', 'count'], list(d['not_routable_reasons'].items())) if d['not_routable_reasons'] else ''))
+    # --- L10 hook ---
+    x = s.get('execution', {'status': 'NOT_PROVIDED'})
+    parts.append('<h2>Execution: latency tax and fees</h2>' + note(x))
+    if x['status'] == 'OK':
+        d = x['data']
+        parts.append('<p>Fills with execution data: %d (%s) &middot; entries aborted by latency: %d</p>' % (d['fills_with_execution'], flag(d['sample']), d['entries_aborted_latency']))
+        parts.append(table(['side', 'n', 'tax bps p50', 'p90', 'mean', 'max'], [[k, v['n'], v['p50'], v['p90'], v['mean'], v['max']] for k, v in d['latency_tax_bps'].items()]))
+        parts.append(table(['fee (SOL)', 'amount'], list(d['fees_sol'].items())))
+    # --- end L10 ---
     parts.append('<h2>Errors by code</h2>' + (table(['code', 'count'], list(s['errors']['data'].items())) if s['errors']['data'] else '<p>None recorded.</p>'))
     parts.append('<h2>Versions</h2>' + table(['kind', 'version', 'events'], [['strategy', k, v] for k, v in s['versions']['strategy'].items()] +
                                               [['code', k, v] for k, v in s['versions']['code'].items()]))

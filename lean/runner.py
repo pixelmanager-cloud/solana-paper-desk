@@ -53,7 +53,15 @@ class _Halt(Exception):
 class Runner:
     def __init__(self, *, store, providers, exit_providers, strategy_cfg, discovery_db, state_dir, code_version,
                  screen_overrides=None, pool_fee_bps=25, taker=PAPER_TAKER, kill_switch=None, clock=time.time,
-                 scan_limit=500, max_retries=3, sol_usd_ttl_s=30, stale_mark_s=30, unexitable_after_s=7200, route_check=None):
+                 scan_limit=500, max_retries=3, sol_usd_ttl_s=30, stale_mark_s=30, unexitable_after_s=7200, route_check=None,
+                 execution=None):
+        # --- L10 hook: latency-aware fills + cost model (None = today's instant fills). The priority fee + Jito tip enter
+        # through the strategy config, so the fill fee, the marks and the entry/exit cost checks share one number. ---
+        self.execution = execution
+        if execution is not None:
+            execution.validate_against(strategy_cfg)
+            strategy_cfg = execution.strategy_cfg(strategy_cfg)
+        # --- end L10 ---
         self.store, self.providers, self.exit_providers = store, providers, exit_providers
         self.cfg = strategy_cfg
         self.pcfg = A.paper_config(strategy_cfg)
@@ -93,6 +101,12 @@ class Runner:
         self._l07r_screened = None                 # (mint, candidate_id, Screen) of the candidate being handled
         # --- end L07R ---
         self.startup()
+        # --- L10 hook ---
+        if execution is not None and self.halted is None:
+            self.store.record('execution_config', {'exec_delay_s': execution.cfg.exec_delay_s, 'tx_extra_lamports': execution.cfg.tx_extra_lamports,
+                                                   'ata_rent_lamports': execution.cfg.ata_rent_lamports, 'fixed_fee_sol': str(self.cfg.fixed_fee_sol)},
+                              code_version=self.code_version, strategy_version=self.strategy_version, ts=self.clock())
+        # --- end L10 ---
 
     # -- lifecycle ------------------------------------------------------------------------------------------------
     def startup(self):
@@ -360,6 +374,14 @@ class Runner:
         # --- end L16 ---
         sell_q, _, sell_at = self._quote(self.providers, mint, SOL_MINT, A.sell_leg_qty(buy_q.out_amount, self.pcfg),
                                          'quote:sell_leg', mint, cid)
+        # --- L10 hook: wait exec_delay_s, re-quote, fill at the worse; None = ENTRY_ABORTED_LATENCY (recorded) ---
+        xmeta = None
+        if self.execution is not None:
+            plan = self.execution.entry_requote(self, features, mint, cid, (buy_q, buy_ref, buy_at), (sell_q, sell_at), result.raw)
+            if plan is None:
+                return
+            (buy_q, buy_ref, buy_at), (sell_q, sell_at), xmeta = plan
+        # --- end L10 ---
         with self._trade_lock:
             if not self.entries_allowed():                                    # a halt may have started meanwhile
                 return
@@ -371,6 +393,11 @@ class Runner:
                 return
             fill = paper.buy(A.paper_quote(buy_q, mint=mint, side='buy', decimals=features['decimals'], ts=self.clock(),
                                            ref=buy_ref), decision.size_sol, self.pcfg)
+            # --- L10 hook: ATA rent, transfer-fee haircut, both quotes + latency tax (stored with the fill via the open state) ---
+            if xmeta is not None:
+                fill, open_extra = self.execution.finish_buy(self, fill, xmeta)
+                features = {**features, '_exec_state': open_extra}
+            # --- end L10 ---
             self.store.add_fill(fill, candidate_id=cid, state={'event': 'open', 'state': A.open_state(features, fill, self.cfg)})
             self.route_check.on_fill('entry', mint, buy_ref, candidate_id=cid, trade=cid)      # --- L16 hook ---
             self._count('entered')
@@ -392,6 +419,10 @@ class Runner:
             self._quote_marks(positions)
             now = self._now()
             liquidate = S.should_liquidate(self.portfolio(now), self.cfg)
+            # --- L10 hook: two-phase exits (q0 for every triggered exit, ONE delay, then q1 + fills) ---
+            if self.execution is not None:
+                return self.execution.run_exits(self, positions, states, liquidate)
+            # --- end L10 ---
             exits = 0
             for mint, position in positions.items():
                 if self.stop.is_set():
@@ -483,6 +514,10 @@ class Runner:
         with self._trade_lock:
             now = self._now()
             fill = paper.write_off(position, ts=self.clock())
+            # --- L10 hook: the ATA rent of a written-off position is lost: record it so the outstanding rent clears ---
+            if self.execution is not None:
+                state = {**state, **self.execution.write_off_state(state)}
+            # --- end L10 ---
             closed = dict(state, reason='UNEXITABLE', trade_pnl_lamports=position.realized_lamports + fill.realized_lamports,
                           cooldown_until=S.cooldown_until('UNEXITABLE', now, self.cfg))
             self.store.add_decision('exit', 'WRITE_OFF', mint=mint, reasons=['UNEXITABLE'], ts=self.clock(),
@@ -524,6 +559,11 @@ class Runner:
             elif decision.position_updates:
                 self.store.add_position_state(mint, open_id, state, ts=self.clock())
             raise
+        # --- L10 hook: phase 1 defers here; phase 2 (and a direct call) gets q1 and the pair of quotes ---
+        xmeta = None
+        if self.execution is not None:
+            quote, ref, quote_at, xmeta = self.execution.after_exit_quote(self, mint, qty, quote, ref, quote_at)
+        # --- end L10 ---
         with self._trade_lock:
             now = self._now()
             final = S.exit_decision(held, mark, A.strategy_quote(quote, 'sell', quote_at), now, self.cfg, mark_at=mark_at,
@@ -540,6 +580,11 @@ class Runner:
                 return 0
             fill = paper.sell(position, A.paper_quote(quote, mint=mint, side='sell', decimals=position.decimals, ts=self.clock(),
                                                       ref=ref), cfg=self.pcfg, qty_raw=qty)
+            # --- L10 hook: transfer-fee haircut, ATA rent refund on a full close, both quotes + latency tax ---
+            if xmeta is not None:
+                fill, sell_extra = self.execution.finish_sell(fill, position, state, xmeta)
+                state = {**state, **sell_extra}
+            # --- end L10 ---
             state = {k: v for k, v in state.items() if k not in ('exit_failing_since', 'exit_failing_reason')}
             if fill.qty_raw == position.qty_raw:
                 closed = dict(state, reason=final.reason, trade_pnl_lamports=position.realized_lamports + fill.realized_lamports,

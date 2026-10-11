@@ -28,6 +28,7 @@ CONFIG_KEYS = {
     'paths': None,                     # lean.paths settings ({"enabled", "path_hours", "interval_s", ...}); None = disabled
     # --- end L07R ---
     'route_check': {},                 # L16: {"enabled": true} records whether a real bot could build each BUY / full exit
+    'execution': None,                 # L10: null = instant fills (today); an object turns on latency-aware fills + the cost model
 }
 REQUIRED = ('strategy_config', 'initial_cash_sol')
 
@@ -68,6 +69,10 @@ def load_config(path):
     if not isinstance(rc, dict) or set(rc) - {'enabled'} or not isinstance(rc.get('enabled', False), bool):
         raise ConfigError('route_check must be an object like {"enabled": true}')
     # --- end L16 ---
+    # --- L10 hook ---
+    if cfg['execution'] is not None and not isinstance(cfg['execution'], dict):
+        raise ConfigError('execution must be an object or null')
+    # --- end L10 ---
     return cfg
 
 
@@ -99,13 +104,19 @@ def build_runner(cfg, *, state_dir, discovery_db, keys, code_version, clock=None
     lanes = cfg.get('lanes') or {}
     providers.configure_lanes(lanes.get('shares'), low_shed_s=lanes.get('low_shed_s'))
     # --- end L07R ---
+    # --- L10 hook: the optional execution model (latency-aware fills + cost model) ---
+    exec_model = None
+    if cfg.get('execution') is not None:
+        from lean import execution
+        exec_model = execution.Execution(execution.ExecConfig.from_dict(cfg['execution']), sleep=transport_kwargs.get('sleep', time.sleep))
+    # --- end L10 ---
     r = runner.Runner(
         store=the_store, providers=providers.build_providers(keys, lane='main', **transport_kwargs),
         exit_providers=providers.build_providers(keys, lane='exit', **transport_kwargs), strategy_cfg=strategy_cfg,
         discovery_db=discovery_db, state_dir=state, code_version=code_version, screen_overrides=cfg['screen'],
         pool_fee_bps=cfg['pool_fee_bps'], clock=clock, scan_limit=cfg['scan_limit'],
         max_retries=cfg['max_candidate_retries'], sol_usd_ttl_s=cfg['sol_usd_ttl_s'], stale_mark_s=cfg['stale_mark_s'],
-        unexitable_after_s=cfg['unexitable_after_s'], route_check=cfg['route_check'])
+        unexitable_after_s=cfg['unexitable_after_s'], route_check=cfg['route_check'], execution=exec_model)
     # --- L07R: the path recorder (low lane), resumed from the store before any loop runs ---
     r.paths = paths.build(paths.config(cfg.get('paths')), store=the_store, keys=keys, pcfg=r.pcfg,
                           code_version=code_version, strategy_version=strategy_cfg.strategy_version,
