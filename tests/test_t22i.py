@@ -145,6 +145,33 @@ class HoldWriteFallbacks(holds.DispatcherBase):
         with self.assertRaises(tool.DispatchHoldFailed):
             self.h.invoke(execute=True, systemd_credentials=True)
 
+    def test_when_both_locations_fail_the_refusal_survives_the_process(self):
+        # T22J: the refusal is durable (appended to the existing dispatcher lock file, which needs no new directory entry),
+        # so a NEW process (no in-process state) still refuses every dispatch and never abandons the intent.
+        with patch.object(tool, '_write_hold', return_value=False):
+            self.refuse_blocked()
+        del tool._HOLD_FAILED[:]                                    # a new process: nothing in memory
+        with self.assertRaisesRegex(tool.DispatchHoldFailed, 'DISPATCH_HOLD_NOT_DURABLE'):
+            self.h.invoke(execute=True, systemd_credentials=True)
+        with self.assertRaisesRegex(tool.DispatchHoldFailed, 'DISPATCH_HOLD_NOT_DURABLE'):
+            self.recover()                                          # past the 900 s deadline: still refused, not abandoned
+        self.assertEqual((self.h.count('intents'), self.h.count('results')), (1, 0))
+
+    def test_when_all_three_locations_fail_only_this_process_refuses(self):
+        # Nothing durable can be written at all: the visible reason and the in-process refusal are all that is left.
+        with patch.object(tool, '_write_hold', return_value=False), patch.object(tool, '_write_refusal', return_value=False):
+            self.refuse_blocked()
+        self.assertEqual(len(tool._HOLD_FAILED), 1)
+        with self.assertRaises(tool.DispatchHoldFailed):
+            self.h.invoke(execute=True, systemd_credentials=True)
+
+    def test_an_unreadable_refusal_record_fails_closed(self):
+        lock = str(self.h.journal) + '.dispatcher.lock'
+        with open(lock, 'a') as stream:
+            stream.write('not json\n')
+        with self.assertRaisesRegex(tool.DispatchHoldFailed, 'unreadable'):
+            self.h.invoke(execute=True, systemd_credentials=True)
+
     def test_a_dangling_symlink_hold_still_holds(self):
         self.refuse_blocked()
         directory = os.path.dirname(str(self.h.journal))

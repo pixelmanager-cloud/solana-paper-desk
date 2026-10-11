@@ -839,15 +839,71 @@ def _hold_dispatch(expected, identity, cause):
             return True
     reason = 'DISPATCH_HOLD_NOT_DURABLE: ' + str(identity) + ' ' + str(cause)[:96]
     _HOLD_FAILED.append(reason)
+    # T22J: make the REFUSAL itself survive the process (a third location the dispatcher reads at start). If this fails
+    # too, nothing durable can be written at all: the in-process refusal and the visible reason are what is left.
+    durable = _write_refusal(expected, identity, reason)
     try:
-        print(reason, file=sys.stderr)
+        print(reason + ('' if durable else ' (refusal not durable either; this process only)'), file=sys.stderr)
     except Exception:
         pass
     return False
 
 
+REFUSAL_MAX_BYTES = 1 << 20
+
+
+def _refusal_path(expected):
+    """The dispatcher's own lock file. It already exists while a dispatch runs (this process holds its flock), so an
+    O_APPEND write needs no new directory entry: it still works when creating the two hold files did not."""
+    return str(_path(expected['journal'], private=True)) + '.dispatcher.lock'
+
+
+def _write_refusal(expected, identity, reason):
+    try:
+        fd = os.open(_refusal_path(expected), os.O_WRONLY | os.O_APPEND | os.O_NOFOLLOW)
+        try:
+            os.write(fd, (canonical({'kind': 'paper_dispatch_refusal_v1', 'dispatch_id': str(identity),
+                                     'reason': str(reason)[:160]}) + '\n').encode())
+            os.fsync(fd)
+        finally:
+            os.close(fd)
+    except Exception:
+        return False
+    return True
+
+
+def _durable_refusals(expected):
+    """T22J: refusals a previous process recorded when it could not make a dispatch hold durable. Any doubt refuses.
+
+    An operator clears them only deliberately, after review (truncate the lock file while no dispatcher runs).
+    """
+    try:
+        with open(_refusal_path(expected), 'rb') as stream:
+            raw = stream.read(REFUSAL_MAX_BYTES + 1)
+    except FileNotFoundError:
+        return []
+    except OSError as error:
+        return [{'dispatch_id': None, 'reason': 'DISPATCH_REFUSAL_RECORD_unreadable: ' + type(error).__name__}]
+    if not raw.strip():
+        return []
+    if len(raw) > REFUSAL_MAX_BYTES:
+        return [{'dispatch_id': None, 'reason': 'DISPATCH_REFUSAL_RECORD_unreadable: oversized'}]
+    found = []
+    for line in raw.splitlines():
+        try:
+            value = json.loads(line)
+            if type(value) is not dict or value.get('kind') != 'paper_dispatch_refusal_v1':
+                raise ValueError()
+        except ValueError:
+            return [{'dispatch_id': None, 'reason': 'DISPATCH_REFUSAL_RECORD_unreadable: malformed line'}]
+        found.append(value)
+    return found
+
+
 def _held(expected, identity):
-    return any(os.path.lexists(path) for path in _hold_paths(expected, identity))
+    if any(os.path.lexists(path) for path in _hold_paths(expected, identity)):
+        return True
+    return any(r.get('dispatch_id') in (identity, None) for r in _durable_refusals(expected))
 
 
 def _recover_unresolved(expected, journal, ids):
@@ -893,6 +949,9 @@ def dispatch(expected, *, execute=False, systemd_credentials=False):
 def _dispatch(expected, *, execute=False, systemd_credentials=False):
     if _HOLD_FAILED:                      # T22I item 2: a hold that could not be made durable refuses all further dispatch
         raise DispatchHoldFailed(_HOLD_FAILED[0])
+    refusals = _durable_refusals(expected)
+    if refusals:                          # T22J: ... in every later process too (fail closed across ticks)
+        raise DispatchHoldFailed(refusals[0]['reason'])
     paths = {k: v['path'] for k,v in expected['paths'].items()}
     v2 = expected.get('journal_schema', 1) == 2
     with _journal(expected['journal']) as journal:
