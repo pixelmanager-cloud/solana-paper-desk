@@ -1864,3 +1864,30 @@ OWNS: the T37G files
 AVOID: desk/paper_pass_closure.py, desk/provider_pacing.py
 
 The T37G worker went silent for more than 3 hours. Read the T37G spec and `reports/T37G.md` on `origin/cloud/T37G`, finish every item (USD failures: transient-only closure; integrity causes HOLD; the Jupiter 401/403 exception only when the Kraken fallback was measured; the regime source), commit the coordinator probe table as tests, run the T37 and T22 test sets in ONE process (real exit code), then write `DONE T37H:`.
+
+---
+
+## L07 — Price-path recorder (data for strategy tuning)
+STATUS: OPEN
+DEPENDS: none (build against L01/L02/L05 interfaces; merge origin/cloud/L01..L05 into your branch first)
+BASE: origin/integration/r1
+OWNS: lean/paths.py, tests/lean/test_paths.py (+ minimal hook lines in lean/runner.py, documented in your report)
+AVOID: desk/**
+Every candidate that passes the HAZARD checks gets its price path recorded for `path_hours` (default 6), **whether or not it was entered**. That includes candidates rejected only for market cap, liquidity, cost, portfolio caps or cooldown.
+- **Record.** Poll pool reserves with ONE batched `getMultipleAccounts` per ≤100 pools every `path_interval_s` (default 15s; held positions keep their own ≤10s loop). Write `observations(kind='path_mark', mint, price_sol, liquidity_sol, ts)`, plus the screen features once at the start (`kind='path_start'`) and the reason it was not entered.
+- **Budget.** The recorder has its own token bucket, capped at 40% of the Helius budget, and is shed first under rate limits. A recorder failure must never affect entries or exits.
+- **Tests.** Path start and stop timing, batching (250 pools → 3 calls), shedding under 429, and that rows are append-only.
+
+## L08 — Offline strategy replay + tuning report
+STATUS: OPEN
+DEPENDS: none (build against the L01 schema + L07 `path_mark` rows; use synthetic paths in tests)
+BASE: origin/integration/r1
+OWNS: lean/replay.py, lean/tune.py, tests/lean/test_replay.py, tests/lean/test_tune.py
+AVOID: desk/**
+- **Replay.** `replay(paths, strategy_cfg) -> trades` re-simulates entry filters and exit rules (from L04, `lean/strategy.py`, called directly — no reimplementation) on the recorded paths. Use the same fee and adverse-slippage model as `lean/paper.py`.
+- **Tune.** `tune(db, grid, split)` uses a walk-forward split by time: fit on the older 70%, evaluate on the newest 30%.
+- **Output.** For each candidate config, report n_trades, win rate, mean/median PnL per trade, max drawdown and profit factor, both in-sample and out-of-sample.
+- **Ranking rule.** Rank by out-of-sample results only. Flag `INSUFFICIENT` below 50 out-of-sample trades.
+- **Promotion.** Never auto-promote. Emit `config/lean/proposals/<ts>.json` with the diff vs current `strategy_version` and the evidence.
+- **Calibration test.** Replaying the live `lean-1` config on the paths of tokens actually traded must reproduce the live fills' exit reasons. A mismatch is reported, not hidden.
+- **Report.** Generate an HTML report in the same style as L06.
