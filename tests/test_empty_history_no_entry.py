@@ -2,6 +2,7 @@
 import copy
 from contextlib import closing
 import sqlite3
+from tests import legacy_null_pass
 import unittest
 from unittest.mock import patch
 from desk import history_preparation_rejection as rejection,paper_terminal_reconciliation as terminal
@@ -104,6 +105,7 @@ class RetainedEmptyTests(unittest.TestCase):
         return patch.object(paper_cycle_no_entry,'publish',side_effect=ValueError('legacy NULL fixture'))
 
     def setUp(self):
+        legacy_null_pass.install(self)    # T22: these tests certify retained pre-T22 NULL/unresolved states
         import inspect,json,textwrap,time
         from pathlib import Path
         from tests import test_history_first_paper_entry as first,test_paper_cycle as protocol

@@ -14,15 +14,16 @@ import sqlite3
 import unittest
 from unittest.mock import patch
 
-from desk import engine, paper_cycle as cycle, quote_execution as qe, paper_read_sources as transport
+from desk import engine, monitoring_budget, paper_cycle as cycle, quote_execution as qe, paper_read_sources as transport
 from desk.job_persistence import BIRTH_ACQUISITION_V1
 from desk.live_observation import ProviderObservation, ingest_mint
 from desk.model import digest, canonical
 from desk.providers import SOL
 from desk.ledger import Ledger
 from tests.test_paper_read_sources import Response
+from tests import lock_sources
 from tests.test_live_strategy_features import transaction, POOL as TRADE_POOL
-from contextlib import ExitStack
+from contextlib import closing, ExitStack
 from desk.paper_observation_collector import ObservationTarget, TargetObservation
 from desk.paper_read_sources import PaperReadError
 from tests import test_paper_observation_collector as collector_fixtures
@@ -86,6 +87,7 @@ class PaperCycleTests(unittest.TestCase):
                     if method=='getSlot':result=110
                     elif method=='getBlockTime':result=outer.f.at-1
                     elif method=='getTransactionsForAddress':
+                        if getattr(outer,'history_failure',None) is not None:raise outer.history_failure      # T22H: fail only the history page, through the real transport
                         rows=[]
                         for i in range(40):
                             row=transaction('cycle-'+str(i),10+i,outer.f.at-1,quote=200,base=100,
@@ -94,6 +96,7 @@ class PaperCycleTests(unittest.TestCase):
                             ix['data']=base58(unbase58(ix['data']).replace(unbase58(TRADE_POOL),unbase58(outer.target.pool)))
                             rows.append(row)
                         result={'data':rows,'paginationToken':None}
+                        if getattr(outer,'history_result',None) is not None:result=outer.history_result      # T22H: a malformed / contradictory page
                     else:
                         result=copy.deepcopy(outer.f.protocol.rpc(method,params))
                         if method=='getAccountInfo' and params[0]==outer.target.mint:
@@ -214,7 +217,9 @@ class PaperCycleTests(unittest.TestCase):
         self.assertFalse(any(x['type']=='fill' for x in stopped['outcomes']))
         count=len(self.http_calls)
         retry=self.actual_cycle(positions=(item,),candidates=())
-        self.assertEqual(retry['status'],'RECOVERY_REQUIRED');self.assertEqual(len(self.http_calls),count)
+        # T22: no latch any more, but the exhausted shared budget still makes zero requests.
+        self.assertNotIn('OBSERVATION_RECOVERY_REQUIRED',retry['blockers']);self.assertEqual(len(self.http_calls),count)
+        self.assertEqual(retry['attempted_requests'],0)
 
     def test_held_exit_does_not_restamp_or_require_old_entry_usd_history(self):
         self.http_calls=[];self.sell_output=10_000_000
@@ -308,18 +313,42 @@ class PaperCycleTests(unittest.TestCase):
         self.assertEqual(dump(self.path),ledger)
         self.assertEqual(self.f.progress.admission(self.target.scan_id)['requests_used'],9)
 
-    def test_monitoring_charged_source_failure_latched_before_restart_or_candidates(self):
+    def test_monitoring_charged_source_failure_is_charged_closed_and_does_not_latch_restart(self):
+        # T22: was ..._latched_before_restart_or_candidates. The failed held read stays charged and retained, but the
+        # next held pass for the same position proceeds (the position must stay exitable).
+        # T22F: the injected error is a classified transient network failure (ConnectionResetError ->
+        # TRANSPORT_ERROR). The earlier bare OSError classifies as UNCLASSIFIED_ERROR, which integration (T25) latches
+        # on purpose; that case is pinned by the sibling test below instead of being waived here.
         item,allowance=self.monitoring_fixture()
-        def failure(*args,**kwargs):raise OSError('SYNTHETIC_TEST_ONLY')
+        def failure(*args,**kwargs):raise ConnectionResetError('SYNTHETIC_TEST_ONLY')
         before=self.f.progress.admission(self.target.scan_id)
         with patch.object(transport,'build_opener',side_effect=failure),patch.object(transport.os.environ,'get',return_value='SYNTHETIC_TEST_ONLY'),patch.object(transport.time,'time',return_value=self.f.at):
             result=self.run_cycle(position_targets=(item,),candidates=(),monitoring=True,source_factory=transport.PaperReadSources)
         self.assertEqual(result['status'],'BLOCKED');self.assertEqual(result['monitoring_attempted_requests'],1)
         self.assertEqual(allowance.snapshot()['total_used'],1)
         self.assertEqual(self.f.progress.admission(self.target.scan_id),before)
+        # T25F: an orphan reservation is abandoned only once it is older than ABANDON_AFTER_SECONDS and its owner is
+        # provably gone, so the restart happens after that age (the old test restarted at the same instant).
+        lock_sources.free(self)   # portable owner evidence: the failed process is gone and holds nothing
+        self.f.at+=monitoring_budget.ABANDON_AFTER_SECONDS+30
         restart=self.actual_cycle(positions=(item,),candidates=(),monitoring=True)
-        self.assertIn(restart['status'],('RECOVERY_REQUIRED','BLOCKED'))
+        self.assertEqual(restart['status'],'COMPLETE',restart)
+        self.assertGreater(restart['attempted_requests'],0)
+        self.assertEqual(allowance.snapshot()['total_used'],1+restart['monitoring_attempted_requests'])
+
+    def test_monitoring_unclassified_source_failure_still_latches_restart(self):
+        # T22F: an exception that cannot be classified as a transient network failure keeps the allowance latched
+        # (fail closed); only the classified transient codes may proceed to a restart.
+        item,allowance=self.monitoring_fixture()
+        def failure(*args,**kwargs):raise OSError('SYNTHETIC_TEST_ONLY')
+        with patch.object(transport,'build_opener',side_effect=failure),patch.object(transport.os.environ,'get',return_value='SYNTHETIC_TEST_ONLY'),patch.object(transport.time,'time',return_value=self.f.at):
+            result=self.run_cycle(position_targets=(item,),candidates=(),monitoring=True,source_factory=transport.PaperReadSources)
+        self.assertEqual(result['status'],'BLOCKED');self.assertEqual(allowance.snapshot()['total_used'],1)
+        self.f.at+=monitoring_budget.ABANDON_AFTER_SECONDS+30
+        restart=self.actual_cycle(positions=(item,),candidates=(),monitoring=True)
+        self.assertEqual(restart['status'],'RECOVERY_REQUIRED',restart)
         self.assertEqual(restart['attempted_requests'],0)
+        self.assertEqual(allowance.snapshot()['total_used'],1)
 
     def test_monitoring_positions_first_candidate_still_uses_exhausted18(self):
         item,allowance=self.monitoring_fixture()
@@ -364,12 +393,24 @@ class PaperCycleTests(unittest.TestCase):
         self.assertEqual(dump(self.path),before)
         self.assertEqual(allowance.snapshot()['total_used'],1)
         self.assertIn('MONITORING_OUTCOME_PENDING',allowance.snapshot()['blockers'])
+        # T25F: abandonment needs an orphan older than ABANDON_AFTER_SECONDS with every lock free (the cycle ran, so the
+        # lock files exist); the restart therefore happens after that age.
+        lock_sources.free(self)   # portable owner evidence: the interrupted process is gone and holds nothing
+        self.f.at+=monitoring_budget.ABANDON_AFTER_SECONDS+30
         restart=self.actual_cycle(positions=(item,),candidates=(),monitoring=True)
-        self.assertEqual(restart['status'],'RECOVERY_REQUIRED')
-        self.assertEqual(restart['attempted_requests'],0)
+        # T22: all three locks are free again, so the dead pass is closed ABANDONED_CHARGED and its dangling
+        # reservation gets an explicit ABANDONED outcome (still charged, never refunded); the position is monitored.
+        self.assertEqual(restart['status'],'COMPLETE',restart)
         self.assertEqual(self.f.progress.admission(self.target.scan_id)['requests_used'],9)
+        with self.f.progress.store.connect() as c:
+            kinds=[self.f.progress.store.load(r[0]).get('kind') for r in c.execute('SELECT evidence_hash FROM paper_monitoring_outcomes ORDER BY reservation_id')]
+            self.assertEqual(kinds[0],'paper_monitoring_abandoned_v1')
+            self.assertIn(('ABANDONED_CHARGED',),c.execute('SELECT status FROM paper_pass_closures').fetchall())
+        self.assertEqual(allowance.snapshot()['blockers'],[])
 
-    def test_monitoring_unsellable_original_keeps_position_and_latches_restart(self):
+    def test_monitoring_unsellable_original_keeps_position_and_does_not_latch_restart(self):
+        # T22: was ..._latches_restart. A still-unsellable route is retried (charged) every pass instead of
+        # wedging the store; the position is kept and nothing is fabricated.
         item,allowance=self.monitoring_fixture()
         original=cycle._state(self.path,self.cfg)['positions'][self.target.mint]
         self.sell_output=0  # SYNTHETIC unusable exact-size route, never a fabricated price.
@@ -380,8 +421,11 @@ class PaperCycleTests(unittest.TestCase):
         self.assertEqual(allowance.snapshot()['total_used'],4)
         count=len(self.http_calls)
         restart=self.actual_cycle(positions=(item,),candidates=(),monitoring=True)
-        self.assertEqual(restart['status'],'RECOVERY_REQUIRED')
-        self.assertEqual(len(self.http_calls),count)
+        self.assertNotEqual(restart['status'],'RECOVERY_REQUIRED',restart)
+        self.assertIn('HELD_OBSERVATION_CONTENT_REJECTED',restart['blockers'])
+        self.assertGreater(len(self.http_calls),count)
+        self.assertEqual(allowance.snapshot()['total_used'],8)
+        self.assertEqual(cycle._state(self.path,self.cfg)['positions'][self.target.mint],original)
 
     def test_monitoring_quote_return_clock_boundary_keeps_original_source_time(self):
         item,allowance=self.monitoring_fixture()
@@ -413,8 +457,9 @@ class PaperCycleTests(unittest.TestCase):
         self.assertFalse(any(x['type']=='fill' for x in result['outcomes']))
         self.assertEqual(allowance.snapshot()['total_used'],4)
         retry=self.actual_cycle(positions=(item,),candidates=(),monitoring=True)
-        self.assertEqual(retry['status'],'RECOVERY_REQUIRED')
-        self.assertEqual(retry['attempted_requests'],0)
+        # T22: the stale pass is closed (charges kept), so the retry reads again instead of being refused.
+        self.assertNotEqual(retry['status'],'RECOVERY_REQUIRED',retry)
+        self.assertGreater(retry['attempted_requests'],0)
 
     def test_explicit_pending_dependency_blocks_before_paths_and_sources(self):
         result=cycle.run_once('missing-research','missing-evidence','missing-ledger',self.cfg,
@@ -484,16 +529,23 @@ class PaperCycleTests(unittest.TestCase):
         self.assertEqual(result['budget'][self.target.scan_id],{'used':18,'ceiling':18})
         self.assertEqual(self.f.calls,[])
 
-    def test_failed_positionless_pass_stays_latched_across_restart(self):
-        self.f.fail='getAccountInfo'
-        first=self.run_cycle()
+    def test_failed_positionless_pass_is_closed_and_its_scan_retired_across_restart(self):
+        # T22: was ..._stays_latched_across_restart (the NULL pass refused EVERY later pass). The failed lone
+        # candidate is closed FAILED_CHARGED and its scan retired: no read, no refund, original result retained.
+        # T22G: the failure goes through the real transport (a connection reset) so the failed attempt original is
+        # retained; SOURCE_REQUEST_FAILED alone is not proof of a transient cause (see test_pass_closure).
+        def failure(*args,**kwargs):raise ConnectionResetError('SYNTHETIC_TEST_ONLY')
+        with patch.object(transport,'build_opener',side_effect=failure),patch.object(transport.os.environ,'get',return_value='SYNTHETIC_TEST_ONLY'),patch.object(transport.time,'time',return_value=self.f.at):
+            first=self.run_cycle(source_factory=transport.PaperReadSources)
         self.assertEqual(first['attempted_requests'],1);self.assertIn('SOURCE_REQUEST_FAILED',first['blockers'])
-        self.f.fail=None;self.f.calls.clear()
+        self.f.calls.clear()
         second=self.run_cycle()
         self.assertEqual(second['status'],'RECOVERY_REQUIRED')
-        self.assertEqual(second['blockers'],['OBSERVATION_RECOVERY_REQUIRED'])
+        self.assertEqual(second['blockers'],['REJECTED_SCAN_RETIRED'])
         self.assertEqual(self.f.calls,[]);self.assertEqual(self.f.progress.admission(self.target.scan_id)['requests_used'],1)
         saved=self.f.progress.store.load(first['evidence_hash']);self.assertEqual(saved['blockers'],first['blockers'])
+        with self.f.progress.store.connect() as c:
+            self.assertEqual(c.execute('SELECT count(*) FROM paper_observation_passes WHERE outcome_hash IS NULL').fetchone()[0],0)
 
     def test_interrupted_charged_pass_no_fresh_restart(self):
         original=self.f.sources[self.target.scan_id]
@@ -528,19 +580,34 @@ class PaperCycleTests(unittest.TestCase):
         self.assertEqual(result['blockers'],['GRADUATION_TIMESTAMP_CONFLICT'])
         self.assertEqual(self.f.calls,[])
 
-    def test_history_failure_enclosed_by_durable_intent_blocks_restart(self):
+    def test_a_transient_history_failure_enclosed_by_durable_intent_is_closed_and_the_scan_retired(self):
+        # T22: was ..._blocks_restart (OBSERVATION_RECOVERY_REQUIRED for every scan). A failed history source is an
+        # ordinary charged failure: the pass is closed FAILED_CHARGED, charges stay, and only that scan is retired.
+        # T22H: only a failure that is KNOWN transient (a connection reset here) is closed this way. It used to be the
+        # bare OSError of this fixture; see the next test. The fixture raises it directly, so there is no attempt original
+        # and the exception path classifies it (TRANSPORT_ERROR) instead of the HISTORY_RECOVERY_REQUIRED state.
+        class HistoryFailure:
+            def __init__(self,progress,scan,key,*,timeout_seconds):pass
+            def __call__(self,method,params):raise ConnectionResetError('SYNTHETIC interrupted history response')
+        with self.assertRaises(ConnectionResetError):self.run_cycle(history_source_factory=HistoryFailure)
+        self.assertEqual(self.f.progress.admission(self.target.scan_id)['requests_used'],5)
+        self.f.calls.clear()
+        repeated=self.run_cycle()
+        self.assertEqual(repeated['blockers'],['REJECTED_SCAN_RETIRED'])
+        self.assertEqual(self.f.calls,[])
+        self.assertEqual(self.f.progress.admission(self.target.scan_id)['requests_used'],5)
+
+    def test_a_bare_oserror_from_the_history_source_holds_the_pass_and_does_not_retire_the_scan(self):
+        # T22H item 1: the same fixture with a bare OSError (UNCLASSIFIED_ERROR) used to be laundered into the
+        # allow-listed HISTORY_RECOVERY_REQUIRED and closed. It now propagates and the pass is held.
         class HistoryFailure:
             def __init__(self,progress,scan,key,*,timeout_seconds):pass
             def __call__(self,method,params):raise OSError('SYNTHETIC interrupted history response')
-        result=self.run_cycle(history_source_factory=HistoryFailure)
-        self.assertEqual(result['attempted_requests'],5)
-        self.assertEqual(result['blockers'],['HISTORY_RECOVERY_REQUIRED'])
-        self.assertEqual(result['budget'][self.target.scan_id]['used'],5)
-        self.f.calls.clear()
-        repeated=self.run_cycle()
-        self.assertEqual(repeated['blockers'],['OBSERVATION_RECOVERY_REQUIRED'])
-        self.assertEqual(self.f.calls,[])
+        with self.assertRaises(OSError):self.run_cycle(history_source_factory=HistoryFailure)
         self.assertEqual(self.f.progress.admission(self.target.scan_id)['requests_used'],5)
+        with closing(self.f.progress.store.connect()) as c:
+            self.assertEqual(c.execute('SELECT status FROM paper_pass_closures').fetchall(),[('INTEGRITY_HOLD',)])
+            self.assertEqual(c.execute('SELECT count(*) FROM paper_observation_passes WHERE outcome_hash IS NULL').fetchone()[0],1)
 
     def test_unrelated_source_defect_remains_visible_and_restart_is_latched(self):
         def bad(progress,scan):raise RuntimeError('fixture programmer defect')

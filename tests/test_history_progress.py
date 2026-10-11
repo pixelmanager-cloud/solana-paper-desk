@@ -22,8 +22,12 @@ class HistoryProgressTests(unittest.TestCase):
         self.assertEqual(result['status'],'DONE');self.assertEqual(result['requests_used'],3)
         self.assertEqual(self.progress.advance(key,lambda *a:self.fail('Already complete'))['requests_used'],3)
     def test_failure_consumes_budget_and_keeps_checkpoint(self):
+        # T22H: a failure is the pager's RETRYABLE_ERROR state only when its retained attempt original proves it transient;
+        # the bare OSError this test used propagates instead (tests/test_history_laundering.py has the full matrix).
+        from desk.paper_read_sources import PaperReadError
         key=self.seed();before=self.progress.snapshot(key)['coverage']
-        def fail(*args):raise OSError('sensitive provider error')
+        original=self.store.save({'kind':'paper_read_attempt_v1','scan_id':'s','failure_code':'TRANSPORT_ERROR','requests_used':1})
+        def fail(*args):raise PaperReadError('TRANSPORT_ERROR',original)
         result=self.progress.advance(key,fail)
         self.assertEqual(result['coverage'],before);self.assertEqual(result['requests_used'],3)
         self.assertEqual(result['status'],'RETRYABLE_ERROR');self.assertNotIn('sensitive',str(result))
