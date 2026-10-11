@@ -1,0 +1,24 @@
+{
+  "_comment": "PAPER ONLY. Same as lean.example.json but with the L10 execution model ON: every BUY/SELL is re-quoted exec_delay_s later (BUY fills at the worse of q0/q1, SELL at q1) and fees include priority fee + Jito tip per transaction, ATA rent (paid on the first buy, refunded on a full close) and the Token-2022 transfer fee. Money values are in SOL. exec_delay_s must be <= price_ttl_seconds - 2. Absent or null = today's instant fills.",
+  "strategy_config": "strategy-default.json",
+  "initial_cash_sol": "10",
+  "candidate_interval_s": 5.0,
+  "position_interval_s": 10.0,
+  "pool_fee_bps": 25,
+  "scan_limit": 500,
+  "max_candidate_retries": 3,
+  "sol_usd_ttl_s": 30,
+  "screen": {
+    "min_age_seconds": 300,
+    "max_age_seconds": 7200,
+    "token_profile_version": 2,
+    "holder_check": true,
+    "max_top10_pct": 60
+  },
+  "execution": {
+    "exec_delay_s": 3,
+    "priority_fee_sol": "0.0001",
+    "jito_tip_sol": "0.0001",
+    "ata_rent_sol": "0.00203928"
+  }
+}

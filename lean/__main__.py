@@ -27,6 +27,12 @@ CONFIG_KEYS = {
     'lanes': None,                     # {"main","exit","low"} shares of each provider rate (+ "low_shed_s"); None = 0.55/0.25/0.20
     'paths': None,                     # lean.paths settings ({"enabled", "db", "path_hours", ...}); None = disabled
     # --- end L07R ---
+    'route_check': {},                 # L16: {"enabled": true} records whether a real bot could build each BUY / full exit
+    'execution': None,                 # L10: null = instant fills (today); an object turns on latency-aware fills + the cost model
+    'held_risk': {},                   # lean.held_risk settings (L11): rug / unsellable handling of held positions
+    'sources': [],                     # L14: extra candidate sources [{name, type, discovery_db}]; [] = pump discovery only
+    'watchlist': {},                   # L14: {enabled (false), watch_interval_s 300, watch_hours 2, watch_max_per_pass 5, watch_max_rescreens_per_hour 120}
+    'ops': None,                       # L15: credit tracker / watchdog / regime log (see lean.ops); absent = off
 }
 REQUIRED = ('strategy_config', 'initial_cash_sol')
 
@@ -63,6 +69,35 @@ def load_config(path):
     except ValueError as error:
         raise ConfigError(str(error)) from None
     # --- end L07R ---
+    rc = cfg['route_check']                                                 # --- L16 hook ---
+    if not isinstance(rc, dict) or set(rc) - {'enabled'} or not isinstance(rc.get('enabled', False), bool):
+        raise ConfigError('route_check must be an object like {"enabled": true}')
+    # --- end L16 ---
+    # --- L10 hook ---
+    if cfg['execution'] is not None and not isinstance(cfg['execution'], dict):
+        raise ConfigError('execution must be an object or null')
+    # --- end L10 ---
+    if not isinstance(cfg['held_risk'], dict):
+        raise ConfigError('held_risk must be an object')
+    from lean import held_risk                                              # L11: strict at load (unknown keys, bad types)
+    try:
+        held_risk.Config.from_dict(cfg['held_risk'])
+    except held_risk.HeldRiskConfigError as error:
+        raise ConfigError(str(error)) from None
+    # --- L14 hook: validated at load, so a typo fails before the trader starts ---
+    from lean import candidates, sources, watchlist
+    try:
+        sources.build_sources(cfg['sources'])
+        watchlist.check_window(watchlist.WatchConfig.from_dict(cfg['watchlist']),
+                               cfg['screen'].get('max_age_seconds', candidates.DEFAULTS['max_age_seconds']))
+    except (sources.SourceConfigError, watchlist.WatchConfigError, TypeError) as error:
+        raise ConfigError(str(error)) from None
+    # --- end L14 ---
+    from lean import ops as _ops           # L15: strict ops block (unknown keys refused); None when absent or disabled
+    try:
+        cfg['ops'] = _ops.load_ops_config(cfg['ops'])
+    except _ops.OpsError as error:
+        raise ConfigError(str(error)) from None
     return cfg
 
 
@@ -94,13 +129,43 @@ def build_runner(cfg, *, state_dir, discovery_db, keys, code_version, clock=None
     lanes = cfg.get('lanes') or {}
     providers.configure_lanes(lanes.get('shares'), low_shed_s=lanes.get('low_shed_s'))
     # --- end L07R ---
+    # --- L10 hook: the optional execution model (latency-aware fills + cost model) ---
+    exec_model = None
+    if cfg.get('execution') is not None:
+        from lean import execution
+        exec_model = execution.Execution(execution.ExecConfig.from_dict(cfg['execution']), sleep=transport_kwargs.get('sleep', time.sleep))
+    # --- end L10 ---
+    # --- L14 hook ---
+    from lean import adapters, sources, watchlist
+    screen_cfg = adapters.screen_config(strategy_cfg, cfg['screen'])
+    extra = sources.build_sources(cfg['sources'], screen_cfg=screen_cfg, limit=cfg['scan_limit'], clock=clock)
+    watch_cfg = watchlist.WatchConfig.from_dict(cfg['watchlist'])
+    l14 = {'extra_sources': sources.SourceSet(extra, state) if extra else None,
+           'watchlist': (watchlist.Watchlist(the_store, watch_cfg, clock=clock, code_version=code_version,
+                                             strategy_version=strategy_cfg.strategy_version,
+                                             max_age_seconds=screen_cfg['max_age_seconds']) if watch_cfg.enabled else None)}
+    # --- end L14 ---
+    # --- L15 hook: credit tracker / watchdog / regime log ---
+    main_providers = providers.build_providers(keys, lane='main', **transport_kwargs)
+    exit_providers = providers.build_providers(keys, lane='exit', **transport_kwargs)
+    ops = None
+    from lean import ops as lean_ops
+    ops_cfg = cfg.get('ops')
+    if ops_cfg is None and lean_ops.watchdog_interval() is not None:
+        ops_cfg = lean_ops.watchdog_only_config()      # WatchdogSec= is set: keep pinging even without an ops block
+    if ops_cfg is not None:
+        ops = lean_ops.Ops(ops_cfg, clock=clock)
+        main_providers, exit_providers = ops.meter(main_providers), ops.meter(exit_providers)
+        ops.lane_clock = {'clock': transport_kwargs.get('monotonic', time.monotonic), 'sleep': transport_kwargs.get('sleep', time.sleep)}  # LINT1
+    # --- end L15 ---
     r = runner.Runner(
-        store=the_store, providers=providers.build_providers(keys, lane='main', **transport_kwargs),
-        exit_providers=providers.build_providers(keys, lane='exit', **transport_kwargs), strategy_cfg=strategy_cfg,
+        store=the_store, providers=main_providers, ops=ops,
+        exit_providers=exit_providers, strategy_cfg=strategy_cfg,
         discovery_db=discovery_db, state_dir=state, code_version=code_version, screen_overrides=cfg['screen'],
         pool_fee_bps=cfg['pool_fee_bps'], clock=clock, scan_limit=cfg['scan_limit'],
         max_retries=cfg['max_candidate_retries'], sol_usd_ttl_s=cfg['sol_usd_ttl_s'], stale_mark_s=cfg['stale_mark_s'],
-        unexitable_after_s=cfg['unexitable_after_s'])
+        unexitable_after_s=cfg['unexitable_after_s'], route_check=cfg['route_check'], execution=exec_model,
+        held_risk=cfg['held_risk'], **l14)
     # --- L07R: the path recorder (low lane, its own paths.sqlite) is only a FACTORY here: Runner.run() builds and
     # resumes it; --once and --clear-halt never open paths.sqlite ---
     paths_cfg = paths.config(cfg.get('paths'))
@@ -110,6 +175,10 @@ def build_runner(cfg, *, state_dir, discovery_db, keys, code_version, clock=None
                                             pool_fee_bps=cfg['pool_fee_bps'], clock=clock,
                                             transport_kwargs=transport_kwargs)
     # --- end L07R ---
+    # --- LINT1 hook: L11 probes / account checks on the shared non-blocking low lane, never on the exit lane ---
+    if r.held_risk is not None:
+        r.held_risk.low = providers.low(keys, **transport_kwargs)
+    # --- end LINT1 ---
     return r
 
 

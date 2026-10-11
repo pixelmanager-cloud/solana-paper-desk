@@ -1,0 +1,71 @@
+{
+  "_comment": "TEST FIXTURE (LINT1): the pre-LINT1 shipped example with every optional feature OFF (route_check, execution, held_risk, watchlist; ops without a budget), so tests of the default behaviour do not depend on what config/lean/lean.example.json enables. Not a deploy config.",
+  "strategy_config": "../../config/lean/strategy-default.json",
+  "initial_cash_sol": "10",
+  "candidate_interval_s": 5.0,
+  "position_interval_s": 10.0,
+  "pool_fee_bps": 25,
+  "scan_limit": 500,
+  "max_candidate_retries": 3,
+  "sol_usd_ttl_s": 30,
+  "route_check": {
+    "enabled": false
+  },
+  "stale_mark_s": 30,
+  "unexitable_after_s": 7200,
+  "screen": {
+    "min_age_seconds": 300,
+    "max_age_seconds": 7200,
+    "token_profile_version": 2,
+    "holder_check": true,
+    "max_top10_pct": 60
+  },
+  "lanes": {
+    "_comment": "Shares of each provider's rate (Helius 10/s: main 5.5, exit 2.5, low 2). main + exit + low must be <= 1. The low lane never waits and is shed for low_shed_s after any 429.",
+    "main": 0.55,
+    "exit": 0.25,
+    "low": 0.2,
+    "low_shed_s": 30
+  },
+  "paths": {
+    "_comment": "L07R price-path recorder (low lane): every hazard-free candidate, entered or not, is marked every interval_s for path_hours.",
+    "enabled": true,
+    "path_hours": 6,
+    "interval_s": 15,
+    "ref_size_sol": "0.2",
+    "max_paths": 2000
+  },
+  "execution": null,
+  "held_risk": {
+    "enabled": false,
+    "rug_liq_drop_frac": "0.7",
+    "unsellable_after_s": 120,
+    "unsellable_value_ttl_s": 30,
+    "route_probe_s": 60,
+    "freeze_check_every": 6,
+    "freeze_forces_exit": false,
+    "pool_gone_confirmations": 2
+  },
+  "sources": [],
+  "watchlist": {
+    "enabled": false,
+    "watch_interval_s": 300,
+    "watch_hours": 2,
+    "watch_max_per_pass": 5,
+    "watch_max_rescreens_per_hour": 120
+  },
+  "ops": {
+    "_comment": "L15: credit tracker (costs are ESTIMATES: calibrate against the provider dashboard), systemd watchdog, regime log. Remove the block to turn all of it off.",
+    "credit_budget_month": null,
+    "credit_costs": {
+      "helius": {
+        "default": 1,
+        "getProgramAccounts": 10
+      }
+    },
+    "credit_flush_s": 60,
+    "watchdog_stale_s": 180,
+    "regime_interval_s": 300,
+    "housekeeping_s": 5
+  }
+}

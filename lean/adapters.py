@@ -190,3 +190,23 @@ def equity_and_freshness(store, now, marks, ttl):
                                      Decimal(0))
     fresh = all(m in marks and 0 <= int(now) - marks[m][1] <= ttl for m in positions)
     return equity, fresh
+
+
+# --- L10 hook (additive): refundable ATA rent stays out of the strategy's cost basis; extra open-state keys from lean.execution ---
+_strategy_position_plain = strategy_position
+_open_state_plain = open_state
+
+
+def strategy_position(position, state):                                  # noqa: F811 - wraps the function above
+    held = _strategy_position_plain(position, state)
+    rent = int(state.get('ata_rent_lamports', 0))
+    if not rent:
+        return held
+    rent_left = rent * position.qty_raw // int(state['initial_qty_raw'])
+    import dataclasses
+    return dataclasses.replace(held, cost_left=sol(position.cost_lamports - rent_left))
+
+
+def open_state(features, fill, cfg):                                     # noqa: F811
+    return {**_open_state_plain(features, fill, cfg), **(features.get('_exec_state') or {})}
+# --- end L10 ---

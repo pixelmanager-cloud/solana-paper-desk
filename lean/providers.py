@@ -40,6 +40,7 @@ import re
 import stat
 import threading
 import time
+import weakref
 from urllib.error import HTTPError, URLError
 from urllib.parse import urlencode
 from urllib.request import HTTPRedirectHandler, Request, build_opener
@@ -258,6 +259,20 @@ def shed_low(provider, seconds=None, *, clock=time.monotonic, sleep=time.sleep):
         log.debug('low lane shed failed for %s', provider)
 
 
+# --- LINT1 hook: call observers (the L15 credit tracker counts EVERY lane here, the low lane included) ---
+CALL_OBSERVERS = weakref.WeakSet()       # objects with observe_call(provider, endpoint, attempts); weak: a dead tracker drops out
+
+
+def _observe(provider, endpoint, attempts):
+    if attempts:                         # 0 = nothing was sent (LANE_SHED / rate-limit deadline): no credit spent
+        for observer in list(CALL_OBSERVERS):
+            try:
+                observer.observe_call(provider, endpoint, attempts)
+            except Exception:            # counting must never fail a call
+                pass
+# --- end LINT1 ---
+
+
 def low_lane_stats(provider, *, clock=time.monotonic, sleep=time.sleep):
     """Counters of ``provider``'s low lane: granted / shed_no_token / shed_backoff / sheds."""
     return dict(shared_limiter(provider, 'low', clock=clock, sleep=sleep).stats)
@@ -455,10 +470,12 @@ class Transport:
                     'latency_s': round(received_at - sent_at, 6), 'bytes': len(raw),
                     'raw_sha256': hashlib.sha256(raw).hexdigest()}
             log.debug('provider=%s endpoint=%s attempt=%d status=200 bytes=%d', self.provider, endpoint, attempts, len(raw))
+            _observe(self.provider, endpoint, attempts)                 # LINT1 hook
             return raw, meta
         error = last or ProviderError('DEADLINE_EXCEEDED', True)
         error.provider = self.provider
         error.meta = {**error.meta, 'endpoint': endpoint, 'attempts': attempts}
+        _observe(self.provider, endpoint, attempts)                     # LINT1 hook
         error.__context__ = None     # drop the original transport exception: it may carry the request URL
         raise error from None
 

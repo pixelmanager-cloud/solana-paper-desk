@@ -1,5 +1,5 @@
 {
-  "_comment": "PAPER ONLY lean trader config (python -m lean --config). Every key the runner reads is listed; unknown keys are refused. strategy_config is relative to this file. initial_cash_sol creates a NEW store; an existing store must match it.",
+  "_comment": "PAPER ONLY lean trader config (python -m lean --config). Every key the runner reads is listed; unknown keys are refused. strategy_config is relative to this file. initial_cash_sol creates a NEW store; an existing store must match it. LINT1: every merged feature is ON at paper-collection defaults (L07R paths, L10 execution, L11 held_risk, L14 watchlist, L15 ops, L16 route_check). L13 wallet_signals was NOT merged (see reports/LINT1.md), so it has no key here. route_check (L16) re-uses the quote response: no extra provider call, never signs or sends. watchlist (L14): soft rejects (incl. ENTRY_THROTTLE) are re-screened on the MAIN lane after the fresh scan, portfolio-blocked mints cost nothing, hard cap watch_max_rescreens_per_hour (<= 360 Helius + 240 Jupiter calls/h), watch_hours must be <= screen.max_age_seconds. held_risk (L11) probes and account checks run on the shared LOW lane after the exits.",
   "strategy_config": "strategy-default.json",
   "initial_cash_sol": "10",
   "candidate_interval_s": 5.0,
@@ -18,10 +18,10 @@
     "max_top10_pct": 60
   },
   "lanes": {
-    "_comment": "Shares of each provider's rate (Helius 10/s: main 5.5, exit 2.5, low 2). main + exit + low must be <= 1. The low lane never waits and is shed for low_shed_s after any 429.",
+    "_comment": "L07R: shares of each provider's rate (Helius 10/s: main 5.5, exit 2.5, low 2; Jupiter 4/s: 2.2 / 1 / 0.8). main + exit + low must be <= 1. The low lane never waits and is shed for low_shed_s after any 429 (and by ops while over the credit budget).",
     "main": 0.55,
     "exit": 0.25,
-    "low": 0.20,
+    "low": 0.2,
     "low_shed_s": 30
   },
   "paths": {
@@ -34,5 +34,47 @@
     "max_paths": 2000,
     "max_db_gb": 2,
     "min_free_gb": 2
+  },
+  "route_check": {
+    "enabled": true
+  },
+  "execution": {
+    "_comment": "L10: every BUY/SELL re-quoted exec_delay_s later (BUY at the worse of q0/q1, SELL at q1; exits are two-phase, ONE delay per pass); fees include priority fee + Jito tip per tx, ATA rent (refunded on a full close) and the Token-2022 transfer fee. exec_delay_s must be <= price_ttl_seconds - 2.",
+    "exec_delay_s": 3,
+    "priority_fee_sol": "0.0001",
+    "jito_tip_sol": "0.0001",
+    "ata_rent_sol": "0.00203928"
+  },
+  "held_risk": {
+    "enabled": true,
+    "rug_liq_drop_frac": "0.7",
+    "unsellable_after_s": 120,
+    "unsellable_value_ttl_s": 30,
+    "route_probe_s": 60,
+    "freeze_check_every": 6,
+    "freeze_forces_exit": false,
+    "pool_gone_confirmations": 2
+  },
+  "sources": [],
+  "watchlist": {
+    "enabled": true,
+    "watch_interval_s": 300,
+    "watch_hours": 2,
+    "watch_max_per_pass": 5,
+    "watch_max_rescreens_per_hour": 120
+  },
+  "ops": {
+    "_comment": "L15: credit tracker (counts every lane at the transport; costs are ESTIMATES: calibrate against the Helius dashboard), systemd watchdog, regime log. credit_budget_month ASSUMES a Helius Developer plan of 10,000,000 credits/month: replace it with the real plan figure. Over budget the shared Helius low lane is shed; screening and exits never are.",
+    "credit_budget_month": 10000000,
+    "credit_costs": {
+      "helius": {
+        "default": 1,
+        "getProgramAccounts": 10
+      }
+    },
+    "credit_flush_s": 60,
+    "watchdog_stale_s": 180,
+    "regime_interval_s": 300,
+    "housekeeping_s": 5
   }
 }

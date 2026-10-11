@@ -1,0 +1,44 @@
+[Unit]
+Description=Lean paper trader morning report (L06 report, plus the L08 replay page when configured). No notifications.
+After=desk-lean.service
+
+[Service]
+Type=oneshot
+User=solana-desk
+Group=solana-desk
+WorkingDirectory=/opt/solana-desk
+Environment=PYTHONDONTWRITEBYTECODE=1
+# Writes /var/lib/solana-desk-lean/reports/YYYY-MM-DD.html (KST date of the run) and .json; an existing page is kept, so a
+# repeated run the same day changes nothing. lean.sqlite is opened read-only (the live trader keeps writing it).
+# To add the L08 replay/tuning page append: --grid /etc/solana-paper/lean-grid.json
+ExecStart=/opt/solana-desk/.venv/bin/python -m lean.ops report --db /var/lib/solana-desk-lean/lean.sqlite --out-dir /var/lib/solana-desk-lean/reports
+
+UMask=0077
+ProtectSystem=strict
+ProtectHome=true
+PrivateTmp=true
+StateDirectory=solana-desk-lean
+StateDirectoryMode=0700
+ReadWritePaths=/var/lib/solana-desk-lean
+NoNewPrivileges=true
+CapabilityBoundingSet=
+AmbientCapabilities=
+PrivateDevices=true
+ProtectKernelTunables=true
+ProtectKernelModules=true
+ProtectKernelLogs=true
+ProtectControlGroups=true
+ProtectClock=true
+ProtectHostname=true
+RestrictNamespaces=true
+RestrictRealtime=true
+RestrictSUIDSGID=true
+LockPersonality=true
+SystemCallArchitectures=native
+SystemCallFilter=@system-service
+# No network: the report reads the local store only.
+RestrictAddressFamilies=AF_UNIX
+PrivateNetwork=true
+MemoryMax=512M
+TasksMax=32
+TimeoutStartSec=300

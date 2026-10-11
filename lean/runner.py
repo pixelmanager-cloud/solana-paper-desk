@@ -35,7 +35,7 @@ import threading
 import time
 from decimal import Decimal
 
-from lean import adapters as A, candidates as C, paper, strategy as S
+from lean import adapters as A, candidates as C, held_risk as H, paper, strategy as S
 from lean.paper import AccountingHalt
 from lean.providers import PAPER_TAKER, ProviderError
 from lean.store import StoreError
@@ -53,7 +53,15 @@ class _Halt(Exception):
 class Runner:
     def __init__(self, *, store, providers, exit_providers, strategy_cfg, discovery_db, state_dir, code_version,
                  screen_overrides=None, pool_fee_bps=25, taker=PAPER_TAKER, kill_switch=None, clock=time.time,
-                 scan_limit=500, max_retries=3, sol_usd_ttl_s=30, stale_mark_s=30, unexitable_after_s=7200):
+                 scan_limit=500, max_retries=3, sol_usd_ttl_s=30, stale_mark_s=30, unexitable_after_s=7200, route_check=None,
+                 execution=None, held_risk=None, extra_sources=None, watchlist=None, ops=None):
+        # --- L10 hook: latency-aware fills + cost model (None = today's instant fills). The priority fee + Jito tip enter
+        # through the strategy config, so the fill fee, the marks and the entry/exit cost checks share one number. ---
+        self.execution = execution
+        if execution is not None:
+            execution.validate_against(strategy_cfg)
+            strategy_cfg = execution.strategy_cfg(strategy_cfg)
+        # --- end L10 ---
         self.store, self.providers, self.exit_providers = store, providers, exit_providers
         self.cfg = strategy_cfg
         self.pcfg = A.paper_config(strategy_cfg)
@@ -83,6 +91,10 @@ class Runner:
         self.halted = None
         self._halt_persisted = False
         self.cursor = 0
+        # --- L16 hook ---
+        from lean.route_check import RouteChecker
+        self.route_check = RouteChecker(store, route_check, clock=clock)    # off unless route_check.enabled
+        # --- end L16 ---
         self.cursor_initialized = False
         # --- L07R hook ---
         self.paths = None                          # lean.paths.PathRecorder, built by run() only (l07r_start_paths)
@@ -90,7 +102,26 @@ class Runner:
         self._l07r_thread = None
         self._l07r = None                          # runner MEMORY of the candidate being handled (screen, entry, fill, error)
         # --- end L07R ---
+        # --- L11 hook ---
+        self.held_risk = H.build(held_risk, self.store, code_version=code_version, strategy_version=self.strategy_version, clock=clock)
+        # --- end L11 ---
+        # --- L14 hook: extra candidate sources + soft-reject watchlist (all logic in lean.watchlist / lean.sources) ---
+        self.extra_sources, self.watch, self._source_of = extra_sources, watchlist, {}
+        from lean import watchlist as _l14
+        _l14.install(self)
+        # --- end L14 ---
+        # --- L15 hook ---
+        self.ops = ops                              # lean.ops.Ops or None (no ops block in lean.json = today's behaviour)
+        if self.ops is not None:
+            self.ops.attach(self)
+        # --- end L15 ---
         self.startup()
+        # --- L10 hook ---
+        if execution is not None and self.halted is None:
+            self.store.record('execution_config', {'exec_delay_s': execution.cfg.exec_delay_s, 'tx_extra_lamports': execution.cfg.tx_extra_lamports,
+                                                   'ata_rent_lamports': execution.cfg.ata_rent_lamports, 'fixed_fee_sol': str(self.cfg.fixed_fee_sol)},
+                              code_version=self.code_version, strategy_version=self.strategy_version, ts=self.clock())
+        # --- end L10 ---
 
     # -- lifecycle ------------------------------------------------------------------------------------------------
     def startup(self):
@@ -158,6 +189,12 @@ class Runner:
         except AccountingHalt as error:
             self._halt('ACCOUNTING_INVARIANT: %s' % error)
             raise _Halt from None
+
+    # --- L15 hook ---
+    def _beat(self, name):
+        if self.ops is not None:
+            self.ops.beat(name)
+    # --- end L15 ---
 
     def _count(self, name, n=1):
         with self._counts_lock:
@@ -231,6 +268,7 @@ class Runner:
         """Retries first, then new discovery frames. One candidate failing never affects another."""
         self.last['candidate_loop'] = self.clock()
         self.refresh_halt()
+        self._beat('candidates')
         if not self.entries_allowed():
             return 0
         retries, self.retry = self.retry, []
@@ -273,9 +311,18 @@ class Runner:
                 self.cursor = handled_to
         except _Halt:
             pass
+        done += self._l14_pass()                                              # L14: after the fresh scan
         return done
 
+    # --- L14 hook ---
+    def _l14_pass(self):
+        """Extra sources, then watchlist re-screens: after the pump scan, bounded, isolated, never raises."""
+        from lean import watchlist as _l14
+        return _l14.after_scan(self) if self.extra_sources is not None or self.watch is not None else 0
+    # --- end L14 ---
+
     def _isolated(self, candidate, attempt):
+        self._beat('candidates')
         try:
             self._handle_candidate(candidate, attempt)
         except _Halt:
@@ -370,9 +417,23 @@ class Runner:
             return
         # Quote at the decided size, then the sell leg for exactly the tokens the paper fill will hold.
         size_lamports = A.lamports(gate.size_sol)
-        buy_q, buy_ref, buy_at = self._quote(self.providers, SOL_MINT, mint, size_lamports, 'quote:buy', mint, cid)
+        # --- L16 hook ---
+        try:
+            buy_q, buy_ref, buy_at = self._quote(self.providers, SOL_MINT, mint, size_lamports, 'quote:buy', mint, cid)
+        except ProviderError as error:
+            self.route_check.on_quote_error('entry', mint, error, candidate_id=cid, trade=cid)
+            raise
+        # --- end L16 ---
         sell_q, _, sell_at = self._quote(self.providers, mint, SOL_MINT, A.sell_leg_qty(buy_q.out_amount, self.pcfg),
                                          'quote:sell_leg', mint, cid)
+        # --- L10 hook: wait exec_delay_s, re-quote, fill at the worse; None = ENTRY_ABORTED_LATENCY (recorded) ---
+        xmeta = None
+        if self.execution is not None:
+            plan = self.execution.entry_requote(self, features, mint, cid, (buy_q, buy_ref, buy_at), (sell_q, sell_at), result.raw)
+            if plan is None:
+                return
+            (buy_q, buy_ref, buy_at), (sell_q, sell_at), xmeta = plan
+        # --- end L10 ---
         with self._trade_lock:
             if not self.entries_allowed():                                    # a halt may have started meanwhile
                 return
@@ -385,7 +446,13 @@ class Runner:
                 return
             fill = paper.buy(A.paper_quote(buy_q, mint=mint, side='buy', decimals=features['decimals'], ts=self.clock(),
                                            ref=buy_ref), decision.size_sol, self.pcfg)
+            # --- L10 hook: ATA rent, transfer-fee haircut, both quotes + latency tax (stored with the fill via the open state) ---
+            if xmeta is not None:
+                fill, open_extra = self.execution.finish_buy(self, fill, xmeta)
+                features = {**features, '_exec_state': open_extra}
+            # --- end L10 ---
             self.store.add_fill(fill, candidate_id=cid, state={'event': 'open', 'state': A.open_state(features, fill, self.cfg)})
+            self.route_check.on_fill('entry', mint, buy_ref, candidate_id=cid, trade=cid)      # --- L16 hook ---
             self._count('entered')
             self._l07r_note(fill=fill)                                         # --- L07R hook (one line) ---
             self._check()
@@ -396,6 +463,7 @@ class Runner:
         a halt stops new entries only, never exits."""
         self.last['position_loop'] = self.clock()
         self.refresh_halt()
+        self._beat('positions')                                               # L15 hook
         try:
             positions = self.store.positions()
             states = self.store.position_states()
@@ -403,9 +471,21 @@ class Runner:
                 self.marks.clear()
                 return 0
             self._read_marks(positions, states)
+            # --- L11 hook --- (no I/O: baselines, trigger detection, valuation of rug positions whose exit is failing)
+            if self.held_risk is not None:
+                self.held_risk.after_marks_safe(self, positions, states)
+            # --- end L11 ---
             self._quote_marks(positions)
             now = self._now()
             liquidate = S.should_liquidate(self.portfolio(now), self.cfg)
+            # --- L10 hook: two-phase exits (q0 for every triggered exit, ONE delay, then q1 + fills) ---
+            if self.execution is not None:
+                exits = self.execution.run_exits(self, positions, states, liquidate)
+                # LINT1: L11's probes must run after the two-phase exits too (the early return skipped them)
+                if self.held_risk is not None and not self.stop.is_set():
+                    self.held_risk.after_exits_safe(self)
+                return exits
+            # --- end L10 ---
             exits = 0
             for mint, position in positions.items():
                 if self.stop.is_set():
@@ -416,6 +496,10 @@ class Runner:
                     self._halt('ACCOUNTING_INVARIANT: %s' % error)
                 except (StoreError, sqlite3.Error) as error:
                     self._halt('STORE_FAILURE: %s' % type(error).__name__)
+            # --- L11 hook --- (the only requests of the module: probes and account checks, AFTER every exit of this pass)
+            if self.held_risk is not None and not self.stop.is_set():
+                self.held_risk.after_exits_safe(self)
+            # --- end L11 ---
             return exits
         except _Halt:
             return 0
@@ -445,7 +529,15 @@ class Runner:
                     base, quote = A.vault_amount(result['value'][2 * i]), A.vault_amount(result['value'][2 * i + 1])
                     self.marks[mint] = (A.mark(positions[mint].qty_raw, base, quote, pool_fee_bps=self.pool_fee_bps, pcfg=self.pcfg),
                                         mark_at, 'vaults')
+                    # --- L11 hook ---
+                    if self.held_risk is not None:
+                        self.held_risk.observe(mint, base, quote, mark_at)
+                    # --- end L11 ---
                 except A.AdapterError as error:
+                    # --- L11 hook ---
+                    if self.held_risk is not None and None in (result['value'][2 * i], result['value'][2 * i + 1]):
+                        self.held_risk.observe_missing(mint, mark_at)
+                    # --- end L11 ---
                     self._error('MARK_INVALID', transient=False, mint=mint, scope='marks', message=str(error))
         now = self._now()
         for mint in list(self.marks):
@@ -471,6 +563,7 @@ class Runner:
             self._count('quote_marks')
 
     def _isolated_exit(self, mint, position, state, liquidate):
+        self._beat('positions')
         try:
             if state is None:
                 raise AccountingHalt('position %s has no state' % mint[:8])
@@ -497,9 +590,14 @@ class Runner:
         with self._trade_lock:
             now = self._now()
             fill = paper.write_off(position, ts=self.clock())
-            closed = dict(state, reason='UNEXITABLE', trade_pnl_lamports=position.realized_lamports + fill.realized_lamports,
-                          cooldown_until=S.cooldown_until('UNEXITABLE', now, self.cfg))
-            self.store.add_decision('exit', 'WRITE_OFF', mint=mint, reasons=['UNEXITABLE'], ts=self.clock(),
+            # --- L10 hook: the ATA rent of a written-off position is lost: record it so the outstanding rent clears ---
+            if self.execution is not None:
+                state = {**state, **self.execution.write_off_state(state)}
+            # --- end L10 ---
+            reason = 'RUG_WRITEOFF' if state.get('rug_trigger') else 'UNEXITABLE'          # L11: chosen by the detector
+            closed = dict(state, reason=reason, trade_pnl_lamports=position.realized_lamports + fill.realized_lamports,
+                          cooldown_until=S.cooldown_until('STOP' if state.get('rug_trigger') else 'UNEXITABLE', now, self.cfg))
+            self.store.add_decision('exit', 'WRITE_OFF', mint=mint, reasons=[reason], ts=self.clock(),
                                     features={'failing_since': state.get('exit_failing_since'), 'why': state.get('exit_failing_reason'),
                                               'qty_raw': position.qty_raw})
             self.store.add_fill(fill, state={'event': 'closed', 'open_fill_id': open_id, 'state': closed})
@@ -511,13 +609,18 @@ class Runner:
 
     def _manage(self, mint, position, row, liquidate):
         open_id, state = row['open_fill_id'], row['state']
+        # --- L11 hook --- (a rug trigger makes the exit wanted as DANGER and is stamped on the state, durably once it is saved)
+        rug = None if self.held_risk is None else self.held_risk.trigger(mint, open_id)
+        if rug and state.get('rug_trigger') != rug:
+            state = dict(state, rug_trigger=rug)
+        # --- end L11 ---
         now = self._now()
         since = state.get('exit_failing_since')
         if since is not None and now - int(since) >= self.unexitable_after_s:
             return self._write_off(mint, position, open_id, state)
         mark, mark_at, _source = self.marks.get(mint, (None, None, None))
         held = A.strategy_position(position, state)
-        decision = S.exit_decision(held, mark, None, now, self.cfg, mark_at=mark_at, liquidate=liquidate)
+        decision = S.exit_decision(held, mark, None, now, self.cfg, mark_at=mark_at, liquidate=liquidate, danger=bool(rug))
         if decision.position_updates:
             state = A.apply_updates(state, decision.position_updates)
             held = A.strategy_position(position, state)
@@ -531,15 +634,22 @@ class Runner:
         try:
             quote, ref, quote_at = self._quote(self.exit_providers, mint, SOL_MINT, qty, 'quote:exit', mint)
         except ProviderError as error:
+            if qty == position.qty_raw:                                             # --- L16 hook --- (full exits only)
+                self.route_check.on_quote_error('exit', mint, error, trade=open_id)  # --- end L16 ---
             if not error.transient:
                 self._exit_failed(mint, open_id, state, error.code, bool(decision.position_updates))
             elif decision.position_updates:
                 self.store.add_position_state(mint, open_id, state, ts=self.clock())
             raise
+        # --- L10 hook: phase 1 defers here; phase 2 (and a direct call) gets q1 and the pair of quotes ---
+        xmeta = None
+        if self.execution is not None:
+            quote, ref, quote_at, xmeta = self.execution.after_exit_quote(self, mint, qty, quote, ref, quote_at)
+        # --- end L10 ---
         with self._trade_lock:
             now = self._now()
             final = S.exit_decision(held, mark, A.strategy_quote(quote, 'sell', quote_at), now, self.cfg, mark_at=mark_at,
-                                    liquidate=liquidate)
+                                    liquidate=liquidate, danger=bool(rug))
             self.store.add_decision('exit', final.action, mint=mint, reasons=final.reasons, ts=self.clock(),
                                     features={**_jsonable(final.detail), 'qty_raw': qty, 'fraction_of_initial': str(final.fraction),
                                               'quote_ref': ref, 'mark_sol': None if mark is None else str(mark),
@@ -552,11 +662,17 @@ class Runner:
                 return 0
             fill = paper.sell(position, A.paper_quote(quote, mint=mint, side='sell', decimals=position.decimals, ts=self.clock(),
                                                       ref=ref), cfg=self.pcfg, qty_raw=qty)
+            # --- L10 hook: transfer-fee haircut, ATA rent refund on a full close, both quotes + latency tax ---
+            if xmeta is not None:
+                fill, sell_extra = self.execution.finish_sell(fill, position, state, xmeta)
+                state = {**state, **sell_extra}
+            # --- end L10 ---
             state = {k: v for k, v in state.items() if k not in ('exit_failing_since', 'exit_failing_reason')}
             if fill.qty_raw == position.qty_raw:
                 closed = dict(state, reason=final.reason, trade_pnl_lamports=position.realized_lamports + fill.realized_lamports,
-                              cooldown_until=S.cooldown_until(final.reason, now, self.cfg))
+                              cooldown_until=S.cooldown_until('STOP' if rug else final.reason, now, self.cfg))     # L11: a rug cools down like a stop
                 self.store.add_fill(fill, state={'event': 'closed', 'open_fill_id': open_id, 'state': closed})
+                self.route_check.on_fill('exit', mint, ref, trade=open_id)                          # --- L16 hook ---
                 self.marks.pop(mint, None)
                 self._count('closed')
             else:
@@ -583,8 +699,12 @@ class Runner:
                 'cost_basis_mints': list(self.cost_basis_mints), 'cash_lamports': cash, 'cursor': self.cursor,
                 'retry_queue': len(self.retry), 'execution_status': 'EXECUTION_UNVERIFIED', 'live_readiness': False,
                 # --- L07R hook ---
-                'paths': self._l07r_health()}
+                'paths': self._l07r_health(),
                 # --- end L07R ---
+                'held_risk': None if self.held_risk is None else self.held_risk.health(),      # L11
+                # --- L15 hook ---
+                **({} if self.ops is None else self.ops.health())}
+                # --- end L15 ---
 
     # --- L07R hook ---
     def _l07r_health(self):
@@ -660,6 +780,9 @@ class Runner:
         if recorder is not None:
             recorder.start()
         # --- end L07R ---
+        # --- L15 hook ---
+        threads += [] if self.ops is None else self.ops.start(self)      # Ops.start returns started threads
+        # --- end L15 ---
         for t in threads:
             while t.is_alive():
                 t.join(0.5)

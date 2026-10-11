@@ -301,9 +301,11 @@ def trades(events):
                 if r['side'] == 'sell':
                     anomalies.append({'code': 'SELL_WITHOUT_POSITION', 'mint': mint})
                     continue
+                # the trade belongs to the strategy_version of its OPENING buy, whatever version later fills (a restart) carry
                 current = {'mint': mint, 'strategy': r['strategy'], 'entry_at': r['at'], 'cost': Decimal(0), 'proceeds': Decimal(0),
-                           'qty': Decimal(0), 'exit_at': None, 'reasons': [], 'status': 'OPEN', 'flag': None}
+                           'qty': Decimal(0), 'exit_at': None, 'reasons': [], 'status': 'OPEN', 'flag': None, 'versions': set()}
                 out.append(current)
+            current['versions'].add(r['strategy'])
             if r['side'] == 'buy':
                 current['cost'] += r['sol'] + r['fee']
                 current['qty'] += r['qty']
@@ -325,6 +327,7 @@ def trades(events):
 
 def trade_row(t):
     row = {'mint': t['mint'], 'strategy_version': t['strategy'], 'status': t['status'], 'flag': t['flag'],
+           'mixed_version': 1 if len(t['versions']) > 1 else 0, 'fill_versions': sorted(t['versions']),
            'entry_at': num(t['entry_at'], 3), 'exit_at': num(t['exit_at'], 3) if t['exit_at'] is not None else None,
            'cost_sol': num(t['cost']), 'proceeds_sol': num(t['proceeds']), 'exit_reasons': t['reasons'],
            'final_exit_reason': t['reasons'][-1] if t['reasons'] and t['status'] == 'CLOSED' else None}
@@ -347,6 +350,7 @@ def pnl_by_strategy(all_trades):
         pnls = [t['proceeds'] - t['cost'] for t in items]
         returns = [(t['proceeds'] - t['cost']) / t['cost'] for t in items]
         result[strategy] = {'trades': len(items), 'wins': sum(1 for p in pnls if p > 0), 'pnl_sol': num(sum(pnls)),
+                            'mixed_version_trades': sum(1 for t in items if len(t['versions']) > 1),
                             'cost_sol': num(sum(t['cost'] for t in items)), 'return': dist(returns), 'sample': sample_flag(len(items))}
     return result
 
@@ -405,7 +409,64 @@ def errors_by_code(events):
     return dict(counts.most_common())
 
 
+# --------------------------------------------------------------------------- L11: rugs and write-offs
+def held_risk_report(db):
+    """Rug exits (reason DANGER, trigger in the state) and rug write-offs (RUG_WRITEOFF) counted and costed SEPARATELY from the
+    ordinary exit reasons, the triggers that fired, freeze flags, and the positions whose rug exit is failing right now (open,
+    valued at 0 unless an executable quote is fresh). Reads the typed ``position_state`` rows and the generic ``held_risk`` events;
+    a store without them reports zeros."""
+    connection = open_ro(db)
+    try:
+        tables = {row[0] for row in connection.execute("SELECT name FROM sqlite_master WHERE type='table'")}
+        out = {'rug_exit': {'trades': 0, 'pnl_sol': '0'}, 'rug_writeoff': {'trades': 0, 'pnl_sol': '0'}, 'triggers': {},
+               'freeze_flags': 0, 'unsellable_open': []}
+        if 'position_state' in tables:
+            totals = {'DANGER': [0, 0], 'RUG_WRITEOFF': [0, 0]}
+            latest = {}
+            for mint, event, state in connection.execute('SELECT mint,event,state FROM position_state ORDER BY id'):
+                try:
+                    data = json.loads(state)
+                except ValueError:
+                    continue
+                latest[mint] = (event, data)
+                if event == 'closed' and data.get('reason') in totals:
+                    totals[data['reason']][0] += 1
+                    totals[data['reason']][1] += int(data.get('trade_pnl_lamports') or 0)
+            out['rug_exit'] = {'trades': totals['DANGER'][0], 'pnl_sol': num(Decimal(totals['DANGER'][1]) / LAMPORTS)}
+            out['rug_writeoff'] = {'trades': totals['RUG_WRITEOFF'][0], 'pnl_sol': num(Decimal(totals['RUG_WRITEOFF'][1]) / LAMPORTS)}
+            out['unsellable_open'] = [{'mint': m, 'since': d.get('exit_failing_since'), 'trigger': d.get('rug_trigger'),
+                                       'why': d.get('exit_failing_reason')}
+                                      for m, (ev, d) in latest.items() if ev != 'closed' and d.get('rug_trigger') and d.get('exit_failing_since') is not None]
+        if 'events' in tables:
+            triggers = Counter()
+            for (payload,) in connection.execute("SELECT payload FROM events WHERE kind='held_risk' ORDER BY id"):
+                try:
+                    p = json.loads(payload)
+                except ValueError:
+                    continue
+                if p.get('ev') == 'trigger':
+                    triggers[str(p.get('reason'))] += 1
+                elif p.get('ev') == 'freeze_flag':
+                    out['freeze_flags'] += 1
+            out['triggers'] = dict(sorted(triggers.items()))
+        return out
+    finally:
+        connection.close()
+
+
 # --------------------------------------------------------------------------- build
+def _route_check_section(db):
+    from lean import route_check
+    connection = open_ro(db)
+    try:
+        if 'decisions' not in {r[0] for r in connection.execute("SELECT name FROM sqlite_master WHERE type='table'")}:
+            return route_check.summary([])
+        rows = connection.execute("SELECT action,features FROM decisions WHERE kind=? ORDER BY id LIMIT 100000", (route_check.KIND,)).fetchall()
+        return route_check.summary([{'action': a, 'features': f} for a, f in rows])
+    finally:
+        connection.close()
+
+
 def _section(function, *args):
     try:
         return {'status': 'OK', 'data': function(*args)}
@@ -413,11 +474,33 @@ def _section(function, *args):
         return {'status': 'ERROR', 'code': type(error).__name__, 'detail': str(error)[:200]}
 
 
+def _execution(db):
+    from lean import execution
+    connection = open_ro(db)
+    try:
+        return execution.report_section(connection, percentile=percentile, min_sample=MIN_SAMPLE)
+    finally:
+        connection.close()
+
+
+def _sources(db):
+    from lean import sources
+    connection = open_ro(db)
+    try:
+        return sources.funnel_by_source(connection)
+    finally:
+        connection.close()
+
+
 def build(db, *, counterfactual_db=None, horizon=3600, now=None):
     now = time.time() if now is None else now
     connection = open_ro(db)
     try:
         events, skipped, truncated, used = load_events(connection)
+        # --- L10 hook: refundable ATA rent out of the buy fee / sell proceeds, so prices and returns are not inflated ---
+        from lean import execution
+        events = execution.adjust_report_events(connection, events)
+        # --- end L10 ---
     finally:
         connection.close()
     summary = {'kind': 'lean_report_v1', 'label': LABEL, 'generated_at': datetime.datetime.fromtimestamp(now, datetime.timezone.utc).isoformat(),
@@ -441,6 +524,16 @@ def build(db, *, counterfactual_db=None, horizon=3600, now=None):
     summary['pnl_by_strategy'] = {'status': 'OK', 'data': pnl_by_strategy(all_trades)}
     summary['exit_reasons'] = {'status': 'OK', 'data': exit_breakdown(all_trades)}
     summary['errors'] = {'status': 'OK', 'data': errors_by_code(events)}
+    # --- L16 hook ---
+    summary['route_check'] = _section(_route_check_section, db)
+    # --- end L16 ---
+    # --- L10 hook: latency-tax distribution, aborted entries, fee breakdown (read-only) ---
+    summary['execution'] = _section(_execution, db)
+    # --- end L10 ---
+    summary['held_risk'] = _section(held_risk_report, db)        # L11
+    # --- L14 hook: per-source funnel (candidates -> screened -> passed -> entered, rejection reasons, watchlist outcome) ---
+    summary['sources'] = _section(_sources, db)
+    # --- end L14 ---
     if counterfactual_db is None:
         summary['counterfactual'] = {'status': 'NOT_PROVIDED'}
     elif funnel_result['status'] != 'OK':
@@ -501,13 +594,23 @@ def render_html(s):
                  % (t['closed_scored'], flag(t['sample']), t['open'], t['flagged'], t['anomaly_count'], e(t['overall_pnl_sol'])))
     hs = t['hold_seconds']
     parts.append('<p>Hold seconds: n=%d median=%s p90=%s max=%s</p>' % (hs['n'], e(hs['median']), e(hs['p90']), e(hs['max'])))
-    parts.append('<h2>PnL per strategy_version</h2>' + (table(['strategy', 'trades', 'wins', 'pnl SOL', 'mean return', 'median return', 'sample'],
-        [[k, v['trades'], v['wins'], v['pnl_sol'], v['return']['mean'], v['return']['median'], v['sample']] for k, v in s['pnl_by_strategy']['data'].items()]) or ''))
+    parts.append('<h2>PnL per strategy_version (by the version of the OPENING buy)</h2>' + (table(['strategy', 'trades', 'wins', 'pnl SOL', 'mean return', 'median return', 'mixed-version trades', 'sample'],
+        [[k, v['trades'], v['wins'], v['pnl_sol'], v['return']['mean'], v['return']['median'], v['mixed_version_trades'], v['sample']] for k, v in s['pnl_by_strategy']['data'].items()]) or ''))
     parts.append('<h2>Exit reasons</h2>' + table(['reason', 'trades', 'pnl SOL', 'mean return', 'median hold s', 'sample'],
         [[k, v['trades'], v['pnl_sol'], v['return']['mean'], v['hold_seconds']['median'], v['sample']] for k, v in s['exit_reasons']['data'].items()]))
-    parts.append('<h2>Per-trade table</h2>' + table(['mint', 'strategy', 'status', 'cost', 'proceeds', 'pnl', 'return', 'hold s', 'exit reasons', 'flag'],
-        [[r['mint'], r['strategy_version'], r['status'], r['cost_sol'], r['proceeds_sol'], r['pnl_sol'], r['return'], r['hold_seconds'],
+    parts.append('<h2>Per-trade table</h2>' + table(['mint', 'strategy', 'mixed_version', 'status', 'cost', 'proceeds', 'pnl', 'return', 'hold s', 'exit reasons', 'flag'],
+        [[r['mint'], r['strategy_version'], r['mixed_version'], r['status'], r['cost_sol'], r['proceeds_sol'], r['pnl_sol'], r['return'], r['hold_seconds'],
           ','.join(r['exit_reasons']), r['flag'] or ''] for r in t['rows']]))
+    h = s.get('held_risk', {'status': 'NOT_PROVIDED'})
+    parts.append('<h2>Rugs and write-offs</h2>' + note(h))
+    if h['status'] == 'OK':
+        d = h['data']
+        parts.append(table(['kind', 'trades', 'pnl SOL'], [['rug exit (DANGER)', d['rug_exit']['trades'], d['rug_exit']['pnl_sol']],
+                                                             ['RUG_WRITEOFF', d['rug_writeoff']['trades'], d['rug_writeoff']['pnl_sol']]]))
+        parts.append('<p>Triggers: %s &middot; freeze flags: %d &middot; rug exits failing now: %d (valued 0 unless a fresh executable quote exists)</p>' % (
+            e(json.dumps(d['triggers'], sort_keys=True)), d['freeze_flags'], len(d['unsellable_open'])))
+        if d['unsellable_open']:
+            parts.append(table(['mint', 'failing since', 'trigger', 'why'], [[r['mint'], r['since'], r['trigger'], r['why']] for r in d['unsellable_open']]))
     c = s['counterfactual']
     parts.append('<h2>Rejections vs forward price (counterfactual)</h2>' + note(c) + ('<p>Not provided.</p>' if c['status'] == 'NOT_PROVIDED' else ''))
     if c['status'] == 'OK':
@@ -516,6 +619,32 @@ def render_html(s):
                      table(['reason', 'rejected', 'with return', 'baseline missing', 'mean', 'median', 'share positive', 'dead', 'sample'],
                            [[k, v['rejected'], v['with_return'], v['baseline_missing'], v['return']['mean'], v['return']['median'],
                              v['share_positive'], v['pool_dead'], v['sample']] for k, v in d['groups'].items()]))
+    rc = s.get('route_check')
+    if rc and rc['status'] == 'OK' and (rc['data']['entry']['checked'] or rc['data']['exit']['checked'] or rc['data']['unsupported']):
+        d = rc['data']
+        parts.append('<h2>Live-route check (paper: nothing was signed or sent)</h2>' + table(['side', 'checked', 'routable', 'routable %'],
+            [[k, d[k]['checked'], d[k]['routable'], d[k]['pct']] for k in ('entry', 'exit')]) +
+            ('<p class="flag">ROUTE_CHECK_UNSUPPORTED: the build endpoint needs a funded taker; the check disabled itself.</p>' if d['unsupported'] else '') +
+            (table(['not routable: reason', 'count'], list(d['not_routable_reasons'].items())) if d['not_routable_reasons'] else ''))
+    # --- L10 hook ---
+    x = s.get('execution', {'status': 'NOT_PROVIDED'})
+    parts.append('<h2>Execution: latency tax and fees</h2>' + note(x))
+    if x['status'] == 'OK':
+        d = x['data']
+        parts.append('<p>Fills with execution data: %d (%s) &middot; entries aborted by latency: %d</p>' % (d['fills_with_execution'], flag(d['sample']), d['entries_aborted_latency']))
+        parts.append(table(['side', 'n', 'tax bps p50', 'p90', 'mean', 'max'], [[k, v['n'], v['p50'], v['p90'], v['mean'], v['max']] for k, v in d['latency_tax_bps'].items()]))
+        parts.append(table(['fee (SOL)', 'amount'], list(d['fees_sol'].items())))
+    # --- end L10 ---
+    # --- L14 hook ---
+    src = s.get('sources', {'status': 'NOT_PROVIDED'})
+    parts.append('<h2>Funnel per source</h2>' + note(src))
+    if src['status'] == 'OK':
+        parts.append(table(['source', 'candidates', 'screened', 'passed', 'entered', 'screen rejected', 'screen failed', 'watched', 're-screens',
+                            'entered after watch', 'watch ended'],
+                           [[k, v['candidates'], v['screened'], v['passed'], v['entered'], v['screen_rejected'], v['screen_failed'], v['watched'],
+                             v['rescreens'], v['entered_after_watch'], ', '.join('%s:%d' % kv for kv in sorted(v['watch_ended'].items()))]
+                            for k, v in sorted(src['data'].items())]))
+    # --- end L14 ---
     parts.append('<h2>Errors by code</h2>' + (table(['code', 'count'], list(s['errors']['data'].items())) if s['errors']['data'] else '<p>None recorded.</p>'))
     parts.append('<h2>Versions</h2>' + table(['kind', 'version', 'events'], [['strategy', k, v] for k, v in s['versions']['strategy'].items()] +
                                               [['code', k, v] for k, v in s['versions']['code'].items()]))

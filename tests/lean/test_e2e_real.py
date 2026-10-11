@@ -99,7 +99,7 @@ class EndToEndRealModulesTest(unittest.TestCase):
         self.world = World(self.root, self.tokens, self.clock)
         self.world.add_frames([T0 + offset for _, _, offset in SCENARIO])
         self.world.outages['helius'] = OUTAGE
-        self.cfg = load_config(ROOT / 'config' / 'lean' / 'lean.example.json')
+        self.cfg = load_config(ROOT / 'tests' / 'lean' / 'lean.baseline.json')
 
     def runner(self):
         return build_runner(self.cfg, state_dir=self.state, discovery_db=self.world.discovery_db, keys=KEYS,
