@@ -1,3 +1,6 @@
+# ⚠️ FREEZE (2026-10-11): `desk/` is FROZEN. No new T-tasks; T16J/T24S/T37G/T37H are stopped.
+# All workers: take OPEN `L*` tasks only (the lean desk in `lean/`). If none is OPEN, stop and wait.
+
 # solana-paper-desk cloud task queue
 
 The coordinator (the Mac session) maintains this file; workers only read it. Follow `WORKER_PROMPT.md` on this branch.
@@ -1676,7 +1679,7 @@ AVOID: desk/provider_pacing.py
 ---
 
 ## T37G — USD failures: transient-only closure (from the T37F review)
-STATUS: OPEN
+STATUS: FROZEN — desk/ is frozen (2026-10-11). Stop work, push what you have as WIP, take an L-task instead.
 DEPENDS: branch `cloud/T22H` has a `DONE T22H:` commit
 BASE: origin/cloud/T37F, then merge origin/cloud/T22H
 OWNS: desk/paper_cycle_no_entry.py (`_cited_usd_failure`, `producer_blocker_is_normal` USD handling only), desk/regime_producer.py, tests/test_usd_valuation*.py
@@ -1697,7 +1700,7 @@ T37F made every failed SOL/USD attempt end terminal, including integrity-class c
 ---
 
 ## T16J — Concurrency final fixes (from the T16I review)
-STATUS: OPEN
+STATUS: FROZEN — desk/ is frozen (2026-10-11). Stop work, push what you have as WIP, take an L-task instead.
 DEPENDS: branch `cloud/T22I` has a `DONE T22I:` commit
 BASE: origin/cloud/T16I, then merge origin/integration/r1 and origin/cloud/T22I. Resolve the T22H-origin conflicts in desk/monitoring_budget.py and three tests by keeping integration's T38/T25F versions plus T22H/T22I's additions.
 OWNS: the T16/T35 files, tools/paper_entry_dispatcher.py, desk/watchlist.py (docs table only), docs/MULTI_POSITION.md, docs/WATCHLIST.md, tests
@@ -1719,7 +1722,7 @@ Run every listed module plus test_watchlist in ONE process on macOS, with the re
 ---
 
 ## T24S — Make the gate and the monitoring chain truly O(new) (from the T24R review) — needed for multi-day 24/7
-STATUS: OPEN
+STATUS: FROZEN — desk/ is frozen (2026-10-11). Stop work, push what you have as WIP, take an L-task instead.
 DEPENDS: branch `cloud/T22I` has a `DONE T22I:` commit
 BASE: origin/cloud/T24R, then merge origin/cloud/T22I and origin/integration/r1 (the conflicts are inherited from T22G; keep integration's T38/T25F versions plus the T22H/T22I additions)
 OWNS: desk/history_preparation_rejection.py, desk/paper_cycle_no_entry.py (inventory only), desk/monitoring_budget.py (chain/accounting only), tools/ops/healthcheck.py (warning wiring only), tools/research/bench_history_scale.py, tests
@@ -1854,7 +1857,7 @@ A read-only report on `lean.sqlite`, as a single self-contained HTML plus JSON:
 ---
 
 ## T37H — Take over T37G (stalled worker; continue its branch)
-STATUS: OPEN
+STATUS: FROZEN — desk/ is frozen (2026-10-11). Stop work, push what you have as WIP, take an L-task instead.
 DEPENDS: branch `cloud/T22J` has a `DONE T22J:` commit (T22J replaces T22I as the final T22-line fix)
 BASE: origin/cloud/T37G (last commit "correct the regression result"), then merge origin/cloud/T22J
 OWNS: the T37G files
