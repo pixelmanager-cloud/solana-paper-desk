@@ -392,27 +392,75 @@ def _verify(store, progress, rec, *, row=None, ledger=True):
 
 
 def _consistent(cause, scans, store=None, refs=()):
-    """T22H L5 / T22I: the necessary charge conditions of a budget cause, the same ones publish's `_consistent` demands of a no-entry.
+    """T22H L5 / T22I / T22J: the necessary charge conditions of a budget cause, the same ones publish's `_consistent` demands.
 
     INVESTIGATION: some scan reached exactly the 18-request ceiling (publish: `after == 18`). CYCLE: some scan was charged
-    exactly 18 inside the pass (publish: `after-before == 18`). FEATURE_HISTORY_PAGE_LIMIT: at least eight RETAINED
-    `getTransactionsForAddress` originals among the closure's attempt references (publish counts retained originals, not charges).
+    exactly 18 inside the pass (publish: `after-before == 18`). FEATURE_HISTORY_PAGE_LIMIT: some scan's charged range
+    `before+1..after` holds at least eight RETAINED, successful `getTransactionsForAddress` originals, indexed per scan by
+    charge exactly as publish indexes them (`paper_cycle_no_entry._index`: one original per charge, ambiguity refused).
     """
     if cause == 'INVESTIGATION_REQUEST_BUDGET_EXHAUSTED' and not any(w['after'] == 18 for w in scans.values()):
         raise HoldRequired('Investigation budget exhaustion requires the full ceiling charged')
     if cause == 'CYCLE_REQUEST_BUDGET_EXHAUSTED' and not any(w['after'] - w['before'] == 18 for w in scans.values()):
         raise HoldRequired('Cycle budget exhaustion requires eighteen charged requests')
     if cause == 'FEATURE_HISTORY_PAGE_LIMIT':
-        pages = 0
-        for key in dict.fromkeys(refs):
-            try:
-                record = terminal._load(store, key)
-            except (ValueError, OSError, sqlite3.Error):
-                continue
-            if type(record) is dict and record.get('kind') == 'paper_read_attempt_v1' and record.get('method') == 'getTransactionsForAddress':
-                pages += 1
-        if pages < 8:
+        if not any(_history_pages(store, scan, window, refs) >= 8 for scan, window in scans.items()):
             raise HoldRequired('History page limit requires eight retained history pages')
+
+
+def _history_pages(store, scan, window, refs):
+    """Successful retained `getTransactionsForAddress` originals of ONE scan over its charged range (publish's index)."""
+    from .paper_cycle_no_entry import _index
+    mine = []
+    for key in dict.fromkeys(refs):
+        try:
+            record = terminal._load(store, key)
+        except (ValueError, OSError, sqlite3.Error):
+            continue                     # a missing original proves nothing; it is simply not counted
+        used = record.get('requests_used') if type(record) is dict else None
+        if (type(record) is dict and record.get('kind') == 'paper_read_attempt_v1' and record.get('scan_id') == scan
+                and type(used) is int and window['before'] < used <= window['after']):
+            mine.append(key)
+    try:
+        index = _index(store, scan, mine)[scan]
+    except (ValueError, OSError, sqlite3.Error, TypeError, KeyError) as error:
+        raise HoldRequired('History page originals are ambiguous or malformed: %s' % error) from None
+    return sum(record.get('method') == 'getTransactionsForAddress' and record.get('failure_code') is None
+               and type(record.get('http_status')) is int and record['http_status'] == 200
+               for _, record in index.values())
+
+
+PASS_PAGE_SCAN_LIMIT = 4096    # pages written AFTER one pass's intent; a pass writes far fewer (fail closed beyond)
+
+
+def pass_attempts(store, intent_hash, scans):
+    """T22J: retained attempt originals of this pass's scans, found the way publish finds them, without trusting the caller.
+
+    The pass's attempts are written after its intent page, so only pages with a larger rowid are read (bounded per pass,
+    never the whole store). A history page-limit failure raised before its refs reached the caller (history_first, or a
+    `CycleBlocked` from `_history`) is then closed only if its retained originals really show the pages.
+    """
+    try:
+        with closing(store.connect()) as c:
+            row = c.execute('SELECT rowid FROM pages WHERE hash=?', (intent_hash,)).fetchone()
+            if row is None:
+                return ()
+            keys = [r[0] for r in c.execute('SELECT hash FROM pages WHERE rowid>? ORDER BY rowid LIMIT ?',
+                                            (row[0], PASS_PAGE_SCAN_LIMIT))]
+    except sqlite3.Error:
+        return ()
+    found = []
+    for key in keys:
+        try:
+            record = store.load(key)
+        except (ValueError, OSError, sqlite3.Error):
+            continue
+        used = record.get('requests_used') if type(record) is dict else None
+        window = scans.get(record.get('scan_id')) if type(record) is dict and type(record.get('scan_id')) is str else None
+        if (window is not None and record.get('kind') == 'paper_read_attempt_v1' and type(used) is int
+                and window['before'] < used <= window['after']):
+            found.append(key)
+    return tuple(found)
 
 
 def close(store, progress, *, pass_id, status, cause, result_hash=None, attempt_refs=(), ledger_before=None):
@@ -450,6 +498,10 @@ def close(store, progress, *, pass_id, status, cause, result_hash=None, attempt_
                 or not start <= current['requests_used'] <= current['request_ceiling']):
             raise ClosureRefused('Charge accounting for scan is not provable')
         scans[scan] = {'before': start, 'after': current['requests_used']}
+    if status == 'FAILED_CHARGED' and cause == 'FEATURE_HISTORY_PAGE_LIMIT':
+        # T22J: the page-limit condition is proved from the scan's retained originals over its charged range (like publish),
+        # not only from whatever refs the failing caller happened to hold (history_first holds none).
+        attempt_refs = tuple(attempt_refs) + pass_attempts(store, intent_hash, scans)
     refs = []
     for key in dict.fromkeys(attempt_refs):
         attempt = terminal._load(store, key)

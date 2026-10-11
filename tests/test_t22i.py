@@ -210,8 +210,9 @@ class SentinelLexists(pass_closure_tests.Base):
 
 class ClosureConsistency(pass_closure_tests.Base):
     def attempts(self, n, method='getTransactionsForAddress'):
-        return [self.store.save({'kind': 'paper_read_attempt_v1', 'scan_id': 's', 'method': method, 'requests_used': i + 1})
-                for i in range(n)]
+        # T22J: genuine history originals are successful reads (publish counts only successful charged originals).
+        return [self.store.save({'kind': 'paper_read_attempt_v1', 'scan_id': 's', 'method': method, 'requests_used': i + 1,
+                                 'failure_code': None, 'http_status': 200}) for i in range(n)]
 
     def test_investigation_needs_exactly_the_ceiling(self):
         for after, ok in ((17, False), (18, True), (19, False)):
@@ -237,6 +238,22 @@ class ClosureConsistency(pass_closure_tests.Base):
                            'eighteen charges of another method': self.attempts(18, 'getSlot'),
                            'no references': [],
                            'seven pages and a missing original': self.attempts(7) + ['f' * 64]}.items():
+            with self.subTest(name), self.assertRaises(closure.HoldRequired):
+                closure._consistent('FEATURE_HISTORY_PAGE_LIMIT', scans, self.store, refs)
+
+    def test_failed_ambiguous_or_out_of_range_originals_do_not_count(self):
+        scans = {'s': {'before': 0, 'after': 8}}
+        good = self.attempts(7)
+        failed = self.store.save({'kind': 'paper_read_attempt_v1', 'scan_id': 's', 'method': 'getTransactionsForAddress',
+                                  'requests_used': 8, 'failure_code': 'TRANSPORT_ERROR', 'http_status': None})
+        other_scan = self.store.save({'kind': 'paper_read_attempt_v1', 'scan_id': 't', 'method': 'getTransactionsForAddress',
+                                      'requests_used': 8, 'failure_code': None, 'http_status': 200})
+        beyond = self.store.save({'kind': 'paper_read_attempt_v1', 'scan_id': 's', 'method': 'getTransactionsForAddress',
+                                  'requests_used': 9, 'failure_code': None, 'http_status': 200})
+        twin = self.store.save({'kind': 'paper_read_attempt_v1', 'scan_id': 's', 'method': 'getTransactionsForAddress',
+                                'requests_used': 7, 'failure_code': None, 'http_status': 200, 'twin': True})
+        for name, refs in {'failed eighth': good + [failed], 'other scan': good + [other_scan],
+                           'outside the charged range': good + [beyond], 'two originals for one charge': good + [twin]}.items():
             with self.subTest(name), self.assertRaises(closure.HoldRequired):
                 closure._consistent('FEATURE_HISTORY_PAGE_LIMIT', scans, self.store, refs)
 

@@ -123,18 +123,27 @@ class HistoryFirstTransientFault(unittest.TestCase):
             self.assertEqual([r[0] for r in c.execute('SELECT status FROM paper_pass_closures')], ['INTEGRITY_HOLD'])
 
 
-    def normal_blocker(self, code, charges):
+    def normal_blocker(self, code, charges, *, pages=0, status='FAILED_CHARGED'):
         """T22F addendum: the history_first path (paper_history_preparation.prepare) inserts its NULL pass before the
         history read. The NORMAL blockers raised there (page limit, request-budget exhaustion) must retire it as
-        FAILED_CHARGED like any other charged failure, and the exception still propagates."""
+        FAILED_CHARGED like any other charged failure, and the exception still propagates.
+
+        T22J: `pages` charged history reads retain a successful getTransactionsForAddress original each, as the real
+        PaperHistorySource transport does; a page-limit closure is proved from those originals (like publish)."""
         h = self.h
         h.row['provenance'] = 'PUBLIC_MAINNET_CAPTURE_NOT_TRADING_EVIDENCE'
         h.save()
 
         def blocked(progress, item, *args):
-            for _ in range(charges):
+            for n in range(charges):
                 if not progress.reserve(item.target.scan_id):
                     break
+                if n < pages:
+                    progress.store.save({'kind': 'paper_read_attempt_v1', 'scan_id': item.target.scan_id,
+                                         'requests_used': progress.admission(item.target.scan_id)['requests_used'],
+                                         'source_id': 'helius-mainnet-paper-confirmed-v1', 'method': 'getTransactionsForAddress',
+                                         'params': ['SYNTHETIC_TEST_ONLY', n], 'request_bytes_base64': '', 'response_bytes_base64': '',
+                                         'observed_at': 1, 'http_status': 200, 'failure_code': None})
             raise cycle.CycleBlocked(code)
         with patch.object(history_first_fixture.tool.cli, '_credentials'), \
                 patch.object(history_first_fixture.tool.cycle, '_history', side_effect=blocked):
@@ -143,12 +152,26 @@ class HistoryFirstTransientFault(unittest.TestCase):
         self.assertEqual(str(caught.exception), code)
         store = h.f.f.progress.store
         with closing(store.connect()) as c:
-            self.assertEqual(c.execute('SELECT count(*) FROM paper_observation_passes WHERE outcome_hash IS NULL').fetchone()[0], 0)
-            self.assertEqual([r[0] for r in c.execute('SELECT status FROM paper_pass_closures')], ['FAILED_CHARGED'])
-        self.assertIsNone(terminal.gate(store, h.f.f.jobs.path, ()))
+            self.assertEqual([r[0] for r in c.execute('SELECT status FROM paper_pass_closures')], [status])
+            if status == 'FAILED_CHARGED':
+                self.assertEqual(c.execute('SELECT count(*) FROM paper_observation_passes WHERE outcome_hash IS NULL').fetchone()[0], 0)
+        if status == 'FAILED_CHARGED':
+            self.assertIsNone(terminal.gate(store, h.f.f.jobs.path, ()))
+        return store
 
     def test_history_page_limit_in_preparation_does_not_leave_a_null_pass(self):
-        self.normal_blocker('FEATURE_HISTORY_PAGE_LIMIT', 8)
+        store = self.normal_blocker('FEATURE_HISTORY_PAGE_LIMIT', 8, pages=8)
+        from desk import paper_pass_closure as closure
+        with closing(store.connect()) as c:
+            record = store.load(c.execute('SELECT closure_hash FROM paper_pass_closures').fetchone()[0])
+        self.assertEqual(len(record['attempt_refs']), 8)            # bound into the record, replayed by every gate
+
+    def test_forged_history_page_limit_in_preparation_holds(self):
+        # T22J: charges without eight retained successful history originals are not a page limit: the pass is held.
+        self.normal_blocker('FEATURE_HISTORY_PAGE_LIMIT', 8, pages=7, status='INTEGRITY_HOLD')
+
+    def test_page_limit_charges_without_any_original_hold(self):
+        self.normal_blocker('FEATURE_HISTORY_PAGE_LIMIT', 8, pages=0, status='INTEGRITY_HOLD')
 
     def test_request_budget_exhaustion_in_preparation_does_not_leave_a_null_pass(self):
         self.normal_blocker('INVESTIGATION_REQUEST_BUDGET_EXHAUSTED', 18)
