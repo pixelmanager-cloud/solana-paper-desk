@@ -44,7 +44,8 @@ MUTANTS = [
     ('providers', 'no own pacing', "limiter = RateLimiter(rate_per_s, 1,", "limiter = RateLimiter(1000, 1000,"),
     ('providers', 'unchecked mint in the URL', "    def report(self, mint):\n        _pubkey(mint)", "    def report(self, mint):\n        pass"),
     # --- the learner guard
-    ('learn', 'late risk snapshots accepted', "if not (_num(late) and late <= policy.max_late_s):", "if not _num(late):"),
+    # LINT4: the pattern ends at the newline so it stays unique after L24 added the same guard (with a trailing comment) to cluster_values
+    ('learn', 'late risk snapshots accepted', "if not (_num(late) and late <= policy.max_late_s):\n", "if not _num(late):\n"),
     ('learn', 'unflagged risk values accepted', "        if flag != 'AT_COLLECTION':", "        if False:"),
     ('learn', 'other risk versions accepted', "if row.get('version') != RISK_VERSION:", "if False:"),
     ('learn', 'risk rows after the decision accepted', "rrow = _pick(risk_rows.get(path.mint, []), decision,", "rrow = _pick(risk_rows.get(path.mint, []), 10 ** 12,"),
