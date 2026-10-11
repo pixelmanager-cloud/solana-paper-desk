@@ -53,7 +53,7 @@ class EndToEndPathsTest(unittest.TestCase):
     def setUp(self):
         self.tmp = tempfile.TemporaryDirectory()
         self.addCleanup(self.tmp.cleanup)
-        self.cfg = load_config(E.ROOT / 'config' / 'lean' / 'lean.example.json')
+        self.cfg = load_config(E.ROOT / 'tests' / 'lean' / 'lean.baseline.json')
         self.assertTrue(self.cfg['paths']['enabled'])                   # the example config turns it on
 
     def runner(self, root, clock, world, enabled):

@@ -75,7 +75,7 @@ class ExecutionE2E(unittest.TestCase):
         self.opener = opener
 
     def runner(self, state, execution=EXEC):
-        cfg = load_config(ROOT / 'config' / 'lean' / 'lean.example.json')
+        cfg = load_config(ROOT / 'tests' / 'lean' / 'lean.baseline.json')
         cfg['execution'] = execution
         return build_runner(cfg, state_dir=state, discovery_db=self.world.discovery_db, keys=KEYS, code_version='e2e-exec',
                             clock=self.clock.time,
@@ -331,7 +331,7 @@ class TwoPhaseExits(unittest.TestCase):
         self.opener = opener
 
     def runner(self, unexitable_after_s=7200):
-        cfg = load_config(ROOT / 'config' / 'lean' / 'lean.example.json')
+        cfg = load_config(ROOT / 'tests' / 'lean' / 'lean.baseline.json')
         cfg.update(execution=EXEC, strategy_config=str(self.strategy_path), unexitable_after_s=unexitable_after_s)
         return build_runner(cfg, state_dir=self.root / 'state', discovery_db=self.world.discovery_db, keys=KEYS, code_version='e2e-l10f',
                             clock=self.clock.time,

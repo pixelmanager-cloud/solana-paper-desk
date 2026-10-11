@@ -63,7 +63,7 @@ class Scenario(unittest.TestCase):
         self.world.add_frames(ready or [T0] * len(tokens))
         for provider, window in (outages or {}).items():
             self.world.outages[provider] = window
-        self.cfg = load_config(ROOT / 'config' / 'lean' / 'lean.example.json')
+        self.cfg = load_config(ROOT / 'tests' / 'lean' / 'lean.baseline.json')
         if held_risk is not False:
             self.cfg['held_risk'] = {**self.cfg['held_risk'], 'enabled': True, **(held_risk or {})}
         if unexitable_after_s is not None:
@@ -422,7 +422,7 @@ class ReportAndConfig(Scenario):
         self.assertIsNotNone(row['since'])
 
     def test_disabled_by_default_and_when_the_key_is_absent(self):
-        shipped = load_config(ROOT / 'config' / 'lean' / 'lean.example.json')
+        shipped = load_config(ROOT / 'tests' / 'lean' / 'lean.baseline.json')
         self.assertFalse(shipped['held_risk']['enabled'])
         token = Token(21, path=steps((600, 0.15)))
         r = self.build(token, held_risk=False)

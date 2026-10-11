@@ -117,7 +117,7 @@ class OpsEndToEnd(unittest.TestCase):
         return world
 
     def config(self, **ops_overrides):
-        cfg = load_config(ROOT / 'config' / 'lean' / 'lean.example.json')
+        cfg = load_config(ROOT / 'tests' / 'lean' / 'lean.baseline.json')
         if ops_overrides.pop('_off', False):
             cfg['ops'] = None
         elif cfg['ops'] is not None:

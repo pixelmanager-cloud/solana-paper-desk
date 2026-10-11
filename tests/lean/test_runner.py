@@ -44,7 +44,7 @@ class Base(unittest.TestCase):
         self.tokens = [Token(31 + 2 * i, **spec) for i, spec in enumerate(self.token_specs)]
         self.world = World(self.root, self.tokens, self.clock)
         self.world.add_frames([T0 + 60 * i for i in range(len(self.tokens))])
-        self.cfg = entry.load_config(ROOT / 'config' / 'lean' / 'lean.example.json')
+        self.cfg = entry.load_config(ROOT / 'tests' / 'lean' / 'lean.baseline.json')
         patcher = mock.patch('logging.basicConfig')            # entry.main must not reconfigure logging for the test run
         patcher.start()
         self.addCleanup(patcher.stop)
@@ -90,7 +90,7 @@ class EntryPointTests(Base):
         keys.chmod(0o400)
         out, err = io.StringIO(), io.StringIO()
         with mock.patch('lean.providers.default_opener', self.world.opener), redirect_stdout(out), redirect_stderr(err):
-            rc = entry.main(['--config', str(ROOT / 'config' / 'lean' / 'lean.example.json'), '--state-dir', str(self.state),
+            rc = entry.main(['--config', str(ROOT / 'tests' / 'lean' / 'lean.baseline.json'), '--state-dir', str(self.state),
                              '--discovery-db', str(self.world.discovery_db), '--keys-file', str(keys), '--once'])
         self.assertEqual(rc, 0)
         self.assertTrue((self.state / 'lean.sqlite').is_file())
@@ -100,7 +100,7 @@ class EntryPointTests(Base):
         keys.chmod(0o644)                                         # world-readable: refused, generic message only
         err = io.StringIO()
         with redirect_stderr(err):
-            self.assertEqual(entry.main(['--config', str(ROOT / 'config' / 'lean' / 'lean.example.json'), '--state-dir',
+            self.assertEqual(entry.main(['--config', str(ROOT / 'tests' / 'lean' / 'lean.baseline.json'), '--state-dir',
                                          str(self.state), '--discovery-db', str(self.world.discovery_db), '--keys-file', str(keys)]), 2)
         self.assertNotIn(secret, err.getvalue())
         self.assertIn('KEY_FILE_INVALID', err.getvalue())
@@ -177,7 +177,7 @@ class CandidateLoopTests(Base):
         keys.write_text(json.dumps(KEYS)); keys.chmod(0o600)
         out = io.StringIO()
         with redirect_stdout(out):
-            rc = entry.main(['--config', str(ROOT / 'config' / 'lean' / 'lean.example.json'), '--state-dir', str(self.state),
+            rc = entry.main(['--config', str(ROOT / 'tests' / 'lean' / 'lean.baseline.json'), '--state-dir', str(self.state),
                              '--discovery-db', str(self.world.discovery_db), '--keys-file', str(keys), '--clear-halt'])
         self.assertEqual(rc, 0)
         self.assertIn('HALT_CLEARED', out.getvalue())
@@ -433,7 +433,7 @@ class ThreadedRunTests(Driven):
         keys.write_text(json.dumps(KEYS)); keys.chmod(0o600)
         with mock.patch.object(R.Runner, 'position_pass', side_effect=Boom()), \
                 mock.patch('lean.providers.default_opener', self.world.opener), self.assertLogs('lean.runner', 'CRITICAL'):
-            rc = entry.main(['--config', str(ROOT / 'config' / 'lean' / 'lean.example.json'), '--state-dir', str(self.state),
+            rc = entry.main(['--config', str(ROOT / 'tests' / 'lean' / 'lean.baseline.json'), '--state-dir', str(self.state),
                              '--discovery-db', str(self.world.discovery_db), '--keys-file', str(keys)])
         self.assertEqual(rc, 4)
         health = json.loads((self.state / 'health.json').read_text())

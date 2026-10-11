@@ -8,11 +8,13 @@ L11F lanes   route probes and account checks ran serially on the EXIT lane (Jupi
 """
 import json
 import unittest
+from pathlib import Path
 
 from lean import providers
 from tests.lean.fakeworld import T0, Token
 from tests.lean.test_e2e_held_risk import Scenario
-from tests.lean.test_e2e_real import steps
+from tests.lean import test_e2e_real as E2E
+from tests.lean.test_e2e_real import ROOT, steps
 
 EXECUTION = {'exec_delay_s': 3, 'priority_fee_sol': '0.0001', 'jito_tip_sol': '0.0001', 'ata_rent_sol': '0.00203928'}
 
@@ -110,6 +112,77 @@ class CreditsSeeEveryLane(unittest.TestCase):
         self.assertEqual((cm.exception.code, cm.exception.meta['why']), ('LANE_SHED', 'backoff'))
         exits.call('rpc:getMultipleAccounts', request)                 # exits untouched
         self.assertEqual(c.sleeps, [])
+
+
+class ShippedExampleConfig(unittest.TestCase):
+    """config/lean/lean.example.json is the deploy template: every key, every merged feature ON, through the REAL loader."""
+    EXAMPLE = ROOT / 'config' / 'lean' / 'lean.example.json'
+
+    def test_the_real_loader_accepts_it_with_every_feature_on(self):
+        from lean import __main__ as entry, execution, held_risk, watchlist
+        raw = json.loads(self.EXAMPLE.read_text())
+        self.assertEqual(set(raw) - {'_comment'}, set(entry.CONFIG_KEYS))            # every key the runner reads
+        cfg = entry.load_config(self.EXAMPLE)
+        self.assertTrue(cfg['paths'] and cfg['paths']['enabled'])
+        self.assertEqual(cfg['route_check'], {'enabled': True})
+        self.assertEqual(execution.ExecConfig.from_dict(cfg['execution']), execution.ExecConfig())
+        self.assertTrue(held_risk.Config.from_dict(cfg['held_risk']).enabled)
+        self.assertTrue(watchlist.WatchConfig.from_dict(cfg['watchlist']).enabled)
+        self.assertEqual(cfg['ops']['credit_budget_month'], 10_000_000)            # ASSUMED Helius Developer plan
+        self.assertTrue(Path(cfg['strategy_config']).is_file())
+
+    def test_python_m_lean_once_accepts_it(self):
+        import io
+        import os
+        import tempfile
+        from contextlib import redirect_stderr, redirect_stdout
+        from unittest import mock
+        from lean import __main__ as entry
+        from tests.lean.fakeworld import FakeTime, World
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(os.path.realpath(tmp))
+            world = World(root, [Token(41), Token(43)], FakeTime(T0))
+            world.add_frames([T0, T0])
+            keys = root / 'provider-keys.json'
+            keys.write_text(json.dumps({'HELIUS_API_KEY': 'TEST-HELIUS-KEY-0000', 'JUPITER_API_KEY': 'TEST-JUPITER-KEY-0000'}))
+            keys.chmod(0o400)
+            out, err = io.StringIO(), io.StringIO()
+            with mock.patch('lean.providers.default_opener', world.opener), mock.patch('logging.basicConfig'), \
+                    redirect_stdout(out), redirect_stderr(err):
+                rc = entry.main(['--config', str(self.EXAMPLE), '--state-dir', str(root / 'state'), '--discovery-db',
+                                 str(world.discovery_db), '--keys-file', str(keys), '--once'])
+            self.assertEqual(rc, 0, err.getvalue())
+            health = json.loads((root / 'state' / 'health.json').read_text())
+            self.assertIsNone(health['halted'])
+            self.assertTrue(health['paths']['enabled'])
+            self.assertIsNotNone(health['held_risk'])
+            self.assertEqual(health['ops']['credits']['budget_month'], 10_000_000)
+            self.assertNotIn('TEST-HELIUS-KEY', out.getvalue() + err.getvalue() + json.dumps(health))
+
+
+class EveryFeatureOnEndToEnd(E2E.EndToEndRealModulesTest):
+    """The 20-candidate e2e scenario (helius outage, restart) with the SHIPPED example config: every merged feature at once.
+    Invariants and position states are checked after every tick by ``run_scenario``; nothing halts."""
+    test_twenty_candidates_end_to_end = None
+
+    def setUp(self):
+        super().setUp()
+        from lean.__main__ import load_config
+        self.cfg = load_config(ROOT / 'config' / 'lean' / 'lean.example.json')
+
+    def test_all_features_together(self):
+        r, _snaps = self.run_scenario()
+        store = r.store
+        fills = store.rows('fills', limit=10000)
+        self.assertTrue([f for f in fills if f['side'] == 'buy'])
+        self.assertTrue([f for f in fills if f['side'] == 'sell'])
+        self.assertTrue(store.rows('decisions', kind='route_check', limit=10000))          # L16
+        states = [json.loads(s['state']) for s in store.rows('position_state', limit=10000)]
+        self.assertTrue([s for s in states if isinstance(s.get('execution'), dict)])        # L10
+        self.assertIsNotNone(r.held_risk)                                                   # L11
+        self.assertIsNotNone(r.watch)                                                       # L14
+        self.assertGreater(r.ops.credits.health()['credits_used'], 0)                      # L15
+        self.assertIsNone(r.halted)
 
 
 if __name__ == '__main__':

@@ -228,9 +228,12 @@ class Checker(unittest.TestCase):
         checker.on_quote_error('entry', 'M', ProviderError('HTTP_400', False, raw=b'{"errorCode":"INSUFFICIENT_FUNDS"}'), trade=1)
         self.assertEqual(store.events, [(R.DISABLED_EVENT, {'reason': 'ROUTE_CHECK_UNSUPPORTED', 'error_code': 'INSUFFICIENT_FUNDS'}, 'c', 's')])
 
-    def test_the_example_config_ships_the_check_disabled(self):
+    def test_the_example_config_ships_the_check_enabled_and_the_fixture_disabled(self):
+        # LINT1: the deploy example collects route data; the default-behaviour fixture keeps it off
         example = json.loads((LEAN.parent / 'config' / 'lean' / 'lean.example.json').read_text())
-        self.assertEqual(example['route_check'], {'enabled': False})
+        self.assertEqual(example['route_check'], {'enabled': True})
+        baseline = json.loads((LEAN.parent / 'tests' / 'lean' / 'lean.baseline.json').read_text())
+        self.assertEqual(baseline['route_check'], {'enabled': False})
 
     def test_load_config_refuses_a_malformed_route_check(self):
         from lean import __main__ as entry

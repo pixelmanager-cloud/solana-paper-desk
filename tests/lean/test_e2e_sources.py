@@ -76,7 +76,7 @@ class SourcesAndWatchlistEndToEnd(unittest.TestCase):
         self.world_b = World(self.root / 'b', second, self.clock)
         self.world_b.add_frames([T0 + o for o in (240, 300, 360)])
         self.world.tokens.update({tok.mint: tok for tok in second})
-        self.cfg = load_config(ROOT / 'config' / 'lean' / 'lean.example.json')
+        self.cfg = load_config(ROOT / 'tests' / 'lean' / 'lean.baseline.json')
         self.cfg['sources'] = [{'name': 'pump_b', 'type': 'pump_graduation', 'discovery_db': str(self.world_b.discovery_db)}]
         self.cfg['watchlist'] = {'enabled': True, 'watch_interval_s': 300, 'watch_hours': 0.5, 'watch_max_per_pass': 5}
         self.state = self.root / 'state'
@@ -225,7 +225,7 @@ class WatchCostControl(unittest.TestCase):
         self.role = {t.mint: name for name, t in tokens.items()}
         self.world = World(self.root, list(tokens.values()), self.clock)
         self.world.add_frames([T0 + o for o in offsets])
-        self.cfg = load_config(ROOT / 'config' / 'lean' / 'lean.example.json')
+        self.cfg = load_config(ROOT / 'tests' / 'lean' / 'lean.baseline.json')
         self.cfg['strategy_config'] = str(strategy_path or self.root / 'strategy.json')
         self.cfg['watchlist'] = watchlist
         return self.runner()

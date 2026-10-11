@@ -86,7 +86,9 @@ class ExampleConfigTests(unittest.TestCase):
         root = Path(__file__).resolve().parents[2] / 'config' / 'lean'
         cfg = load_config(root / 'lean.execution.example.json')
         self.assertEqual(X.ExecConfig.from_dict(cfg['execution']), X.ExecConfig())
-        self.assertIsNone(load_config(root / 'lean.example.json')['execution'])
+        # LINT1: the shipped example turns the model ON at its defaults; the default-behaviour fixture keeps it off
+        self.assertEqual(X.ExecConfig.from_dict(load_config(root / 'lean.example.json')['execution']), X.ExecConfig())
+        self.assertIsNone(load_config(root.parents[1] / 'tests' / 'lean' / 'lean.baseline.json')['execution'])
 
 
 class TransferFeeTests(unittest.TestCase):

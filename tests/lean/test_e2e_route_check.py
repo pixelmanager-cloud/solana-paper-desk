@@ -49,7 +49,7 @@ class RouteCheckEndToEnd(unittest.TestCase):
         tmp = tempfile.TemporaryDirectory(); self.addCleanup(tmp.cleanup)
         self.root = Path(os.path.realpath(tmp.name)); self.state = self.root / 'state'
         self.clock = FakeTime(T0)
-        example = load_config(ROOT / 'config' / 'lean' / 'lean.example.json')
+        example = load_config(ROOT / 'tests' / 'lean' / 'lean.baseline.json')
         self.assertEqual(example['route_check'], {'enabled': False})              # the shipped example is off
         self.cfg = {**example, 'route_check': {'enabled': True}}
 
