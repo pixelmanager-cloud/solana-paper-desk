@@ -336,6 +336,21 @@ def _chain_sample(count, head):
     return _distinct_picks(count,{'head':head,'count':count,'blobs':1},CHAIN_SAMPLE) if count else set()
 
 
+def _to_prove(c):
+    """The completed reservations whose evidence blobs are re-proved this call: every one the chain does NOT cover (older stores,
+    rows resolved as abandoned) plus a bounded deterministic sample of the covered ones, looked up by link number (T24S)."""
+    has_chain,_=_chain_objects(c)
+    columns='r.id,r.at,r.scan_id,r.mint,r.checkpoint_hash,r.method,r.params_hash,o.evidence_hash'
+    source='FROM paper_monitoring_reservations r JOIN paper_monitoring_outcomes o ON o.reservation_id=r.id'
+    if not has_chain:
+        return c.execute(f'SELECT {columns} {source}').fetchall()
+    count,head,_=_chain_state(c)
+    sampled=sorted(_chain_sample(count,head))
+    marks=','.join('?'*len(sampled))
+    return c.execute(f'SELECT {columns} {source} WHERE r.id NOT IN (SELECT reservation_id FROM {CHAIN_TABLE})'
+                     +(f' OR r.id IN (SELECT reservation_id FROM {CHAIN_TABLE} WHERE seq IN ({marks}))' if sampled else ''),sampled).fetchall()
+
+
 def _chain_append(c, identity):
     """Inside retain_outcome's write transaction, after the row was fully proved: extend the chain by this reservation."""
     row=c.execute('SELECT r.at,r.scan_id,r.mint,r.checkpoint_hash,r.method,r.params_hash,o.evidence_hash FROM paper_monitoring_reservations r '
@@ -540,19 +555,7 @@ class MonitoringBudget:
         # no blob loads); only unchained rows and a bounded deterministic sample of chained ones are re-proved from the blobs.
         from .monitoring_successor import rows as successor_rows
         history=successor_rows(c,handoff) if handoff else []
-        chain_count,head,_=_chain_state(c)
-        has_chain=_chain_objects(c)[0]
-        # T24S: re-prove from the blobs only the reservations the chain does not cover plus a bounded deterministic sample of the
-        # covered ones (looked up by link number, never by scanning every reservation).
-        sampled=sorted(_chain_sample(chain_count,head))
-        columns='r.id,r.at,r.scan_id,r.mint,r.checkpoint_hash,r.method,r.params_hash,o.evidence_hash'
-        source='FROM paper_monitoring_reservations r JOIN paper_monitoring_outcomes o ON o.reservation_id=r.id'
-        if not has_chain:
-            proving=c.execute(f'SELECT {columns} {source}').fetchall()
-        else:
-            marks=','.join('?'*len(sampled))
-            proving=c.execute(f'SELECT {columns} {source} WHERE r.id NOT IN (SELECT reservation_id FROM {CHAIN_TABLE})'
-                              +(f' OR r.id IN (SELECT reservation_id FROM {CHAIN_TABLE} WHERE seq IN ({marks}))' if sampled else ''),sampled).fetchall()
+        proving=_to_prove(c)
         for identity, at, scan, mint, checkpoint, method, params_hash, evidence_hash in proving:
             try:
                 original = self.store.load(evidence_hash)
