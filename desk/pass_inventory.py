@@ -144,8 +144,8 @@ def completed(store, kinds, *, persist=True, full=False):
         fresh_passes = []
         if done > n:
             fresh_passes = c.execute(
-                f'SELECT p.id,p.intent_hash,p.outcome_hash FROM paper_observation_passes p LEFT JOIN {TABLE} t ON t.pass_id=p.id '
-                'WHERE p.outcome_hash IS NOT NULL AND t.pass_id IS NULL ORDER BY p.rowid').fetchall()
+                f'SELECT p.id,p.intent_hash,p.outcome_hash FROM paper_observation_passes p ' + (f'LEFT JOIN {TABLE} t ON t.pass_id=p.id ' if n or _objects(c) else '')
+                + 'WHERE p.outcome_hash IS NOT NULL' + (' AND t.pass_id IS NULL' if n or _objects(c) else '') + ' ORDER BY p.rowid').fetchall()
             if len(fresh_passes) != done - n:
                 raise ValueError('Pass inventory count mismatch')
         if full and n:
