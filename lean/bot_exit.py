@@ -350,7 +350,7 @@ class BotExit:
         self._signaled = set()                # lifecycles that already signalled (replayed on start)
         self._rr = 0
         self.counts = {'passes': 0, 'polls': 0, 'calls': 0, 'sheds': 0, 'yields': 0, 'signals': 0, 'shadow_signals': 0,
-                       'live_signals': 0, 'errors': 0, 'quotes': 0, 'quote_sheds': 0, 'swaps_parsed': 0}
+                       'live_signals': 0, 'errors': 0, 'quotes': 0, 'quote_sheds': 0, 'swaps_parsed': 0, 'tx_not_ready': 0}
         self._replay()
 
     # -- persistence ------------------------------------------------------------------------------------------------------------
@@ -556,7 +556,13 @@ class BotExit:
             swap = parse_swap(body, watch.mint, watch.pool)
         except _Skip:
             raise
-        except (ProviderError, BotExitError) as error:
+        except ProviderError as error:
+            if error.transient:                                   # a just-landed signature the node cannot serve yet: count, don't log
+                self._count('tx_not_ready')
+                return
+            self._error(runner, error.code, watch.mint, 'transaction')
+            return
+        except BotExitError as error:
             self._error(runner, getattr(error, 'code', str(error)), watch.mint, 'transaction')
             return
         if swap is None:

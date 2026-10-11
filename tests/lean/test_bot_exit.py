@@ -445,6 +445,20 @@ class Budget(Scenario):
         self.assertEqual((len(self.world.calls), self.clock.time()), (before, at))     # nothing sent, no time spent
         self.assertEqual(r.bot_exit.health()['sheds'], 1)
 
+    def test_a_not_yet_served_transaction_is_counted_not_logged_as_an_error(self):
+        # live: getTransaction on a just-landed signature answers a transient RPC error (-32004 etc.); ~120/h were logged
+        r = self.build(Token(31, path=BOT_PATH), bot_pump_events(), bot_exit={})
+        self.run_until(r, 0)
+        watch = type('W', (), {'mint': 'M', 'pool': 'P'})()
+        errors = []
+        r._error = lambda code, **kw: errors.append(code)
+        with mock.patch.object(r.bot_exit, '_call', side_effect=providers.ProviderError('RPC_ERROR', True)):
+            r.bot_exit._sample(r, watch, 'sig', None)
+        self.assertEqual((errors, r.bot_exit.health()['tx_not_ready']), ([], 1))
+        with mock.patch.object(r.bot_exit, '_call', side_effect=providers.ProviderError('RPC_ERROR', False)):
+            r.bot_exit._sample(r, watch, 'sig', None)
+        self.assertEqual(errors, ['RPC_ERROR'])                                    # a permanent failure is still logged
+
     def test_a_lane_shed_answer_ends_the_pass_without_a_reserve_too(self):
         r = self.build(Token(31, path=BOT_PATH), bot_pump_events(), bot_exit={'reserve_tokens': 0})
         self.run_until(r, 0)
