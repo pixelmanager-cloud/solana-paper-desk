@@ -279,17 +279,61 @@ def forbidden_hits(source, filename='<source>'):
     return hits
 
 
+def simulation_sites(source):
+    """L22: [(line, safe)] for every call passing 'simulateTransaction' as an argument. ``safe`` only when the next argument is a list
+    literal whose second item is a dict LITERAL (no ``**`` spread) with the constants ``sigVerify: False`` and
+    ``replaceRecentBlockhash: True``."""
+    out = []
+    for node in ast.walk(ast.parse(source)):
+        if not isinstance(node, ast.Call):
+            continue
+        for i, arg in enumerate(node.args):
+            if not (isinstance(arg, ast.Constant) and arg.value == 'simulateTransaction'):
+                continue
+            safe, params = False, node.args[i + 1] if i + 1 < len(node.args) else None
+            if isinstance(params, ast.List) and len(params.elts) == 2 and isinstance(params.elts[1], ast.Dict):
+                options = params.elts[1]
+                if all(isinstance(k, ast.Constant) for k in options.keys):        # a ``**spread`` has a None key
+                    values = {k.value: v for k, v in zip(options.keys, options.values)}
+                    safe = all(isinstance(values.get(name), ast.Constant) and values[name].value is want
+                               for name, want in (('sigVerify', False), ('replaceRecentBlockhash', True)))
+            out.append((node.lineno, safe))
+    return out
+
+
 class NeverSignsOrSends(unittest.TestCase):
     FORBIDDEN_NAMES = {'sign', 'sign_message', 'sign_transaction', 'signTransaction', 'send_transaction', 'sendTransaction',
                        'send_raw_transaction', 'sendRawTransaction', 'send_and_confirm', 'Keypair', 'SigningKey', 'secret_key',
-                       'private_key', 'simulateTransaction', 'simulate_transaction'}
+                       'private_key', 'simulateTransaction', 'simulate_transaction',
+                       # L22: more broadcast / signing primitives
+                       'sendBundle', 'send_bundle', 'requestAirdrop', 'request_airdrop', 'partial_sign', 'sign_all'}
     FORBIDDEN_MODULES = ('solders.keypair', 'nacl', 'cryptography.hazmat.primitives.asymmetric.ed25519', 'solana.keypair', 'solana.rpc')
 
     def test_no_signing_or_broadcast_primitive_anywhere_in_lean(self):
         files = sorted(LEAN.rglob('*.py'))
         self.assertGreater(len(files), 5)
         found = [hit for path in files for hit in forbidden_hits(path.read_text(), path.name)]
-        self.assertEqual(found, [])
+        # L22: the ONE allowed hit is the unsigned simulateTransaction call of lean/honeypot_sim.py, and only with the literal
+        # options sigVerify=False + replaceRecentBlockhash=True (checked on the AST below). Everything else stays forbidden.
+        allowed = [hit for hit in found if hit[0] == 'honeypot_sim.py' and hit[2] == 'call-argument:simulateTransaction']
+        self.assertEqual([hit for hit in found if hit not in allowed], [])
+        self.assertEqual(len(allowed), 1, allowed)
+        self.assertEqual([ok for _line, ok in simulation_sites((LEAN / 'honeypot_sim.py').read_text())], [True])
+        for path in files:                                         # no other lean file has a simulate call at all
+            if path.name != 'honeypot_sim.py':
+                self.assertEqual(simulation_sites(path.read_text()), [], path.name)
+
+    def test_the_simulation_site_check_rejects_unsafe_shapes(self):
+        good = "h.rpc('simulateTransaction', [tx, {'encoding': 'base64', 'sigVerify': False, 'replaceRecentBlockhash': True}])"
+        self.assertEqual([ok for _l, ok in simulation_sites(good)], [True])
+        for bad in ("h.rpc('simulateTransaction', [tx, {'encoding': 'base64', 'sigVerify': True, 'replaceRecentBlockhash': True}])",
+                    "h.rpc('simulateTransaction', [tx, {'encoding': 'base64', 'replaceRecentBlockhash': True}])",
+                    "h.rpc('simulateTransaction', [tx, {'encoding': 'base64', 'sigVerify': False}])",
+                    "h.rpc('simulateTransaction', [tx, {'sigVerify': 0, 'replaceRecentBlockhash': True}])",
+                    "h.rpc('simulateTransaction', [tx, OPTIONS])", "h.rpc('simulateTransaction', params)",
+                    "h.rpc('simulateTransaction', [tx, {**o, 'sigVerify': False, 'replaceRecentBlockhash': True}])"):
+            with self.subTest(bad):
+                self.assertEqual([ok for _l, ok in simulation_sites(bad)], [False])
 
     def test_the_walker_fires_on_every_kind_of_offender(self):
         offenders = {'call': 'sign(tx)', 'method call': 'client.send_transaction(tx)', 'camel call': 'rpc.sendTransaction(tx)',

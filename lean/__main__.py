@@ -39,6 +39,9 @@ CONFIG_KEYS = {
     # --- L13 ---
     'wallet_signals': None,            # lean.wallet_signals settings (an object, may be {}, turns it on); None = off
     # --- end L13 ---
+    # --- L22 ---
+    'honeypot_sim': {},                # {enabled (false), max_per_hour 30, full_size true}: sell-simulation entry filter (main lane)
+    # --- end L22 ---
 }
 REQUIRED = ('strategy_config', 'initial_cash_sol')
 
@@ -119,6 +122,13 @@ def load_config(path):
         except wallet_signals.ConfigError as error:
             raise ConfigError(str(error)) from None
     # --- end L13 ---
+    # --- L22 ---
+    from lean import honeypot_sim
+    try:
+        cfg['honeypot_sim'] = honeypot_sim.config(cfg['honeypot_sim'])
+    except honeypot_sim.HoneypotConfigError as error:
+        raise ConfigError(str(error)) from None
+    # --- end L22 ---
     return cfg
 
 
@@ -213,6 +223,10 @@ def build_runner(cfg, *, state_dir, discovery_db, keys, code_version, clock=None
                                                 transport_kwargs=transport_kwargs,
                                                 paths_db=paths.db_path(paths_cfg, state) if paths_cfg['enabled'] else None)   # LINT2
     # --- end L13 ---
+    # --- L22: the honeypot sell-simulation entry filter (MAIN lane, before the entry quotes; None = off) ---
+    from lean import honeypot_sim
+    r.honeypot = honeypot_sim.build(cfg.get('honeypot_sim'), the_store, clock=clock)
+    # --- end L22 ---
     return r
 
 

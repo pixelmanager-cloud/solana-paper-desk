@@ -126,6 +126,9 @@ class Runner:
         # --- LINT2b hook: the feature / wallet-signal threads (health ``alive``; one shared shutdown deadline) ---
         self._aux_threads = {}                     # 'features' / 'wallet_signals' -> Thread
         # --- end LINT2b ---
+        # --- L22 hook ---
+        self.honeypot = None                       # lean.honeypot_sim.HoneypotSim (set by build_runner when honeypot_sim.enabled)
+        # --- end L22 ---
         self.startup()
         # --- L10 hook ---
         if execution is not None and self.halted is None:
@@ -447,6 +450,10 @@ class Runner:
                                     features=_jsonable(gate.detail), ts=self.clock())
             self._l07r_note(entry_reasons=list(gate.reasons))                  # --- L07R hook (one line) ---
             return
+        # --- L22 hook: honeypot sell simulation (MAIN lane) before any entry quote; True = rejected, decision recorded ---
+        if self.honeypot is not None and self.honeypot.reject(self, candidate, cid, result, gate):
+            return
+        # --- end L22 ---
         # Quote at the decided size, then the sell leg for exactly the tokens the paper fill will hold.
         size_lamports = A.lamports(gate.size_sol)
         # --- L16 hook ---
@@ -740,6 +747,7 @@ class Runner:
                 'paths': self._l07r_health(),
                 # --- end L07R ---
                 'held_risk': None if self.held_risk is None else self.held_risk.health(),      # L11
+                'honeypot_sim': None if self.honeypot is None else self.honeypot.health(),     # L22
                 # --- L15 hook ---
                 **({} if self.ops is None else self.ops.health())}
                 # --- end L15 ---

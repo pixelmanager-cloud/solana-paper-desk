@@ -390,7 +390,9 @@ class HeliusTests(unittest.TestCase):
                 h.rpc(method, [])
             self.assertEqual((cm.exception.code, cm.exception.transient), ('METHOD_NOT_ALLOWED', False), method)
         self.assertEqual(o.requests, [])
-        self.assertFalse(any(m.startswith(('send', 'sign', 'simulate', 'request')) for m in P.READ_ONLY_RPC))
+        # L22: simulateTransaction is the ONE vetted exception (only unsigned, sigVerify=false, replaceRecentBlockhash=true: see
+        # tests.lean.test_honeypot_sim); nothing that sends, signs or requests is allowed
+        self.assertEqual({m for m in P.READ_ONLY_RPC if m.startswith(('send', 'sign', 'simulate', 'request'))}, {'simulateTransaction'})
 
     def test_rpc_roundtrip_and_request_shape(self):
         o = Opener(rpc_ok(123))
