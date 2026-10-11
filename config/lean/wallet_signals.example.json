@@ -1,0 +1,17 @@
+{
+  "_comment": "L13 example: copy the object below into lean.json as \"wallet_signals\" (null/absent = off). FEATURES ONLY, never an entry gate. Every key is optional; these are the defaults. Calls go through the shared low lane (lean.providers.low, shed first) and are capped per candidate (max_calls).",
+  "wallet_signals": {
+    "window_s": 120,
+    "sniper_slots": 3,
+    "max_swap_txs": 6,
+    "sig_pages": 2,
+    "funding_wallets": 3,
+    "max_calls": 16,
+    "pace_s": 0.25,
+    "shed_wait_s": 30.0,
+    "retain_raw": "signatures",
+    "ignore_funders": [],
+    "min_wins": 2,
+    "smart_threshold": 0.7
+  }
+}
