@@ -81,6 +81,9 @@ class ReplayOnRealRunnerStoreTest(unittest.TestCase):
         world.add_frames([T0 + off for _, _, off in SCENARIO])
         cfg = load_config(ROOT / 'config' / 'lean' / 'lean.example.json')
         assert cfg['paths']['enabled'] and cfg['paths']['interval_s'] == 15
+        # replay models instant paper fills at the recorded vault amounts: the LINT1 example's latency-aware fills (L10) and rug handling (L11)
+        # are separate cost/exit models that replay does not reproduce, so they are off here (a documented replay limitation)
+        cfg['execution'], cfg['held_risk'] = None, {'enabled': False}
         runner = build_runner(cfg, state_dir=cls.root / 'state', discovery_db=world.discovery_db, keys=KEYS, code_version='e2e-replay',
                               clock=clock.time, transport_kwargs={'opener': world.opener, 'clock': clock.time, 'monotonic': clock.monotonic,
                                                                   'sleep': clock.sleep, 'rng': lambda: 0.5})
