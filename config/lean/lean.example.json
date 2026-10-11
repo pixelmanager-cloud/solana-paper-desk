@@ -76,5 +76,11 @@
     "watchdog_stale_s": 180,
     "regime_interval_s": 300,
     "housekeeping_s": 5
+  },
+  "features": {
+    "_comment": "L12F entry feature capture (low lane, <= 3 extra Helius calls per candidate). Off by default; enrich=false writes only the free fields.",
+    "enabled": false,
+    "enrich": true,
+    "queue_size": 500
   }
 }
