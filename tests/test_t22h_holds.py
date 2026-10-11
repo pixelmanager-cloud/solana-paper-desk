@@ -276,13 +276,12 @@ class ConsistencyOfBudgetCauses(pass_closure_tests.Base):
 
     def test_the_conditions_themselves(self):
         ok = {'s': {'before': 0, 'after': 18}}
-        for cause in ('INVESTIGATION_REQUEST_BUDGET_EXHAUSTED', 'CYCLE_REQUEST_BUDGET_EXHAUSTED', 'FEATURE_HISTORY_PAGE_LIMIT'):
+        for cause in ('INVESTIGATION_REQUEST_BUDGET_EXHAUSTED', 'CYCLE_REQUEST_BUDGET_EXHAUSTED'):
             closure._consistent(cause, ok)
-        closure._consistent('FEATURE_HISTORY_PAGE_LIMIT', {'s': {'before': 3, 'after': 11}})
+        # T22I item 5: the history-page condition counts RETAINED getTransactionsForAddress originals (see tests/test_t22i.py)
         closure._consistent('TRANSPORT_ERROR', {'s': {'before': 0, 'after': 1}})
         for cause, scans in (('INVESTIGATION_REQUEST_BUDGET_EXHAUSTED', {'s': {'before': 0, 'after': 17}}),
-                             ('CYCLE_REQUEST_BUDGET_EXHAUSTED', {'s': {'before': 1, 'after': 18}}),
-                             ('FEATURE_HISTORY_PAGE_LIMIT', {'s': {'before': 0, 'after': 7}})):
+                             ('CYCLE_REQUEST_BUDGET_EXHAUSTED', {'s': {'before': 1, 'after': 18}})):
             with self.subTest(cause), self.assertRaises(closure.HoldRequired):
                 closure._consistent(cause, scans)
 

@@ -382,8 +382,8 @@ class Pacer:
         try:
             with closing(self._connect()) as c:
                 c.execute('BEGIN')                                    # deferred: a plain read, no write lock
-                now = self._now_or_none(c)
-                if now is None: return []                              # clock disagrees with the database: do nothing
+                now = self._reclaim_now(c)
+                if now is None: return []
                 if not c.execute("SELECT 1 FROM sqlite_master WHERE type='table' AND name=?", (RECLAIM_TABLE,)).fetchone():
                     return []
                 old = False
@@ -395,9 +395,10 @@ class Pacer:
                 if not old: return []
                 done = []
                 c.execute('BEGIN IMMEDIATE')                          # now (and only now) the write lock; re-proved inside
-                now = self._now_or_none(c)
+                now = self._reclaim_now(c)
                 if now is None:
-                    c.rollback(); return []
+                    c.rollback()
+                    return []
                 for provider in self.providers:
                     row = c.execute('SELECT next_at,pending FROM state WHERE provider=?', (provider,)).fetchone()
                     if row and row[1] is not None and self._reclaim(c, provider, row[1], row[0], now):
@@ -436,16 +437,18 @@ class Pacer:
         finally:
             os.close(fd)
 
-    def _now_or_none(self, c):
-        """The usable clock reading, or None when it disagrees with the database (acquire() refuses it loudly).
+    def _reclaim_now(self, c):
+        """The same clock and the same validity rule as acquire(), but a bad clock is "do nothing", never an exception.
 
-        The read-first reclaim path runs inside entry gates that refuse on a pending grant without ever calling
-        acquire(); a clock problem must not turn such a gate into a crash.
+        Reclaim runs on the entry gates' read-first path, which refuse on a pending grant without calling acquire(). A
+        clock behind `high_water` or not a usable number is acquire()'s PACING_CLOCK_INVALID to report; here it only means
+        "prove nothing this time", so the gate cannot be turned into a crash and nothing is reclaimed on an untrusted clock.
         """
         try:
             return self._now(c)
-        except (PacingError, TypeError, ValueError):
-            return None
+        except PacingError as error:
+            if error.code == 'PACING_CLOCK_INVALID': return None
+            raise
 
     def _now(self, c):
         now = self.clock()
