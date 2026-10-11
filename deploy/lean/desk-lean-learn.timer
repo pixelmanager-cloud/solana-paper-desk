@@ -1,8 +1,8 @@
 [Unit]
-Description=Lean selection learner daily at 08:15 KST (23:15 UTC), after the morning report
+Description=Lean selection learner every 3 hours (incl. 08:15 KST = 23:15 UTC, after the morning report)
 
 [Timer]
-OnCalendar=*-*-* 23:15:00 UTC
+OnCalendar=*-*-* 02,05,08,11,14,17,20,23:15:00 UTC
 Persistent=true
 AccuracySec=1min
 Unit=desk-lean-learn.service
