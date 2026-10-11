@@ -2,8 +2,16 @@
 
 PAPER ONLY, EXECUTION_UNVERIFIED. Never writes to the store, never calls a provider, never imports the desk.
 
-Input contract (what this report reads; see ``load_events``). The lean store is append-only; this module
-accepts either layout and normalises both into events ``(kind, at, strategy_version, code_version, data)``:
+Input contract (what this report reads; see ``load_events``).
+
+The lean store (lean/store.py) is read natively (``load_store_events``): ``candidates``; ``decisions`` (``kind='screen'``
+rows are the screen, action PASS/REJECT/FAILED; others are entry/exit decisions; ``reasons`` is JSON text and is
+parsed); ``fills`` with their real integer columns ``qty_raw``, ``sol_lamports``, ``fee_lamports`` (lamports, converted
+to SOL here); ``errors``; ``position_state`` (the exit reason of each SELL, by ``fill_id``). ``observations`` BLOBs are
+never loaded (only counted). The generic ``events`` table is NOT read for kinds the typed tables cover, so nothing is
+counted twice.
+
+Other layouts (legacy/generic) are normalised into events ``(kind, at, strategy_version, code_version, data)``:
   * one generic table ``records`` / ``events`` with columns ``kind`` and ``payload`` (JSON text), or
   * typed tables ``candidates``, ``screens``, ``decisions``, ``fills``, ``errors``, ``observations``
     that carry a JSON ``payload`` column or plain columns.
@@ -115,12 +123,78 @@ def _columns(connection, table):
     return [row[1] for row in connection.execute('PRAGMA table_info("%s")' % table.replace('"', ''))]
 
 
+LAMPORTS = Decimal(10) ** 9
+STORE_TABLES = {'candidates', 'decisions', 'fills', 'errors', 'observations', 'position_state'}
+
+
+def _is_lean_store(connection, tables):
+    return STORE_TABLES <= tables and {'qty_raw', 'sol_lamports', 'fee_lamports'} <= set(_columns(connection, 'fills'))
+
+
+def _reasons(text, skipped, table):
+    try:
+        value = json.loads(text) if isinstance(text, str) else text
+    except ValueError:
+        skipped['REASONS_NOT_JSON:' + table] += 1
+        return ['UNSPECIFIED']
+    return [str(r) for r in value] if isinstance(value, list) else [str(value)]
+
+
+def load_store_events(connection):
+    """The lean store's typed tables, with their real columns. Observation BLOBs are never selected."""
+    events, skipped, truncated = [], Counter(), []
+
+    def select(table, columns):
+        rows = connection.execute('SELECT %s FROM "%s" ORDER BY id LIMIT ?' % (','.join(columns), table), (MAX_ROWS + 1,)).fetchall()
+        if len(rows) > MAX_ROWS:
+            truncated.append(table)
+            rows = rows[:MAX_ROWS]
+        return [dict(zip(columns, r)) for r in rows]
+
+    def add(kind, row, data):
+        events.append({'kind': kind, 'at': dec(row['ts']), 'strategy': str(row.get('strategy_version') or 'UNKNOWN'),
+                       'code': str(row.get('code_version') or 'UNKNOWN'), 'data': data})
+    versions = ('ts', 'code_version', 'strategy_version')
+    for row in select('candidates', ('id', 'mint') + versions):
+        add('candidate', row, {'mint': row['mint']})
+    for row in select('decisions', ('id', 'kind', 'mint', 'action', 'reasons') + versions):
+        reasons = _reasons(row['reasons'], skipped, 'decisions')
+        if row['kind'] == 'screen':
+            add('screen', row, {'mint': row['mint'], 'passed': row['action'] == 'PASS', 'action': row['action'], 'reasons': reasons})
+        else:
+            add('decision', row, {'mint': row['mint'], 'action': row['action'], 'decision_kind': row['kind'], 'reasons': reasons})
+    exit_reason = {}
+    for row in select('position_state', ('id', 'fill_id', 'event', 'state')):
+        if row['event'] in ('rung', 'closed') and row['fill_id'] is not None:
+            try:
+                state = json.loads(row['state'])
+                exit_reason[row['fill_id']] = str(state.get('reason') or state.get('last_reason') or 'UNSPECIFIED')
+            except (ValueError, AttributeError):
+                skipped['STATE_NOT_JSON:position_state'] += 1
+    for row in select('fills', ('id', 'mint', 'side', 'qty_raw', 'sol_lamports', 'fee_lamports') + versions):
+        add('fill', row, {'mint': row['mint'], 'side': row['side'], 'qty': row['qty_raw'], 'fill_id': row['id'],
+                          'sol': Decimal(row['sol_lamports']) / LAMPORTS, 'fee': Decimal(row['fee_lamports']) / LAMPORTS,
+                          'reason': exit_reason.get(row['id']) if row['side'] == 'sell' else None})
+    for row in select('errors', ('id', 'code', 'mint', 'scope', 'transient') + versions):
+        add('error', row, {'code': row['code'], 'mint': row['mint'], 'scope': row['scope'], 'transient': bool(row['transient'])})
+    skipped_counts = dict(skipped)
+    observations = connection.execute('SELECT COUNT(*) FROM observations').fetchone()[0]
+    return events, Counter(skipped_counts), truncated, sorted(STORE_TABLES), observations
+
+
 def load_events(connection):
-    """Normalised events plus ``skipped`` (reason -> count) and ``truncated`` tables."""
+    """Normalised events plus ``skipped`` (reason -> count) and ``truncated`` tables.
+
+    The lean store is read natively (``load_store_events``). For other layouts, a generic ``records``/``events`` row is
+    ignored when a typed table of the same kind exists, so nothing is counted twice."""
     tables = {row[0] for row in connection.execute("SELECT name FROM sqlite_master WHERE type='table'")}
+    if _is_lean_store(connection, tables):
+        events, skipped, truncated, used, _ = load_store_events(connection)
+        return events, skipped, truncated, used
     events, skipped, truncated, used = [], Counter(), [], []
+    typed_kinds = {kind for t, kind in TYPED_TABLES.items() if t in tables}
     sources = [(t, None) for t in GENERIC_TABLES if t in tables] + \
-              [(t, kind) for t, kind in TYPED_TABLES.items() if t in tables]
+              [(t, kind) for t, kind in TYPED_TABLES.items() if t in tables and kind != 'observation']
     for table, fixed_kind in sources:
         columns = _columns(connection, table)
         used.append(table)
@@ -149,6 +223,12 @@ def load_events(connection):
             if kind is None:
                 skipped['UNKNOWN_KIND:' + table] += 1
                 continue
+            if fixed_kind is None and kind in typed_kinds:
+                skipped['COVERED_BY_TYPED_TABLE:' + table] += 1       # never double count
+                continue
+            for key in ('reasons',):
+                if isinstance(data.get(key), str) and data[key][:1] == '[':
+                    data[key] = _reasons(data[key], skipped, table)
             at = dec(next((row[c] for c in ('at', 'ts', 'recorded_at') if row.get(c) is not None), None))
             if at is None:
                 at = dec(pick(data, 'at', 'ts', 'recorded_at'))
@@ -202,9 +282,13 @@ def trades(events):
         d = e['data']
         mint = pick(d, 'mint', 'token', 'token_mint')
         side = str(d.get('side', '')).lower()
-        qty = dec(pick(d, 'qty', 'quantity', 'tokens'))
+        qty = dec(pick(d, 'qty', 'quantity', 'tokens', 'qty_raw'))
         sol = dec(pick(d, 'sol', 'sol_amount', 'notional_sol'))
-        fee = dec(pick(d, 'fee_sol', 'fee')) or Decimal(0)
+        if sol is None and dec(d.get('sol_lamports')) is not None:
+            sol = dec(d['sol_lamports']) / LAMPORTS
+        fee = dec(pick(d, 'fee_sol', 'fee'))
+        if fee is None:
+            fee = dec(d['fee_lamports']) / LAMPORTS if dec(d.get('fee_lamports')) is not None else Decimal(0)
         if not isinstance(mint, str) or side not in ('buy', 'sell') or qty is None or qty <= 0 or sol is None or sol < 0 or fee < 0 or e['at'] is None:
             anomalies.append({'code': 'FILL_UNREADABLE', 'mint': mint if isinstance(mint, str) else None})
             continue
@@ -346,6 +430,9 @@ def build(db, *, counterfactual_db=None, horizon=3600, now=None):
     all_trades, anomalies = trades(events)
     summary['funnel'] = ({'status': 'OK', 'data': {k: v for k, v in funnel_result['data'][0].items() if k != 'rejected_mints'}}
                          if funnel_result['status'] == 'OK' else funnel_result)
+    if summary['funnel']['status'] == 'OK':
+        # exited = mints with at least one fully closed position (a partial take-profit is not an exit)
+        summary['funnel']['data']['exited'] = len({t['mint'] for t in all_trades if t['status'] == 'CLOSED'})
     scored = [t for t in all_trades if t['scored']]
     summary['trades'] = {'status': 'OK', 'data': {
         'closed_scored': len(scored), 'open': sum(1 for t in all_trades if t['status'] == 'OPEN'),
@@ -409,7 +496,7 @@ def render_html(s):
     parts.append('<h2>Funnel</h2>' + note(f))
     if f['status'] == 'OK':
         d = f['data']
-        parts.append(table(['stage', 'mints'], [[k, d[k]] for k in ('candidates', 'screened', 'passed', 'entered')]))
+        parts.append(table(['stage', 'mints'], [[k, d[k]] for k in ('candidates', 'screened', 'passed', 'entered', 'exited')]))
         parts.append(table(['rejection reason', 'mints'], list(d['rejection_reasons'].items())) if d['rejection_reasons'] else '<p>No rejections recorded.</p>')
     t = s['trades']['data']
     parts.append('<h2>Trades</h2><p>Closed and scored: %d (%s) &middot; open: %d &middot; flagged: %d &middot; anomalies: %d &middot; overall PnL %s SOL</p>'

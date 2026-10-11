@@ -5,6 +5,7 @@ import sqlite3
 import tempfile
 import unittest
 from pathlib import Path
+from unittest import mock
 
 from lean import report
 
@@ -336,6 +337,67 @@ class Output(Base):
         db = self.store().done()
         self.assertEqual(report.main(['--db', db, '--out-dir', str(self.root / 'nope')]), 2)
         self.assertEqual(report.main(['--db', str(self.root / 'nope.sqlite'), '--out-dir', str(self.root)]), 2)
+
+
+class RealLeanStore(unittest.TestCase):
+    """L09: the report reads the real lean.store layout (integer lamport columns, JSON reasons, position_state)."""
+
+    def setUp(self):
+        import tempfile as _tempfile
+        from lean import paper as P
+        from lean.store import Store as LeanStore
+        self.tmp = _tempfile.TemporaryDirectory(); self.addCleanup(self.tmp.cleanup)
+        self.path = Path(os.path.realpath(self.tmp.name)) / 'lean.sqlite'
+        s = LeanStore(self.path, initial_cash_sol='10', code_version='c1', strategy_version='lean-1', clock=lambda: 1000.0)
+        self.addCleanup(s.close)
+        cfg = P.PaperConfig()
+        for i, mint in enumerate(('A' * 32, 'B' * 32, 'C' * 32)):
+            s.add_candidate(mint, ts=100.0 + i)
+            s.add_decision('screen', 'PASS' if i < 2 else 'REJECT', mint=mint, reasons=[] if i < 2 else ['ACTIVE_MINT_AUTHORITY'], ts=101.0 + i)
+        s.add_decision('entry', 'SKIP', mint='B' * 32, reasons=['COST_BUDGET'], ts=103.0)
+        s.add_observation('quote:buy', b'\x00' * (1024 * 1024), mint='A' * 32, ts=104.0)    # a big BLOB the report must not load
+        buy = P.buy(P.Quote('A' * 32, 'buy', 200_000_000, 10 ** 9, 6, 110.0), '0.2', cfg)
+        open_id = s.add_fill(buy, state={'event': 'open', 'state': {'stage': 0}})
+        (pos,) = s.positions().values()
+        part = P.sell(pos, P.Quote('A' * 32, 'sell', 300_000_000, 90_000_000, 6, 200.0), cfg=cfg, qty_raw=300_000_000)
+        s.add_fill(part, state={'event': 'rung', 'open_fill_id': open_id, 'state': {'stage': 1, 'last_reason': 'TAKE_PROFIT'}})
+        (pos,) = s.positions().values()
+        last = P.sell(pos, P.Quote('A' * 32, 'sell', pos.qty_raw, 120_000_000, 6, 400.0), cfg=cfg, qty_raw=pos.qty_raw)
+        s.add_fill(last, state={'event': 'closed', 'open_fill_id': open_id, 'state': {'reason': 'TRAILING_STOP'}})
+        s.add_error('HTTP_503', transient=True, mint='B' * 32, ts=120.0)
+        # generic events of kinds the typed tables cover must not be counted twice
+        s.record('fill', {'mint': 'A' * 32, 'side': 'buy', 'qty': 1, 'sol': 5}, code_version='c1', strategy_version='lean-1')
+        s.record('screen', {'mint': 'Z' * 32, 'passed': True}, code_version='c1', strategy_version='lean-1')
+        self.store = s
+
+    def test_store_columns_reasons_exit_reasons_and_pnl(self):
+        summary = report.build(self.path, now=NOW)
+        funnel = summary['funnel']['data']
+        self.assertEqual((funnel['candidates'], funnel['screened'], funnel['passed'], funnel['entered'], funnel['exited']), (3, 3, 2, 1, 1))
+        self.assertEqual(funnel['rejection_reasons'], {'ACTIVE_MINT_AUTHORITY': 1})
+        self.assertEqual(funnel['entry_decision_rejections'], {'COST_BUDGET': 1})
+        trades = summary['trades']['data']
+        self.assertEqual((trades['closed_scored'], trades['anomaly_count']), (1, 0))
+        self.assertAlmostEqual(trades['overall_pnl_sol'], self.store.realized() / 1e9, places=6)
+        self.assertEqual(trades['rows'][0]['exit_reasons'], ['TAKE_PROFIT', 'TRAILING_STOP'])
+        self.assertEqual(list(summary['exit_reasons']['data']), ['TRAILING_STOP'])
+        self.assertEqual(summary['errors']['data'], {'HTTP_503': 1})
+        self.assertIn('exited', report.render_html(summary))
+
+    def test_observation_blobs_are_never_selected(self):
+        statements = []
+        original = report.open_ro
+
+        def traced(path):
+            connection = original(path)
+            connection.set_trace_callback(statements.append)
+            return connection
+        with mock.patch.object(report, 'open_ro', traced):
+            report.build(self.path, now=NOW)
+        observation_reads = [s for s in statements if 'observations' in s]
+        self.assertTrue(observation_reads)
+        import re
+        self.assertTrue(all('raw' not in s and not re.search(r'SELECT\s+\*', s) for s in observation_reads), observation_reads)
 
 
 if __name__ == '__main__':
