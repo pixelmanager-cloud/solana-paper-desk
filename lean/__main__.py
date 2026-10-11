@@ -156,6 +156,7 @@ def build_runner(cfg, *, state_dir, discovery_db, keys, code_version, clock=None
     if ops_cfg is not None:
         ops = lean_ops.Ops(ops_cfg, clock=clock)
         main_providers, exit_providers = ops.meter(main_providers), ops.meter(exit_providers)
+        ops.lane_clock = {'clock': transport_kwargs.get('monotonic', time.monotonic), 'sleep': transport_kwargs.get('sleep', time.sleep)}  # LINT1
     # --- end L15 ---
     r = runner.Runner(
         store=the_store, providers=main_providers, ops=ops,

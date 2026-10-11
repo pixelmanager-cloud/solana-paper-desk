@@ -194,13 +194,18 @@ class OpsEndToEnd(unittest.TestCase):
         health = r.ops.credits.health()
         self.assertEqual(health['status'], 'SHEDDING')
         self.assertGreater(health['projected_month'], 3000)
-        self.assertEqual(health['shed_lanes'], ['features', 'paths', 'wallet_signals'])
+        self.assertEqual(health['shed_lanes'], ['features', 'low', 'paths', 'wallet_signals'])     # LINT1: + the shared low lane
+        from lean import providers as P                                                               # LINT1: really shed, not just a flag
+        self.assertGreater(P.low_lane_stats('helius', **r.ops.lane_clock)['sheds'], 0)
+        with self.assertRaises(P.ProviderError) as shed:
+            P.shared_limiter('helius', 'low', **r.ops.lane_clock).acquire()
+        self.assertEqual((shed.exception.code, shed.exception.meta['why']), ('LANE_SHED', 'backoff'))
         self.assertFalse(r.ops.credits.allow('paths'))
         self.assertFalse(r.ops.credits.allow('wallet_signals'))
         for lane in ('screening', 'exit', 'marks'):
             self.assertTrue(r.ops.credits.allow(lane))
         shed_rows = [e for e in store.rows('errors', limit=10000) if e['code'] == 'CREDIT_SHED']
-        self.assertEqual(sorted(e['message'] for e in shed_rows), ['paths', 'wallet_signals'])        # once per lane that asked
+        self.assertEqual(sorted(e['message'] for e in shed_rows), ['low', 'paths', 'wallet_signals'])  # once per lane that asked
         fills = store.rows('fills', limit=10000)
         entered = {self.role[f['mint']] for f in fills if f['side'] == 'buy'}
         self.assertEqual(entered, {'stop', 'flat', 'ladder', 'flat2', 'late'})                         # trading went on while shedding

@@ -28,7 +28,7 @@ import tempfile
 import threading
 import time
 
-LOW_PRIORITY_LANES = frozenset({'paths', 'features', 'wallet_signals'})
+LOW_PRIORITY_LANES = frozenset({'low', 'paths', 'features', 'wallet_signals'})   # 'low' = the shared provider low lane (LINT1)
 PROVIDERS = ('helius', 'jupiter', 'kraken')
 # ESTIMATES, to be calibrated against the provider dashboard (operator-editable via ``ops.credit_costs``): a standard Helius
 # RPC request is 1 credit, getProgramAccounts is dearer; Jupiter and Kraken are rate limited, not credit billed here.
@@ -150,6 +150,10 @@ class CreditTracker:
     def cost(self, provider, method):
         table = self.costs.get(provider, {})
         return table.get(method, table.get('default', 1))
+
+    def observe_call(self, provider, endpoint, attempts):
+        """LINT1: ``providers.CALL_OBSERVERS`` callback (every lane). ``rpc:getX`` / ``das:getX`` -> ``getX``."""
+        self.record(provider, endpoint.split(':', 1)[-1], attempts)
 
     def record(self, provider, method, attempts=1):
         """Count ``attempts`` HTTP attempts of one logical call. Never raises."""
@@ -365,6 +369,7 @@ class Ops:
         self.regime = None
         self.runner = None
         self._last_flush = None
+        self.lane_clock = {}                      # LINT1: {clock, sleep} of the transports (tests); {} = the process defaults
 
     # runner-facing
     def beat(self, name):
@@ -375,7 +380,21 @@ class Ops:
                         'regime': None if self.regime is None else self.regime.last}}
 
     def meter(self, providers):
-        return providers if self.cfg.get('watchdog_only') else meter(providers, self.credits)
+        """LINT1: counting moved to the transport (``providers.CALL_OBSERVERS``) so every lane is counted, the shared LOW lane
+        (paths, held-risk probes, wallet signals) included; wrapping here as well would count main/exit calls twice."""
+        if not self.cfg.get('watchdog_only'):
+            from lean import providers as _providers
+            _providers.CALL_OBSERVERS.add(self.credits)
+        return providers
+
+    def shed_low_lane(self):
+        """LINT1: over budget, shed the SHARED Helius low lane (every data-collection user at once); one CREDIT_SHED row per
+        episode (``allow('low')``). Screening and exits are never touched. Re-applied every housekeeping tick while shedding."""
+        if self.cfg.get('watchdog_only') or self.credits.allow('low'):
+            return False
+        from lean import providers as _providers
+        _providers.shed_low('helius', 2 * self.cfg['housekeeping_s'], **self.lane_clock)
+        return True
 
     def attach(self, runner):
         """Bind to the runner's store: restore this month's usage, hook CREDIT_SHED/WATCHDOG_STALL rows, build the regime log."""
@@ -419,6 +438,7 @@ class Ops:
             if self.regime is not None and self.regime.due():
                 self.regime.sample(self.runner._sol_usd_value)
             self.credits.status()
+            self.shed_low_lane()                 # LINT1
             if self.watchdog.interval is None:
                 self.watchdog.check()            # no systemd watchdog: still keep the health status and the stall row
             self.flush()

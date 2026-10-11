@@ -73,5 +73,44 @@ class HeldRiskOnTheLowLane(Scenario):
         self.assertIn(mint, r.store.positions())
 
 
+class CreditsSeeEveryLane(unittest.TestCase):
+    """L15: the tracker metered only the main/exit bundles, so the low lane (the path recorder alone is ~2,160 Helius calls/h)
+    was never counted, and its CREDIT_SHED only answered ``allow(lane)`` calls nobody made."""
+
+    def ops(self, budget=None):
+        from lean import ops
+        o = ops.Ops(ops.load_ops_config({'credit_budget_month': budget}), clock=lambda: 0.0, notify=lambda m: False, environ={})
+        o.meter(None)                                                   # registers the tracker as a call observer
+        return o
+
+    def tearDown(self):
+        providers.configure_lanes()
+
+    def test_a_low_lane_call_is_counted_and_a_shed_one_is_not(self):
+        from tests.lean.test_low_lane import Clock, Opener, request, transport
+        o, c = self.ops(), Clock()
+        low = transport('helius', Opener(), c, 'low')
+        low.call('rpc:getMultipleAccounts', request)
+        self.assertEqual(o.credits.health()['calls'], {'helius': {'getMultipleAccounts': 1}})
+        providers.shed_low('helius', 30, clock=c.now, sleep=c.sleep)
+        with self.assertRaises(providers.ProviderError):
+            low.call('rpc:getMultipleAccounts', request)                # nothing sent: no credit
+        self.assertEqual(o.credits.health()['calls'], {'helius': {'getMultipleAccounts': 1}})
+
+    def test_over_budget_the_shared_low_lane_is_shed_and_exits_are_not(self):
+        from tests.lean.test_low_lane import Clock, Opener, request, transport
+        o, c = self.ops(budget=1), Clock()
+        o.lane_clock = {'clock': c.now, 'sleep': c.sleep}
+        o.credits.shedding = True                                       # projection above the budget
+        o.credits.status = lambda now=None: (10.0, 'SHEDDING')
+        self.assertTrue(o.shed_low_lane())
+        low, exits = transport('helius', Opener(), c, 'low'), transport('helius', Opener(), c, 'exit')
+        with self.assertRaises(providers.ProviderError) as cm:
+            low.call('rpc:getMultipleAccounts', request)
+        self.assertEqual((cm.exception.code, cm.exception.meta['why']), ('LANE_SHED', 'backoff'))
+        exits.call('rpc:getMultipleAccounts', request)                 # exits untouched
+        self.assertEqual(c.sleeps, [])
+
+
 if __name__ == '__main__':
     unittest.main()
