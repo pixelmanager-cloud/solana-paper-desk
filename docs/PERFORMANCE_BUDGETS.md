@@ -60,3 +60,8 @@ must hold `max_positions x 20 + 20`; entry 600 holds 18 + 2 + 20 + margin (tests
 | 1x | 167 -> 17 | 0.33 -> 0.19 | 30 -> 2 | 92 -> 8 |
 | 10x | 1517 -> 17 | 0.72 -> 0.20 | 300 -> 2 | 902 -> 8 |
 | 30x (4505 pages, 900 reads) | LATCH `Preparation attempt inventory bound` -> 17 | - -> 0.21 | 900 -> 2 | 2702 -> 8 |
+
+7-day profile on this branch (`--days 7`: 33,605 pages, 4,032 monitoring reads; the base commit latches at 4,096 pages so it cannot run it):
+gate 17 loads / 0.19 s, snapshot 2 blob loads / 0.12 s, next read 8 blob loads / 0.42 s. Blob loads are constant; the remaining growth
+(next read 0.15 s at 30 reads -> 0.42 s at 4,032) is the chain recomputation over SQL scalars, linear in reads but about 0.1 ms per
+read. Planning assumptions, not measurements: 240 candidates/day at ~20 pages, 576 held reads/day.
