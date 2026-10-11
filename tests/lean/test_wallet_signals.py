@@ -326,6 +326,10 @@ class AnalyzeTests(unittest.TestCase):
         figures = self.run_analyze([tx(GRAD, {a: 10 ** 13}), tx(GRAD + 5, {}, post={a: 4 * 10 ** 13})])
         self.assertEqual(figures['bundled_supply_pct'], 4.0)
 
+    def test_one_slot_after_graduation_is_a_sniper_but_not_a_same_slot_buyer(self):
+        figures = self.run_analyze([tx(GRAD + 1, {addr(1): 5})])
+        self.assertEqual((figures['same_slot_buyers'], figures['sniper_count'], figures['bundled_wallets']), (0, 1, 0))
+
     def test_a_wallet_that_buys_twice_is_one_buyer(self):
         a = addr(1)
         figures = self.run_analyze([tx(GRAD, {a: 5}), tx(GRAD + 1, {a: 5})])
@@ -474,7 +478,11 @@ class CollectTests(Tmp):
         collector.signals_pass()
         collector.signals_pass()
         self.assertEqual(chain.count(), 1)
-        self.assertEqual(self.signals()[0]['unavailable']['window'], 'SIGNATURES_UNAVAILABLE:HTTP_401')
+        row = self.signals()[0]
+        self.assertEqual(row['unavailable']['window'], 'SIGNATURES_UNAVAILABLE:HTTP_401')
+        for field in ('bundle_score', 'sniper_count', 'same_slot_buyers', 'bundled_supply_pct'):         # null, each with its reason
+            self.assertIsNone(row[field], field)
+            self.assertEqual(row['unavailable'][field], row['unavailable']['window'], field)
 
     def test_a_window_that_cannot_be_reached_is_unavailable_not_guessed(self):
         chain = Chain()
@@ -488,6 +496,14 @@ class CollectTests(Tmp):
         self.assertIsNone(row['bundle_score'])
         self.assertIsNone(row['same_slot_buyers'])
         self.assertEqual(chain.count('getTransaction'), 0)
+
+    def test_the_last_slot_of_the_window_is_inside_and_the_next_one_is_not(self):
+        chain = Chain()
+        chain.swap(GRAD + WINDOW_SLOTS, {addr(1): 10})
+        chain.swap(GRAD + WINDOW_SLOTS + 1, {addr(2): 10})
+        self.candidate()
+        self.collector(chain, {'funding_wallets': 0}).signals_pass()
+        self.assertEqual(self.signals()[0]['buyer_wallets'], [addr(1)])
 
     def test_a_second_page_reaches_the_start(self):
         chain = Chain()
@@ -705,6 +721,13 @@ class TradeOutcomeTests(Tmp):
         self.assertEqual([W.trade_outcome(self.store, addr(i), self.cfg)[0] for i in (1, 2, 3)], ['WIN', 'RUG', 'FLAT'])
         self.assertEqual(W.trade_outcome(self.store, addr(2), self.cfg)[1], 'TRADE')
 
+    def test_only_the_last_lifecycle_of_a_re_entered_token_is_scored(self):
+        traded(self.store, addr(1), exit_lamports=20_000_000, ts=1.0)             # first round trip: flat
+        traded(self.store, addr(1), exit_lamports=45_000_000, ts=10.0)            # second: ~ +125 % on ITS OWN cost
+        outcome, source, detail = W.trade_outcome(self.store, addr(1), self.cfg)
+        self.assertEqual((outcome, source), ('WIN', 'TRADE'))
+        self.assertGreater(detail['pnl_over_cost'], 1.0)
+
     def test_open_and_never_entered_tokens_are_unresolved(self):
         from lean.paper import PaperConfig, buy, Quote, to_lamports
         fill = buy(Quote(addr(4), 'buy', to_lamports('0.02'), 10 ** 9, 6, 1.0, ref='r'), '0.02', PaperConfig())
@@ -829,6 +852,8 @@ class SmartWalletTests(Tmp):
         self.assertFalse(collector.is_smart({'wins': 1, 'rugs': 0, 'flat': 0, 'unresolved': 0, 'buys': 1}))      # one win is not enough
         self.assertFalse(collector.is_smart({'wins': 3, 'rugs': 2, 'flat': 0, 'unresolved': 0, 'buys': 5}))      # 4/7 < 0.7
         self.assertTrue(collector.is_smart({'wins': 4, 'rugs': 1, 'flat': 0, 'unresolved': 0, 'buys': 5}))       # 5/7 >= 0.7
+        exact = self.collector(self.chain, {'smart_threshold': 0.75})
+        self.assertTrue(exact.is_smart({'wins': 2, 'rugs': 0, 'flat': 0, 'unresolved': 0, 'buys': 2}))           # 3/4 == threshold: inclusive
 
 
 # ------------------------------------------------------------------------------------------------- the low-priority lane
