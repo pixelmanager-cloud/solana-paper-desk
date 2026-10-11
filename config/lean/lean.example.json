@@ -104,5 +104,29 @@
     "hub_window_s": 86400.0,
     "min_wins": 2,
     "smart_threshold": 0.7
+  },
+  "bot_exit": {
+    "_comment": "L23 bot-exit detection on held positions, SHADOW ONLY: records decisions(kind='shadow_exit') with the metrics and a hypothetical exit value; trading is NOT changed. mode \"live\" would exit through the normal two-phase path with reason BOT_EXIT: keep it shadow until the report shows the signals save money. Own thread, shared LOW lane, <= max_calls_per_pass Helius calls every poll_s (1 getSignaturesForAddress per position + sampled getTransaction + getTokenLargestAccounts every holders_every polls), paced pace_s, leaving reserve_tokens; a shed ends the pass. rules: a signal when every condition of any rule holds; a metric without enough evidence never holds.",
+    "enabled": true,
+    "mode": "shadow",
+    "poll_s": 10,
+    "window_s": 30,
+    "baseline_s": 180,
+    "min_baseline_tx": 30,
+    "min_sample": 4,
+    "pumper_window_s": 120,
+    "sig_limit": 300,
+    "sample_txs": 2,
+    "holders_every": 3,
+    "max_calls_per_pass": 6,
+    "reserve_tokens": 1,
+    "pace_s": 0.5,
+    "quote_ttl_s": 10,
+    "rules": [
+      {"name": "BOT_STOPPED", "all": [{"metric": "tx_rate_ratio", "op": "<", "value": "0.3"}, {"metric": "sell_share_30s", "op": ">", "value": "0.6"}]},
+      {"name": "WHALE_SELL", "all": [{"metric": "max_sell_reserve_frac", "op": ">", "value": "0.15"}]},
+      {"name": "CREATOR_SELL", "all": [{"metric": "creator_sold", "op": ">=", "value": "1"}]},
+      {"name": "PUMPERS_OUT", "all": [{"metric": "pumper_net_sol_30s", "op": "<", "value": "0"}, {"metric": "pumper_sellers_30s", "op": ">=", "value": "2"}, {"metric": "tx_rate_ratio", "op": "<", "value": "0.6"}]}
+    ]
   }
 }

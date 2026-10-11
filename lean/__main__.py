@@ -39,6 +39,9 @@ CONFIG_KEYS = {
     # --- L13 ---
     'wallet_signals': None,            # lean.wallet_signals settings (an object, may be {}, turns it on); None = off
     # --- end L13 ---
+    # --- L23 ---
+    'bot_exit': None,                  # lean.bot_exit settings ({"enabled", "mode": "shadow"|"live", ...}); None/absent = off
+    # --- end L23 ---
 }
 REQUIRED = ('strategy_config', 'initial_cash_sol')
 
@@ -119,6 +122,13 @@ def load_config(path):
         except wallet_signals.ConfigError as error:
             raise ConfigError(str(error)) from None
     # --- end L13 ---
+    # --- L23 --- (strict at load: unknown keys, bad rules and bad types fail before the trader starts)
+    from lean import bot_exit
+    try:
+        bot_exit.Config.from_dict(cfg['bot_exit'])
+    except bot_exit.BotExitConfigError as error:
+        raise ConfigError(str(error)) from None
+    # --- end L23 ---
     return cfg
 
 
@@ -213,6 +223,11 @@ def build_runner(cfg, *, state_dir, discovery_db, keys, code_version, clock=None
                                                 transport_kwargs=transport_kwargs,
                                                 paths_db=paths.db_path(paths_cfg, state) if paths_cfg['enabled'] else None)   # LINT2
     # --- end L13 ---
+    # --- L23: the bot-exit monitor (low lane, own thread in run mode; None when absent/disabled) ---
+    from lean import bot_exit
+    r.bot_exit = bot_exit.build(cfg.get('bot_exit'), store=the_store, keys=keys, code_version=code_version,
+                                strategy_version=strategy_cfg.strategy_version, clock=clock, transport_kwargs=transport_kwargs)
+    # --- end L23 ---
     return r
 
 

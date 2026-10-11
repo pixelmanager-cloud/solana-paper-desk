@@ -126,6 +126,9 @@ class Runner:
         # --- LINT2b hook: the feature / wallet-signal threads (health ``alive``; one shared shutdown deadline) ---
         self._aux_threads = {}                     # 'features' / 'wallet_signals' -> Thread
         # --- end LINT2b ---
+        # --- L23 hook ---
+        self.bot_exit = None                       # lean.bot_exit.BotExit (set by build_runner when bot_exit.enabled)
+        # --- end L23 ---
         self.startup()
         # --- L10 hook ---
         if execution is not None and self.halted is None:
@@ -646,13 +649,15 @@ class Runner:
         if rug and state.get('rug_trigger') != rug:
             state = dict(state, rug_trigger=rug)
         # --- end L11 ---
+        bot = None if self.bot_exit is None else self.bot_exit.trigger(mint, open_id)     # --- L23 hook (live mode only) ---
         now = self._now()
         since = state.get('exit_failing_since')
         if since is not None and now - int(since) >= self.unexitable_after_s:
             return self._write_off(mint, position, open_id, state)
         mark, mark_at, _source = self.marks.get(mint, (None, None, None))
         held = A.strategy_position(position, state)
-        decision = S.exit_decision(held, mark, None, now, self.cfg, mark_at=mark_at, liquidate=liquidate, danger=bool(rug))
+        decision = S.exit_decision(held, mark, None, now, self.cfg, mark_at=mark_at, liquidate=liquidate, danger=bool(rug),
+                                   bot_exit=bool(bot))                                    # L23
         if decision.position_updates:
             state = A.apply_updates(state, decision.position_updates)
             held = A.strategy_position(position, state)
@@ -681,7 +686,7 @@ class Runner:
         with self._trade_lock:
             now = self._now()
             final = S.exit_decision(held, mark, A.strategy_quote(quote, 'sell', quote_at), now, self.cfg, mark_at=mark_at,
-                                    liquidate=liquidate, danger=bool(rug))
+                                    liquidate=liquidate, danger=bool(rug), bot_exit=bool(bot))     # L23
             self.store.add_decision('exit', final.action, mint=mint, reasons=final.reasons, ts=self.clock(),
                                     features={**_jsonable(final.detail), 'qty_raw': qty, 'fraction_of_initial': str(final.fraction),
                                               'quote_ref': ref, 'mark_sol': None if mark is None else str(mark),
@@ -740,6 +745,7 @@ class Runner:
                 'paths': self._l07r_health(),
                 # --- end L07R ---
                 'held_risk': None if self.held_risk is None else self.held_risk.health(),      # L11
+                'bot_exit': self._aux_health('bot_exit', self.bot_exit),                        # L23
                 # --- L15 hook ---
                 **({} if self.ops is None else self.ops.health())}
                 # --- end L15 ---
@@ -849,6 +855,14 @@ class Runner:
                                                                                     name='wallet_signals', daemon=True)
             signals_thread.start()
         # --- end L13 ---
+        # --- L23 hook: bot-exit monitor on its own daemon thread and the shared low lane (shadow by default) ---
+        bot_thread = None
+        if self.bot_exit is not None:
+            self.bot_exit.stop = self.stop
+            bot_thread = self._aux_threads['bot_exit'] = threading.Thread(target=self.bot_exit.run_loop, args=(self,),
+                                                                          name='bot_exit', daemon=True)
+            bot_thread.start()
+        # --- end L23 ---
         for t in threads:
             while t.is_alive():
                 t.join(0.5)
@@ -856,7 +870,7 @@ class Runner:
         # AUX_JOIN_S in total, so a slow one can never push the stop past systemd's TimeoutStopSec (30 s); each checks
         # ``stop`` before every request, so they normally end within one in-flight call ---
         aux_deadline = time.monotonic() + AUX_JOIN_S
-        for aux in (recorder, feature_thread, signals_thread):
+        for aux in (recorder, feature_thread, signals_thread, bot_thread):          # L23: bot_thread
             if aux is not None:
                 aux.join(max(0.0, aux_deadline - time.monotonic()))
         # --- end LINT2b ---
