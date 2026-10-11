@@ -533,6 +533,15 @@ def _sell_evidence(db):
         return sell_evidence.report_section(connection)
     finally:
         connection.close()
+# --- L23 hook ---
+def _bot_exit(db):
+    from lean import bot_exit
+    connection = open_ro(db)
+    try:
+        return bot_exit.report_section(connection)
+    finally:
+        connection.close()
+# --- end L23 ---
 
 
 def _sources(db):
@@ -586,6 +595,7 @@ def build(db, *, counterfactual_db=None, horizon=3600, now=None):
     summary['sell_evidence'] = _section(_sell_evidence, db)
     # --- end L20 ---
     summary['held_risk'] = _section(held_risk_report, db)        # L11
+    summary['bot_exit'] = _section(_bot_exit, db)                 # L23
     # --- L14 hook: per-source funnel (candidates -> screened -> passed -> entered, rejection reasons, watchlist outcome) ---
     summary['sources'] = _section(_sources, db)
     # --- end L14 ---
@@ -669,6 +679,25 @@ def render_html(s):
             e(json.dumps(d['triggers'], sort_keys=True)), d['freeze_flags'], len(d['unsellable_open'])))
         if d['unsellable_open']:
             parts.append(table(['mint', 'failing since', 'trigger', 'why'], [[r['mint'], r['since'], r['trigger'], r['why']] for r in d['unsellable_open']]))
+    # --- L23 hook ---
+    b = s.get('bot_exit', {'status': 'NOT_PROVIDED'})
+    if b['status'] == 'ERROR':
+        parts.append('<h2>Bot-exit signals</h2>' + note(b))
+    elif b['status'] == 'OK' and b['data']['signals']:
+        d = b['data']
+        parts.append('<h2>Bot-exit signals (shadow: would they have saved money?)</h2>')
+        parts.append('<p>Signals: %d (%s) &middot; by rule: %s &middot; open: %d &middot; unvalued: %d &middot; scored: %d (%s)</p>' % (
+            d['signals'], e(json.dumps(d['by_mode'], sort_keys=True)), e(json.dumps(d['by_rule'], sort_keys=True)), d['open'], d['unvalued'],
+            d['scored'], flag('OK' if d['scored'] >= MIN_SAMPLE else 'INSUFFICIENT')))
+        parts.append(table(['saved (signal > actual)', 'cost (actual > signal)', 'signal value SOL', 'actual after signal SOL', 'saved SOL',
+                            'false-positive rate'], [[d['saved_count'], d['cost_count'], d['shadow_sum_sol'], d['actual_sum_sol'],
+                                                      d['saved_sum_sol'], d['false_positive_rate']]]))
+        parts.append('<p>Closed trades: %d &middot; without a signal: %d &middot; big losses (&le; -50%%): %d, of which signalled: %d</p>' % (
+            d['closed_trades'], d['closed_without_signal'], d['big_losses'], d['big_losses_signalled']))
+        parts.append(table(['mint', 'kind', 'rules', 'signal at', 'value source', 'signal SOL', 'actual SOL', 'saved SOL', 'status'],
+                           [[r['mint'], r['kind'], ','.join(r['rules']), r['signal_at'], r['value_source'], r['shadow_sol'], r['actual_sol'],
+                             r['saved_sol'], r['status']] for r in d['rows'][-100:]]))
+    # --- end L23 ---
     # --- L12 hook ---
     fe = s.get('features', {'status': 'NOT_PROVIDED'})
     if fe['status'] == 'OK' and fe['data']['rows']:

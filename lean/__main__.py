@@ -46,6 +46,9 @@ CONFIG_KEYS = {
     # --- L22 ---
     'honeypot_sim': {},                # {enabled (false), max_per_hour 30, full_size true}: sell-simulation entry filter (main lane)
     # --- end L22 ---
+    # --- L23 ---
+    'bot_exit': None,                  # lean.bot_exit settings ({"enabled", "mode": "shadow"|"live", ...}); None/absent = off
+    # --- end L23 ---
 }
 REQUIRED = ('strategy_config', 'initial_cash_sol')
 
@@ -143,6 +146,13 @@ def load_config(path):
     except honeypot_sim.HoneypotConfigError as error:
         raise ConfigError(str(error)) from None
     # --- end L22 ---
+    # --- L23 --- (strict at load: unknown keys, bad rules and bad types fail before the trader starts)
+    from lean import bot_exit
+    try:
+        bot_exit.Config.from_dict(cfg['bot_exit'])
+    except bot_exit.BotExitConfigError as error:
+        raise ConfigError(str(error)) from None
+    # --- end L23 ---
     return cfg
 
 
@@ -252,6 +262,11 @@ def build_runner(cfg, *, state_dir, discovery_db, keys, code_version, clock=None
     from lean import honeypot_sim
     r.honeypot = honeypot_sim.build(cfg.get('honeypot_sim'), the_store, clock=clock)
     # --- end L22 ---
+    # --- L23: the bot-exit monitor (low lane, own thread in run mode; None when absent/disabled) ---
+    from lean import bot_exit
+    r.bot_exit = bot_exit.build(cfg.get('bot_exit'), store=the_store, keys=keys, code_version=code_version,
+                                strategy_version=strategy_cfg.strategy_version, clock=clock, transport_kwargs=transport_kwargs)
+    # --- end L23 ---
     return r
 
 
