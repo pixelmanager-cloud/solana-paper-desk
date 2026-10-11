@@ -53,7 +53,8 @@ class _Halt(Exception):
 class Runner:
     def __init__(self, *, store, providers, exit_providers, strategy_cfg, discovery_db, state_dir, code_version,
                  screen_overrides=None, pool_fee_bps=25, taker=PAPER_TAKER, kill_switch=None, clock=time.time,
-                 scan_limit=500, max_retries=3, sol_usd_ttl_s=30, stale_mark_s=30, unexitable_after_s=7200):
+                 scan_limit=500, max_retries=3, sol_usd_ttl_s=30, stale_mark_s=30, unexitable_after_s=7200,
+                 extra_sources=None, watchlist=None):
         self.store, self.providers, self.exit_providers = store, providers, exit_providers
         self.cfg = strategy_cfg
         self.pcfg = A.paper_config(strategy_cfg)
@@ -84,6 +85,11 @@ class Runner:
         self._halt_persisted = False
         self.cursor = 0
         self.cursor_initialized = False
+        # --- L14 hook: extra candidate sources + soft-reject watchlist (all logic in lean.watchlist / lean.sources) ---
+        self.extra_sources, self.watch, self._source_of = extra_sources, watchlist, {}
+        from lean import watchlist as _l14
+        _l14.install(self)
+        # --- end L14 ---
         self.startup()
 
     # -- lifecycle ------------------------------------------------------------------------------------------------
@@ -267,7 +273,15 @@ class Runner:
                 self.cursor = handled_to
         except _Halt:
             pass
+        done += self._l14_pass()                                              # L14: after the fresh scan
         return done
+
+    # --- L14 hook ---
+    def _l14_pass(self):
+        """Extra sources, then watchlist re-screens: after the pump scan, bounded, isolated, never raises."""
+        from lean import watchlist as _l14
+        return _l14.after_scan(self) if self.extra_sources is not None or self.watch is not None else 0
+    # --- end L14 ---
 
     def _isolated(self, candidate, attempt):
         try:

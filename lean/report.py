@@ -413,6 +413,15 @@ def _section(function, *args):
         return {'status': 'ERROR', 'code': type(error).__name__, 'detail': str(error)[:200]}
 
 
+def _sources(db):
+    from lean import sources
+    connection = open_ro(db)
+    try:
+        return sources.funnel_by_source(connection)
+    finally:
+        connection.close()
+
+
 def build(db, *, counterfactual_db=None, horizon=3600, now=None):
     now = time.time() if now is None else now
     connection = open_ro(db)
@@ -441,6 +450,9 @@ def build(db, *, counterfactual_db=None, horizon=3600, now=None):
     summary['pnl_by_strategy'] = {'status': 'OK', 'data': pnl_by_strategy(all_trades)}
     summary['exit_reasons'] = {'status': 'OK', 'data': exit_breakdown(all_trades)}
     summary['errors'] = {'status': 'OK', 'data': errors_by_code(events)}
+    # --- L14 hook: per-source funnel (candidates -> screened -> passed -> entered, rejection reasons, watchlist outcome) ---
+    summary['sources'] = _section(_sources, db)
+    # --- end L14 ---
     if counterfactual_db is None:
         summary['counterfactual'] = {'status': 'NOT_PROVIDED'}
     elif funnel_result['status'] != 'OK':
@@ -516,6 +528,16 @@ def render_html(s):
                      table(['reason', 'rejected', 'with return', 'baseline missing', 'mean', 'median', 'share positive', 'dead', 'sample'],
                            [[k, v['rejected'], v['with_return'], v['baseline_missing'], v['return']['mean'], v['return']['median'],
                              v['share_positive'], v['pool_dead'], v['sample']] for k, v in d['groups'].items()]))
+    # --- L14 hook ---
+    src = s.get('sources', {'status': 'NOT_PROVIDED'})
+    parts.append('<h2>Funnel per source</h2>' + note(src))
+    if src['status'] == 'OK':
+        parts.append(table(['source', 'candidates', 'screened', 'passed', 'entered', 'screen rejected', 'screen failed', 'watched', 're-screens',
+                            'entered after watch', 'watch ended'],
+                           [[k, v['candidates'], v['screened'], v['passed'], v['entered'], v['screen_rejected'], v['screen_failed'], v['watched'],
+                             v['rescreens'], v['entered_after_watch'], ', '.join('%s:%d' % kv for kv in sorted(v['watch_ended'].items()))]
+                            for k, v in sorted(src['data'].items())]))
+    # --- end L14 ---
     parts.append('<h2>Errors by code</h2>' + (table(['code', 'count'], list(s['errors']['data'].items())) if s['errors']['data'] else '<p>None recorded.</p>'))
     parts.append('<h2>Versions</h2>' + table(['kind', 'version', 'events'], [['strategy', k, v] for k, v in s['versions']['strategy'].items()] +
                                               [['code', k, v] for k, v in s['versions']['code'].items()]))

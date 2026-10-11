@@ -23,6 +23,8 @@ CONFIG_KEYS = {
     'stale_mark_s': 30,                # a mark older than this is not used; the position is quote-marked instead (3x interval)
     'unexitable_after_s': 7200,        # a wanted exit failing (no route / 4xx) this long is written off at zero proceeds
     'screen': {},                      # lean.candidates settings other than the strategy-owned bands
+    'sources': [],                     # L14: extra candidate sources [{name, type, discovery_db}]; [] = pump discovery only
+    'watchlist': {},                   # L14: {enabled (false), watch_interval_s 300, watch_hours 2, watch_max_per_pass 5, watch_max_rescreens_per_hour 120}
 }
 REQUIRED = ('strategy_config', 'initial_cash_sol')
 
@@ -46,6 +48,15 @@ def load_config(path):
     cfg['strategy_config'] = str(strategy_path if strategy_path.is_absolute() else path.parent / strategy_path)
     if not isinstance(cfg['screen'], dict):
         raise ConfigError('screen must be an object')
+    # --- L14 hook: validated at load, so a typo fails before the trader starts ---
+    from lean import candidates, sources, watchlist
+    try:
+        sources.build_sources(cfg['sources'])
+        watchlist.check_window(watchlist.WatchConfig.from_dict(cfg['watchlist']),
+                               cfg['screen'].get('max_age_seconds', candidates.DEFAULTS['max_age_seconds']))
+    except (sources.SourceConfigError, watchlist.WatchConfigError, TypeError) as error:
+        raise ConfigError(str(error)) from None
+    # --- end L14 ---
     return cfg
 
 
@@ -72,13 +83,23 @@ def build_runner(cfg, *, state_dir, discovery_db, keys, code_version, clock=None
     the_store = store.Store(os.path.join(state, 'lean.sqlite'), initial_cash_sol=str(cfg['initial_cash_sol']),
                             code_version=code_version, strategy_version=strategy_cfg.strategy_version, clock=clock)
     transport_kwargs = transport_kwargs or {}
+    # --- L14 hook ---
+    from lean import adapters, sources, watchlist
+    screen_cfg = adapters.screen_config(strategy_cfg, cfg['screen'])
+    extra = sources.build_sources(cfg['sources'], screen_cfg=screen_cfg, limit=cfg['scan_limit'], clock=clock)
+    watch_cfg = watchlist.WatchConfig.from_dict(cfg['watchlist'])
+    l14 = {'extra_sources': sources.SourceSet(extra, state) if extra else None,
+           'watchlist': (watchlist.Watchlist(the_store, watch_cfg, clock=clock, code_version=code_version,
+                                             strategy_version=strategy_cfg.strategy_version,
+                                             max_age_seconds=screen_cfg['max_age_seconds']) if watch_cfg.enabled else None)}
+    # --- end L14 ---
     return runner.Runner(
         store=the_store, providers=providers.build_providers(keys, lane='main', **transport_kwargs),
         exit_providers=providers.build_providers(keys, lane='exit', **transport_kwargs), strategy_cfg=strategy_cfg,
         discovery_db=discovery_db, state_dir=state, code_version=code_version, screen_overrides=cfg['screen'],
         pool_fee_bps=cfg['pool_fee_bps'], clock=clock, scan_limit=cfg['scan_limit'],
         max_retries=cfg['max_candidate_retries'], sol_usd_ttl_s=cfg['sol_usd_ttl_s'], stale_mark_s=cfg['stale_mark_s'],
-        unexitable_after_s=cfg['unexitable_after_s'])
+        unexitable_after_s=cfg['unexitable_after_s'], **l14)
 
 
 def main(argv=None):
