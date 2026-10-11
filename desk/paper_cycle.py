@@ -73,9 +73,16 @@ REQUEST_TIMEOUT_MAX = 15            # desk.paper_read_sources._attempt accepts 0
 DEADLINE_RANGE = (10, 20)          # whole seconds; see worst_case_seconds and docs/PERFORMANCE_BUDGETS.md for the arithmetic
 # Provider cadences of the paid plans (T36): Helius 0.1 s, Jupiter 0.25 s; the shared Kraken lane stays at 2 s.
 PACING_SECONDS = {'helius': 0.1, 'jupiter': 0.25, 'kraken': 2.0}
-# Charged provider reads that one cycle may spend after its preparation: the entry reserve of history-first
-# (history_preparation_rejection.intent: 9, or 7 with USD valuation v1, one of them the Kraken SOL/USD read) and one held leg.
-CYCLE_REQUESTS = {'entry': (8, 1), 'entry_usd_v1': (6, 1), 'held_leg': (5, 1)}      # (non-Kraken reads, Kraken reads)
+# T24S F9: the worst case is sized on the per-pass MAXIMUM, not on the preparation reserve. A scan is admitted with a hard ceiling of
+# 18 charged requests (history_progress.admit), at most one of them the shared Kraken SOL/USD read, so one pass may spend 17 + 1
+# reads; the old 9-read (7 with USD v1) figures were the entry's RESERVE, which is not a bound. (non-Kraken reads, Kraken reads)
+CYCLE_REQUESTS = {'entry': (17, 1), 'held_leg': (17, 1)}
+# Other units that can hold the shared pacing slot of a provider ahead of this pass (the entry dispatcher and the held cycle run
+# on separate timers; the monitor and the held watcher read too). Each contender can place one read in front of ours per cadence.
+CONTENDING_UNITS = 2
+# terminal.gate calls one pass makes (dispatcher: preflight, two context checks, post-acquisition check, final check; cycle: one)
+GATE_CALLS = {'entry': 5, 'held_leg': 1}
+GATE_SECONDS_BUDGET = 1.0           # per call, cold; measured <= 0.4 s at the 10,000-pass ceiling (docs/PERFORMANCE_BUDGETS.md)
 
 
 def deadline_seconds(cfg):
@@ -88,13 +95,21 @@ def deadline_seconds(cfg):
     return value
 
 
-def worst_case_seconds(pass_type, latency, pacing=PACING_SECONDS):
+def worst_case_seconds(pass_type, latency, pacing=PACING_SECONDS, contenders=0):
     """Upper bound of one cycle's provider reads when every read has to wait out its provider cadence AND takes ``latency``.
 
-    Reads are strictly sequential (one process, the shared pacer serialises providers), so each read costs at most its
-    provider's cadence plus the response time; the non-Kraken reads are bounded by the slower of Helius/Jupiter."""
+    Reads are strictly sequential (one process, the shared pacer serialises providers), so each read costs at most its provider's
+    cadence plus the response time; the non-Kraken reads are bounded by the slower of Helius/Jupiter. ``contenders`` other units
+    queued on the same shared pacer each place one read in front of ours per cadence (``CONTENDING_UNITS`` for the unit budget)."""
     other, kraken = CYCLE_REQUESTS[pass_type]
-    return other * (max(pacing['helius'], pacing['jupiter']) + latency) + kraken * (pacing['kraken'] + latency)
+    share = 1 + contenders
+    return (other * (share * max(pacing['helius'], pacing['jupiter']) + latency)
+            + kraken * (share * pacing['kraken'] + latency))
+
+
+def unit_worst_case_seconds(pass_type, latency, pacing=PACING_SECONDS):
+    """The same bound for the whole unit step: contended reads plus the terminal-gate calls the pass makes."""
+    return worst_case_seconds(pass_type, latency, pacing, CONTENDING_UNITS) + GATE_CALLS[pass_type] * GATE_SECONDS_BUDGET
 
 
 def _config(cfg):

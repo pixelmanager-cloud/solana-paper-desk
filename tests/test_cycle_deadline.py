@@ -97,41 +97,60 @@ class BudgetTests(unittest.TestCase):
             budget.call('s', lambda timeout: seen.append(timeout) or (_ for _ in ()).throw(RuntimeError('stop')))
         self.assertEqual(seen, [cycle.REQUEST_TIMEOUT_MAX])
         self.assertEqual(cycle.REQUEST_TIMEOUT_MAX, 15)
-        self.assertIn('<= 15', open(paper_read_sources.__file__).read())
+        self.assertIn('<= 15', Path(paper_read_sources.__file__).read_text())
 
     def test_an_overrun_is_on_the_closure_allow_list_not_a_latch(self):
         self.assertIn('CYCLE_DEADLINE_UNAVAILABLE', closure.TRANSIENT_CAUSES)
 
 
 class WorstCaseTests(unittest.TestCase):
-    """Known answers of worst_case_seconds with the T36 cadences (Helius 0.1, Jupiter 0.25, Kraken 2.0 s)."""
+    """Known answers of worst_case_seconds with the T36 cadences (Helius 0.1, Jupiter 0.25, Kraken 2.0 s), sized on the 18-read MAXIMUM."""
 
     def test_known_answers(self):
-        # entry: 8 non-Kraken reads x (0.25 + L) + 1 Kraken read x (2.0 + L)
-        self.assertAlmostEqual(cycle.worst_case_seconds('entry', 0.5), 8 * 0.75 + 2.5)
-        self.assertAlmostEqual(cycle.worst_case_seconds('entry', 1.0), 8 * 1.25 + 3.0)
-        self.assertAlmostEqual(cycle.worst_case_seconds('entry', 0.0), 8 * 0.25 + 2.0)
-        self.assertAlmostEqual(cycle.worst_case_seconds('entry_usd_v1', 1.0), 6 * 1.25 + 3.0)
-        self.assertAlmostEqual(cycle.worst_case_seconds('held_leg', 0.5), 5 * 0.75 + 2.5)
+        # entry: 17 non-Kraken reads x (0.25 + L) + 1 Kraken read x (2.0 + L)
+        self.assertAlmostEqual(cycle.worst_case_seconds('entry', 0.0), 17 * 0.25 + 2.0)
+        self.assertAlmostEqual(cycle.worst_case_seconds('entry', 0.5), 17 * 0.75 + 2.5)
+        self.assertAlmostEqual(cycle.worst_case_seconds('entry', 1.0), 17 * 1.25 + 3.0)
+        self.assertAlmostEqual(cycle.worst_case_seconds('held_leg', 0.5), 17 * 0.75 + 2.5)
+        # one contender queued on the shared pacer places one read in front of ours per cadence
+        self.assertAlmostEqual(cycle.worst_case_seconds('entry', 0.5, contenders=1), 17 * (2 * 0.25 + 0.5) + (2 * 2.0 + 0.5))
+        self.assertAlmostEqual(cycle.worst_case_seconds('entry', 0.5, contenders=2), 17 * (3 * 0.25 + 0.5) + (3 * 2.0 + 0.5))
 
     def test_the_arithmetic_behind_the_ten_second_default_and_the_range(self):
-        self.assertLess(cycle.worst_case_seconds('entry', 0.5), cycle.DEFAULT_DEADLINE_SECONDS)       # 8.5 s: fits with 0.5 s latency
-        self.assertGreater(cycle.worst_case_seconds('entry', 1.0), cycle.DEFAULT_DEADLINE_SECONDS)    # 13 s: does not fit with 1.0 s
-        self.assertLess(cycle.worst_case_seconds('entry', 1.7), cycle.DEADLINE_RANGE[1])              # 20 s ceiling covers ~1.78 s latency
-        self.assertGreater(cycle.worst_case_seconds('entry', 1.9), cycle.DEADLINE_RANGE[1])
+        deadline, ceiling = cycle.DEFAULT_DEADLINE_SECONDS, cycle.DEADLINE_RANGE[1]
+        # no contention: 6.25 s of cadence + 18 L. The 10 s default only covers a MAXIMUM pass when responses take <= ~0.2 s ...
+        self.assertLess(cycle.worst_case_seconds('entry', 0.2), deadline)
+        self.assertGreater(cycle.worst_case_seconds('entry', 0.25), deadline)
+        # ... and the 20 s ceiling when they take <= ~0.76 s. A typical pass reads far less than 18, and an overrun is the allow-listed
+        # CYCLE_DEADLINE_UNAVAILABLE (FAILED_CHARGED, nothing latches), so these are bounds, not predictions.
+        self.assertLess(cycle.worst_case_seconds('entry', 0.76), ceiling)
+        self.assertGreater(cycle.worst_case_seconds('entry', 0.77), ceiling)
+        # with the shared pacer contended the default cannot cover a maximum pass at all
+        self.assertGreater(cycle.worst_case_seconds('entry', 0.0, contenders=cycle.CONTENDING_UNITS), deadline)
 
-    def test_monotone_in_latency_and_in_pacing(self):
+    def test_monotone_in_latency_in_pacing_and_in_contention(self):
         values = [cycle.worst_case_seconds('entry', latency / 10) for latency in range(0, 30)]
         self.assertEqual(values, sorted(values))
         slower = dict(cycle.PACING_SECONDS, helius=2.0, jupiter=2.0)
         self.assertGreater(cycle.worst_case_seconds('entry', 0.5, slower), cycle.worst_case_seconds('entry', 0.5))
+        self.assertGreater(cycle.worst_case_seconds('entry', 0.5, contenders=1), cycle.worst_case_seconds('entry', 0.5))
 
-    def test_request_counts_match_the_reserve_in_the_preparation_intent(self):
-        other, kraken = cycle.CYCLE_REQUESTS['entry']
-        self.assertEqual(other + kraken, 9)      # history_preparation_rejection.intent: fresh_requests_reserved without USD v1
-        other, kraken = cycle.CYCLE_REQUESTS['entry_usd_v1']
-        self.assertEqual(other + kraken, 7)      # ... and with paper_usd_valuation_version 1
+    def test_request_counts_are_the_per_scan_maximum_not_the_preparation_reserve(self):
+        from desk import history_progress
+        for kind in ('entry', 'held_leg'):
+            other, kraken = cycle.CYCLE_REQUESTS[kind]
+            self.assertEqual((other + kraken, kraken), (18, 1), kind)
+        self.assertEqual(set(cycle.CYCLE_REQUESTS), {'entry', 'held_leg'})      # the 9 / 7-read reserve variants are gone
+        source = Path(history_progress.__file__).read_text()
+        self.assertIn('def admit(self,identity,descriptor,ceiling=18)', source)  # the ceiling the 18 comes from
         self.assertEqual(cycle.PACING_SECONDS['kraken'], 2.0)
+
+    def test_unit_bound_adds_contention_and_the_gate_calls(self):
+        for kind in ('entry', 'held_leg'):
+            expected = (cycle.worst_case_seconds(kind, 0.5, contenders=cycle.CONTENDING_UNITS)
+                        + cycle.GATE_CALLS[kind] * cycle.GATE_SECONDS_BUDGET)
+            self.assertAlmostEqual(cycle.unit_worst_case_seconds(kind, 0.5), expected)
+        self.assertGreater(cycle.unit_worst_case_seconds('entry', 0.5), cycle.worst_case_seconds('entry', 0.5))
 
 
 class RenderedUnitTests(unittest.TestCase):
@@ -143,11 +162,25 @@ class RenderedUnitTests(unittest.TestCase):
     def test_held_unit_fits_every_leg_at_the_largest_deadline(self):
         positions = json.loads((ROOT / 'config' / 'paper.json').read_text())['max_positions']
         overhead = 20                                           # target export, accounting, interpreter start
-        self.assertLessEqual(positions * cycle.DEADLINE_RANGE[1] + overhead, self.timeout('desk-paper-held-cycle.service'))
+        leg = cycle.DEADLINE_RANGE[1] + cycle.GATE_CALLS['held_leg'] * cycle.GATE_SECONDS_BUDGET   # the deadline caps the reads
+        self.assertLessEqual(positions * leg + overhead, self.timeout('desk-paper-held-cycle.service'))
 
-    def test_entry_unit_fits_preparation_plus_the_deadline(self):
+    def test_entry_unit_fits_preparation_plus_the_deadline_and_every_gate_call(self):
         preparation = 18 + 2                                    # preparation_seconds + the pacing sleep between the phases
-        self.assertLessEqual(preparation + cycle.DEADLINE_RANGE[1] + 60, self.timeout('desk-paper-entry-dispatcher.service'))
+        gates = cycle.GATE_CALLS['entry'] * cycle.GATE_SECONDS_BUDGET
+        self.assertLessEqual(preparation + cycle.DEADLINE_RANGE[1] + gates + 60, self.timeout('desk-paper-entry-dispatcher.service'))
+
+    def test_the_decisions_unit_does_no_provider_io_and_its_waits_fit_its_timeout(self):
+        from desk import decision_runner
+        unit = (FRESH / 'desk-decisions.service').read_text()
+        self.assertIn('PrivateNetwork=true', unit)               # no provider reads: no pacer contention, no read deadline
+        busy_timeout = 15                                        # decision_runner: PRAGMA busy_timeout=15000 for the consumer batch
+        self.assertIn('busy_timeout=15000', Path(decision_runner.__file__).read_text())
+        waits = decision_runner._JOURNAL_INIT_TIMEOUT + busy_timeout                 # its own deadlines, back to back
+        self.assertLessEqual(waits + 20, self.timeout('desk-decisions.service'))      # + interpreter start and the bounded batch
+
+    def test_the_pass_deadline_range_still_fits_the_unit_bound_with_gate_cost(self):
+        self.assertLess(cycle.GATE_SECONDS_BUDGET * cycle.GATE_CALLS['entry'], 10)
 
     def test_units_still_carry_the_timeouts_this_analysis_assumes(self):
         self.assertEqual((self.timeout('desk-paper-held-cycle.service'), self.timeout('desk-paper-entry-dispatcher.service'),

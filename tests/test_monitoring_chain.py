@@ -168,6 +168,7 @@ class ChainTests(_Fixture):
     def test_every_chained_field_is_covered(self):
         for column, value in (('at', 5.0), ('scan_id', 'x'), ('mint', 'x'), ('checkpoint_hash', 'x'), ('method', 'x'), ('params_hash', 'x')):
             with self.subTest(column=column):
+                self.doCleanups()          # a re-run of setUp inside a subTest must release the previous fixture first
                 self.setUp()
                 for _ in range(4):
                     self.read()
@@ -192,6 +193,7 @@ class ChainTests(_Fixture):
                                 (f'UPDATE {mb.CHAIN_TABLE} SET reservation_id=99 WHERE seq=2', ()),
                                 (f'UPDATE {mb.CHAIN_TABLE} SET reservation_id=99 WHERE seq=5', ())):      # the LAST link too
             with self.subTest(statement=statement):
+                self.doCleanups()          # a re-run of setUp inside a subTest must release the previous fixture first
                 self.setUp()
                 for _ in range(5):
                     self.read()

@@ -34,6 +34,7 @@ class PreTransportTransient(unittest.TestCase):
 
     def test_the_sources_own_deadline_before_any_transport_is_the_retryable_state(self):
         before = self.t.progress.snapshot(self.t.seed())['requests_used']
+        self.doCleanups()          # a re-run of setUp inside a subTest must release the previous fixture first
         self.setUp()
         key, result = self.advance(PaperReadError('DEADLINE_EXCEEDED'))
         self.assertEqual(result['status'], 'RETRYABLE_ERROR')
@@ -55,6 +56,7 @@ class PreTransportTransient(unittest.TestCase):
                 'bare OSError': OSError('SYNTHETIC_TEST_ONLY'),
                 'deadline with a missing original': PaperReadError('DEADLINE_EXCEEDED', 'f' * 64)}.items():
             with self.subTest(name):
+                self.doCleanups()          # a re-run of setUp inside a subTest must release the previous fixture first
                 self.setUp()
                 key = self.t.seed()
                 before = self.t.progress.snapshot(key)
@@ -70,6 +72,7 @@ class PreTransportTransient(unittest.TestCase):
     def test_only_the_sources_own_deadline_code_qualifies(self):
         for code in ('TRANSPORT_ERROR', 'RPC_ERROR', 'PACING_DEADLINE_EXCEEDED', 'PACING_QUEUE_FULL'):
             with self.subTest(code):
+                self.doCleanups()          # a re-run of setUp inside a subTest must release the previous fixture first
                 self.setUp()
                 key = self.t.seed()
 
