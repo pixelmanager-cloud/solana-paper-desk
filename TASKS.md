@@ -1693,3 +1693,25 @@ T37F made every failed SOL/USD attempt end terminal, including integrity-class c
    - Commit the coordinator probe table as tests: each cause × {entry, held} × {Kraken up, Kraken down}.
 2. **(LOW) Regime source.** When the valuation used the Kraken fallback, the regime must use THAT observation, not a Jupiter price up to 900s old (`regime_producer.py` ~:94-101).
 3. **Out of OWNS.** T37F edited paper_cycle.py, engine.py and tools/ops/healthcheck.py. List those edits in the report and keep them minimal.
+
+---
+
+## T16J — Concurrency final fixes (from the T16I review)
+STATUS: OPEN
+DEPENDS: branch `cloud/T22I` has a `DONE T22I:` commit
+BASE: origin/cloud/T16I, then merge origin/integration/r1 and origin/cloud/T22I. Resolve the T22H-origin conflicts in desk/monitoring_budget.py and three tests by keeping integration's T38/T25F versions plus T22H/T22I's additions.
+OWNS: the T16/T35 files, tools/paper_entry_dispatcher.py, desk/watchlist.py (docs table only), docs/MULTI_POSITION.md, docs/WATCHLIST.md, tests
+AVOID: desk/provider_pacing.py
+
+1. **Crash-restart test.** `tests/test_paper_concurrency_held_latency.py` ~:338 fails on macOS: it uses the wrong key (`monitoring_attempted_requests` instead of `attempted_requests`), and the orphan is never abandoned without an injected lock table. Fix the key and inject the lock table (T25F style), so the test passes on macOS AND Linux.
+2. **Watchlist docs.** Add the 11 new NOT_YET codes (`desk/watchlist.py` ~:60-72) to docs/WATCHLIST.md, so `test_watchlist.DocumentationTests` passes. Scope those codes to the checkpoint result kind only, not the global NOT_YET set.
+3. **(MED) Post-intent typed terminals.**
+   - `Provider pacing pending` (`state_gate` → `_preflight` ~:386) is pacing contention (transient) and must end as a typed terminal no-entry, not EXCEPTION_VALUEERROR → hold.
+   - The same applies to the `_held_guard` refusals mid-phase ("Held-position priority before I/O", "Held cycle or ledger busy").
+
+   Add a test for each.
+4. **Alarm during intake.** Add a test for the SIGALRM `_Deadline` firing after a charged `HistoryProgress.advance` reservation inside `migration.intake`. The next preflight/dispatch must be clean, with no ambiguous-reservation latch. Fix the code if it is not.
+5. **One rollover rule in the docs.** Reconcile docs/MULTI_POSITION.md (~:150 vs ~:235-236) to describe the single flag-gated rule the code has.
+6. **(LOW) Closed-vault confirmations.** The N=2 "closed" confirmation needs a minimum spacing (e.g. ≥5s between observations), so back-to-back refreshes cannot confirm a transient null.
+
+Run every listed module plus test_watchlist in ONE process on macOS, with the real exit code.
