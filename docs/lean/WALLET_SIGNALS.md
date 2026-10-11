@@ -36,15 +36,15 @@ else UNKNOWN after `outcome_max_age_s`. A wallet is smart with >= `min_wins` (2)
 after it.
 
 ## Budget
-Per candidate at most `max_calls` (16) requests: 2 signature pages + `getTokenSupply` + 6 `getTransaction` + 3 wallets x
-(`getSignaturesForAddress` + `getTransaction`) = 15 at worst. A launch with four window transactions and three funding lookups costs 12 (the e2e fixture); one with no swap in the
-window costs 2. One attempt per request (no transport retries), so the cap equals the requests sent. Every request goes
-through `LowLaneLimiter`: its own bucket (`low_rate_per_s` 1.0, burst 2) AND a token of the shared Helius main-lane bucket, so
-the collector can never use more than 1 req/s and always queues behind screening; `shed()` (credit shedding, L15) refuses
-before any token is taken. The exit lane is never touched. Collection runs on its own thread (`WalletSignals.run_loop`) and
-finds work straight from the store (screened, no row yet), so a restart loses nothing and no queue can overflow. A transient
-failure of the first request is retried (`max_retries`, `retry_delay_s`), then recorded as unavailable; an unexpected error is
-retried a bounded number of times and then closed out with a `COLLECT_FAILED` row, so one bad candidate never blocks the rest.
+Per candidate at most `max_calls` (16) requests actually SENT: 2 signature pages + `getTokenSupply` + 6 `getTransaction` + 3 wallets x
+(`getSignaturesForAddress` + `getTransaction`) = 15 at worst. A launch with four window transactions and three funding lookups costs 12 (the e2e
+fixture); one with no swap in the window costs 2. Every request goes through the shared LOW lane (`lean.providers.low`, L07R): it goes out at once or
+fails with `LANE_SHED` and sends nothing (and does not count against the cap); any 429 on any lane sheds the low lane for a while. This collector
+has its own thread, so a `no_token` shed is paced (`pace_s` 0.25 s, up to `shed_wait_s` 30 s per request); a shed window or lost patience ends the
+candidate with what it learned (`unavailable['stopped'] = 'LANE_SHED'`), or retries it later (`max_retries`, `retry_delay_s`) when nothing was learned
+yet. `shed()` (credit shedding, L15) refuses before a request. The exit lane is never touched. Collection runs on its own daemon thread
+(`WalletSignals.run_loop`) and finds work straight from the store (screened, no row yet), so a restart loses nothing and no queue can overflow. An
+unexpected error is retried a bounded number of times and then closed out with a `COLLECT_FAILED` row, so one bad candidate never blocks the rest.
 
 `retain_raw`: `signatures` (default) keeps the signature pages as `wallet_signals:raw:*` observations; `all` also keeps every
 `getTransaction` body (large); `none` keeps only the feature row.
