@@ -54,7 +54,7 @@ class Runner:
     def __init__(self, *, store, providers, exit_providers, strategy_cfg, discovery_db, state_dir, code_version,
                  screen_overrides=None, pool_fee_bps=25, taker=PAPER_TAKER, kill_switch=None, clock=time.time,
                  scan_limit=500, max_retries=3, sol_usd_ttl_s=30, stale_mark_s=30, unexitable_after_s=7200, route_check=None,
-                 execution=None, held_risk=None):
+                 execution=None, held_risk=None, extra_sources=None, watchlist=None):
         # --- L10 hook: latency-aware fills + cost model (None = today's instant fills). The priority fee + Jito tip enter
         # through the strategy config, so the fill fee, the marks and the entry/exit cost checks share one number. ---
         self.execution = execution
@@ -103,6 +103,11 @@ class Runner:
         # --- L11 hook ---
         self.held_risk = H.build(held_risk, self.store, code_version=code_version, strategy_version=self.strategy_version, clock=clock)
         # --- end L11 ---
+        # --- L14 hook: extra candidate sources + soft-reject watchlist (all logic in lean.watchlist / lean.sources) ---
+        self.extra_sources, self.watch, self._source_of = extra_sources, watchlist, {}
+        from lean import watchlist as _l14
+        _l14.install(self)
+        # --- end L14 ---
         self.startup()
         # --- L10 hook ---
         if execution is not None and self.halted is None:
@@ -292,7 +297,15 @@ class Runner:
                 self.cursor = handled_to
         except _Halt:
             pass
+        done += self._l14_pass()                                              # L14: after the fresh scan
         return done
+
+    # --- L14 hook ---
+    def _l14_pass(self):
+        """Extra sources, then watchlist re-screens: after the pump scan, bounded, isolated, never raises."""
+        from lean import watchlist as _l14
+        return _l14.after_scan(self) if self.extra_sources is not None or self.watch is not None else 0
+    # --- end L14 ---
 
     def _isolated(self, candidate, attempt):
         try:

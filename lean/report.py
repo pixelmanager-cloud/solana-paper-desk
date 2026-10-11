@@ -483,6 +483,15 @@ def _execution(db):
         connection.close()
 
 
+def _sources(db):
+    from lean import sources
+    connection = open_ro(db)
+    try:
+        return sources.funnel_by_source(connection)
+    finally:
+        connection.close()
+
+
 def build(db, *, counterfactual_db=None, horizon=3600, now=None):
     now = time.time() if now is None else now
     connection = open_ro(db)
@@ -522,6 +531,9 @@ def build(db, *, counterfactual_db=None, horizon=3600, now=None):
     summary['execution'] = _section(_execution, db)
     # --- end L10 ---
     summary['held_risk'] = _section(held_risk_report, db)        # L11
+    # --- L14 hook: per-source funnel (candidates -> screened -> passed -> entered, rejection reasons, watchlist outcome) ---
+    summary['sources'] = _section(_sources, db)
+    # --- end L14 ---
     if counterfactual_db is None:
         summary['counterfactual'] = {'status': 'NOT_PROVIDED'}
     elif funnel_result['status'] != 'OK':
@@ -623,6 +635,16 @@ def render_html(s):
         parts.append(table(['side', 'n', 'tax bps p50', 'p90', 'mean', 'max'], [[k, v['n'], v['p50'], v['p90'], v['mean'], v['max']] for k, v in d['latency_tax_bps'].items()]))
         parts.append(table(['fee (SOL)', 'amount'], list(d['fees_sol'].items())))
     # --- end L10 ---
+    # --- L14 hook ---
+    src = s.get('sources', {'status': 'NOT_PROVIDED'})
+    parts.append('<h2>Funnel per source</h2>' + note(src))
+    if src['status'] == 'OK':
+        parts.append(table(['source', 'candidates', 'screened', 'passed', 'entered', 'screen rejected', 'screen failed', 'watched', 're-screens',
+                            'entered after watch', 'watch ended'],
+                           [[k, v['candidates'], v['screened'], v['passed'], v['entered'], v['screen_rejected'], v['screen_failed'], v['watched'],
+                             v['rescreens'], v['entered_after_watch'], ', '.join('%s:%d' % kv for kv in sorted(v['watch_ended'].items()))]
+                            for k, v in sorted(src['data'].items())]))
+    # --- end L14 ---
     parts.append('<h2>Errors by code</h2>' + (table(['code', 'count'], list(s['errors']['data'].items())) if s['errors']['data'] else '<p>None recorded.</p>'))
     parts.append('<h2>Versions</h2>' + table(['kind', 'version', 'events'], [['strategy', k, v] for k, v in s['versions']['strategy'].items()] +
                                               [['code', k, v] for k, v in s['versions']['code'].items()]))

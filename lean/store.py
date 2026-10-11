@@ -528,6 +528,28 @@ class Store:
             names = [d[0] for d in cur.description]
             return [dict(zip(names, r)) for r in cur.fetchall()]
 
+    def rows_after(self, table, after_id=0, *, mint=None, kind=None, since_ts=None, limit=1000):
+        """L14F pagination primitive (additive): rows with ``id > after_id`` in id order, at most ``limit``, so a caller can read a
+        table of ANY size page by page (``rows`` is capped at its oldest 100000). ``since_ts`` keeps rows with ``ts >= since_ts``.
+        Same table/filter rules and bound parameters as ``rows``."""
+        if table not in TABLES or table == 'meta' or type(limit) is not int or not 0 < limit <= 100000 or type(after_id) is not int:
+            raise StoreError('unknown table or limit')
+        clauses, args = ['id>?'], [after_id]
+        for column, value in (('mint', mint), ('kind', kind)):
+            if value is None:
+                continue
+            if (column == 'mint' and table == 'events') or (column == 'kind' and table not in ('events', 'observations', 'decisions')):
+                raise StoreError('filter not available on this table')
+            clauses.append(column + '=?')
+            args.append(value)
+        if since_ts is not None:
+            clauses.append('ts>=?')
+            args.append(float(since_ts))
+        with self._lock:
+            cur = self.db.execute(f'SELECT * FROM {table} WHERE {" AND ".join(clauses)} ORDER BY id LIMIT ?', (*args, limit))
+            names = [d[0] for d in cur.description]
+            return [dict(zip(names, r)) for r in cur.fetchall()]
+
     @staticmethod
     def _clean(meta):
         """Metadata is JSON-able and credential-free: every string value is redacted."""

@@ -30,6 +30,8 @@ CONFIG_KEYS = {
     'route_check': {},                 # L16: {"enabled": true} records whether a real bot could build each BUY / full exit
     'execution': None,                 # L10: null = instant fills (today); an object turns on latency-aware fills + the cost model
     'held_risk': {},                   # lean.held_risk settings (L11): rug / unsellable handling of held positions
+    'sources': [],                     # L14: extra candidate sources [{name, type, discovery_db}]; [] = pump discovery only
+    'watchlist': {},                   # L14: {enabled (false), watch_interval_s 300, watch_hours 2, watch_max_per_pass 5, watch_max_rescreens_per_hour 120}
 }
 REQUIRED = ('strategy_config', 'initial_cash_sol')
 
@@ -81,6 +83,15 @@ def load_config(path):
         held_risk.Config.from_dict(cfg['held_risk'])
     except held_risk.HeldRiskConfigError as error:
         raise ConfigError(str(error)) from None
+    # --- L14 hook: validated at load, so a typo fails before the trader starts ---
+    from lean import candidates, sources, watchlist
+    try:
+        sources.build_sources(cfg['sources'])
+        watchlist.check_window(watchlist.WatchConfig.from_dict(cfg['watchlist']),
+                               cfg['screen'].get('max_age_seconds', candidates.DEFAULTS['max_age_seconds']))
+    except (sources.SourceConfigError, watchlist.WatchConfigError, TypeError) as error:
+        raise ConfigError(str(error)) from None
+    # --- end L14 ---
     return cfg
 
 
@@ -118,6 +129,16 @@ def build_runner(cfg, *, state_dir, discovery_db, keys, code_version, clock=None
         from lean import execution
         exec_model = execution.Execution(execution.ExecConfig.from_dict(cfg['execution']), sleep=transport_kwargs.get('sleep', time.sleep))
     # --- end L10 ---
+    # --- L14 hook ---
+    from lean import adapters, sources, watchlist
+    screen_cfg = adapters.screen_config(strategy_cfg, cfg['screen'])
+    extra = sources.build_sources(cfg['sources'], screen_cfg=screen_cfg, limit=cfg['scan_limit'], clock=clock)
+    watch_cfg = watchlist.WatchConfig.from_dict(cfg['watchlist'])
+    l14 = {'extra_sources': sources.SourceSet(extra, state) if extra else None,
+           'watchlist': (watchlist.Watchlist(the_store, watch_cfg, clock=clock, code_version=code_version,
+                                             strategy_version=strategy_cfg.strategy_version,
+                                             max_age_seconds=screen_cfg['max_age_seconds']) if watch_cfg.enabled else None)}
+    # --- end L14 ---
     r = runner.Runner(
         store=the_store, providers=providers.build_providers(keys, lane='main', **transport_kwargs),
         exit_providers=providers.build_providers(keys, lane='exit', **transport_kwargs), strategy_cfg=strategy_cfg,
@@ -125,7 +146,7 @@ def build_runner(cfg, *, state_dir, discovery_db, keys, code_version, clock=None
         pool_fee_bps=cfg['pool_fee_bps'], clock=clock, scan_limit=cfg['scan_limit'],
         max_retries=cfg['max_candidate_retries'], sol_usd_ttl_s=cfg['sol_usd_ttl_s'], stale_mark_s=cfg['stale_mark_s'],
         unexitable_after_s=cfg['unexitable_after_s'], route_check=cfg['route_check'], execution=exec_model,
-        held_risk=cfg['held_risk'])
+        held_risk=cfg['held_risk'], **l14)
     # --- L07R: the path recorder (low lane), resumed from the store before any loop runs ---
     r.paths = paths.build(paths.config(cfg.get('paths')), store=the_store, keys=keys, pcfg=r.pcfg,
                           code_version=code_version, strategy_version=strategy_cfg.strategy_version,

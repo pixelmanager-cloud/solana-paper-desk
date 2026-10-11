@@ -45,5 +45,13 @@
     "freeze_check_every": 6,
     "freeze_forces_exit": false,
     "pool_gone_confirmations": 2
+  },
+  "sources": [],
+  "watchlist": {
+    "enabled": false,
+    "watch_interval_s": 300,
+    "watch_hours": 2,
+    "watch_max_per_pass": 5,
+    "watch_max_rescreens_per_hour": 120
   }
 }
