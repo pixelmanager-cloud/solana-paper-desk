@@ -98,7 +98,8 @@ Each provider's plan rate is split into three process-wide token buckets (`lean.
 * **The low lane never waits.** Without a token right now, or inside a shed window, a call fails at once with
   `ProviderError('LANE_SHED', transient=True)`. Nothing is sent in that case. `meta['why']` is `no_token` or `backoff`.
 * **429 shedding:** any HTTP 429 seen by ANY lane of a provider sheds its low lane for `low_shed_s`, or longer when
-  Retry-After asks for more (capped at 30 s). A 429 on the low lane blocks nobody else.
+  Retry-After asks for more (capped at 30 s). A 429 on the low lane blocks nobody else. The JSON-RPC throttle code
+  `-32005` (an HTTP 200 answer) sheds the low lane the same way (L07R2).
 * **No retries:** low-lane calls are never retried inside the call. A failed call is a gap for the caller to count.
 * **Exits never wait behind low traffic:** the lanes are separate buckets. `tests/lean/test_low_lane.py` floods the low
   lane (1,000 calls, and 8 threads) and checks that the exit lane is untouched and acquires with zero wait.
@@ -131,26 +132,44 @@ whether it was entered or not. This is data for strategy tuning (L08 replay).
     failed, or entries stopped.
 * **Never recorded:** hazard rejects (authorities, extensions, pool/vault/LP evidence, holder concentration) and failed
   screens. A candidate queued for a retry is decided on its final attempt.
-* **Rows (append-only `observations`):**
-  * `path_start` holds the screen features, `entered`, `not_entered` (`{stage, reasons}`) and the `target` (vault keys,
-    reference quantity and its cost).
-  * `path_mark` holds `{ts, slot, base_raw, quote_raw, net_sol, liquidity_sol, status}`. `net_sol` is
-    `adapters.mark`, the same function the position loop marks with. It values the filled quantity for an entered
-    candidate, otherwise the tokens `ref_size_sol` (0.2 SOL) buys at the path-start reserves.
-  * `path_end` is written once, after `path_hours`.
-  * The event `paths_active` lists the live `path_start` ids. On restart, `build_runner` resumes the live paths from it.
+* **Its own database (L07R2):** `paths.db`, default `<state-dir>/paths.sqlite`, with its own connection and lock.
+  * The trader's accounting store `lean.sqlite` gets NO path rows.
+  * The recorder never reads or locks `lean.sqlite`: the not-entered reason comes from the runner's memory.
+  * The notifier and the report only open `lean.sqlite`, so they never walk path rows.
+* **Tables:** plain indexed tables, append-only by convention (the recorder only INSERTs). Query them directly:
+  * `paths(mint PK, candidate_id, start_ts, ends_ts, entered, stage, reason JSON, screen_reasons JSON, holders_checked,
+    features JSON, target JSON, carried_from, code_version, strategy_version)`.
+  * `path_marks(mint, ts, slot, base_raw, quote_raw, net_sol, liquidity_sol, status)`, with an index on `(mint, ts)`.
+    `net_sol` is `adapters.mark`, the same function the position loop marks with. It values the filled quantity for an
+    entered candidate, otherwise the tokens `ref_size_sol` (0.2 SOL) buys at the path-start reserves.
+  * `path_gaps(mint, ts, cause)`, with an index on `(mint, ts)`: a due mark that was skipped. `cause` is `shed`,
+    `HTTP_429`, `budget`, another provider code, `stopped`, or `POLL_CALL_FAILED`.
+  * `path_ends(mint, ts, why, marks, gaps)`: `COMPLETE` after `path_hours`, or `EXPIRED_WHILE_DOWN` on resume.
+  * The live paths are the `paths` rows without a `path_ends` row.
+* **Rotation and disk:**
+  * When the file passes `max_db_gb` (default 2), it is renamed to `paths-YYYYMMDD[-n].sqlite`, which is logged at
+    WARNING. A fresh `paths.sqlite` then carries over the live paths (`carried_from`).
+  * Archives are never deleted automatically; delete old ones by hand.
+  * Below `min_free_gb` of free disk (default 2), nothing is written and the polls count `disk_low`.
+* **Run mode only:** `Runner.run()` builds the recorder, resumes the live paths from the file before the loops start,
+  then starts its thread. `--once`, `--clear-halt` and `build_runner` never open `paths.sqlite`.
 * **Polling:**
-  * One `getMultipleAccounts` per 50 pools (100 accounts, the RPC limit), on the LOW lane, in its own daemon thread
-    started by `Runner.run`.
-  * The marks of a poll are written in one store transaction (`Store.add_observations`).
-  * When the low lane has no token, the recorder's thread paces its own calls within 80% of the interval. A 429 shed
-    ends the poll, and the missed marks count as gaps.
-* **Isolation:** recorder failures are counted in `health.json` under `paths` (`errors_by_code`, `gaps`, `shed`,
-  `write_failures`, `low_lane`) and never raised. It never takes a runner lock and does no provider I/O under any lock.
-* **Config:** `lean.json` `paths` = `{"enabled": true, "path_hours": 6, "interval_s": 15, "ref_size_sol": "0.2",
-  "max_paths": 2000}`. When `paths` is absent, the recorder is disabled.
-* **Budget at ~70 recorded candidates/h:** about 420 live paths, 9 calls per poll, so about 2,160 Helius calls per hour
-  (0.6 req/s of the 2 req/s low lane). Storage is about 650 B per mark, so about 65 MB/h (see `reports/L07R.md`).
+  * One `getMultipleAccounts` per 50 pools (100 accounts, the RPC limit), on the LOW lane. The marks, gaps and ends of
+    a poll are written in one transaction.
+  * When the low lane has no token, the recorder's thread paces its own calls within 80% of the interval.
+  * A shed (a 429 or -32005 on any lane), the exhausted budget, or `stop` ends the poll. The skipped paths get
+    `path_gaps` rows.
+  * The order ROTATES: the next poll starts at the first skipped path, so the newest paths are never always the ones
+    dropped. `stop` is checked between calls.
+* **Isolation:** recorder failures are counted in `health.json` under `paths` and never raised. That includes `alive`
+  (the thread runs), `errors_by_code`, `gaps`, `shed`, `paced`, `write_failures`, `rollovers`, `disk_low`, `db_bytes`
+  and `low_lane`. The recorder never takes a runner lock and does no provider I/O under any lock.
+* **Config:** `lean.json` `paths` = `{"enabled": true, "db": null, "path_hours": 6, "interval_s": 15,
+  "ref_size_sol": "0.2", "max_paths": 2000, "max_db_gb": 2, "min_free_gb": 2}`. When `paths` is absent, the recorder is
+  disabled.
+* **Budget at ~70 recorded candidates/h:**
+  * About 420 live paths, 9 calls per poll, so about 2,160 Helius calls per hour (0.6 req/s of the 2 req/s low lane).
+  * Storage is about 180 B per mark, so about 18 MB/h (about 0.43 GB/day) in `paths.sqlite` (see `reports/L07R2.md`).
 
 ## Modules
 * `providers`: HTTP clients and limiters (main / exit / low lanes).
