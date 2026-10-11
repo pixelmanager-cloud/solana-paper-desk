@@ -20,6 +20,7 @@ CONFIG_KEYS = {
     'max_candidate_retries': 3,
     'sol_usd_ttl_s': 30,
     'screen': {},                      # lean.candidates settings other than the strategy-owned bands
+    'route_check': {},                 # L16: {"enabled": true} records whether a real bot could build each BUY / full exit
 }
 REQUIRED = ('strategy_config', 'initial_cash_sol')
 
@@ -73,7 +74,7 @@ def build_runner(cfg, *, state_dir, discovery_db, keys, code_version, clock=None
         exit_providers=providers.build_providers(keys, lane='exit', **transport_kwargs), strategy_cfg=strategy_cfg,
         discovery_db=discovery_db, state_dir=state, code_version=code_version, screen_overrides=cfg['screen'],
         pool_fee_bps=cfg['pool_fee_bps'], clock=clock, scan_limit=cfg['scan_limit'],
-        max_retries=cfg['max_candidate_retries'], sol_usd_ttl_s=cfg['sol_usd_ttl_s'])
+        max_retries=cfg['max_candidate_retries'], sol_usd_ttl_s=cfg['sol_usd_ttl_s'], route_check=cfg['route_check'])
 
 
 def main(argv=None):

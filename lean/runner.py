@@ -43,7 +43,7 @@ class _Halt(Exception):
 class Runner:
     def __init__(self, *, store, providers, exit_providers, strategy_cfg, discovery_db, state_dir, code_version,
                  screen_overrides=None, pool_fee_bps=25, taker=PAPER_TAKER, kill_switch=None, clock=time.time,
-                 scan_limit=500, max_retries=3, sol_usd_ttl_s=30):
+                 scan_limit=500, max_retries=3, sol_usd_ttl_s=30, route_check=None):
         self.store, self.providers, self.exit_providers = store, providers, exit_providers
         self.cfg = strategy_cfg
         self.pcfg = A.paper_config(strategy_cfg)
@@ -68,6 +68,10 @@ class Runner:
         self._sol_usd = None                       # (Decimal, fetched_at)
         self.halted = None
         self.cursor = 0
+        # --- L16 hook ---
+        from lean.route_check import RouteChecker
+        self.route_check = RouteChecker(store, route_check, clock=clock)    # off unless route_check.enabled
+        # --- end L16 ---
         self.startup()
 
     # -- lifecycle ------------------------------------------------------------------------------------------------
@@ -266,7 +270,13 @@ class Runner:
             return
         # Quote at the decided size, then the sell leg for exactly the tokens the paper fill will hold.
         size_lamports = A.lamports(gate.size_sol)
-        buy_q, buy_ref, buy_at = self._quote(self.providers, SOL_MINT, mint, size_lamports, 'quote:buy', mint, cid)
+        # --- L16 hook ---
+        try:
+            buy_q, buy_ref, buy_at = self._quote(self.providers, SOL_MINT, mint, size_lamports, 'quote:buy', mint, cid)
+        except ProviderError as error:
+            self.route_check.on_quote_error('entry', mint, error, candidate_id=cid)
+            raise
+        # --- end L16 ---
         sell_q, _, sell_at = self._quote(self.providers, mint, SOL_MINT, A.sell_leg_qty(buy_q.out_amount, self.pcfg),
                                          'quote:sell_leg', mint, cid)
         with self._trade_lock:
@@ -279,6 +289,7 @@ class Runner:
             fill = paper.buy(A.paper_quote(buy_q, mint=mint, side='buy', decimals=features['decimals'], ts=self.clock(),
                                            ref=buy_ref), decision.size_sol, self.pcfg)
             self.store.add_fill(fill, candidate_id=cid, state={'event': 'open', 'state': A.open_state(features, fill, self.cfg)})
+            self.route_check.on_fill('entry', mint, buy_ref, candidate_id=cid)      # --- L16 hook ---
             self._count('entered')
             self._check()
 
@@ -362,7 +373,14 @@ class Runner:
         if decision.action != 'SELL' or not decision.quote_required:
             return 0
         qty = A.sell_qty_raw(decision.qty, position.qty_raw)
-        quote, ref, quote_at = self._quote(self.exit_providers, mint, SOL_MINT, qty, 'quote:exit', mint)
+        # --- L16 hook ---
+        try:
+            quote, ref, quote_at = self._quote(self.exit_providers, mint, SOL_MINT, qty, 'quote:exit', mint)
+        except ProviderError as error:
+            if qty == position.qty_raw:                                             # full exits only
+                self.route_check.on_quote_error('exit', mint, error)
+            raise
+        # --- end L16 ---
         with self._trade_lock:
             now = self._now()
             final = S.exit_decision(held, mark, A.strategy_quote(quote, 'sell', quote_at), now, self.cfg, mark_at=mark_at,
@@ -380,6 +398,7 @@ class Runner:
                 closed = dict(state, reason=final.reason, trade_pnl_lamports=position.realized_lamports + fill.realized_lamports,
                               cooldown_until=S.cooldown_until(final.reason, now, self.cfg))
                 self.store.add_fill(fill, state={'event': 'closed', 'open_fill_id': open_id, 'state': closed})
+                self.route_check.on_fill('exit', mint, ref)                          # --- L16 hook ---
                 self.marks.pop(mint, None)
                 self._count('closed')
             else:

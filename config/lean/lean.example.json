@@ -8,6 +8,7 @@
   "scan_limit": 500,
   "max_candidate_retries": 3,
   "sol_usd_ttl_s": 30,
+  "route_check": {"enabled": true},
   "screen": {
     "min_age_seconds": 300,
     "max_age_seconds": 7200,
