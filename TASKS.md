@@ -2105,3 +2105,33 @@ OWNS: lean/report.py, tests/lean/test_report.py (+ lean/notify.py: the `/pnl` an
 - **Fix:** group every trade, and all of its fills, by the strategy_version of its OPENING buy fill. Do the same for `/pnl` in notify.
 - **Mixed versions:** flag trades whose fills span versions (`mixed_version=1`) in the per-trade table.
 - **Test:** a trade opened under A and closed under B counts fully under A, in both the report and notify.
+
+## L19 — Selection learner: features at screen time → outcome labels → proposed screen rules
+STATUS: OPEN
+DEPENDS: `DONE L07R:` (path_mark rows) and `DONE L12F:` (features rows). Build against those REAL schemas, using synthetic data in tests until production data exists.
+BASE: origin/integration/r1 (after L07R and L12F are merged)
+OWNS: lean/learn.py, lean/labels.py, tests/lean/test_learn.py, tests/lean/test_labels.py, tests/lean/test_e2e_learn.py
+GOAL (CK): learn what winners vs rugs look like AT ENTRY TIME, so the trader keeps getting better at selection.
+
+1. **Labels (`lean/labels.py`).** Label every hazard-passed candidate with a recorded path, whether entered or not, from its path_marks starting at the screen time:
+   - `RUG`: −80% or worse within 1h, or liquidity down by 70% or more
+   - `WIN`: +40% (TP1) reached before the stop (−18%)
+   - `LOSS`: stop reached first
+   - `FLAT`: neither within `path_hours`
+   - Also record `max_up`, `max_down` and `time_to_extreme`.
+   - Use the SAME mark function as live (`adapters.mark`).
+   - Label at most once per candidate; a label is versioned (`label_version`).
+2. **No lookahead.**
+   - Features may come ONLY from rows with ts at or before the screen/entry decision time.
+   - Write a test that fails if any feature row after the decision is used.
+3. **Learner (`lean/learn.py`).** Interpretable only. Stdlib + numpy if already installed; no new heavy deps in the trader venv.
+   - Per-feature quantile tables: rug rate, win rate and mean forward return per bucket, with counts and Wilson intervals.
+   - A greedy rule miner for 1–2 condition rules (e.g. `dev_pct > 8 AND top10 > 45 → reject`) that maximise the out-of-sample expected PnL per candidate under the live exit rules (replay via L08's replay on the path).
+   - Walk-forward by time: mine on the older window, select on a middle window, confirm on the newest window. Never pick on the confirm window.
+   - Minimum support per rule (`min_n`, default 50), with an INSUFFICIENT flag below it.
+4. **Output.**
+   - `config/lean/proposals/<ts>-selection.json` with the rule list, its diff vs the current screen, and the evidence (in-sample, selection and confirm metrics; counts).
+   - An HTML section in the report: "what winners vs rugs looked like at entry".
+   - NEVER auto-apply. A proposal becomes a new strategy/screen version only after coordinator review and CK's OK.
+5. **Shadow (optional, if simple).** A `shadow_rules` config makes the runner log `decisions(kind='shadow')` with what a proposed rule set WOULD have done, with no effect on trading, so champion and challenger can be compared live.
+6. **Acceptance.** The full tests/lean suite passes, rc=0. An e2e test on fakeworld with planted structure (e.g. high dev_pct → rugs) must recover the planted rule, and a pure-noise dataset must produce NO confirmed rule. Try 3 mutations.
