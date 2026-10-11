@@ -8,19 +8,33 @@ import io
 import json
 import os
 import random
+import sqlite3
 import tempfile
 import unittest
 from decimal import Decimal as D
 from pathlib import Path
+from types import SimpleNamespace
+from unittest import mock
 
-from lean import labels as LB, learn as LN, strategy as S
+from lean import features as F, labels as LB, learn as LN, strategy as S, wallet_signals as W
+from lean.store import Store
+from tests.lean import test_wallet_signals as WS
+from tests.lean.test_labels import RecorderMixin
 
 ROOT = Path(__file__).resolve().parents[2]
 DEFAULT = ROOT / 'config' / 'lean' / 'strategy-default.json'
 T0 = 19675 * 86400 + 3600
 NOW = T0 + 10 ** 6
 NAMES = ('dev_holding_pct', 'top10_pct', 'tx_count_first_10m')
+STRATEGY = S.StrategyConfig.load(DEFAULT)
 SMALL = dict(min_n=15, min_confirm=10, min_bucket=5)                  # the production minimums are 50 / 30 / 20; the maths is the same
+
+
+def setUpModule():
+    import socket
+    patcher = mock.patch.object(socket.socket, 'connect', side_effect=AssertionError('network used'))
+    patcher.start()
+    unittest.addModuleCleanup(patcher.stop)
 
 
 def lab(mint, name, ts, end_return=0.0):
@@ -89,41 +103,252 @@ class StatsTests(unittest.TestCase):
         self.assertLess(LN.t_statistic([-3, -2, -4, -1]), 0)
 
 
-class LookaheadTests(unittest.TestCase):
-    def rows(self, **over):
-        base = {'mint': 'M', 'fields': {'dev_holding_pct': '12', 'top10_pct': '40'}, 'missing': {}, '_ts': T0 - 10, '_screen_at': T0 - 12, '_collected_at': T0 - 8}
-        base.update(over)
-        return base
+class DecisionTests(unittest.TestCase):
+    def test_the_decision_is_the_last_screen_or_the_entry_after_it_never_after_the_path_start(self):
+        d = [(100.0, 'screen', 1), (101.0, 'entry', 1), (200.0, 'screen', 1), (203.0, 'entry', 1), (500.0, 'screen', 1), (90.0, 'screen', 2)]
+        d.sort()
+        self.assertEqual(LN.decision_time(d, 1, 150.0), 101.0)
+        self.assertEqual(LN.decision_time(d, 1, 204.0), 203.0)
+        self.assertEqual(LN.decision_time(d, 1, 202.0), 200.0)            # the entry after the start is not the decision
+        self.assertEqual(LN.decision_time(d, 2, 1000.0), 90.0)
+        self.assertIsNone(LN.decision_time(d, 3, 1000.0))
+        self.assertIsNone(LN.decision_time(d, 1, 99.0))
 
-    def test_a_row_known_before_the_decision_is_used(self):
-        known, why, dropped = LN.features_known_at([self.rows()], T0, NAMES)
-        self.assertEqual((known['dev_holding_pct'], known['top10_pct'], known['tx_count_first_10m'], why, dropped), (D(12), D(40), None, None, 0))
+    def test_enterable_means_entered_or_blocked_only_by_the_portfolio(self):
+        def p(entered, screen_reasons=(), reasons=()):
+            return LB.PathRecord('M', 1, 0.0, 1.0, entered, tuple(screen_reasons), tuple(reasons), {}, {}, (), ())
+        self.assertTrue(LN.enterable(p(True)))
+        self.assertTrue(LN.enterable(p(False, reasons=['MAX_POSITIONS', 'ENTRY_THROTTLE'])))
+        self.assertFalse(LN.enterable(p(False, reasons=['COST_BUDGET'])))
+        self.assertFalse(LN.enterable(p(False, reasons=['MAX_POSITIONS', 'NO_ROUTE'])))
+        self.assertFalse(LN.enterable(p(False, screen_reasons=['MARKET_CAP_ABOVE_MAX'], reasons=['MARKET_CAP_ABOVE_MAX'])))
+        self.assertFalse(LN.enterable(p(False)))
 
-    def test_a_row_collected_after_the_decision_plus_lag_is_never_used(self):
-        late = self.rows(_collected_at=T0 + LN.DEFAULT_MAX_LAG_S + 1, fields={'dev_holding_pct': '99'})
-        known, why, dropped = LN.features_known_at([late], T0, NAMES)
-        self.assertEqual((known, why, dropped), (None, 'FEATURES_AFTER_DECISION', 1))
-        known, why, _ = LN.features_known_at([late], T0, NAMES, max_lag_s=LN.DEFAULT_MAX_LAG_S + 5)
-        self.assertEqual(known['dev_holding_pct'], D(99))                   # the lag is the only knob, and it is explicit
 
-    def test_a_row_screened_after_the_decision_is_never_used(self):
-        later = self.rows(_screen_at=T0 + 60, _collected_at=T0 + 61, fields={'dev_holding_pct': '99'})
-        self.assertEqual(LN.features_known_at([later], T0, NAMES, max_lag_s=10 ** 6)[:2], (None, 'FEATURES_AFTER_DECISION'))
+class FieldGuardTests(unittest.TestCase):
+    """The per-field guard on rows made by the REAL builders (lean.features.build_row; lean.wallet_signals.WalletSignals.collect in
+    WriterIntegrationTests)."""
 
-    def test_the_last_acceptable_row_wins_and_a_later_row_cannot_replace_it(self):
-        a = self.rows(fields={'dev_holding_pct': '1'})
-        b = self.rows(fields={'dev_holding_pct': '2'}, _screen_at=T0 - 5, _collected_at=T0 - 4)
-        leak = self.rows(fields={'dev_holding_pct': '77'}, _screen_at=T0 + 500, _collected_at=T0 + 501)
-        known, _, dropped = LN.features_known_at([a, b, leak], T0, NAMES)
-        self.assertEqual((known['dev_holding_pct'], dropped), (D(2), 1))
+    def row(self, decision_ts=T0, late=5.0, version=None, **extra):
+        payload = F.build_row(SimpleNamespace(mint='M'), SimpleNamespace(passed=True, reasons=(), features={'market_cap_usd': '90000'}),
+                              entered=True, extra=extra.pop('fields', {'dev_holding_pct': '12', 'top10_pct': '40', 'tx_count_first_10m': 7}),
+                              screen_at=decision_ts, collected_at=decision_ts + late, decision_ts=decision_ts,
+                              flags=extra.pop('flags', {'dev_holding_pct': 'AT_COLLECTION', 'tx_count_first_10m': 'CUT_AT_DECISION'}))
+        if version is not None:
+            payload['features_version'] = version
+        return json.loads(F.canonical(payload))
 
-    def test_no_rows(self):
-        self.assertEqual(LN.features_known_at([], T0, NAMES)[:2], (None, 'NO_FEATURES_ROW'))
+    def values(self, row, **policy):
+        counts = LN._Counts()
+        return LN.feature_values(row, T0, LN.LookaheadPolicy(**policy), counts), counts
+
+    def test_an_on_time_row_is_used_whole(self):
+        v, c = self.values(self.row())
+        self.assertEqual((v['dev_holding_pct'], v['top10_pct'], v['tx_count_first_10m'], v['market_cap_usd']), (D(12), D(40), D(7), D(90000)))
+        self.assertEqual((c.skipped, c.excluded), ({}, {}))
+
+    def test_a_late_at_collection_snapshot_is_excluded_and_counted_the_rest_kept(self):
+        v, c = self.values(self.row(late=LN.DEFAULT_MAX_LATE_S + 0.001))
+        self.assertIsNone(v['dev_holding_pct'])
+        self.assertEqual((v['top10_pct'], v['tx_count_first_10m']), (D(40), D(7)))              # unflagged / cut at the decision: kept
+        self.assertEqual(c.excluded, {'dev_holding_pct': {'AT_COLLECTION_LATE': 1}})
+        v, _ = self.values(self.row(late=LN.DEFAULT_MAX_LATE_S))
+        self.assertEqual(v['dev_holding_pct'], D(12))                                          # the threshold itself is allowed
+        v, _ = self.values(self.row(late=100), max_late_s=200)
+        self.assertEqual(v['dev_holding_pct'], D(12))                                          # configurable
+
+    def test_an_unknown_flag_is_post_decision_until_proven_otherwise(self):
+        v, c = self.values(self.row(flags={'top10_pct': 'READ_AFTER_EXIT'}))
+        self.assertIsNone(v['top10_pct'])
+        self.assertEqual(c.excluded, {'top10_pct': {'FLAG_READ_AFTER_EXIT': 1}})
+
+    def test_rows_before_v3_are_never_used(self):
+        v, c = self.values(self.row(version=2))
+        self.assertEqual(set(v.values()), {None})
+        self.assertEqual(c.skipped, {'FEATURES_PRE_V3': 1})
+
+    def test_the_last_row_at_or_before_the_decision_wins_and_a_later_one_never_replaces_it(self):
+        a, b, later = self.row(decision_ts=T0 - 50), self.row(decision_ts=T0), self.row(decision_ts=T0 + 0.01)
+        counts = LN._Counts()
+        self.assertIs(LN._pick([a, b, later], T0, None, LN.LookaheadPolicy(), counts, 'FEATURES'), b)
+        self.assertEqual(counts.skipped, {'FEATURES_AFTER_DECISION': 1})
+        self.assertIsNone(LN._pick([later], T0, None, LN.LookaheadPolicy(), LN._Counts(), 'FEATURES'))
+        b['_candidate_id'] = 7
+        self.assertIs(LN._pick([a, b], T0, 7, LN.LookaheadPolicy(), LN._Counts(), 'FEATURES'), b)    # another candidate's row is ignored
+        a['_candidate_id'] = 8
+        self.assertIsNone(LN._pick([a], T0, 7, LN.LookaheadPolicy(), LN._Counts(), 'FEATURES'))
 
     def test_unusable_values_are_unknown_not_zero(self):
-        r = self.rows(fields={'dev_holding_pct': 'abc', 'top10_pct': True, 'tx_count_first_10m': float('inf')})
-        known, _, _ = LN.features_known_at([r], T0, NAMES)
-        self.assertEqual(set(known.values()), {None})
+        v, _ = self.values(self.row(fields={'dev_holding_pct': 'abc', 'top10_pct': True, 'tx_count_first_10m': 'Infinity'}, flags={}))
+        self.assertEqual({v[n] for n in ('dev_holding_pct', 'top10_pct', 'tx_count_first_10m')}, {None})
+
+    def test_policy_validation(self):
+        for bad in (dict(max_late_s=-1), dict(max_late_s=float('nan')), dict(eps_s=True)):
+            with self.assertRaises(LN.LearnError):
+                LN.LookaheadPolicy(**bad)
+
+
+class WriterIntegrationTests(RecorderMixin, unittest.TestCase):
+    """The REAL writers end to end: the trader's decisions (Store.add_decision), the L12F row writer (FeatureRecorder._write ->
+    build_row), the L13 collector (WalletSignals.collect on a fake chain) and the L07R2 recorder (PathRecorder on a fake RPC), in one
+    state dir; the learner reads the two files mode=ro. Every value that only exists AFTER a decision is the CANARY 666 (or a buyer
+    count of 6): none may reach a learning row, and each exclusion is counted. Relaxing the guard lets the canaries in (sensitivity)."""
+    CANARY = D(666)
+
+    def setUp(self):
+        tmp = tempfile.TemporaryDirectory()
+        self.addCleanup(tmp.cleanup)
+        self.setup_recorder(os.path.realpath(tmp.name))
+        self.lean = Store(self.dir / 'lean.sqlite', initial_cash_sol='10', code_version='t', strategy_version='lean-1', clock=self.clock.now)
+        self.addCleanup(self.lean.close)
+        self.chain = WS.Chain()
+        self.wclock = self.fclock = 0.0                   # the collectors' own threads have their own notion of "now"
+        self.signals = W.WalletSignals(store=self.lean, helius=WS.ChainHelius(self.chain), cfg={}, code_version='t', strategy_version='lean-1',
+                                       clock=lambda: self.wclock, sleep=lambda s: None)
+        self.feat = F.FeatureRecorder(store=self.lean, helius=None, code_version='t', strategy_version='lean-1', clock=lambda: self.fclock)
+        self.expected = {}
+
+    def slot_at(self, t):
+        return int(WS.GRAD + (t - WS.GRAD_TIME) / 0.4)
+
+    def candidate(self, i, *, late=False, supply_from_screen=True, wallet='cut', price=(1, 1.5)):
+        """One candidate: decision, feature rows, wallet row, path. Returns its mint."""
+        mint = WS.addr(10 + i)
+        pool = WS.addr(100 + i)
+        decision = self.clock.now()
+        cid = self.lean.add_candidate(mint, pool=pool, slot=1, migrated_at=decision - 60, ts=decision - 1)
+        self.lean.add_decision('screen', 'PASS', mint=mint, candidate_id=cid, reasons=[],
+                                features={'supply_raw': str(WS.SUPPLY)} if supply_from_screen else {}, ts=decision)
+        self.lean.add_decision('entry', 'SKIP', mint=mint, candidate_id=cid, reasons=['MAX_POSITIONS'], ts=decision)
+        # the wallet chain: two same-slot buyers + one 8 s later BEFORE the decision; three more buyers 20 s AFTER it
+        grad = self.slot_at(decision - 60)
+        a, b, c = WS.addr(150 + 3 * i), WS.addr(151 + 3 * i), WS.addr(152 + 3 * i)
+        self.chain.swap(grad, {a: 10 ** 12, b: 10 ** 12}, mint=mint, pool=pool)
+        self.chain.swap(grad + 20, {c: 10 ** 12}, mint=mint, pool=pool)
+        self.chain.swap(self.slot_at(decision + 20), {WS.addr(200 + k): 10 ** 13 for k in range(3)}, mint=mint, pool=pool)
+        # the path: the recorder starts 1.5 s after the decision
+        mint_, _ = self.start(cid=cid, mint=mint)
+        # the feature row the recorder writes for this decision (5 s late, or 100 s late: its dev snapshot is then post-decision)
+        lateness = 100.0 if late else 5.0
+        self.fclock = decision + lateness
+        dev = self.CANARY if late else D(i) / 4 + 1
+        self.feat._write(SimpleNamespace(mint=mint), cid, SimpleNamespace(passed=True, reasons=(), features={'market_cap_usd': str(90000 + i)}),
+                         False, 'MAX_POSITIONS', decision, decision, extra={'dev_holding_pct': str(dev), 'tx_count_first_10m': 3 + i},
+                         flags={'dev_holding_pct': 'AT_COLLECTION', 'tx_count_first_10m': 'CUT_AT_DECISION'}, calls=2)
+        # a re-screen 60 s later wrote another row (its decision is after this candidate's): canary everywhere
+        self.feat._write(SimpleNamespace(mint=mint), cid, SimpleNamespace(passed=True, reasons=(), features={'market_cap_usd': '666'}),
+                         False, 'MAX_POSITIONS', decision + 60, decision + 60, extra={'dev_holding_pct': '666', 'tx_count_first_10m': 666})
+        # the wallet collector runs ~125 s after graduation
+        self.wclock = decision + 70
+        self.signals.collect(cid, mint, pool, grad, decision_ts=None if wallet == 'unknown' else decision)
+        self.walk(mint_, list(price))
+        self.expected[mint] = {'dev': None if late else D(i) / 4 + 1, 'tx': D(3 + i), 'mc': D(90000 + i), 'wallet': wallet,
+                               'supply': supply_from_screen}
+        self.clock.t += 300
+        return mint
+
+    def build(self, **policy):
+        return LN.build_dataset(self.dir / 'lean.sqlite', self.dir / 'paths.sqlite', STRATEGY, pool_fee_bps=25,
+                                policy=LN.LookaheadPolicy(**policy))
+
+    def scenario(self):
+        mints = [self.candidate(0), self.candidate(1, late=True), self.candidate(2, supply_from_screen=False),
+                 self.candidate(3, wallet='unknown'), self.candidate(4, price=(1, 0.7))]
+        self.lean.close()
+        self.rec.db.close()
+        return mints
+
+    def test_no_post_decision_value_reaches_a_learning_row(self):
+        mints = self.scenario()
+        before = {p: hashlib.sha256(p.read_bytes()).hexdigest() for p in (self.dir / 'lean.sqlite', self.dir / 'paths.sqlite')}
+        ds = self.build()
+        rows = {r.mint: r for r in ds.rows}
+        self.assertEqual(sorted(rows), sorted(mints))
+        for mint in mints:
+            row, exp = rows[mint], self.expected[mint]
+            for name, value in row.features.items():
+                self.assertNotEqual(value, self.CANARY, (mint, name))
+            self.assertEqual(row.features['dev_holding_pct'], exp['dev'])
+            self.assertEqual(row.features['tx_count_first_10m'], exp['tx'])
+            self.assertEqual(row.features['market_cap_usd'], exp['mc'])
+            if exp['wallet'] == 'unknown':                                           # the window was not cut: nothing of it is used
+                self.assertEqual({row.features[n] for n in LN.WALLET_FEATURES}, {None})
+                continue
+            self.assertEqual((row.features['same_slot_buyers'], row.features['sniper_count'], row.features['smart_buyers_count']),
+                             (D(2), D(2), D(0)))
+            self.assertEqual(row.features['bundle_score'], D('0.6667'))             # 2 bundled of the 3 PRE-decision buyers, never of 6
+            if exp['supply']:
+                self.assertEqual(row.features['bundled_supply_pct'], D(2 * 10 ** 12 * 100) / WS.SUPPLY)
+            else:
+                self.assertIsNone(row.features['bundled_supply_pct'])               # the supply was read after the decision
+            self.assertEqual(row.ts, row.label.decision_ts)
+        self.assertEqual(rows[mints[0]].label.label, 'WIN')
+        self.assertEqual(rows[mints[4]].label.label, 'LOSS')
+        self.assertEqual(ds.stats['skipped'], {'FEATURES_AFTER_DECISION': 5, 'WALLET_SIGNALS_NO_DECISION_TS': 1})
+        self.assertEqual(ds.stats['excluded'], {'dev_holding_pct': {'AT_COLLECTION_LATE': 1},
+                                                'bundled_supply_pct': {'SUPPLY_READ_AFTER_DECISION': 1}})
+        for path, digest in before.items():
+            self.assertEqual(hashlib.sha256(path.read_bytes()).hexdigest(), digest)
+
+    def test_the_guard_is_what_keeps_the_canaries_out(self):
+        mints = self.scenario()
+        lax = {r.mint: r for r in self.build(max_late_s=10 ** 6).rows}
+        self.assertEqual(lax[mints[1]].features['dev_holding_pct'], self.CANARY)               # the late snapshot
+        with mock.patch.object(LN, '_pick', lambda rows, *a, **k: rows[-1] if rows else None):
+            picked = {r.mint: r for r in self.build().rows}
+        self.assertEqual(picked[mints[0]].features['tx_count_first_10m'], self.CANARY)        # the later re-screen row
+        self.assertIsNone(picked[mints[3]].features['bundle_score'])                          # 2nd layer: the uncut window is still out
+        raw = lambda row, *a, **k: {n: None if row is None else LN._to_decimal(row.get(n)) for n in LN.WALLET_FEATURES}
+        with mock.patch.object(LN, '_pick', lambda rows, *a, **k: rows[-1] if rows else None), mock.patch.object(LN, 'wallet_values', raw):
+            unguarded = {r.mint: r for r in self.build().rows}
+        self.assertEqual(unguarded[mints[3]].features['bundle_score'], D('0.3333'))           # 2 of 6 buyers: the window ran past the decision
+        self.assertIsNotNone(unguarded[mints[2]].features['bundled_supply_pct'])              # the supply read after the decision
+
+    def test_a_path_with_too_many_gaps_never_becomes_a_learning_row(self):
+        good = self.candidate(0)
+        gappy = self.candidate(1, price=('gap', 'gap', 'gap', 1, 1.5))           # real path_gaps rows (503s) before the first marks
+        self.lean.close()
+        self.rec.db.close()
+        ds = self.build()
+        self.assertEqual([r.mint for r in ds.rows], [good])
+        self.assertEqual(ds.stats['labels'], {'INSUFFICIENT_PATH': 1, 'WIN': 1})
+        self.assertEqual(ds.stats['skipped']['INSUFFICIENT_PATH:TOO_MANY_GAPS'], 1)
+        loose = LN.build_dataset(self.dir / 'lean.sqlite', self.dir / 'paths.sqlite', STRATEGY, pool_fee_bps=25,
+                                 label_cfg=LB.LabelConfig.from_strategy(STRATEGY, max_gap_fraction=0.9))
+        self.assertEqual(sorted(r.mint for r in loose.rows), sorted([good, gappy]))
+
+    def test_every_wallet_field_check_on_a_real_collected_row(self):
+        self.candidate(0)
+        raw = json.loads(self.lean.db.execute("SELECT raw FROM observations WHERE kind='wallet_signals'").fetchone()[0])
+        self.assertEqual((raw['version'], raw['window_after_decision_s'], raw['supply_source']), (LN.WALLET_VERSION, 0.0, 'screen'))
+
+        def vals(**over):
+            counts = LN._Counts()
+            return LN.wallet_values({**raw, **over}, raw['decision_ts'], LN.LookaheadPolicy(), counts), counts
+        v, c = vals()
+        self.assertEqual((v['bundle_score'], v['smart_buyers_count'], c.excluded), (D('0.6667'), D(0), {}))
+        for after in (None, 12.0):
+            v, c = vals(window_after_decision_s=after)
+            self.assertEqual(set(v.values()), {None})
+            self.assertEqual(set(c.excluded), {'bundle_score', 'sniper_count', 'same_slot_buyers', 'bundled_supply_pct', 'smart_buyers_count'})
+        for asof in (raw['decision_ts'] + 5, None):
+            v, c = vals(smart_asof_ts=asof)
+            self.assertIsNone(v['smart_buyers_count'])
+            self.assertEqual(c.excluded, {'smart_buyers_count': {'SMART_TABLE_NOT_AS_OF_DECISION': 1}})
+            self.assertEqual(v['bundle_score'], D('0.6667'))
+        v, c = vals(version='wallet_signals_v1')
+        self.assertEqual((set(v.values()), c.skipped), ({None}, {'WALLET_SIGNALS_OLD_VERSION': 1}))
+
+    def test_a_label_never_reads_a_mark_before_the_decision(self):
+        mints = self.scenario()
+        ds = self.build()
+        c = sqlite3.connect((self.dir / 'paths.sqlite').as_uri() + '?mode=ro', uri=True)
+        self.addCleanup(c.close)
+        for row in ds.rows:
+            first = c.execute('SELECT MIN(ts) FROM path_marks WHERE mint=?', (row.mint,)).fetchone()[0]
+            self.assertGreater(first, row.ts)
+            self.assertEqual(row.label.n_marks, c.execute('SELECT COUNT(*) FROM path_marks WHERE mint=? AND ts>=?', (row.mint, row.ts)).fetchone()[0])
+        self.assertEqual(len(ds.rows), len(mints))
 
 
 class SplitTests(unittest.TestCase):
@@ -317,7 +542,7 @@ class SelectTests(unittest.TestCase):
 class LearnTests(unittest.TestCase):
     def test_planted_structure_is_recovered_and_confirmed(self):
         r = run(planted())
-        self.assertEqual(r['proposal_status'], 'CONFIRMED_NO_DIRECTORY_GIVEN')
+        self.assertEqual(r['proposal_status'], 'CONFIRMED')
         self.assertTrue(r['selected'])
         first = r['selected'][0]['if'][0]
         self.assertEqual((first['feature'], first['op']), ('dev_holding_pct', '>'))
@@ -331,8 +556,7 @@ class LearnTests(unittest.TestCase):
     def test_pure_noise_produces_no_confirmed_rule(self):
         for seed in range(1, 41):
             r = run(noise(seed=seed))
-            self.assertNotEqual(r['proposal_status'], 'WRITTEN', seed)
-            self.assertNotEqual(r['proposal_status'], 'CONFIRMED_NO_DIRECTORY_GIVEN', seed)
+            self.assertFalse(r['confirmed'], seed)
             self.assertIn(r['proposal_status'], ('NO_RULE_FOUND', 'NO_SELECTED_RULE', 'NOT_CONFIRMED'), seed)
 
     def test_noise_does_reach_the_confirm_gate_so_the_gate_is_what_stops_it(self):
@@ -356,6 +580,12 @@ class LearnTests(unittest.TestCase):
         self.assertNotEqual(a['union']['confirm'], b['union']['confirm'])
         self.assertEqual(b['proposal_status'], 'NOT_CONFIRMED')
         self.assertIs(a['confirm_used_for_selection'], False)
+        with tempfile.TemporaryDirectory() as tmp:                         # chosen on select but not confirmed: nothing is proposed
+            doc = json.loads(Path(run(changed, proposals_dir=Path(tmp) / 'p')['proposal']).read_text())
+        self.assertTrue(b['selected'])
+        self.assertEqual((doc['status'], doc['outcome'], doc['proposed']['selection_rules'], doc['requires_runner_change']),
+                         ('NO_PROPOSAL', 'NOT_CONFIRMED', [], []))
+        self.assertEqual(doc['evidence']['selected_on_select_window'], b['selected'])     # the evidence still shows what select chose
 
     def test_a_chosen_set_is_accepted_or_rejected_as_a_whole(self):
         r = run(planted(1500), max_rules=3)
@@ -372,9 +602,12 @@ class LearnTests(unittest.TestCase):
         self.assertEqual(sum(t['buckets'][0]['n'] for t in [r['tables']['dev_holding_pct']]) > 0, True)
         self.assertEqual(sum(b['n'] for b in r['tables']['dev_holding_pct']['buckets']), 600)
 
-    def test_too_few_candidates(self):
+    def test_too_few_candidates_is_a_status_not_a_crash(self):
+        r = run([row(0), row(1)])
+        self.assertEqual((r['proposal_status'], r['confirmed'], r['selected']), ('INSUFFICIENT_DATA', False, []))
+        self.assertEqual(r['counts']['candidates'], 2)
         with self.assertRaises(LN.LearnError):
-            run([row(0), row(1)])
+            run(planted(60), fractions=(0.5, 0.5, 0.5))                        # a usage error still raises
 
     def test_bad_minimums_are_refused(self):
         for kw in ({'min_n': 0}, {'min_n': True}, {'min_confirm': -1}, {'min_bucket': 1.5}):
@@ -384,7 +617,7 @@ class LearnTests(unittest.TestCase):
     def test_default_minimums_are_the_documented_ones(self):
         self.assertEqual((LN.MIN_N, LN.MIN_CONFIRM, LN.MIN_BUCKET), (50, 30, 20))
         r = LN.learn(planted(200), now=NOW, feature_names=NAMES)            # 50 / 30 with only ~50 per window: nothing can be chosen or confirmed
-        self.assertNotIn(r['proposal_status'], ('WRITTEN', 'CONFIRMED_NO_DIRECTORY_GIVEN'))
+        self.assertFalse(r['confirmed'])
         self.assertTrue(any('noise-dominated' in w for w in r['warnings']))
 
     def test_insufficient_support_flag_below_min_n(self):
@@ -445,7 +678,7 @@ class ProposalTests(unittest.TestCase):
         props = self.dir / 'proposals'
         before = hashlib.sha256(DEFAULT.read_bytes()).hexdigest()
         r = run(planted(), proposals_dir=props, strategy=self.strategy)
-        self.assertEqual(r['proposal_status'], 'WRITTEN')
+        self.assertEqual((r['proposal_status'], r['confirmed']), ('CONFIRMED', True))
         path = Path(r['proposal'])
         self.assertEqual((path.parent, path.name.endswith('-selection.json')), (props, True))
         doc = json.loads(path.read_text())
@@ -467,12 +700,15 @@ class ProposalTests(unittest.TestCase):
         with self.assertRaises(FileExistsError):
             run(planted(), proposals_dir=props, strategy=self.strategy)
 
-    def test_nothing_is_written_without_confirmation(self):
+    def test_an_unconfirmed_run_writes_a_file_that_proposes_nothing(self):
         props = self.dir / 'proposals'
         r = run(noise(seed=3), proposals_dir=props, strategy=self.strategy)
-        self.assertNotEqual(r['proposal_status'], 'WRITTEN')
-        self.assertIsNone(r['proposal'])
-        self.assertFalse(props.exists())
+        self.assertFalse(r['confirmed'])
+        doc = json.loads(Path(r['proposal']).read_text())
+        self.assertEqual((doc['status'], doc['outcome']), ('NO_PROPOSAL', r['proposal_status']))
+        self.assertEqual((doc['proposed']['selection_rules'], doc['diff']['selection_rules']['to'], doc['requires_runner_change']), ([], [], []))
+        self.assertTrue(doc['never_applied_automatically'])
+        self.assertIsNone(run(noise(seed=3))['proposal'])                     # no directory, no file
 
     def test_screen_time_features_need_no_runner_wait(self):
         rng = random.Random(5)
@@ -526,6 +762,32 @@ class ReportTests(unittest.TestCase):
     def test_insufficient_buckets_are_flagged(self):
         r = run(planted(), min_bucket=500)
         self.assertIn('INSUFFICIENT', LN.render_section(r))
+
+    def test_the_cli_on_a_fresh_deployment_reports_insufficient_data(self):
+        """Day one on the VPS: an empty lean.sqlite and paths.sqlite. The CLI still writes its page and a NO_PROPOSAL file, rc 0."""
+        from lean.paths import PathStore
+        Store(self.dir / 'lean.sqlite', initial_cash_sol='10', code_version='t', strategy_version='lean-1').close()
+        PathStore(self.dir / 'paths.sqlite').close()
+        out = self.dir / 'out'
+        out.mkdir()
+        buf = io.StringIO()
+        with contextlib.redirect_stdout(buf):
+            code = LN.main(['--lean-db', str(self.dir / 'lean.sqlite'), '--paths-db', str(self.dir / 'paths.sqlite'), '--out-dir', str(out),
+                            '--embargo-s', '21600', '--now', str(NOW)])
+        self.assertEqual(code, 0, buf.getvalue())
+        summary = json.loads(buf.getvalue())
+        self.assertEqual((summary['proposal_status'], summary['confirmed'], summary['candidates']), ('INSUFFICIENT_DATA', False, 0))
+        self.assertEqual(json.loads(Path(summary['proposal']).read_text())['status'], 'NO_PROPOSAL')
+        self.assertIn('What winners vs rugs looked like at entry', Path(summary['html']).read_text())
+        for bad in (['--config', 'x.json', '--strategy', str(DEFAULT)], ['--fractions', '0.5,0.5']):
+            err = io.StringIO()
+            with contextlib.redirect_stdout(err), contextlib.redirect_stderr(io.StringIO()):
+                try:
+                    rc = LN.main(['--lean-db', str(self.dir / 'lean.sqlite'), '--paths-db', str(self.dir / 'paths.sqlite'),
+                                  '--out-dir', str(out), '--now', str(NOW + 1)] + bad)
+                except SystemExit as stop:                        # argparse: mutually exclusive options
+                    rc = stop.code
+            self.assertEqual(rc, 2, bad)
 
     def test_write_report_is_exclusive(self):
         r = run(planted())

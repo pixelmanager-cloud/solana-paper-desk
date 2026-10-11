@@ -1,20 +1,16 @@
-"""SYNTHETIC_TEST_ONLY: the selection learner (L19) end to end on the REAL runner, the REAL L12F feature recorder and the REAL L07R2
-path recorder (lean/paths.py). Only HTTP is faked (tests/lean/fakeworld.py; the dev wallet balances and the pool histories are served
-through its ``extra_rpc`` hook).
+"""SYNTHETIC_TEST_ONLY: the selection learner (L19, LINT3) end to end on the REAL runner, the REAL L12F feature recorder (v3 rows with
+decision_ts / late_s / flags) and the REAL L07R2 path recorder (lean/paths.py, its own paths.sqlite). Only HTTP is faked
+(tests/lean/fakeworld.py; the dev wallet balances and the pool histories are served through its ``extra_rpc`` hook).
 
-Two worlds of 100 launches, one per 240 s, each with a dev wallet holding a different share of the supply:
+Worlds of 100 launches, one per 240 s, each with a dev wallet holding a different share of the supply:
   PLANTED  a launch whose dev holds more than 15 % usually rugs (the price collapses a minute after the entry); the others are winners
            (ladder to 3.2x) or small losers (-25 % stop). The tx count of the pool's first 10 minutes is independent noise.
   NOISE    the same dev shares and tx counts, but the outcome is drawn independently of every feature.
-The runner trades them all (the daily stops are widened so that the rugs do not halt it), the recorders write ``lean.sqlite`` (features
-rows) and ``paths.sqlite`` (the marks of every candidate), and ``lean.learn`` reads those two files and nothing else.
-
-What it proves
-  labels     every path gets the label of the family that generated it (RUG / WIN / LOSS) from the recorded vault amounts
-  no leak    a features row that appears later with a perfectly predictive value is not used (decision-time guard)
-  recovery   the planted ``dev_holding_pct > T`` rule (T = 15) is mined, selected on the select window and confirmed on the confirm window;
-             a proposal is written, never applied; the noise world yields NO confirmed rule
-  read-only  both databases are byte-identical afterwards
+  LATE     the PLANTED world, but the feature recorder reads the dev balance a minute AFTER the decision (an AT_COLLECTION snapshot,
+           late_s ~ 60 s): the planted signal exists only after the decision, so the learner must NOT find it (and does, if the
+           lookahead guard is relaxed: the test is sensitive).
+The runner trades them all (the daily stops are widened so that the rugs do not halt it), the recorders write ``lean.sqlite`` and
+``paths.sqlite``, and ``lean.learn`` reads those two files (mode=ro) and nothing else.
 """
 import contextlib
 import hashlib
@@ -22,15 +18,17 @@ import io
 import json
 import os
 import random
+import shutil
 import socket
 import sqlite3
 import tempfile
+import types
 import unittest
 from decimal import Decimal as D
 from pathlib import Path
 from unittest import mock
 
-from lean import features as F, labels as LB, learn as LN, paths as L, providers, strategy as S
+from lean import adapters as A, features as F, labels as LB, learn as LN, paths as L, providers, strategy as S
 from lean.__main__ import build_runner, load_config
 from lean.store import Store
 from tests.lean.fakeworld import FakeTime, SUPPLY, T0, Token, World
@@ -43,7 +41,7 @@ N = 100
 SPACING = 240
 END = T0 + N * SPACING + 1500
 PATHS = {'RUG': steps((60, 0.15)), 'WIN': steps((120, 1.5), (240, 2.2), (360, 3.2), (480, 1.8)), 'LOSS': steps((120, 0.75))}
-TX_NAMES = ('dev_holding_pct', 'tx_count_first_10m')
+NAMES = ('dev_holding_pct', 'tx_count_first_10m', 'market_cap_usd')
 MIN = dict(min_n=10, min_confirm=6, min_bucket=5)
 
 
@@ -70,7 +68,7 @@ def plan(planted, seed):
 class World_:
     """One simulated run: the runner + both recorders over the whole scenario, then the files closed."""
 
-    def __init__(self, root, planted, seed):
+    def __init__(self, root, planted, seed, late=False):
         self.root, self.plan = root, plan(planted, seed)
         clock = FakeTime(T0)
         tokens = [Token(10 + i, coin_creator_tag=120 + i, path=PATHS[p['kind']]) for i, p in enumerate(self.plan)]
@@ -99,14 +97,21 @@ class World_:
         (root / 'strategy.json').write_text(json.dumps(strategy))
         cfg = load_config(ROOT / 'config' / 'lean' / 'lean.example.json')
         cfg['strategy_config'] = str(root / 'strategy.json')
-        cfg['execution'], cfg['held_risk'] = None, {'enabled': False}
+        cfg['execution'], cfg['held_risk'], cfg['wallet_signals'] = None, {'enabled': False}, None
         cfg['paths'] = L.config({'enabled': True, 'path_hours': 0.5, 'interval_s': 15})
-        cfg['features'] = F.config({'enabled': True})
+        cfg['features'] = F.config({'enabled': True, 'max_late_s': 3600 if late else 30})     # LATE: the recorder still reads it
         cfg['lanes'] = {'shares': providers.validate_lane_shares({'main': 0.5, 'exit': 0.2, 'low': 0.3}), 'low_shed_s': 1}
+        self.pool_fee_bps = cfg['pool_fee_bps']
         r = build_runner(cfg, state_dir=root / 'state', discovery_db=world.discovery_db, keys=KEYS, code_version='e2e-learn',
                          clock=clock.time, transport_kwargs={'opener': world.opener, 'clock': clock.time, 'monotonic': clock.monotonic,
                                                              'sleep': clock.sleep, 'rng': lambda: 0.5})
         r.l07r_start_paths()
+
+        def drain():
+            while True:
+                clock.t += 2.0                                    # the feature recorder's thread: one candidate per low-lane refill
+                if not r.features.process_one():
+                    break
         tick = T0
         while tick <= END:
             for sub in (15, 30, 45):
@@ -116,16 +121,21 @@ class World_:
             if clock.time() < tick:
                 clock.t = tick
             r.paths.poll()
+            if late:
+                drain()                                           # LATE: last tick's candidates, a minute after their decision
             r.position_pass()
             r.candidate_pass()
-            while True:
-                clock.t += 2.0                                    # the feature recorder's thread: one candidate per low-lane refill
-                if not r.features.process_one():
-                    break
+            if not late:
+                drain()
             assert r.halted is None, r.halted
             tick += 60
+        drain()
         assert r.store.check_invariants()
         self.fills = r.store.rows('fills', limit=100000)
+        self.sells = {}
+        for d in r.store.rows('decisions', kind='exit', limit=100000):
+            if d['action'] == 'SELL':
+                self.sells.setdefault(d['mint'], []).append(json.loads(d['reasons'])[0])
         self.db, self.paths_db = r.store.path, r.paths.db.path
         r.store.close()
         r.paths.db.close()
@@ -140,10 +150,10 @@ class E2ELearn(unittest.TestCase):
         cls.tmp = tempfile.TemporaryDirectory()
         base = Path(os.path.realpath(cls.tmp.name))
         cls.worlds = {}
-        for name, planted, seed in (('planted', True, 7), ('noise', False, 11)):
+        for name, planted, seed, late in (('planted', True, 7, False), ('noise', False, 11, False), ('late', True, 7, True)):
             root = base / name
             root.mkdir()
-            cls.worlds[name] = World_(root, planted, seed)
+            cls.worlds[name] = World_(root, planted, seed, late)
         cls.strategy = S.StrategyConfig.load(cls.worlds['planted'].strategy_path)
         cls.sha = {n: {p: hashlib.sha256(p.read_bytes()).hexdigest() for p in (w.db, w.paths_db)} for n, w in cls.worlds.items()}
 
@@ -153,14 +163,20 @@ class E2ELearn(unittest.TestCase):
 
     def dataset(self, name, **kw):
         w = self.worlds[name]
-        return LN.build_dataset(w.db, [w.paths_db], self.strategy, **kw)
+        kw.setdefault('pool_fee_bps', w.pool_fee_bps)
+        return LN.build_dataset(w.db, w.paths_db, self.strategy, **kw)
+
+    def run_learn(self, name, ds, **kw):
+        props = Path(self.worlds[name].root) / ('proposals-%d' % len(list(Path(self.worlds[name].root).glob('proposals-*'))))
+        return LN.learn(ds.rows, strategy=self.strategy, now=T0 + 10 ** 6, proposals_dir=props, dataset_stats=ds.stats,
+                        feature_names=NAMES, **dict(MIN, **kw))
 
     def mint_of(self, name, i):
         w = self.worlds[name]
         return next(m for m, k in w.role.items() if k == i)
 
-    # ------------------------------------------------------------------------------------------------------------
-    def test_every_candidate_has_a_path_and_a_label_of_the_family_that_made_it(self):
+    # ------------------------------------------------------------------------------------------------------------ labels
+    def test_every_candidate_has_a_path_and_the_label_of_the_family_that_made_it(self):
         for name in ('planted', 'noise'):
             w, ds = self.worlds[name], self.dataset(name)
             self.assertEqual(ds.stats['paths'], N, ds.stats)
@@ -170,55 +186,93 @@ class E2ELearn(unittest.TestCase):
             for row in ds.rows:
                 self.assertEqual(row.label.label, w.plan[w.role[row.mint]]['kind'], (name, row.mint))
                 self.assertEqual(row.label.label_version, LB.LABEL_VERSION)
+                self.assertLessEqual(row.label.max_hole_s, 60, row.label)               # 15 s marks: the path is fully observed
+                self.assertEqual(row.label.gap_fraction, 0.0)
 
-    def test_the_rug_family_loses_and_the_winner_family_wins_under_the_live_exit_rules(self):
-        ds = self.dataset('planted')
+    def test_labels_start_at_the_trader_decision_read_from_the_store(self):
+        w, ds = self.worlds['planted'], self.dataset('planted')
+        c = sqlite3.connect(w.db.as_uri() + '?mode=ro', uri=True)
+        self.addCleanup(c.close)
+        p = sqlite3.connect(w.paths_db.as_uri() + '?mode=ro', uri=True)
+        self.addCleanup(p.close)
+        starts = dict(p.execute('SELECT mint, start_ts FROM paths'))
+        for row in ds.rows:
+            entries = [ts for (ts,) in c.execute("SELECT ts FROM decisions WHERE mint=? AND kind='entry' ORDER BY id", (row.mint,))]
+            self.assertEqual(row.ts, entries[-1])                                        # entered: the entry decision
+            self.assertLessEqual(row.ts, starts[row.mint])                               # the path starts after it
+            self.assertEqual(row.label.decision_ts, row.ts)
+
+    def test_live_exit_pnl_reproduces_the_live_trader(self):
+        """The minimal replay (strategy.exit_decision on every recorded mark) gives the SAME ordered sell reasons as the live runner did
+        on the same tokens, and the families lose / win as built."""
+        w, ds = self.worlds['planted'], self.dataset('planted')
         by = {}
         for row in ds.rows:
             by.setdefault(row.label.label, []).append(row.pnl_lamports)
         self.assertLess(max(by['RUG']), 0)
         self.assertGreater(min(by['WIN']), 0)
         self.assertLess(max(by['LOSS']), 0)
-        self.assertLess(sum(by['RUG']) / len(by['RUG']), sum(by['LOSS']) / len(by['LOSS']))     # a rug costs more than an ordinary stop
+        self.assertLess(sum(by['RUG']) / len(by['RUG']), sum(by['LOSS']) / len(by['LOSS']))
+        pcfg = A.paper_config(self.strategy)
+        c = sqlite3.connect(w.paths_db.as_uri() + '?mode=ro', uri=True)
+        self.addCleanup(c.close)
+        paths = {p.mint: p for p in LB.load_paths(c)[0]}
+        matched = 0
+        for row in ds.rows:
+            path = paths[row.mint]
+            trade = LB.simulate_exits(path, row.ts, LB.reference(path, pcfg), self.strategy, pool_fee_bps=w.pool_fee_bps, pcfg=pcfg)
+            self.assertEqual(trade.reasons, w.sells[row.mint], (row.mint, row.label.label))
+            matched += 1
+        self.assertEqual(matched, N)
 
-    def test_features_are_what_the_recorder_saw_at_the_screen(self):
+    # ------------------------------------------------------------------------------------------------------------ features
+    def test_features_are_what_the_recorder_saw_at_the_decision(self):
         w, ds = self.worlds['planted'], self.dataset('planted')
         for row in ds.rows:
             p = w.plan[w.role[row.mint]]
             self.assertEqual(row.features['dev_holding_pct'], D(str(p['dev'])).quantize(D('0.0001')), row.mint)
             self.assertEqual(row.features['tx_count_first_10m'], D(p['tx']), row.mint)
             self.assertIsNotNone(row.features['market_cap_usd'])
+            for name in LN.WALLET_FEATURES:                                              # the collector is off in this world
+                self.assertIsNone(row.features[name])
         self.assertEqual(ds.stats['skipped'], {})
+        self.assertEqual(ds.stats['excluded'], {})
 
-    def test_a_feature_row_that_appears_after_the_decision_is_never_used(self):
+    def test_a_feature_row_written_after_the_decision_is_never_used(self):
+        """Rows built by the REAL row builder (lean.features.build_row) and written exactly as FeatureRecorder._write writes them: one
+        with a later decision_ts, one with a perfectly predictive dev share read 120 s after the decision (AT_COLLECTION). Neither
+        changes anything; with the guard relaxed the snapshot IS read (so this test would see a leak)."""
         w = self.worlds['planted']
         target = self.mint_of('planted', 5)
         clean = {r.mint: r for r in self.dataset('planted').rows}[target]
-        # work on a copy: append a perfectly predictive row stamped long after the decision, and one screened after it
-        import shutil
-        copy = Path(w.db.parent / 'leak.sqlite')
+        copy = Path(w.root / 'leak.sqlite')
         shutil.copy(w.db, copy)
-        shutil.copy(w.paths_db, copy.with_name('leak-paths.sqlite'))
+        shutil.copy(w.paths_db, w.root / 'leak-paths.sqlite')
         store = Store(copy, code_version='e2e-learn', strategy_version='lean-1')
-        start = clean.ts
-        for screen_at, collected_at, dev in ((start + 30, start + 31, '99'), (start - 5, start + 4000, '98')):
-            payload = {'features_version': F.FEATURES_VERSION, 'mint': target, 'entered': True, 'not_entered_reason': None, 'screen_passed': True,
-                       'screen_at': screen_at, 'collected_at': collected_at, 'calls': 0, 'fields': {'dev_holding_pct': dev}, 'missing': {}}
-            store.add_observation('features', json.dumps(payload).encode(), mint=target, ts=collected_at, meta=payload)
+        cid = store.db.execute('SELECT candidate_id FROM decisions WHERE mint=? AND candidate_id IS NOT NULL', (target,)).fetchone()[0]
+        candidate = types.SimpleNamespace(mint=target)
+        screen = types.SimpleNamespace(passed=True, reasons=(), features={'market_cap_usd': '1', 'liquidity_usd': '1'})
+        decision = clean.ts
+        for decision_ts, collected_at, dev in ((decision + 30, decision + 31, '99'), (decision, decision + 120, '98')):
+            payload = F.build_row(candidate, screen, entered=True, extra={'dev_holding_pct': dev}, screen_at=decision_ts,
+                                  collected_at=collected_at, decision_ts=decision_ts, flags={'dev_holding_pct': 'AT_COLLECTION'})
+            store.add_observation(F.KIND, F.canonical(payload), mint=target, candidate_id=cid, meta=payload, ts=collected_at)
         store.close()
-        ds = LN.build_dataset(copy, [copy.with_name('leak-paths.sqlite')], self.strategy)
+        ds = LN.build_dataset(copy, w.root / 'leak-paths.sqlite', self.strategy, pool_fee_bps=w.pool_fee_bps)
         leaked = {r.mint: r for r in ds.rows}[target]
-        self.assertEqual(leaked.features, clean.features)
-        self.assertEqual(ds.stats['skipped'].get('FEATURES_AFTER_DECISION'), 2)
-        # the lag is the only knob: with an absurd lag the late-collected row (screened before the decision) is accepted
-        lax = LN.build_dataset(copy, [copy.with_name('leak-paths.sqlite')], self.strategy, max_lag_s=10 ** 6)
+        self.assertNotIn(leaked.features['dev_holding_pct'], (D(99), D(98)))
+        self.assertIsNone(leaked.features['dev_holding_pct'])         # the LAST row at the decision is the late one: its snapshot is out
+        self.assertEqual(ds.stats['skipped'].get('FEATURES_AFTER_DECISION'), 1)
+        self.assertEqual(ds.stats['excluded'], {'dev_holding_pct': {'AT_COLLECTION_LATE': 1}})
+        lax = LN.build_dataset(copy, w.root / 'leak-paths.sqlite', self.strategy, pool_fee_bps=w.pool_fee_bps,
+                               policy=LN.LookaheadPolicy(max_late_s=10 ** 6))
         self.assertEqual({r.mint: r for r in lax.rows}[target].features['dev_holding_pct'], D(98))
 
+    # ------------------------------------------------------------------------------------------------------------ learning
     def test_the_planted_rule_is_recovered_selected_and_confirmed(self):
         ds = self.dataset('planted')
-        props = Path(self.worlds['planted'].root) / 'proposals'
-        r = LN.learn(ds.rows, strategy=self.strategy, now=T0 + 10 ** 6, proposals_dir=props, dataset_stats=ds.stats, feature_names=ds.stats['feature_names'], **MIN)
-        self.assertEqual(r['proposal_status'], 'WRITTEN', r['candidates'][:3])
+        r = self.run_learn('planted', ds)
+        self.assertEqual(r['proposal_status'], 'CONFIRMED', r['candidates'][:3])
         first = r['selected'][0]['if'][0]
         self.assertEqual((first['feature'], first['op']), ('dev_holding_pct', '>'))
         self.assertTrue(8 <= D(first['value']) <= 20, first)
@@ -231,50 +285,96 @@ class E2ELearn(unittest.TestCase):
         self.assertEqual((doc['status'], doc['never_applied_automatically']), ('SELECTION_PROPOSAL_NOT_APPLIED', True))
         self.assertEqual(doc['current']['strategy_version'], self.strategy.strategy_version)
         self.assertIn('wait_for_enrichment:dev_holding_pct', doc['requires_runner_change'])
-        # the tables show the planted structure: the highest dev bucket is mostly rugs, the lowest hardly any
         buckets = r['tables']['dev_holding_pct']['buckets']
         self.assertGreater(buckets[-1]['rug_rate'], 0.6)
         self.assertLess(buckets[0]['rug_rate'], 0.25)
         self.assertGreater(D(r['winners_vs_rugs']['RUG']['features']['dev_holding_pct']['median']), D(r['winners_vs_rugs']['WIN']['features']['dev_holding_pct']['median']))
-        # the tx-count noise is not what the winning rule is about
         self.assertNotIn('tx_count_first_10m', [c['feature'] for rule in r['selected'] for c in rule['if']][:1])
 
     def test_a_world_whose_outcomes_ignore_every_feature_yields_no_confirmed_rule(self):
-        ds = self.dataset('noise')
-        props = Path(self.worlds['noise'].root) / 'proposals'
-        r = LN.learn(ds.rows, strategy=self.strategy, now=T0 + 10 ** 6, proposals_dir=props, dataset_stats=ds.stats, feature_names=ds.stats['feature_names'], **MIN)
+        r = self.run_learn('noise', self.dataset('noise'))
         self.assertIn(r['proposal_status'], ('NO_RULE_FOUND', 'NO_SELECTED_RULE', 'NOT_CONFIRMED'))
-        self.assertIsNone(r['proposal'])
-        self.assertFalse(props.exists())
+        self.assertFalse(r['confirmed'])
+        doc = json.loads(Path(r['proposal']).read_text())
+        self.assertEqual((doc['status'], doc['proposed']['selection_rules'], doc['requires_runner_change']), ('NO_PROPOSAL', [], []))
+
+    def test_a_signal_that_exists_only_after_the_decision_is_never_learned(self):
+        """LATE world: the same planted dev shares, read 60+ s after each decision. The learner excludes every one of them (counted) and
+        confirms nothing; relaxing ONLY the late threshold brings the leaked rule back, so the guard is what stops it."""
+        w = self.worlds['late']
+        ds = self.dataset('late')
+        self.assertEqual(ds.stats['with_features'], N)
+        self.assertTrue(all(r.features['dev_holding_pct'] is None for r in ds.rows))
+        self.assertEqual(ds.stats['excluded']['dev_holding_pct']['AT_COLLECTION_LATE'], N)
+        c = sqlite3.connect(w.db.as_uri() + '?mode=ro', uri=True)
+        self.addCleanup(c.close)
+        lates = [json.loads(raw)['late_s'] for (raw,) in c.execute("SELECT raw FROM observations WHERE kind='features'")]
+        self.assertTrue(all(55 <= x <= 400 for x in lates), lates[:5])
+        r = self.run_learn('late', ds)
+        self.assertFalse(r['confirmed'], r['selected'])
+        self.assertNotIn('dev_holding_pct', [c['feature'] for e in r['candidates'] for c in e['rule']['if']])
+        leaky = self.run_learn('late', self.dataset('late', policy=LN.LookaheadPolicy(max_late_s=3600)))
+        self.assertTrue(leaky['confirmed'])
+        self.assertEqual(leaky['selected'][0]['if'][0]['feature'], 'dev_holding_pct')
 
     def test_the_html_section_and_the_cli(self):
         w = self.worlds['planted']
-        out, props = w.root / 'out', w.root / 'cli-proposals'
+        out = w.root / 'out'
         out.mkdir()
+        cfg = json.loads((ROOT / 'config' / 'lean' / 'lean.example.json').read_text())
+        cfg['strategy_config'] = str(w.strategy_path)
+        (w.root / 'lean.json').write_text(json.dumps(cfg))
         buf = io.StringIO()
         with contextlib.redirect_stdout(buf):
-            code = LN.main(['--db', str(w.db), '--paths-db', str(w.paths_db), '--strategy', str(w.strategy_path), '--out-dir', str(out),
-                            '--proposals-dir', str(props), '--min-n', '10', '--min-confirm', '6', '--now', str(T0 + 10 ** 6)])
+            code = LN.main(['--lean-db', str(w.db), '--paths-db', str(w.paths_db), '--config', str(w.root / 'lean.json'), '--out-dir', str(out),
+                            '--min-n', '10', '--min-confirm', '6', '--min-bucket', '5', '--now', str(T0 + 10 ** 6)])
         self.assertEqual(code, 0, buf.getvalue())
         summary = json.loads(buf.getvalue())
-        self.assertEqual((summary['status'], summary['proposal_status']), ('OK', 'WRITTEN'))
+        self.assertEqual((summary['status'], summary['proposal_status'], summary['confirmed']), ('OK', 'CONFIRMED', True))
+        self.assertEqual(Path(summary['proposal']).parent, out / 'proposals')
+        self.assertTrue(Path(summary['proposal']).name.endswith('-selection.json'))
         page = Path(summary['html']).read_text()
-        for needle in ('What winners vs rugs looked like at entry', 'dev_holding_pct', 'Never applied automatically', 'CHOSEN'):
+        for needle in ('What winners vs rugs looked like at entry', 'dev_holding_pct', 'Never applied automatically', 'CHOSEN',
+                       'no lookahead'):
             self.assertIn(needle, page)
         bad = io.StringIO()
         with contextlib.redirect_stdout(bad):
-            self.assertEqual(LN.main(['--db', str(w.db), '--paths-db', str(w.root / 'missing.sqlite'), '--out-dir', str(out), '--now', '1']), 2)
+            self.assertEqual(LN.main(['--lean-db', str(w.db), '--paths-db', str(w.root / 'missing.sqlite'), '--out-dir', str(out), '--now', '1']), 2)
         self.assertEqual(json.loads(bad.getvalue())['status'], 'ERROR')
+        again = io.StringIO()                                    # the same second again: nothing is overwritten
+        with contextlib.redirect_stdout(again):
+            self.assertEqual(LN.main(['--lean-db', str(w.db), '--paths-db', str(w.paths_db), '--config', str(w.root / 'lean.json'),
+                                      '--out-dir', str(out), '--now', str(T0 + 10 ** 6)]), 2)
 
     def test_both_databases_are_only_read(self):
         for name, w in self.worlds.items():
             self.dataset(name)
             for path, digest in self.sha[name].items():
                 self.assertEqual(hashlib.sha256(path.read_bytes()).hexdigest(), digest, path.name)
-        # the trader's store never receives a learner row, and the recorder file has no learner table
         c = sqlite3.connect(self.worlds['planted'].db.as_uri() + '?mode=ro', uri=True)
         self.addCleanup(c.close)
         self.assertFalse({k for (k,) in c.execute('SELECT DISTINCT kind FROM observations') if 'label' in k or 'learn' in k})
+
+    def test_it_reads_while_the_files_are_held_open_for_writing(self):
+        """The trader keeps both files open and writes while the learner runs: plain mode=ro reads a consistent snapshot."""
+        w = self.worlds['noise']
+        copy = w.root / 'busy'
+        copy.mkdir()
+        db, pdb = copy / 'lean.sqlite', copy / 'paths.sqlite'
+        shutil.copy(w.db, db)
+        shutil.copy(w.paths_db, pdb)
+        writer = sqlite3.connect(db, isolation_level=None)
+        self.addCleanup(writer.close)
+        writer.execute('PRAGMA journal_mode=WAL')
+        pw = L.PathStore(pdb)
+        self.addCleanup(pw.close)
+        pw.add(marks=[('busy-mint', T0, 1, 1, 1, '1', '1', 'OK')])
+        writer.execute('BEGIN IMMEDIATE')                       # a write transaction in progress on lean.sqlite
+        writer.execute("INSERT INTO meta VALUES('lint3-busy', 'x')")
+        ds = LN.build_dataset(db, pdb, self.strategy, pool_fee_bps=w.pool_fee_bps)
+        writer.execute('ROLLBACK')
+        self.assertEqual(ds.stats['with_features'], N)
+        self.assertEqual(ds.stats['skipped'], {'MARKS_WITHOUT_PATH': 1})
 
 
 if __name__ == '__main__':

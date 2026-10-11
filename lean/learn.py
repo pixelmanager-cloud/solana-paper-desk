@@ -1,51 +1,62 @@
-"""Selection learner (L19): what did winners and rugs look like AT ENTRY TIME, and which simple screen rule would have kept the trader
-out of the rugs. PAPER ONLY, offline, read-only, deterministic (no clock, no randomness). Nothing here trades, calls a provider or
-changes a config: the output is a REPORT and, at most, a proposal file that is NEVER applied automatically.
+"""Selection learner (L19, reworked in LINT3): what did winners and rugs look like AT DECISION TIME, and which simple screen rule would
+have kept the trader out of the rugs. PAPER ONLY, offline, read-only, deterministic (no randomness; the clock only names the files).
+Nothing here trades, calls a provider or changes a config: the output is a REPORT and a proposal file that is NEVER applied.
 
-Inputs (all read-only):
-  * ``paths.sqlite`` (``lean.paths``, the recorder; several files = the rolled-over archives, oldest first): the marks of every
-    hazard-free candidate, entered or not. ``lean.labels`` turns each path into ONE label (RUG / WIN / LOSS / FLAT) with the live
-    mark function; ``lean.replay`` replays the LIVE exit rules on it (first-mark entry) to give a per-candidate PnL.
-  * ``lean.sqlite``: the ``observations(kind='features')`` rows (``lean.features``, one per screened candidate).
+Inputs, all opened read-only with plain ``mode=ro`` (``lean.report.open_ro``: works while the trader and the recorders write):
+  * ``paths.sqlite`` (the L07R2 recorder, ``lean.paths``) and its archives ``paths-*.sqlite`` beside it: tables ``paths`` /
+    ``path_marks`` / ``path_gaps`` / ``path_ends`` (``lean.labels.load_paths``);
+  * ``lean.sqlite`` (the trader's store): ``decisions`` (the decision time of each candidate), ``observations(kind='features')``
+    (the L12F v3 rows: ``decision_ts``, ``late_s``, ``flags``) and ``observations(kind='wallet_signals')`` (the L13 v2 rows:
+    ``decision_ts``, the window cut at the decision, the smart table as of the decision, the funders map, detected hubs).
 
-No lookahead: a feature row is used for a candidate only when it was decided AND collected no later than the path's start
-(= the decision time) plus ``max_lag_s`` (the enrichment calls run a few seconds after the screen; default 300 s). A row whose screen
-time is after the path's start, or that was collected later than that, is dropped and counted (``FEATURES_AFTER_DECISION``);
-nothing from the marks ever becomes a feature. A feature that is unknown for a candidate never matches a rule condition.
+THE DECISION of a candidate is the trader's last screen decision at or before its path start, or the entry decision that followed it
+(``decision_time``; the same definition the v3 feature row uses). Labels start there (``lean.labels``) and every feature must be KNOWN
+there. No lookahead (``LookaheadPolicy``, every exclusion counted in ``stats['excluded']``):
+  * a features row is used only if it is ``features_version`` >= 3 and its ``decision_ts`` is at or before the decision (the last such
+    row of the candidate wins; a later row can never replace it);
+  * a field flagged ``AT_COLLECTION`` (a snapshot read AFTER the decision: the dev balance, the holders of a soft reject) is used only
+    when the row's ``late_s`` <= ``max_late_s`` (default 15 s); a field with any other flag except ``CUT_AT_DECISION`` is excluded;
+  * a wallet-signals row is used only if it is ``wallet_signals_v2`` with a ``decision_ts`` at or before the decision and a window that
+    ends at it (``window_after_decision_s == 0``); ``smart_buyers_count`` only when its table is as of that decision
+    (``smart_asof_ts``); ``bundled_supply_pct`` only when the supply is the screen's (``supply_source == 'screen'``);
+  * the marks never become features, and no mark before the decision is ever read by a label.
+A feature that is unknown for a candidate never matches a rule condition.
 
 Learner (interpretable only; stdlib):
   * per-feature quantile tables: n, rug rate, win rate (each with a Wilson 95% interval), mean forward return and mean simulated PnL
     per bucket; a bucket / feature below its minimum is flagged INSUFFICIENT and must not be read as a finding;
   * "winners vs rugs": the median of each feature per label;
   * a greedy rule miner for 1- and 2-condition REJECT rules (``feature > t`` / ``feature <= t``, ``t`` a quantile of the training
-    values). The objective is the expected simulated PnL per candidate under the live exit rules: rejecting a candidate replaces its
-    PnL by 0, so a rule's gain is ``-(sum of the rejected PnL) / n_candidates``. Candidates are the ones the current strategy would
-    enter (non-enterable ones cannot be improved by a screen rule).
+    values). The objective is the expected PnL per candidate under the LIVE exit rules (``lean.labels.simulate_exits``: the real
+    ``lean.strategy.exit_decision`` on every recorded mark): rejecting a candidate replaces its PnL by 0, so a rule's gain is
+    ``-(sum of the rejected PnL) / n_candidates``. Candidates are the ones the current strategy would enter (entered, or passed and
+    blocked only by a portfolio limit): a screen rule cannot improve the others;
   * walk-forward by time: MINE on the oldest window, SELECT on the middle one, CONFIRM on the newest. The select window chooses the
     rules (each needs ``min_n`` rejected candidates, a positive gain and a one-sided t-test on the rejected PnL); the confirm window
     can only accept or reject the SET as a whole (``min_confirm`` rejected, positive gain, stricter t-test): it never chooses.
 
-A confirmed set is written to ``config/lean/proposals/<ts>-selection.json`` (never overwritten) with the rule list, its diff against
-the current screen and the evidence of all three windows. It is a proposal: a new screen / strategy version needs the coordinator's
-review and CK's OK. Rules on features collected after the screen need the runner to wait for that enrichment (``requires_runner_change``).
+Every run writes ``<out-dir>/proposals/<ts>-selection.json`` (never overwritten; ``status`` says whether it proposes anything) and the
+HTML page "what winners vs rugs looked like at entry". A proposal needs the coordinator's review and CK's OK to become a screen /
+strategy version; rules on features that are only known after the screen need the runner to wait for them (``requires_runner_change``).
 """
 import argparse
 import datetime
-import html
 import json
 import math
 import os
 import sqlite3
 import sys
+import time
 from dataclasses import dataclass
 from decimal import Decimal, InvalidOperation
 from pathlib import Path
 from typing import Optional
 
-from lean import features as F, labels as LB, replay as R, strategy as S
+from lean import adapters as A, features as F, labels as LB, strategy as S
 
-SELECTION_VERSION = 1
+SELECTION_VERSION = 2
 PROPOSAL_STATUS = 'SELECTION_PROPOSAL_NOT_APPLIED'
+NO_PROPOSAL = 'NO_PROPOSAL'
 LABEL = 'PAPER ONLY / EXECUTION_UNVERIFIED'
 MIN_N = 50                                # rejected candidates a rule needs in the mine and the select windows
 MIN_CONFIRM = 30                          # ... and in the confirm window
@@ -57,17 +68,30 @@ MAX_RULES = 3
 MAX_REJECT_FRACTION = 0.8                 # a screen rule that rejects more than this share of the candidates is "stop trading", not selection
 TOP_CANDIDATES = 25
 PAIR_SEEDS = 10
-FEATURE_NAMES = ('top10_pct', 'top1_pct', 'dev_holding_pct', 'seconds_graduation_to_screen', 'tx_count_first_10m', 'market_cap_usd',
-                 'liquidity_usd', 'age_seconds_at_screen', 'transfer_fee_bps')
-# features known from the screen itself; the others come from the extra calls that run a few seconds later (lean.features)
+# L12F v3 feature-row fields (lean.features.FIELDS that are numbers a screen rule can use)
+ROW_FEATURES = ('top10_pct', 'top1_pct', 'dev_holding_pct', 'seconds_graduation_to_screen', 'tx_count_first_10m', 'market_cap_usd',
+                'liquidity_usd', 'age_seconds_at_screen', 'transfer_fee_bps')
+# L13 wallet-signal row figures
+WALLET_FEATURES = ('bundle_score', 'sniper_count', 'same_slot_buyers', 'bundled_supply_pct', 'smart_buyers_count')
+FEATURE_NAMES = ROW_FEATURES + WALLET_FEATURES
+# known from the screen itself; the others come from the extra calls (L12F) or the wallet collector (L13) that run after it
 SCREEN_TIME_FEATURES = frozenset({'market_cap_usd', 'liquidity_usd', 'age_seconds_at_screen', 'transfer_fee_bps'})
-DEFAULT_MAX_LAG_S = 300.0
-EPS_S = 1.0
+MIN_FEATURES_VERSION = 3
+WALLET_VERSION = 'wallet_signals_v2'
+DEFAULT_MAX_LATE_S = 15.0
+OK_FLAGS = frozenset({'CUT_AT_DECISION'})           # a field cut at the decision is pre-decision by construction
+# a not-entered candidate that passed the screen and was refused ONLY by one of these would have been entered on its own merits
+PORTFOLIO_REASONS = frozenset({'PORTFOLIO_INVALID', 'DAILY_LOSS_STOP', 'LOSS_STREAK_PAUSE', 'MAX_POSITIONS', 'ALREADY_HELD', 'COOLDOWN',
+                               'ENTRY_THROTTLE', 'BELOW_MINIMUM', 'ENTRIES_STOPPED'})
 ROOT = Path(__file__).resolve().parents[1]
 
 
 class LearnError(ValueError):
     pass
+
+
+class InsufficientData(LearnError):
+    """Too few candidates for three non-empty windows: a STATUS of the run (INSUFFICIENT_DATA), not a usage error."""
 
 
 # ----------------------------------------------------------------------------------------------------------- statistics
@@ -113,14 +137,18 @@ def _sol(lamports):
     return float(Decimal(lamports) / Decimal(10 ** 9))
 
 
+def _num(value):
+    return isinstance(value, (int, float)) and not isinstance(value, bool) and math.isfinite(value)
+
+
 # ----------------------------------------------------------------------------------------------------------- dataset
 @dataclass(frozen=True)
 class Row:
     mint: str
-    ts: float                    # the decision time = the path's start
+    ts: float                    # THE decision time
     label: LB.Label
-    features: dict               # {name: Decimal | None}, only what was known at the decision (+ lag)
-    pnl_lamports: int            # the live exit rules replayed on the path (first-mark entry); 0 when not enterable
+    features: dict               # {name: Decimal | None}, only what was known at the decision
+    pnl_lamports: int            # the live exit rules on the path from the decision (lean.labels.simulate_exits)
     enterable: bool              # the current strategy would have entered this candidate
     trade_status: Optional[str] = None
 
@@ -131,96 +159,224 @@ class Dataset:
     stats: dict
 
 
-def read_feature_rows(connection) -> tuple:
-    """-> ({mint: [row dicts oldest first]}, skipped). The payload is read from the row's ``meta`` (it holds the same JSON as ``raw``)."""
-    out, skipped = {}, {}
+@dataclass(frozen=True)
+class LookaheadPolicy:
+    max_late_s: float = DEFAULT_MAX_LATE_S          # an AT_COLLECTION snapshot later than this after the decision is excluded
+    eps_s: float = 1e-6                             # the rows and the decision are stamped by the same store clock
+
+    def __post_init__(self):
+        for name in ('max_late_s', 'eps_s'):
+            value = getattr(self, name)
+            if not _num(value) or value < 0:
+                raise LearnError('%s must be a finite number >= 0' % name)
+
+    def to_dict(self):
+        return {'max_late_s': float(self.max_late_s), 'eps_s': float(self.eps_s), 'min_features_version': MIN_FEATURES_VERSION,
+                'wallet_version': WALLET_VERSION, 'ok_flags': sorted(OK_FLAGS)}
+
+
+class _Counts:
+    def __init__(self):
+        self.skipped, self.excluded = {}, {}
+
+    def skip(self, name, n=1):
+        self.skipped[name] = self.skipped.get(name, 0) + n
+
+    def exclude(self, feature, why):
+        bucket = self.excluded.setdefault(feature, {})
+        bucket[why] = bucket.get(why, 0) + 1
+
+
+def _observations(connection, kind, counts, prefix):
+    """{mint: [payload dicts in id order]} of one observation kind, parsed from the canonical ``raw`` bytes."""
+    out = {}
     try:
-        cursor = connection.execute("SELECT id, ts, meta FROM observations WHERE kind='features' ORDER BY id")
+        cursor = connection.execute('SELECT id, mint, candidate_id, raw, raw_truncated FROM observations WHERE kind=? ORDER BY id', (kind,))
     except sqlite3.Error:
-        return out, {'FEATURES_NO_TABLE': 1}
-    for _id, ts, meta in cursor:
+        counts.skip(prefix + '_NO_TABLE')
+        return out
+    for _id, mint, cid, raw, truncated in cursor:
         try:
-            row = json.loads(meta)
-            mint, fields = row['mint'], row['fields']
-            if not isinstance(mint, str) or not mint or not isinstance(fields, dict):
-                raise ValueError
-        except (ValueError, KeyError, TypeError):
-            skipped['FEATURES_UNREADABLE'] = skipped.get('FEATURES_UNREADABLE', 0) + 1
+            if truncated:
+                raise ValueError('truncated')
+            row = json.loads(bytes(raw).decode('utf-8'))
+            if not isinstance(row, dict) or row.get('mint') != mint or not isinstance(mint, str):
+                raise ValueError('mint')
+        except (ValueError, TypeError, UnicodeDecodeError):
+            counts.skip(prefix + '_UNREADABLE')
             continue
-        screen_at, collected_at = _to_decimal(row.get('screen_at')), _to_decimal(row.get('collected_at'))
-        row = dict(row, _ts=ts, _screen_at=float(screen_at) if screen_at is not None else ts,
-                   _collected_at=float(collected_at) if collected_at is not None else ts)
+        row['_candidate_id'] = cid
         out.setdefault(mint, []).append(row)
-    return out, skipped
+    return out
 
 
-def features_known_at(rows, decision_ts, names, max_lag_s=DEFAULT_MAX_LAG_S):
-    """The last feature row of a mint that was screened no later than the decision and collected no later than it plus
-    ``max_lag_s``, as ``{name: Decimal|None}``; (None, reason) when there is none. This is THE lookahead guard."""
-    usable = [r for r in rows if r['_screen_at'] <= decision_ts + EPS_S and r['_collected_at'] <= decision_ts + max_lag_s]
-    dropped = len(rows) - len(usable)
-    if not usable:
-        return None, 'FEATURES_AFTER_DECISION' if rows else 'NO_FEATURES_ROW', dropped
-    fields = usable[-1]['fields']
-    return {name: _to_decimal(fields.get(name)) for name in names}, None, dropped
+def read_decisions(connection) -> dict:
+    """{mint: [(ts, kind, candidate_id), ...] by time} of the screen and entry decisions (``lean.sqlite`` ``decisions``)."""
+    out = {}
+    for ts, kind, mint, cid in connection.execute("SELECT ts, kind, mint, candidate_id FROM decisions WHERE kind IN ('screen','entry') "
+                                                  'AND mint IS NOT NULL ORDER BY ts, id'):
+        if _num(ts):
+            out.setdefault(mint, []).append((float(ts), kind, cid))
+    return out
 
 
-def _connections(items):
-    if not isinstance(items, (list, tuple)):
-        items = [items]
-    if not items:
-        raise LearnError('no paths database given')
-    if all(isinstance(i, sqlite3.Connection) for i in items):
-        return list(items), False
-    return R.open_paths(*items), True
+def decision_time(decisions, candidate_id, start_ts) -> Optional[float]:
+    """The candidate's decision: its LAST screen decision at or before the path start, or the last entry decision after that screen
+    (still at or before the start). None when the store has no screen decision for it."""
+    rows = [d for d in decisions if d[0] <= start_ts and (candidate_id is None or d[2] == candidate_id)]
+    screens = [d[0] for d in rows if d[1] == 'screen']
+    if not screens:
+        return None
+    entries = [d[0] for d in rows if d[1] == 'entry' and d[0] >= screens[-1]]
+    return entries[-1] if entries else screens[-1]
 
 
-def build_dataset(live_db, paths_dbs, strategy: S.StrategyConfig, *, rcfg=None, label_cfg=None, feature_names=FEATURE_NAMES,
-                  max_lag_s=DEFAULT_MAX_LAG_S, pool_fee_bps=LB.DEFAULT_POOL_FEE_BPS, since=None, until=None) -> Dataset:
-    """Label every recorded path, join the features known at its decision time and replay the live exit rules on it."""
+def _pick(rows, decision_ts, candidate_id, policy, counts, prefix):
+    """The last row of the candidate whose own ``decision_ts`` is at or before the decision. Later rows are counted, never used."""
+    best = None
+    for row in rows:
+        if candidate_id is not None and row.get('_candidate_id') not in (None, candidate_id):
+            continue
+        at = row.get('decision_ts')
+        if not _num(at):
+            counts.skip(prefix + '_NO_DECISION_TS')
+            continue
+        if at > decision_ts + policy.eps_s:
+            counts.skip(prefix + '_AFTER_DECISION')
+            continue
+        best = row
+    return best
+
+
+def feature_values(row, decision_ts, policy, counts, names=ROW_FEATURES) -> dict:
+    """``{name: Decimal | None}`` of one L12F v3 row, every post-decision field excluded (and counted)."""
+    out = {name: None for name in names}
+    if row is None:
+        return out
+    if not isinstance(row.get('features_version'), int) or row['features_version'] < MIN_FEATURES_VERSION:
+        counts.skip('FEATURES_PRE_V3')                     # no decision_ts / flags: a v1/v2 tx count runs past the decision
+        return out
+    fields, flags = row.get('fields') or {}, row.get('flags') or {}
+    late = row.get('late_s')
+    for name in names:
+        value = _to_decimal(fields.get(name)) if isinstance(fields, dict) else None
+        if value is None:
+            continue
+        flag = flags.get(name) if isinstance(flags, dict) else None
+        if flag == 'AT_COLLECTION':
+            if not _num(late) or late > policy.max_late_s:
+                counts.exclude(name, 'AT_COLLECTION_LATE')
+                continue
+        elif flag is not None and flag not in OK_FLAGS:
+            counts.exclude(name, 'FLAG_' + str(flag)[:40])
+            continue
+        out[name] = value
+    return out
+
+
+def wallet_values(row, decision_ts, policy, counts, names=WALLET_FEATURES) -> dict:
+    """``{name: Decimal | None}`` of one L13 row, as of the decision only (and every exclusion counted)."""
+    out = {name: None for name in names}
+    if row is None:
+        return out
+    if row.get('version') != WALLET_VERSION:
+        counts.skip('WALLET_SIGNALS_OLD_VERSION')
+        return out
+    after = row.get('window_after_decision_s')
+    for name in names:
+        value = _to_decimal(row.get(name))
+        if value is None:
+            continue
+        if not _num(after) or after > 0:                     # the window was not cut at the decision (unknown decision)
+            counts.exclude(name, 'WINDOW_NOT_CUT_AT_DECISION')
+            continue
+        if name == 'smart_buyers_count' and (not _num(row.get('smart_asof_ts')) or row['smart_asof_ts'] > row['decision_ts'] + policy.eps_s):
+            counts.exclude(name, 'SMART_TABLE_NOT_AS_OF_DECISION')
+            continue
+        if name == 'bundled_supply_pct' and row.get('supply_source') != 'screen':
+            counts.exclude(name, 'SUPPLY_READ_AFTER_DECISION')
+            continue
+        out[name] = value
+    return out
+
+
+def enterable(path: LB.PathRecord) -> bool:
+    """Entered, or passed the screen and refused ONLY by a portfolio limit (it would have been entered on its own merits)."""
+    if path.entered:
+        return True
+    if path.screen_reasons:
+        return False
+    return bool(path.reasons) and all(str(r) in PORTFOLIO_REASONS for r in path.reasons)
+
+
+def build_dataset(lean_db, paths_db, strategy: S.StrategyConfig, *, label_cfg=None, policy=None, pool_fee_bps=LB.DEFAULT_POOL_FEE_BPS,
+                  feature_names=FEATURE_NAMES, extra_paths=()) -> Dataset:
+    """Label every recorded path from its decision, join the features known at that decision and replay the live exit rules on it.
+    ``lean_db`` / ``paths_db`` are file paths (opened ``mode=ro``) or open sqlite3 connections (``paths_db`` may be a list)."""
     from lean.report import open_ro
-    label_cfg = label_cfg or LB.LabelConfig.from_strategy(strategy, pool_fee_bps)
+    label_cfg = label_cfg or LB.LabelConfig.from_strategy(strategy)
+    policy = policy or LookaheadPolicy()
     feature_names = tuple(feature_names)
-    live, live_owned = (live_db, False) if isinstance(live_db, sqlite3.Connection) else (open_ro(live_db), True)
-    connections, owned = _connections(paths_dbs)
+    unknown = set(feature_names) - set(FEATURE_NAMES)
+    if unknown:
+        raise LearnError('unknown features %s' % sorted(unknown))
+    pcfg = A.paper_config(strategy)
+    counts = _Counts()
+    live, live_owned = (lean_db, False) if isinstance(lean_db, sqlite3.Connection) else (open_ro(lean_db), True)
+    if isinstance(paths_db, sqlite3.Connection):
+        connections, owned = [paths_db], False
+    elif isinstance(paths_db, (list, tuple)) and paths_db and all(isinstance(c, sqlite3.Connection) for c in paths_db):
+        connections, owned = list(paths_db), False
+    else:
+        connections, owned = None, True
+    rows, by_label, n_paths, load_skipped = [], {}, 0, {}
     try:
-        rcfg = rcfg or R.ReplayConfig(initial_cash_sol=R.store_initial_cash_sol(live) or R.ReplayConfig().initial_cash_sol,
-                                      pool_fee_bps=label_cfg.pool_fee_bps)
-        paths, skipped = R.load_paths(connections, since=since, until=until)
-        refs = LB.references(connections)
-        feature_rows, feature_skipped = read_feature_rows(live)
+        if connections is None:
+            connections = LB.open_paths(paths_db, extra_paths)
+        decisions = read_decisions(live)
+        feature_rows = _observations(live, 'features', counts, 'FEATURES')
+        wallet_rows = _observations(live, 'wallet_signals', counts, 'WALLET_SIGNALS')
+        for path in LB.iter_paths(connections, load_skipped):           # one path's marks in memory at a time
+            n_paths += 1
+            decision = decision_time(decisions.get(path.mint, []), path.candidate_id, path.start_ts)
+            if decision is None:
+                counts.skip('DECISION_UNKNOWN')
+                continue
+            try:
+                ref = LB.reference(path, pcfg)
+            except LB.LabelError:
+                counts.skip('REFERENCE_UNUSABLE')
+                continue
+            label = LB.label_path(path, decision, ref, label_cfg, pool_fee_bps=pool_fee_bps, pcfg=pcfg)
+            by_label[label.label] = by_label.get(label.label, 0) + 1
+            if not label.usable:
+                counts.skip('%s:%s' % (LB.INSUFFICIENT, label.why_insufficient))
+                continue
+            frow = _pick(feature_rows.get(path.mint, []), decision, path.candidate_id, policy, counts, 'FEATURES')
+            wrow = _pick(wallet_rows.get(path.mint, []), decision, path.candidate_id, policy, counts, 'WALLET_SIGNALS')
+            if frow is None and wrow is None:
+                counts.skip('NO_FEATURES_AT_DECISION')
+                continue
+            values = {**feature_values(frow, decision, policy, counts), **wallet_values(wrow, decision, policy, counts)}
+            trade = LB.simulate_exits(path, decision, ref, strategy, pool_fee_bps=pool_fee_bps, pcfg=pcfg)
+            rows.append(Row(path.mint, decision, label, {n: values[n] for n in feature_names}, trade.pnl_lamports, enterable(path),
+                            trade.status))
     finally:
         if live_owned:
             live.close()
-        if owned:
+        if owned and connections:
             for c in connections:
                 c.close()
-    skipped = dict(skipped)
-    for name, n in feature_skipped.items():
-        skipped[name] = skipped.get(name, 0) + n
-    labels, label_skipped = LB.label_paths(paths, refs, label_cfg)
-    for name, n in label_skipped.items():
-        skipped[name] = skipped.get(name, 0) + n
-    rows = []
-    for path in paths:
-        label = labels.get(path.mint)
-        if label is None:
-            continue
-        known, why, dropped = features_known_at(feature_rows.get(path.mint, []), path.start_ts, feature_names, max_lag_s)
-        if dropped:
-            skipped['FEATURES_AFTER_DECISION'] = skipped.get('FEATURES_AFTER_DECISION', 0) + dropped
-        if known is None:
-            skipped[why] = skipped.get(why, 0) + (0 if why == 'FEATURES_AFTER_DECISION' else 1)
-            continue
-        result = R.replay([path], strategy, rcfg)
-        trade = result.trades[0] if result.trades else None
-        rows.append(Row(path.mint, path.start_ts, label, known, trade.realized_lamports if trade else 0, trade is not None,
-                        trade.status if trade else None))
+    for name, n in load_skipped.items():
+        counts.skip(name, n)
     rows.sort(key=lambda r: (r.ts, r.mint))
-    return Dataset(rows, {'paths': len(paths), 'labelled': len(labels), 'with_features': len(rows),
-                          'enterable': sum(1 for r in rows if r.enterable), 'skipped': dict(sorted(skipped.items())),
-                          'label_config': label_cfg.to_dict(), 'replay_assumptions': rcfg.to_dict(), 'max_lag_s': max_lag_s,
-                          'feature_names': list(feature_names)})
+    return Dataset(rows, {'paths': n_paths, 'labels': dict(sorted(by_label.items())), 'with_features': len(rows),
+                          'enterable': sum(1 for r in rows if r.enterable), 'skipped': dict(sorted(counts.skipped.items())),
+                          'excluded': {k: dict(sorted(v.items())) for k, v in sorted(counts.excluded.items())},
+                          'label_config': label_cfg.to_dict(), 'lookahead': policy.to_dict(), 'pool_fee_bps': pool_fee_bps,
+                          'strategy_version': strategy.strategy_version, 'feature_names': list(feature_names),
+                          'pnl_model': 'lean.labels.simulate_exits: lean.strategy.exit_decision on every recorded mark (adapters.mark), '
+                                       'one isolated position per path; L10 latency and L11 DANGER exits not modelled'})
 
 
 # ----------------------------------------------------------------------------------------------------------- windows
@@ -237,13 +393,13 @@ def split_rows(rows, fractions=DEFAULT_FRACTIONS, embargo_s: float = 0):
     a, b = int(n * fractions[0]), int(n * (fractions[0] + fractions[1]))
     mine, select, confirm = ordered[:a], ordered[a:b], ordered[b:]
     if not (mine and select and confirm):
-        raise LearnError('need at least 3 candidates so that all three windows are non-empty (have %d)' % n)
+        raise InsufficientData('need at least 3 candidates so that all three windows are non-empty (have %d)' % n)
     bounds = (select[0].ts, confirm[0].ts)
     if embargo_s:
         select = [r for r in select if r.ts >= bounds[0] + embargo_s]
         confirm = [r for r in confirm if r.ts >= bounds[1] + embargo_s]
         if not select or not confirm:
-            raise LearnError('embargo removed every select or confirm candidate')
+            raise InsufficientData('embargo removed every select or confirm candidate')
     return mine, select, confirm, bounds
 
 
@@ -450,14 +606,19 @@ def winners_vs_rugs(rows, feature_names):
 def learn(rows, *, strategy: Optional[S.StrategyConfig] = None, fractions=DEFAULT_FRACTIONS, min_n=MIN_N, min_confirm=MIN_CONFIRM,
           min_bucket=MIN_BUCKET, embargo_s=0, feature_names=FEATURE_NAMES, now=None, proposals_dir=None, dataset_stats=None,
           z_select=Z_SELECT, z_confirm=Z_CONFIRM, max_rules=MAX_RULES, max_reject_fraction=MAX_REJECT_FRACTION) -> dict:
-    """Tables over every labelled candidate that has features; rules mined / selected / confirmed on the ENTERABLE ones by time."""
+    """Tables over every labelled candidate that has features; rules mined / selected / confirmed on the ENTERABLE ones by time.
+    With ``proposals_dir`` the selection file is written (always: it says whether it proposes anything)."""
     rows = list(rows)
     feature_names = tuple(feature_names)
     for name, value in (('min_n', min_n), ('min_confirm', min_confirm), ('min_bucket', min_bucket)):
         if isinstance(value, bool) or not isinstance(value, int) or value < 1:
             raise LearnError('%s must be an integer >= 1' % name)
     enterable = [r for r in rows if r.enterable]
-    mine_rows, select_rows, confirm_rows, bounds = split_rows(enterable, fractions, embargo_s)
+    try:
+        mine_rows, select_rows, confirm_rows, bounds = split_rows(enterable, fractions, embargo_s)
+        enough = True
+    except InsufficientData:                                # (bad fractions / embargo values still raise LearnError)
+        mine_rows, select_rows, confirm_rows, bounds, enough = [], [], [], (None, None), False
     candidates = mine(mine_rows, feature_names, min_n=min_n, max_reject_fraction=max_reject_fraction)
     chosen, evidence = select_rules(candidates, select_rows, min_n=min_n, z_select=z_select, max_rules=max_rules,
                                     max_reject_fraction=max_reject_fraction)
@@ -479,62 +640,82 @@ def learn(rows, *, strategy: Optional[S.StrategyConfig] = None, fractions=DEFAUL
         'candidates': [{'rule': e['rule'].to_dict(), 'train': e['mined'], 'select': e['select'], 'flags': e['flags'],
                         'chosen': e['rule'] in chosen} for e in evidence],
         'selected': [r.to_dict() for r in chosen], 'union': union, 'confirm_used_for_selection': False,
-        'proposal': None, 'proposal_status': None, 'warnings': [],
+        'confirmed': False, 'proposal': None, 'proposal_status': None, 'warnings': [],
     }
     result['warnings'] = _warnings(result, len(candidates))
-    if not candidates:
+    if not enough:
+        result['proposal_status'] = 'INSUFFICIENT_DATA'
+    elif not candidates:
         result['proposal_status'] = 'NO_RULE_FOUND'
     elif not chosen:
         result['proposal_status'] = 'NO_SELECTED_RULE'
     elif not confirmed(union['confirm'], min_confirm=min_confirm, z_confirm=z_confirm):
         result['proposal_status'] = 'NOT_CONFIRMED'
-    elif proposals_dir is None:
-        result['proposal_status'] = 'CONFIRMED_NO_DIRECTORY_GIVEN'
     else:
-        result['proposal'] = str(write_proposal(proposals_dir, result, chosen, strategy, feature_names))
-        result['proposal_status'] = 'WRITTEN'
+        result['proposal_status'], result['confirmed'] = 'CONFIRMED', True
+    if proposals_dir is not None:
+        result['proposal'] = str(write_proposal(proposals_dir, result, chosen if result['confirmed'] else [], strategy, feature_names))
     return result
 
 
 def _warnings(result, n_mined):
-    out = ['Outcomes are a SIMULATION: recorded vault amounts, constant-product quotes, the live exit rules (EXECUTION_UNVERIFIED).']
+    out = ['Outcomes are a SIMULATION: recorded vault amounts, constant-product quotes, the live exit rules (EXECUTION_UNVERIFIED); '
+           'L10 latency fills and L11 DANGER exits are not modelled.']
     if n_mined:
         out.append('%d candidate rules were mined and the best chosen on the select window: that choice is optimistic (selection bias). '
                    'The confirm window only accepts or rejects the chosen set; confirm any proposal with a forward paper run under a new version.' % n_mined)
     if result['split']['select'] < 100 or result['split']['confirm'] < 100:
         out.append('Only %d select / %d confirm candidates: rule evidence is noise-dominated.' % (result['split']['select'], result['split']['confirm']))
-    skipped = result['counts']['dataset'].get('skipped') if result['counts']['dataset'] else None
-    if skipped:
+    dataset = result['counts']['dataset'] or {}
+    if dataset.get('skipped'):
         out.append('Some rows were unusable or dropped (see counts.dataset.skipped).')
+    if dataset.get('excluded'):
+        out.append('Some feature values were excluded as known only after the decision (see counts.dataset.excluded).')
     if result['counts']['by_label'].get('RUG', 0) == 0:
         out.append('No candidate was labelled RUG: there is nothing to learn to avoid yet.')
     return out
 
 
+def runner_changes(chosen):
+    """What the runner must do before a proposed rule can be applied at the decision."""
+    names = {c.feature for rule in chosen for c in rule.conditions}
+    out = ['selection_rules'] if chosen else []
+    enriched = sorted((names & set(ROW_FEATURES)) - SCREEN_TIME_FEATURES)
+    wallet = sorted(names & set(WALLET_FEATURES))
+    if enriched:
+        out.append('wait_for_enrichment:' + ','.join(enriched))
+    if wallet:
+        out.append('wait_for_wallet_signals:' + ','.join(wallet))
+    return out
+
+
 def write_proposal(directory, result, chosen, strategy, feature_names):
+    """``<directory>/<ts>-selection.json``, exclusive (never overwritten). ``status`` is PROPOSAL_STATUS only for a confirmed set."""
     ts = result['generated_at'].replace('-', '').replace(':', '')
-    enriched = sorted({c.feature for rule in chosen for c in rule.conditions} - SCREEN_TIME_FEATURES)
     current = {'strategy_version': strategy.strategy_version, 'config_hash': strategy.config_hash,
                'min_market_cap_usd': str(strategy.min_market_cap_usd), 'max_market_cap_usd': str(strategy.max_market_cap_usd),
                'min_liquidity_usd': str(strategy.min_liquidity_usd), 'selection_rules': []} if strategy is not None else {'selection_rules': []}
-    doc = {'status': PROPOSAL_STATUS, 'label': LABEL, 'generated_at': result['generated_at'], 'selection_version': SELECTION_VERSION,
+    doc = {'status': PROPOSAL_STATUS if chosen else NO_PROPOSAL, 'outcome': result['proposal_status'], 'label': LABEL,
+           'generated_at': result['generated_at'], 'selection_version': SELECTION_VERSION,
            'label_version': LB.LABEL_VERSION, 'current': current,
            'proposed': {'selection_rules': [r.to_dict() for r in chosen]},
            'diff': {'selection_rules': {'from': [], 'to': [r.to_dict() for r in chosen]}},
-           'requires_runner_change': ['selection_rules'] + (['wait_for_enrichment:' + ','.join(enriched)] if enriched else []),
+           'requires_runner_change': runner_changes(chosen),
            'evidence': {'baseline': result['baseline'], 'union': result['union'], 'split': result['split'], 'thresholds': result['thresholds'],
                         'chosen_on': 'select', 'confirmed_on': 'confirm', 'candidates_mined': len(result['candidates']),
+                        'selected_on_select_window': result['selected'],
                         'counts': {'candidates': result['counts']['candidates'], 'enterable': result['counts']['enterable'],
-                                   'by_label': result['counts']['by_label']}, 'features_available_to_rules': list(feature_names)},
+                                   'by_label': result['counts']['by_label']},
+                        'dataset': result['counts']['dataset'], 'features_available_to_rules': list(feature_names)},
            'warnings': result['warnings'], 'never_applied_automatically': True}
     out = Path(directory)
     if out.is_symlink():
         raise LearnError('proposals_dir must not be a symlink')
-    out.mkdir(parents=True, exist_ok=True)
+    out.mkdir(mode=0o700, parents=True, exist_ok=True)
     path = out / ('%s-selection.json' % ts)
     fd = os.open(path, os.O_WRONLY | os.O_CREAT | os.O_EXCL | os.O_NOFOLLOW, 0o600)
     with os.fdopen(fd, 'w', encoding='utf-8') as stream:
-        stream.write(json.dumps(doc, sort_keys=True, indent=2, allow_nan=False) + '\n')
+        stream.write(json.dumps(doc, sort_keys=True, indent=2, allow_nan=False, default=str) + '\n')
     return path
 
 
@@ -572,6 +753,16 @@ def render_section(result: dict) -> str:
                      [[k, v['n'], v['n_rejected'], v['baseline_mean_pnl_sol'], v['policy_mean_pnl_sol'], v['gain_per_candidate_sol'], v['rejected_t'],
                        v['rug_rate_rejected'], v['rug_rate_kept']] for k, v in result['union'].items()]) +
                      '<p>* the confirm window is NOT used to choose or drop any rule.</p>')
+    dataset = result['counts']['dataset'] or {}
+    if dataset:
+        parts.append('<h3>Data used and excluded (no lookahead)</h3><p>Every label starts at the decision; every feature must be known at it. '
+                     'Policy: %s</p>' % e(json.dumps(dataset.get('lookahead', {}), sort_keys=True)))
+        parts.append(table(['labels (all paths)', 'n'], [[k, v] for k, v in (dataset.get('labels') or {}).items()]))
+        parts.append(table(['rows skipped', 'n'], [[k, v] for k, v in (dataset.get('skipped') or {}).items()]) if dataset.get('skipped')
+                     else '<p>No row skipped.</p>')
+        excluded = [[name, why, n] for name, reasons in (dataset.get('excluded') or {}).items() for why, n in reasons.items()]
+        parts.append(table(['feature value excluded', 'why (known only after the decision)', 'n'], excluded) if excluded
+                     else '<p>No feature value had to be excluded.</p>')
     parts.append('<h3>Warnings</h3><ul>%s</ul>' % ''.join('<li>%s</li>' % e(w) for w in result['warnings']))
     return ''.join(parts)
 
@@ -601,35 +792,58 @@ def write_report(out_dir, result):
 
 def main(argv=None):
     p = argparse.ArgumentParser(description=__doc__.split('\n')[0])
-    p.add_argument('--db', required=True, help="the live trader's lean.sqlite (read-only: features rows and starting cash)")
-    p.add_argument('--paths-db', required=True, action='append', help="the recorder's paths.sqlite; repeat for rolled-over archives (oldest first)")
-    p.add_argument('--strategy', default=str(ROOT / 'config' / 'lean' / 'strategy-default.json'))
-    p.add_argument('--out-dir', required=True)
-    p.add_argument('--proposals-dir', default=str(ROOT / 'config' / 'lean' / 'proposals'),
-                   help='where a CONFIRMED rule set is written (never applied); default config/lean/proposals')
+    p.add_argument('--lean-db', required=True, help="the trader's lean.sqlite (opened mode=ro: decisions, features and wallet-signal rows)")
+    p.add_argument('--paths-db', required=True, help="the recorder's paths.sqlite (mode=ro); its archives paths-*.sqlite beside it are read too")
+    p.add_argument('--paths-archive', action='append', default=[], help='an extra archived recorder file elsewhere (repeatable)')
+    p.add_argument('--out-dir', required=True, help='an existing directory: the HTML/JSON report and proposals/<ts>-selection.json go here')
+    group = p.add_mutually_exclusive_group()
+    group.add_argument('--config', help="the trader's lean.json: its strategy_config and pool_fee_bps (the LIVE exit rules and mark)")
+    group.add_argument('--strategy', help='a strategy JSON (default config/lean/strategy-default.json) when --config is not given')
+    p.add_argument('--pool-fee-bps', type=int, default=None, help='only without --config (default %d)' % LB.DEFAULT_POOL_FEE_BPS)
     p.add_argument('--fractions', default='0.5,0.25,0.25', help='mine,select,confirm shares of the candidates by decision time')
     p.add_argument('--min-n', type=int, default=MIN_N)
     p.add_argument('--min-confirm', type=int, default=MIN_CONFIRM)
-    p.add_argument('--max-lag-s', type=float, default=DEFAULT_MAX_LAG_S)
+    p.add_argument('--min-bucket', type=int, default=MIN_BUCKET)
+    p.add_argument('--max-late-s', type=float, default=DEFAULT_MAX_LATE_S, help='AT_COLLECTION snapshots later than this after the decision are excluded')
+    p.add_argument('--max-gap-fraction', type=float, default=LB.LabelConfig.max_gap_fraction)
+    p.add_argument('--max-hole-s', type=float, default=LB.LabelConfig.max_hole_s)
     p.add_argument('--embargo-s', type=float, default=0)
-    p.add_argument('--pool-fee-bps', type=int, default=LB.DEFAULT_POOL_FEE_BPS)
-    p.add_argument('--now', type=float, required=True, help='epoch seconds used for names/timestamps (explicit: no hidden clock)')
+    p.add_argument('--now', type=float, default=None, help='epoch seconds for the file names (default: the current time)')
     args = p.parse_args(argv)
     try:
         try:
             fractions = tuple(float(x) for x in args.fractions.split(','))
         except ValueError:
             raise LearnError('fractions must be three numbers like 0.5,0.25,0.25') from None
-        strategy = S.StrategyConfig.load(args.strategy)
-        dataset = build_dataset(args.db, args.paths_db, strategy, max_lag_s=args.max_lag_s, pool_fee_bps=args.pool_fee_bps)
+        if args.config:
+            if args.pool_fee_bps is not None:
+                raise LearnError('--pool-fee-bps comes from --config')
+            from lean.__main__ import ConfigError, load_config
+            try:
+                cfg = load_config(args.config)
+            except ConfigError as error:
+                raise LearnError('config: %s' % error) from None
+            strategy, pool_fee_bps = S.StrategyConfig.load(cfg['strategy_config']), int(cfg['pool_fee_bps'])
+        else:
+            strategy = S.StrategyConfig.load(args.strategy or str(ROOT / 'config' / 'lean' / 'strategy-default.json'))
+            pool_fee_bps = LB.DEFAULT_POOL_FEE_BPS if args.pool_fee_bps is None else args.pool_fee_bps
+        out = Path(args.out_dir)
+        if out.is_symlink() or not out.is_dir():
+            raise LearnError('out_dir missing or a symlink')
+        label_cfg = LB.LabelConfig.from_strategy(strategy, max_gap_fraction=args.max_gap_fraction, max_hole_s=args.max_hole_s)
+        dataset = build_dataset(args.lean_db, args.paths_db, strategy, label_cfg=label_cfg, policy=LookaheadPolicy(max_late_s=args.max_late_s),
+                                pool_fee_bps=pool_fee_bps, extra_paths=args.paths_archive)
+        now = time.time() if args.now is None else args.now
         result = learn(dataset.rows, strategy=strategy, fractions=fractions, min_n=args.min_n, min_confirm=args.min_confirm,
-                       embargo_s=args.embargo_s, now=args.now, proposals_dir=args.proposals_dir, dataset_stats=dataset.stats)
-        html_path, json_path = write_report(args.out_dir, result)
-    except (LearnError, LB.LabelError, R.ReplayError, S.ConfigError, sqlite3.Error, OSError, ValueError) as error:
+                       min_bucket=args.min_bucket, embargo_s=args.embargo_s, now=now, proposals_dir=out / 'proposals',
+                       dataset_stats=dataset.stats)
+        html_path, json_path = write_report(out, result)
+    except Exception as error:                               # noqa: BLE001 - one JSON line, never a traceback with paths
         print(json.dumps({'status': 'ERROR', 'code': type(error).__name__, 'detail': str(error)[:200]}))
         return 2
     print(json.dumps({'status': 'OK', 'html': str(html_path), 'json': str(json_path), 'proposal': result['proposal'],
-                      'proposal_status': result['proposal_status']}))
+                      'proposal_status': result['proposal_status'], 'confirmed': result['confirmed'],
+                      'candidates': result['counts']['candidates'], 'enterable': result['counts']['enterable']}))
     return 0
 
 
