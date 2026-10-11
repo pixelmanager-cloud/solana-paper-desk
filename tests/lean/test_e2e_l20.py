@@ -305,7 +305,8 @@ class ConfigCompatibility(unittest.TestCase):
     def test_the_example_turns_both_on_and_sell_evidence_needs_execution(self):
         cfg = load_config(ROOT / 'config' / 'lean' / 'lean.example.json')
         self.assertTrue(cfg['sell_evidence']['enabled'] and cfg['flow']['enabled'])
-        self.assertEqual(cfg['sell_evidence']['unverified_sell_policy'], 'zero')
+        # LINT4 (coordinator): the example ships flag_only; under 'zero' a quiet pool would value a legitimate stop at 0
+        self.assertEqual(cfg['sell_evidence']['unverified_sell_policy'], 'flag_only')
         with tempfile.TemporaryDirectory() as tmp:
             raw = json.loads((ROOT / 'config' / 'lean' / 'lean.example.json').read_text())
             raw['execution'] = None

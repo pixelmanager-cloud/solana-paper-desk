@@ -106,11 +106,11 @@
     "smart_threshold": 0.7
   },
   "sell_evidence": {
-    "_comment": "L20 paper realism: before a paper SELL is booked, the pool must show >= min_organic_sells successful sells by DISTINCT signers (not the coin creator, not the paper taker) in the last sell_window_s. One getSignaturesForAddress + <= max_tx_samples getTransaction on the shared LOW lane, run on a daemon thread INSIDE the L10 exit delay (needs execution; an exit is never later than without it). VERIFIED: booked normally. UNVERIFIED (the probe completed and found too few): booked as SELL_UNVERIFIED, valued at 0 proceeds under policy zero (paper.write_off of the same qty), or at the quote and flagged under flag_only. Shed / failed / not finished in time: booked normally, sell_evidence UNKNOWN. Conclusive results cached per pool for cache_s; hard cap max_calls_per_hour. Absent / enabled false = off.",
+    "_comment": "L20 paper realism: before a paper SELL is booked, the pool must show >= min_organic_sells successful sells by DISTINCT signers (not the coin creator, not the paper taker) in the last sell_window_s. One getSignaturesForAddress + <= max_tx_samples getTransaction on the shared LOW lane, run on a daemon thread INSIDE the L10 exit delay (needs execution; an exit is never later than without it). VERIFIED: booked normally. UNVERIFIED (the probe completed and found too few): booked as SELL_UNVERIFIED, valued at 0 proceeds under policy zero (paper.write_off of the same qty), or at the quote and flagged under flag_only. Shed / failed / not finished in time: booked normally, sell_evidence UNKNOWN. LINT4: the example ships flag_only (under zero a quiet pool would value a legitimate stop at 0 and distort the data; real honeypots are blocked at entry by L22 honeypot_sim). Conclusive results cached per pool for cache_s; hard cap max_calls_per_hour. Absent / enabled false = off.",
     "enabled": true,
     "min_organic_sells": 2,
     "sell_window_s": 300,
-    "unverified_sell_policy": "zero",
+    "unverified_sell_policy": "flag_only",
     "max_tx_samples": 8,
     "sig_limit": 1000,
     "cache_s": 60,
