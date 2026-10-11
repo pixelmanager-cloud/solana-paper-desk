@@ -373,6 +373,87 @@ class PublisherAndGateTests(unittest.TestCase):
         with closing(h.store.connect()) as c:
             self.assertEqual(c.execute(f'SELECT count(*) FROM {inv.TABLE}').fetchone()[0], 1)         # remembered by the gate
 
+    def drop_inventory(self, store):
+        with closing(store.connect()) as c:
+            for (name,) in c.execute("SELECT name FROM sqlite_master WHERE type='trigger' AND tbl_name=?", (inv.TABLE,)).fetchall():
+                c.execute(f'DROP TRIGGER "{name}"')
+            c.execute(f'DROP TABLE {inv.TABLE}')
+
+    def test_a_review_plan_reads_the_gate_without_writing_the_inventory(self):
+        h, result = self.history()
+        self.drop_inventory(h.store)
+        with patch.object(rejection, 'verify', return_value={'context': {'research_db': h.context['research_db']}}):
+            self.assertIsNone(rejection.gate(h.store, h.context['research_db'], ('b' * 32,), review_source='a' * 64))
+        with closing(h.store.connect()) as c:
+            self.assertFalse(inv._objects(c))
+        self.assertIsNone(rejection.gate(h.store, h.context['research_db'], ('b' * 32,)))        # the active gate remembers
+        with closing(h.store.connect()) as c:
+            self.assertTrue(inv._objects(c))
+
+    def test_a_no_entry_review_plan_reads_the_gate_without_writing_the_inventory(self):
+        legacy_null_pass.install(self)
+        t = no_entry_fixture.fixture()
+        self.addCleanup(t.doCleanups)
+        self.drop_inventory(t.store)
+        research = t.ctx['research_db']
+        with patch.object(no_entry, '_proof', return_value={'targets': [{'target': {'scan_id': t.h.f.target.scan_id}}]}):
+            self.assertIsNone(no_entry.gate(t.store, research, ('b' * 32,), review_source='a' * 64))
+        with closing(t.store.connect()) as c:
+            self.assertFalse(inv._objects(c))
+
+
+class QuickSampleTests(unittest.TestCase):
+    """T24S: a bounded sample of the indexed receipts gets the page-level check; the rest a presence check."""
+
+    def items(self, n):
+        return [('%032x' % i, 'scan-%d' % i, '%064x' % (i + 1000), '%064x' % (i + 2000)) for i in range(n)]
+
+    def test_distinct_picks_are_bounded_distinct_in_range_and_deterministic(self):
+        for upto, k in ((0, 5), (1, 5), (3, 8), (50, 8), (50, 0), (1000, 8)):
+            picks = vi.distinct_picks(upto, 'seed', k)
+            self.assertEqual(len(picks), min(k, upto), (upto, k))
+            self.assertTrue(all(1 <= n <= upto for n in picks))
+            self.assertEqual(picks, vi.distinct_picks(upto, 'seed', k))
+        self.assertNotEqual(vi.distinct_picks(1000, 'a', 8), vi.distinct_picks(1000, 'b', 8))
+
+    def test_split_quick_partitions_and_is_bounded(self):
+        items = self.items(40)
+        checked, rest = vi.split_quick(items, seed='s', kind='k')
+        self.assertEqual(len(checked), vi.QUICK_SAMPLE)
+        self.assertEqual(sorted(checked + rest), sorted(items))
+        self.assertEqual(vi.split_quick(items, seed='s', kind='k'), (checked, rest))
+        self.assertEqual(vi.split_quick(items[:3], seed='s', kind='k')[1], [])            # fewer than the sample: all are checked
+        self.assertEqual(len(vi.split_quick(items, seed='s', kind='k', sample=0)[0]), 0)
+        self.assertEqual(vi.split_quick([], seed='s', kind='k'), ([], []))
+
+    def test_over_time_every_receipt_gets_the_page_level_check(self):
+        items = self.items(40)
+        seen = set()
+        for seed in range(80):
+            seen |= {i[0] for i in vi.split_quick(items, seed=str(seed), kind='k')[0]}
+        self.assertEqual(len(seen), 40)
+
+    def test_missing_pages_names_exactly_the_absent_hashes(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            store = EvidenceStore(os.path.join(tmp, 'e.sqlite'))
+            keys = [store.save({'n': i}) for i in range(3)]
+            with closing(store.connect()) as c:
+                self.assertEqual(vi.missing_pages(c, keys), [])
+                self.assertEqual(vi.missing_pages(c, [keys[0], 'f' * 64, keys[2], 'e' * 64]), ['f' * 64, 'e' * 64])
+                self.assertEqual(vi.missing_pages(c, []), [])
+
+    def test_the_gate_refuses_an_unsampled_receipt_whose_outcome_page_is_gone(self):
+        h = prep_fixture.PreparationTests('test_global_gate_retirement_and_unrelated_scan')
+        h.setUp()
+        self.addCleanup(h.doCleanups)
+        result = h.rejected()
+        with patch.object(vi, 'QUICK_SAMPLE', 0), patch.object(vi, 'SAMPLE', 0):
+            self.assertIsNone(terminal.gate(h.store, h.context['research_db'], ('b' * 32,)))
+            with closing(h.store.connect()) as c:
+                c.execute('DELETE FROM pages WHERE hash=?', (result['evidence_hash'],))
+            with self.assertRaises(ValueError):
+                terminal.gate(h.store, h.context['research_db'], ('b' * 32,))
+
 
 if __name__ == '__main__':
     unittest.main()
