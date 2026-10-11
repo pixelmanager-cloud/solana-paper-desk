@@ -2062,3 +2062,37 @@ OWNS: same as L16
 2. Count once per trade. Transient errors (429, timeout, 5xx) are not NOT_ROUTABLE.
 3. `UNSUPPORTED_MARKERS`: match exact error codes only, or drop the branch.
 4. A non-dict config is handled. Don't call private `store._versions`. Example config: `enabled: false`.
+
+## L07R — Rework the L07 path recorder onto the integrated runner + the SHARED low-priority lane
+STATUS: CLAIMED by coordinator (local agent, branch cloud/L07R). Do not take.
+
+## L12F — Fix L12 (entry features)
+STATUS: OPEN
+DEPENDS: `cloud/L07R` has a `DONE L07R:` commit (it adds the shared `low` lane to `lean/providers.py`; use THAT lane, delete `LowPriorityBucket`)
+BASE: origin/integration/r1 (after L07R is merged there), merging your old cloud/L12
+OWNS: same as L12 (+ the feature table section in `lean/report.py`)
+1. **Fill the missing fields.** `holder_count`, buys, sells, unique buyers, buy volume and socials are always null today; fill them or remove them.
+   - Top-10 must exclude the burn address.
+   - On soft rejects, use one of the 3 calls for holders.
+2. **Dev wallet.** The dev wallet is free: `coin_creator` from the pool account the screen already loaded (`desk/pools.py:162`).
+   - Do not page the mint's signatures (more than 1000, so `HISTORY_TRUNCATED`); bound the creation/graduation lookups differently.
+   - Use block time, not `received_at`.
+3. **Ranking ties.** Quantile buckets must keep tied values in one bucket.
+4. **Report.** Wire the feature-vs-outcome table into `report.py`.
+5. **Runner hook.** Use the delimited hook, with additive edits only. Use `except BaseException as e`, not `sys.exc_info()` in `finally`.
+6. **Production config.** Wire it in `build_runner` and add the `lean.json` keys (default off).
+
+## L08BF — Fix L08B (replay/tune)
+STATUS: OPEN
+DEPENDS: `DONE L07R:` (the path_mark rows store `base_raw`/`quote_raw`)
+BASE: origin/integration/r1 (after L07R), merging cloud/L08B
+OWNS: lean/replay.py, lean/tune.py, tests/lean/test_replay.py, tests/lean/test_tune.py, tests/lean/test_e2e_replay.py
+1. **HIGH: marks.** The replay must mark exactly like live: call `adapters.mark` on the stored `base_raw`/`quote_raw`.
+   - No extra 50 bps haircut.
+   - Don't rebuild reserves from liquidity/price.
+   - Fix the test that locks in the divergence.
+2. **Fill timing.** Pullback and momentum entries fill at the NEXT mark, not the trigger mark.
+   - The market-cap/liquidity band uses features as of the entry time, not the screen time.
+3. **Selection.** Select on in-sample, then confirm on out-of-sample (or a 3-way split). Never pick the winner on the OOS set.
+4. **Calibration.** Run it on real L07R output (path rows written by the recorder in an e2e), sensitive to the mark model.
+5. **test_tune.py:276.** It must tolerate the `-wal`/`-shm` files left by a plain `mode=ro` open.
