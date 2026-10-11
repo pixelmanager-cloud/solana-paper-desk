@@ -126,6 +126,9 @@ class Runner:
         # --- LINT2b hook: the feature / wallet-signal threads (health ``alive``; one shared shutdown deadline) ---
         self._aux_threads = {}                     # 'features' / 'wallet_signals' -> Thread
         # --- end LINT2b ---
+        # --- L21 hook ---
+        self.risk_external = None                  # lean.risk_external.RiskExternal (set by build_runner when risk_external.enabled)
+        # --- end L21 ---
         self.startup()
         # --- L10 hook ---
         if execution is not None and self.halted is None:
@@ -375,6 +378,17 @@ class Runner:
             log.debug('feature recorder hook failed', exc_info=True)
     # --- end L12 ---
 
+    # --- L21 hook ---
+    def _l21_submit(self, candidate, cid, result):
+        """Hand the screened candidate to the risk_external recorder (it keeps hazard-free ones). Never raises, never blocks."""
+        if self.risk_external is None:
+            return
+        try:
+            self.risk_external.submit(candidate, cid, result)
+        except Exception:                                                       # the trader never notices
+            log.debug('risk_external hook failed', exc_info=True)
+    # --- end L21 ---
+
     # --- L07R hook ---
     def _l07r_note(self, **facts):
         """Remember what happened to the candidate being handled (memory only; the recorder never reads the store)."""
@@ -429,6 +443,9 @@ class Runner:
         # --- L12 hook ---
         self._l12_screened = (cid, result)
         # --- end L12 ---
+        # --- L21 hook: external risk collection starts right after the screen decision (non-blocking hand-over) ---
+        self._l21_submit(candidate, cid, result)
+        # --- end L21 ---
         if result.error:
             error = result.error
             self._error(error['code'], transient=error['transient'], mint=mint, scope='screen:%s' % error.get('stage'),
@@ -736,6 +753,9 @@ class Runner:
                 # --- L13 hook ---
                 'wallet_signals': self._aux_health('wallet_signals', self.wallet_signals),
                 # --- end L13 ---
+                # --- L21 hook ---
+                'risk_external': self._aux_health('risk_external', self.risk_external),
+                # --- end L21 ---
                 # --- L07R hook ---
                 'paths': self._l07r_health(),
                 # --- end L07R ---
@@ -849,6 +869,12 @@ class Runner:
                                                                                     name='wallet_signals', daemon=True)
             signals_thread.start()
         # --- end L13 ---
+        # --- L21 hook: the RugCheck collector on its own daemon thread (its own bucket; never on the trader's path) ---
+        if self.risk_external is not None:
+            self._aux_threads['risk_external'] = threading.Thread(target=self.risk_external.run, args=(self.stop,),
+                                                                  name='risk_external', daemon=True)
+            self._aux_threads['risk_external'].start()
+        # --- end L21 ---
         for t in threads:
             while t.is_alive():
                 t.join(0.5)
@@ -860,6 +886,10 @@ class Runner:
             if aux is not None:
                 aux.join(max(0.0, aux_deadline - time.monotonic()))
         # --- end LINT2b ---
+        # --- L21 hook: inside the same shared deadline ---
+        if self._aux_threads.get('risk_external') is not None:
+            self._aux_threads['risk_external'].join(max(0.0, aux_deadline - time.monotonic()))
+        # --- end L21 ---
         try:
             self.write_health()
         except Exception:

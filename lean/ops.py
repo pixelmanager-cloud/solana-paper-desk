@@ -32,7 +32,8 @@ LOW_PRIORITY_LANES = frozenset({'low', 'paths', 'features', 'wallet_signals'})  
 PROVIDERS = ('helius', 'jupiter', 'kraken')
 # ESTIMATES, to be calibrated against the provider dashboard (operator-editable via ``ops.credit_costs``): a standard Helius
 # RPC request is 1 credit, getProgramAccounts is dearer; Jupiter and Kraken are rate limited, not credit billed here.
-DEFAULT_COSTS = {'helius': {'default': 1, 'getProgramAccounts': 10}, 'jupiter': {'default': 0}, 'kraken': {'default': 0}}
+DEFAULT_COSTS = {'helius': {'default': 1, 'getProgramAccounts': 10}, 'jupiter': {'default': 0}, 'kraken': {'default': 0},
+                 'rugcheck': {'default': 0}}            # L21: the public RugCheck report is free (counted, not billed)
 OPS_DEFAULTS = {
     'credit_budget_month': None,       # credits per UTC month; None = count and project but never shed
     'credit_costs': None,              # {provider: {method|default: credits}} merged over DEFAULT_COSTS
@@ -86,7 +87,7 @@ def merge_costs(overrides):
     costs = {p: dict(t) for p, t in DEFAULT_COSTS.items()}
     if overrides is None:
         return costs
-    if not isinstance(overrides, dict) or set(overrides) - set(PROVIDERS):
+    if not isinstance(overrides, dict) or set(overrides) - set(DEFAULT_COSTS):          # L21: + rugcheck
         raise OpsError('credit_costs must map known providers to cost tables')
     for provider, table in overrides.items():
         if not isinstance(table, dict):
