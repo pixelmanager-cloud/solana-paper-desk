@@ -35,7 +35,7 @@ import json
 import sqlite3
 from decimal import Decimal, InvalidOperation
 
-from lean import adapters as A, paper
+from lean import adapters as A, paper, providers
 from lean.providers import ProviderError
 from lean.store import StoreError
 
@@ -122,7 +122,15 @@ class HeldRisk:
         self._fresh = {}                    # mint -> quote vault lamports of THIS pass's marks read
         self._missing = {}                  # mint -> mark_at of THIS pass's read when a vault account was missing
         self._reserve_seen = {}             # mint -> latest quote vault lamports (baseline fallback)
+        # LINT1: probes and account checks go on the SHARED non-blocking low lane (set by build_runner), never on the exit lane:
+        # 15 serial probes on the 1 req/s Jupiter exit bucket stalled the position thread ~14 s every minute. A LANE_SHED sends
+        # nothing and is skipped silently (retried next pass). None = the exit lane (unit tests that build a bare Runner).
+        self.low = None
+        self.counts['shed'] = 0
         self._replay()
+
+    def _lane(self, runner):
+        return self.low if self.low is not None else runner.exit_providers
 
     # -- persistence ----------------------------------------------------------------------------------------------
     def _write(self, payload):
@@ -303,12 +311,16 @@ class HeldRisk:
             self._write({'ev': 'route_ok', 'mint': mint, 'open_fill_id': row['open_fill_id']})
 
     def _probe(self, runner, mint, position, row, life, now):
-        """A full-size sell quote on the exit lane. A non-transient failure starts the no-route clock; success clears it.
+        """A full-size sell quote on the low lane (LINT1). A non-transient failure starts the no-route clock; success clears it.
         A probe is not an exit: its raw bytes are kept only when it FAILS (research evidence), never on success."""
-        life.last_probe = now
+        previous, life.last_probe = life.last_probe, now
         try:
-            quote, _raw, _meta = runner.exit_providers.jupiter.quote(mint, SOL_MINT, position.qty_raw, runner.taker)
+            quote, _raw, _meta = self._lane(runner).jupiter.quote(mint, SOL_MINT, position.qty_raw, runner.taker)
         except ProviderError as error:
+            if providers.is_shed(error):                              # LINT1: nothing was sent; probe again next pass
+                life.last_probe = previous
+                self.counts['shed'] += 1
+                return
             runner._error(error.code, transient=error.transient, mint=mint, scope='route_probe', raw=error.raw)
             if error.transient:
                 return                                                # an outage is not "no route"
@@ -321,7 +333,7 @@ class HeldRisk:
         self._route_ok(mint, row, life, net_lamports(quote.out_amount, runner.pcfg), now)
 
     def _account_checks(self, runner, held):
-        """ONE batched read of [mint, pool] per held position on the exit lane: freeze authority, pool closed or migrated."""
+        """ONE batched read of [mint, pool] per held position on the low lane (LINT1): freeze authority, pool closed or migrated."""
         mints = list(held)
         for start in range(0, len(mints), 50):
             if runner.stop.is_set():
@@ -329,8 +341,11 @@ class HeldRisk:
             chunk = mints[start:start + 50]
             keys = [k for m in chunk for k in (m, held[m]['state']['pool'])]
             try:
-                result, _raw, _meta = runner.exit_providers.helius.get_multiple_accounts(keys)
+                result, _raw, _meta = self._lane(runner).helius.get_multiple_accounts(keys)
             except ProviderError as error:
+                if providers.is_shed(error):                          # LINT1: nothing was sent; the next check retries
+                    self.counts['shed'] += 1
+                    continue
                 runner._error(error.code, transient=error.transient, scope='held_risk', message='%d positions' % len(chunk), raw=error.raw)
                 continue
             for i, mint in enumerate(chunk):

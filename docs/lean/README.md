@@ -179,6 +179,8 @@ slippage, D2's persisted `exit_failing_since` clock and D2's write-off are the o
 
 Order in one position pass: marks read -> `after_marks` (no I/O: baselines, detection, valuation) -> D1 quote marks -> exits (a trigger is `DANGER`)
 -> `after_exits` (route probes and one batched `[mint, pool]` read every `freeze_check_every` (6) passes; findings act on the NEXT pass).
+The probes and account checks use the shared non-blocking LOW lane (LINT1), so they never sleep in the position thread; a `LANE_SHED`
+probe sends nothing, records no error and is retried on the next pass (health `held_risk.shed`). They also run after L10's two-phase exits.
 
 If the forced exit cannot be quoted, D2's clock runs; meanwhile the position is valued at 0 (unless an executable quote younger than
 `unsellable_value_ttl_s` (30 s) exists; never at its last price, never at cost) and after `unexitable_after_s` D2 books the zero-proceeds write-off

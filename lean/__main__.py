@@ -133,6 +133,10 @@ def build_runner(cfg, *, state_dir, discovery_db, keys, code_version, clock=None
     if r.paths is not None:
         r.paths.resume()
     # --- end L07R ---
+    # --- LINT1 hook: L11 probes / account checks on the shared non-blocking low lane, never on the exit lane ---
+    if r.held_risk is not None:
+        r.held_risk.low = providers.low(keys, **transport_kwargs)
+    # --- end LINT1 ---
     return r
 
 

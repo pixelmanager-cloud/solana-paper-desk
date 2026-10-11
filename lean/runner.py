@@ -428,7 +428,11 @@ class Runner:
             liquidate = S.should_liquidate(self.portfolio(now), self.cfg)
             # --- L10 hook: two-phase exits (q0 for every triggered exit, ONE delay, then q1 + fills) ---
             if self.execution is not None:
-                return self.execution.run_exits(self, positions, states, liquidate)
+                exits = self.execution.run_exits(self, positions, states, liquidate)
+                # LINT1: L11's probes must run after the two-phase exits too (the early return skipped them)
+                if self.held_risk is not None and not self.stop.is_set():
+                    self.held_risk.after_exits_safe(self)
+                return exits
             # --- end L10 ---
             exits = 0
             for mint, position in positions.items():
