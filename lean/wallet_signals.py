@@ -15,8 +15,9 @@ only the first ``max_swap_txs`` window transactions and the first ``funding_wall
 
 Smart wallets (``wallet_table``) are built ONLY from this desk's own records: every examined early buyer of a candidate is
 written as a ``wallet_buy`` event, and a token's outcome (``wallet_outcome`` event: WIN = reached ``win_multiple`` x its
-first observed price before it fell to ``rug_price_frac`` x; RUG = the reverse) comes from the L07 ``path_mark`` observations
-when they exist, otherwise from this desk's own closed trade on the token. A wallet is smart with at least ``min_wins`` wins
+first observed price before it fell to ``rug_price_frac`` x; RUG = the reverse) comes from the L07R2 path data in
+``paths.sqlite`` and its archived ``paths-*.sqlite`` (read-only, through ONE reader: ``read_path``) when it exists,
+otherwise from this desk's own closed trade on the token. A wallet is smart with at least ``min_wins`` wins
 and a Laplace score (wins + 1) / (wins + rugs + 2) >= ``smart_threshold``. A candidate's ``smart_buyers_count`` only uses
 outcomes recorded BEFORE its row is written (the row stores the event id it was computed as of), and the candidate's own
 buys are written after it, so a wallet is never rated by the token it is being scored on.
@@ -35,9 +36,12 @@ never migrated), so ``lean_wallets`` is a view over those events, not a table.
 import json
 import logging
 import re
+import sqlite3
 import threading
 import time
 from decimal import Decimal
+from pathlib import Path
+from urllib.parse import quote
 
 from lean.providers import LANE_SHED, ProviderError
 from lean.store import StoreError
@@ -324,8 +328,10 @@ class WalletSignals:
     ``signals_pass()`` does a bounded amount of work and is meant for its own thread (``run_loop``). It finds candidates
     straight from the store (screened, no ``wallet_signals`` row yet), so a restart loses nothing and no queue can overflow."""
 
-    def __init__(self, *, store, helius, cfg=None, code_version, strategy_version, clock=time.time, shed=None, stop=None, sleep=time.sleep):
+    def __init__(self, *, store, helius, cfg=None, code_version, strategy_version, clock=time.time, shed=None, stop=None, sleep=time.sleep,
+                 paths_db=None):
         self.store, self.helius, self.clock, self.shed, self.sleep = store, helius, clock, shed, sleep
+        self.paths_db = paths_db                   # LINT2: the L07R2 paths.sqlite (None = no path outcomes, trades only)
         self.cfg = make_config(cfg)
         self.code_version, self.strategy_version = code_version, strategy_version
         self.stop = stop or threading.Event()
@@ -354,7 +360,7 @@ class WalletSignals:
         rows = self._query(
             "SELECT c.id,c.mint,c.pool,c.slot,c.migrated_at FROM candidates c WHERE c.ts>? AND c.pool IS NOT NULL AND c.slot IS NOT NULL "
             "AND c.migrated_at IS NOT NULL AND c.migrated_at<=? AND NOT EXISTS (SELECT 1 FROM observations o WHERE o.mint=c.mint AND o.kind=?) "
-            "AND EXISTS (SELECT 1 FROM decisions d WHERE d.candidate_id=c.id AND d.kind='screen' AND d.action IN ('PASS','REJECT')) "
+            "AND EXISTS (SELECT 1 FROM decisions d WHERE d.mint=c.mint AND d.candidate_id=c.id AND d.kind='screen' AND d.action IN ('PASS','REJECT')) "
             'ORDER BY c.id LIMIT ?', (cutoff, now - self.cfg['window_s'] - 5, OBSERVATION_KIND, int(limit)))
         return rows
 
@@ -617,7 +623,7 @@ class WalletSignals:
         self.wallet_table()
         todo = [m for m in self._buy_mints if m not in self._outcomes][:self.cfg['resolve_batch']]
         for mint in todo:
-            outcome, source, detail = path_outcome(self.store, mint, self.cfg)
+            outcome, source, detail = path_outcome(self.paths_db, mint, self.cfg)
             if outcome is None:
                 outcome, source, detail = trade_outcome(self.store, mint, self.cfg)
             if outcome is None:
@@ -630,13 +636,13 @@ class WalletSignals:
         self.wallet_table()
 
 
-def build(cfg, *, store, keys, code_version, strategy_version, clock=time.time, transport_kwargs=None, shed=None):
+def build(cfg, *, store, keys, code_version, strategy_version, clock=time.time, transport_kwargs=None, shed=None, paths_db=None):
     """The collector of a validated config, on the shared LOW lane (``lean.providers.low``)."""
     from lean import providers
     transport_kwargs = dict(transport_kwargs or {})
     helius = providers.low(keys, **transport_kwargs).helius
     return WalletSignals(store=store, helius=helius, cfg=cfg, code_version=code_version, strategy_version=strategy_version, clock=clock,
-                         shed=shed, sleep=transport_kwargs.get('sleep', time.sleep))
+                         shed=shed, sleep=transport_kwargs.get('sleep', time.sleep), paths_db=paths_db)
 
 
 def _meta_summary(features):
@@ -647,20 +653,42 @@ def _meta_summary(features):
 
 # ------------------------------------------------------------------------------------------------------------ outcomes
 
-def path_outcome(store, mint, cfg):
-    """('WIN'|'RUG'|'FLAT'|None, 'PATH', detail) from the L07 ``path_mark`` observations (``meta.price_sol``). First hit wins:
-    price >= win_multiple x first price is a WIN, <= rug_price_frac x first price a RUG. A finished path (``path_end``) with
-    neither is FLAT. No marks, or a path still running with neither hit, is unresolved (None)."""
-    marks = store.rows('observations', mint=mint, kind='path_mark', limit=100000)
+def read_path(paths_db, mint):
+    """LINT2: THE reader of L07R2 path data. ``([(status, net_sol)] oldest first, ended)`` of ``mint`` from ``paths_db`` and the
+    archived ``paths-*.sqlite`` beside it, each opened READ-ONLY with its own short-lived connection (never lean.sqlite, never a
+    store lock). A missing file is no data; nothing is created."""
+    if paths_db is None:
+        return [], False
+    main = Path(paths_db)
+    marks, ended = [], False
+    for path in sorted(main.parent.glob('paths-*.sqlite')) + [main]:
+        if not path.is_file():
+            continue
+        connection = sqlite3.connect('file:%s?mode=ro' % quote(str(path)), uri=True, timeout=5)
+        try:
+            marks += connection.execute('SELECT ts,status,net_sol FROM path_marks WHERE mint=? ORDER BY ts', (mint,)).fetchall()
+            ended = ended or connection.execute('SELECT 1 FROM path_ends WHERE mint=?', (mint,)).fetchone() is not None
+        finally:
+            connection.close()
+    return [(status, net) for _, status, net in sorted(marks, key=lambda m: m[0])], ended
+
+
+def path_outcome(paths_db, mint, cfg):
+    """('WIN'|'RUG'|'FLAT'|None, 'PATH', detail) from the L07R2 marks (``net_sol`` of the path's reference quantity, via
+    ``read_path``). First hit wins: >= win_multiple x the first mark is a WIN, <= rug_price_frac x (or an EMPTY_POOL mark) a RUG.
+    A finished path (``path_ends``) with neither is FLAT. No marks, or a path still running with neither hit, is unresolved."""
+    marks, ended = read_path(paths_db, mint)
     if not marks:
         return None, 'PATH', {}
     reference = None
-    for row in marks:
+    for status, net in marks:
+        if status == 'EMPTY_POOL' and reference is not None:
+            return 'RUG', 'PATH', {'ratio': 0.0}
         try:
-            price = Decimal(str(json.loads(row['meta']).get('price_sol')))
+            price = Decimal(str(net))
         except (ValueError, ArithmeticError, TypeError):
             continue
-        if not price.is_finite() or price <= 0:
+        if status != 'OK' or not price.is_finite() or price <= 0:
             continue
         if reference is None:
             reference = price
@@ -670,7 +698,7 @@ def path_outcome(store, mint, cfg):
             return 'WIN', 'PATH', {'ratio': float(ratio)}
         if ratio <= Decimal(str(cfg['rug_price_frac'])):
             return 'RUG', 'PATH', {'ratio': float(ratio)}
-    if store.rows('observations', mint=mint, kind='path_end', limit=1):
+    if ended:
         return 'FLAT', 'PATH', {}
     return None, 'PATH', {}
 

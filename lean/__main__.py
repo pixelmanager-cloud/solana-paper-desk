@@ -210,7 +210,8 @@ def build_runner(cfg, *, state_dir, discovery_db, keys, code_version, clock=None
         from lean import wallet_signals
         r.wallet_signals = wallet_signals.build(wallet_signals.make_config(cfg['wallet_signals']), store=the_store, keys=keys,
                                                 code_version=code_version, strategy_version=strategy_cfg.strategy_version, clock=clock,
-                                                transport_kwargs=transport_kwargs)
+                                                transport_kwargs=transport_kwargs,
+                                                paths_db=paths.db_path(paths_cfg, state) if paths_cfg['enabled'] else None)   # LINT2
     # --- end L13 ---
     return r
 

@@ -118,7 +118,8 @@ class WalletSignalsEndToEnd(unittest.TestCase):
         world.extra_rpc = chain.rpc_handlers()
         cfg = load_config(ROOT / 'config' / 'lean' / 'lean.example.json')
         from lean import paths, providers
-        cfg['paths'] = paths.config({'enabled': False})                       # the L07R recorder is not under test here
+        cfg['paths'] = paths.config({'enabled': True})       # LINT2: paths.sqlite is the outcome source; the recorder thread is
+                                                              # built by Runner.run() only, so it never runs in this manual drive
         cfg['lanes'] = {'shares': providers.validate_lane_shares({'main': 0.3, 'exit': 0.2, 'low': 0.5}), 'low_shed_s': 1}
         if signals:
             cfg['wallet_signals'] = {'pace_s': 0.25, 'retry_delay_s': 60, 'max_per_pass': 3}

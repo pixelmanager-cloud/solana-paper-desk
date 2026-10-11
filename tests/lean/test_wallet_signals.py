@@ -5,6 +5,7 @@ that answers with the public jsonParsed response shapes; ``ChainHelius`` puts it
 unit tests need no HTTP, and ``Chain.rpc_handlers()`` plugs the same data into ``tests/lean/fakeworld.py`` for the e2e test.
 """
 import json
+import sqlite3
 import tempfile
 import unittest
 from decimal import Decimal
@@ -159,6 +160,7 @@ class Tmp(unittest.TestCase):
         cfg = {'max_per_pass': 10, **(cfg or {})}
         self.sleeps = getattr(self, 'sleeps', [])
         self.helius = ChainHelius(chain, gate)
+        kwargs.setdefault('paths_db', self.dir / 'paths.sqlite')            # LINT2: outcomes come from the L07R2 paths.sqlite
         return W.WalletSignals(store=self.store, helius=self.helius, cfg=cfg, code_version='t', strategy_version='s',
                                clock=lambda: self.now, sleep=self.sleeps.append, **kwargs)
 
@@ -610,6 +612,18 @@ class CollectTests(Tmp):
         collector = self.collector(chain)
         self.assertEqual([r[0] for r in collector.pending(self.now, 100)], [rejected, passed])
 
+    def test_LINT2_the_pending_query_never_scans_the_whole_decisions_table(self):
+        """pending() runs every pass under the STORE lock (which the exit thread needs): its decisions lookup must use the
+        decisions_mint index, not a scan of every decision ever written (a FAILED screen is re-checked on every pass)."""
+        collector = self.collector(Chain())
+        seen = []
+        collector._query = lambda sql, args=(): seen.append((sql, args)) or []
+        collector.pending(self.now, 10)
+        (sql, args), = seen
+        plan = ' | '.join(str(row[-1]) for row in self.store.db.execute('EXPLAIN QUERY PLAN ' + sql, args))
+        self.assertNotRegex(plan, r'SCAN d\b|SCAN decisions\b', plan)
+        self.assertIn('decisions_mint', plan)
+
     def test_oldest_first_and_bounded_per_pass(self):
         chain = Chain()
         for i in range(5):
@@ -672,20 +686,27 @@ class CollectTests(Tmp):
 
 # --------------------------------------------------------------------------------------------- outcomes and the smart table
 
-def add_path(store, mint, prices, *, end=False, ts=1.0):
-    for i, price in enumerate(prices):
-        store.add_observation('path_mark', b'{}', mint=mint, meta={'price_sol': None if price is None else str(price), 'ts': ts + i}, ts=ts + i)
-    if end:
-        store.add_observation('path_end', b'{}', mint=mint, meta={}, ts=ts + len(prices))
+def add_path(store, mint, prices, *, end=False, ts=1.0, db=None):
+    """LINT2: real L07R2 path rows in ``paths.sqlite`` next to the store (lean.paths.PathStore), never lean.sqlite. ``None`` is an
+    unreadable mark; ``'EMPTY'`` an EMPTY_POOL mark."""
+    from lean.paths import PathStore
+    paths = PathStore(db or Path(store.path).parent / 'paths.sqlite')
+    try:
+        marks = [(mint, ts + i, 1, None, None, None if p in (None, 'EMPTY') else str(p), None,
+                  'EMPTY_POOL' if p == 'EMPTY' else 'MALFORMED' if p is None else 'OK') for i, p in enumerate(prices)]
+        paths.add(marks=marks, ends=[(mint, ts + len(prices), 'COMPLETE', len(prices), 0)] if end else ())
+    finally:
+        paths.close()
 
 
 class PathOutcomeTests(Tmp):
     cfg = W.make_config({})
 
     def outcome(self, prices, **kwargs):
-        mint = addr(120 + len(self.store.rows('observations', limit=100000)) % 100)
+        self.n = getattr(self, 'n', 0) + 1                                       # a fresh mint per path
+        mint = addr(120 + self.n)
         add_path(self.store, mint, prices, **kwargs)
-        return W.path_outcome(self.store, mint, self.cfg)[0]
+        return W.path_outcome(self.dir / 'paths.sqlite', mint, self.cfg)[0]
 
     def test_first_threshold_hit_decides(self):
         self.assertEqual(self.outcome([1, 1.4, 2.5, 0.1]), 'WIN')
@@ -701,9 +722,34 @@ class PathOutcomeTests(Tmp):
         self.assertEqual(self.outcome([1, 1.2, 0.8], end=True), 'FLAT')
 
     def test_no_marks_and_invalid_marks(self):
-        self.assertIsNone(W.path_outcome(self.store, addr(5), self.cfg)[0])
+        self.assertIsNone(W.path_outcome(self.dir / 'paths.sqlite', addr(5), self.cfg)[0])
         self.assertIsNone(self.outcome([None, 0, '-1', 'abc']))
         self.assertEqual(self.outcome([None, 1, 3]), 'WIN')                    # an unparseable mark is skipped, not the reference
+
+    def test_an_emptied_pool_after_the_reference_is_a_rug(self):
+        self.assertEqual(self.outcome([1, 1.2, 'EMPTY']), 'RUG')
+        self.assertIsNone(self.outcome(['EMPTY', 1, 1.2]))                     # no reference yet: not a verdict
+
+    def test_LINT2_outcomes_come_only_from_paths_sqlite_and_its_archives(self):
+        db = self.dir / 'paths.sqlite'
+        self.assertEqual(W.read_path(db, addr(7)), ([], False))
+        self.assertFalse(db.exists())                                          # the reader never creates the recorder's file
+        self.store.add_observation('path_mark', b'{}', mint=addr(7), meta={'price_sol': '1'}, ts=1)      # the schema that never existed
+        self.store.add_observation('path_mark', b'{}', mint=addr(7), meta={'price_sol': '9'}, ts=2)
+        self.assertIsNone(W.path_outcome(db, addr(7), self.cfg)[0])           # lean.sqlite is never read for paths
+        add_path(self.store, addr(7), [1, 1.5], ts=10.0)                       # the start of the path, then a rollover ...
+        from lean.paths import PathStore
+        paths = PathStore(db, clock=lambda: 1_800_000_000.0)
+        archive = paths.rollover()
+        self.addCleanup(paths.close)                                           # the live recorder keeps its connection open
+        self.assertTrue(archive.name.startswith('paths-'))
+        add_path(self.store, addr(7), [2.1], ts=20.0, end=True)               # ... and its end in the fresh file
+        self.assertEqual(W.read_path(db, addr(7)), ([('OK', '1'), ('OK', '1.5'), ('OK', '2.1')], True))
+        self.assertEqual(W.path_outcome(db, addr(7), self.cfg)[0], 'WIN')
+        with self.assertRaises(sqlite3.OperationalError):                      # read-only: the reader can never write the file
+            sqlite3.connect('file:%s?mode=ro' % db, uri=True).execute('DELETE FROM path_marks')
+        self.assertEqual(W.path_outcome(None, addr(7), self.cfg), (None, 'PATH', {}))
+        self.assertNotIn("kind='path_mark'", Path(W.__file__).read_text())
 
 
 def traded(store, mint, *, sol='0.02', out=1_000_000_000, exit_lamports, ts=1.0, reenter=False):
