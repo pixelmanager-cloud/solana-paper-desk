@@ -35,5 +35,15 @@
     "ref_size_sol": "0.2",
     "max_paths": 2000
   },
-  "execution": null
+  "execution": null,
+  "held_risk": {
+    "enabled": false,
+    "rug_liq_drop_frac": "0.7",
+    "unsellable_after_s": 120,
+    "unsellable_value_ttl_s": 30,
+    "route_probe_s": 60,
+    "freeze_check_every": 6,
+    "freeze_forces_exit": false,
+    "pool_gone_confirmations": 2
+  }
 }

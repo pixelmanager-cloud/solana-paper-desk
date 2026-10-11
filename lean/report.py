@@ -409,6 +409,51 @@ def errors_by_code(events):
     return dict(counts.most_common())
 
 
+# --------------------------------------------------------------------------- L11: rugs and write-offs
+def held_risk_report(db):
+    """Rug exits (reason DANGER, trigger in the state) and rug write-offs (RUG_WRITEOFF) counted and costed SEPARATELY from the
+    ordinary exit reasons, the triggers that fired, freeze flags, and the positions whose rug exit is failing right now (open,
+    valued at 0 unless an executable quote is fresh). Reads the typed ``position_state`` rows and the generic ``held_risk`` events;
+    a store without them reports zeros."""
+    connection = open_ro(db)
+    try:
+        tables = {row[0] for row in connection.execute("SELECT name FROM sqlite_master WHERE type='table'")}
+        out = {'rug_exit': {'trades': 0, 'pnl_sol': '0'}, 'rug_writeoff': {'trades': 0, 'pnl_sol': '0'}, 'triggers': {},
+               'freeze_flags': 0, 'unsellable_open': []}
+        if 'position_state' in tables:
+            totals = {'DANGER': [0, 0], 'RUG_WRITEOFF': [0, 0]}
+            latest = {}
+            for mint, event, state in connection.execute('SELECT mint,event,state FROM position_state ORDER BY id'):
+                try:
+                    data = json.loads(state)
+                except ValueError:
+                    continue
+                latest[mint] = (event, data)
+                if event == 'closed' and data.get('reason') in totals:
+                    totals[data['reason']][0] += 1
+                    totals[data['reason']][1] += int(data.get('trade_pnl_lamports') or 0)
+            out['rug_exit'] = {'trades': totals['DANGER'][0], 'pnl_sol': num(Decimal(totals['DANGER'][1]) / LAMPORTS)}
+            out['rug_writeoff'] = {'trades': totals['RUG_WRITEOFF'][0], 'pnl_sol': num(Decimal(totals['RUG_WRITEOFF'][1]) / LAMPORTS)}
+            out['unsellable_open'] = [{'mint': m, 'since': d.get('exit_failing_since'), 'trigger': d.get('rug_trigger'),
+                                       'why': d.get('exit_failing_reason')}
+                                      for m, (ev, d) in latest.items() if ev != 'closed' and d.get('rug_trigger') and d.get('exit_failing_since') is not None]
+        if 'events' in tables:
+            triggers = Counter()
+            for (payload,) in connection.execute("SELECT payload FROM events WHERE kind='held_risk' ORDER BY id"):
+                try:
+                    p = json.loads(payload)
+                except ValueError:
+                    continue
+                if p.get('ev') == 'trigger':
+                    triggers[str(p.get('reason'))] += 1
+                elif p.get('ev') == 'freeze_flag':
+                    out['freeze_flags'] += 1
+            out['triggers'] = dict(sorted(triggers.items()))
+        return out
+    finally:
+        connection.close()
+
+
 # --------------------------------------------------------------------------- build
 def _route_check_section(db):
     from lean import route_check
@@ -476,6 +521,7 @@ def build(db, *, counterfactual_db=None, horizon=3600, now=None):
     # --- L10 hook: latency-tax distribution, aborted entries, fee breakdown (read-only) ---
     summary['execution'] = _section(_execution, db)
     # --- end L10 ---
+    summary['held_risk'] = _section(held_risk_report, db)        # L11
     if counterfactual_db is None:
         summary['counterfactual'] = {'status': 'NOT_PROVIDED'}
     elif funnel_result['status'] != 'OK':
@@ -543,6 +589,16 @@ def render_html(s):
     parts.append('<h2>Per-trade table</h2>' + table(['mint', 'strategy', 'mixed_version', 'status', 'cost', 'proceeds', 'pnl', 'return', 'hold s', 'exit reasons', 'flag'],
         [[r['mint'], r['strategy_version'], r['mixed_version'], r['status'], r['cost_sol'], r['proceeds_sol'], r['pnl_sol'], r['return'], r['hold_seconds'],
           ','.join(r['exit_reasons']), r['flag'] or ''] for r in t['rows']]))
+    h = s.get('held_risk', {'status': 'NOT_PROVIDED'})
+    parts.append('<h2>Rugs and write-offs</h2>' + note(h))
+    if h['status'] == 'OK':
+        d = h['data']
+        parts.append(table(['kind', 'trades', 'pnl SOL'], [['rug exit (DANGER)', d['rug_exit']['trades'], d['rug_exit']['pnl_sol']],
+                                                             ['RUG_WRITEOFF', d['rug_writeoff']['trades'], d['rug_writeoff']['pnl_sol']]]))
+        parts.append('<p>Triggers: %s &middot; freeze flags: %d &middot; rug exits failing now: %d (valued 0 unless a fresh executable quote exists)</p>' % (
+            e(json.dumps(d['triggers'], sort_keys=True)), d['freeze_flags'], len(d['unsellable_open'])))
+        if d['unsellable_open']:
+            parts.append(table(['mint', 'failing since', 'trigger', 'why'], [[r['mint'], r['since'], r['trigger'], r['why']] for r in d['unsellable_open']]))
     c = s['counterfactual']
     parts.append('<h2>Rejections vs forward price (counterfactual)</h2>' + note(c) + ('<p>Not provided.</p>' if c['status'] == 'NOT_PROVIDED' else ''))
     if c['status'] == 'OK':

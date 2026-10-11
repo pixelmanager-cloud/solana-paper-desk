@@ -29,6 +29,7 @@ CONFIG_KEYS = {
     # --- end L07R ---
     'route_check': {},                 # L16: {"enabled": true} records whether a real bot could build each BUY / full exit
     'execution': None,                 # L10: null = instant fills (today); an object turns on latency-aware fills + the cost model
+    'held_risk': {},                   # lean.held_risk settings (L11): rug / unsellable handling of held positions
 }
 REQUIRED = ('strategy_config', 'initial_cash_sol')
 
@@ -73,6 +74,13 @@ def load_config(path):
     if cfg['execution'] is not None and not isinstance(cfg['execution'], dict):
         raise ConfigError('execution must be an object or null')
     # --- end L10 ---
+    if not isinstance(cfg['held_risk'], dict):
+        raise ConfigError('held_risk must be an object')
+    from lean import held_risk                                              # L11: strict at load (unknown keys, bad types)
+    try:
+        held_risk.Config.from_dict(cfg['held_risk'])
+    except held_risk.HeldRiskConfigError as error:
+        raise ConfigError(str(error)) from None
     return cfg
 
 
@@ -116,7 +124,8 @@ def build_runner(cfg, *, state_dir, discovery_db, keys, code_version, clock=None
         discovery_db=discovery_db, state_dir=state, code_version=code_version, screen_overrides=cfg['screen'],
         pool_fee_bps=cfg['pool_fee_bps'], clock=clock, scan_limit=cfg['scan_limit'],
         max_retries=cfg['max_candidate_retries'], sol_usd_ttl_s=cfg['sol_usd_ttl_s'], stale_mark_s=cfg['stale_mark_s'],
-        unexitable_after_s=cfg['unexitable_after_s'], route_check=cfg['route_check'], execution=exec_model)
+        unexitable_after_s=cfg['unexitable_after_s'], route_check=cfg['route_check'], execution=exec_model,
+        held_risk=cfg['held_risk'])
     # --- L07R: the path recorder (low lane), resumed from the store before any loop runs ---
     r.paths = paths.build(paths.config(cfg.get('paths')), store=the_store, keys=keys, pcfg=r.pcfg,
                           code_version=code_version, strategy_version=strategy_cfg.strategy_version,

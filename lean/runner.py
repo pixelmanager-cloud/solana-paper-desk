@@ -35,7 +35,7 @@ import threading
 import time
 from decimal import Decimal
 
-from lean import adapters as A, candidates as C, paper, strategy as S
+from lean import adapters as A, candidates as C, held_risk as H, paper, strategy as S
 from lean.paper import AccountingHalt
 from lean.providers import PAPER_TAKER, ProviderError
 from lean.store import StoreError
@@ -54,7 +54,7 @@ class Runner:
     def __init__(self, *, store, providers, exit_providers, strategy_cfg, discovery_db, state_dir, code_version,
                  screen_overrides=None, pool_fee_bps=25, taker=PAPER_TAKER, kill_switch=None, clock=time.time,
                  scan_limit=500, max_retries=3, sol_usd_ttl_s=30, stale_mark_s=30, unexitable_after_s=7200, route_check=None,
-                 execution=None):
+                 execution=None, held_risk=None):
         # --- L10 hook: latency-aware fills + cost model (None = today's instant fills). The priority fee + Jito tip enter
         # through the strategy config, so the fill fee, the marks and the entry/exit cost checks share one number. ---
         self.execution = execution
@@ -100,6 +100,9 @@ class Runner:
         self.paths = None                          # lean.paths.PathRecorder (set by build_runner when paths.enabled)
         self._l07r_screened = None                 # (mint, candidate_id, Screen) of the candidate being handled
         # --- end L07R ---
+        # --- L11 hook ---
+        self.held_risk = H.build(held_risk, self.store, code_version=code_version, strategy_version=self.strategy_version, clock=clock)
+        # --- end L11 ---
         self.startup()
         # --- L10 hook ---
         if execution is not None and self.halted is None:
@@ -416,6 +419,10 @@ class Runner:
                 self.marks.clear()
                 return 0
             self._read_marks(positions, states)
+            # --- L11 hook --- (no I/O: baselines, trigger detection, valuation of rug positions whose exit is failing)
+            if self.held_risk is not None:
+                self.held_risk.after_marks_safe(self, positions, states)
+            # --- end L11 ---
             self._quote_marks(positions)
             now = self._now()
             liquidate = S.should_liquidate(self.portfolio(now), self.cfg)
@@ -433,6 +440,10 @@ class Runner:
                     self._halt('ACCOUNTING_INVARIANT: %s' % error)
                 except (StoreError, sqlite3.Error) as error:
                     self._halt('STORE_FAILURE: %s' % type(error).__name__)
+            # --- L11 hook --- (the only requests of the module: probes and account checks, AFTER every exit of this pass)
+            if self.held_risk is not None and not self.stop.is_set():
+                self.held_risk.after_exits_safe(self)
+            # --- end L11 ---
             return exits
         except _Halt:
             return 0
@@ -462,7 +473,15 @@ class Runner:
                     base, quote = A.vault_amount(result['value'][2 * i]), A.vault_amount(result['value'][2 * i + 1])
                     self.marks[mint] = (A.mark(positions[mint].qty_raw, base, quote, pool_fee_bps=self.pool_fee_bps, pcfg=self.pcfg),
                                         mark_at, 'vaults')
+                    # --- L11 hook ---
+                    if self.held_risk is not None:
+                        self.held_risk.observe(mint, base, quote, mark_at)
+                    # --- end L11 ---
                 except A.AdapterError as error:
+                    # --- L11 hook ---
+                    if self.held_risk is not None and None in (result['value'][2 * i], result['value'][2 * i + 1]):
+                        self.held_risk.observe_missing(mint, mark_at)
+                    # --- end L11 ---
                     self._error('MARK_INVALID', transient=False, mint=mint, scope='marks', message=str(error))
         now = self._now()
         for mint in list(self.marks):
@@ -518,9 +537,10 @@ class Runner:
             if self.execution is not None:
                 state = {**state, **self.execution.write_off_state(state)}
             # --- end L10 ---
-            closed = dict(state, reason='UNEXITABLE', trade_pnl_lamports=position.realized_lamports + fill.realized_lamports,
-                          cooldown_until=S.cooldown_until('UNEXITABLE', now, self.cfg))
-            self.store.add_decision('exit', 'WRITE_OFF', mint=mint, reasons=['UNEXITABLE'], ts=self.clock(),
+            reason = 'RUG_WRITEOFF' if state.get('rug_trigger') else 'UNEXITABLE'          # L11: chosen by the detector
+            closed = dict(state, reason=reason, trade_pnl_lamports=position.realized_lamports + fill.realized_lamports,
+                          cooldown_until=S.cooldown_until('STOP' if state.get('rug_trigger') else 'UNEXITABLE', now, self.cfg))
+            self.store.add_decision('exit', 'WRITE_OFF', mint=mint, reasons=[reason], ts=self.clock(),
                                     features={'failing_since': state.get('exit_failing_since'), 'why': state.get('exit_failing_reason'),
                                               'qty_raw': position.qty_raw})
             self.store.add_fill(fill, state={'event': 'closed', 'open_fill_id': open_id, 'state': closed})
@@ -532,13 +552,18 @@ class Runner:
 
     def _manage(self, mint, position, row, liquidate):
         open_id, state = row['open_fill_id'], row['state']
+        # --- L11 hook --- (a rug trigger makes the exit wanted as DANGER and is stamped on the state, durably once it is saved)
+        rug = None if self.held_risk is None else self.held_risk.trigger(mint, open_id)
+        if rug and state.get('rug_trigger') != rug:
+            state = dict(state, rug_trigger=rug)
+        # --- end L11 ---
         now = self._now()
         since = state.get('exit_failing_since')
         if since is not None and now - int(since) >= self.unexitable_after_s:
             return self._write_off(mint, position, open_id, state)
         mark, mark_at, _source = self.marks.get(mint, (None, None, None))
         held = A.strategy_position(position, state)
-        decision = S.exit_decision(held, mark, None, now, self.cfg, mark_at=mark_at, liquidate=liquidate)
+        decision = S.exit_decision(held, mark, None, now, self.cfg, mark_at=mark_at, liquidate=liquidate, danger=bool(rug))
         if decision.position_updates:
             state = A.apply_updates(state, decision.position_updates)
             held = A.strategy_position(position, state)
@@ -567,7 +592,7 @@ class Runner:
         with self._trade_lock:
             now = self._now()
             final = S.exit_decision(held, mark, A.strategy_quote(quote, 'sell', quote_at), now, self.cfg, mark_at=mark_at,
-                                    liquidate=liquidate)
+                                    liquidate=liquidate, danger=bool(rug))
             self.store.add_decision('exit', final.action, mint=mint, reasons=final.reasons, ts=self.clock(),
                                     features={**_jsonable(final.detail), 'qty_raw': qty, 'fraction_of_initial': str(final.fraction),
                                               'quote_ref': ref, 'mark_sol': None if mark is None else str(mark),
@@ -588,7 +613,7 @@ class Runner:
             state = {k: v for k, v in state.items() if k not in ('exit_failing_since', 'exit_failing_reason')}
             if fill.qty_raw == position.qty_raw:
                 closed = dict(state, reason=final.reason, trade_pnl_lamports=position.realized_lamports + fill.realized_lamports,
-                              cooldown_until=S.cooldown_until(final.reason, now, self.cfg))
+                              cooldown_until=S.cooldown_until('STOP' if rug else final.reason, now, self.cfg))     # L11: a rug cools down like a stop
                 self.store.add_fill(fill, state={'event': 'closed', 'open_fill_id': open_id, 'state': closed})
                 self.route_check.on_fill('exit', mint, ref, trade=open_id)                          # --- L16 hook ---
                 self.marks.pop(mint, None)
@@ -617,8 +642,9 @@ class Runner:
                 'cost_basis_mints': list(self.cost_basis_mints), 'cash_lamports': cash, 'cursor': self.cursor,
                 'retry_queue': len(self.retry), 'execution_status': 'EXECUTION_UNVERIFIED', 'live_readiness': False,
                 # --- L07R hook ---
-                'paths': self.paths.health() if self.paths is not None else {'enabled': False}}
+                'paths': self.paths.health() if self.paths is not None else {'enabled': False},
                 # --- end L07R ---
+                'held_risk': None if self.held_risk is None else self.held_risk.health()}      # L11
 
     def write_health(self):
         """Atomic: a unique temp file in the state dir, fsync, rename; one writer at a time."""
