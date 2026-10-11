@@ -1,4 +1,5 @@
 """Synthetic public-schema trades; no provider, credential or production data."""
+import os
 import base64
 import copy
 from decimal import Decimal
@@ -43,6 +44,8 @@ class KrakenUsdTests(unittest.TestCase):
 class KrakenPacingTests(unittest.TestCase):
     def setUp(self):
         import tempfile
+        # work/ is gitignored and absent on a clean checkout (it made these 4 tests ERROR in CI-like runs); create it.
+        os.makedirs('work',exist_ok=True)
         self.t=tempfile.TemporaryDirectory(dir='work');self.addCleanup(self.t.cleanup)
         self.path=Path(self.t.name).resolve()/'pace.sqlite';pace.initialize(self.path)
         self.policy=self.path.parent/'policy.json';self.policy.write_text(canonical({'version':1,'pins':[]}))
