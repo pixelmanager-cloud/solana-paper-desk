@@ -4,7 +4,10 @@ No I/O, no clock, no randomness: every function takes its inputs explicitly so d
 Semantics follow desk/engine.py (see tests/lean/test_strategy.py for the desk test each case mirrors), simplified:
 no entry score (screening is lean.candidates' job), no per-trade/daily-risk sizing limits, no latches.
 
-Money is SOL as Decimal. Marks are the NET value (fee already deducted) of the whole remaining position.
+Units (the runner's adapter, lean/adapters.py, is the one place that converts to/from lean.paper's integers):
+money is SOL as Decimal; token quantities are RAW integer units held in a Decimal (a SELL ``qty`` is always floored to a
+whole raw unit, so it can be quoted and filled exactly). Marks are the NET value (fee already deducted) of the whole
+remaining position, and every mark carries the epoch second it was read (``mark_at``, required).
 Slippage: quotes are raw route quotes; `adverse_slippage_bps` is applied here ONLY to estimate round-trip cost and
 by lean.paper when filling. Never apply it twice to the same number.
 """
@@ -355,6 +358,9 @@ def _roundtrip_blockers(rt, size: Decimal, now: int, cfg: StrategyConfig) -> lis
         out.append("QUOTE_EXCEEDS_RISK_ALLOCATION")
     if rt.sell.in_amount > rt.buy.out_amount:
         out.append("SELL_QUOTE_EXCEEDS_BOUGHT")  # would price tokens the buy never returns
+    elif rt.sell.in_amount != sell_quote_tokens(rt.buy, cfg):
+        # a sell leg for fewer tokens than the fill will hold hides price impact from the round-trip cost cap
+        out.append("SELL_QUOTE_SIZE_MISMATCH")
     return out
 
 
@@ -368,8 +374,9 @@ def roundtrip_cost_fraction(rt: RoundTrip, cfg: StrategyConfig) -> Decimal:
 
 
 def sell_quote_tokens(buy: Quote, cfg: StrategyConfig) -> Decimal:
-    """Tokens the paper fill will actually hold after adverse slippage; the sell leg of RoundTrip is quoted for this."""
-    return buy.out_amount * (ONE - cfg.adverse_slippage_bps / 10000)
+    """Raw tokens the paper fill will actually hold after adverse slippage, floored to a whole raw unit (lean.paper's
+    ``out * (10000 - bps) // 10000``). The sell leg of RoundTrip must be quoted for EXACTLY this."""
+    return (buy.out_amount * (ONE - cfg.adverse_slippage_bps / 10000)).to_integral_value(rounding=ROUND_DOWN)
 
 
 def new_position_fields(cfg: StrategyConfig) -> dict:
@@ -379,8 +386,7 @@ def new_position_fields(cfg: StrategyConfig) -> dict:
 # ------------------------------------------------------------------------------------------------ exits
 
 def exit_decision(position: Position, mark: Optional[Decimal], quote: Optional[Quote], now: int,
-                  cfg: StrategyConfig, *, liquidate: bool = False, danger: bool = False,
-                  mark_at: Optional[int] = None) -> Decision:
+                  cfg: StrategyConfig, *, mark_at: Optional[int], liquidate: bool = False, danger: bool = False) -> Decision:
     """HOLD / SELL / BLOCKED for one open position.
 
     `mark` is the net SOL value of the whole remaining quantity. A stale (older than price_ttl_seconds) or missing
@@ -392,8 +398,9 @@ def exit_decision(position: Position, mark: Optional[Decimal], quote: Optional[Q
     quote=None with a triggered exit returns SELL(quote_required=True): fetch a sell quote for `qty`, call again.
     """
     forced = "LIQUIDATE" if liquidate else "DANGER" if danger else None
+    # mark_at is required: a mark without a read time is never treated as fresh
     mark_ok = (isinstance(mark, Decimal) and mark.is_finite() and mark >= ZERO and position.cost_left > ZERO
-               and (mark_at is None or 0 <= now - mark_at <= cfg.price_ttl_seconds))
+               and type(mark_at) is int and 0 <= now - mark_at <= cfg.price_ttl_seconds)
     if not mark_ok and not forced:
         return Decision("BLOCKED", reasons=("STALE_OR_UNAVAILABLE_MARK",), reason="STALE_OR_UNAVAILABLE_MARK")
     updates: dict = {}
@@ -429,7 +436,8 @@ def exit_decision(position: Position, mark: Optional[Decimal], quote: Optional[Q
 
 
 def _sell(position, reason, fraction, quote, now, cfg, updates, after_fill, detail) -> Decision:
-    qty = position.qty if fraction >= ONE else min(position.qty, position.initial_qty * fraction)
+    # whole raw units only: a ladder fraction of the initial quantity is floored so it can be quoted and filled exactly
+    qty = position.qty if fraction >= ONE else min(position.qty, (position.initial_qty * fraction).to_integral_value(rounding=ROUND_DOWN))
     common = dict(reasons=(reason,), reason=reason, qty=qty, fraction=fraction, position_updates=updates,
                   after_fill=after_fill, detail=detail)
     if qty <= ZERO:
@@ -459,3 +467,20 @@ def cooldown_until(reason: str, now: int, cfg: StrategyConfig) -> int:
 def next_loss_streak(previous: int, trade_pnl: Decimal) -> int:
     """Updated when a position is fully closed; trade_pnl is the SUM over all of its fills."""
     return previous + 1 if trade_pnl < ZERO else 0
+
+
+def utc_day(now: int) -> int:
+    return now // 86400
+
+
+def roll_day_start(previous: Optional[tuple], now: int, equity: Decimal, *, marks_fresh: bool) -> tuple:
+    """(utc_day, day_start_equity) for the daily loss stop. A new UTC day resets the baseline to the current equity, but
+    only when that equity is measured from fresh marks for every open position (older than price_ttl_seconds = stale);
+    otherwise the rollover is DEFERRED and the previous baseline is kept until fresh marks exist. The first baseline ever
+    is the current equity."""
+    day = utc_day(now)
+    if previous is None:
+        return day, equity
+    if previous[0] >= day or not marks_fresh:
+        return previous
+    return day, equity

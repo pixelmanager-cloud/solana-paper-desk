@@ -105,6 +105,7 @@ class ExitTests(unittest.TestCase):
         position = position or pos()
         if quote is not None and quote.observed_at == AUTO:
             quote = S.Quote(quote.side, quote.in_amount, quote.out_amount, now - 1, quote.route_available)
+        kw.setdefault("mark_at", now)
         return S.exit_decision(position, position.cost_left * D(ratio), quote, now, self.c, **kw)
 
     def test_stop_boundary_inclusive(self):
@@ -130,7 +131,7 @@ class ExitTests(unittest.TestCase):
         p, sold = pos(), D(0)
         for ratio, stage in (("1.4", 0), ("2", 1), ("3", 2)):
             p = S.Position(**{**p.__dict__, "stage": stage, "stop_ratio": self.c.tp_ladder[stage - 1].stop_ratio if stage else p.stop_ratio})
-            d = S.exit_decision(p, p.cost_left * D(ratio), sellq(p.initial_qty * self.c.tp_ladder[stage].fraction, at=T0 + 49), T0 + 50, self.c)
+            d = S.exit_decision(p, p.cost_left * D(ratio), sellq(p.initial_qty * self.c.tp_ladder[stage].fraction, at=T0 + 49), T0 + 50, self.c, mark_at=T0 + 50)
             self.assertEqual(d.reason, "TAKE_PROFIT")
             sold += d.qty
             p = S.Position(**{**p.__dict__, "qty": p.qty - d.qty, "cost_left": p.cost_left * (p.qty - d.qty) / p.qty})
@@ -139,7 +140,7 @@ class ExitTests(unittest.TestCase):
 
     def test_stop_ratio_after_rung_protects_profit(self):
         p = pos(stage=1, stop_ratio=D(1), qty=D(700))
-        self.assertEqual(S.exit_decision(p, p.cost_left * D("0.99"), None, T0 + 60, self.c).reason, "STOP")
+        self.assertEqual(S.exit_decision(p, p.cost_left * D("0.99"), None, T0 + 60, self.c, mark_at=T0 + 60).reason, "STOP")
 
     def test_trailing_only_after_all_rungs_and_uses_peak(self):
         # tests/test_held_watcher.py: stage 3, peak 3, stop 1.4: 2.0 <= 3*0.7 trails, 2.2 holds.
@@ -181,7 +182,7 @@ class ExitTests(unittest.TestCase):
 
     def test_forced_exit_does_not_wait_for_a_mark(self):
         for kw in ({"liquidate": True}, {"danger": True}):
-            d = S.exit_decision(pos(), None, sellq(1000, at=T0 + 9), T0 + 10, self.c, **kw)
+            d = S.exit_decision(pos(), None, sellq(1000, at=T0 + 9), T0 + 10, self.c, mark_at=None, **kw)
             self.assertEqual((d.action, d.qty), ("SELL", D(1000)))
 
     def test_missing_stale_or_garbage_mark_blocks_never_sells_or_holds_silently(self):
@@ -189,8 +190,13 @@ class ExitTests(unittest.TestCase):
                          (D("0.1"), T0 + 1000)):
             d = S.exit_decision(pos(), mark, sellq(1000, at=T0 + 99), T0 + 100, self.c, mark_at=at)
             self.assertEqual((d.action, d.reason), ("BLOCKED", "STALE_OR_UNAVAILABLE_MARK"), (mark, at))
-        d = S.exit_decision(pos(cost_left=D(0)), D(1), None, T0 + 100, self.c)
+        d = S.exit_decision(pos(cost_left=D(0)), D(1), None, T0 + 100, self.c, mark_at=T0 + 100)
         self.assertEqual(d.action, "BLOCKED")
+        # L09: a mark without a read time is never fresh, and mark_at is a required argument
+        d = S.exit_decision(pos(), D("0.05"), None, T0 + 100, self.c, mark_at=None)
+        self.assertEqual(d.reason, "STALE_OR_UNAVAILABLE_MARK")
+        with self.assertRaises(TypeError):
+            S.exit_decision(pos(), D("0.05"), None, T0 + 100, self.c)
 
     def test_fresh_mark_at_ttl_boundary_ok(self):
         d = S.exit_decision(pos(), D("0.05"), None, T0 + 100, self.c, mark_at=T0 + 90)
@@ -222,7 +228,7 @@ class ExitTests(unittest.TestCase):
 
     def test_take_profit_clamps_to_remaining_quantity(self):
         p = pos(qty=D(100), initial_qty=D(1000), stage=2, stop_ratio=D("1.4"))
-        d = S.exit_decision(p, p.cost_left * D(3), sellq(100, at=T0 + 59), T0 + 60, self.c)
+        d = S.exit_decision(p, p.cost_left * D(3), sellq(100, at=T0 + 59), T0 + 60, self.c, mark_at=T0 + 60)
         self.assertEqual((d.reason, d.qty), ("TAKE_PROFIT", D(100)))
 
     def test_property_random_walks_never_oversell_or_regress(self):
@@ -233,13 +239,13 @@ class ExitTests(unittest.TestCase):
             for _ in range(60):
                 now += rnd.randint(1, 900)
                 ratio = D(str(round(rnd.uniform(0.3, 4.5), 3)))
-                d = S.exit_decision(p, p.cost_left * ratio, sellq(1, at=now), now, self.c)
+                d = S.exit_decision(p, p.cost_left * ratio, sellq(1, at=now), now, self.c, mark_at=now)
                 if d.action == "SELL" or (d.action == "BLOCKED" and d.qty > 0):
                     self.assertTrue(D(0) < d.qty <= p.qty)
                 if d.action == "SELL":
-                    pre = S.exit_decision(p, p.cost_left * ratio, None, now, self.c)
+                    pre = S.exit_decision(p, p.cost_left * ratio, None, now, self.c, mark_at=now)
                     q = sellq(pre.qty, at=now)
-                    d = S.exit_decision(p, p.cost_left * ratio, q, now, self.c)
+                    d = S.exit_decision(p, p.cost_left * ratio, q, now, self.c, mark_at=now)
                     if d.action != "SELL":
                         continue
                     left = p.qty - d.qty
@@ -419,10 +425,43 @@ class BookkeepingTests(unittest.TestCase):
 
     def test_decisions_are_pure(self):
         p = pos(); before = copy.deepcopy(p.__dict__)
-        a = S.exit_decision(p, D("0.05"), None, T0 + 5, self.c)
-        b = S.exit_decision(p, D("0.05"), None, T0 + 5, self.c)
+        a = S.exit_decision(p, D("0.05"), None, T0 + 5, self.c, mark_at=T0 + 5)
+        b = S.exit_decision(p, D("0.05"), None, T0 + 5, self.c, mark_at=T0 + 5)
         self.assertEqual(a, b)
         self.assertEqual(p.__dict__, before)
+
+
+class L09IntegrationTests(unittest.TestCase):
+    """Review fixes: exact sell leg, whole-unit TP quantities, required mark_at, UTC-day loss baseline."""
+    c = cfg()
+
+    def test_sell_leg_must_be_for_exactly_the_tokens_the_fill_will_hold(self):
+        now = port().now
+        rt = roundtrip(now)
+        self.assertEqual(rt.sell.in_amount, S.sell_quote_tokens(rt.buy, self.c))
+        self.assertEqual(S.entry_decision(FEATURES, rt, port(), self.c).action, "BUY")
+        # a small sell leg priced at a good rate would hide the price impact of selling the whole position
+        small = S.RoundTrip(rt.buy, S.Quote("sell", D(10), D("0.00099"), now - 1))
+        d = S.entry_decision(FEATURES, small, port(), self.c)
+        self.assertEqual((d.action, d.reason), ("SKIP", "SELL_QUOTE_SIZE_MISMATCH"))
+
+    def test_sell_quote_tokens_is_floored_to_a_raw_unit(self):
+        self.assertEqual(S.sell_quote_tokens(S.Quote("buy", D("0.1"), D(1001), T0), self.c), D(995))   # 995.995 -> 995
+
+    def test_tp_quantity_is_a_whole_raw_unit(self):
+        p = pos(qty=D(1001), initial_qty=D(1001))
+        d = S.exit_decision(p, p.cost_left * D("1.5"), None, T0 + 10, self.c, mark_at=T0 + 10)
+        self.assertEqual((d.reason, d.qty), ("TAKE_PROFIT", D(300)))                 # floor(1001 * 0.3)
+        d = S.exit_decision(p, p.cost_left * D("1.5"), sellq(300, at=T0 + 9), T0 + 10, self.c, mark_at=T0 + 10)
+        self.assertEqual(d.action, "SELL")
+
+    def test_day_start_resets_at_utc_midnight_only_with_fresh_marks(self):
+        day = 20_000 * 86400
+        first = S.roll_day_start(None, day + 10, D(5), marks_fresh=False)
+        self.assertEqual(first, (20_000, D(5)))
+        self.assertEqual(S.roll_day_start(first, day + 86399, D(4), marks_fresh=True), first)      # same UTC day
+        self.assertEqual(S.roll_day_start(first, day + 86400, D(4), marks_fresh=False), first)     # deferred: stale marks
+        self.assertEqual(S.roll_day_start(first, day + 86410, D(4), marks_fresh=True), (20_001, D(4)))
 
 
 if __name__ == "__main__":
