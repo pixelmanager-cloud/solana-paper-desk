@@ -97,8 +97,10 @@ class Runner:
         # --- end L16 ---
         self.cursor_initialized = False
         # --- L07R hook ---
-        self.paths = None                          # lean.paths.PathRecorder (set by build_runner when paths.enabled)
-        self._l07r_screened = None                 # (mint, candidate_id, Screen) of the candidate being handled
+        self.paths = None                          # lean.paths.PathRecorder, built by run() only (l07r_start_paths)
+        self._l07r_build = None                    # factory set by build_runner when paths.enabled
+        self._l07r_thread = None
+        self._l07r = None                          # runner MEMORY of the candidate being handled (screen, entry, fill, error)
         # --- end L07R ---
         # --- L11 hook ---
         self.held_risk = H.build(held_risk, self.store, code_version=code_version, strategy_version=self.strategy_version, clock=clock)
@@ -336,25 +338,45 @@ class Runner:
                         message=getattr(error, 'kind', ''), raw=error.raw, candidate_id=self.store.candidate_id(candidate.mint))
             if error.transient and attempt < self.max_retries:
                 self.retry.append((candidate, attempt + 1))
+            self._l07r_note(error=error.code)                                  # --- L07R hook (one line) ---
         except Exception as error:                                             # isolation: recorded, never fatal
             self._error('CANDIDATE_FAILED', transient=False, mint=candidate.mint, message=type(error).__name__)
+            self._l07r_note(error='CANDIDATE_FAILED')                           # --- L07R hook (one line) ---
         # --- L07R hook ---
         self._l07r_after(candidate)
         # --- end L07R ---
 
     # --- L07R hook ---
+    def _l07r_note(self, **facts):
+        """Remember what happened to the candidate being handled (memory only; the recorder never reads the store)."""
+        if self._l07r is not None:
+            self._l07r.update(facts)
+
     def _l07r_after(self, candidate):
         """Path recorder: start the price path of a handled candidate (entered or soft-rejected; the recorder skips
-        hazards). Decided on the final attempt only. Store writes only, no provider I/O, no runner lock; never raises."""
-        screened, self._l07r_screened = self._l07r_screened, None
-        if self.paths is None or screened is None or screened[0] != candidate.mint:
+        hazards), decided on its final attempt from runner memory. Writes only the recorder's own paths.sqlite: no
+        trader-store access, no provider I/O, no runner lock; never raises."""
+        note, self._l07r = self._l07r, None
+        if self.paths is None or note is None or note['mint'] != candidate.mint:
             return
         try:
             if any(queued.mint == candidate.mint for queued, _attempt in self.retry):
                 return
-            self.paths.on_candidate(*screened)
+            self.paths.on_candidate(note)
         except Exception:                                                       # the trader never notices
             log.debug('path recorder hook failed', exc_info=True)
+
+    def l07r_start_paths(self):
+        """Build and resume the recorder (``run()`` mode only; ``--once`` / ``--clear-halt`` never call this)."""
+        if self.paths is None and self._l07r_build is not None:
+            try:
+                self.paths = self._l07r_build()
+                if self.paths is not None:
+                    self.paths.resume()
+            except Exception:
+                log.exception('path recorder could not start; trading continues without it')
+                self.paths = None
+        return self.paths
     # --- end L07R ---
 
     def _handle_candidate(self, candidate, attempt):
@@ -373,7 +395,7 @@ class Runner:
         self.store.add_decision('screen', action, mint=mint, candidate_id=cid, reasons=result.reasons,
                                 features={**result.features, 'unknowns': list(result.unknowns), 'attempt': attempt}, ts=self.clock())
         # --- L07R hook ---
-        self._l07r_screened = (mint, cid, result)
+        self._l07r = {'mint': mint, 'cid': cid, 'screen': result, 'entry_reasons': None, 'fill': None, 'error': None}
         # --- end L07R ---
         if result.error:
             error = result.error
@@ -391,6 +413,7 @@ class Runner:
         if gate.action != 'BUY' or not gate.quote_required:
             self.store.add_decision('entry', gate.action, mint=mint, candidate_id=cid, reasons=gate.reasons,
                                     features=_jsonable(gate.detail), ts=self.clock())
+            self._l07r_note(entry_reasons=list(gate.reasons))                  # --- L07R hook (one line) ---
             return
         # Quote at the decided size, then the sell leg for exactly the tokens the paper fill will hold.
         size_lamports = A.lamports(gate.size_sol)
@@ -418,6 +441,7 @@ class Runner:
             decision = S.entry_decision(features, A.roundtrip(buy_q, buy_at, sell_q, sell_at), self.portfolio(now), self.cfg)
             self.store.add_decision('entry', decision.action, mint=mint, candidate_id=cid, reasons=decision.reasons,
                                     features={**_jsonable(decision.detail), 'size_sol': str(decision.size_sol)}, ts=self.clock())
+            self._l07r_note(entry_reasons=list(decision.reasons))              # --- L07R hook (one line) ---
             if decision.action != 'BUY':
                 return
             fill = paper.buy(A.paper_quote(buy_q, mint=mint, side='buy', decimals=features['decimals'], ts=self.clock(),
@@ -430,6 +454,7 @@ class Runner:
             self.store.add_fill(fill, candidate_id=cid, state={'event': 'open', 'state': A.open_state(features, fill, self.cfg)})
             self.route_check.on_fill('entry', mint, buy_ref, candidate_id=cid, trade=cid)      # --- L16 hook ---
             self._count('entered')
+            self._l07r_note(fill=fill)                                         # --- L07R hook (one line) ---
             self._check()
 
     # -- position loop --------------------------------------------------------------------------------------------
@@ -674,12 +699,24 @@ class Runner:
                 'cost_basis_mints': list(self.cost_basis_mints), 'cash_lamports': cash, 'cursor': self.cursor,
                 'retry_queue': len(self.retry), 'execution_status': 'EXECUTION_UNVERIFIED', 'live_readiness': False,
                 # --- L07R hook ---
-                'paths': self.paths.health() if self.paths is not None else {'enabled': False},
+                'paths': self._l07r_health(),
                 # --- end L07R ---
                 'held_risk': None if self.held_risk is None else self.held_risk.health(),      # L11
                 # --- L15 hook ---
                 **({} if self.ops is None else self.ops.health())}
                 # --- end L15 ---
+
+    # --- L07R hook ---
+    def _l07r_health(self):
+        """Recorder counters plus ``alive`` (its thread is running). Never raises."""
+        alive = self._l07r_thread is not None and self._l07r_thread.is_alive()
+        if self.paths is None:
+            return {'enabled': self._l07r_build is not None, 'alive': alive}
+        try:
+            return {**self.paths.health(), 'alive': alive}
+        except Exception as error:
+            return {'enabled': True, 'alive': alive, 'health_error': type(error).__name__}
+    # --- end L07R ---
 
     def write_health(self):
         """Atomic: a unique temp file in the state dir, fsync, rename; one writer at a time."""
@@ -730,12 +767,17 @@ class Runner:
         threads = [threading.Thread(target=self._loop, args=('candidates', self.candidate_pass, candidate_interval), name='candidates'),
                    threading.Thread(target=self._loop, args=('positions', self.position_pass, min(10.0, position_interval)),
                                     name='positions')]
+        # --- L07R hook: built and resumed here (run mode only), BEFORE the candidate loop starts; then its own daemon
+        # thread, whose death or slowness never stops the trader ---
+        recorder = None
+        if self.l07r_start_paths() is not None:
+            recorder = self._l07r_thread = threading.Thread(target=self.paths.run, args=(self.stop,), name='paths',
+                                                            daemon=True)
+        # --- end L07R ---
         for t in threads:
             t.start()
-        # --- L07R hook: the path recorder in its own daemon thread; its death or slowness never stops the trader ---
-        recorder = None
-        if self.paths is not None:
-            recorder = threading.Thread(target=self.paths.run, args=(self.stop,), name='paths', daemon=True)
+        # --- L07R hook ---
+        if recorder is not None:
             recorder.start()
         # --- end L07R ---
         # --- L15 hook ---

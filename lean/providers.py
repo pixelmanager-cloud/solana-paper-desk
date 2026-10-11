@@ -133,6 +133,7 @@ class RateLimiter:
 # --- L07R: the shared low-priority lane ---------------------------------------------------------------------------
 LANE_SHED = 'LANE_SHED'          # typed, transient: the low lane had no token now (or is shed); nothing was sent
 LOW_SHED_SECONDS = 30.0          # a 429 on ANY lane of a provider sheds its low lane at least this long
+RPC_THROTTLE_CODE = -32005       # a JSON-RPC throttle answer (HTTP 200) sheds the low lane too (L07R2)
 
 
 class LowLaneLimiter(RateLimiter):
@@ -478,6 +479,15 @@ class Transport:
         error.__context__ = None     # drop the original transport exception: it may carry the request URL
         raise error from None
 
+    # --- L07R ---
+    def shed_low_lane(self, seconds=None):
+        """Shed this provider's low lane (this transport's own when it is a low-lane one). Never raises."""
+        if isinstance(self.limiter, LowLaneLimiter):
+            self.limiter.shed(seconds)
+        else:
+            shed_low(self.provider, seconds, clock=self.monotonic, sleep=self.sleep)
+    # --- end L07R ---
+
     def json(self, endpoint, request_factory, *, max_bytes=MAX_RESPONSE_BYTES):
         raw, meta = self.call(endpoint, request_factory, max_bytes=max_bytes)
         try:
@@ -554,6 +564,12 @@ class Helius:
             error = parsed['error']
             code = error.get('code') if isinstance(error, dict) else None
             meta = {**meta, 'rpc_error_code': code if isinstance(code, int) else None}
+            # --- L07R hook: the JSON-RPC throttle code sheds the low lane like an HTTP 429 ---
+            if code == RPC_THROTTLE_CODE and not isinstance(code, bool):
+                shed = getattr(self.transport, 'shed_low_lane', None)
+                if callable(shed):
+                    shed()
+            # --- end L07R ---
             raise _fail('helius', 'RPC_ERROR', isinstance(code, int) and code in TRANSIENT_RPC_CODES, raw=raw, meta=meta)
         if 'result' not in parsed:
             raise _fail('helius', 'RESPONSE_INVALID', raw=raw, meta=meta)

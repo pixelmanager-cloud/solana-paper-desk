@@ -25,12 +25,15 @@
     "low_shed_s": 30
   },
   "paths": {
-    "_comment": "L07R price-path recorder (low lane): every hazard-free candidate, entered or not, is marked every interval_s for path_hours.",
+    "_comment": "L07R price-path recorder (low lane, run mode only): every hazard-free candidate, entered or not, is marked every interval_s for path_hours into its OWN db (null = <state-dir>/paths.sqlite; never lean.sqlite). Past max_db_gb the file rolls over to paths-YYYYMMDD.sqlite; below min_free_gb of free disk nothing is written.",
     "enabled": true,
+    "db": null,
     "path_hours": 6,
     "interval_s": 15,
     "ref_size_sol": "0.2",
-    "max_paths": 2000
+    "max_paths": 2000,
+    "max_db_gb": 2,
+    "min_free_gb": 2
   },
   "route_check": {
     "enabled": true

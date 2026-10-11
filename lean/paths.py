@@ -1,41 +1,48 @@
-"""L07R price-path recorder: strategy-tuning data for every candidate that passed the HAZARD checks, entered or not.
+"""L07R/L07R2 price-path recorder: strategy-tuning data for every candidate that passed the HAZARD checks, entered or not.
 
-PAPER ONLY and read-only: one batched ``getMultipleAccounts`` of pool vault accounts on the shared LOW provider lane
-(``lean.providers.low``), nothing else. A recorder failure NEVER reaches the trader: every public method swallows its
-own failures, counts them in ``health()`` and returns.
+PAPER ONLY and read-only towards the chain: one batched ``getMultipleAccounts`` of pool vault accounts on the shared LOW
+provider lane (``lean.providers.low``), nothing else. A recorder failure NEVER reaches the trader: every public method
+swallows its own failures, counts them in ``health()`` and returns.
+
+Storage (L07R2): its OWN SQLite file, ``paths.sqlite`` in the state dir (``paths.db``), with its own connection and lock.
+The trader's append-only accounting store ``lean.sqlite`` gets NO path rows, and the recorder never reads or locks it:
+the entry outcome comes from the runner's memory (``outcome``). Plain indexed tables, append-only by convention:
+  paths       one row per recorded mint: start/end time, entered, stage + reasons it was not entered, screen reasons,
+              holders_checked, the screen features (JSON) and the target (vault keys, reference quantity and cost)
+  path_marks  (mint, ts, slot, base_raw, quote_raw, net_sol, liquidity_sol, status), index (mint, ts)
+  path_gaps   (mint, ts, cause): a due mark that was skipped (shed, HTTP_429, budget, a provider code, stopped,
+              write_failed, disk_low), index (mint, ts)
+  path_ends   (mint, ts, why, marks, gaps): COMPLETE after path_hours, EXPIRED_WHILE_DOWN on resume
+The live paths are ``paths`` without a ``path_ends`` row: a restart resumes them from the file. When the file passes
+``max_db_gb`` it is rolled over: renamed to ``paths-YYYYMMDD[-n].sqlite`` (logged) and a fresh ``paths.sqlite`` starts
+with the live paths carried over (``carried_from``). Below ``min_free_gb`` of free disk nothing is written (gaps).
 
 Which candidates (``eligible``): a screen that PASSED, or one rejected ONLY for the soft market reasons (market cap or
-liquidity outside the band). Hazard rejects (authorities, extensions, pool/vault/LP evidence, holder concentration) and
-failed screens (provider errors) are never recorded. Every soft entry outcome after a passed screen is recorded too:
-cost cap, portfolio limits, entry throttle, cooldown, a quote that failed, entries stopped. A candidate queued for a
-retry is decided on its final attempt. NOTE: a market-band reject stops the screen before the holder check, so those
-paths carry ``holders_checked: false``.
+liquidity outside the band). Hazard rejects and failed screens are never recorded. Every soft entry outcome after a
+passed screen is recorded: cost cap, portfolio limits, entry throttle, cooldown, a failed quote, entries stopped. A
+candidate queued for a retry is decided on its final attempt. A market-band reject stops the screen before the holder
+check, so those paths carry ``holders_checked = 0``.
 
-Rows (``observations``, append-only like everything in the store):
-* ``path_start`` once: the screen features, ``entered``, the stage and reasons it was not entered, and the ``target``
-  (vault keys, decimals, the reference quantity and its cost) so a restarted process can resume the path.
-* ``path_mark`` every ``interval_s`` for ``path_hours``: ``meta`` = ``{ts, slot, base_raw, quote_raw, net_sol,
-  liquidity_sol, status}``; ``raw`` = the vault amounts and slot as canonical JSON (the account bytes are not kept).
-  ``net_sol`` is ``lean.adapters.mark`` (THE function the live position loop marks with) of the reference quantity:
-  the filled quantity for an entered candidate, else the tokens ``ref_size_sol`` buys at the path-start reserves.
-  ``liquidity_sol`` = 2 x (quote vault - the pool fees seen at the screen) in SOL. ``status`` is OK / ACCOUNT_MISSING
-  (a closed vault) / MALFORMED / EMPTY_POOL.
-* ``path_end`` once: COMPLETE after ``path_hours`` (or EXPIRED_WHILE_DOWN when the process was down at the end).
-* the event ``paths_active`` (``store.record``): the ``path_start`` ids of the live paths, rewritten whenever the set
-  changes. ``resume`` reads the latest one (``store.latest_event`` + ``store.observation``) after a restart.
+``net_sol`` is ``lean.adapters.mark`` (THE function the live position loop marks with) of the reference quantity: the
+filled quantity for an entered candidate, else the tokens ``ref_size_sol`` buys at the path-start reserves.
+``liquidity_sol`` = 2 x (quote vault - the pool fees seen at the screen) in SOL.
 
-Budget: at most 100 ACCOUNTS per call (the RPC limit) = 50 pools (base + quote vault each). The low lane never waits.
-When it has no token right now, THIS recorder thread paces itself (sleeps one token interval, no lock held) as long as
-the poll stays within 80% of ``interval_s``; a shed window (a 429 on any lane) or an exhausted budget ends the poll and
-the missed marks count as gaps. No provider I/O runs while any lock is held; the marks of one poll are written in ONE
-store transaction.
+Budget: at most 100 ACCOUNTS per call (the RPC limit) = 50 pools. The low lane never waits; when it has no token right
+now, THIS thread paces itself within 80% of ``interval_s``. A shed (429 / -32005 on any lane) or the exhausted budget
+ends the poll; the skipped paths get ``path_gaps`` rows and are polled FIRST next time (the order rotates), so the
+newest paths are not the ones always dropped. ``stop`` is checked between calls.
 """
 import json
 import logging
+import os
+import shutil
+import sqlite3
 import threading
 import time
 from dataclasses import asdict, dataclass
+from datetime import datetime, timezone
 from decimal import Decimal
+from pathlib import Path
 
 from lean import adapters as A
 from lean.providers import LANE_SHED, MAX_MULTIPLE_ACCOUNTS, ProviderError, _pubkey
@@ -45,9 +52,10 @@ log = logging.getLogger('lean.paths')
 SOFT_SCREEN_REASONS = frozenset({'MARKET_CAP_BELOW_MIN', 'MARKET_CAP_ABOVE_MAX', 'LIQUIDITY_BELOW_MIN'})
 ACCOUNTS_PER_POOL = 2
 POOLS_PER_CALL = MAX_MULTIPLE_ACCOUNTS // ACCOUNTS_PER_POOL          # 50 pools = 100 accounts
-CHECKPOINT = 'paths_active'
 PACE_BUDGET = 0.8            # a poll may pace its calls over at most 80% of the interval
-DEFAULTS = {'enabled': False, 'path_hours': 6.0, 'interval_s': 15.0, 'ref_size_sol': '0.2', 'max_paths': 2000}
+GB = 1024 ** 3
+DEFAULTS = {'enabled': False, 'db': None, 'path_hours': 6.0, 'interval_s': 15.0, 'ref_size_sol': '0.2', 'max_paths': 2000,
+            'max_db_gb': 2.0, 'min_free_gb': 2.0}
 
 
 def config(raw):
@@ -60,7 +68,10 @@ def config(raw):
     out = {k: raw.get(k, v) for k, v in DEFAULTS.items()}
     if type(out['enabled']) is not bool:
         raise ValueError('paths.enabled must be true or false')
-    for key, low, high in (('path_hours', 0.01, 72), ('interval_s', 1, 3600)):
+    if out['db'] is not None and (not isinstance(out['db'], str) or not out['db'].strip()):
+        raise ValueError('paths.db must be a path or null')
+    for key, low, high in (('path_hours', 0.01, 72), ('interval_s', 1, 3600), ('max_db_gb', 0.001, 1000),
+                           ('min_free_gb', 0, 1000)):
         if isinstance(out[key], bool) or not isinstance(out[key], (int, float)) or not low <= out[key] <= high:
             raise ValueError('paths.%s out of range' % key)
         out[key] = float(out[key])
@@ -76,6 +87,13 @@ def config(raw):
     return out
 
 
+def db_path(cfg, state_dir):
+    """``paths.db`` (absolute, or relative to the state dir), default ``<state-dir>/paths.sqlite``."""
+    value = cfg.get('db') or 'paths.sqlite'
+    path = Path(value)
+    return path if path.is_absolute() else Path(state_dir) / path
+
+
 def eligible(screen):
     """True when the screen shows no hazard: it passed, or it was rejected ONLY for soft market-band reasons."""
     if screen is None or getattr(screen, 'error', None):
@@ -86,8 +104,19 @@ def eligible(screen):
     return bool(reasons) and all(r in SOFT_SCREEN_REASONS for r in reasons)
 
 
-def _canonical(value):
-    return json.dumps(value, sort_keys=True, separators=(',', ':'), allow_nan=False, default=str).encode()
+def outcome(screen, *, entry_reasons=None, fill=None, error=None):
+    """(stage, reasons, entered) of one handled candidate, from what the runner KNOWS in memory (no store reads):
+    the screen, the reasons of its last entry decision (pre-quote gate or round trip), the BUY fill, the error code."""
+    if not screen.passed:
+        return 'screen', list(screen.reasons), False
+    if fill is not None:
+        return 'entry', [], True
+    if entry_reasons:
+        reasons = list(entry_reasons)
+        return 'entry', (['NOT_FILLED'] if reasons == ['ENTRY'] else reasons), False
+    if error:
+        return 'quote', ['ENTRY_FAILED:' + str(error)], False
+    return 'entry', ['ENTRIES_STOPPED'], False
 
 
 @dataclass(frozen=True)
@@ -108,27 +137,157 @@ class _Path:
     target: Target
     started: float
     ends: float
-    candidate_id: object
-    start_id: object = None
     marks: int = 0
     gaps: int = 0
 
 
+# ------------------------------------------------------------------------------------------------------ the file
+SCHEMA = (
+    'CREATE TABLE IF NOT EXISTS meta(key TEXT PRIMARY KEY, value TEXT NOT NULL)',
+    'CREATE TABLE IF NOT EXISTS paths(mint TEXT PRIMARY KEY, candidate_id INTEGER, start_ts REAL NOT NULL, '
+    'ends_ts REAL NOT NULL, entered INTEGER NOT NULL, stage TEXT, reason TEXT NOT NULL, screen_reasons TEXT NOT NULL, '
+    'holders_checked INTEGER NOT NULL, features TEXT NOT NULL, target TEXT NOT NULL, carried_from TEXT, '
+    'code_version TEXT NOT NULL, strategy_version TEXT NOT NULL)',
+    'CREATE TABLE IF NOT EXISTS path_marks(mint TEXT NOT NULL, ts REAL NOT NULL, slot INTEGER, base_raw INTEGER, '
+    'quote_raw INTEGER, net_sol TEXT, liquidity_sol TEXT, status TEXT NOT NULL)',
+    'CREATE INDEX IF NOT EXISTS path_marks_mint_ts ON path_marks(mint, ts)',
+    'CREATE TABLE IF NOT EXISTS path_gaps(mint TEXT NOT NULL, ts REAL NOT NULL, cause TEXT NOT NULL)',
+    'CREATE INDEX IF NOT EXISTS path_gaps_mint_ts ON path_gaps(mint, ts)',
+    'CREATE TABLE IF NOT EXISTS path_ends(mint TEXT PRIMARY KEY, ts REAL NOT NULL, why TEXT NOT NULL, marks INTEGER, '
+    'gaps INTEGER)',
+)
+PATH_COLUMNS = ('mint', 'candidate_id', 'start_ts', 'ends_ts', 'entered', 'stage', 'reason', 'screen_reasons',
+                'holders_checked', 'features', 'target', 'carried_from', 'code_version', 'strategy_version')
+
+
+class PathStore:
+    """``paths.sqlite``: the recorder's own file, connection and lock. Never the trader's ``lean.sqlite``."""
+
+    def __init__(self, path, *, clock=time.time):
+        self.path, self.clock = Path(path), clock
+        self._lock = threading.RLock()
+        self.db = None
+        self._open()
+
+    def _open(self):
+        if self.path.is_symlink() or (self.path.exists() and not self.path.is_file()):
+            raise ValueError('paths db must be a regular file')
+        if not self.path.parent.is_dir():
+            raise ValueError('paths db directory missing')
+        if not self.path.exists():
+            os.close(os.open(self.path, os.O_WRONLY | os.O_CREAT | os.O_EXCL | os.O_NOFOLLOW, 0o600))
+        self.db = sqlite3.connect(self.path, timeout=5, isolation_level=None, check_same_thread=False)
+        self.db.execute('PRAGMA journal_mode=WAL')
+        self.db.execute('PRAGMA synchronous=NORMAL')        # research data: a crash may lose the last poll, never more
+        self.db.execute('PRAGMA busy_timeout=5000')
+        self._tx(lambda: [self.db.execute(sql) for sql in SCHEMA]
+                 + [self.db.execute("INSERT OR IGNORE INTO meta VALUES('schema','paths-1')")])
+
+    def _tx(self, function):
+        with self._lock:
+            self.db.execute('BEGIN IMMEDIATE')
+            try:
+                value = function()
+                self.db.execute('COMMIT')
+                return value
+            except BaseException:
+                if self.db.in_transaction:
+                    self.db.execute('ROLLBACK')
+                raise
+
+    def insert_path(self, row):
+        """False when the mint already has a path in this file."""
+        def write():
+            if self.db.execute('SELECT 1 FROM paths WHERE mint=?', (row['mint'],)).fetchone():
+                return False
+            self.db.execute('INSERT INTO paths(%s) VALUES(%s)' % (','.join(PATH_COLUMNS), ','.join('?' * len(PATH_COLUMNS))),
+                            tuple(row.get(c) for c in PATH_COLUMNS))
+            return True
+        return self._tx(write)
+
+    def add(self, marks=(), gaps=(), ends=()):
+        """One transaction: mark tuples, gap tuples ``(mint, ts, cause)``, end tuples ``(mint, ts, why, marks, gaps)``."""
+        def write():
+            if marks:
+                self.db.executemany('INSERT INTO path_marks(mint,ts,slot,base_raw,quote_raw,net_sol,liquidity_sol,status) '
+                                    'VALUES(?,?,?,?,?,?,?,?)', marks)
+            if gaps:
+                self.db.executemany('INSERT INTO path_gaps(mint,ts,cause) VALUES(?,?,?)', gaps)
+            if ends:
+                self.db.executemany('INSERT OR IGNORE INTO path_ends(mint,ts,why,marks,gaps) VALUES(?,?,?,?,?)', ends)
+        if marks or gaps or ends:
+            self._tx(write)
+
+    def live_paths(self):
+        """Rows of ``paths`` without an end, oldest first."""
+        with self._lock:
+            cur = self.db.execute('SELECT %s FROM paths WHERE mint NOT IN (SELECT mint FROM path_ends) ORDER BY start_ts, mint'
+                                  % ','.join(PATH_COLUMNS))
+            return [dict(zip(PATH_COLUMNS, r)) for r in cur.fetchall()]
+
+    def size_bytes(self):
+        total = 0
+        for suffix in ('', '-wal'):
+            try:
+                total += os.path.getsize(str(self.path) + suffix)
+            except OSError:
+                pass
+        return total
+
+    def free_bytes(self):
+        return shutil.disk_usage(self.path.parent).free
+
+    def rollover(self):
+        """Rename this file to ``paths-YYYYMMDD[-n].sqlite`` and start a fresh one carrying the live paths. Returns the
+        archive path."""
+        with self._lock:
+            live = self.live_paths()
+            self.db.execute('PRAGMA wal_checkpoint(TRUNCATE)')
+            self.db.close()
+            day = datetime.fromtimestamp(self.clock(), timezone.utc).strftime('%Y%m%d')
+            archive, n = self.path.with_name('paths-%s.sqlite' % day), 1
+            while archive.exists():
+                archive, n = self.path.with_name('paths-%s-%d.sqlite' % (day, n)), n + 1
+            os.rename(self.path, archive)
+            for suffix in ('-wal', '-shm'):
+                try:
+                    os.unlink(str(self.path) + suffix)
+                except FileNotFoundError:
+                    pass
+            self._open()
+            for row in live:
+                self.insert_path(dict(row, carried_from=archive.name))
+            return archive
+
+    def close(self):
+        with self._lock:
+            if self.db is not None:
+                self.db.close()
+
+
+class _Stopped(Exception):
+    """Internal: ``stop`` was set while this poll was pacing."""
+
+
+# ------------------------------------------------------------------------------------------------------ the recorder
 class PathRecorder:
-    def __init__(self, *, store, helius, pcfg, code_version, strategy_version, pool_fee_bps=25, path_hours=6.0,
-                 interval_s=15.0, ref_size_sol='0.2', max_paths=2000, clock=time.time, sleep=time.sleep):
-        self.store, self.helius, self.pcfg, self.clock, self.sleep = store, helius, pcfg, clock, sleep
+    def __init__(self, *, db, helius, pcfg, code_version, strategy_version, pool_fee_bps=25, path_hours=6.0,
+                 interval_s=15.0, ref_size_sol='0.2', max_paths=2000, max_db_gb=2.0, min_free_gb=2.0, clock=time.time,
+                 sleep=time.sleep):
+        self.db, self.helius, self.pcfg, self.clock, self.sleep = db, helius, pcfg, clock, sleep
         self.code_version, self.strategy_version = code_version, strategy_version
         self.pool_fee_bps = int(pool_fee_bps)
         self.path_s, self.interval_s = float(path_hours) * 3600, float(interval_s)
         self.ref_lamports = A.lamports(Decimal(str(ref_size_sol)))
         self.max_paths = int(max_paths)
+        self.max_db_bytes, self.min_free_bytes = float(max_db_gb) * GB, float(min_free_gb) * GB
         self._paths = {}                           # mint -> _Path
+        self._cursor = 0                           # rotation: the next poll starts where the last one was cut short
+        self._floor_bytes = 0                      # file size right after the last rollover (the carried paths)
         self._lock = threading.Lock()              # in-memory state only: never held across I/O
-        self._checkpoint_lock = threading.Lock()   # serializes checkpoint writes (never taken by the trader)
         self.stats = {'started': 0, 'resumed': 0, 'ended': 0, 'polls': 0, 'calls': 0, 'marks': 0, 'gaps': 0, 'shed': 0,
                       'paced': 0, 'errors': 0, 'write_failures': 0, 'hazard_skipped': 0, 'duplicates': 0,
-                      'capacity_dropped': 0}
+                      'capacity_dropped': 0, 'rollovers': 0, 'disk_low': 0}
         self.errors_by_code = {}
         self.last_error = None
         self.last_poll_at = None
@@ -148,59 +307,43 @@ class PathRecorder:
 
     def active(self):
         with self._lock:
-            return {m: p.start_id for m, p in self._paths.items() if p.start_id is not None}
+            return {m: p.started for m, p in self._paths.items()}
 
     def health(self):
         with self._lock:
-            out = {'enabled': True, 'active_paths': sum(1 for p in self._paths.values() if p.start_id is not None),
-                   'last_poll_at': self.last_poll_at, 'last_error': self.last_error,
-                   'errors_by_code': dict(self.errors_by_code), **self.stats}
+            out = {'enabled': True, 'active_paths': len(self._paths), 'last_poll_at': self.last_poll_at,
+                   'last_error': self.last_error, 'errors_by_code': dict(self.errors_by_code), **self.stats}
+        out['db'] = str(self.db.path)
+        out['db_bytes'] = self.db.size_bytes()
         limiter = getattr(getattr(self.helius, 'transport', None), 'limiter', None)
         if isinstance(getattr(limiter, 'stats', None), dict):
             out['low_lane'] = dict(limiter.stats)
         return out
 
     # -- starting a path ------------------------------------------------------------------------------------------
-    def on_candidate(self, mint, candidate_id, screen):
-        """Runner hook, after a candidate was handled (its final attempt). Never raises; True when a path started."""
+    def on_candidate(self, note):
+        """Runner hook after a candidate's FINAL attempt. ``note`` is runner memory: ``{'mint', 'cid', 'screen',
+        'entry_reasons', 'fill', 'error'}``. Never touches the trader's store; never raises. True when a path started."""
         try:
+            screen = note['screen']
             if not eligible(screen):
                 self._bump('hazard_skipped')
                 return False
-            stage, reasons, entered = self._outcome(mint, screen)
-            position = self.store.positions().get(mint) if entered else None
-            if entered and position is None:
-                entered, reasons = False, ['NOT_FILLED']
-            return self.start(mint, candidate_id, screen.features, entered=entered, stage=stage, reasons=reasons,
-                              screen_reasons=list(screen.reasons or ()), position=position)
+            stage, reasons, entered = outcome(screen, entry_reasons=note.get('entry_reasons'), fill=note.get('fill'),
+                                              error=note.get('error'))
+            return self.start(note['mint'], note.get('cid'), screen.features, entered=entered, stage=stage, reasons=reasons,
+                              screen_reasons=list(screen.reasons or ()), fill=note.get('fill') if entered else None)
         except Exception as error:                                     # noqa: BLE001 - never reaches the trader
             self._fail('START_FAILED', error)
             return False
 
-    def _outcome(self, mint, screen):
-        """(stage, reasons, entered) from what the runner recorded for this attempt (store reads only)."""
-        if not screen.passed:
-            return 'screen', list(screen.reasons), False
-        decisions = self.store.rows('decisions', mint=mint, limit=10000)
-        screens = [d for d in decisions if d['kind'] == 'screen']
-        after_id = screens[-1]['id'] if screens else 0
-        after_ts = screens[-1]['ts'] if screens else 0
-        entries = [d for d in decisions if d['kind'] == 'entry' and d['id'] > after_id]
-        if entries:
-            last = entries[-1]
-            if last['action'] == 'BUY':
-                return 'entry', [], True
-            return 'entry', list(json.loads(last['reasons'])) or [last['action']], False
-        errors = [e for e in self.store.rows('errors', mint=mint, limit=10000) if e['ts'] >= after_ts]
-        return 'quote', ['ENTRY_FAILED:' + errors[-1]['code'] if errors else 'NOT_ENTERED'], False
-
-    def _target(self, mint, features, position):
+    def _target(self, mint, features, fill):
         base_vault, quote_vault = _pubkey(features['pool_base_token_account']), _pubkey(features['pool_quote_token_account'])
         base0, gross0, spendable0 = (int(features[k]) for k in ('base_reserve_raw', 'quote_gross_raw', 'quote_spendable_raw'))
         if base0 <= 0 or gross0 <= 0 or not 0 <= spendable0 <= gross0:
             raise ValueError('pool reserves at the screen are unusable')
-        if position is not None:
-            qty, cost, basis = int(position.qty_raw), int(position.cost_lamports), 'fill'
+        if fill is not None:                                           # the position's cost basis = paid + fee
+            qty, cost, basis = int(fill.qty_raw), int(fill.sol_lamports) + int(fill.fee_lamports), 'fill'
         else:
             spent = self.ref_lamports * (10_000 - self.pool_fee_bps) // 10_000
             qty, cost, basis = base0 * spent // (gross0 + spent), self.ref_lamports, 'ref_size'
@@ -210,10 +353,10 @@ class PathRecorder:
                       decimals=int(features['decimals']), fee_raw=gross0 - spendable0, qty_raw=qty, cost_lamports=cost,
                       basis=basis)
 
-    def start(self, mint, candidate_id, features, *, entered, stage, reasons, screen_reasons=(), position=None):
+    def start(self, mint, candidate_id, features, *, entered, stage, reasons, screen_reasons=(), fill=None):
         """Begin recording ``mint`` (no provider I/O: the vault keys come from the screen). Never raises."""
         try:
-            target = self._target(mint, features, position)
+            target = self._target(mint, features, fill)
             now = self.clock()
             with self._lock:
                 if mint in self._paths:
@@ -222,140 +365,163 @@ class PathRecorder:
                 if len(self._paths) >= self.max_paths:
                     self.stats['capacity_dropped'] += 1
                     return False
-                path = self._paths[mint] = _Path(target, now, now + self.path_s, candidate_id)
-            meta = {'mint': mint, 'candidate_id': candidate_id, 'entered': bool(entered),
-                    'not_entered': None if entered else {'stage': stage, 'reasons': list(reasons)},
-                    'screen_reasons': list(screen_reasons), 'holders_checked': features.get('holder_check') == 'OK',
-                    'started': now, 'ends': now + self.path_s, 'path_hours': self.path_s / 3600,
-                    'interval_s': self.interval_s, 'target': asdict(target)}
-            try:
-                start_id = self.store.add_observation(
-                    'path_start', _canonical({**meta, 'features': _jsonable(features)}), mint=mint,
-                    candidate_id=candidate_id, meta=meta, code_version=self.code_version,
-                    strategy_version=self.strategy_version, ts=now)
-            except BaseException:
-                with self._lock:
-                    self._paths.pop(mint, None)
-                raise
+            row = {'mint': mint, 'candidate_id': candidate_id, 'start_ts': now, 'ends_ts': now + self.path_s,
+                   'entered': int(bool(entered)), 'stage': None if entered else stage,
+                   'reason': json.dumps([] if entered else list(reasons)), 'screen_reasons': json.dumps(list(screen_reasons)),
+                   'holders_checked': int(features.get('holder_check') == 'OK'),
+                   'features': json.dumps(_jsonable(features), sort_keys=True, default=str),
+                   'target': json.dumps(asdict(target), sort_keys=True), 'carried_from': None,
+                   'code_version': self.code_version, 'strategy_version': self.strategy_version}
+            if not self.db.insert_path(row):
+                self._bump('duplicates')
+                return False
             with self._lock:
-                path.start_id = start_id
+                self._paths.setdefault(mint, _Path(target, now, now + self.path_s))
                 self.stats['started'] += 1
-            self._checkpoint(now)
             return True
         except Exception as error:                                     # noqa: BLE001
             self._fail('START_FAILED', error)
             return False
 
-    # -- persistence of the live set ----------------------------------------------------------------------------------
-    def _checkpoint(self, now=None):
-        try:
-            with self._checkpoint_lock:
-                ids = sorted(self.active().values())
-                self.store.record(CHECKPOINT, {'active': ids, 'at': self.clock() if now is None else now},
-                                  code_version=self.code_version, strategy_version=self.strategy_version,
-                                  ts=self.clock() if now is None else now)
-        except Exception as error:                                     # noqa: BLE001
-            self._fail('CHECKPOINT_FAILED', error)
-
     def resume(self):
-        """After a restart: the live paths of the latest ``paths_active`` checkpoint; ended ones get their path_end.
-        Call it before the candidate loop starts. Never raises; returns the number of paths resumed."""
+        """After a restart: the live paths of the file (``paths`` without an end); expired ones get their end row.
+        Never raises; returns the number of paths resumed."""
         try:
-            last = self.store.latest_event(CHECKPOINT)
-            if last is None:
-                return 0
             now, restored, expired = self.clock(), 0, []
-            for start_id in last[1].get('active', []):
-                obs = self.store.observation(int(start_id))
-                if obs is None or obs['kind'] != 'path_start':
-                    self._fail('RESUME_ROW_INVALID')
-                    continue
-                meta = obs['meta']
-                path = _Path(Target(**meta['target']), float(meta['started']), float(meta['ends']), meta.get('candidate_id'),
-                             int(start_id))
-                if path.ends <= now:
-                    expired.append(path)
+            for row in self.db.live_paths():
+                target = Target(**json.loads(row['target']))
+                if row['ends_ts'] <= now:
+                    expired.append((row['mint'], now, 'EXPIRED_WHILE_DOWN', None, None))
                     continue
                 with self._lock:
-                    if path.target.mint not in self._paths:
-                        self._paths[path.target.mint] = path
+                    if row['mint'] not in self._paths:
+                        self._paths[row['mint']] = _Path(target, row['start_ts'], row['ends_ts'])
                         restored += 1
-            self._bump('resumed', restored)
             if expired:
-                self._end(expired, now, 'EXPIRED_WHILE_DOWN')
-            self._checkpoint(now)
+                self.db.add(ends=expired)
+                self._bump('ended', len(expired))
+            self._bump('resumed', restored)
             return restored
         except Exception as error:                                     # noqa: BLE001
             self._fail('RESUME_FAILED', error)
             return 0
 
     # -- polling --------------------------------------------------------------------------------------------------
-    def poll(self):
-        """One round: end expired paths, then ONE getMultipleAccounts per <=50 pools (low lane) and one store write.
+    def poll(self, stop=None):
+        """One round: end expired paths, then ONE getMultipleAccounts per <=50 pools (low lane) and one write.
         Never raises; returns the number of marks written."""
         try:
-            return self._poll()
+            return self._poll(stop)
         except Exception as error:                                     # noqa: BLE001
             self._fail('POLL_FAILED', error)
             return 0
 
-    def _poll(self):
+    def _poll(self, stop):
         now = self.clock()
         with self._lock:
             self.stats['polls'] += 1
             self.last_poll_at = now
-            expired = [p for p in self._paths.values() if p.start_id is not None and now >= p.ends]
-        if expired:
-            self._end(expired, now, 'COMPLETE')
-        with self._lock:
-            due = sorted((p for p in self._paths.values() if p.start_id is not None), key=lambda p: p.start_id)
-        rows, marked, gaps = [], [], []
+            expired = [(m, p) for m, p in self._paths.items() if now >= p.ends]
+            for mint, _p in expired:
+                del self._paths[mint]
+            ordered = sorted(self._paths.items(), key=lambda item: (item[1].started, item[0]))
+            start = self._cursor % len(ordered) if ordered else 0
+        ends = [(m, now, 'COMPLETE', p.marks, p.gaps) for m, p in expired]
+        due = ordered[start:] + ordered[:start]
+        marks, gaps, marked, first_gap = [], [], [], None
         deadline = now + self.interval_s * PACE_BUDGET
-        for offset in range(0, len(due), POOLS_PER_CALL):
+        if due and self.min_free_bytes and self._free() < self.min_free_bytes:
+            self._bump('disk_low')
+            self._bump('gaps', len(due))
+            self._write([], [], ends)                                  # nothing else is written while the disk is low
+            return 0
+        offset = 0
+        while offset < len(due):
             chunk = due[offset:offset + POOLS_PER_CALL]
-            keys = [k for p in chunk for k in (p.target.base_vault, p.target.quote_vault)]
-            try:
-                result = self._call(keys, deadline)
-            except ProviderError as error:
-                if error.code == LANE_SHED:                            # nothing was sent: yield, the rest are gaps
-                    self._bump('shed')
-                    gaps += due[offset:]
-                    break
+            if stop is not None and stop.is_set():
+                cause = 'stopped'
+            else:
+                keys = [k for _m, p in chunk for k in (p.target.base_vault, p.target.quote_vault)]
+                cause = None
+                try:
+                    result = self._call(keys, deadline, stop)
+                except _Stopped:
+                    cause = 'stopped'
+                except ProviderError as error:
+                    if error.code == LANE_SHED:                        # nothing was sent
+                        self._bump('shed')
+                        cause = 'shed' if error.meta.get('why') == 'backoff' else 'budget'
+                    else:
+                        self._bump('calls')
+                        self._fail('PROVIDER', error)
+                        cause = error.code
+                except Exception as error:                             # noqa: BLE001
+                    self._fail('POLL_CALL_FAILED', error)
+                    cause = 'POLL_CALL_FAILED'
+            if cause is None:
                 self._bump('calls')
-                self._fail('PROVIDER', error)
-                gaps += chunk
+                at, slot = self.clock(), result['context']['slot']
+                for i, (mint, path) in enumerate(chunk):
+                    marks.append(self._mark_row(mint, path, result['value'][2 * i], result['value'][2 * i + 1], at, slot))
+                    marked.append(path)
+                offset += len(chunk)
                 continue
-            except Exception as error:                                 # noqa: BLE001
-                self._fail('POLL_CALL_FAILED', error)
-                gaps += chunk
-                continue
-            self._bump('calls')
-            at, slot = self.clock(), result['context']['slot']
-            for i, path in enumerate(chunk):
-                rows.append(self._mark_row(path, result['value'][2 * i], result['value'][2 * i + 1], at, slot))
-                marked.append(path)
-        written = 0
-        if rows:
-            try:
-                written = self.store.add_observations(rows, code_version=self.code_version,
-                                                      strategy_version=self.strategy_version)
-            except Exception as error:                                 # noqa: BLE001 - a failed write is a gap
-                self._bump('write_failures')
-                self._fail('WRITE_FAILED', error)
-                gaps, marked = gaps + marked, []
+            first_gap = offset if first_gap is None else first_gap
+            stop_here = cause in ('stopped', 'shed', 'budget', 'HTTP_429')
+            skipped = due[offset:] if stop_here else chunk
+            gaps += [(mint, now, cause, path) for mint, path in skipped]
+            if stop_here:
+                break
+            offset += len(chunk)
         with self._lock:
-            for path in marked:
-                path.marks += 1
-            for path in gaps:
+            self._cursor = 0 if first_gap is None or not due else (start + first_gap) % len(due)
+        written = self._write(marks, [(m, ts, c) for m, ts, c, _p in gaps], ends)
+        with self._lock:
+            if written:
+                for path in marked:
+                    path.marks += 1
+            else:
+                gaps += [(None, None, 'write_failed', p) for p in marked]
+            for *_x, path in gaps:
                 path.gaps += 1
-            self.stats['marks'] += written
+            self.stats['marks'] += len(marks) if written else 0
             self.stats['gaps'] += len(gaps)
-        return written
+            self.stats['ended'] += len(ends) if written else 0
+        self._maybe_rollover()
+        return len(marks) if written else 0
 
-    def _call(self, keys, deadline):
-        """One low-lane getMultipleAccounts. The lane never waits; when it has no token RIGHT NOW (not a 429 shed),
-        this recorder thread paces itself (sleeps one token interval, holding no lock) while the poll is inside its
-        time budget, so a large batch spreads over the interval instead of bursting. A shed window is never waited."""
+    def _write(self, marks, gaps, ends):
+        try:
+            self.db.add(marks=marks, gaps=gaps, ends=ends)
+            return True
+        except Exception as error:                                     # noqa: BLE001 - a failed write is a gap
+            self._bump('write_failures')
+            self._fail('WRITE_FAILED', error)
+            return False
+
+    def _free(self):
+        try:
+            return self.db.free_bytes()
+        except OSError:
+            return float('inf')
+
+    def _maybe_rollover(self):
+        try:
+            size = self.db.size_bytes()
+            # the carried live paths alone may be large: a fresh file must at least double before it rolls again
+            if size > self.max_db_bytes and size > 2 * self._floor_bytes:
+                archive = self.db.rollover()
+                self._floor_bytes = self.db.size_bytes()
+                self._bump('rollovers')
+                log.warning('paths db passed %.3f GB: rolled over to %s; a fresh %s carries the live paths',
+                            self.max_db_bytes / GB, archive.name, self.db.path.name)
+        except Exception as error:                                     # noqa: BLE001
+            self._fail('ROLLOVER_FAILED', error)
+
+    def _call(self, keys, deadline, stop):
+        """One low-lane getMultipleAccounts. The lane never waits; when it has no token RIGHT NOW (not a shed), this
+        recorder thread paces itself (sleeps one token interval, holding no lock) while the poll is inside its time
+        budget. A shed window is never waited."""
         while True:
             try:
                 return self.helius.get_multiple_accounts(keys)[0]
@@ -363,6 +529,8 @@ class PathRecorder:
                 pace = self._pace_s()
                 if error.code != LANE_SHED or error.meta.get('why') != 'no_token' or self.clock() + pace > deadline:
                     raise
+                if stop is not None and stop.is_set():
+                    raise _Stopped from None
                 self._bump('paced')
                 self.sleep(pace)
 
@@ -371,7 +539,7 @@ class PathRecorder:
         rate = getattr(limiter, 'rate', None)
         return 1.0 / rate if isinstance(rate, float) and rate > 0 else 0.5
 
-    def _mark_row(self, path, base_account, quote_account, at, slot):
+    def _mark_row(self, mint, path, base_account, quote_account, at, slot):
         t = path.target
         status, base, quote, net, liquidity = 'OK', None, None, None, None
         if base_account is None or quote_account is None:
@@ -387,27 +555,7 @@ class PathRecorder:
                 net = format(A.mark(t.qty_raw, base, quote, pool_fee_bps=self.pool_fee_bps, pcfg=self.pcfg), 'f')
             except A.AdapterError:
                 status = 'EMPTY_POOL'
-        evidence = {'base_raw': base, 'quote_raw': quote, 'slot': slot}
-        return {'kind': 'path_mark', 'mint': t.mint, 'candidate_id': path.candidate_id, 'ts': at, 'raw': _canonical(evidence),
-                'meta': {**evidence, 'ts': at, 'net_sol': net, 'liquidity_sol': liquidity, 'status': status}}
-
-    def _end(self, paths, now, why):
-        with self._lock:
-            for path in paths:
-                if self._paths.get(path.target.mint) is path:
-                    del self._paths[path.target.mint]
-        rows = [{'kind': 'path_end', 'mint': p.target.mint, 'candidate_id': p.candidate_id, 'ts': now,
-                 'raw': _canonical(body), 'meta': body}
-                for p in paths
-                for body in [{'mint': p.target.mint, 'why': why, 'started': p.started, 'ends': p.ends, 'ended': now,
-                              'start_id': p.start_id, 'marks_this_process': p.marks, 'gaps_this_process': p.gaps}]]
-        try:
-            self.store.add_observations(rows, code_version=self.code_version, strategy_version=self.strategy_version)
-            self._bump('ended', len(rows))
-        except Exception as error:                                     # noqa: BLE001
-            self._bump('write_failures')
-            self._fail('WRITE_FAILED', error)
-        self._checkpoint(now)
+        return (mint, at, slot, base, quote, net, liquidity, status)
 
     # -- the thread -----------------------------------------------------------------------------------------------
     def run(self, stop, *, monotonic=time.monotonic):
@@ -415,7 +563,7 @@ class PathRecorder:
         while not stop.is_set():
             began = monotonic()
             try:
-                self.poll()
+                self.poll(stop)
             except BaseException as error:                             # noqa: B902 - the trader must never notice
                 self._fail('POLL_FAILED', error)
             stop.wait(max(0.0, self.interval_s - (monotonic() - began)))
@@ -431,14 +579,17 @@ def _jsonable(value):
     return value
 
 
-def build(cfg, *, store, keys, pcfg, code_version, strategy_version, pool_fee_bps, clock=time.time, transport_kwargs=None):
-    """The recorder of a lean.json ``paths`` config (already validated by ``config``), on the LOW lane; None if disabled."""
+def build(cfg, *, state_dir, keys, pcfg, code_version, strategy_version, pool_fee_bps, clock=time.time,
+          transport_kwargs=None):
+    """The recorder of a validated lean.json ``paths`` config, with its own ``paths.sqlite`` and the LOW lane; None if
+    disabled. Called by ``Runner.run`` only (never by ``--once`` / ``--clear-halt``)."""
     if not cfg['enabled']:
         return None
     from lean import providers
     transport_kwargs = dict(transport_kwargs or {})
     helius = providers.low(keys, **transport_kwargs).helius
-    return PathRecorder(store=store, helius=helius, pcfg=pcfg, code_version=code_version, strategy_version=strategy_version,
-                        pool_fee_bps=pool_fee_bps, path_hours=cfg['path_hours'], interval_s=cfg['interval_s'],
-                        ref_size_sol=cfg['ref_size_sol'], max_paths=cfg['max_paths'], clock=clock,
-                        sleep=transport_kwargs.get('sleep', time.sleep))
+    return PathRecorder(db=PathStore(db_path(cfg, state_dir), clock=clock), helius=helius, pcfg=pcfg,
+                        code_version=code_version, strategy_version=strategy_version, pool_fee_bps=pool_fee_bps,
+                        path_hours=cfg['path_hours'], interval_s=cfg['interval_s'], ref_size_sol=cfg['ref_size_sol'],
+                        max_paths=cfg['max_paths'], max_db_gb=cfg['max_db_gb'], min_free_gb=cfg['min_free_gb'],
+                        clock=clock, sleep=transport_kwargs.get('sleep', time.sleep))
