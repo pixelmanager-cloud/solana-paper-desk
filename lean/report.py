@@ -301,9 +301,11 @@ def trades(events):
                 if r['side'] == 'sell':
                     anomalies.append({'code': 'SELL_WITHOUT_POSITION', 'mint': mint})
                     continue
+                # the trade belongs to the strategy_version of its OPENING buy, whatever version later fills (a restart) carry
                 current = {'mint': mint, 'strategy': r['strategy'], 'entry_at': r['at'], 'cost': Decimal(0), 'proceeds': Decimal(0),
-                           'qty': Decimal(0), 'exit_at': None, 'reasons': [], 'status': 'OPEN', 'flag': None}
+                           'qty': Decimal(0), 'exit_at': None, 'reasons': [], 'status': 'OPEN', 'flag': None, 'versions': set()}
                 out.append(current)
+            current['versions'].add(r['strategy'])
             if r['side'] == 'buy':
                 current['cost'] += r['sol'] + r['fee']
                 current['qty'] += r['qty']
@@ -325,6 +327,7 @@ def trades(events):
 
 def trade_row(t):
     row = {'mint': t['mint'], 'strategy_version': t['strategy'], 'status': t['status'], 'flag': t['flag'],
+           'mixed_version': 1 if len(t['versions']) > 1 else 0, 'fill_versions': sorted(t['versions']),
            'entry_at': num(t['entry_at'], 3), 'exit_at': num(t['exit_at'], 3) if t['exit_at'] is not None else None,
            'cost_sol': num(t['cost']), 'proceeds_sol': num(t['proceeds']), 'exit_reasons': t['reasons'],
            'final_exit_reason': t['reasons'][-1] if t['reasons'] and t['status'] == 'CLOSED' else None}
@@ -347,6 +350,7 @@ def pnl_by_strategy(all_trades):
         pnls = [t['proceeds'] - t['cost'] for t in items]
         returns = [(t['proceeds'] - t['cost']) / t['cost'] for t in items]
         result[strategy] = {'trades': len(items), 'wins': sum(1 for p in pnls if p > 0), 'pnl_sol': num(sum(pnls)),
+                            'mixed_version_trades': sum(1 for t in items if len(t['versions']) > 1),
                             'cost_sol': num(sum(t['cost'] for t in items)), 'return': dist(returns), 'sample': sample_flag(len(items))}
     return result
 
@@ -501,12 +505,12 @@ def render_html(s):
                  % (t['closed_scored'], flag(t['sample']), t['open'], t['flagged'], t['anomaly_count'], e(t['overall_pnl_sol'])))
     hs = t['hold_seconds']
     parts.append('<p>Hold seconds: n=%d median=%s p90=%s max=%s</p>' % (hs['n'], e(hs['median']), e(hs['p90']), e(hs['max'])))
-    parts.append('<h2>PnL per strategy_version</h2>' + (table(['strategy', 'trades', 'wins', 'pnl SOL', 'mean return', 'median return', 'sample'],
-        [[k, v['trades'], v['wins'], v['pnl_sol'], v['return']['mean'], v['return']['median'], v['sample']] for k, v in s['pnl_by_strategy']['data'].items()]) or ''))
+    parts.append('<h2>PnL per strategy_version (by the version of the OPENING buy)</h2>' + (table(['strategy', 'trades', 'wins', 'pnl SOL', 'mean return', 'median return', 'mixed-version trades', 'sample'],
+        [[k, v['trades'], v['wins'], v['pnl_sol'], v['return']['mean'], v['return']['median'], v['mixed_version_trades'], v['sample']] for k, v in s['pnl_by_strategy']['data'].items()]) or ''))
     parts.append('<h2>Exit reasons</h2>' + table(['reason', 'trades', 'pnl SOL', 'mean return', 'median hold s', 'sample'],
         [[k, v['trades'], v['pnl_sol'], v['return']['mean'], v['hold_seconds']['median'], v['sample']] for k, v in s['exit_reasons']['data'].items()]))
-    parts.append('<h2>Per-trade table</h2>' + table(['mint', 'strategy', 'status', 'cost', 'proceeds', 'pnl', 'return', 'hold s', 'exit reasons', 'flag'],
-        [[r['mint'], r['strategy_version'], r['status'], r['cost_sol'], r['proceeds_sol'], r['pnl_sol'], r['return'], r['hold_seconds'],
+    parts.append('<h2>Per-trade table</h2>' + table(['mint', 'strategy', 'mixed_version', 'status', 'cost', 'proceeds', 'pnl', 'return', 'hold s', 'exit reasons', 'flag'],
+        [[r['mint'], r['strategy_version'], r['mixed_version'], r['status'], r['cost_sol'], r['proceeds_sol'], r['pnl_sol'], r['return'], r['hold_seconds'],
           ','.join(r['exit_reasons']), r['flag'] or ''] for r in t['rows']]))
     c = s['counterfactual']
     parts.append('<h2>Rejections vs forward price (counterfactual)</h2>' + note(c) + ('<p>Not provided.</p>' if c['status'] == 'NOT_PROVIDED' else ''))

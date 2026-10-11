@@ -374,9 +374,20 @@ class StoreView:
             cost = sum(f['sol_lamports'] + f['fee_lamports'] for f in fills if f['side'] == 'buy')
             pnl = state.get('trade_pnl_lamports')
             pnl = int(pnl) if type(pnl) is int else sum(f['realized_lamports'] for f in fills if f['side'] == 'sell')
+            # a trade belongs to the strategy_version of its OPENING buy; later fills may carry another one (a restart)
+            opening = next((f['strategy_version'] for f in fills if f['id'] == open_id), version)
             out.append({'mint': mint, 'open_fill_id': open_id, 'fill_id': fill_id, 'ts': ts, 'pnl': pnl, 'cost': cost,
-                        'reason': state.get('reason'), 'strategy_version': version})
+                        'reason': state.get('reason'), 'strategy_version': opening,
+                        'mixed_version': len({f['strategy_version'] for f in fills} | {version}) > 1})
         return out
+
+    def realized_by_opening_version(self):
+        """{strategy_version of the OPENING buy: realized lamports of ALL the lifecycle's sells}. A sell with no lifecycle row
+        (a legacy store) falls back to its own version."""
+        rows = self.c.execute('SELECT COALESCE(o.strategy_version, f.strategy_version), SUM(f.realized_lamports) FROM fills f '
+                              'LEFT JOIN position_state p ON p.fill_id = f.id AND p.event IN (\'rung\',\'closed\') '
+                              'LEFT JOIN fills o ON o.id = p.open_fill_id WHERE f.side = \'sell\' GROUP BY 1').fetchall()
+        return {version: int(total) for version, total in rows}
 
     def replay(self):
         """(positions, cash, realized) by the ONE accounting implementation (lean.paper.apply_fill), like Store does."""
@@ -623,6 +634,9 @@ def fill_event(view, row, *, sol_usd_max_age):
     open_id = record.get('open_fill_id')
     opened = view.fill(open_id) if open_id else None
     out['hold_seconds'] = row['ts'] - opened['ts'] if opened else None
+    if opened:                                                          # the trade's strategy is its OPENING buy's, not this sell's
+        out['mixed_version'] = opened['strategy_version'] != row['strategy_version']
+        out['strategy_version'] = opened['strategy_version']
     if full and open_id:
         fills = view.mint_fills(mint, open_id, row['id'])
         cost = sum(f['sol_lamports'] + f['fee_lamports'] for f in fills if f['side'] == 'buy')
@@ -1014,9 +1028,7 @@ class Notifier:
         return '\n'.join(lines)
 
     def cmd_pnl(self, view, now):
-        realized = {}
-        for f in view._fills("WHERE side='sell'"):
-            realized[f['strategy_version']] = realized.get(f['strategy_version'], 0) + f['realized_lamports']
+        realized = view.realized_by_opening_version()                   # by the OPENING buy's version, not the sell's
         trades = {}
         for t in view.closed():
             entry = trades.setdefault(t['strategy_version'], [0, 0])
