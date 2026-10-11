@@ -23,7 +23,7 @@ Error responses keep their (bounded) body in ``ProviderError.raw``.
 
 L07R adds a shared LOW-priority lane (``lane='low'``, ``low(keys)``) for data collection (path recorder, entry features,
 wallet signals). It is carved out of the same plan budget (default main 0.55 / exit 0.25 / low 0.20 of the provider
-rate; ``configure_lanes``) and it NEVER waits: without a token right now, or inside a shed window, a call fails at once
+rate; ``configure_lanes``; LINT4: the Helius rate itself is ``lanes.helius_rps``, default 10/s) and it NEVER waits: without a token right now, or inside a shed window, a call fails at once
 with ``ProviderError('LANE_SHED', transient=True)`` and sends nothing. Any HTTP 429 seen by ANY lane of a provider sheds
 its low lane for ``low_shed_s`` (default 30 s, longer if Retry-After says so). Low-lane calls are never retried.
 """
@@ -33,6 +33,7 @@ from decimal import Decimal, DecimalException
 import hashlib
 import json
 import logging
+import math
 import os
 from pathlib import Path
 import random
@@ -225,21 +226,51 @@ LANE_SHARES = dict(DEFAULT_LANE_SHARES)
 _SHARED = {}
 _SHARED_LOCK = threading.Lock()
 _LOW_SHED = {'seconds': LOW_SHED_SECONDS}
+# --- LINT4: the Helius plan rate is configurable (lean.json ``lanes.helius_rps``; absent = DEFAULT_RATES, i.e. 10/s as before). The
+# burst equals the rate (the default's shape: 10/s, burst 10). The lane shares still split it: e.g. 20/s x 0.35/0.20/0.45 = 7/4/9 req/s.
+HELIUS_RPS_RANGE = (1.0, 500.0)
+RATES = dict(DEFAULT_RATES)
 
 
-def configure_lanes(shares=None, *, low_shed_s=None):
-    """Set the process-wide lane shares (validated; None = the defaults) and the low lane's shed window. Call it once at
-    startup, before any client is built: it drops the cached limiters so the next ones use the new shares."""
+def validate_helius_rps(value):
+    """None (= the default rate) or a finite number of requests per second in HELIUS_RPS_RANGE; anything else raises ValueError."""
+    if value is None:
+        return None
+    if isinstance(value, bool) or not isinstance(value, (int, float, Decimal)):
+        raise ValueError('helius_rps must be a number')
+    value = float(value)
+    low, high = HELIUS_RPS_RANGE
+    if not math.isfinite(value) or not low <= value <= high:
+        raise ValueError('helius_rps must be between %s and %s' % (low, high))
+    return value
+# --- end LINT4 ---
+
+
+def configure_lanes(shares=None, *, low_shed_s=None, helius_rps=None):
+    """Set the process-wide lane shares (validated; None = the defaults), the low lane's shed window and (LINT4) the Helius plan
+    rate (None = DEFAULT_RATES). Call it once at startup, before any client is built: it drops the cached limiters so the next
+    ones use the new shares and rate."""
     checked = validate_lane_shares(dict(DEFAULT_LANE_SHARES) if shares is None else shares)
     shed = LOW_SHED_SECONDS if low_shed_s is None else low_shed_s
     if isinstance(shed, bool) or not isinstance(shed, (int, float)) or not 0 <= shed <= 3600:
         raise ValueError('low_shed_s out of range')
+    rps = validate_helius_rps(helius_rps)
     with _SHARED_LOCK:
         LANE_SHARES.clear()
         LANE_SHARES.update(checked)
         _LOW_SHED['seconds'] = float(shed)
+        RATES.clear()
+        RATES.update(DEFAULT_RATES)
+        if rps is not None:
+            RATES['helius'] = (rps, rps)
         _SHARED.clear()
     return dict(checked)
+
+
+def lane_rates(provider='helius'):
+    """LINT4: ``{lane: requests per second}`` of ``provider`` under the current configuration (for health and the report)."""
+    rate = RATES[provider][0]
+    return {lane: round(rate * LANE_SHARES[lane], 6) for lane in LANES}
 
 
 def shared_limiter(provider, lane='main', *, clock=time.monotonic, sleep=time.sleep):
@@ -255,8 +286,8 @@ def shared_limiter(provider, lane='main', *, clock=time.monotonic, sleep=time.sl
     with _SHARED_LOCK:
         limiter = _SHARED.get(key)
         if limiter is None:
-            rate, burst = DEFAULT_RATES[provider]
-            share = 1.0 if provider == 'kraken' else LANE_SHARES[lane]   # helius 5.5+2.5+2/s, jupiter 2.2+1+0.8/s
+            rate, burst = RATES[provider]                                  # LINT4: helius = lanes.helius_rps when set
+            share = 1.0 if provider == 'kraken' else LANE_SHARES[lane]   # default helius 5.5+2.5+2/s, jupiter 2.2+1+0.8/s
             if lane == 'low':
                 limiter = LowLaneLimiter(rate * share, max(1.0, burst * share), clock=clock, sleep=sleep,
                                          shed_s=_LOW_SHED['seconds'])

@@ -24,7 +24,7 @@ CONFIG_KEYS = {
     'unexitable_after_s': 7200,        # a wanted exit failing (no route / 4xx) this long is written off at zero proceeds
     'screen': {},                      # lean.candidates settings other than the strategy-owned bands
     # --- L07R ---
-    'lanes': None,                     # {"main","exit","low"} shares of each provider rate (+ "low_shed_s"); None = 0.55/0.25/0.20
+    'lanes': None,                     # {"main","exit","low"} shares of each provider rate (+ "low_shed_s", LINT4 "helius_rps"); None = 0.55/0.25/0.20 of 10/s
     'paths': None,                     # lean.paths settings ({"enabled", "db", "path_hours", ...}); None = disabled
     # --- end L07R ---
     'route_check': {},                 # L16: {"enabled": true} records whether a real bot could build each BUY / full exit
@@ -86,8 +86,9 @@ def load_config(path):
         if lanes is not None:
             if not isinstance(lanes, dict):
                 raise ValueError('lanes must be an object')
-            shares = {k: v for k, v in lanes.items() if k not in ('low_shed_s', '_comment')}
-            cfg['lanes'] = {'shares': providers.validate_lane_shares(shares), 'low_shed_s': lanes.get('low_shed_s')}
+            shares = {k: v for k, v in lanes.items() if k not in ('low_shed_s', 'helius_rps', '_comment')}
+            cfg['lanes'] = {'shares': providers.validate_lane_shares(shares), 'low_shed_s': lanes.get('low_shed_s'),
+                            'helius_rps': providers.validate_helius_rps(lanes.get('helius_rps'))}          # LINT4
     except ValueError as error:
         raise ConfigError(str(error)) from None
     # --- end L07R ---
@@ -203,7 +204,7 @@ def build_runner(cfg, *, state_dir, discovery_db, keys, code_version, clock=None
     # --- L07R: lane shares before any client exists ---
     from lean import paths
     lanes = cfg.get('lanes') or {}
-    providers.configure_lanes(lanes.get('shares'), low_shed_s=lanes.get('low_shed_s'))
+    providers.configure_lanes(lanes.get('shares'), low_shed_s=lanes.get('low_shed_s'), helius_rps=lanes.get('helius_rps'))   # LINT4: + rate
     # --- end L07R ---
     # --- L10 hook: the optional execution model (latency-aware fills + cost model) ---
     exec_model = None

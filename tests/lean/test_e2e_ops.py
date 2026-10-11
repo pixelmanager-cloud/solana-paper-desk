@@ -194,7 +194,8 @@ class OpsEndToEnd(unittest.TestCase):
         health = r.ops.credits.health()
         self.assertEqual(health['status'], 'SHEDDING')
         self.assertGreater(health['projected_month'], 3000)
-        self.assertEqual(health['shed_lanes'], ['features', 'low', 'paths', 'wallet_signals'])     # LINT1: + the shared low lane
+        self.assertEqual(health['shed_lanes'], ['bot_exit', 'clusters', 'features', 'flow', 'low', 'paths', 'sell_evidence',
+                                                'wallet_signals'])     # LINT1: + the shared low lane; LINT4: + L20/L23/L24
         from lean import providers as P                                                               # LINT1: really shed, not just a flag
         self.assertGreater(P.low_lane_stats('helius', **r.ops.lane_clock)['sheds'], 0)
         with self.assertRaises(P.ProviderError) as shed:

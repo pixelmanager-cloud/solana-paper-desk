@@ -130,7 +130,7 @@ class Runner:
         self.clusters = None                       # lean.clusters.Clusters (set by build_runner when configured)
         # --- end L24 ---
         # --- LINT2b hook: the feature / wallet-signal threads (health ``alive``; one shared shutdown deadline) ---
-        self._aux_threads = {}                     # 'features' / 'wallet_signals' -> Thread
+        self._aux_threads = {}                     # name -> Thread (features, wallet_signals, flow, bot_exit, clusters, risk_external)
         # --- end LINT2b ---
         # --- L22 hook ---
         self.honeypot = None                       # lean.honeypot_sim.HoneypotSim (set by build_runner when honeypot_sim.enabled)
@@ -868,6 +868,26 @@ class Runner:
             log.critical('%s loop DIED (%s): stopping the process', name, type(error).__name__)
             self.stop.set()
 
+    # --- LINT4 hook ---
+    def _aux_specs(self):
+        """``[(name, target, args)]`` of the auxiliary daemon threads ``run`` starts (only the configured ones), each wired to
+        ``self.stop``. The path recorder is started separately (it is built and resumed before the candidate loop)."""
+        specs = []
+        if self.features is not None:                                       # L12: on stop it writes the queued rows unenriched
+            specs.append(('features', self.features.run, (self.stop,)))
+        for name in ('wallet_signals', 'flow', 'clusters'):                 # L13, L20, L24: run_loop() polls their own .stop
+            worker = getattr(self, name)
+            if worker is not None:
+                worker.stop = self.stop
+                specs.append((name, worker.run_loop, ()))
+        if self.bot_exit is not None:                                       # L23 (shadow by default)
+            self.bot_exit.stop = self.stop
+            specs.append(('bot_exit', self.bot_exit.run_loop, (self,)))
+        if self.risk_external is not None:                                  # L21 (its own RugCheck bucket)
+            specs.append(('risk_external', self.risk_external.run, (self.stop,)))
+        return specs
+    # --- end LINT4 ---
+
     def run(self, *, candidate_interval=5.0, position_interval=10.0, install_signals=True):
         """Both loops until SIGTERM/SIGINT (or ``stop``). Returns True on a clean stop, False if a loop died."""
         if install_signals:
@@ -892,64 +912,24 @@ class Runner:
         # --- L15 hook ---
         threads += [] if self.ops is None else self.ops.start(self)      # Ops.start returns started threads
         # --- end L15 ---
-        # --- L12 hook: the feature recorder in its own daemon thread; on stop it writes the queued rows without enrichment ---
-        feature_thread = None
-        if self.features is not None:
-            feature_thread = self._aux_threads['features'] = threading.Thread(target=self.features.run, args=(self.stop,),
-                                                                              name='features', daemon=True)
-            feature_thread.start()
-        # --- end L12 ---
-        # --- L13 hook --- (data collection on its own daemon thread and the shared low lane; never blocks entries or exits)
-        signals_thread = None
-        if self.wallet_signals is not None:
-            self.wallet_signals.stop = self.stop
-            signals_thread = self._aux_threads['wallet_signals'] = threading.Thread(target=self.wallet_signals.run_loop,
-                                                                                    name='wallet_signals', daemon=True)
-            signals_thread.start()
-        # --- end L13 ---
-        # --- L20 hook --- (order-flow features on their own daemon thread and the shared low lane; never blocks entries or exits)
-        flow_thread = None
-        if self.flow is not None:
-            self.flow.stop = self.stop
-            flow_thread = self._aux_threads['flow'] = threading.Thread(target=self.flow.run_loop, name='flow', daemon=True)
-            flow_thread.start()
-        # --- end L20 ---
-        # --- L23 hook: bot-exit monitor on its own daemon thread and the shared low lane (shadow by default) ---
-        bot_thread = None
-        if self.bot_exit is not None:
-            self.bot_exit.stop = self.stop
-            bot_thread = self._aux_threads['bot_exit'] = threading.Thread(target=self.bot_exit.run_loop, args=(self,),
-                                                                          name='bot_exit', daemon=True)
-            bot_thread.start()
-        # --- end L23 ---
-        # --- L24 hook --- (linked-wallet clusters: its own daemon thread on the shared low lane; recording only)
-        clusters_thread = None
-        if self.clusters is not None:
-            self.clusters.stop = self.stop
-            clusters_thread = self._aux_threads['clusters'] = threading.Thread(target=self.clusters.run_loop, name='clusters', daemon=True)
-            clusters_thread.start()
-        # --- end L24 ---
-        # --- L21 hook: the RugCheck collector on its own daemon thread (its own bucket; never on the trader's path) ---
-        if self.risk_external is not None:
-            self._aux_threads['risk_external'] = threading.Thread(target=self.risk_external.run, args=(self.stop,),
-                                                                  name='risk_external', daemon=True)
-            self._aux_threads['risk_external'].start()
-        # --- end L21 ---
+        # --- LINT4 hook: every auxiliary data-collection thread (L12 features, L13 wallet_signals, L20 flow, L23 bot_exit, L24
+        # clusters, L21 risk_external) is a daemon started here; none of them runs on the exit or candidate thread ---
+        aux = [] if recorder is None else [recorder]
+        for name, target, args in self._aux_specs():
+            thread = self._aux_threads[name] = threading.Thread(target=target, args=args, name=name, daemon=True)
+            thread.start()
+            aux.append(thread)
+        # --- end LINT4 ---
         for t in threads:
             while t.is_alive():
                 t.join(0.5)
-        # --- LINT2b hook: the auxiliary daemon threads (path recorder, features, wallet signals) share ONE deadline of
-        # AUX_JOIN_S in total, so a slow one can never push the stop past systemd's TimeoutStopSec (30 s); each checks
-        # ``stop`` before every request, so they normally end within one in-flight call ---
+        # --- LINT2b/LINT4 hook: the path recorder and EVERY auxiliary thread share ONE deadline of AUX_JOIN_S in total, so a slow one
+        # can never push the stop past systemd's TimeoutStopSec (30 s); each checks ``stop`` before every request, so they normally
+        # end within one in-flight call. A thread still alive at the deadline is a daemon: the process exits without it ---
         aux_deadline = time.monotonic() + AUX_JOIN_S
-        for aux in (recorder, feature_thread, signals_thread, flow_thread, bot_thread, clusters_thread):   # L20, L23, L24
-            if aux is not None:
-                aux.join(max(0.0, aux_deadline - time.monotonic()))
-        # --- end LINT2b ---
-        # --- L21 hook: inside the same shared deadline ---
-        if self._aux_threads.get('risk_external') is not None:
-            self._aux_threads['risk_external'].join(max(0.0, aux_deadline - time.monotonic()))
-        # --- end L21 ---
+        for thread in aux:
+            thread.join(max(0.0, aux_deadline - time.monotonic()))
+        # --- end LINT2b/LINT4 ---
         try:
             self.write_health()
         except Exception:
