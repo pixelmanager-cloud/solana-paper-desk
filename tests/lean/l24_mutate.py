@@ -55,7 +55,9 @@ MUTANTS = [
     ('clusters', 'never waits for L13', "if self.signals_enabled and not has_signals and now - decision_ts < self.cfg['signals_wait_s']:", "if False:"),
     # --- the learner guard
     ('learn', 'old cluster versions accepted', "if row.get('version') != CLUSTERS_VERSION:", "if False:"),
-    ('learn', 'late cluster snapshot accepted', "if not (_num(late) and late <= policy.max_late_s):", "if False:"),
+    # LINT4: + the trailing comment, so the pattern stays unique after L21 added the same guard to risk_values
+    ('learn', 'late cluster snapshot accepted', "if not (_num(late) and late <= policy.max_late_s):          # a snapshot read too long",
+     "if False:          # a snapshot read too long"),
     ('learn', 'unknown cluster flags accepted', "elif flag not in (None, *OK_FLAGS):", "elif False:"),
     ('learn', 'holders not from the screen accepted', "elif name != 'jito_bundled_buys' and row.get('holders_source') != 'screen':", "elif False:"),
     ('learn', 'uncut cluster window accepted', "if name == 'jito_bundled_buys' and (not _num(after) or after > 0):", "if False:"),
