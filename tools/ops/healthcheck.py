@@ -13,6 +13,7 @@ import argparse
 import datetime
 import json
 import os
+import re
 import shutil
 import sqlite3
 import subprocess
@@ -56,7 +57,11 @@ DEFAULTS = {
     'disk_free_bytes_critical': 1 << 30,
     'backup_age_warn': 30 * 3600, 'backup_age_critical': 54 * 3600,
     'max_hold_seconds': 21600,
+    'research_cpu_fraction': 0.9, 'research_cpu_consecutive': 3,
 }
+# Research/optional units that carry a CPUQuota (T39). Optional: a unit that is not installed is skipped.
+RESEARCH_UNITS = ('desk-counterfactual.service', 'desk-fill-realism-worker.service')
+RESEARCH_PROPS = ('ActiveState', 'CPUUsageNSec', 'CPUQuotaPerSecUSec', 'ActiveEnterTimestamp')
 SYSTEMCTL_PROPS = ('ActiveState', 'SubState', 'Result', 'ExecMainStatus', 'NRestarts', 'UnitFileState', 'LastTriggerUSec', 'ActiveEnterTimestamp')
 
 
@@ -98,8 +103,8 @@ def default_runner(argv):
     return subprocess.run(argv, capture_output=True, text=True, timeout=30, check=False)
 
 
-def show(runner, unit):
-    result = runner(['systemctl', '--timestamp=utc', 'show', unit] + ['-p' + p for p in SYSTEMCTL_PROPS])
+def show(runner, unit, props=SYSTEMCTL_PROPS):
+    result = runner(['systemctl', '--timestamp=utc', 'show', unit] + ['-p' + p for p in props])
     if result.returncode != 0:
         raise OSError('systemctl show %s failed' % unit)
     return dict(line.partition('=')[::2] for line in result.stdout.splitlines() if '=' in line)
@@ -140,6 +145,110 @@ def check_units(runner, now, t, units=None):
             else:
                 out.append(graded('restarts:' + unit, restarts, t['restarts_warn'], t['restarts_critical'],
                                   'NRestarts=%d after non-zero exit (Result=%s ExecMainStatus=%s)' % (restarts, result, s.get('ExecMainStatus'))))
+    return out
+
+
+_USEC = {'us': 1e-6, 'ms': 1e-3, 's': 1.0, 'min': 60.0}
+
+
+def parse_quota(text):
+    """CPUQuotaPerSecUSec as cores ('1s' = 1 core, '500ms' = half); None when unlimited or unparseable."""
+    total, found = 0.0, False
+    for number, unit in re.findall(r'(\d+(?:\.\d+)?)\s*(us|ms|min|s)', text or ''):
+        total += float(number) * _USEC[unit]
+        found = True
+    return total if found and total > 0 else None
+
+
+def _load_cpu_state(path):
+    """(previous samples, refused). Missing, malformed or hostile content gives ({}, False): it is never trusted, the file is
+    rewritten. A symlink or an unreadable file gives ({}, True): it is neither followed nor replaced."""
+    try:
+        fd = os.open(path, os.O_RDONLY | os.O_NOFOLLOW)
+        with os.fdopen(fd) as stream:
+            data = json.loads(stream.read(1 << 20))
+    except FileNotFoundError:
+        return {}, False
+    except OSError:
+        return {}, True
+    except ValueError:
+        return {}, False
+    if not isinstance(data, dict):
+        return {}, False
+    clean = {}
+    for unit, row in data.items():
+        if (isinstance(row, dict) and isinstance(row.get('streak'), int) and not isinstance(row['streak'], bool)
+                and 0 <= row['streak'] <= 1000 and isinstance(row.get('usage'), (int, float)) and row['usage'] >= 0
+                and isinstance(row.get('ts'), (int, float)) and isinstance(row.get('run'), str)):
+            clean[unit] = row
+    return clean, False
+
+
+def _save_cpu_state(path, state):
+    out = Path(path)
+    tmp = out.with_name('.' + out.name + '.tmp')
+    fd = os.open(tmp, os.O_WRONLY | os.O_CREAT | os.O_TRUNC | os.O_NOFOLLOW, 0o600)
+    with os.fdopen(fd, 'w') as stream:
+        stream.write(json.dumps(state, sort_keys=True) + '\n')
+    os.replace(tmp, out)
+
+
+def check_research_cpu(runner, now, t, state_path, units=RESEARCH_UNITS):
+    """WARN when a research unit runs at (a fraction of) its CPUQuota for N consecutive checks.
+
+    The sample is cores used: the CPUUsageNSec delta over the wall-clock gap since the previous check of the SAME run, or the
+    run's lifetime average for a first sample or a new run (the counter restarts with every start of a oneshot). An inactive
+    unit gives no sample: the streak is neither advanced nor reset. State is the only thing written (``--cpu-state``)."""
+    previous, refused = _load_cpu_state(state_path)
+    stored = dict(previous)
+    out = []
+    for unit in units:
+        try:
+            s = show(runner, unit, RESEARCH_PROPS)
+        except (OSError, subprocess.SubprocessError):
+            continue   # not installed: optional
+        name = 'research_cpu:' + unit
+        quota = parse_quota(s.get('CPUQuotaPerSecUSec'))
+        if quota is None:
+            out.append(check(name, WARN, 'no CPUQuota configured: this research unit can take every core from trading'))
+            continue
+        if s.get('ActiveState') != 'active':
+            continue
+        try:
+            usage = int(s.get('CPUUsageNSec', '')) / 1e9
+        except ValueError:
+            continue
+        if usage >= 2 ** 63 / 1e9:   # systemd reports UINT64_MAX when accounting is off
+            continue
+        run = s.get('ActiveEnterTimestamp', '')
+        started = parse_systemd_time(run)
+        prev = previous.get(unit)
+        fraction = None
+        if prev and prev['run'] == run and 0 < now - prev['ts'] <= 6 * 3600 and usage >= prev['usage']:
+            fraction = (usage - prev['usage']) / (now - prev['ts'])
+        elif started is not None and now - started >= 10:
+            fraction = usage / (now - started)
+        if fraction is None:
+            stored[unit] = {'run': run, 'usage': usage, 'ts': now, 'streak': prev['streak'] if prev else 0}
+            continue
+        saturated = fraction + 1e-9 >= t['research_cpu_fraction'] * quota
+        streak = (prev['streak'] + 1 if prev else 1) if saturated else 0
+        stored[unit] = {'run': run, 'usage': usage, 'ts': now, 'streak': streak}
+        need = int(t['research_cpu_consecutive'])
+        if streak >= need:
+            out.append(check(name, WARN, 'at %.0f%% of its %.2f-core CPUQuota for %d consecutive checks (%.2f cores)'
+                             % (100 * fraction / quota, quota, streak, fraction), fraction=round(fraction, 4), quota=quota, streak=streak))
+        else:
+            out.append(check(name, OK, '%.2f cores of %.2f (streak %d/%d)' % (fraction, quota, streak, need),
+                             fraction=round(fraction, 4), quota=quota, streak=streak))
+    if refused:
+        out.append(check('research_cpu_state', WARN, '%s is a symlink or unreadable: ignored and not rewritten' % state_path))
+        return out
+    try:
+        if stored != previous or not previous:
+            _save_cpu_state(state_path, stored)
+    except OSError as exc:
+        out.append(check('research_cpu_state', WARN, 'cannot write %s: %s' % (state_path, type(exc).__name__)))
     return out
 
 
@@ -326,6 +435,8 @@ def _build_report(args, runner, clock, usage):
     checks = []
     if not args.no_systemd:
         checks += guarded('units', check_units, runner, now, t)
+        if args.cpu_state:
+            checks += guarded('research_cpu', check_research_cpu, runner, now, t, args.cpu_state)
     checks += guarded('discovery', check_discovery, args.discovery_db, now, t)
     checks += guarded('ledger', check_ledger, root / 'paper-ledger.sqlite', now, t, cfg)
     checks += guarded('evidence', check_evidence, root / 'evidence.sqlite', now, t)
@@ -357,6 +468,7 @@ def main(argv=None, runner=default_runner, clock=time.time, usage=shutil.disk_us
     p.add_argument('--config', help='experiment config (price TTL, max hold)')
     p.add_argument('--out', help='also write the report here (atomic, 0600)')
     p.add_argument('--no-systemd', action='store_true')
+    p.add_argument('--cpu-state', help='file remembering research-unit CPU samples between checks (enables the research_cpu check)')
     p.add_argument('--threshold', action='append', default=[], metavar='NAME=VALUE')
     args = p.parse_args(argv)
     try:
