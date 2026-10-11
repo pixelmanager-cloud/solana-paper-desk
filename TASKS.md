@@ -1753,3 +1753,100 @@ CK's direction: the codebase is over-engineered for paper research ("touch one t
 7. **Migration path.** Keep the current desk running while a lean path is built beside it (same data sources and engine), then switch.
 
 Be concrete and blunt. No code edits.
+
+---
+
+# LEAN DESK (approved by CK 2026-10-11): build a simple paper trader BESIDE the current desk
+
+## Why
+The current desk (`desk/`) is over-engineered for paper research: global latches, identity pinning, per-incident reconciliation and full re-verification make every change ripple. CK wants a lean trader built in parallel NOW, to collect maximum paper data and iterate selection/entry/exit strategies fast. The current desk keeps running and is NOT modified by these tasks.
+
+## Principles (all L-tasks)
+- **Location.** All new code lives in the package `lean/`, with tests in `tests/lean/`. You may IMPORT pure helpers from `desk/` (decoders, PumpSwap/Token-2022 parsing, quote math, the fee model, `desk.engine` decision functions if they are pure), but NEVER import the desk's gates, reconciliation, receipts, runtime pins, monitoring budget or pacing DB. Do not modify `desk/`.
+- **Paper only.** No signing, no broadcasting, no real funds. Fills are quote-based, with fees and slippage, labelled EXECUTION_UNVERIFIED.
+- **Per-candidate failure isolation.** A provider error, malformed response or timeout marks THAT candidate or position-check as failed (recorded, with the raw bytes kept when available) and the loop moves on. The only things that HALT the trader are: an accounting invariant violation (cash/positions/PnL don't reconcile), a store write failure, or the kill-switch file. Malformed or contradictory evidence about a token means that token is REJECTED. It never becomes an entry, and it never stops the desk.
+- **Code version per event.** Every stored row carries `code_version` (git sha or package hash) and `strategy_version`. Updating code never requires migrations, pins or rotation.
+- **One SQLite store per run.** `lean.sqlite`: append-only tables, WAL, simple schema, raw provider responses retained for research.
+- **Simple rate limiting.** An in-process token bucket per provider, sized for the paid plans: Helius ≤10 req/s, Jupiter ≤4 req/s, Kraken 0.5 req/s; 429 → exponential backoff with jitter. No shared pacing DB.
+- **Multi-position from day 1.** Portfolio caps come from config: max positions, per-position size, total exposure, daily loss stop.
+- **Tests.** Fixtures only, no network. Fail-first for behaviour. Run `python -m unittest discover -s tests/lean` plus anything you touch. The full desk suite must stay green: you don't touch `desk/`.
+
+## Interfaces (keep them; workers build in parallel against them)
+- `lean/store.py`: `Store(path)`; `.record(kind:str, payload:dict, *, code_version, strategy_version) -> int`; typed helpers for `candidates`, `observations(raw bytes)`, `decisions`, `fills`, `errors`; `.positions()` and `.cash()` derived from fills; `.check_invariants()` raises `AccountingHalt`.
+- `lean/providers.py`:
+  - `RateLimiter`;
+  - `Helius(key).get_multiple_accounts(pubkeys)` and `.rpc(method, params)`;
+  - `Jupiter(key).quote(input_mint, output_mint, amount, taker)` and `.price(mints)`;
+  - `Kraken().sol_usd()`.
+
+  Each returns `(parsed, raw_bytes, meta)` or raises a typed `ProviderError(code, transient: bool)`. Keys are read from a JSON file path given at runtime (systemd credential) and never logged.
+- `lean/candidates.py`: `iter_new_candidates(discovery_db_path, cursor) -> [Candidate]`, reading `discovery/continuous.sqlite` READ-ONLY (immutable only for a quiet WAL); `screen(candidate, providers, cfg) -> Screen(passed: bool, reasons: [str], features: dict)`.
+- `lean/strategy.py`: `StrategyConfig` (versioned JSON); `entry_decision(features, quote, portfolio, cfg) -> Decision`; `exit_decision(position, mark, quote, now, cfg) -> Decision`. Default parameters = the current paper experiment (stop 0.18, trailing 0.30, time-stop 2700s, max hold 21600s, TP ladder 1.4/2/3, mcap 50k–2M USD, min liquidity 8k USD, round-trip cost cap 0.08, fee 0.00005 SOL, 50 bps slippage). Read `desk/engine.py` for the exact semantics, but implement them simply.
+- `lean/paper.py`: `buy(quote, size_sol, cfg) -> Fill`; `sell(position, quote, fraction, cfg) -> Fill`; fee/slippage-adjusted accounting.
+- `lean/runner.py`: one long-running process that loops:
+  1. new candidates → screen → (if passed) entry quote → entry decision → paper BUY;
+  2. every N seconds: batched marks for open positions → exit decisions → sell quote → paper SELL.
+
+  It writes a health JSON and stops gracefully on SIGTERM.
+
+## L01 — lean/store.py + lean/paper.py (+ tests)
+STATUS: OPEN
+DEPENDS: none
+BASE: origin/integration/r1
+OWNS: lean/__init__.py, lean/store.py, lean/paper.py, tests/lean/__init__.py, tests/lean/test_store.py, tests/lean/test_paper.py
+AVOID: desk/**
+Implement the store (schema, append-only triggers, WAL, record/typed helpers, derived positions and cash) and paper accounting (buy, sell, partial sells, fees, slippage, realized PnL), with invariants: cash = initial − buys + sells − fees; no negative quantity; no sell without a position. Write property tests with random fill sequences. `AccountingHalt` is raised on any violation.
+
+## L02 — lean/providers.py (+ tests)
+STATUS: OPEN
+DEPENDS: none
+BASE: origin/integration/r1
+OWNS: lean/providers.py, tests/lean/test_providers.py
+AVOID: desk/**
+Implement the HTTP clients (stdlib urllib or the repo's existing deps only), the token buckets, backoff, typed errors (transient = timeout/reset/429/5xx; otherwise non-transient), and the raw-bytes capture. Reuse the strict PriceV3 parser from `desk/usd_valuation.py` (T37) if importable as a pure function, and Jupiter quote parsing from `desk/` if pure. Tests use a fake HTTP opener: rate limiting, backoff, error typing, no key ever appearing in a log or exception message.
+
+## L03 — lean/candidates.py (+ tests)
+STATUS: OPEN
+DEPENDS: none
+BASE: origin/integration/r1
+OWNS: lean/candidates.py, tests/lean/test_candidates.py
+AVOID: desk/**
+Read new migration hints from `discovery/continuous.sqlite` (schema in `discovery/`), using a persisted cursor and an age window. Screening uses the providers interface (mock it in tests):
+- pool/vault/mint account checks (reuse desk's pure PumpSwap/Token-2022 decoders and hazard rules: mint/freeze authority, dangerous Token-2022 extensions);
+- market cap and liquidity from reserves and SOL/USD;
+- holder concentration if cheap (one DAS or getTokenLargestAccounts call);
+- a recent-flow proxy if cheap.
+
+Return `Screen` with reasons and features. Hazards → rejected with a reason, never an exception. Document what is deliberately NOT checked compared with the desk.
+
+## L04 — lean/strategy.py (+ tests)
+STATUS: OPEN
+DEPENDS: none
+BASE: origin/integration/r1
+OWNS: lean/strategy.py, config/lean/strategy-default.json, tests/lean/test_strategy.py
+AVOID: desk/**
+Implement entry and exit decisions with the default parameters above: stop, trailing (activates after the TP rungs per desk semantics), time-stop, max hold, the TP ladder with partial sells, cooldowns, and the round-trip cost cap. Add portfolio caps (max positions default 4, per-position 0.02 of equity, total exposure 0.08, daily loss stop 0.06). Use known-answer tests mirroring the desk engine's documented behaviour; cite the desk test names where they match.
+
+## L05 — lean/runner.py + systemd unit + health (+ tests)
+STATUS: OPEN
+DEPENDS: none (stub against the interfaces; integrate as L01–L04 land: merge their branches if DONE, otherwise use interface stubs in tests)
+BASE: origin/integration/r1
+OWNS: lean/runner.py, lean/__main__.py, deploy/lean/desk-lean.service, tests/lean/test_runner.py, docs/lean/README.md
+AVOID: desk/**
+- **The loop.** The candidate loop and the position loop run concurrently (threads or asyncio). Held checks every ≤10s for all positions, with one batched marks read and a sell quote only when an exit triggers.
+- **Isolation and halts.** Per-candidate isolation, kill-switch file, SIGTERM, a health JSON (last loop times, counts, errors by code, open positions, cash), and `AccountingHalt` stops new entries and writes a halt reason.
+- **Unit.** The systemd unit runs as `solana-desk` with `ReadWritePaths=` only its own state dir, credentials via `LoadCredential`, `Restart=on-failure`, and limits.
+- **Test.** An end-to-end fake-provider run: 20 candidates, mixed rejects, entries, exits by stop/TP/time, a provider outage mid-run, and the store invariants holding throughout.
+
+## L06 — lean reports (+ tests)
+STATUS: OPEN
+DEPENDS: none
+BASE: origin/integration/r1
+OWNS: lean/report.py, tests/lean/test_report.py
+AVOID: desk/**
+A read-only report on `lean.sqlite`, as a single self-contained HTML plus JSON:
+- the funnel (candidates → screened → passed → entered → exited);
+- PnL per strategy_version;
+- per-trade table, exit-reason breakdown and hold times;
+- rejection reasons with the forward price where counterfactual data exists (optional join to T26's `counterfactual.sqlite`);
+- an "insufficient sample" flag below 30 trades.
