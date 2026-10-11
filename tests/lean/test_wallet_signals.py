@@ -1002,7 +1002,8 @@ class HookTests(unittest.TestCase):
         from lean import __main__ as entry
         root = Path(__file__).resolve().parents[2]
         raw = json.loads((root / 'config' / 'lean' / 'lean.example.json').read_text())
-        self.assertIsNone(raw['wallet_signals'])
+        self.assertIsInstance(raw['wallet_signals'], dict)                       # LINT2: ON in the shipped example
+        self.assertEqual(W.make_config(raw['wallet_signals'])['retain_raw'], 'none')
         with tempfile.TemporaryDirectory() as d:
             for value, ok in ((None, True), ({}, True), ({'max_calls': 12}, True), ({'max_cals': 12}, False), ('on', False), ({'max_calls': 0}, False)):
                 path = Path(d) / 'lean.json'

@@ -123,6 +123,8 @@ class WalletSignalsEndToEnd(unittest.TestCase):
         cfg['lanes'] = {'shares': providers.validate_lane_shares({'main': 0.3, 'exit': 0.2, 'low': 0.5}), 'low_shed_s': 1}
         if signals:
             cfg['wallet_signals'] = {'pace_s': 0.25, 'retry_delay_s': 60, 'max_per_pass': 3}
+        else:
+            cfg['wallet_signals'] = None                                      # LINT2: the shipped example turns it ON
         r = build_runner(cfg, state_dir=root / 'state', discovery_db=world.discovery_db, keys=KEYS, code_version='e2e-wallets',
                          clock=clock.time, transport_kwargs={'opener': world.opener, 'clock': clock.time, 'monotonic': clock.monotonic,
                                                              'sleep': clock.sleep, 'rng': lambda: 0.5})
