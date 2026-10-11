@@ -2166,3 +2166,6 @@ OWNS: same as L08BF
 
 ## L20 — Sellability evidence at paper SELL + bot-pump/manipulation features
 STATUS: CLAIMED by coordinator (local agent, branch cloud/L20). Do not take.
+
+## L21 RugCheck/creator-history/copycat · L22 honeypot sell-simulation filter · L23 bot-exit (shadow) · L24 linked-wallet clusters
+STATUS: CLAIMED by coordinator (local agents, branches cloud/L21..L24). Do not take. L20 also absorbs #1 wash-ratio and #7 price-shape.
