@@ -25,7 +25,7 @@ CONFIG_KEYS = {
     'screen': {},                      # lean.candidates settings other than the strategy-owned bands
     # --- L07R ---
     'lanes': None,                     # {"main","exit","low"} shares of each provider rate (+ "low_shed_s"); None = 0.55/0.25/0.20
-    'paths': None,                     # lean.paths settings ({"enabled", "path_hours", "interval_s", ...}); None = disabled
+    'paths': None,                     # lean.paths settings ({"enabled", "db", "path_hours", ...}); None = disabled
     # --- end L07R ---
 }
 REQUIRED = ('strategy_config', 'initial_cash_sol')
@@ -101,12 +101,14 @@ def build_runner(cfg, *, state_dir, discovery_db, keys, code_version, clock=None
         pool_fee_bps=cfg['pool_fee_bps'], clock=clock, scan_limit=cfg['scan_limit'],
         max_retries=cfg['max_candidate_retries'], sol_usd_ttl_s=cfg['sol_usd_ttl_s'], stale_mark_s=cfg['stale_mark_s'],
         unexitable_after_s=cfg['unexitable_after_s'])
-    # --- L07R: the path recorder (low lane), resumed from the store before any loop runs ---
-    r.paths = paths.build(paths.config(cfg.get('paths')), store=the_store, keys=keys, pcfg=r.pcfg,
-                          code_version=code_version, strategy_version=strategy_cfg.strategy_version,
-                          pool_fee_bps=cfg['pool_fee_bps'], clock=clock, transport_kwargs=transport_kwargs)
-    if r.paths is not None:
-        r.paths.resume()
+    # --- L07R: the path recorder (low lane, its own paths.sqlite) is only a FACTORY here: Runner.run() builds and
+    # resumes it; --once and --clear-halt never open paths.sqlite ---
+    paths_cfg = paths.config(cfg.get('paths'))
+    if paths_cfg['enabled']:
+        r._l07r_build = lambda: paths.build(paths_cfg, state_dir=state, keys=keys, pcfg=r.pcfg, code_version=code_version,
+                                            strategy_version=strategy_cfg.strategy_version,
+                                            pool_fee_bps=cfg['pool_fee_bps'], clock=clock,
+                                            transport_kwargs=transport_kwargs)
     # --- end L07R ---
     return r
 
