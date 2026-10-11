@@ -209,8 +209,8 @@ class SentinelLexists(pass_closure_tests.Base):
 
 
 class ClosureConsistency(pass_closure_tests.Base):
-    def attempts(self, n, method='getTransactionsForAddress'):
-        return [self.store.save({'kind': 'paper_read_attempt_v1', 'scan_id': 's', 'method': method, 'requests_used': i + 1})
+    def attempts(self, n, method='getTransactionsForAddress', scan='s'):
+        return [self.store.save({'kind': 'paper_read_attempt_v1', 'scan_id': scan, 'method': method, 'requests_used': i + 1})
                 for i in range(n)]
 
     def test_investigation_needs_exactly_the_ceiling(self):
@@ -233,18 +233,27 @@ class ClosureConsistency(pass_closure_tests.Base):
     def test_history_page_limit_counts_retained_history_originals_not_charges(self):
         scans = {'s': {'before': 0, 'after': 18}}
         closure._consistent('FEATURE_HISTORY_PAGE_LIMIT', scans, self.store, self.attempts(8))
-        for name, refs in {'seven pages': self.attempts(7),
-                           'eighteen charges of another method': self.attempts(18, 'getSlot'),
-                           'no references': [],
-                           'seven pages and a missing original': self.attempts(7) + ['f' * 64]}.items():
+        # The closure also finds the pass's retained originals in the store (the history-first preparation passes none), so every
+        # refusal case uses a scan of its own: 18 charges alone, or other methods, never make a page limit.
+        cases = {'seven pages': (self.attempts(7, scan='a'), 'a'),
+                 'eighteen charges of another method': (self.attempts(18, 'getSlot', scan='b'), 'b'),
+                 'no references': ([], 'c'),
+                 'seven pages and a missing original': (self.attempts(7, scan='d') + ['f' * 64], 'd')}
+        for name, (refs, scan) in cases.items():
             with self.subTest(name), self.assertRaises(closure.HoldRequired):
-                closure._consistent('FEATURE_HISTORY_PAGE_LIMIT', scans, self.store, refs)
+                closure._consistent('FEATURE_HISTORY_PAGE_LIMIT', {scan: {'before': 0, 'after': 18}}, self.store, refs)
+
+    def test_originals_retained_in_the_store_count_when_no_reference_names_them(self):
+        self.attempts(8, scan='e')
+        closure._consistent('FEATURE_HISTORY_PAGE_LIMIT', {'e': {'before': 0, 'after': 18}}, self.store, [])
+        self.attempts(8, scan='g')                                                  # outside the scan's charge window: not its originals
+        with self.assertRaises(closure.HoldRequired):
+            closure._consistent('FEATURE_HISTORY_PAGE_LIMIT', {'g': {'before': 8, 'after': 18}}, self.store, [])
 
     def test_a_duplicated_reference_counts_once(self):
-        scans = {'s': {'before': 0, 'after': 18}}
-        refs = self.attempts(7)
+        refs = self.attempts(7, scan='h')
         with self.assertRaises(closure.HoldRequired):
-            closure._consistent('FEATURE_HISTORY_PAGE_LIMIT', scans, self.store, refs + [refs[0]])
+            closure._consistent('FEATURE_HISTORY_PAGE_LIMIT', {'h': {'before': 0, 'after': 18}}, self.store, refs + [refs[0]])
 
 
 if __name__ == '__main__':

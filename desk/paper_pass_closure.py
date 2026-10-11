@@ -412,7 +412,34 @@ def _consistent(cause, scans, store=None, refs=()):
             if type(record) is dict and record.get('kind') == 'paper_read_attempt_v1' and record.get('method') == 'getTransactionsForAddress':
                 pages += 1
         if pages < 8:
+            # The history-first preparation closes with no attempt references of its own, so look the pass's retained history
+            # originals up in the store: attempts of THESE scans inside THEIR charge window, one per charged request.
+            pages = max(pages, _retained_history_pages(store, scans))
+        if pages < 8:
             raise HoldRequired('History page limit requires eight retained history pages')
+
+
+def _retained_history_pages(store, scans, limit=4096):
+    """Distinct charged requests (inside each scan's closure window) whose retained original is a getTransactionsForAddress attempt.
+
+    Bounded: the newest ``limit`` evidence pages only. A page that cannot be read is skipped (it proves nothing)."""
+    found = set()
+    try:
+        with closing(store.connect()) as c:
+            keys = [r[0] for r in c.execute('SELECT hash FROM pages ORDER BY rowid DESC LIMIT ?', (limit,))]
+    except sqlite3.Error:
+        return 0
+    for key in keys:
+        try:
+            record = terminal._load(store, key)
+        except (ValueError, OSError, sqlite3.Error):
+            continue
+        if type(record) is not dict or record.get('kind') != 'paper_read_attempt_v1' or record.get('method') != 'getTransactionsForAddress':
+            continue
+        window, used = scans.get(record.get('scan_id')), record.get('requests_used')
+        if window is not None and type(used) is int and window['before'] < used <= window['after']:
+            found.add((record['scan_id'], used))
+    return len(found)
 
 
 def close(store, progress, *, pass_id, status, cause, result_hash=None, attempt_refs=(), ledger_before=None):

@@ -123,7 +123,7 @@ class HistoryFirstTransientFault(unittest.TestCase):
             self.assertEqual([r[0] for r in c.execute('SELECT status FROM paper_pass_closures')], ['INTEGRITY_HOLD'])
 
 
-    def normal_blocker(self, code, charges):
+    def normal_blocker(self, code, charges, history_pages=False):
         """T22F addendum: the history_first path (paper_history_preparation.prepare) inserts its NULL pass before the
         history read. The NORMAL blockers raised there (page limit, request-budget exhaustion) must retire it as
         FAILED_CHARGED like any other charged failure, and the exception still propagates."""
@@ -135,6 +135,9 @@ class HistoryFirstTransientFault(unittest.TestCase):
             for _ in range(charges):
                 if not progress.reserve(item.target.scan_id):
                     break
+                if history_pages:       # T22I: a page limit is only real if each charged request left its retained history original
+                    progress.store.save({'kind': 'paper_read_attempt_v1', 'scan_id': item.target.scan_id, 'method': 'getTransactionsForAddress',
+                                         'requests_used': progress.admission(item.target.scan_id)['requests_used'], 'failure_code': None})
             raise cycle.CycleBlocked(code)
         with patch.object(history_first_fixture.tool.cli, '_credentials'), \
                 patch.object(history_first_fixture.tool.cycle, '_history', side_effect=blocked):
@@ -148,7 +151,14 @@ class HistoryFirstTransientFault(unittest.TestCase):
         self.assertIsNone(terminal.gate(store, h.f.f.jobs.path, ()))
 
     def test_history_page_limit_in_preparation_does_not_leave_a_null_pass(self):
-        self.normal_blocker('FEATURE_HISTORY_PAGE_LIMIT', 8)
+        self.normal_blocker('FEATURE_HISTORY_PAGE_LIMIT', 8, history_pages=True)
+
+    def test_a_page_limit_without_retained_history_originals_is_held_not_retired(self):
+        '''A forged page limit (eight charges, no retained getTransactionsForAddress originals) must hold, never retire as FAILED_CHARGED.'''
+        with self.assertRaises(AssertionError):
+            self.normal_blocker('FEATURE_HISTORY_PAGE_LIMIT', 8)
+        with closing(self.h.f.f.progress.store.connect()) as c:
+            self.assertEqual([r[0] for r in c.execute('SELECT status FROM paper_pass_closures')], ['INTEGRITY_HOLD'])
 
     def test_request_budget_exhaustion_in_preparation_does_not_leave_a_null_pass(self):
         self.normal_blocker('INVESTIGATION_REQUEST_BUDGET_EXHAUSTED', 18)
@@ -179,7 +189,6 @@ class PreparationRejectionReplayGrowth(unittest.TestCase):
             self.assertIsNone(terminal.gate(self.h.store, self.research, ('b' * 32,)))
         return count[0]
 
-    @unittest.expectedFailure
     def test_gate_decodes_every_unrelated_evidence_page_per_retained_rejection(self):
         """rejection._attempts() decompresses+parses EVERY row of the evidence `pages` table to
         find the rejection's 3-6 attempt records, once per retained rejection per gate call:
@@ -192,7 +201,6 @@ class PreparationRejectionReplayGrowth(unittest.TestCase):
         grown = self.loads_during_gate()
         self.assertEqual(grown, base, 'gate decoded %d extra unrelated pages' % (grown - base))
 
-    @unittest.expectedFailure
     def test_unrelated_pages_beyond_4096_latch_the_gate_permanently(self):
         """With ONE retained preparation rejection, the evidence store reaching 4097 pages (any
         content: history pages, attempts, intents, results; no pruning exists) makes
