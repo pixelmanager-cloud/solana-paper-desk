@@ -2096,3 +2096,12 @@ OWNS: lean/replay.py, lean/tune.py, tests/lean/test_replay.py, tests/lean/test_t
 3. **Selection.** Select on in-sample, then confirm on out-of-sample (or a 3-way split). Never pick the winner on the OOS set.
 4. **Calibration.** Run it on real L07R output (path rows written by the recorder in an e2e), sensitive to the mark model.
 5. **test_tune.py:276.** It must tolerate the `-wal`/`-shm` files left by a plain `mode=ro` open.
+
+## L06F — Report attribution by ENTRY strategy_version
+STATUS: OPEN
+BASE: origin/integration/r1
+OWNS: lean/report.py, tests/lean/test_report.py (+ lean/notify.py: the `/pnl` and summary grouping only)
+- **The problem, seen live:** a position bought under `lean-1-collect` was sold after a restart under `lean-1-collect-b`. The sell fill carries the new version, so PnL per strategy_version is split across versions.
+- **Fix:** group every trade, and all of its fills, by the strategy_version of its OPENING buy fill. Do the same for `/pnl` in notify.
+- **Mixed versions:** flag trades whose fills span versions (`mixed_version=1`) in the per-trade table.
+- **Test:** a trade opened under A and closed under B counts fully under A, in both the report and notify.
