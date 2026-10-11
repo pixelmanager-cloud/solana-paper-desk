@@ -146,6 +146,9 @@ class WorstCaseTests(unittest.TestCase):
         self.assertEqual(cycle.PACING_SECONDS['kraken'], 2.0)
 
     def test_unit_bound_adds_contention_and_the_gate_calls(self):
+        self.assertEqual(cycle.GATE_CALLS, {'entry': 5, 'held_leg': 1})
+        self.assertAlmostEqual(cycle.unit_worst_case_seconds('entry', 0.5), 17 * (3 * 0.25 + 0.5) + (3 * 2.0 + 0.5) + 5 * 1.0)   # 32.75 s
+        self.assertAlmostEqual(cycle.unit_worst_case_seconds('held_leg', 0.0), 17 * 0.75 + 6.0 + 1.0)
         for kind in ('entry', 'held_leg'):
             expected = (cycle.worst_case_seconds(kind, 0.5, contenders=cycle.CONTENDING_UNITS)
                         + cycle.GATE_CALLS[kind] * cycle.GATE_SECONDS_BUDGET)

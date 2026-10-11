@@ -119,6 +119,7 @@ class IncrementalEqualsFullRecompute(unittest.TestCase):
             covered = proving - unchained
             self.assertTrue(covered <= set(links), label)
             self.assertLessEqual(len(covered), mb.CHAIN_SAMPLE, label)         # ... and the covered ones cost a bounded sample
+            self.assertEqual(len(covered), min(mb.CHAIN_SAMPLE, len(links)), label)   # ... and the sample really is taken
             if links:
                 stored = c.execute(f'SELECT seq,chain_hash FROM {mb.HEAD_TABLE}').fetchall()
                 self.assertEqual(stored, [(len(links), head)], label)          # the stored head follows every chained completion
