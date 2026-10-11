@@ -40,7 +40,7 @@ Per candidate at most `max_calls` (16) requests actually SENT: 2 signature pages
 (`getSignaturesForAddress` + `getTransaction`) = 15 at worst. A launch with four window transactions and three funding lookups costs 12 (the e2e
 fixture); one with no swap in the window costs 2. Every request goes through the shared LOW lane (`lean.providers.low`, L07R): it goes out at once or
 fails with `LANE_SHED` and sends nothing (and does not count against the cap); any 429 on any lane sheds the low lane for a while. This collector
-has its own thread, so a `no_token` shed is paced (`pace_s` 0.25 s, up to `shed_wait_s` 30 s per request); a shed window or lost patience ends the
+has its own thread, so a `no_token` shed is paced (`pace_s` 0.5 s, up to `shed_wait_s` 30 s per request; LINT2b: only while `reserve_tokens` more tokens stay for the other low-lane users); a shed window or lost patience ends the
 candidate with what it learned (`unavailable['stopped'] = 'LANE_SHED'`), or retries it later (`max_retries`, `retry_delay_s`) when nothing was learned
 yet. `shed()` (credit shedding, L15) refuses before a request. The exit lane is never touched. Collection runs on its own daemon thread
 (`WalletSignals.run_loop`) and finds work straight from the store (screened, no row yet), so a restart loses nothing and no queue can overflow. An

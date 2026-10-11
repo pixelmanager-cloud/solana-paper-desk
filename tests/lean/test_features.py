@@ -583,6 +583,13 @@ class TestLINT2b(Base):
         self.assertEqual((len(self.helius.calls), calls, len(sleeps)), (1, 0, 1))
         self.assertEqual({missing[n] for n in ('dev_holding_pct', 'tx_count_first_10m')}, {'STOPPED'})
 
+    def test_the_free_drain_sends_nothing(self):
+        self.rec.submit(self.fx.candidate, self.fx.screen(), entered=False, candidate_id=5)
+        self.assertTrue(self.rec.process_one(enrich_now=False))
+        (row,) = self.rows()
+        self.assertEqual((self.helius.calls, row['calls'], row['missing']['dev_holding_pct']), ([], 0, 'STOPPED'))
+        self.assertIsNotNone(row['fields']['market_cap_usd'])                    # the free fields are still written
+
     def test_the_row_carries_the_real_screen_and_entry_decision_times(self):
         fx, mint = self.fx, self.fx.token.mint
         cid = self.store.add_candidate(mint, pool=fx.candidate.pool, slot=GRAD_SLOT, ts=T0)
