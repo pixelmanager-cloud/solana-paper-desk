@@ -238,6 +238,10 @@ CLOSED_REASONS = ('POOL_CLOSED', 'VAULT_CLOSED')
 # CLOSED_CONFIRMATIONS of them (distinct observations); any ordinary answer for the position resets the count.
 NULL_REASONS = ('POOL_NULL', 'VAULT_NULL')
 CLOSED_CONFIRMATIONS = 2
+# Guarded marks (version 2, T16J item 6): a null observation counts toward the confirmation only when it is at least this many
+# seconds after the previous COUNTED one, so two back-to-back refreshes cannot confirm one transient provider gap. Version 1 keeps
+# its distinct-observation rule byte for byte.
+CLOSED_MIN_SPACING_SECONDS = 5
 CONFIRMED = {'POOL_NULL': 'POOL_CLOSED', 'VAULT_NULL': 'VAULT_CLOSED'}
 
 

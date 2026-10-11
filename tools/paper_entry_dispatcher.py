@@ -452,8 +452,14 @@ CHECKPOINT_REASONS = frozenset({'HELD_PASS_NONZERO', 'LEDGER_MODE_NOT_RUNNING', 
                                 # busy, the reserve or freshness gate no longer holds, the provider is backing off)
                                 'CHECKPOINT_STATE_UNAVAILABLE', 'MONITORING_RESERVE_INSUFFICIENT',
                                 'PORTFOLIO_MARKS_TOO_OLD_FOR_ENTRY', 'HELD_POSITION_PRIORITY',
-                                'PACING_BACKOFF_EXCEEDS_PHASE_BUDGET'})
+                                'PACING_BACKOFF_EXCEEDS_PHASE_BUDGET',
+                                # T16J: provider pacing contention after the intent (a pending grant or a queued waiter is
+                                # another process's ordinary use of the shared pacer, not an integrity problem)
+                                'PROVIDER_PACING_PENDING'})
 BUSY_MESSAGES = ('Research worker busy', 'Evidence invocation busy', 'Cycle ledger busy')
+# Refusals of `_held_guard` raised mid-phase, just before an I/O call (T16J item 3): the book moved or a lock was busy.
+GUARD_REFUSALS = {'Held-position priority before I/O': 'HELD_POSITION_PRIORITY',
+                  'Held cycle or ledger busy': 'CHECKPOINT_STATE_UNAVAILABLE'}
 CHECKPOINT_PHASES = ('acquisition', 'intake', 'preparation')
 CHECKPOINT_FIELDS = {'version', 'kind', 'dispatch_id', 'scan_id', 'intent_hash', 'phase', 'reasons', 'held_pass',
                      'mode', 'entry_authorized', 'execution_status', 'no_retry'}
@@ -638,6 +644,10 @@ def _refusal_halt(error, current_mode):
         reasons = ['MONITORING_BLOCKED']
     elif text in BUSY_MESSAGES:
         reasons = ['CHECKPOINT_STATE_UNAVAILABLE']
+    elif text in GUARD_REFUSALS:
+        reasons = [GUARD_REFUSALS[text]]
+    elif text == 'Provider pacing pending':
+        reasons = ['PROVIDER_PACING_PENDING']
     elif text.startswith('Concurrent entry refused: '):
         reasons = text.split(': ', 1)[1].split(' | ', 1)[0].split(',')
         if not reasons or not set(reasons) <= CHECKPOINT_REASONS:
@@ -1208,8 +1218,8 @@ def _dispatch(expected, *, execute=False, systemd_credentials=False):
             def state_gate(phase_name):
                 """`_preflight` AFTER the intent: a refusal caused by the book moving (another process changed the mode,
                 monitoring is busy or blocked, a lock is held, the reserve/freshness gate no longer holds) ends the intent
-                as a typed terminal result. Integrity refusals (context/identity/source changed, observation recovery,
-                pacing pending) still raise and become durable holds."""
+                as a typed terminal result. Provider pacing pending is contention, not integrity (T16J). Integrity refusals
+                (context/identity/source changed, observation recovery) still raise and become durable holds."""
                 try:
                     _preflight(expected,scan)
                 except ValueError as error:
@@ -1218,21 +1228,27 @@ def _dispatch(expected, *, execute=False, systemd_credentials=False):
                         raise
                     return no_entry(phase_name,halt)
                 return None
-            rpc_state = {'error': None}
+            rpc_state = {'error': None, 'refusal': None}
             def guarded_rpc(method,params):
                 if phase is not None:phase.check(paths['pacing_db'])   # OUTSIDE the rpc_state capture: a cut is never a provider failure
-                with _held_guard(expected,scan):
-                    try:
-                        if phase is None:
-                            value = helius_rpc(method,params)
-                        else:
-                            with _Deadline(phase):          # the request in flight is bounded by the phase's remaining budget
+                try:
+                    with _held_guard(expected,scan):
+                        try:
+                            if phase is None:
                                 value = helius_rpc(method,params)
-                    except BaseException as failure:
-                        rpc_state['error'] = failure         # the acquisition swallows it into an ambiguous status
-                        raise
-                    rpc_state['error'] = None
-                    return value
+                            else:
+                                with _Deadline(phase):          # the request in flight is bounded by the phase's remaining budget
+                                    value = helius_rpc(method,params)
+                        except BaseException as failure:
+                            rpc_state['error'] = failure         # the acquisition swallows it into an ambiguous status
+                            raise
+                        rpc_state['error'] = None
+                        rpc_state['refusal'] = None
+                        return value
+                except ValueError as refusal:
+                    if str(refusal) in GUARD_REFUSALS and rpc_state['error'] is not refusal:
+                        rpc_state['refusal'] = refusal       # the guard refused BEFORE any I/O: the book moved, not a provider failure
+                    raise
             halt = cadence.checkpoint(concurrency.PHASE_CAPS['acquisition'])
             if halt:return no_entry('acquisition',halt)
             phase = cadence.phase('acquisition')
@@ -1247,6 +1263,12 @@ def _dispatch(expected, *, execute=False, systemd_credentials=False):
                 return {'status':'TOKEN_REJECTED','dispatch_id':identity,'scan_id':scan,
                         'entry_authorized':False,'execution_status':'EXECUTION_UNVERIFIED','live_readiness':False}
             if phase.finish():return no_entry('acquisition',overrun())   # AHEAD of every post-acquire raise: a cut is terminal
+            if (rpc_state['refusal'] is not None
+                    and (not scan or acquired.get('status') not in ('SEED_HISTORY_PARTIAL','SEED_HISTORY_ACQUIRED','LAUNCH_OR_INVENTORY_UNVERIFIED'))):
+                # T16J item 3: the held guard refused mid-phase (a held position has priority / the ledger lock was busy).
+                # Nothing was sent to the provider by that call; the intent ends as a typed terminal no-entry.
+                halt = _refusal_halt(rpc_state['refusal'], current_mode)
+                if halt is not None:return no_entry('acquisition',halt)
             if not scan or acquired.get('status') not in ('SEED_HISTORY_PARTIAL','SEED_HISTORY_ACQUIRED','LAUNCH_OR_INVENTORY_UNVERIFIED'):
                 # Only the acquisition's own ordinary retry statuses are a typed, closable outcome; anything else
                 # (e.g. ACQUISITION_RETRY_OR_EVIDENCE_BLOCKED) may mean blocked evidence and stays unresolved.
@@ -1277,9 +1299,12 @@ def _dispatch(expected, *, execute=False, systemd_credentials=False):
                 retained = migration.intake(paths['research_db'],paths['evidence_db'],scan_id=scan,
                     mint=hint['mint'],pool=hint['pool'],signature=hint['signature'],slot=hint['slot'],
                     provenance=PROVENANCE,credentials_loader=intake_guard,paper_token_profile_version=cli._config(paths['config']).get('paper_token_profile_version',0))
-            except BaseException:
+            except BaseException as failure:
                 deadline.disarm()
-                if not phase.cut:raise
+                if not phase.cut:
+                    halt = _refusal_halt(failure, current_mode) if isinstance(failure, ValueError) and str(failure) in GUARD_REFUSALS else None
+                    if halt is None:raise              # T16J item 3: only the held guard's own mid-phase refusals end typed
+                    return no_entry('intake',halt)
                 return no_entry('intake',overrun())
             deadline.disarm()
             if phase.finish():return no_entry('intake',overrun())

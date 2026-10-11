@@ -492,6 +492,10 @@ def _portfolio_marks(state, e, cfg):
             # the position at zero only after pm.CLOSED_CONFIRMATIONS of them. Until then the previous mark just ages out.
             if e["observed_at"] <= p.get("portfolio_mark_null_at", -1):
                 continue
+            if (pm.selected(cfg) == pm.GUARDED_VERSION and p.get("portfolio_mark_nulls")
+                    and e["observed_at"] - p["portfolio_mark_null_at"] < pm.CLOSED_MIN_SPACING_SECONDS):
+                unconfirmed.append(mint)               # too close to the previous counted null: not an independent observation
+                continue
             p["portfolio_mark_nulls"] = p.get("portfolio_mark_nulls", 0) + 1
             p["portfolio_mark_null_at"] = e["observed_at"]
             if p["portfolio_mark_nulls"] < pm.CLOSED_CONFIRMATIONS:

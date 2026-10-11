@@ -45,6 +45,29 @@ result permanent, and a rejection that carries no recognisable code is permanent
 | `HISTORY_FEATURE_MOMENTUM_STALE` | NOT_YET | captured momentum too old |
 | `MISSING_WINDOW_MEASUREMENT:<name>` | NOT_YET | producer: a required window measurement is empty right now (`<name>` = `[a-z][a-z0-9_]{0,63}`) |
 | `STALE_WINDOW_MEASUREMENT:<name>` | NOT_YET | producer: a window measurement is older than 30 s |
+
+### Checkpoint results (`dispatcher_checkpoint_no_entry_v1`, T16I/T16J)
+
+When the HELD side cuts an entry attempt after its dispatch intent (a held pass failed, the book moved, monitoring or a lock was
+busy, the provider is pacing, or a phase overran its wall cap) the dispatcher publishes a typed terminal no-entry. Nothing is wrong
+with the candidate, so these reasons are `NOT_YET`, but ONLY as reasons of that result kind: `watchlist.reason_codes` hands them
+out as `CHECKPOINT:<reason>`, and the same words anywhere else (an engine reject, a cycle blocker, a string that merely starts with
+`CHECKPOINT:` in another result kind) are not in the table above and stay `PERMANENT`.
+
+| Code (as `CHECKPOINT:<reason>`) | Class | Meaning |
+|---|---|---|
+| `HELD_PASS_NONZERO` | NOT_YET | a checkpoint held pass exited non-zero |
+| `LEDGER_MODE_NOT_RUNNING` | NOT_YET | a checkpoint left the ledger not RUNNING |
+| `HELD_EXIT_UNRESOLVED` | NOT_YET | a checkpoint left a held exit unresolved |
+| `MAX_POSITIONS_REACHED` | NOT_YET | the book filled during the attempt |
+| `MONITORING_BLOCKED` | NOT_YET | monitoring was blocked at a checkpoint |
+| `PHASE_CAP_EXCEEDED` | NOT_YET | an entry phase overran its wall cap |
+| `CHECKPOINT_STATE_UNAVAILABLE` | NOT_YET | a non-blocking lock was busy (also the held guard's "ledger busy" refusal) |
+| `MONITORING_RESERVE_INSUFFICIENT` | NOT_YET | the monitoring allowance cannot carry another position yet |
+| `PORTFOLIO_MARKS_TOO_OLD_FOR_ENTRY` | NOT_YET | the held marks cannot be refreshed in time |
+| `HELD_POSITION_PRIORITY` | NOT_YET | a held position has priority (also the held guard's mid-phase refusal) |
+| `PACING_BACKOFF_EXCEEDS_PHASE_BUDGET` | NOT_YET | the provider is backing off longer than the phase may wait |
+| `PROVIDER_PACING_PENDING` | NOT_YET | another process holds or awaits the shared pacer after the intent |
 | every other producer blocker (`COLLECTOR_SOURCE_BINDING_OR_CONTENT_INVALID`, `CAPTURED_HISTORY_WINDOW_STALE_OR_FUTURE`, `BOUNDED_RAW_TRADE_SEQUENCE_REQUIRED`, `SOL_USD_SOURCE_OR_EXACT_BLOCK_TIME_MISSING`, `USD_ORIGINAL_BINDING_INVALID`, ...) | PERMANENT | integrity/binding/identity: not a market condition |
 | `DANGER` | PERMANENT | rug/control hazard |
 | `UNVERIFIED_SAFETY` | PERMANENT | safety flags not verified |

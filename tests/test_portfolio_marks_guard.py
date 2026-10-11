@@ -203,6 +203,55 @@ class ClosedVaultTests(unittest.TestCase):
         self.assertNotIn('portfolio_mark_reason', again['positions'][victim])
 
 
+    # -- T16J item 6: the guarded marks need real spacing between two null observations ------------------------------------------------
+    def closure_state(self, cfg):
+        state = book(cfg)
+        state['positions'] = {m: {**p, 'pool': self.positions[m]['pool']} for m, p in zip(sorted(self.positions), state['positions'].values())}
+        return state, sorted(state['positions'])[0]
+
+    def test_guarded_marks_do_not_confirm_a_closure_from_back_to_back_observations(self):
+        cfg = cfg_marks(**{pm.KEY: 2})
+        state, victim = self.closure_state(cfg)
+        first, _ = transition(copy.deepcopy(state), self.observation(state, T + 3), cfg)
+        for gap in (1, 2, 4):                                          # distinct but too close to the counted one
+            close, out = transition(copy.deepcopy(first), self.observation(state, T + 3 + gap), cfg)
+            p = close['positions'][victim]
+            self.assertEqual((p['portfolio_mark_nulls'], p['portfolio_mark_null_at'], 'portfolio_mark_value' in p), (1, T + 3, False), gap)
+            self.assertIn(victim, out[-1]['unconfirmed_null'], gap)
+        confirmed, _ = transition(copy.deepcopy(first), self.observation(state, T + 3 + pm.CLOSED_MIN_SPACING_SECONDS), cfg)
+        self.assertEqual(confirmed['positions'][victim]['portfolio_mark_reason'], 'VAULT_CLOSED')
+        self.assertEqual(pm.CLOSED_MIN_SPACING_SECONDS, 5)
+
+    def test_the_spacing_is_measured_from_the_last_counted_observation_not_from_the_last_seen_one(self):
+        cfg = cfg_marks(**{pm.KEY: 2})
+        state, victim = self.closure_state(cfg)
+        current, _ = transition(copy.deepcopy(state), self.observation(state, T + 3), cfg)
+        for ts in (T + 5, T + 7):                                      # each is closer than 5 s to T+3 or counted nothing new
+            current, _ = transition(current, self.observation(state, ts), cfg)
+        # T+5 (2 s after T+3) was ignored, so T+7 is 4 s after the counted one: still not confirmed
+        self.assertEqual(current['positions'][victim]['portfolio_mark_nulls'], 1)
+        closed, _ = transition(current, self.observation(state, T + 8), cfg)
+        self.assertEqual(closed['positions'][victim]['portfolio_mark_reason'], 'VAULT_CLOSED')
+
+    def test_version_one_keeps_its_distinct_observation_rule(self):
+        cfg = cfg_marks()
+        self.assertEqual(pm.selected(cfg), 1)
+        state, victim = self.closure_state(cfg)
+        first, _ = transition(copy.deepcopy(state), self.observation(state, T + 3), cfg)
+        second, _ = transition(copy.deepcopy(first), self.observation(state, T + 4), cfg)
+        self.assertEqual(second['positions'][victim]['portfolio_mark_reason'], 'VAULT_CLOSED')
+
+    def test_an_ordinary_answer_between_two_close_nulls_still_resets_the_guarded_count(self):
+        cfg = cfg_marks(**{pm.KEY: 2})
+        state, victim = self.closure_state(cfg)
+        first, _ = transition(copy.deepcopy(state), self.observation(state, T + 3), cfg)
+        healthy = pm.build_event(T + 5, T + 4, 9, 'e' * 64, {m: {'value_sol': '0.9', 'pool': state['positions'][m]['pool'],
+                                 'base_raw': '1', 'quote_raw': '1'} for m in state['positions']})
+        reset, _ = transition(copy.deepcopy(first), healthy, cfg)
+        again, _ = transition(copy.deepcopy(reset), self.observation(state, T + 6), cfg)
+        self.assertEqual(again['positions'][victim]['portfolio_mark_nulls'], 1)
+
+
 class FlagAbsentIdentityTests(unittest.TestCase):
     def test_flag_absent_engine_output_is_byte_identical_to_integration_r1(self):
         """The golden was produced by the same scenario run on origin/integration/r1 (worktree), before this branch."""

@@ -232,9 +232,10 @@ ONE `getMultipleAccounts` over the PumpSwap pool and both vaults of every open p
 1. Verify the first single-position cycle (entry, hold, exit, accounting, restart) with the flag off.
 2. New ledger/config version with the flag, `"max_positions": 2`, `"paper_portfolio_mark_source_version": 2` and
    `"paper_portfolio_mark_pool_fee_bps"` (4 is the most the reserve math carries; raise only after one forward observation period). Never set
-   `paper_portfolio_mark_ttl_seconds`. The batched marks roll the day over at the start of a held pass or checkpoint
-   whenever every position's mark is fresh; `"paper_rollover_after_mark_version": 1` additionally lets a single
-   fresh leg do it when the other marks are within 10 s.
+   `paper_portfolio_mark_ttl_seconds`. Set `"paper_rollover_after_mark_version": 1`: it is the ONE rollover rule and every
+   after-mark rollover needs it. With it the batched marks roll the day over at the start of a held pass or checkpoint
+   whenever every position's mark is fresh, and a held leg that has just refreshed its own mark does it when the other
+   marks are within 10 s. Without it only the pre-existing top-of-event test applies (no after-mark rollover at all).
 3. Monitoring allowance 3600/hour (provisioned by `fresh_start`); install the `deploy/fresh` held unit as shipped.
 4. Keep `desk-paper-monitor.timer` off: the stale-mark watchdog uses the 10 s price TTL and would put the book in
    `EXIT_ONLY` (T09 F5/T23).

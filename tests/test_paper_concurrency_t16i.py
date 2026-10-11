@@ -191,7 +191,8 @@ class ClassifierTests(unittest.TestCase):
 
     def test_watchlist_treats_a_held_side_cut_as_not_yet(self):
         codes, accepted = watchlist.reason_codes(self.RESULT)
-        self.assertEqual((codes, accepted), (['HELD_PASS_NONZERO', 'MONITORING_BLOCKED'], False))
+        # T16J item 2: the codes of this result kind are handed out as CHECKPOINT:<reason> so only this kind is NOT_YET
+        self.assertEqual((codes, accepted), (['CHECKPOINT:HELD_PASS_NONZERO', 'CHECKPOINT:MONITORING_BLOCKED'], False))
         self.assertEqual(watchlist.classify(codes), 'NOT_YET')
         for reason in sorted(tool.CHECKPOINT_REASONS):
             self.assertEqual(watchlist.classify(watchlist.reason_codes({**self.RESULT, 'reasons': [reason]})[0]), 'NOT_YET', reason)

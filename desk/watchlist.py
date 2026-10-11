@@ -57,8 +57,14 @@ NOT_YET = {
     'HISTORY_FEATURE_EMPTY_WINDOW': 'empty five-minute trade window; trades can arrive',
     'HISTORY_REQUIRED_MEASUREMENTS_UNAVAILABLE': 'insufficient history for required measurements',
     'HISTORY_FEATURE_MOMENTUM_STALE': 'latest captured momentum too old; fresh scan re-captures',
-    # dispatcher_checkpoint_no_entry_v1 (T16I): the HELD side cut the attempt (a held pass failed, the book's state moved,
-    # monitoring was busy, or a phase overran its wall cap); nothing is wrong with the candidate, so retry is fine.
+}
+# dispatcher_checkpoint_no_entry_v1 (T16I): the HELD side cut the attempt (a held pass failed, the book's state moved, monitoring was
+# busy, or a phase overran its wall cap); nothing is wrong with the candidate, so retry is fine. These are NOT_YET only as codes of
+# THAT result kind (T16J item 2): reason_codes() hands them out as CHECKPOINT:<reason>. The same bare words elsewhere (for example an
+# engine MAX_POSITIONS_REACHED reject) are not in the spec's NOT_YET list and stay PERMANENT.
+CHECKPOINT_KIND = 'dispatcher_checkpoint_no_entry_v1'
+CHECKPOINT_PREFIX = 'CHECKPOINT:'
+CHECKPOINT_NOT_YET = {
     'HELD_PASS_NONZERO': 'a checkpoint held pass exited non-zero; the candidate itself is untouched',
     'LEDGER_MODE_NOT_RUNNING': 'a checkpoint left the ledger not RUNNING; may resume',
     'HELD_EXIT_UNRESOLVED': 'a checkpoint left a held exit unresolved; may clear',
@@ -70,6 +76,7 @@ NOT_YET = {
     'PORTFOLIO_MARKS_TOO_OLD_FOR_ENTRY': 'the held marks cannot be refreshed in time; may change',
     'HELD_POSITION_PRIORITY': 'a held position has priority right now; may clear',
     'PACING_BACKOFF_EXCEEDS_PHASE_BUDGET': 'the provider is backing off longer than the phase may wait; retry later',
+    'PROVIDER_PACING_PENDING': 'another process holds or awaits the shared provider pacer after the intent; retry later',
 }
 # Inner producer blockers (paper_market_adapter) for a window that is empty or stale RIGHT NOW. Every other producer
 # blocker (binding/integrity/identity codes) is deliberately absent => PERMANENT.
@@ -144,6 +151,8 @@ def classify(codes):
 
 def _not_yet(code):
     if code in NOT_YET:
+        return True
+    if code.startswith(CHECKPOINT_PREFIX) and code[len(CHECKPOINT_PREFIX):] in CHECKPOINT_NOT_YET:
         return True
     for prefix in NOT_YET_PREFIXES:
         if code.startswith(prefix) and _MEASUREMENT.fullmatch(code[len(prefix):]):
@@ -343,6 +352,7 @@ def reason_codes(result, mint=None, scan_id=None):
     if type(result) is not dict:
         return codes, accepted
     kind = result.get('kind')
+    checkpoint_codes = set()
     if kind == 'history_preparation_no_entry_v1' and type(result.get('reason')) is str:
         codes.append(result['reason'])
     elif kind == 'dispatcher_token_rejection_v1':
@@ -350,8 +360,9 @@ def reason_codes(result, mint=None, scan_id=None):
         codes.extend(x for x in (policy or {}).get('reasons', []) if type(x) is str)
     elif kind == 'dispatcher_migration_no_entry_v1' and type(result.get('reason')) is str:
         codes.append(result['reason'])
-    elif kind == 'dispatcher_checkpoint_no_entry_v1' and type(result.get('reasons')) is list:
-        codes.extend(x for x in result['reasons'] if type(x) is str)
+    elif kind == CHECKPOINT_KIND and type(result.get('reasons')) is list:
+        checkpoint_codes = {CHECKPOINT_PREFIX + x for x in result['reasons'] if type(x) is str}
+        codes.extend(checkpoint_codes)
     for outcome in result.get('outcomes', []) if type(result.get('outcomes')) is list else []:
         if type(outcome) is not dict:
             continue
@@ -369,6 +380,9 @@ def reason_codes(result, mint=None, scan_id=None):
             continue
         if type(diagnostic) is dict and type(diagnostic.get('blockers')) is list:
             codes.extend(b for b in diagnostic['blockers'] if type(b) is str)
+    # Only the checkpoint branch above may mint CHECKPOINT: codes; a string of that shape anywhere else is not trusted.
+    codes = [c if c.startswith(CHECKPOINT_PREFIX) and kind == CHECKPOINT_KIND and c in checkpoint_codes else
+             ('UNTRUSTED_' + c if c.startswith(CHECKPOINT_PREFIX) else c) for c in codes]
     return sorted(set(codes)), accepted
 
 

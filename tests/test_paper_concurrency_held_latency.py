@@ -289,6 +289,24 @@ class CheckpointTerminalResult(Latency):
 
 
 class ThreePositionRestart(Latency):
+    @contextlib.contextmanager
+    def nobody_holds_the_locks(self):
+        """T25F style, so the abandonment rule is decided on macOS and Linux alike: the lock files the cycle would have created
+        exist, and the kernel lock table / process table are fixtures in which no other process holds anything. (Without
+        a readable lock table the owner is 'unknown', never 'gone', and the orphan is correctly NOT abandoned.)"""
+        import os
+        import tempfile
+        from desk import monitoring_budget as budget_module
+        with tempfile.TemporaryDirectory() as tmp:
+            for path in (str(self.f.progress.store.path) + '.ownership-invocation.lock', str(self.ledger) + '.paper-cycle.lock'):
+                with open(path, 'a'):
+                    pass
+            table, proc = os.path.join(tmp, 'locks'), os.path.join(tmp, 'proc')
+            open(table, 'w').close()
+            os.mkdir(proc)
+            with patch.object(budget_module, 'LOCK_TABLE', table), patch.object(budget_module, 'PROC_ROOT', proc):
+                yield
+
     def fills(self):
         with sqlite3.connect(self.ledger) as c:
             return sum(1 for (p,) in c.execute('SELECT payload FROM outcomes') if json.loads(p).get('type') == 'fill')
@@ -334,8 +352,10 @@ class ThreePositionRestart(Latency):
         # stays charged (never refunded, never repeated), and the held legs resume with their own five requests each.
         self.f.at += 60
         first = pc.held_order(cycle._state(self.ledger, self.cfg)['positions'])[0]
-        leg = self.held_leg(first)
-        self.assertEqual((leg['status'], leg['monitoring_attempted_requests']), ('COMPLETE', 5), leg)
+        with self.nobody_holds_the_locks():
+            leg = self.held_leg(first)
+        self.assertEqual(leg['status'], 'COMPLETE', leg)       # T16J item 1: assert the status BEFORE any key that only a COMPLETE result has
+        self.assertEqual((leg['attempted_requests'], leg['monitoring_attempted_requests']), (5, 5), leg)
         after = self.totals()
         self.assertEqual(after[1][0], crashed[1][0] + 5)                     # the orphan's reservation is still counted
         self.assertEqual(after[1][1], crashed[1][1] + 6)                     # its ABANDONED_CHARGED outcome + the leg's five

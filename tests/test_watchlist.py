@@ -237,7 +237,7 @@ class StoreTests(unittest.TestCase):
 class DocumentationTests(unittest.TestCase):
     def test_mapping_table_in_docs_lists_every_classified_code(self):
         text = (Path(__file__).resolve().parents[1] / 'docs' / 'WATCHLIST.md').read_text()
-        for code in (*wl.NOT_YET, *wl.PERMANENT_EXAMPLES):
+        for code in (*wl.NOT_YET, *wl.CHECKPOINT_NOT_YET, *wl.PERMANENT_EXAMPLES):     # T16J: the checkpoint-scoped codes too
             self.assertIn(f'`{code}`', text, code)
 
 
