@@ -16,5 +16,20 @@
     "token_profile_version": 2,
     "holder_check": true,
     "max_top10_pct": 60
+  },
+  "lanes": {
+    "_comment": "Shares of each provider's rate (Helius 10/s: main 5.5, exit 2.5, low 2). main + exit + low must be <= 1. The low lane never waits and is shed for low_shed_s after any 429.",
+    "main": 0.55,
+    "exit": 0.25,
+    "low": 0.20,
+    "low_shed_s": 30
+  },
+  "paths": {
+    "_comment": "L07R price-path recorder (low lane): every hazard-free candidate, entered or not, is marked every interval_s for path_hours.",
+    "enabled": true,
+    "path_hours": 6,
+    "interval_s": 15,
+    "ref_size_sol": "0.2",
+    "max_paths": 2000
   }
 }
