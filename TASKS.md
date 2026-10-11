@@ -2140,7 +2140,7 @@ GOAL (CK): learn what winners vs rugs look like AT ENTRY TIME, so the trader kee
 STATUS: CLAIMED by coordinator (local agent, branch cloud/L07R2). Do not take.
 
 ## L13F — Rework L13 (bundle/sniper + smart wallets) onto the current runner
-STATUS: OPEN
+STATUS: IN INTEGRATION — the rework landed on cloud/L13 (28e63d4); the coordinator is reviewing and merging it in LINT2. Do not take.
 BASE: origin/integration/r1 (it has L07R2 + LINT1), merging your old cloud/L13
 OWNS: same as L13
 The LINT1 integrator skipped L13 for three reasons:
