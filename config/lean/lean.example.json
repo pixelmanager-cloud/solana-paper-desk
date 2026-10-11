@@ -53,5 +53,19 @@
     "watch_hours": 2,
     "watch_max_per_pass": 5,
     "watch_max_rescreens_per_hour": 120
+  },
+  "ops": {
+    "_comment": "L15: credit tracker (costs are ESTIMATES: calibrate against the provider dashboard), systemd watchdog, regime log. Remove the block to turn all of it off.",
+    "credit_budget_month": null,
+    "credit_costs": {
+      "helius": {
+        "default": 1,
+        "getProgramAccounts": 10
+      }
+    },
+    "credit_flush_s": 60,
+    "watchdog_stale_s": 180,
+    "regime_interval_s": 300,
+    "housekeeping_s": 5
   }
 }

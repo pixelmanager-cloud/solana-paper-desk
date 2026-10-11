@@ -54,7 +54,7 @@ class Runner:
     def __init__(self, *, store, providers, exit_providers, strategy_cfg, discovery_db, state_dir, code_version,
                  screen_overrides=None, pool_fee_bps=25, taker=PAPER_TAKER, kill_switch=None, clock=time.time,
                  scan_limit=500, max_retries=3, sol_usd_ttl_s=30, stale_mark_s=30, unexitable_after_s=7200, route_check=None,
-                 execution=None, held_risk=None, extra_sources=None, watchlist=None):
+                 execution=None, held_risk=None, extra_sources=None, watchlist=None, ops=None):
         # --- L10 hook: latency-aware fills + cost model (None = today's instant fills). The priority fee + Jito tip enter
         # through the strategy config, so the fill fee, the marks and the entry/exit cost checks share one number. ---
         self.execution = execution
@@ -108,6 +108,11 @@ class Runner:
         from lean import watchlist as _l14
         _l14.install(self)
         # --- end L14 ---
+        # --- L15 hook ---
+        self.ops = ops                              # lean.ops.Ops or None (no ops block in lean.json = today's behaviour)
+        if self.ops is not None:
+            self.ops.attach(self)
+        # --- end L15 ---
         self.startup()
         # --- L10 hook ---
         if execution is not None and self.halted is None:
@@ -183,6 +188,12 @@ class Runner:
             self._halt('ACCOUNTING_INVARIANT: %s' % error)
             raise _Halt from None
 
+    # --- L15 hook ---
+    def _beat(self, name):
+        if self.ops is not None:
+            self.ops.beat(name)
+    # --- end L15 ---
+
     def _count(self, name, n=1):
         with self._counts_lock:
             self.counts[name] += n
@@ -255,6 +266,7 @@ class Runner:
         """Retries first, then new discovery frames. One candidate failing never affects another."""
         self.last['candidate_loop'] = self.clock()
         self.refresh_halt()
+        self._beat('candidates')
         if not self.entries_allowed():
             return 0
         retries, self.retry = self.retry, []
@@ -308,6 +320,7 @@ class Runner:
     # --- end L14 ---
 
     def _isolated(self, candidate, attempt):
+        self._beat('candidates')
         try:
             self._handle_candidate(candidate, attempt)
         except _Halt:
@@ -425,6 +438,7 @@ class Runner:
         a halt stops new entries only, never exits."""
         self.last['position_loop'] = self.clock()
         self.refresh_halt()
+        self._beat('positions')                                               # L15 hook
         try:
             positions = self.store.positions()
             states = self.store.position_states()
@@ -524,6 +538,7 @@ class Runner:
             self._count('quote_marks')
 
     def _isolated_exit(self, mint, position, state, liquidate):
+        self._beat('positions')
         try:
             if state is None:
                 raise AccountingHalt('position %s has no state' % mint[:8])
@@ -661,7 +676,10 @@ class Runner:
                 # --- L07R hook ---
                 'paths': self.paths.health() if self.paths is not None else {'enabled': False},
                 # --- end L07R ---
-                'held_risk': None if self.held_risk is None else self.held_risk.health()}      # L11
+                'held_risk': None if self.held_risk is None else self.held_risk.health(),      # L11
+                # --- L15 hook ---
+                **({} if self.ops is None else self.ops.health())}
+                # --- end L15 ---
 
     def write_health(self):
         """Atomic: a unique temp file in the state dir, fsync, rename; one writer at a time."""
@@ -720,6 +738,9 @@ class Runner:
             recorder = threading.Thread(target=self.paths.run, args=(self.stop,), name='paths', daemon=True)
             recorder.start()
         # --- end L07R ---
+        # --- L15 hook ---
+        threads += [] if self.ops is None else self.ops.start(self)      # Ops.start returns started threads
+        # --- end L15 ---
         for t in threads:
             while t.is_alive():
                 t.join(0.5)

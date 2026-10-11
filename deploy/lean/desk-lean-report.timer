@@ -1,0 +1,12 @@
+[Unit]
+Description=Lean morning report at 08:00 KST (23:00 UTC)
+
+[Timer]
+# 23:00 UTC == 08:00 Asia/Seoul (no DST in Korea). Persistent: a run missed while the host was down happens at boot.
+OnCalendar=*-*-* 23:00:00 UTC
+Persistent=true
+AccuracySec=1min
+Unit=desk-lean-report.service
+
+[Install]
+WantedBy=timers.target
