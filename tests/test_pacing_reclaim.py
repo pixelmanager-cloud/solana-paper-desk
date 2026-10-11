@@ -241,11 +241,14 @@ class PacingReclaimTests(unittest.TestCase):
         released = []
         real_flock = p.fcntl.flock
         calls = []
+        # T38: a same-process leftover entry is now displaced at once (it is stale by construction: acquire() only grants
+        # while `pending` is NULL), so the wait is exercised the way production meets it: the previous owner is ANOTHER
+        # process, i.e. an open descriptor this process's registry does not know about.
+        foreign_fd = p._HELD.pop(first._hold_key('helius'))[1]
         def flock(fd, op):
             calls.append(op)
-            if len(calls) == 3 and not released: first._release('helius', t1); released.append(True)
+            if len(calls) == 3 and not released: os.close(foreign_fd); released.append(True)
             return real_flock(fd, op)
-        first.finish('helius', t1) if False else None
         with sqlite3.connect(self.path) as c:                            # the owner committed its outcome, release is next
             c.execute('UPDATE state SET pending=NULL WHERE provider="helius"')
         self.clock.wall = T0 + 10
@@ -458,6 +461,190 @@ class PacingReclaimTests(unittest.TestCase):
         ticket = pacer.acquire('helius', timeout_seconds=1)
         self.assertEqual(seen, [None, True])                                # nothing committed before the lock existed
         self.assertEqual(self.rows('SELECT pending FROM state WHERE provider="helius"')[0][0], ticket)
+
+
+class SequenceClock:
+    """A wall clock that replays a list of readings (the last one repeats)."""
+    def __init__(self, *readings): self.readings = list(readings); self.calls = 0
+    def time(self):
+        value = self.readings[min(self.calls, len(self.readings) - 1)]; self.calls += 1
+        return value
+    def sleep(self, d): pass
+
+
+class ReclaimClockTests(PacingReclaimTests):
+    """T23H: a clock problem inside reclaim must never raise on the gate's read-first path.
+
+    `reclaim_orphans` is called by the entry gates before they test `pending`; they refuse on a pending grant without ever
+    calling acquire(). A clock behind `high_water` (or not a usable number) is already refused by acquire() with
+    PACING_CLOCK_INVALID; reclaim just does nothing, so a gate cannot be turned into a crash by a clock that disagrees with the
+    one that advanced the database (this crashed tests.test_empty_history_successor_lifecycle on integration/r1).
+    """
+
+    def snapshot(self):
+        return (self.rows('SELECT provider,next_at,blocked_until,high_water,pending FROM state ORDER BY provider'),
+                self.rows('SELECT * FROM pacing_reclaims'), self.path.read_bytes())
+
+    BAD_CLOCKS = {'behind high_water': T0 - 50, 'nan': float('nan'), 'inf': float('inf'), 'too large': 2.0 ** 41, 'none': None,
+                  'bool': True, 'string': '1000000'}
+
+    def test_a_clock_that_disagrees_with_the_database_returns_empty_and_changes_nothing(self):
+        self.killed_orphan()
+        before = self.snapshot()
+        for label, reading in self.BAD_CLOCKS.items():
+            with self.subTest(label):
+                pacer = self.make(Clock(reading))
+                self.assertEqual(pacer.reclaim_orphans(), [])
+                self.assertEqual(self.snapshot(), before)             # no reclaim row, orphan intact, file bytes identical
+
+    def test_acquire_still_fails_closed_with_the_same_clock(self):
+        self.killed_orphan()
+        for label, reading in self.BAD_CLOCKS.items():
+            with self.subTest(label), self.assertRaisesRegex(p.PacingError, 'PACING_CLOCK_INVALID|DEADLINE'):
+                self.make(Clock(reading)).acquire('helius', timeout_seconds=1)
+
+    def test_a_valid_clock_reclaims_afterwards_so_the_failed_attempt_damaged_nothing(self):
+        self.killed_orphan()
+        self.assertEqual(self.make(Clock(T0 - 50)).reclaim_orphans(), [])
+        self.assertEqual(self.make(Clock(T0 + 100)).reclaim_orphans(), ['helius'])
+        self.assertEqual(len(self.rows('SELECT * FROM pacing_reclaims')), 1)
+
+    def test_a_clock_that_goes_bad_between_the_read_and_the_write_pass_also_returns_empty(self):
+        self.killed_orphan()
+        before = self.snapshot()
+        clock = SequenceClock(T0 + 100, T0 - 5)                       # valid for the read-first pass, behind for the write pass
+        self.assertEqual(self.make(clock).reclaim_orphans(), [])
+        self.assertEqual(clock.calls, 2)
+        self.assertEqual(self.snapshot(), before)
+
+    def test_reclaim_without_an_orphan_and_a_bad_clock_is_also_quiet(self):
+        self.assertEqual(self.make(Clock(T0 - 50)).reclaim_orphans(), [])
+        self.assertEqual(self.make(Clock(float('nan'))).reclaim_orphans(), [])
+
+    def test_the_gate_refuses_on_the_pending_grant_not_on_the_clock(self):
+        from desk import paper_terminal_reconciliation as terminal
+        self.killed_orphan()
+        behind = Clock(T0 - 50)
+        with patch.object(terminal.provider_pacing, 'Pacer', lambda path, _real=p.Pacer: _real(path, clock=behind.time)):
+            with self.assertRaisesRegex(ValueError, 'Provider outcome pending'):
+                terminal._pacing(self.path)                            # the pre-existing fail-closed refusal, not PacingError
+
+    def test_the_gate_passes_a_clean_database_even_when_the_clock_disagrees(self):
+        from desk import paper_terminal_reconciliation as terminal
+        with patch.object(terminal.provider_pacing, 'Pacer', lambda path, _real=p.Pacer: _real(path, clock=Clock(T0 - 50).time)):
+            terminal._pacing(self.path)                                # nothing pending: acquire() will refuse the bad clock later
+
+
+for _name in dir(PacingReclaimTests):                      # reuse setUp/helpers only; do not re-run the parent's tests
+    if _name.startswith('test_'):
+        setattr(ReclaimClockTests, _name, None)
+
+
+class RegistryIsolationTests(unittest.TestCase):
+    """T38: the process-wide holder registry must never let one database (or a deleted one) affect another."""
+
+    def setUp(self):
+        self.tmp = tempfile.TemporaryDirectory(); self.addCleanup(self.tmp.cleanup)
+        self.dir = Path(self.tmp.name).resolve()
+        self.clock = Clock()
+
+    def new_db(self, name):
+        path = self.dir / name
+        p.initialize(path)
+        return path
+
+    def pacer(self, path):
+        return p.Pacer(path, clock=self.clock.time, monotonic=self.clock.time, sleep=self.clock.sleep)
+
+    def keys(self, path=None):
+        return [k for k in p._HELD if path is None or k[0] == str(path)]
+
+    def test_two_databases_in_one_process_never_share_ownership(self):
+        a, b = self.new_db('a.sqlite'), self.new_db('b.sqlite')
+        pacer_a = self.pacer(a)
+        ticket_a = pacer_a.acquire('helius', timeout_seconds=1)          # A: live grant, never finished yet
+        pacer_b = self.pacer(b)
+        self.assertEqual(pacer_b._held, {})
+        ticket_b = pacer_b.acquire('helius', timeout_seconds=1)          # B is unaffected by A's holder
+        self.assertEqual(set(pacer_a._held), {'helius'}); self.assertEqual(set(pacer_b._held), {'helius'})
+        pacer_b.finish('helius', ticket_b)
+        self.assertEqual(pacer_b._held, {})
+        self.assertEqual(pacer_a._held['helius'][0], ticket_a)           # finishing B released nothing of A's
+        self.clock.wall += 3600
+        with self.assertRaisesRegex(p.PacingError, 'OUTCOME_PENDING'):   # A's owner (this process) is alive
+            self.pacer(a).acquire('helius', timeout_seconds=1)
+        pacer_a.finish('helius', ticket_a)
+
+    def test_deleted_and_recreated_database_gets_no_phantom_owner(self):
+        path = self.new_db('x.sqlite')
+        first = self.pacer(path)
+        first.acquire('helius', timeout_seconds=1)                       # grant that is never finished
+        old_keys = self.keys(path)
+        self.assertEqual(len(old_keys), 1)
+        path.unlink()
+        for sidecar in self.dir.glob('x.sqlite.holder-*'): sidecar.unlink()
+        p.initialize(path)                                                # same path, new inode
+        fresh = self.pacer(path)
+        self.assertEqual(fresh._held, {})
+        self.assertNotIn(old_keys[0], p._HELD, 'the entry for the deleted file was purged and its descriptor closed')
+        ticket = fresh.acquire('helius', timeout_seconds=1)
+        self.assertEqual(len(self.keys(path)), 1)
+        self.assertEqual(self.keys(path)[0][1:3], tuple(fresh.identity))
+        fresh.finish('helius', ticket)
+
+    def test_reused_inode_does_not_resurrect_an_old_ticket(self):
+        """ext4 reuses inode numbers at once: same path, device AND inode, but the database no longer records the ticket."""
+        path = self.new_db('r.sqlite')
+        pacer = self.pacer(path)
+        ticket = pacer.acquire('helius', timeout_seconds=1)
+        key = next(iter(self.keys(path)))
+        with sqlite3.connect(path) as c:
+            c.execute("UPDATE state SET pending=NULL WHERE provider='helius'")       # as a recreated database would be
+        self.assertEqual(pacer._held, {})
+        self.assertNotIn(key, p._HELD)
+        # and a new grant is not blocked by the stale lock the old entry used to hold
+        self.clock.wall += 5                                              # past the cadence of the first grant
+        again = self.pacer(path).acquire('helius', timeout_seconds=1)
+        self.assertNotEqual(again, ticket)
+
+    def test_new_grant_displaces_a_leftover_entry_for_the_same_database_and_provider(self):
+        path = self.new_db('l.sqlite')
+        first = self.pacer(path)
+        stale = first.acquire('helius', timeout_seconds=1)
+        with sqlite3.connect(path) as c:
+            c.execute("UPDATE state SET pending=NULL,next_at=0 WHERE provider='helius'")     # database forgot the grant
+        ticket = self.pacer(path).acquire('helius', timeout_seconds=1)                       # must not hit PACING_HOLDER_LOCK_UNAVAILABLE
+        self.assertEqual(self.pacer(path)._held['helius'][0], ticket)
+        self.assertNotEqual(ticket, stale)
+
+    def test_entry_with_a_foreign_inode_or_pid_is_purged_not_trusted(self):
+        path = self.new_db('y.sqlite')
+        pacer = self.pacer(path)
+        fd = os.open(os.devnull, os.O_RDONLY)
+        p._HELD[(str(path), 1, 2, 'helius')] = ('t' * 32, fd, os.getpid(), True)          # right path, wrong inode
+        fd2 = os.open(os.devnull, os.O_RDONLY)
+        p._HELD[(str(path),) + tuple(pacer.identity) + ('jupiter',)] = ('u' * 32, fd2, os.getpid() + 1, True)  # inherited
+        self.assertEqual(pacer._held, {})
+        self.assertEqual(self.keys(path), [])
+        for descriptor in (fd, fd2):
+            with self.assertRaises(OSError): os.fstat(descriptor)                    # closed by the purge
+
+    def test_forked_child_does_not_inherit_ownership(self):
+        path = self.new_db('z.sqlite')
+        pacer = self.pacer(path)
+        ticket = pacer.acquire('helius', timeout_seconds=1)
+        read, write = os.pipe()
+        pid = os.fork()
+        if pid == 0:
+            try:
+                os.write(write, repr(p.Pacer(path)._held).encode())
+            finally:
+                os._exit(0)
+        os.waitpid(pid, 0)
+        self.assertEqual(os.read(read, 100), b'{}')
+        os.close(read); os.close(write)
+        self.assertEqual(pacer._held['helius'][0], ticket)
+        pacer.finish('helius', ticket)
 
 
 if __name__ == '__main__':

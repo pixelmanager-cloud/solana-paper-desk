@@ -23,7 +23,7 @@ from tests import test_paper_cycle as cycle_fixtures
 
 class MigrationSlotTests(unittest.TestCase):
     def setUp(self):
-        self.c=cycle_fixtures.PaperCycleTests();self.c.setUp();self.addCleanup(self.c.doCleanups)
+        self.c=cycle_fixtures.PaperCycleTests();self.addCleanup(self.c.doCleanups);self.c.setUp()
         self.f=self.c.f;self.target=self.c.target
         original=self.f.progress.store.load(self.c.item.graduation_refs[0])
         self.raw=self.f.progress.store.load(original['response_hash'])['data'][0]

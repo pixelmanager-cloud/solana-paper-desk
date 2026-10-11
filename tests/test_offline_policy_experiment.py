@@ -147,7 +147,7 @@ class OfflinePolicyExperimentTests(unittest.TestCase):
         from tests.test_paper_experimental_scoring import experimental
         cases = []
         for at in (T, T + 400):
-            c = QuoteExecutionTests(); c.setUp(); self.addCleanup(c.doCleanups)
+            c = QuoteExecutionTests(); self.addCleanup(c.doCleanups); c.setUp()
             c.cfg['experimental_policy_version'] = 1
             buy = c.quote('buy', 10_000_000, 1_000_000, at=at)
             reverse = c.quote('sell', c.raw, 10_000_000, at=at)

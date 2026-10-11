@@ -55,7 +55,7 @@ def _child(research,evidence,fence,mode,queue=None,go=None):
 class GenesisAttachmentTests(unittest.TestCase):
     def setUp(self):
         self.f = journal_fixture.CommonBankJournalTests()
-        self.f.setUp(); self.addCleanup(self.f.doCleanups)
+        self.addCleanup(self.f.doCleanups); self.f.setUp()
         self.journal = self.f.journal; self.f.freeze()
 
     def install(self):

@@ -33,7 +33,7 @@ class TerminalReconciliationTests(unittest.TestCase):
         # real new code: a receipt-certified NULL pass must survive the abandoned-pass recovery of the second cycle.
         if self._testMethodName != 'test_future_known_rejection_certifies_intrinsic_without_policy_or_retry':
             legacy_null_pass.install(self)
-        self.h=fixtures.PaperCycleTests();self.h.setUp();self.addCleanup(self.h.doCleanups)
+        self.h=fixtures.PaperCycleTests();self.addCleanup(self.h.doCleanups);self.h.setUp()
         self.f=self.h.f;self.store=self.f.progress.store;self.progress=self.f.progress
         self.cfg=self.h.cfg;self.ledger=self.h.path;self.target=self.h.target
         _Setup(self.store,self.f.jobs.descriptor(self.target.scan_id),self.progress.admission(self.target.scan_id))
@@ -413,7 +413,7 @@ class TerminalReconciliationTests(unittest.TestCase):
 
     def monitoring_fixture(self):
         from tests import test_monitoring_budget as budget_fixtures
-        fixture=budget_fixtures.MonitoringBudgetTests();fixture.setUp();self.addCleanup(fixture.doCleanups)
+        fixture=budget_fixtures.MonitoringBudgetTests();self.addCleanup(fixture.doCleanups);fixture.setUp()
         source=transport.PaperReadSources(fixture.progress,fixture.scan,monitoring_budget=fixture.budget)
         body=canonical({'jsonrpc':'2.0','id':transport.RPC_ID,'result':100}).encode()
         class Opener:

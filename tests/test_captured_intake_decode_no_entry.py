@@ -20,7 +20,7 @@ def multisig_close(raw,*,malformed=False):
 
 class CapturedGapTests(unittest.TestCase):
     def setUp(self):
-        self.h=fixture.MigrationNoEntryTests();self.h.setUp();self.addCleanup(self.h.doCleanups)
+        self.h=fixture.MigrationNoEntryTests();self.addCleanup(self.h.doCleanups);self.h.setUp()
         self.f=self.h.f
     def reject(self,*,incomplete=False):
         pages=[0]
@@ -78,7 +78,7 @@ class HistoricalCapturedGapTests(unittest.TestCase):
         from tests.test_migration_recovery_lineage import mint_fixture
         from desk import ownership_acquisition as acquisition,migration_slot_intake as intake,paper_read_sources as transport
         from desk import runtime_compatibility as runtime,runtime_extensions as ext,monitoring_budget as monitoring
-        h=ancestor.IntakeRetirementTests();h.setUp();self.addCleanup(h.doCleanups);h.apply()
+        h=ancestor.IntakeRetirementTests();self.addCleanup(h.doCleanups);h.setUp();h.apply()
         producer=h.pin['successor_context'];raw,mint,pool=mint_fixture(29);identity='9'*32
         with h.store.connect() as c:key=c.execute('SELECT mint_hash FROM ownership_acquisition_setup WHERE scan_id=?',(h.scan,)).fetchone()[0]
         mint_value=h.store.load(key)['result'];seed=[0]

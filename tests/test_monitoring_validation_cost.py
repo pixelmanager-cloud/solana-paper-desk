@@ -15,7 +15,7 @@ from tests.helpers import T
 
 class MonitoringValidationCostTests(unittest.TestCase):
     def setUp(self):
-        self.f=fixtures.MonitoringSuccessorTests();self.f.setUp();self.addCleanup(self.f.doCleanups)
+        self.f=fixtures.MonitoringSuccessorTests();self.addCleanup(self.f.doCleanups);self.f.setUp()
         self.f.activate()
         saved=(self.f.f.new,self.f.f.cfg)
         self.f.f.new=self.f.next;self.f.f.cfg=self.f.cfg

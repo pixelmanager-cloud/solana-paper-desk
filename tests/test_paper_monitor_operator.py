@@ -11,7 +11,7 @@ from tests.test_paper_read_sources import Response
 
 class MonitorOperatorTests(unittest.TestCase):
  def case(self,entry=False):
-  f=fixtures.PaperCycleTests();f.setUp();self.addCleanup(f.doCleanups)
+  f=fixtures.PaperCycleTests();self.addCleanup(f.doCleanups);f.setUp()
   f.http_calls=[];f.sell_output=10_000_000
   if entry:self.assertEqual(f.actual_cycle()['status'],'COMPLETE')
   return f
@@ -51,7 +51,7 @@ class MonitorOperatorTests(unittest.TestCase):
   self.assertFalse(result['saved_marks'][0]['fresh_by_age']);self.assertEqual(before,list(f.f.progress.store.connect().iterdump()))
   self.assertEqual(f.f.progress.admission(f.target.scan_id)['requests_used'],original_usage)
  def test_cli_insufficient_allowance_refuses_before_credentials_and_preserves144(self):
-  f=cli_fixtures.PaperCycleCliTests();f.setUp();self.addCleanup(f.doCleanups)
+  f=cli_fixtures.PaperCycleCliTests();self.addCleanup(f.doCleanups);f.setUp()
   pacing={'kind':'paper_monitoring_preflight_v1','status':'BLOCKED','blockers':['MONITORING_PASS_ALLOWANCE_INSUFFICIENT']}
   with patch.object(op,'preflight',return_value=pacing),patch.object(cli,'_credentials',side_effect=AssertionError('credential read')):
    code,result=f.invoke(*f.args(),'--monitoring','--systemd-credentials')

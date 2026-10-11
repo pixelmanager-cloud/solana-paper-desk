@@ -32,7 +32,7 @@ from tests.test_paper_read_sources import Response
 
 class PreparationRetirementTests(unittest.TestCase):
     def setUp(self):
-        fixture=fixtures.PaperObservationCollectorTests();fixture.setUp();self.addCleanup(fixture.doCleanups)
+        fixture=fixtures.PaperObservationCollectorTests();self.addCleanup(fixture.doCleanups);fixture.setUp()
         fixture.at=int(time.time());root=Path(fixture.tmp.name).resolve()
         raw,mint,pool=migration_fixture();raw["transaction"]["signatures"]=[base58(bytes([9])*64)]
         cfg=config()|{'paper_signal_policy_version':3,'paper_quote_execution_version':1}

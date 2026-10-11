@@ -466,7 +466,7 @@ class RealFlowTests(unittest.TestCase):
     def test_one_real_candidate_reaches_buy_and_tampered_frame_is_not_used(self):
         from tests import test_paper_entry_dispatcher as fixtures
         d = fixtures.DispatcherTests('test_dry_run_no_admission_credentials_or_io_and_context_activation')
-        d.setUp(); self.addCleanup(d.doCleanups)
+        self.addCleanup(d.doCleanups); d.setUp()
         self.assertEqual(d.live()['status'], 'DISPATCHED')
         now = d.f.at + 100
         r = fr.build(discovery_db=d.discovery, journal=d.journal, research_db=d.f.jobs.path, ledger=d.ledger,

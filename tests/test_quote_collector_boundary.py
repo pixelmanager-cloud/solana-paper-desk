@@ -12,7 +12,7 @@ from urllib.parse import urlencode
 
 class QuoteBoundaryTests(unittest.TestCase):
     def setUp(self):
-        self.f=fixtures.PaperMarketAdapterTests();self.f.setUp();self.addCleanup(self.f.doCleanups)
+        self.f=fixtures.PaperMarketAdapterTests();self.addCleanup(self.f.doCleanups);self.f.setUp()
         f=self.f;store=f.fixture.progress.store
         raw=json.loads(f.observation.quote.source.original_json)
         attempt={'kind':'paper_read_attempt_v1','scan_id':f.target.scan_id,'requests_used':4,

@@ -201,7 +201,7 @@ class WorkerFixtureBase(unittest.TestCase):
 
     def setUp(self):
         self.q = cycle_fixtures.QuoteOnlyCycleTests('test_entry_reuses_existing_buy_and_only_reads_exact_reverse_once')
-        self.q.setUp(); self.addCleanup(self.q.doCleanups)
+        self.addCleanup(self.q.doCleanups); self.q.setUp()
         self.cfg = {**self.q.cfg, fr.KEY: 1}
         self.tmp = tempfile.TemporaryDirectory(); self.addCleanup(self.tmp.cleanup)
         self.ledger = Path(self.tmp.name) / 'ledger.sqlite'                  # never created: the worker cannot need it
@@ -542,7 +542,7 @@ class CycleIntegrationTests(unittest.TestCase):
 
     def make(self, flag, *, monitoring=False):
         fx = cycle_fixtures.PaperCycleTests('run_cycle')
-        fx.setUp(); self.addCleanup(fx.doCleanups)
+        self.addCleanup(fx.doCleanups); fx.setUp()
         fx.http_calls, fx.sell_output = [], 10_000_000
         if flag:
             fx.cfg = {**fx.cfg, fr.KEY: 1}
@@ -728,7 +728,7 @@ class ConfigAndHookTests(unittest.TestCase):
 
     def test_a_bad_realism_config_is_refused_before_any_pass_exists_so_nothing_latches(self):
         fx = cycle_fixtures.PaperCycleTests('run_cycle')
-        fx.setUp(); self.addCleanup(fx.doCleanups)
+        self.addCleanup(fx.doCleanups); fx.setUp()
         fx.http_calls, fx.sell_output = [], 10_000_000
         bad = {k: v for k, v in fx.cfg.items() if k != 'paper_quote_execution_version'} | {fr.KEY: 1}
         with self.assertRaises(ValueError):
@@ -759,7 +759,7 @@ class ConfigAndHookTests(unittest.TestCase):
 
     def test_a_defect_inside_the_in_pass_hook_cannot_latch_the_store(self):
         fx = cycle_fixtures.PaperCycleTests('run_cycle')
-        fx.setUp(); self.addCleanup(fx.doCleanups)
+        self.addCleanup(fx.doCleanups); fx.setUp()
         fx.http_calls, fx.sell_output = [], 10_000_000
         fx.cfg = {**fx.cfg, fr.KEY: 1}
         fx.path = Path(fx.f.tmp.name) / 'hook-defect.sqlite'

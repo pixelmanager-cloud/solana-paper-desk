@@ -58,7 +58,7 @@ class BoostPolicyTests(unittest.TestCase):
 
 class BoostCycleTests(unittest.TestCase):
  def setUp(self):
-  self.h=vertical_fixtures.VerticalProfileTests();self.h.profile=2;self.h.setUp();self.addCleanup(self.h.doCleanups)
+  self.h=vertical_fixtures.VerticalProfileTests();self.h.profile=2;self.addCleanup(self.h.doCleanups);self.h.setUp()
   self.f=self.h.f;self.f.buy_output_raw=60_000_000;self.f.sell_output_per_unit_raw=170_000
   protocol=self.f.f.protocol
   raw=bytearray(protocol.raw+bytes(301-len(protocol.raw)));raw[245:261]=(10**11).to_bytes(16,'little',signed=True);protocol.raw=bytes(raw)

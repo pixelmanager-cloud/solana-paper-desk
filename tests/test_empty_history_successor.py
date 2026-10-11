@@ -46,7 +46,7 @@ class PredecessorJournalTests(unittest.TestCase):
         from tools import paper_entry_dispatcher as dispatcher
         from desk.model import digest
         from tests.test_migration_recovery_lineage import mint_fixture
-        h=PerformanceContinuationTests();h.setUp();self.addCleanup(h.doCleanups)
+        h=PerformanceContinuationTests();self.addCleanup(h.doCleanups);h.setUp()
         h.append()
         with sqlite3.connect(h.h.f.new) as ledger,sqlite3.connect(h.old['journal']) as journal:
             self.assertEqual(edge._validate_predecessor_journal(ledger,journal,h.new)['intents'],{})

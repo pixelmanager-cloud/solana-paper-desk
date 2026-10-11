@@ -197,7 +197,7 @@ class TransportOutcomeTests(unittest.TestCase):
             self.assertEqual(f.used(),7);self.assertIn('FAILED_ATTEMPT_RETAINED',case.read().blockers)
 
     def test_install_refuses_incomplete_profiles_without_initialization_or_charge(self):
-        case=fixture.CompletionInventoryTests();case.setUp();self.addCleanup(case.doCleanups)
+        case=fixture.CompletionInventoryTests();self.addCleanup(case.doCleanups);case.setUp()
         case.f.freeze()
         with case.f.journal.locked() as s:
             with self.assertRaisesRegex(m.JournalBlocked,'FULL_CLOCK'):s.install_transport_outcomes()
@@ -274,7 +274,7 @@ class TransportOutcomeTests(unittest.TestCase):
                     else:self.assertEqual(json.loads(row[6])['category'],'RESPONSE_TRUNCATED');self.assertIsInstance(row[5],bytes)
 
     def test_successful_mixed_chain_replay_remains_diagnostic_and_read_only(self):
-        case=replay_fixture.JournalSemanticReplayTests();case.setUp();self.addCleanup(case.doCleanups)
+        case=replay_fixture.JournalSemanticReplayTests();self.addCleanup(case.doCleanups);case.setUp()
         case.complete(clock=False)
         f=case.f
         with f.journal.locked() as s:

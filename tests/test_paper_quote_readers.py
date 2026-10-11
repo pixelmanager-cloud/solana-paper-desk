@@ -133,7 +133,7 @@ class QuoteReaderTests(unittest.TestCase):
         self.assertEqual(paper_status(f.path,now=T)['status'],'LEDGER_PRESENT')
 
     def test_actual_v3_entry_checkpoint_and_dashboard_without_history_synthesis(self):
-        seam = seam_fixture.QuoteV3SeamTests(); seam.setUp(); self.addCleanup(seam.doCleanups)
+        seam = seam_fixture.QuoteV3SeamTests(); self.addCleanup(seam.doCleanups); seam.setUp()
         f = seam.fixture; f.cfg = seam.cfg
         f.apply({'schema_version':1,'event_id':'paper-runner:init','ts':0,'kind':'clock','actor':'paper_monitor'})
         f.ledger.db.execute('INSERT INTO metadata VALUES(?,?)',('paper_runner','SYNTHETIC_TEST_ONLY'))

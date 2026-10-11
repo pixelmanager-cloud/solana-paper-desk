@@ -70,7 +70,7 @@ class PaperCycleCliTests(unittest.TestCase):
         with self.assertRaises(ValueError):cli.load_targets(self.target_path)
 
     def test_actual_cycle_call_retains_historical_refs_and_unknown_holder(self):
-        f=cycle_fixtures.PaperCycleTests();f.setUp();self.addCleanup(f.doCleanups)
+        f=cycle_fixtures.PaperCycleTests();self.addCleanup(f.doCleanups);f.setUp()
         item=f.item;target=item.target
         row={key:getattr(target,key) for key in ('scan_id','mint','pool','taker','amount_raw')}
         row.update(provenance=item.provenance,pool_fee_bps=item.pool_fee_bps,graduation_refs=list(item.graduation_refs),known_hazards=list(item.known_hazards))

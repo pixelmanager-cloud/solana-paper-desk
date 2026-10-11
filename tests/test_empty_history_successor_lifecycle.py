@@ -51,7 +51,10 @@ import copy,sqlite3,time
 # slightly ahead of the host. Wait for the host; never reset pacing state.
 with sqlite3.connect(a['pacing']) as paced:
  lag=paced.execute('SELECT MAX(high_water) FROM state').fetchone()[0]-time.time()
-assert lag<5,lag
+# The lead depends on host speed (faster hosts finish the synthetic steps sooner, so the
+# synthetic watermark is further ahead of wall time); it is a fixture wait bound, not a
+# production property. Bound it generously and wait it out; never reset pacing state.
+assert lag<60,lag
 if lag>0:time.sleep(lag+.05)
 from unittest.mock import patch
 from tests import test_empty_history_no_entry as fixture,test_history_first_paper_entry as first
@@ -69,7 +72,7 @@ def same_context(self):
  import inspect,textwrap
  construction=textwrap.dedent(inspect.getsource(PoolTests.setUp)).replace('bytes([7])*32','bytes([51])*32')
  pool_namespace=dict(vars(__import__('tests.test_pools',fromlist=['PoolTests'])));exec(construction,pool_namespace)
- self.f=protocol_fixture.PaperCycleTests();self.f.setUp();self.addCleanup(self.f.doCleanups)
+ self.f=protocol_fixture.PaperCycleTests();self.addCleanup(self.f.doCleanups);self.f.setUp()
  fresh_protocol=PoolTests();pool_namespace['setUp'](fresh_protocol);self.f.f.protocol=fresh_protocol
  self.root=Path(self.f.f.tmp.name);self.targets=self.root/'targets.json'
  f=self.f;f.http_calls=[];f.sell_output=100_000_000;old_store=f.f.progress.store

@@ -1,0 +1,8 @@
+[Unit]
+Description=Daily strategy research report (23:30 UTC = 08:30 KST)
+[Timer]
+OnCalendar=*-*-* 23:30:00 UTC
+Persistent=true
+Unit=desk-daily-report.service
+[Install]
+WantedBy=timers.target

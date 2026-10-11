@@ -115,7 +115,9 @@ def report(ledger):
     if os.path.islink(path) or not path.is_file():
         raise ValueError('Existing non-symlink ledger required')
     store = fr.store_path(path)
-    with closing(sqlite3.connect(path.resolve().as_uri() + '?mode=ro', uri=True)) as c:
+    from tools.research import funnel_report
+    flag = 'immutable=1' if funnel_report.open_mode(path.resolve()) == 'immutable' else 'mode=ro'
+    with closing(sqlite3.connect(path.resolve().as_uri() + '?' + flag, uri=True)) as c:
         c.row_factory = sqlite3.Row
         meta = dict(c.execute("SELECT key,value FROM metadata WHERE key IN ('config_hash','config')").fetchall())
         config = json.loads(meta['config']) if meta.get('config') else {}

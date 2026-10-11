@@ -31,7 +31,7 @@ class PoolClassificationProjectionTests(unittest.TestCase):
         (ROOT/'work').mkdir(exist_ok=True)
         self.tmp = tempfile.TemporaryDirectory(dir=ROOT/'work'); self.addCleanup(self.tmp.cleanup)
         self.root = Path(self.tmp.name).resolve(); os.chmod(self.root, 0o700)
-        self.h = multi.OwnershipMultiHistoryIntegrationTests(); self.h.setUp(); self.addCleanup(self.h.doCleanups)
+        self.h = multi.OwnershipMultiHistoryIntegrationTests(); self.addCleanup(self.h.doCleanups); self.h.setUp()
         h = self.h; h.root = self.root; h.path = self.root/'evidence.sqlite'; h.store = EvidenceStore(h.path)
         fixture = json.loads((ROOT/'fixtures/pool-vault-admission-legacy.json').read_text())
         self.q = fixture['query']; old = h.f; first = old['accounts'][0]

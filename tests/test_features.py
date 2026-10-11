@@ -1,0 +1,1008 @@
+"""SYNTHETIC_TEST_ONLY: candidate feature store. Known answers from stores built with the repo's real writers.
+
+The ledger is written by the real ``Ledger.apply`` + ``engine.transition`` (so outcomes and reject reasons are the engine's own),
+the dispatcher journal by the dispatcher's DDL, the counterfactual store by its own ``init``/``add_candidate``, and one end-to-end
+test reads the real stores of a dispatched paper entry (actual discovery frame, journal, ledger, research and evidence DBs).
+Adversarial cases: look-ahead stamps, missing measurement times, future-dated evidence, tampered rows, hostile paths.
+"""
+import contextlib
+import copy
+import hashlib
+import io
+import json
+import os
+import shutil
+import sqlite3
+import tempfile
+import unittest
+import unittest.mock
+from contextlib import closing
+from pathlib import Path
+
+from desk.engine import initial_state, transition
+from desk.ledger import Ledger
+from desk.model import canonical
+from desk.security import TOKEN_2022
+from tests import helpers
+from tools import paper_entry_dispatcher as dispatcher
+from tools.research import counterfactual as cf
+from tools.research import features as ft
+from tools.research import shadow_strategies as sh
+
+T = helpers.T
+NOW = T + 100_000
+REPO = Path(__file__).resolve().parents[1]
+FRESH = REPO / 'deploy' / 'fresh'
+
+
+def sha(path):
+    return hashlib.sha256(Path(path).read_bytes()).hexdigest()
+
+
+def sql(path, statement, args=()):
+    with closing(sqlite3.connect(path)) as c, c:
+        return c.execute(statement, args).fetchall()
+
+
+def hint(mint, received, seq=1, slot=100):
+    return {'seq': seq, 'mint': mint, 'pool': 'P-' + mint, 'signature': 'S-' + mint, 'slot': slot, 'migrated_at': float(received)}
+
+
+class Fixture(unittest.TestCase):
+    def setUp(self):
+        self.tmp = tempfile.TemporaryDirectory()
+        self.addCleanup(self.tmp.cleanup)
+        self.dir = Path(os.path.realpath(self.tmp.name))
+        self.ledger, self.store = self.dir / 'ledger.sqlite', self.dir / 'features.sqlite'
+        self.cfg = helpers.config()
+        ledger = Ledger(self.ledger)
+        # A: clean, buys. B: rejected by the engine (market cap). Both through the REAL writer.
+        for e in (helpers.event(ts=T, mint='A'), helpers.event(ts=T + 60, mint='B', market_cap_usd='1000')):
+            ledger.apply(e, self.cfg, transition, initial_state)
+        ledger.close()
+        ft.init(self.store)
+
+    def raw_event(self, **changes):
+        """An event written straight into the journal table (hostile / unusual shapes the engine would refuse)."""
+        e = helpers.event(**changes)
+        sql(self.ledger, 'INSERT INTO events(event_id,ts,payload,payload_hash) VALUES(?,?,?,?)',
+            (e['event_id'], e['ts'], canonical(e), 'h-' + e['event_id']))
+        return e
+
+    def ingest(self, **kw):
+        kw.setdefault('now', NOW)
+        kw.setdefault('ledger_db', self.ledger)
+        return ft.ingest(self.store, **kw)
+
+    def rows(self, **kw):
+        return {(r['mint'], r['as_of']): r for r in ft.read_rows(self.store, **kw)}
+
+    def row(self, mint, ts):
+        return self.rows()[(mint, float(ts))]
+
+    def hashes(self, store=None):
+        store = store or self.store
+        return {(r['mint'], r['as_of']): r['row_hash'] for r in ft.read_rows(store)}
+
+    def fresh_store(self, name):
+        path = self.dir / name
+        ft.init(path)
+        return path
+
+
+class KnownAnswerTests(Fixture):
+    def test_ledger_event_features_and_provenance(self):
+        report = self.ingest()
+        self.assertEqual((report['inserted'], report['invalid'], report['conflict']), (2, 0, 0))
+        a = self.row('A', T)
+        f = a['features']
+        self.assertEqual((f['market_cap_usd'], f['reserve_sol'], f['top10_pct'], f['net_buy_ratio'], f['unique_buyers_5m']),
+                         ('100000', '100', '10', '.8', 50))
+        self.assertEqual(f['liquidity_usd'], '30000')                   # 2 * 100 SOL * 150 USD
+        self.assertEqual(f['age_since_migration_seconds'], 600)         # ts - graduated_at
+        self.assertEqual((f['token_2022'], f['holders_listed'], f['early_buys_listed'], f['holder_coverage_pct']), (False, 100, 100, '100'))
+        self.assertIs(f['entered'], True)
+        prov = a['provenance']
+        self.assertEqual(prov['market_cap_usd']['source'], 'ledger.events')
+        self.assertTrue(prov['market_cap_usd']['ref'].startswith('A:%d#' % T))
+        self.assertEqual(prov['entered']['role'], 'decision')
+        self.assertEqual(prov['top10_pct']['role'], 'input')
+        self.assertEqual(prov['liquidity_usd']['derived'], '2*reserve_sol*sol_usd')
+
+    def test_rejection_reasons_come_from_the_engines_own_outcomes(self):
+        self.ingest()
+        b = self.row('B', T + 60)
+        self.assertEqual(b['features']['reject_reasons'], ['MARKET_CAP', 'STALE_PORTFOLIO'])
+        self.assertNotIn('entered', b['features'])
+        self.assertEqual(b['provenance']['reject_reasons']['source'], 'ledger.outcomes')
+        self.assertEqual(b['features']['market_cap_usd'], '1000')
+
+    def test_token_2022_flag_and_age_use_the_recorded_profile(self):
+        e = helpers.event(ts=T + 5, mint='T22')
+        e['token_evidence']['account']['owner'] = TOKEN_2022
+        self.raw_event(**{k: e[k] for k in ('ts', 'mint', 'token_evidence')})
+        self.ingest()
+        self.assertIs(self.row('T22', T + 5)['features']['token_2022'], True)
+
+    def test_discovery_and_journal_rows(self):
+        journal = self.dir / 'dispatch.sqlite'
+        for ddl in dispatcher.SCHEMAS.values():
+            sql(journal, ddl)
+        sql(journal, 'INSERT INTO intents VALUES(?,?,?,?,?)', ('id-D', 'D', 'S-D', canonical({'version': 1, 'at': T + 400}), 'h'))
+        body = {'kind': 'paper_cycle_v1', 'status': 'COMPLETE', 'attempted_requests': 9,
+                'outcomes': [{'type': 'reject', 'reason': 'COST_BUDGET', 'reasons': ['COST_BUDGET'], 'mint': 'D'}]}
+        sql(journal, 'INSERT INTO results VALUES(?,?,?)', ('id-D', canonical({'version': 1, 'at': T + 420, 'scan_id': 'scan-D', 'result': body}), 'h'))
+        self.ingest(hints=[hint('D', T + 10, seq=7, slot=555)], journal_db=journal)
+        rows = self.rows()
+        d0, d1, d2 = rows[('D', float(T + 10))], rows[('D', float(T + 400))], rows[('D', float(T + 420))]
+        self.assertEqual((d0['features']['migrated_at'], d0['features']['migration_slot']), (T + 10.0, 555))
+        self.assertEqual(d0['provenance']['migration_slot']['ref'], 'discovery.raw_events#7')
+        self.assertIs(d1['features']['dispatched'], True)
+        self.assertEqual((d2['features']['dispatch_death_reason'], d2['features']['dispatch_stage_reached'], d2['features']['requests_charged']),
+                         ('ENGINE:COST_BUDGET', 'observations_ok', 9))
+        self.assertEqual({p['role'] for p in d2['provenance'].values()}, {'decision'})
+
+    def test_counterfactual_samples_are_known_only_from_their_sample_time(self):
+        store = self.dir / 'cf.sqlite'
+        cf.init(store, now=T)
+        cf.add_candidate(store, mint='C', pool='P', signature='S', slot=1, migrated_at=T, seq=1, now=T)
+        sql(store, "INSERT INTO samples(mint,horizon,due_at,sampled_at,slot,base_raw,quote_raw,price,status) VALUES('C',300,?,?,5,'2000','80000000000','1','OK')",
+            (T + 300, T + 302))
+        sql(store, "INSERT INTO samples(mint,horizon,due_at,sampled_at,status) VALUES('C',900,?,NULL,'PENDING')", (T + 900,))
+        self.ingest(counterfactual_store=store)
+        c = self.row('C', T + 302)
+        self.assertEqual((c['features']['cf_base_vault_raw'], c['features']['cf_quote_vault_raw'], c['features']['cf_sample_horizon_seconds']),
+                         ('2000', '80000000000', 300))
+        sql(store, "INSERT INTO samples(mint,horizon,due_at,sampled_at,slot,base_raw,quote_raw,price,status) VALUES('C',1800,?,?,6,'1','1','1','POOL_DEAD')",
+            (T + 1800, T + 1802))
+        self.ingest(counterfactual_store=store)
+        self.assertEqual(len([k for k in self.rows() if k[0] == 'C']), 1, 'unsampled and dead-pool horizons contribute nothing')
+
+    def test_decisions_need_their_own_time_and_a_mint(self):
+        decisions, research = self.dir / 'decisions.sqlite', self.dir / 'research.sqlite'
+        sql(decisions, 'CREATE TABLE decisions(scan_id TEXT PRIMARY KEY,source_hash TEXT NOT NULL,source_payload TEXT NOT NULL,decision TEXT NOT NULL)')
+        sql(research, 'CREATE TABLE scans(id TEXT PRIMARY KEY,mint TEXT,created INTEGER,status TEXT,result TEXT)')
+        sql(research, "INSERT INTO scans VALUES('s1','E',1,'COMPLETE',NULL)")
+        for scan, payload, decision in (('s1', {}, {'action': 'WATCH', 'ts': T + 50}),
+                                        ('s2', {'mint': 'E2'}, {'action': 'SKIP'}),              # no time: cannot be placed
+                                        ('s3', {'mint': 'E3'}, {'action': 'BUY', 'ts': T + 60})):
+            sql(decisions, 'INSERT INTO decisions VALUES(?,?,?,?)', (scan, 'h', json.dumps(payload), json.dumps(decision)))
+        report = self.ingest(decisions_db=decisions, research_db=research)
+        self.assertEqual(self.row('E', T + 50)['features']['decision_label'], 'WATCH')
+        self.assertEqual(self.row('E3', T + 60)['features']['decision_label'], 'BUY')
+        self.assertNotIn('E2', {m for m, _ in self.rows()})
+        self.assertEqual(report['skipped']['DECISION_NOT_PLACEABLE'], 1)
+
+
+class NoLookAheadTests(Fixture):
+    def test_measurement_stamped_after_the_event_is_dropped_and_counted(self):
+        self.raw_event(ts=T + 10, mint='L', holder_at=T + 40)
+        report = self.ingest()
+        f = self.row('L', T + 10)['features']
+        for name in ('top10_pct', 'dev_pct', 'bundle_pct', 'cluster_pct', 'fresh_wallet_ratio'):
+            self.assertNotIn(name, f)
+        self.assertIn('net_buy_ratio', f, 'other groups of the same event are unaffected')
+        self.assertGreaterEqual(report['skipped']['LOOK_AHEAD_DROPPED'], 1)
+
+    def test_every_stored_feature_is_measured_at_or_before_its_row(self):
+        self.raw_event(ts=T + 10, mint='L', price_at=T + 11, flow_at=T + 12, graduated_at=T + 99)
+        self.ingest()
+        for row in ft.read_rows(self.store):
+            for name, prov in row['provenance'].items():
+                self.assertLessEqual(prov['at'], row['as_of'], (row['mint'], name))
+        f = self.row('L', T + 10)['features']
+        self.assertNotIn('age_since_migration_seconds', f)         # graduated_at in the future
+        self.assertNotIn('market_cap_usd', f)
+        self.assertNotIn('net_buy_ratio', f)
+        self.assertNotIn('liquidity_usd', f)
+
+    def test_collector_refuses_a_measurement_later_than_its_row(self):
+        col = ft.Collector(now=NOW)
+        self.assertFalse(col.add('m', 100, 'x', 1, source='s', ref='r', at=101))
+        self.assertTrue(col.add('m', 100, 'x', 1, source='s', ref='r', at=100))
+        self.assertEqual((col.skipped, len(col.records)), ({'LOOK_AHEAD_DROPPED': 1}, 1))
+        self.assertFalse(col.add('m', 100, 'x', 2, source='s2', ref='r2'))           # same time, other value: first writer wins, counted
+        self.assertEqual(col.records[('m', 100.0)]['features']['x'], 1)
+        self.assertEqual(col.skipped['SAME_TIME_SOURCE_DISAGREEMENT'], 1)
+
+    def test_token_and_bundle_evidence_observed_after_the_event_are_not_used(self):
+        e = helpers.event(ts=T + 70, mint='K')
+        e['token_evidence']['observed_at'] = T + 80
+        e['bundle_evidence']['as_of'] = T + 90
+        self.raw_event(**{k: e[k] for k in ('ts', 'mint', 'token_evidence', 'bundle_evidence')})
+        report = self.ingest()
+        f = self.row('K', T + 70)['features']
+        for name in ('token_2022', 'holders_listed', 'early_buys_listed', 'holder_coverage_pct'):
+            self.assertNotIn(name, f)
+        self.assertEqual((report['skipped'].get('TOKEN_PROFILE_UNUSABLE'), report['skipped'].get('BUNDLE_EVIDENCE_TIME_UNUSABLE')), (1, 1))
+        self.assertNotIn('LOOK_AHEAD_DROPPED', report['skipped'])
+
+    def test_unknown_stays_unknown_no_defaults(self):
+        self.raw_event(ts=T + 20, mint='U', holder_at=None)
+        report = self.ingest()
+        f = self.row('U', T + 20)['features']
+        self.assertEqual(sorted(set(f) & {'top10_pct', 'dev_pct', 'bundle_pct'}), [])
+        self.assertGreaterEqual(report['skipped']['MEASUREMENT_TIME_UNKNOWN'], 1)
+
+    def test_missing_measurement_time_drops_the_value_rather_than_assuming_now(self):
+        e = helpers.event(ts=T + 30, mint='M')
+        del e['flow_at']
+        self.raw_event(**{k: v for k, v in e.items() if k not in ('schema_version',)})
+        sql(self.ledger, 'UPDATE events SET payload=? WHERE event_id=?', (canonical(e), e['event_id']))
+        self.ingest()
+        self.assertNotIn('net_buy_ratio', self.row('M', T + 30)['features'])
+
+    def test_evidence_dated_after_now_is_refused(self):
+        self.raw_event(ts=NOW + 5, mint='F', price_at=NOW + 5, holder_at=NOW + 5, flow_at=NOW + 5, momentum_at=NOW + 5, graduated_at=T)
+        report = self.ingest()
+        self.assertNotIn('F', {m for m, _ in self.rows()})
+        self.assertGreaterEqual(report['skipped']['FUTURE_DATED_EVIDENCE'], 1)
+
+    def test_invalid_values_are_skipped_not_repaired(self):
+        self.raw_event(ts=T + 40, mint='V', top10_pct='NaN', danger='no', unique_buyers_5m=True, market_cap_usd='1e999999',
+                       dev_pct=True, flow=7.5)
+        report = self.ingest()
+        f = self.rows().get(('V', float(T + 40)), {'features': {}})['features']
+        for name in ('top10_pct', 'danger', 'unique_buyers_5m', 'dev_pct', 'flow', 'market_cap_usd'):
+            self.assertNotIn(name, f)
+        self.assertGreaterEqual(report['skipped']['FEATURE_VALUE_INVALID'], 6)
+
+    def test_validate_row_rejects_look_ahead_and_unprovenanced_rows(self):
+        ok = {'x': {'source': 's', 'ref': 'r', 'at': 10.0, 'role': 'input'}}
+        self.assertIsNone(ft.validate_row('m', 10.0, {'x': 1}, ok))
+        self.assertEqual(ft.validate_row('m', 9.0, {'x': 1}, ok), 'LOOK_AHEAD')
+        self.assertEqual(ft.validate_row('m', 10.0, {'x': 1, 'y': 2}, ok), 'PROVENANCE_MISMATCH')
+        self.assertEqual(ft.validate_row('m', 10.0, {}, {}), 'PROVENANCE_MISMATCH')
+        self.assertEqual(ft.validate_row('m', float('nan'), {'x': 1}, ok), 'BAD_AS_OF')
+        self.assertEqual(ft.validate_row('', 10.0, {'x': 1}, ok), 'BAD_MINT')
+        self.assertEqual(ft.validate_row('m', 10.0, {'x': 1}, {'x': dict(ok['x'], ref='')}), 'NO_PROVENANCE')
+        self.assertEqual(ft.validate_row('m', 10.0, {'x': 1}, {'x': dict(ok['x'], role='label')}), 'BAD_ROLE')
+        self.assertEqual(ft.validate_row('m', 10.0, {'x': 1}, {'x': dict(ok['x'], at=None)}), 'BAD_FEATURE_TIME')
+        self.assertEqual(ft.validate_row('m', 10.0, {'x': 'z' * 20000}, ok), 'ROW_TOO_LARGE')
+
+
+class StoreIntegrityTests(Fixture):
+    def test_rerun_is_idempotent_and_never_rewrites_rows(self):
+        first = self.ingest()
+        before = [(r['mint'], r['as_of'], r['row_hash']) for r in ft.read_rows(self.store)]
+        again = self.ingest(now=NOW + 1)
+        # T42: a re-run resumes from the persisted cursors and reads nothing new, so there is nothing to count as duplicate
+        # (it used to rescan and count every row as a duplicate). Forcing the rescan is covered by IncrementalIngestTests.
+        self.assertEqual((again['inserted'], again['duplicate'], again['conflict']), (0, 0, 0))
+        self.assertEqual(first['inserted'], 2)
+        self.assertEqual(before, [(r['mint'], r['as_of'], r['row_hash']) for r in ft.read_rows(self.store)])
+        self.assertEqual(sql(self.store, 'SELECT COUNT(*) FROM ingest_runs')[0][0], 4)    # two runs, each start + summary
+
+    def test_row_hashes_do_not_depend_on_ingest_order_or_time(self):
+        self.ingest(now=NOW)
+        other = self.dir / 'other.sqlite'
+        ft.init(other)
+        ft.ingest(other, ledger_db=self.ledger, now=NOW + 5000, since=T + 30)
+        ft.ingest(other, ledger_db=self.ledger, now=NOW + 9000, until=T + 30)
+        mine = {(r['mint'], r['as_of']): r['row_hash'] for r in ft.read_rows(self.store)}
+        theirs = {(r['mint'], r['as_of']): r['row_hash'] for r in ft.read_rows(other)}
+        self.assertEqual(mine, theirs)
+
+    def test_different_content_for_an_existing_key_is_a_recorded_conflict_not_an_overwrite(self):
+        self.ingest()
+        kept = self.row('A', T)
+        offered = {('A', float(T)): {'features': {'market_cap_usd': '1'}, 'provenance': {
+            'market_cap_usd': {'source': 'x', 'ref': 'y', 'at': float(T), 'role': 'input'}}}}
+        for _ in range(2):
+            counts = ft.append_rows(self.store, offered, now=NOW)
+            self.assertEqual((counts['conflict'], counts['inserted']), (1, 0))
+        self.assertEqual(self.row('A', T), kept)
+        self.assertEqual(sql(self.store, 'SELECT COUNT(*) FROM feature_conflicts')[0][0], 1, 'the same offer is recorded once')
+        self.assertEqual(sql(self.store, 'SELECT kept_hash FROM feature_conflicts')[0][0], kept['row_hash'])
+
+    def test_invalid_rows_are_never_stored(self):
+        bad = {('A', 5.0): {'features': {'x': 1}, 'provenance': {'x': {'source': 's', 'ref': 'r', 'at': 9.0, 'role': 'input'}}}}
+        self.assertEqual(ft.append_rows(self.store, bad, now=NOW)['invalid'], 1)
+        self.assertEqual(sql(self.store, 'SELECT COUNT(*) FROM feature_rows')[0][0], 0)
+
+    def test_records_are_append_only(self):
+        self.ingest()
+        ft.append_rows(self.store, {('A', float(T)): {'features': {'market_cap_usd': '1'}, 'provenance': {
+            'market_cap_usd': {'source': 'x', 'ref': 'y', 'at': float(T), 'role': 'input'}}}}, now=NOW)   # so the conflicts table has a row
+        for table in ft.GUARDED:
+            self.assertTrue(sql(self.store, f'SELECT COUNT(*) FROM {table}')[0][0], table)
+        for table in ft.GUARDED:
+            for statement in (f'UPDATE {table} SET rowid=rowid', f'DELETE FROM {table}'):
+                with self.subTest(statement=statement), self.assertRaises(sqlite3.IntegrityError):
+                    sql(self.store, statement)
+        with self.assertRaises(sqlite3.IntegrityError):
+            sql(self.store, "UPDATE feature_rows SET features='{}'")
+
+    def test_verify_detects_tampered_rows(self):
+        self.ingest()
+        self.assertTrue(ft.verify(self.store)['ok'])
+        copy_ = self.dir / 'tampered.sqlite'
+        shutil.copyfile(self.store, copy_)
+        with closing(sqlite3.connect(copy_)) as c, c:
+            for (name,) in c.execute("SELECT name FROM sqlite_master WHERE type='trigger'").fetchall():
+                c.execute(f'DROP TRIGGER "{name}"')
+            c.execute("UPDATE feature_rows SET features=replace(features,'\"100000\"','\"999\"') WHERE mint='A'")
+            c.execute("UPDATE feature_rows SET as_of=as_of-1000 WHERE mint='B'")
+        report = ft.verify(copy_)
+        self.assertFalse(report['ok'])
+        self.assertEqual({(b['mint'], b['code']) for b in report['bad']}, {('A', 'ROW_HASH_MISMATCH'), ('B', 'LOOK_AHEAD')})
+
+    def test_init_refuses_existing_or_symlinked_paths(self):
+        with self.assertRaises(ft.FeatureError) as ctx:
+            ft.init(self.store)
+        self.assertEqual(ctx.exception.code, 'STORE_EXISTS')
+        link = self.dir / 'link.sqlite'
+        link.symlink_to(self.dir / 'nowhere.sqlite')
+        with self.assertRaises(ft.FeatureError):
+            ft.init(link)
+        self.assertFalse((self.dir / 'nowhere.sqlite').exists())
+        with self.assertRaises(ft.FeatureError) as ctx:
+            ft.verify(link)
+        self.assertEqual(ctx.exception.code, 'SYMLINKED_STORE')
+
+
+class InputSafetyTests(Fixture):
+    def test_input_stores_are_never_modified(self):
+        journal = self.dir / 'dispatch.sqlite'
+        for ddl in dispatcher.SCHEMAS.values():
+            sql(journal, ddl)
+        store = self.dir / 'cf.sqlite'
+        cf.init(store, now=T)
+        before = {p: sha(p) for p in (self.ledger, journal, store)}
+        self.ingest(journal_db=journal, counterfactual_store=store)
+        self.assertEqual(before, {p: sha(p) for p in before})
+
+    def test_symlinked_hardlinked_or_missing_inputs_fail_closed(self):
+        link = self.dir / 'link.sqlite'
+        link.symlink_to(self.ledger)
+        with self.assertRaises(ft.fr.FunnelError):
+            ft.ingest(self.store, ledger_db=link, now=NOW)
+        hard = self.dir / 'hard.sqlite'
+        os.link(self.ledger, hard)
+        with self.assertRaises(ft.fr.FunnelError):
+            ft.ingest(self.store, ledger_db=self.ledger, now=NOW)
+        with self.assertRaises(ft.fr.FunnelError):
+            ft.ingest(self.store, ledger_db=self.dir / 'absent.sqlite', now=NOW)
+        self.assertEqual(sql(self.store, 'SELECT COUNT(*) FROM feature_rows')[0][0], 0)
+
+    def test_missing_tables_fail_closed(self):
+        empty = self.dir / 'empty.sqlite'
+        sql(empty, 'CREATE TABLE unrelated(x)')
+        with self.assertRaises(ft.FeatureError) as ctx:
+            ft.ingest(self.store, ledger_db=empty, now=NOW)
+        self.assertEqual(ctx.exception.code, 'LEDGER_TABLES_MISSING')
+
+    def test_corrupt_event_rows_are_skipped_and_counted(self):
+        sql(self.ledger, "INSERT INTO events(event_id,ts,payload,payload_hash) VALUES('bad',?,'{not json','h')", (T + 1,))
+        sql(self.ledger, "INSERT INTO events(event_id,ts,payload,payload_hash) VALUES('ctl',?,?,'h')",
+            (T + 2, canonical(helpers.control(T + 2, 'PAUSE'))))
+        report = self.ingest()
+        self.assertEqual(report['skipped'], {'EVENT_UNREADABLE': 1, 'NOT_A_MARKET_EVENT': 1})
+        self.assertEqual(report['inserted'], 2)
+
+
+class ExportTests(Fixture):
+    def test_jsonl_export_matches_the_store_and_refuses_overwrite(self):
+        self.ingest()
+        out = self.dir / 'rows.jsonl'
+        self.assertEqual(ft.export_jsonl(self.store, out), 2)
+        self.assertEqual(out.stat().st_mode & 0o777, 0o600)
+        lines = [json.loads(l) for l in out.read_text().splitlines()]
+        self.assertEqual(lines, list(ft.read_rows(self.store)))
+        self.assertEqual([l['mint'] for l in lines], ['A', 'B'])
+        with self.assertRaises(FileExistsError):
+            ft.export_jsonl(self.store, out)
+        link = self.dir / 'l.jsonl'
+        link.symlink_to(self.dir / 'victim.jsonl')
+        with self.assertRaises(OSError):
+            ft.export_jsonl(self.store, link)
+        self.assertFalse((self.dir / 'victim.jsonl').exists())
+        part = self.dir / 'part.jsonl'
+        self.assertEqual(ft.export_jsonl(self.store, part, since=T + 30), 1)
+
+    def test_shadow_features_load_in_t27_and_gate_entries_by_as_of(self):
+        self.ingest()
+        out = self.dir / 'features.json'
+        features = ft.shadow_features(self.store)
+        ft.write_json_exclusive(out, features)
+        self.assertEqual(set(features), {'A', 'B'})
+        self.assertEqual(features['A']['as_of'], T)
+        self.assertTrue(set(features['A']) - {'as_of'} <= set(sh.NEUTRAL_FEATURES))
+        self.assertEqual(features['A']['top10_pct'], '10')
+        self.assertNotIn('entered', features['A'])
+        self.assertNotIn('reject_reasons', features['B'])
+        cand = {'mint': 'A', 'pool': 'P', 'migrated_at': T - 600, 'samples': [{'horizon': 3600, 'base_raw': 1, 'quote_raw': 1}]}
+        loaded = sh.load_features(out, [cand])
+        self.assertEqual(sh._features_for(loaded, 'A', T - 1), (None, False))        # unknown before as_of, entries refused
+        fields, known = sh._features_for(loaded, 'A', T)
+        self.assertTrue(known)
+        self.assertEqual(fields['net_buy_ratio'], '.8')
+        self.assertEqual(sh._features_for(loaded, 'ZZ', T), (None, True))             # unseen mints stay neutral
+
+    def test_shadow_features_use_only_the_earliest_row_per_mint(self):
+        self.raw_event(ts=T + 500, mint='A', top10_pct='55')           # a later event for A with different holder share
+        self.ingest()
+        features = ft.shadow_features(self.store)
+        self.assertEqual((features['A']['as_of'], features['A']['top10_pct']), (T, '10'))
+        self.assertEqual(ft.shadow_features(self.store, until=T + 1)['A']['as_of'], T)      # until is exclusive: rows known before it
+        self.assertNotIn('B', ft.shadow_features(self.store, until=T + 1))
+        self.assertEqual(ft.shadow_features(self.store, until=T), {})
+
+    def test_shadow_export_never_carries_decision_or_foreign_source_fields(self):
+        rec = {('X', float(T)): {'features': {'danger': True, 'top10_pct': '1', 'flow': '5', 'wash_score': '9', 'entered': True}, 'provenance': {
+            'wash_score': {'source': 'ledger.events', 'ref': 'r', 'at': float(T), 'role': 'decision'},
+            'entered': {'source': 'ledger.events', 'ref': 'r', 'at': float(T), 'role': 'input'},
+            'danger': {'source': 'decisions.decisions', 'ref': 'r', 'at': float(T), 'role': 'decision'},
+            'top10_pct': {'source': 'counterfactual.samples', 'ref': 'r', 'at': float(T), 'role': 'input'},
+            'flow': {'source': 'ledger.events', 'ref': 'r', 'at': float(T), 'role': 'input'}}}}
+        ft.append_rows(self.store, rec, now=NOW)
+        self.assertEqual(ft.shadow_features(self.store)['X'], {'as_of': float(T), 'flow': '5'})
+
+    def test_shadow_features_skip_rows_from_other_sources(self):
+        self.ingest(hints=[hint('A', T - 50), hint('D', T + 5)])
+        features = ft.shadow_features(self.store)
+        self.assertEqual(features['A']['as_of'], T, 'a discovery row has no event fields, so the first usable row is the ledger event')
+        self.assertNotIn('D', features)
+
+
+class CliTests(Fixture):
+    def run_cli(self, *argv):
+        out = io.StringIO()
+        with contextlib.redirect_stdout(out):
+            code = ft.main(list(argv))
+        return code, json.loads(out.getvalue())
+
+    def test_init_ingest_verify_export_roundtrip(self):
+        store = str(self.dir / 'cli.sqlite')
+        self.assertEqual(self.run_cli('init', '--store', store)[0], 0)
+        self.assertEqual(self.run_cli('init', '--store', store)[1]['code'], 'STORE_EXISTS')
+        code, rep = self.run_cli('ingest', '--store', store, '--ledger', str(self.ledger), '--now', str(NOW))
+        self.assertEqual((code, rep['inserted'], rep['paper_only']), (0, 2, True))
+        self.assertEqual(self.run_cli('verify', '--store', store)[1]['ok'], True)
+        self.assertEqual(self.run_cli('export-jsonl', '--store', store, '--out', str(self.dir / 'o.jsonl'))[1]['rows'], 2)
+        self.assertEqual(self.run_cli('shadow-features', '--store', store, '--out', str(self.dir / 'f.json'))[1]['mints'], 2)
+        self.assertEqual(self.run_cli('shadow-features', '--store', store, '--out', str(self.dir / 'f.json'))[0], 2)
+
+    def test_unavailable_inputs_exit_two_with_a_typed_code(self):
+        code, rep = self.run_cli('ingest', '--store', str(self.store), '--ledger', str(self.dir / 'absent.sqlite'), '--now', str(NOW))
+        self.assertEqual((code, rep['code']), (2, 'STORE_MISSING'))
+
+    def test_cli_exit_code_is_zero_when_only_optional_stores_are_missing(self):
+        code, rep = self.run_cli('ingest', '--store', str(self.store), '--ledger', str(self.ledger),
+                                 '--decisions-db', str(self.dir / 'nope'), '--journal', str(self.dir / 'nope2'), '--now', str(NOW))
+        self.assertEqual((code, rep['inserted']), (0, 2))
+        self.assertEqual(set(rep['sources_unavailable']), {'decisions', 'journal'})
+
+    def test_verify_exit_code_reports_a_bad_store(self):
+        copy_ = self.dir / 'bad.sqlite'
+        self.ingest()
+        shutil.copyfile(self.store, copy_)
+        with closing(sqlite3.connect(copy_)) as c, c:
+            for (name,) in c.execute("SELECT name FROM sqlite_master WHERE type='trigger'").fetchall():
+                c.execute(f'DROP TRIGGER "{name}"')
+            c.execute("UPDATE feature_rows SET row_hash='x'")
+        code, rep = self.run_cli('verify', '--store', str(copy_))
+        self.assertEqual((code, rep['ok']), (2, False))
+
+
+class IncrementalIngestTests(Fixture):
+    """T42 items 1-2: cursor-based, paged, bounded ingestion and optional stores."""
+
+    def add_market(self, mint, ts, **changes):
+        ledger = Ledger(self.ledger)
+        ledger.apply(helpers.event(ts=ts, mint=mint, **changes), self.cfg, transition, initial_state)
+        ledger.close()
+
+    def test_a_rerun_resumes_from_the_cursor_and_reads_nothing(self):
+        first = self.ingest()
+        self.assertEqual(first['pages'], {'ledger.events': 1})
+        self.assertEqual(set(ft.read_cursors(self.store)), {'ledger.events', 'ledger.outcomes'})
+        again = self.ingest(now=NOW + 1)
+        self.assertEqual((again['inserted'], again['duplicate'], again['conflict'], again['pages']), (0, 0, 0, {}))
+
+    def test_incremental_equals_full_ingest(self):
+        self.ingest()
+        self.add_market('C', T + 120)
+        self.add_market('D', T + 180, market_cap_usd='1000')
+        step = self.ingest(now=NOW + 1)
+        self.assertEqual(step['inserted'], 2)
+        other = self.fresh_store('full.sqlite')
+        ft.ingest(other, ledger_db=self.ledger, now=NOW)
+        self.assertEqual(self.hashes(), self.hashes(other))
+        self.assertEqual(len(self.hashes()), 4)
+
+    def test_page_size_does_not_change_the_rows(self):
+        other = self.fresh_store('small-pages.sqlite')
+        report = ft.ingest(other, ledger_db=self.ledger, now=NOW, page_rows=1)
+        self.assertEqual(report['pages']['ledger.events'], 2)
+        self.ingest()
+        self.assertEqual(self.hashes(), self.hashes(other))
+
+    def test_a_page_bound_is_counted_and_the_next_run_finishes_the_job(self):
+        first = self.ingest(page_rows=1, max_pages=1)
+        self.assertEqual((first['inserted'], first['page_bound_hit']), (1, {'ledger.events': 1}))
+        self.assertEqual(first['skipped'], {'PAGE_BOUND_HIT:ledger.events': 1})
+        second = self.ingest(page_rows=1, max_pages=1, now=NOW + 1)
+        self.assertEqual(second['inserted'], 1)
+        full = self.fresh_store('full.sqlite')
+        ft.ingest(full, ledger_db=self.ledger, now=NOW)
+        self.assertEqual(self.hashes(), self.hashes(full))
+
+    def test_an_outcome_is_never_stored_without_its_reject_reasons_because_of_a_bound(self):
+        self.add_market('C', T + 120, market_cap_usd='1000')
+        self.add_market('D', T + 180, market_cap_usd='1000')
+        self.ingest(page_rows=1, max_pages=2)
+        self.ingest(page_rows=1, max_pages=2, now=NOW + 1)
+        rows = self.rows()
+        for mint in ('B', 'C', 'D'):
+            self.assertIn('reject_reasons', rows[(mint, float({'B': T + 60, 'C': T + 120, 'D': T + 180}[mint]))]['features'], mint)
+        self.assertIn('entered', rows[('A', float(T))]['features'])
+
+    def test_a_replaced_source_restarts_instead_of_skipping_rows(self):
+        self.ingest()
+        self.ledger.unlink()
+        ledger = Ledger(self.ledger)
+        for e in (helpers.event(ts=T + 500, mint='X'), helpers.event(ts=T + 560, mint='Y')):
+            ledger.apply(e, self.cfg, transition, initial_state)
+        ledger.close()
+        report = self.ingest(now=NOW + 1)
+        self.assertEqual(report['inserted'], 2)
+        self.assertEqual(report['skipped'].get('CURSOR_RESET_SOURCE_CHANGED'), 2)
+        self.assertEqual({m for m, _ in self.rows()}, {'A', 'B', 'X', 'Y'}, 'old rows are kept, never deleted')
+
+    def test_a_windowed_run_neither_reads_nor_moves_the_cursor(self):
+        self.ingest(until=T + 30)
+        self.assertEqual(ft.read_cursors(self.store), {})
+        report = self.ingest(now=NOW + 1)
+        self.assertEqual({m for m, _ in self.rows()}, {'A', 'B'})
+        self.assertEqual(report['duplicate'], 1)
+
+    def test_rows_and_cursor_commit_together_or_not_at_all(self):
+        original = ft.Writer._one
+        calls = []
+
+        def crash(writer, c, mint, as_of, features, provenance):
+            calls.append(mint)
+            if len(calls) == 2:
+                raise RuntimeError('crash inside the page')
+            return original(writer, c, mint, as_of, features, provenance)
+        with unittest.mock.patch.object(ft.Writer, '_one', crash), self.assertRaises(RuntimeError):
+            self.ingest()
+        self.assertEqual(sql(self.store, 'SELECT COUNT(*) FROM feature_rows')[0][0], 0)
+        self.assertEqual(ft.read_cursors(self.store), {})
+        self.assertEqual(self.ingest(now=NOW + 1)['inserted'], 2)
+
+    def test_a_failing_cursor_write_rolls_the_pages_rows_back(self):
+        """The cursor is written after the rows inside the same transaction: if it cannot be stored, no row of the page stays."""
+        sql(self.store, "CREATE TRIGGER refuse_cursor BEFORE INSERT ON ingest_cursors BEGIN SELECT RAISE(ABORT,'no cursor'); END")
+        with self.assertRaises(sqlite3.DatabaseError):
+            self.ingest()
+        self.assertEqual(sql(self.store, 'SELECT COUNT(*) FROM feature_rows')[0][0], 0)
+
+    def test_cursor_records_are_append_only(self):
+        self.ingest()
+        for statement in ('UPDATE ingest_cursors SET position=0', 'DELETE FROM ingest_cursors'):
+            with self.subTest(statement=statement), self.assertRaises(sqlite3.DatabaseError):
+                sql(self.store, statement)
+
+    def test_a_store_made_before_cursors_existed_is_upgraded_in_place(self):
+        old = self.dir / 'old.sqlite'
+        with closing(sqlite3.connect(old)) as c:
+            c.executescript(ft.SCHEMA)
+            c.execute("INSERT INTO meta VALUES('store_version','1')")
+            c.commit()
+        self.assertEqual(ft.ingest(old, ledger_db=self.ledger, now=NOW)['inserted'], 2)
+        self.assertIn('ledger.events', ft.read_cursors(old))
+
+    def test_two_million_events_run_in_bounded_memory(self):
+        import tracemalloc
+        ledger = self.dir / 'big.sqlite'
+        with closing(sqlite3.connect(ledger)) as c:
+            c.executescript("""
+            CREATE TABLE events(seq INTEGER PRIMARY KEY AUTOINCREMENT,event_id TEXT UNIQUE NOT NULL,ts INTEGER NOT NULL,
+              payload TEXT NOT NULL,payload_hash TEXT NOT NULL);
+            CREATE TABLE outcomes(seq INTEGER PRIMARY KEY AUTOINCREMENT,event_id TEXT NOT NULL,payload TEXT NOT NULL);
+            WITH RECURSIVE n(i) AS (SELECT 1 UNION ALL SELECT i+1 FROM n WHERE i<2000000)
+              INSERT INTO events(event_id,ts,payload,payload_hash) SELECT 'e'||i,%d,'{"kind":"control"}','h' FROM n;
+            INSERT INTO outcomes(event_id,payload) SELECT event_id,'{"type":"noop"}' FROM events WHERE seq%%1000=0 ORDER BY seq;""" % T)
+            c.commit()
+        store = self.fresh_store('big-features.sqlite')
+        tracemalloc.start()
+        try:
+            report = ft.ingest(store, ledger_db=ledger, now=NOW)
+            peak = tracemalloc.get_traced_memory()[1]
+        finally:
+            tracemalloc.stop()
+        self.assertEqual(report['skipped'], {'NOT_A_MARKET_EVENT': 2_000_000})
+        self.assertEqual(report['pages'], {'ledger.events': 400})
+        self.assertLess(peak, 64 * 1024 * 1024, 'memory is bounded by the page, not by the number of events')
+        self.assertEqual(ft.read_cursors(store)['ledger.events'][1], 2_000_000)
+
+    def test_missing_optional_stores_are_skipped_with_a_reason(self):
+        absent = {k: self.dir / ('absent-' + k) for k in ('journal', 'research', 'decisions', 'discovery', 'cf')}
+        report = self.ingest(journal_db=absent['journal'], research_db=absent['research'], decisions_db=absent['decisions'],
+                             discovery_db=absent['discovery'], counterfactual_store=absent['cf'])
+        self.assertEqual(report['inserted'], 2)
+        self.assertEqual(report['sources_unavailable'], {k: 'STORE_MISSING' for k in ('journal', 'discovery', 'counterfactual', 'decisions')})
+        self.assertEqual(report['skipped']['SOURCE_ABSENT:decisions'], 1)
+
+    def test_a_missing_research_store_only_loses_the_scan_to_mint_fallback(self):
+        decisions = self.dir / 'decisions.sqlite'
+        sql(decisions, 'CREATE TABLE decisions(scan_id TEXT PRIMARY KEY,source_hash TEXT NOT NULL,source_payload TEXT NOT NULL,decision TEXT NOT NULL)')
+        sql(decisions, 'INSERT INTO decisions VALUES(?,?,?,?)', ('s1', 'h', json.dumps({'mint': 'A'}), json.dumps({'ts': T + 5, 'action': 'BUY'})))
+        sql(decisions, 'INSERT INTO decisions VALUES(?,?,?,?)', ('s2', 'h', json.dumps({}), json.dumps({'ts': T + 6, 'action': 'BUY'})))
+        report = self.ingest(decisions_db=decisions, research_db=self.dir / 'absent-research')
+        self.assertEqual(report['skipped'].get('SOURCE_ABSENT:research'), 1)
+        self.assertEqual(report['skipped'].get('DECISION_NOT_PLACEABLE'), 1)
+        self.assertEqual(self.row('A', T + 5)['features']['decision_label'], 'BUY')
+
+    def test_the_ledger_stays_required_and_unsafe_optional_stores_still_fail_closed(self):
+        with self.assertRaises(ft.fr.FunnelError):
+            ft.ingest(self.store, ledger_db=self.dir / 'absent.sqlite', now=NOW)
+        link = self.dir / 'journal-link.sqlite'
+        link.symlink_to(self.ledger)
+        with self.assertRaises(ft.fr.FunnelError):
+            self.ingest(journal_db=link)
+        corrupt = self.dir / 'corrupt.sqlite'
+        corrupt.write_bytes(b'not a database' * 100)
+        with self.assertRaises(sqlite3.DatabaseError):
+            self.ingest(counterfactual_store=corrupt)
+        # pages that completed before the failure stay (each is whole, with the cursor that covers it); nothing is half-stored
+        self.assertEqual(sql(self.store, 'SELECT COUNT(*) FROM feature_rows')[0][0], 2)
+        self.assertEqual(ft.read_cursors(self.store)['ledger.events'][1], 2)
+        self.assertEqual(self.ingest(now=NOW + 1)['inserted'], 0)
+
+
+class RealStoresTests(unittest.TestCase):
+    """The stores of a real dispatched paper entry (production decoder, dispatcher, cycle, ledger)."""
+
+    def test_real_candidate_end_to_end(self):
+        from tests import test_paper_entry_dispatcher as fixtures
+        d = fixtures.DispatcherTests('test_dry_run_no_admission_credentials_or_io_and_context_activation')
+        d.setUp()
+        self.addCleanup(d.doCleanups)
+        self.assertEqual(d.live()['status'], 'DISPATCHED')
+        tmp = tempfile.TemporaryDirectory()
+        self.addCleanup(tmp.cleanup)
+        store = Path(os.path.realpath(tmp.name)) / 'features.sqlite'
+        ft.init(store)
+        now = d.f.at + 100
+        before = {p: sha(p) for p in (d.discovery, d.journal, d.ledger)}
+        report = ft.ingest(store, ledger_db=d.ledger, discovery_db=d.discovery, journal_db=d.journal, research_db=d.f.jobs.path, now=now)
+        self.assertEqual(before, {p: sha(p) for p in before}, 'real input stores untouched')
+        self.assertEqual(report['invalid'], 0, report)
+        self.assertTrue(ft.verify(store)['ok'])
+        rows = list(ft.read_rows(store))
+        mints = {r['mint'] for r in rows}
+        self.assertEqual(len(mints), 1, mints)
+        names = {n for r in rows for n in r['features']}
+        self.assertTrue({'migrated_at', 'dispatched', 'dispatch_stage_reached'} <= names, names)
+        self.assertTrue({'entered'} <= names, 'the real paper BUY is recorded as the decision outcome')
+        for r in rows:
+            for prov in r['provenance'].values():
+                self.assertLessEqual(prov['at'], r['as_of'])
+        again = ft.ingest(store, ledger_db=d.ledger, discovery_db=d.discovery, journal_db=d.journal, now=now + 1)
+        self.assertEqual((again['inserted'], again['conflict']), (0, 0))
+
+
+_REAL_FRAMES = []
+
+
+def real_frames():
+    """(rows, migration_row) of the discovery store of a real dispatched paper entry: actual frames decoded by the production decoder."""
+    if not _REAL_FRAMES:
+        from tests import test_paper_entry_dispatcher as fixtures
+        d = fixtures.DispatcherTests('test_dry_run_no_admission_credentials_or_io_and_context_activation')
+        d.setUp()
+        try:
+            from tools.research import funnel_report as fr
+            hints, _ = fr.discovery_hints(d.discovery, since=0, until=d.f.at + 1000)
+            rows = sql(d.discovery, 'SELECT seq,source_id,received_at,slot,payload,payload_hash FROM raw_events ORDER BY seq')
+            migration = next(r for r in rows if r[0] == hints[0]['seq'])
+            _REAL_FRAMES.extend([rows, migration, hints[0]])
+        finally:
+            d.doCleanups()
+    return _REAL_FRAMES
+
+
+class DiscoveryFixture(Fixture):
+    """A discovery store with N junk frames (their stored hash is wrong, so they are counted and never used) and real frames."""
+
+    def make_discovery(self, name='discovery.sqlite', junk=0, real=(), junk_start=1_000.0):
+        path = self.dir / name
+        with closing(sqlite3.connect(path)) as c:
+            c.execute('CREATE TABLE raw_events(seq INTEGER PRIMARY KEY,source_id TEXT UNIQUE NOT NULL,received_at REAL NOT NULL,slot INTEGER NOT NULL,'
+                      'payload TEXT NOT NULL,payload_hash TEXT NOT NULL)')
+            c.executemany('INSERT INTO raw_events(source_id,received_at,slot,payload,payload_hash) VALUES(?,?,?,?,?)',
+                          (('%s-junk-%d' % (name, i), junk_start + i, 5, '{"junk":%d}' % i, 'x') for i in range(junk)))
+            c.commit()
+        self.add_real(path, real)
+        return path
+
+    def add_real(self, path, received_list):
+        _, row, _ = real_frames()
+        with closing(sqlite3.connect(path)) as c:
+            for i, received in enumerate(received_list):
+                c.execute('INSERT INTO raw_events(source_id,received_at,slot,payload,payload_hash) VALUES(?,?,?,?,?)',
+                          ('%s-real-%d-%s' % (path.name, i, received), received, row[3], row[4], row[5]))
+            c.commit()
+
+    def add_junk(self, path, n, start):
+        with closing(sqlite3.connect(path)) as c:
+            c.executemany('INSERT INTO raw_events(source_id,received_at,slot,payload,payload_hash) VALUES(?,?,?,?,?)',
+                          (('%s-more-%d-%d' % (path.name, start, i), float(start + i), 5, '{"more":%d}' % i, 'x') for i in range(n)))
+            c.commit()
+
+    def migrated(self):
+        mint = real_frames()[2]['mint']
+        return sorted(r['as_of'] for (m, _), r in self.rows().items() if m == mint and 'migrated_at' in r['features'])
+
+
+class DiscoveryCursorTests(DiscoveryFixture):
+    def test_the_newest_hint_is_ingested_beyond_fifty_thousand_frames(self):
+        d = self.make_discovery(junk=60_005, real=[T + 50.0])
+        report = self.ingest(discovery_db=d, ledger_db=None)
+        self.assertEqual(self.migrated(), [T + 50.0], report['skipped'])
+        self.assertEqual(report['rows_read'], {'discovery.raw_events': 60_006})
+        self.assertNotIn('DISCOVERY_TRUNCATED', report['skipped'])
+        self.assertEqual(ft.read_cursors(self.store)['discovery.raw_events'][1], 60_006)
+
+    def test_a_second_run_reads_only_the_new_frames(self):
+        d = self.make_discovery(junk=300, real=[T + 50.0])
+        first = self.ingest(discovery_db=d, ledger_db=None)
+        self.assertEqual(first['rows_read'], {'discovery.raw_events': 301})
+        self.assertEqual(first['skipped']['DISCOVERY_FRAME_ALTERED'], 300)          # the junk frames are counted, never used
+        again = self.ingest(discovery_db=d, ledger_db=None, now=NOW + 1)
+        self.assertNotIn('discovery.raw_events', again['rows_read'])           # nothing new: nothing read
+        self.assertEqual((again['inserted'], again['duplicate']), (0, 0))
+        self.add_junk(d, 3, 5_000)
+        self.add_real(d, [T + 80.0])
+        step = self.ingest(discovery_db=d, ledger_db=None, now=NOW + 2)
+        self.assertEqual(step['rows_read'], {'discovery.raw_events': 4})
+        self.assertEqual(self.migrated(), [T + 50.0, T + 80.0])
+
+    def test_a_bound_is_recorded_and_the_next_run_continues_from_the_cursor(self):
+        d = self.make_discovery(junk=2500, real=[T + 50.0])
+        first = self.ingest(discovery_db=d, ledger_db=None, page_rows=1000, max_pages=2)
+        self.assertEqual(first['skipped']['DISCOVERY_TRUNCATED'], 1)
+        self.assertEqual(first['page_bound_hit'], {'discovery.raw_events': 1})
+        self.assertEqual(self.migrated(), [])                                   # the hint is behind the bound, not lost
+        second = self.ingest(discovery_db=d, ledger_db=None, page_rows=1000, max_pages=2, now=NOW + 1)
+        self.assertEqual(second['rows_read'], {'discovery.raw_events': 501})
+        self.assertNotIn('DISCOVERY_TRUNCATED', second['skipped'])
+        self.assertEqual(self.migrated(), [T + 50.0])
+
+    def test_a_source_drained_exactly_by_the_last_page_is_not_a_bound(self):
+        exact = self.make_discovery('exact.sqlite', junk=3, real=[T + 50.0])      # 4 frames = 2 pages x 2 rows
+        report = self.ingest(discovery_db=exact, ledger_db=None, page_rows=2, max_pages=2)
+        self.assertEqual((report['page_bound_hit'], 'DISCOVERY_TRUNCATED' in report['skipped']), ({}, False), report['skipped'])
+        self.assertEqual(self.migrated(), [T + 50.0])
+        more = self.make_discovery('more.sqlite', junk=4, real=[T + 60.0])        # 5 frames: one frame is left behind
+        other = self.fresh_store('other.sqlite')
+        hit = ft.ingest(other, discovery_db=more, now=NOW, page_rows=2, max_pages=2)
+        self.assertEqual((hit['page_bound_hit'], hit['skipped']['DISCOVERY_TRUNCATED']), ({'discovery.raw_events': 1}, 1))
+
+    def test_a_replaced_discovery_store_restarts_from_zero(self):
+        d = self.make_discovery(junk=5, real=[T + 50.0])
+        self.ingest(discovery_db=d, ledger_db=None)
+        d.unlink()
+        d = self.make_discovery(junk=4, real=[T + 90.0], junk_start=9_000.0)     # a different first frame
+        again = self.ingest(discovery_db=d, ledger_db=None, now=NOW + 1)
+        self.assertEqual(again['skipped']['CURSOR_RESET_SOURCE_CHANGED'], 1)
+        self.assertEqual(again['rows_read'], {'discovery.raw_events': 5})
+        self.assertEqual(self.migrated(), [T + 50.0, T + 90.0])                  # the old row is kept
+
+    def test_a_cursor_past_the_end_of_a_shrunk_store_restarts(self):
+        d = self.make_discovery(junk=10, real=[T + 50.0])
+        self.ingest(discovery_db=d, ledger_db=None)
+        with closing(sqlite3.connect(d)) as c:
+            c.execute('DROP TRIGGER IF EXISTS raw_identity')
+            c.execute('DELETE FROM raw_events WHERE seq>5')
+            c.commit()
+        again = self.ingest(discovery_db=d, ledger_db=None, now=NOW + 1)
+        self.assertEqual(again['skipped']['CURSOR_RESET_SOURCE_CHANGED'], 1)
+
+    def test_a_windowed_run_reads_its_window_records_truncation_and_leaves_the_cursor_alone(self):
+        d = self.make_discovery(junk=10, real=[T + 50.0])
+        with unittest.mock.patch.object(ft, 'DISCOVERY_WINDOW_LIMIT', 3):
+            report = self.ingest(discovery_db=d, ledger_db=None, since=0, until=T + 1_000_000)
+        self.assertEqual(report['skipped']['DISCOVERY_TRUNCATED'], 1)
+        self.assertEqual((report['rows_read'], ft.read_cursors(self.store)), ({}, {}))
+
+    def test_the_cursor_is_committed_with_the_rows_and_a_failed_write_re_reads_the_frames(self):
+        d = self.make_discovery(junk=5, real=[T + 50.0])
+        real = ft.Writer.append
+        calls = []
+
+        def failing(writer, records, cursors=()):
+            calls.append(len(records))
+            raise OSError('disk full')
+        with unittest.mock.patch.object(ft.Writer, 'append', failing):
+            with self.assertRaises(OSError):
+                self.ingest(discovery_db=d, ledger_db=None)
+        self.assertEqual((ft.read_cursors(self.store), self.migrated()), ({}, []))
+        again = self.ingest(discovery_db=d, ledger_db=None, now=NOW + 1)
+        self.assertEqual(again['rows_read'], {'discovery.raw_events': 6})
+        self.assertEqual(self.migrated(), [T + 50.0])
+
+    def test_frames_are_taken_in_seq_order_even_when_received_at_goes_backwards(self):
+        d = self.make_discovery(junk=5, real=[T + 50.0])
+        self.ingest(discovery_db=d, ledger_db=None)
+        self.add_real(d, [T + 10.0])                    # a later frame stamped EARLIER than everything read (a clock step)
+        self.ingest(discovery_db=d, ledger_db=None, now=NOW + 1)
+        self.assertEqual(self.migrated(), [T + 10.0, T + 50.0])
+        # ...and inside ONE page: a page is the next rows by seq, whatever their stamps (ordering by time would drop one at the page edge)
+        self.add_real(d, [T + 300.0, T + 100.0, T + 200.0])
+        self.ingest(discovery_db=d, ledger_db=None, now=NOW + 2, page_rows=2)
+        self.assertEqual(self.migrated(), [T + 10.0, T + 50.0, T + 100.0, T + 200.0, T + 300.0])
+
+    def test_per_frame_decoding_matches_funnel_reports_on_every_kind_of_frame(self):
+        from tools.research import funnel_report as fr
+        rows, migration, _ = real_frames()
+        d = self.make_discovery(junk=2, real=[T + 50.0])
+        tampered = (migration[4], '0' * 64)
+        with closing(sqlite3.connect(d)) as c:
+            for source, payload, h in (('tamper', *tampered), ('nonjson', 'not json', 'x'), ('other', '{"jsonrpc":"2.0"}', 'x')):
+                c.execute('INSERT INTO raw_events(source_id,received_at,slot,payload,payload_hash) VALUES(?,?,?,?,?)', (source, T + 70.0, 9, payload, h))
+            c.commit()
+        stats = {'frames': 0, 'altered': 0, 'undecodable': 0, 'not_migration': 0, 'ambiguous': 0}
+        hints = []
+        for seq, _, received, slot, payload, h in sql(d, 'SELECT seq,source_id,received_at,slot,payload,payload_hash FROM raw_events ORDER BY seq'):
+            hint = ft._frame_hint(seq, received, slot, h, payload, stats)
+            if hint:
+                hints.append(hint)
+        expected, expected_stats = fr.discovery_hints(d, since=0, until=T + 1_000_000)
+        self.assertEqual((hints, stats), (expected, {k: v for k, v in expected_stats.items() if k != 'truncated'}))
+        self.assertEqual(len(hints), 1)
+        self.assertGreaterEqual(stats['altered'], 3)
+
+
+class JournalCursorTests(Fixture):
+    def make_journal(self):
+        journal = self.dir / 'dispatch.sqlite'
+        for ddl in dispatcher.SCHEMAS.values():
+            sql(journal, ddl)
+        return journal
+
+    def dispatch(self, journal, mint, *, at, result=None, result_at=None, result_text=None):
+        sql(journal, 'INSERT INTO intents VALUES(?,?,?,?,?)', ('id-' + mint, mint, 'S-' + mint, canonical({'version': 1, 'at': at}), 'h'))
+        if result is not None or result_text is not None:
+            self.result_for(journal, mint, result=result, result_at=result_at, result_text=result_text)
+
+    def result_for(self, journal, mint, *, result=None, result_at=None, result_text=None):
+        text = result_text if result_text is not None else canonical({'version': 1, 'at': result_at, 'scan_id': 'scan-' + mint, 'result': result})
+        sql(journal, 'INSERT INTO results VALUES(?,?,?)', ('id-' + mint, text, 'h'))
+
+    BODY = {'kind': 'paper_cycle_v1', 'status': 'COMPLETE', 'attempted_requests': 9,
+            'outcomes': [{'type': 'reject', 'reason': 'COST_BUDGET', 'reasons': ['COST_BUDGET'], 'mint': 'D'}]}
+
+    def test_a_second_run_reads_only_new_rows_and_the_result_of_an_old_intent_is_offered_alone(self):
+        journal = self.make_journal()
+        self.dispatch(journal, 'D', at=T + 400, result=self.BODY, result_at=T + 420)
+        self.dispatch(journal, 'E', at=T + 500)                                    # dispatched, no result yet
+        first = self.ingest(journal_db=journal, ledger_db=None)
+        self.assertEqual(first['rows_read'], {'journal.intents': 2, 'journal.results': 1})
+        quiet = self.ingest(journal_db=journal, ledger_db=None, now=NOW + 1)
+        self.assertEqual((quiet['rows_read'], quiet['inserted'], quiet['duplicate']), ({}, 0, 0))
+        self.result_for(journal, 'E', result={**self.BODY, 'outcomes': [{**self.BODY['outcomes'][0], 'mint': 'E'}]}, result_at=T + 520)
+        step = self.ingest(journal_db=journal, ledger_db=None, now=NOW + 2)
+        self.assertEqual(step['rows_read'], {'journal.results': 1})
+        self.assertEqual((step['inserted'], step['duplicate'], step['conflict']), (1, 0, 0))   # the intent is not offered again
+        self.assertEqual(self.row('E', T + 520)['features']['dispatch_death_reason'], 'ENGINE:COST_BUDGET')
+        self.dispatch(journal, 'F', at=T + 600, result=self.BODY, result_at=T + 640)
+        last = self.ingest(journal_db=journal, ledger_db=None, now=NOW + 3)
+        self.assertEqual(last['rows_read'], {'journal.intents': 1, 'journal.results': 1})
+
+    def test_incremental_journal_rows_equal_a_full_read(self):
+        journal = self.make_journal()
+        self.dispatch(journal, 'D', at=T + 400, result=self.BODY, result_at=T + 420)
+        self.dispatch(journal, 'E', at=T + 500)
+        self.ingest(journal_db=journal, ledger_db=None)
+        self.result_for(journal, 'E', result=self.BODY, result_at=T + 520)
+        self.dispatch(journal, 'F', at=T + 600, result=self.BODY, result_at=T + 640)
+        self.ingest(journal_db=journal, ledger_db=None, now=NOW + 1)
+        other = self.fresh_store('full.sqlite')
+        ft.ingest(other, journal_db=journal, now=NOW)
+        self.assertEqual(self.hashes(), self.hashes(other))
+        self.assertEqual(len(self.hashes()), 6)                  # D, E, F: dispatched + result each
+
+    def test_an_unreadable_result_skips_the_dispatch_as_the_full_read_does(self):
+        journal = self.make_journal()
+        self.dispatch(journal, 'U', at=T + 400, result_text='{broken')
+        self.dispatch(journal, 'V', at=T + 410)
+        report = self.ingest(journal_db=journal, ledger_db=None)
+        self.assertEqual(report['skipped']['JOURNAL_ROW_UNREADABLE'], 1)
+        self.assertEqual(sorted(m for m, _ in self.rows()), ['V'])
+
+    def test_a_replaced_journal_restarts_and_a_windowed_run_reads_it_whole_without_cursors(self):
+        journal = self.make_journal()
+        self.dispatch(journal, 'D', at=T + 400)
+        self.ingest(journal_db=journal, ledger_db=None)
+        journal.unlink()
+        journal = self.make_journal()
+        self.dispatch(journal, 'Z', at=T + 450)
+        again = self.ingest(journal_db=journal, ledger_db=None, now=NOW + 1)
+        self.assertEqual(again['skipped']['CURSOR_RESET_SOURCE_CHANGED'], 1)        # the intents cursor (the old journal had no results)
+        before = ft.read_cursors(self.store)
+        windowed = self.ingest(journal_db=journal, ledger_db=None, now=NOW + 2, since=0, until=T + 10_000)
+        self.assertEqual((windowed['rows_read'], ft.read_cursors(self.store)), ({}, before))
+        self.assertEqual(windowed['duplicate'], 1)                                   # it did read the journal whole
+
+    def test_a_bound_continues_from_the_journal_cursor(self):
+        journal = self.make_journal()
+        for i in range(5):
+            self.dispatch(journal, 'M%d' % i, at=T + 400 + i)
+        first = self.ingest(journal_db=journal, ledger_db=None, page_rows=2, max_pages=1)
+        self.assertEqual(first['page_bound_hit'], {'journal.intents': 1})
+        self.assertEqual(first['rows_read']['journal.intents'], 2)
+        for step in range(2):
+            self.ingest(journal_db=journal, ledger_db=None, page_rows=2, max_pages=1, now=NOW + 1 + step)
+        self.assertEqual(sorted(m for m, _ in self.rows()), ['M%d' % i for i in range(5)])
+
+
+class ExactDrainTests(Fixture):
+    """A last full page that drains its source exactly is not a page bound (T43 item 2)."""
+
+    def test_ledger_events_drained_exactly(self):
+        report = self.ingest(page_rows=1, max_pages=2)                              # exactly two events
+        self.assertEqual((report['page_bound_hit'], 'PAGE_BOUND_HIT:ledger.events' in report['skipped']), ({}, False), report['skipped'])
+        other = self.fresh_store('one-page.sqlite')
+        report = ft.ingest(other, ledger_db=self.ledger, now=NOW, page_rows=2, max_pages=1)
+        self.assertEqual(report['page_bound_hit'], {})
+        report = self.ingest(page_rows=1, max_pages=1, now=NOW + 1)                  # one event is left: that IS a bound
+        self.assertEqual(report['page_bound_hit'], {})                               # ...but the first store already holds both
+        third = self.fresh_store('bound.sqlite')
+        report = ft.ingest(third, ledger_db=self.ledger, now=NOW, page_rows=1, max_pages=1)
+        self.assertEqual(report['page_bound_hit'], {'ledger.events': 1})
+
+    def test_counterfactual_and_decisions_drained_exactly(self):
+        store = self.dir / 'cf.sqlite'
+        cf.init(store, now=T)
+        for mint in ('C1', 'C2'):
+            cf.add_candidate(store, mint=mint, pool='P' + mint, signature='S' + mint, slot=1, migrated_at=T, seq=1 if mint == 'C1' else 2, now=T)
+            sql(store, "INSERT INTO samples(mint,horizon,due_at,sampled_at,slot,base_raw,quote_raw,price,status) VALUES(?,300,?,?,5,'2000','80000000000','1','OK')",
+                (mint, T + 300, T + 301))
+        decisions = self.dir / 'decisions.sqlite'
+        sql(decisions, 'CREATE TABLE decisions(scan_id TEXT PRIMARY KEY,source_hash TEXT NOT NULL,source_payload TEXT NOT NULL,decision TEXT NOT NULL)')
+        for i in range(2):
+            sql(decisions, 'INSERT INTO decisions VALUES(?,?,?,?)', ('s%d' % i, 'h', json.dumps({'mint': 'A'}), json.dumps({'ts': T + 5 + i, 'action': 'BUY'})))
+        exact = self.ingest(ledger_db=None, counterfactual_store=store, decisions_db=decisions, page_rows=2, max_pages=1)
+        self.assertEqual((exact['page_bound_hit'], exact['pages']), ({}, {'counterfactual.samples': 1, 'decisions.decisions': 1}), exact['skipped'])
+        other = self.fresh_store('bound.sqlite')
+        hit = ft.ingest(other, counterfactual_store=store, decisions_db=decisions, now=NOW, page_rows=1, max_pages=1)
+        self.assertEqual(hit['page_bound_hit'], {'counterfactual.samples': 1, 'decisions.decisions': 1})
+
+
+class UnitTemplateTests(unittest.TestCase):
+    def test_features_unit_is_a_limited_offline_research_unit(self):
+        service = (FRESH / 'desk-features.service').read_text()
+        timer = (FRESH / 'desk-features.timer').read_text()
+        lines = service.splitlines()
+
+        def one(key):
+            values = [l.split('=', 1)[1] for l in lines if l.startswith(key + '=')]
+            self.assertEqual(len(values), 1, key)
+            return values[0]
+        for key, value in (('CPUQuota', '100%'), ('CPUWeight', '20'), ('IOWeight', '20'), ('Nice', '10'),
+                           ('IOSchedulingClass', 'idle'), ('Type', 'oneshot'), ('User', 'solana-desk'), ('ProtectSystem', 'strict'),
+                           ('NoNewPrivileges', 'true'), ('ProtectHome', 'true'), ('PrivateTmp', 'true'), ('UMask', '0077'),
+                           ('PrivateNetwork', 'true'), ('RestrictAddressFamilies', 'AF_UNIX')):
+            self.assertEqual(one(key), value, key)
+        for key in ('MemoryMax', 'TasksMax'):
+            self.assertRegex(one(key), r'^[1-9]\d*[KMG]?$')
+        self.assertNotIn('LoadCredential', service, 'no provider keys: it reads retained evidence only')
+        self.assertNotRegex(service, r'(?m)^\[Install\]')
+        self.assertIn('-m tools.research.features ingest', one('ExecStart'))
+        self.assertIn('--counterfactual-store <FRESH_ROOT>/counterfactual/counterfactual.sqlite', one('ExecStart'),
+                      'optional stores are listed: a missing one is skipped with a reason, not a failed run')
+        self.assertIn('ReadOnlyPaths=<FRESH_ROOT>', service)
+        write = one('ReadWritePaths').split()
+        self.assertEqual(write, ['<FRESH_ROOT>/features'], 'only its own store directory is writable')
+        self.assertNotIn('--discovery-db /var/lib/solana-desk/', service.replace('<DISCOVERY_DB>', ''))
+        self.assertIn('OnUnitInactiveSec=', timer)
+        self.assertIn('Unit=desk-features.service', timer)
+        self.assertIn('WantedBy=timers.target', timer)
+
+
+if __name__ == '__main__':
+    unittest.main()

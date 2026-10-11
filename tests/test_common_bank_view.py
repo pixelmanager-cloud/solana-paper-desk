@@ -18,7 +18,7 @@ from tests import test_pool_classification_projection as fixtures
 @unittest.skipUnless(Path('/proc/self/mountinfo').is_file(),'Existing fixture ledger setup requires Linux')
 class CommonBankViewTests(unittest.TestCase):
     def setUp(self):
-        self.f=fixtures.PoolClassificationProjectionTests();self.f.setUp();self.addCleanup(self.f.doCleanups)
+        self.f=fixtures.PoolClassificationProjectionTests();self.addCleanup(self.f.doCleanups);self.f.setUp()
         self.store=self.f.h.store; self.mint=self.f.q['mint'];self.pool=canonical_accounts(self.mint)
         bank=self.store.load(self.f.head['snapshot_evidence']['snapshot_hash'])
         point=self.store.load(self.f.refs.snapshot)

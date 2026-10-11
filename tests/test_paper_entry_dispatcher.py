@@ -29,7 +29,7 @@ from desk.programs import unbase58
 
 class DispatcherTests(unittest.TestCase):
     def setUp(self):
-        self.f=fixture.PaperObservationCollectorTests();self.f.setUp();self.addCleanup(self.f.doCleanups)
+        self.f=fixture.PaperObservationCollectorTests();self.addCleanup(self.f.doCleanups);self.f.setUp()
         self.f.at=int(time.time());self.root=Path(self.f.tmp.name).resolve()
         self.cfg=config()|{'paper_signal_policy_version':3,'paper_quote_execution_version':1,'paper_usd_valuation_version':1}
         self.config=self.root/'config.json';self.config.write_text(canonical(self.cfg))
