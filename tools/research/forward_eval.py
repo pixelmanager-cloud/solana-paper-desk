@@ -58,7 +58,10 @@ def _fingerprint(c):
 
 
 def _connect(path):
-    c = sqlite3.connect(path.resolve().as_uri() + '?mode=ro', uri=True, timeout=2, isolation_level=None)
+    from tools.research import funnel_report
+    resolved = path.resolve()
+    flag = 'immutable=1' if funnel_report.open_mode(resolved) == 'immutable' else 'mode=ro'  # quiet WAL: no sidecars created
+    c = sqlite3.connect(resolved.as_uri() + '?' + flag, uri=True, timeout=2, isolation_level=None)
     c.execute('PRAGMA query_only=ON')
     return c
 
