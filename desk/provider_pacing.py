@@ -444,7 +444,10 @@ class Pacer:
         """
         try:
             return self._now(c)
-        except (PacingError, TypeError, ValueError):
+        except PacingError as error:
+            if error.code == 'PACING_CLOCK_INVALID': return None     # T23H: an integrity/policy/database error is NEVER swallowed
+            raise
+        except (TypeError, ValueError):
             return None
 
     def _now(self, c):
