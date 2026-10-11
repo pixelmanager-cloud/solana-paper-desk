@@ -17,6 +17,12 @@ ExecStart=/opt/solana-desk/.venv/bin/python -m lean --config /etc/solana-paper/l
 Restart=on-failure
 RestartSec=10
 TimeoutStopSec=30
+# L15 watchdog: the runner pings WATCHDOG=1 (stdlib sd_notify) only while BOTH loop heartbeats are fresh, so a stalled
+# loop stops the pings and systemd kills and restarts the service (Restart=on-failure covers a watchdog timeout).
+# The runner pings whenever systemd arms the watchdog (WATCHDOG_USEC), with or without an `ops` block in lean.json;
+# the credit tracker and the regime log need the block.
+WatchdogSec=300
+NotifyAccess=main
 
 # Filesystem: everything read-only except the lean state dir.
 # The discovery store is a live WAL database written by the discovery service. lean opens it with

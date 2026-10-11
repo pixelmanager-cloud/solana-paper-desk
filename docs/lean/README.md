@@ -44,3 +44,25 @@ python -m lean --config /etc/solana-paper/lean.json --state-dir /var/lib/solana-
 `providers` (HTTP clients, limiters) · `candidates` (discovery + screen) · `strategy` (pure decisions) · `paper`
 (integer fills) · `store` (append-only SQLite) · `adapters` (the ONE place units/types are converted) · `runner` ·
 `report`. The end-to-end test `tests/lean/test_e2e_real.py` runs the real modules with only HTTP faked.
+
+## Ops (L15): credits, watchdog, regime log, morning report
+Enabled by an `ops` block in `lean.json` (see `config/lean/lean.example.json`; unknown keys are refused; remove the block to
+turn the credit tracker and regime log off). Nothing here is a gate: no decision reads these rows.
+* **Credit tracker** (`lean.ops.CreditTracker`). Every provider call (every HTTP attempt, retries included) is counted per
+  provider and method and priced from `ops.credit_costs` (ESTIMATES: calibrate against the provider dashboard; default 1 credit per
+  Helius request, 10 for `getProgramAccounts`, Jupiter and Kraken free). `health.json` -> `ops.credits` shows the month's usage and
+  the projection (month-to-date plus the last 24 h rate times the time left; needs 10 minutes of data). Usage is saved in the store
+  (`events` kind `credit_usage`, at most once a minute: a crash loses at most that minute) and continues after a restart; a new UTC
+  month starts at zero. With `credit_budget_month` set and the projection above it, the low-priority lanes `paths`, `features` and
+  `wallet_signals` are SHED until the projection falls under 90% of the budget: data-collection code asks `runner.ops.credits.allow(lane)`
+  before spending, gets False, and one `CREDIT_SHED` row is written per lane and episode. Screening and exits are never shed or slowed.
+* **Watchdog** (`lean.ops.Watchdog`). With `WatchdogSec=` in the unit (300 s) the runner sends `WATCHDOG=1` through `$NOTIFY_SOCKET`
+  every half timeout, only while BOTH loops have beaten within `watchdog_stale_s` (default 180 s; the candidate loop also beats after
+  every candidate, the position loop after every position). A stalled loop stops the pings, writes one `WATCHDOG_STALL` row and systemd
+  restarts the service; positions resume from the store.
+* **Regime log** (`lean.regime`). Every `regime_interval_s` (300) one `observations(kind='regime')` row: SOL/USD, its 1h and 24h change
+  against the log's own earlier samples (null until a reference sample exists within 10 min / 72 min of the wanted time), and the
+  candidates stored in the last hour (and per hour once 10 minutes have been observed).
+* **Morning report.** `deploy/lean/desk-lean-report.timer` runs `python -m lean.ops report` at 23:00 UTC (08:00 KST) and writes
+  `/var/lib/solana-desk-lean/reports/YYYY-MM-DD.html` (+ `.json`, KST date; an existing page is kept). It is the L06 report; with
+  `--grid FILE` and L08 (`lean.tune`) installed it also writes `YYYY-MM-DD-replay.html` and links it. No notifications.

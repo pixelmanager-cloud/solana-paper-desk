@@ -43,7 +43,7 @@ class _Halt(Exception):
 class Runner:
     def __init__(self, *, store, providers, exit_providers, strategy_cfg, discovery_db, state_dir, code_version,
                  screen_overrides=None, pool_fee_bps=25, taker=PAPER_TAKER, kill_switch=None, clock=time.time,
-                 scan_limit=500, max_retries=3, sol_usd_ttl_s=30):
+                 scan_limit=500, max_retries=3, sol_usd_ttl_s=30, ops=None):
         self.store, self.providers, self.exit_providers = store, providers, exit_providers
         self.cfg = strategy_cfg
         self.pcfg = A.paper_config(strategy_cfg)
@@ -68,6 +68,11 @@ class Runner:
         self._sol_usd = None                       # (Decimal, fetched_at)
         self.halted = None
         self.cursor = 0
+        # --- L15 hook ---
+        self.ops = ops                              # lean.ops.Ops or None (no ops block in lean.json = today's behaviour)
+        if self.ops is not None:
+            self.ops.attach(self)
+        # --- end L15 ---
         self.startup()
 
     # -- lifecycle ------------------------------------------------------------------------------------------------
@@ -109,6 +114,12 @@ class Runner:
         except AccountingHalt as error:
             self._halt('ACCOUNTING_INVARIANT: %s' % error)
             raise _Halt from None
+
+    # --- L15 hook ---
+    def _beat(self, name):
+        if self.ops is not None:
+            self.ops.beat(name)
+    # --- end L15 ---
 
     def _count(self, name, n=1):
         with self._counts_lock:
@@ -174,6 +185,7 @@ class Runner:
     def candidate_pass(self):
         """Retries first, then new discovery frames. One candidate failing never affects another."""
         self.last['candidate_loop'] = self.clock()
+        self._beat('candidates')
         if not self.entries_allowed():
             return 0
         retries, self.retry = self.retry, []
@@ -214,6 +226,7 @@ class Runner:
         return done
 
     def _isolated(self, candidate, attempt):
+        self._beat('candidates')
         try:
             self._handle_candidate(candidate, attempt)
         except _Halt:
@@ -286,6 +299,7 @@ class Runner:
     def position_pass(self):
         """Mark every open position with batched reads; sell (paper) when an exit triggers. Runs under the kill switch."""
         self.last['position_loop'] = self.clock()
+        self._beat('positions')
         if self.halted is not None:
             return 0
         try:
@@ -336,6 +350,7 @@ class Runner:
                 del self.marks[mint]
 
     def _isolated_exit(self, mint, position, state, liquidate):
+        self._beat('positions')
         try:
             if state is None:
                 raise AccountingHalt('position %s has no state' % mint[:8])
@@ -401,7 +416,10 @@ class Runner:
                 'strategy_version': self.strategy_version, 'halted': self.halted,
                 'kill_switch': os.path.exists(self.kill_switch), 'last_loop': dict(self.last), 'counts': counts,
                 'errors_by_code': errors, 'open_positions': sorted(positions), 'cash_lamports': cash, 'cursor': self.cursor,
-                'retry_queue': len(self.retry), 'execution_status': 'EXECUTION_UNVERIFIED', 'live_readiness': False}
+                'retry_queue': len(self.retry), 'execution_status': 'EXECUTION_UNVERIFIED', 'live_readiness': False,
+                # --- L15 hook ---
+                **({} if self.ops is None else self.ops.health())}
+                # --- end L15 ---
 
     def write_health(self):
         """Atomic: a unique temp file in the state dir, fsync, rename; one writer at a time."""
@@ -443,6 +461,9 @@ class Runner:
                    threading.Thread(target=loop, args=(self.position_pass, min(10.0, position_interval)), name='positions')]
         for t in threads:
             t.start()
+        # --- L15 hook ---
+        threads += [] if self.ops is None else self.ops.start(self)      # Ops.start returns started threads
+        # --- end L15 ---
         for t in threads:
             t.join()
         self.write_health()

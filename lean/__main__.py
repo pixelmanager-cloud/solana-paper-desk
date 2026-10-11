@@ -20,6 +20,7 @@ CONFIG_KEYS = {
     'max_candidate_retries': 3,
     'sol_usd_ttl_s': 30,
     'screen': {},                      # lean.candidates settings other than the strategy-owned bands
+    'ops': None,                       # L15: credit tracker / watchdog / regime log (see lean.ops); absent = off
 }
 REQUIRED = ('strategy_config', 'initial_cash_sol')
 
@@ -43,6 +44,11 @@ def load_config(path):
     cfg['strategy_config'] = str(strategy_path if strategy_path.is_absolute() else path.parent / strategy_path)
     if not isinstance(cfg['screen'], dict):
         raise ConfigError('screen must be an object')
+    from lean import ops as _ops           # L15: strict ops block (unknown keys refused); None when absent or disabled
+    try:
+        cfg['ops'] = _ops.load_ops_config(cfg['ops'])
+    except _ops.OpsError as error:
+        raise ConfigError(str(error)) from None
     return cfg
 
 
@@ -68,9 +74,19 @@ def build_runner(cfg, *, state_dir, discovery_db, keys, code_version, clock=None
     the_store = store.Store(os.path.join(state, 'lean.sqlite'), initial_cash_sol=str(cfg['initial_cash_sol']),
                             code_version=code_version, strategy_version=strategy_cfg.strategy_version, clock=clock)
     transport_kwargs = transport_kwargs or {}
+    main_providers = providers.build_providers(keys, lane='main', **transport_kwargs)
+    exit_providers = providers.build_providers(keys, lane='exit', **transport_kwargs)
+    ops = None
+    from lean import ops as lean_ops           # L15: every provider call is counted; the runner gets the Ops hooks
+    ops_cfg = cfg.get('ops')
+    if ops_cfg is None and lean_ops.watchdog_interval() is not None:
+        ops_cfg = lean_ops.watchdog_only_config()      # WatchdogSec= is set: keep pinging even without an ops block
+    if ops_cfg is not None:
+        ops = lean_ops.Ops(ops_cfg, clock=clock)
+        main_providers, exit_providers = ops.meter(main_providers), ops.meter(exit_providers)
     return runner.Runner(
-        store=the_store, providers=providers.build_providers(keys, lane='main', **transport_kwargs),
-        exit_providers=providers.build_providers(keys, lane='exit', **transport_kwargs), strategy_cfg=strategy_cfg,
+        store=the_store, providers=main_providers, ops=ops,
+        exit_providers=exit_providers, strategy_cfg=strategy_cfg,
         discovery_db=discovery_db, state_dir=state, code_version=code_version, screen_overrides=cfg['screen'],
         pool_fee_bps=cfg['pool_fee_bps'], clock=clock, scan_limit=cfg['scan_limit'],
         max_retries=cfg['max_candidate_retries'], sol_usd_ttl_s=cfg['sol_usd_ttl_s'])
