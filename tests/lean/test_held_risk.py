@@ -395,6 +395,49 @@ class Probes(Harness):
         risk, life = self.probe([1_000])
         self.assertIsNone(life.last_good)
 
+    def after_exits(self, marks, jupiter_outcomes, *, at=1000, **cfg):
+        risk = self.make(**cfg)
+        self.runner.t = at
+        self.runner.marks = marks
+        self.runner.stop = type('Stop', (), {'is_set': staticmethod(lambda: False)})()
+        self.runner.exit_providers = type('Prov', (), {'jupiter': self.Jupiter(jupiter_outcomes),
+                                                       'helius': type('H', (), {'get_multiple_accounts': staticmethod(lambda keys: ({'value': [None] * len(keys)}, b'', {}))})()})()
+        row = {'open_fill_id': 7, 'state': {'pool': 'Pool'}}
+        self.runner.store = type('S', (), {'positions': staticmethod(lambda: {MINT: self.position}),
+                                           'position_states': staticmethod(lambda: {MINT: row})})()
+        risk.passes = 1                                               # not the account-check pass (every 6th)
+        risk.after_exits(self.runner)
+        return risk, self.runner.exit_providers.jupiter
+
+    def test_a_fresh_d1_quote_mark_is_reused_instead_of_a_probe(self):
+        risk, jupiter = self.after_exits({MINT: (Decimal('0.9'), 990, 'quote')}, [])
+        self.assertEqual(jupiter.calls, 0)
+        self.assertEqual(risk.life(MINT, 7).last_good, (900_000_000, 990))
+        risk, jupiter = self.after_exits({MINT: (Decimal('0.9'), 900, 'quote')}, [5 * 10 ** 9])       # 100 s old: a probe is needed
+        self.assertEqual(jupiter.calls, 1)
+        risk, jupiter = self.after_exits({MINT: (Decimal('0.9'), 990, 'vaults')}, [5 * 10 ** 9])      # a vault mark proves no route
+        self.assertEqual(jupiter.calls, 1)
+
+    def test_a_reused_quote_mark_clears_the_no_route_clock(self):
+        risk = self.make()
+        risk.life(MINT, 7).no_route_since = 900
+        self.runner.t, self.runner.marks = 1000, {MINT: (Decimal('0.9'), 995, 'quote')}
+        risk._route_ok(MINT, ROW, risk.life(MINT, 7), 900_000_000, 995)
+        self.assertIsNone(risk.life(MINT, 7).no_route_since)
+
+    def test_probes_are_spaced_by_route_probe_s_and_never_for_a_triggered_position(self):
+        risk, jupiter = self.after_exits({}, [5 * 10 ** 9], at=1000)
+        life = risk.life(MINT, 7)
+        self.assertEqual(life.last_probe, 1000)
+        self.runner.t = 1059
+        risk.after_exits(self.runner)
+        self.assertEqual(jupiter.calls, 1)                                                           # 59 s later: not due
+        life.trigger = ('POOL_GONE', {})
+        life.last_probe = 0
+        self.runner.t = 5000
+        risk.after_exits(self.runner)
+        self.assertEqual(jupiter.calls, 1)                                                           # exiting already: no probe
+
     def test_probe_keeps_no_raw_bytes_on_success(self):
         self.probe([5 * 10 ** 9])
         self.assertEqual(self.store.rows('observations', limit=10), [])

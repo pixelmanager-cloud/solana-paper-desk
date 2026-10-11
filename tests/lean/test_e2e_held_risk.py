@@ -267,6 +267,9 @@ class FailingExit(Scenario):
         since = closed['state']['exit_failing_since']
         self.assertGreater(since, trigger['detail']['since'] + 119)
         self.assertEqual((closed['state']['reason'], closed['state']['rug_trigger']), ('RUG_WRITEOFF', 'NO_ROUTE'))
+        # no doomed D1 quote-mark request is made for a position that is already valued here (the hook runs BEFORE the quote marks)
+        late = [e for e in r.store.rows('errors', mint=token.mint, limit=100000) if e['scope'] == 'quote:mark' and e['ts'] > since]
+        self.assertEqual(late, [])
         # valuation while failing: ZERO, from the held-risk source, and never the cost basis
         self.assertTrue(seen['marks'])
         for value, at, source in seen['marks']:
@@ -285,6 +288,19 @@ class FailingExit(Scenario):
         self.assertTrue(r.store.check_invariants())
         decisions = [d for d in r.store.rows('decisions', mint=token.mint, kind='exit', limit=1000) if d['action'] == 'WRITE_OFF']
         self.assertEqual([json.loads(d['reasons']) for d in decisions], [['RUG_WRITEOFF']])
+
+    def test_a_gone_pool_with_no_route_is_valued_at_zero_and_makes_no_doomed_quote_mark_requests(self):
+        token = Token(21, pool_closed_from=600, no_route_from=600)
+        r = self.build(token, unexitable_after_s=900)
+        self.run_until(r, 3000)
+        (closed,) = self.closed(r)
+        self.assertEqual((closed['state']['reason'], closed['state']['rug_trigger']), ('RUG_WRITEOFF', 'POOL_GONE'))
+        since = closed['state']['exit_failing_since']
+        # before the exit started failing the position had no mark at all (cost basis); from then on the hook values it at 0 BEFORE the
+        # D1 quote marks run, so no further 'quote:mark' request is made for it
+        late = [e for e in r.store.rows('errors', mint=token.mint, limit=100000) if e['scope'] == 'quote:mark' and e['ts'] > since + TICK]
+        self.assertEqual(late, [])
+        self.assertEqual(r.cost_basis_mints, [])
 
     def test_without_a_trigger_the_same_failure_is_still_unexitable(self):
         token = Token(21, path=steps((600, 0.5)), no_route_from=600)                         # an ordinary STOP that cannot be quoted

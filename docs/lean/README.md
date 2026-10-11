@@ -100,23 +100,22 @@ cd /opt/solana-desk-lean && /opt/solana-desk/.venv/bin/python -m lean --config /
 
 The end-to-end test `tests/lean/test_e2e_real.py` runs the real modules with only HTTP faked.
 
-## Held-position rug / unsellable handling (L11, `lean/held_risk.py`)
-Configured by the `held_risk` object of `lean.json` (all keys optional; unknown keys are refused; `"enabled": false` gives exactly the
-previous behaviour). For every held mint the position loop watches:
-* **LIQUIDITY_DROP**: the pool's quote vault fell by MORE than `rug_liq_drop_frac` (0.7) since entry (baseline = the reserve the screen saw);
-* **NO_ROUTE**: the Jupiter sell quote has had no route for longer than `unsellable_after_s` (120 s); probed every `route_probe_s` (60 s) with a
-  full-size sell quote on the exit lane. A provider outage (timeout, 5xx, 429) is NOT "no route". About one Jupiter call per position per minute;
-* **POOL_GONE**: a vault account is missing, the pool account is closed, or its owner program changed (migrated); one batched read of
-  `[mint, pool]` per held position every `freeze_check_every` (6) position passes, which also reads the mint's freeze authority;
-* **freeze authority** set after entry: recorded as a flag and reported; it forces an exit only with `freeze_forces_exit: true`.
+## Held-position rug handling (L11F, `lean/held_risk.py`)
+OFF unless `"held_risk": {"enabled": true}` (the key absent or `enabled: false` gives exactly the previous behaviour; unknown keys are refused).
+The module only DETECTS and VALUES; it never sells. A detected rug makes the exit wanted as `DANGER` inside `Runner._manage`, so the quote, fee,
+slippage, D2's persisted `exit_failing_since` clock and D2's write-off are the ordinary ones. Triggers per held mint:
+* **LIQUIDITY_DROP**: the quote vault fell by MORE than `rug_liq_drop_frac` (0.7) since the screen tied to the BUY (the latest PASS screen decided no
+  later than the opening fill); read from the marks the position loop already makes;
+* **POOL_GONE**: vault accounts missing from the marks read, or the pool account closed / owned by another program, in `pool_gone_confirmations` (2)
+  CONSECUTIVE reads (a good read resets; the count survives a restart);
+* **NO_ROUTE**: no Jupiter sell route for `unsellable_after_s` (120 s), probed every `route_probe_s` (60 s) AFTER the exits of the pass (skipped where a
+  D1 quote mark proves a route). A provider outage is never "no route";
+* **freeze authority**: a flag; it forces an exit only with `freeze_forces_exit`.
 
-Any of the first three sells the whole position at a FRESH quote (`RUG_EXIT`, cooldown as after a stop) before the normal strategy looks at it.
-If no executable route exists (a non-transient quote failure, or a route worth less than the fee) the position is **UNSELLABLE**: valued in the
-equity at the best executable quote seen (0 if there never was one), re-tried every pass (a route that comes back is used,
-`trigger: ROUTE_RESTORED`) and, after `unsellable_writeoff_s` (6 h), closed in the books at that value with exit reason `RUG_WRITEOFF` and no fee
-(nothing is sent). A transient quote failure while exiting is retried, never turned into UNSELLABLE.
+Order in one position pass: marks read -> `after_marks` (no I/O: baselines, detection, valuation) -> D1 quote marks -> exits (a trigger is `DANGER`)
+-> `after_exits` (route probes and one batched `[mint, pool]` read every `freeze_check_every` (6) passes; findings act on the NEXT pass).
 
-State lives in generic `events` rows of kind `held_risk` (no schema change) and is rebuilt at start, so UNSELLABLE, the no-route clock and the
-write-off clock survive a restart. `health.json` has a `held_risk` block (trigger / rug-exit / write-off / freeze counts and the UNSELLABLE mints).
-The report has a "Rugs and write-offs" section: counts and PnL of `RUG_EXIT` and `RUG_WRITEOFF` apart from the ordinary exit reasons, the triggers
-that fired, freeze flags, and the positions that are UNSELLABLE now with their value.
+If the forced exit cannot be quoted, D2's clock runs; meanwhile the position is valued at 0 (unless an executable quote younger than
+`unsellable_value_ttl_s` (30 s) exists; never at its last price, never at cost) and after `unexitable_after_s` D2 books the zero-proceeds write-off
+with the reason `RUG_WRITEOFF` (`UNEXITABLE` when no trigger fired). A rug exit and a write-off cool down like a stop. State: `held_risk` events
+plus `rug_trigger` stamped on the position state; the report has a "Rugs and write-offs" section (reasons `DANGER` and `RUG_WRITEOFF`).
