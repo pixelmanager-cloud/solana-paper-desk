@@ -98,6 +98,7 @@ class E2E(unittest.TestCase):
         cfg = load_config(ROOT / 'config' / 'lean' / 'lean.example.json')
         from lean import paths
         cfg['paths'] = paths.config({'enabled': False})                                          # isolate the feature recorder
+        cfg['held_risk'] = {'enabled': False}                                                    # the LINT1 example turns on L11, whose probes also use the low lane
         cfg['lanes'] = {'shares': providers.validate_lane_shares({'main': 0.5, 'exit': 0.2, 'low': 0.3}), 'low_shed_s': 1}
         cfg['features'] = F.config({'enabled': True}) if features else F.config(None)
         r = build_runner(cfg, state_dir=root / 'state', discovery_db=world.discovery_db, keys=KEYS, code_version='e2e-features',
