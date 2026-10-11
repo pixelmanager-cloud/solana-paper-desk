@@ -98,6 +98,8 @@ class World_:
         cfg = load_config(ROOT / 'config' / 'lean' / 'lean.example.json')
         cfg['strategy_config'] = str(root / 'strategy.json')
         cfg['execution'], cfg['held_risk'], cfg['wallet_signals'] = None, {'enabled': False}, None
+        from lean import flow, sell_evidence                                                    # L20: the shipped example turns them ON
+        cfg['sell_evidence'], cfg['flow'] = sell_evidence.config(None), flow.config(None)
         cfg['paths'] = L.config({'enabled': True, 'path_hours': 0.5, 'interval_s': 15})
         cfg['features'] = F.config({'enabled': True, 'max_late_s': 3600 if late else 30})     # LATE: the recorder still reads it
         cfg['lanes'] = {'shares': providers.validate_lane_shares({'main': 0.5, 'exit': 0.2, 'low': 0.3}), 'low_shed_s': 1}

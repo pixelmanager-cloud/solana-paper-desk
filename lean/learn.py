@@ -19,6 +19,8 @@ there. No lookahead (``LookaheadPolicy``, every exclusion counted in ``stats['ex
   * a wallet-signals row is used only if it is ``wallet_signals_v2`` with a ``decision_ts`` at or before the decision and a window that
     ends at it (``window_after_decision_s == 0``); ``smart_buyers_count`` only when its table is as of that decision
     (``smart_asof_ts``); ``bundled_supply_pct`` only when the supply is the screen's (``supply_source == 'screen'``);
+  * an order-flow row (L20, ``observations(kind='flow')``) is used only if it is ``flow_v1`` with a ``decision_ts`` at or before the
+    decision and a window that ends at it (``window_after_decision_s == 0``); a ``TRUNCATED_SPAN`` rate is excluded;
   * the marks never become features, and no mark before the decision is ever read by a label.
 A feature that is unknown for a candidate never matches a rule condition.
 
@@ -53,6 +55,7 @@ from pathlib import Path
 from typing import Optional
 
 from lean import adapters as A, features as F, labels as LB, strategy as S
+from lean import flow as FLW
 
 SELECTION_VERSION = 2
 PROPOSAL_STATUS = 'SELECTION_PROPOSAL_NOT_APPLIED'
@@ -73,7 +76,11 @@ ROW_FEATURES = ('top10_pct', 'top1_pct', 'dev_holding_pct', 'seconds_graduation_
                 'liquidity_usd', 'age_seconds_at_screen', 'transfer_fee_bps')
 # L13 wallet-signal row figures
 WALLET_FEATURES = ('bundle_score', 'sniper_count', 'same_slot_buyers', 'bundled_supply_pct', 'smart_buyers_count')
-FEATURE_NAMES = ROW_FEATURES + WALLET_FEATURES
+# L20 order-flow / bot-pump figures (lean.flow), as of the decision
+FLOW_FEATURES = FLW.FEATURES                       # rate, buy/sell, wash trading (#1), path shape (#7)
+FLOW_VERSION = FLW.VERSION
+FLOW_OK_FLAGS = frozenset({'SAMPLE'})              # read off the pre-decision sample: pre-decision by construction
+FEATURE_NAMES = ROW_FEATURES + WALLET_FEATURES + FLOW_FEATURES
 # known from the screen itself; the others come from the extra calls (L12F) or the wallet collector (L13) that run after it
 SCREEN_TIME_FEATURES = frozenset({'market_cap_usd', 'liquidity_usd', 'age_seconds_at_screen', 'transfer_fee_bps'})
 MIN_FEATURES_VERSION = 3
@@ -300,6 +307,30 @@ def wallet_values(row, decision_ts, policy, counts, names=WALLET_FEATURES) -> di
     return out
 
 
+def flow_values(row, decision_ts, policy, counts, names=FLOW_FEATURES) -> dict:
+    """``{name: Decimal | None}`` of one L20 flow row, as of the decision only (and every exclusion counted)."""
+    out = {name: None for name in names}
+    if row is None:
+        return out
+    if row.get('version') != FLOW_VERSION:
+        counts.skip('FLOW_OLD_VERSION')
+        return out
+    after, flags = row.get('window_after_decision_s'), row.get('flags') or {}
+    for name in names:
+        value = _to_decimal(row.get(name))
+        if value is None:
+            continue
+        if not _num(after) or after > 0:                     # the window ran past the decision
+            counts.exclude(name, 'WINDOW_NOT_CUT_AT_DECISION')
+            continue
+        flag = flags.get(name) if isinstance(flags, dict) else None
+        if flag is not None and flag not in FLOW_OK_FLAGS:
+            counts.exclude(name, 'FLAG_' + str(flag)[:40])
+            continue
+        out[name] = value
+    return out
+
+
 def enterable(path: LB.PathRecord) -> bool:
     """Entered, or passed the screen and refused ONLY by a portfolio limit (it would have been entered on its own merits)."""
     if path.entered:
@@ -336,6 +367,7 @@ def build_dataset(lean_db, paths_db, strategy: S.StrategyConfig, *, label_cfg=No
         decisions = read_decisions(live)
         feature_rows = _observations(live, 'features', counts, 'FEATURES')
         wallet_rows = _observations(live, 'wallet_signals', counts, 'WALLET_SIGNALS')
+        flow_rows = _observations(live, 'flow', counts, 'FLOW')                                 # L20
         for path in LB.iter_paths(connections, load_skipped):           # one path's marks in memory at a time
             n_paths += 1
             decision = decision_time(decisions.get(path.mint, []), path.candidate_id, path.start_ts)
@@ -354,10 +386,12 @@ def build_dataset(lean_db, paths_db, strategy: S.StrategyConfig, *, label_cfg=No
                 continue
             frow = _pick(feature_rows.get(path.mint, []), decision, path.candidate_id, policy, counts, 'FEATURES')
             wrow = _pick(wallet_rows.get(path.mint, []), decision, path.candidate_id, policy, counts, 'WALLET_SIGNALS')
-            if frow is None and wrow is None:
+            xrow = _pick(flow_rows.get(path.mint, []), decision, path.candidate_id, policy, counts, 'FLOW')     # L20
+            if frow is None and wrow is None and xrow is None:
                 counts.skip('NO_FEATURES_AT_DECISION')
                 continue
-            values = {**feature_values(frow, decision, policy, counts), **wallet_values(wrow, decision, policy, counts)}
+            values = {**feature_values(frow, decision, policy, counts), **wallet_values(wrow, decision, policy, counts),
+                      **flow_values(xrow, decision, policy, counts)}
             trade = LB.simulate_exits(path, decision, ref, strategy, pool_fee_bps=pool_fee_bps, pcfg=pcfg)
             rows.append(Row(path.mint, decision, label, {n: values[n] for n in feature_names}, trade.pnl_lamports, enterable(path),
                             trade.status))
@@ -686,6 +720,9 @@ def runner_changes(chosen):
         out.append('wait_for_enrichment:' + ','.join(enriched))
     if wallet:
         out.append('wait_for_wallet_signals:' + ','.join(wallet))
+    flow = sorted(names & set(FLOW_FEATURES))                                            # L20: collected after the screen
+    if flow:
+        out.append('wait_for_flow:' + ','.join(flow))
     return out
 
 

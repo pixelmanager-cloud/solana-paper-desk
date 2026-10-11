@@ -167,6 +167,10 @@ def load_store_events(connection):
             try:
                 state = json.loads(row['state'])
                 exit_reason[row['fill_id']] = str(state.get('reason') or state.get('last_reason') or 'UNSPECIFIED')
+                # --- L20 hook: an UNVERIFIED sell is its own exit reason (shown apart from the verified ones) ---
+                if (state.get('execution') or {}).get('sell_status') == 'SELL_UNVERIFIED':
+                    exit_reason[row['fill_id']] = 'SELL_UNVERIFIED:' + exit_reason[row['fill_id']]
+                # --- end L20 ---
             except (ValueError, AttributeError):
                 skipped['STATE_NOT_JSON:position_state'] += 1
     for row in select('fills', ('id', 'mint', 'side', 'qty_raw', 'sol_lamports', 'fee_lamports') + versions):
@@ -522,6 +526,15 @@ def _execution(db):
         connection.close()
 
 
+def _sell_evidence(db):
+    from lean import sell_evidence
+    connection = open_ro(db)
+    try:
+        return sell_evidence.report_section(connection)
+    finally:
+        connection.close()
+
+
 def _sources(db):
     from lean import sources
     connection = open_ro(db)
@@ -569,6 +582,9 @@ def build(db, *, counterfactual_db=None, horizon=3600, now=None):
     # --- L10 hook: latency-tax distribution, aborted entries, fee breakdown (read-only) ---
     summary['execution'] = _section(_execution, db)
     # --- end L10 ---
+    # --- L20 hook: sells by sellability evidence; UNVERIFIED sells listed separately (booked vs quoted proceeds) ---
+    summary['sell_evidence'] = _section(_sell_evidence, db)
+    # --- end L20 ---
     summary['held_risk'] = _section(held_risk_report, db)        # L11
     # --- L14 hook: per-source funnel (candidates -> screened -> passed -> entered, rejection reasons, watchlist outcome) ---
     summary['sources'] = _section(_sources, db)
@@ -690,6 +706,22 @@ def render_html(s):
         parts.append(table(['side', 'n', 'tax bps p50', 'p90', 'mean', 'max'], [[k, v['n'], v['p50'], v['p90'], v['mean'], v['max']] for k, v in d['latency_tax_bps'].items()]))
         parts.append(table(['fee (SOL)', 'amount'], list(d['fees_sol'].items())))
     # --- end L10 ---
+    # --- L20 hook ---
+    se = s.get('sell_evidence', {'status': 'NOT_PROVIDED'})
+    if se['status'] != 'OK' or se['data']['sells'] - se['data']['verdicts']['NOT_CHECKED'] > 0:
+        parts.append('<h2>Sell evidence (could real traders sell?)</h2>' + note(se))
+    if se['status'] == 'OK' and se['data']['sells'] - se['data']['verdicts']['NOT_CHECKED'] > 0:
+        d = se['data']
+        parts.append(table(['verdict', 'sells'], list(d['verdicts'].items())))
+        if d['unknown_why']:
+            parts.append('<p>UNKNOWN (booked normally): %s</p>' % e(json.dumps(d['unknown_why'], sort_keys=True)))
+        if d['unverified']:
+            parts.append('<p class="flag">SELL_UNVERIFIED: %d sells without evidence of organic sellers; quoted proceeds not booked: %s SOL</p>'
+                         % (len(d['unverified']), e(d['forgone_sol'])))
+            parts.append(table(['fill', 'mint', 'exit', 'reason', 'policy', 'booked SOL', 'quoted SOL', 'realized SOL', 'sellers', 'sampled', 'why'],
+                               [[r['fill_id'], r['mint'], r['event'], r['reason'], r['policy'], r['booked_sol'], r['quoted_sol'], r['realized_sol'],
+                                 r['sellers'], r['sampled'], r['why']] for r in d['unverified']]))
+    # --- end L20 ---
     # --- L14 hook ---
     src = s.get('sources', {'status': 'NOT_PROVIDED'})
     parts.append('<h2>Funnel per source</h2>' + note(src))

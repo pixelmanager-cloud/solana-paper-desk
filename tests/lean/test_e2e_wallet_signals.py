@@ -121,6 +121,8 @@ class WalletSignalsEndToEnd(unittest.TestCase):
         cfg['paths'] = paths.config({'enabled': True})       # LINT2: paths.sqlite is the outcome source; the recorder thread is
                                                               # built by Runner.run() only, so it never runs in this manual drive
         cfg['lanes'] = {'shares': providers.validate_lane_shares({'main': 0.3, 'exit': 0.2, 'low': 0.5}), 'low_shed_s': 1}
+        from lean import flow, sell_evidence                                                    # L20: the shipped example turns
+        cfg['sell_evidence'], cfg['flow'] = sell_evidence.config(None), flow.config(None)       # them ON; the chain stays L13's own
         if signals:
             cfg['wallet_signals'] = {'pace_s': 0.25, 'retry_delay_s': 60, 'max_per_pass': 3}
         else:
