@@ -182,6 +182,22 @@ class IntakeTests(DiscoveryFixture):
         holder.execute('ROLLBACK')
         self.assertEqual(lc.scan_new(locked, 0, now=NOW).candidates, [])     # retried next pass: works again
 
+    def test_live_wal_discovery_is_readable_with_a_read_only_shm_and_directory(self):
+        """The systemd unit keeps the discovery dir read-only (ProtectSystem=strict): SQLite must read a live WAL
+        database through the EXISTING -wal/-shm without being able to write either (deploy/lean/desk-lean.service)."""
+        seq, mint, *_ = self.add_migration(21, 900)
+        writer = sqlite3.connect(self.db, isolation_level=None)
+        self.addCleanup(writer.close)
+        self.assertEqual(writer.execute('PRAGMA journal_mode=WAL').fetchone()[0], 'wal')
+        later, later_mint, *_ = self.add_migration(23, 800)                 # committed into the -wal, not checkpointed
+        writer.execute('BEGIN'); writer.execute('SELECT COUNT(*) FROM raw_events').fetchone(); writer.execute('COMMIT')
+        shm = Path(str(self.db) + '-shm')
+        self.assertTrue(shm.exists() and Path(str(self.db) + '-wal').exists())
+        shm.chmod(0o444); self.root.chmod(0o555)
+        self.addCleanup(shm.chmod, 0o644); self.addCleanup(self.root.chmod, 0o755)
+        result = lc.scan_new(self.db, 0, now=NOW)
+        self.assertEqual([c.mint for c in result.candidates], [mint, later_mint])
+
     def test_iter_new_candidates_keeps_the_cursor_past_batches_without_candidates(self):
         for _ in range(4):
             self.add({'method': 'x'}, NOW - 900)
