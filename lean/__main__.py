@@ -27,6 +27,9 @@ CONFIG_KEYS = {
     'lanes': None,                     # {"main","exit","low"} shares of each provider rate (+ "low_shed_s"); None = 0.55/0.25/0.20
     'paths': None,                     # lean.paths settings ({"enabled", "path_hours", "interval_s", ...}); None = disabled
     # --- end L07R ---
+    # --- L12 ---
+    'features': None,                  # lean.features settings ({"enabled", "enrich", "queue_size"}); None = disabled
+    # --- end L12 ---
 }
 REQUIRED = ('strategy_config', 'initial_cash_sol')
 
@@ -63,6 +66,13 @@ def load_config(path):
     except ValueError as error:
         raise ConfigError(str(error)) from None
     # --- end L07R ---
+    # --- L12 ---
+    from lean import features
+    try:
+        cfg['features'] = features.config(cfg['features'])
+    except ValueError as error:
+        raise ConfigError(str(error)) from None
+    # --- end L12 ---
     return cfg
 
 
@@ -108,6 +118,11 @@ def build_runner(cfg, *, state_dir, discovery_db, keys, code_version, clock=None
     if r.paths is not None:
         r.paths.resume()
     # --- end L07R ---
+    # --- L12: the entry feature recorder (low lane) ---
+    from lean import features
+    r.features = features.build(features.config(cfg.get('features')), store=the_store, keys=keys, code_version=code_version,
+                                strategy_version=strategy_cfg.strategy_version, clock=clock, transport_kwargs=transport_kwargs)
+    # --- end L12 ---
     return r
 
 

@@ -405,6 +405,45 @@ def errors_by_code(events):
     return dict(counts.most_common())
 
 
+# --------------------------------------------------------------------------- L12: features at entry vs outcome
+def features_report(db):
+    """What the captured entry features looked like against the realized outcome of the candidates that were ENTERED and are
+    closed now: per numeric feature, quantile buckets (equal values share a bucket) x (n, win rate, mean pnl), with an
+    ``insufficient`` flag. Also how many ``features`` rows exist (entered or not) and how often each field is missing and why."""
+    from lean import features
+    connection = open_ro(db)
+    try:
+        tables = {row[0] for row in connection.execute("SELECT name FROM sqlite_master WHERE type='table'")}
+        out = {'rows': 0, 'entered_rows': 0, 'closed_entered': 0, 'missing': {}, 'table': {}}
+        if 'observations' not in tables:
+            return out
+        rows, missing = [], Counter()
+        for (meta,) in connection.execute("SELECT meta FROM observations WHERE kind='features' ORDER BY id"):
+            try:
+                row = json.loads(meta)
+                row['fields'], row['missing']
+            except (ValueError, KeyError, TypeError):
+                continue
+            rows.append(row)
+            for name, why in row['missing'].items():
+                missing['%s:%s' % (name, why)] += 1
+        realized = {}
+        if 'position_state' in tables:
+            for mint, state in connection.execute("SELECT mint,state FROM position_state WHERE event='closed' ORDER BY id"):
+                try:
+                    realized[mint] = int(json.loads(state)['trade_pnl_lamports'])
+                except (ValueError, KeyError, TypeError):
+                    continue
+        out['rows'] = len(rows)
+        out['entered_rows'] = sum(1 for r in rows if r.get('entered'))
+        out['closed_entered'] = sum(1 for r in rows if r.get('entered') and r.get('mint') in realized)
+        out['missing'] = dict(missing.most_common(30))
+        out['table'] = features.feature_outcome_table(rows, realized)
+        return out
+    finally:
+        connection.close()
+
+
 # --------------------------------------------------------------------------- build
 def _section(function, *args):
     try:
@@ -441,6 +480,9 @@ def build(db, *, counterfactual_db=None, horizon=3600, now=None):
     summary['pnl_by_strategy'] = {'status': 'OK', 'data': pnl_by_strategy(all_trades)}
     summary['exit_reasons'] = {'status': 'OK', 'data': exit_breakdown(all_trades)}
     summary['errors'] = {'status': 'OK', 'data': errors_by_code(events)}
+    # --- L12 hook ---
+    summary['features'] = _section(features_report, db)
+    # --- end L12 ---
     if counterfactual_db is None:
         summary['counterfactual'] = {'status': 'NOT_PROVIDED'}
     elif funnel_result['status'] != 'OK':
@@ -508,6 +550,19 @@ def render_html(s):
     parts.append('<h2>Per-trade table</h2>' + table(['mint', 'strategy', 'status', 'cost', 'proceeds', 'pnl', 'return', 'hold s', 'exit reasons', 'flag'],
         [[r['mint'], r['strategy_version'], r['status'], r['cost_sol'], r['proceeds_sol'], r['pnl_sol'], r['return'], r['hold_seconds'],
           ','.join(r['exit_reasons']), r['flag'] or ''] for r in t['rows']]))
+    # --- L12 hook ---
+    fe = s.get('features', {'status': 'NOT_PROVIDED'})
+    if fe['status'] == 'OK' and fe['data']['rows']:
+        d = fe['data']
+        parts.append('<h2>What entered candidates looked like at entry (features vs outcome)</h2><p>%d feature rows, %d entered, %d entered and closed. '
+                     'Equal values share a bucket; <b>insufficient</b> means too few samples to read as a finding.</p>' % (d['rows'], d['entered_rows'], d['closed_entered']))
+        flat = [[name, t['n'], 'INSUFFICIENT' if t['insufficient'] else '', b['lo'], b['hi'], b['n'], b['win_rate'], b['mean_pnl_lamports'],
+                 'INSUFFICIENT' if b['insufficient'] else ''] for name, t in d['table'].items() for b in t['buckets']]
+        parts.append(table(['feature', 'n', 'feature flag', 'bucket lo', 'bucket hi', 'bucket n', 'win rate', 'mean pnl (lamports)', 'bucket flag'], flat)
+                     if flat else '<p>No closed entered candidate has numeric features yet.</p>')
+        if d['missing']:
+            parts.append('<p>Most common missing fields: %s</p>' % e(json.dumps(d['missing'], sort_keys=True)))
+    # --- end L12 ---
     c = s['counterfactual']
     parts.append('<h2>Rejections vs forward price (counterfactual)</h2>' + note(c) + ('<p>Not provided.</p>' if c['status'] == 'NOT_PROVIDED' else ''))
     if c['status'] == 'OK':
