@@ -1733,3 +1733,23 @@ The T24R review measured gate loads of 17 + 2×(completed passes). Passes grow b
 4. **Benchmark.** It must grow PASSES and RECEIPTS (1×/10×/30× of a 7-day profile at 288+ passes/day) and run each scale in a FRESH process. Assert flat gate and accounting cost.
 5. **F9 worst case.** Use the 18-read maximum per pass, not the 9-read reserve. Include pacer contention between units and gate cost. Check the decisions unit timeout against its deadline.
 6. **(LOW)** Close the unclosed `open()` at `tests/test_cycle_deadline.py:100`; `setUp` inside subTests must clean up.
+
+---
+
+## T44 — Simplification inventory for a "lean desk" (ANALYSIS ONLY, no code changes)
+STATUS: OPEN
+DEPENDS: none
+BASE: origin/integration/r1
+OWNS: docs/design/LEAN_DESK_INVENTORY.md (new; documentation only)
+AVOID: all code
+
+CK's direction: the codebase is over-engineered for paper research ("touch one thing and everything breaks"). The coordinator will design a simplification and needs a precise, harsh inventory first. Produce a document with file:line references for each of the following.
+1. **Global-latch machinery.** Every place where a charged failure or unresolved state can stop the WHOLE desk: NULL passes, terminal gate, receipts, holds, dispatcher journal checks, monitoring latches, pacing guards. For each, what it protects, whether it is needed for PAPER data integrity, and what a per-candidate failure model would replace it with.
+2. **Identity pinning.** `implementation_hash`, the runtime successor/continuation/extension pins, dispatcher context hashes and inode pins, config_hash pins. Where it is enforced, what breaks on a code change, and what "record code version per event" would need.
+3. **Legacy reconciliation/retirement modules.** List every `*_retirement*`, `*_reconciliation*`, `runtime_*successor*`, `*_lineage*` and similar module, its tests, its line count, and whether anything on the FRESH-store path needs it. Mark each: delete / keep-for-archive-reading / keep.
+4. **Full re-verification on every gate.** Each place that re-proves retained history on every call, with its cost class.
+5. **Minimal core.** The minimal set of modules that a lean paper desk needs (discovery → candidate screening → quotes → engine → ledger/accounting → held monitoring → exits → reports), with dependencies.
+6. **Size.** The total LOC and test count that could be removed or bypassed, and the risks.
+7. **Migration path.** Keep the current desk running while a lean path is built beside it (same data sources and engine), then switch.
+
+Be concrete and blunt. No code edits.
