@@ -51,6 +51,7 @@ DEFAULTS = {
     'freeze_check_every': 6,
     'freeze_forces_exit': False,
     'pool_gone_confirmations': 2,
+    'max_probes_per_pass': 1,          # bounds how long one pass can spend in blocking probe HTTP calls (exit thread)
 }
 REPLAY_PAGE = 1000
 
@@ -74,6 +75,8 @@ class Config:
         for name in ('unsellable_after_s', 'unsellable_value_ttl_s', 'route_probe_s', 'freeze_check_every'):
             if type(merged[name]) is not int or not 1 <= merged[name] <= 10 ** 7:
                 raise HeldRiskConfigError('%s must be a positive integer' % name)
+        if type(merged['max_probes_per_pass']) is not int or not 1 <= merged['max_probes_per_pass'] <= 50:
+            raise HeldRiskConfigError('max_probes_per_pass must be an integer from 1 to 50')
         if type(merged['pool_gone_confirmations']) is not int or not 1 <= merged['pool_gone_confirmations'] <= 20:
             raise HeldRiskConfigError('pool_gone_confirmations must be an integer from 1 to 20')
         for name in ('enabled', 'freeze_forces_exit'):
@@ -83,6 +86,7 @@ class Config:
         self.unsellable_after_s, self.unsellable_value_ttl_s = merged['unsellable_after_s'], merged['unsellable_value_ttl_s']
         self.route_probe_s, self.freeze_check_every = merged['route_probe_s'], merged['freeze_check_every']
         self.freeze_forces_exit, self.pool_gone_confirmations = merged['freeze_forces_exit'], merged['pool_gone_confirmations']
+        self.max_probes_per_pass = merged['max_probes_per_pass']
 
     @classmethod
     def from_dict(cls, value):
@@ -288,8 +292,9 @@ class HeldRisk:
         now = runner._now()
         if self.passes % self.cfg.freeze_check_every == 1 or self.cfg.freeze_check_every == 1:
             self._account_checks(runner, held)
+        probes = 0
         for mint, row in held.items():
-            if runner.stop.is_set():
+            if runner.stop.is_set() or probes >= self.cfg.max_probes_per_pass:
                 return
             life = self.life(mint, row['open_fill_id'])
             if life.trigger is not None:
@@ -301,6 +306,7 @@ class HeldRisk:
                 life.last_probe = now                                  # a D1 quote mark IS a full-size sell quote: reuse it
                 self._route_ok(mint, row, life, int(mark[0] * 10 ** 9), mark[1])
                 continue
+            probes += 1
             self._probe(runner, mint, positions[mint], row, life, now)
 
     def _route_ok(self, mint, row, life, value_lamports, at):

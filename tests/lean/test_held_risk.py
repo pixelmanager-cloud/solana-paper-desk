@@ -409,6 +409,24 @@ class Probes(Harness):
         risk.after_exits(self.runner)
         return risk, self.runner.exit_providers.jupiter
 
+    def test_probes_per_pass_are_bounded_so_a_slow_provider_cannot_stall_the_exit_thread(self):
+        mints = ['M1', 'M2', 'M3']
+        rows = {m: {'open_fill_id': i + 1, 'state': {'pool': 'Pool'}} for i, m in enumerate(mints)}
+        risk = self.make()
+        self.runner.t, self.runner.marks = 1000, {}
+        self.runner.exit_providers = type('Prov', (), {'jupiter': self.Jupiter([5 * 10 ** 9] * 9)})()
+        self.runner.store = type('S', (), {'positions': staticmethod(lambda: {m: self.position for m in mints}),
+                                           'position_states': staticmethod(lambda: rows)})()
+        risk.passes = 1
+        risk.after_exits(self.runner)
+        self.assertEqual(self.runner.exit_providers.jupiter.calls, 1)              # default: one blocking probe per pass
+        risk.after_exits(self.runner)
+        risk.after_exits(self.runner)
+        self.assertEqual(self.runner.exit_providers.jupiter.calls, 3)              # the others are reached on later passes
+        self.assertTrue(all(risk.life(m, rows[m]['open_fill_id']).last_probe == 1000 for m in mints))
+        with self.assertRaises(H.HeldRiskConfigError):
+            H.Config.from_dict({'max_probes_per_pass': 0})
+
     def test_a_fresh_d1_quote_mark_is_reused_instead_of_a_probe(self):
         risk, jupiter = self.after_exits({MINT: (Decimal('0.9'), 990, 'quote')}, [])
         self.assertEqual(jupiter.calls, 0)

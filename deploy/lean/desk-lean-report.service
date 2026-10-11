@@ -6,7 +6,7 @@ After=desk-lean.service
 Type=oneshot
 User=solana-desk
 Group=solana-desk
-WorkingDirectory=/opt/solana-desk
+WorkingDirectory=/opt/solana-desk-lean
 Environment=PYTHONDONTWRITEBYTECODE=1
 # Writes /var/lib/solana-desk-lean/reports/YYYY-MM-DD.html (KST date of the run) and .json; an existing page is kept, so a
 # repeated run the same day changes nothing. lean.sqlite is opened read-only (the live trader keeps writing it).
@@ -17,9 +17,9 @@ UMask=0077
 ProtectSystem=strict
 ProtectHome=true
 PrivateTmp=true
-StateDirectory=solana-desk-lean
-StateDirectoryMode=0700
-ReadWritePaths=/var/lib/solana-desk-lean
+# The trader's state dir is read-only here; only the reports subdir (pre-created 0700 solana-desk at install) is writable.
+ReadOnlyPaths=/var/lib/solana-desk-lean
+ReadWritePaths=/var/lib/solana-desk-lean/reports
 NoNewPrivileges=true
 CapabilityBoundingSet=
 AmbientCapabilities=

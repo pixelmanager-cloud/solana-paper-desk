@@ -7,7 +7,7 @@ Wants=network-online.target
 Type=simple
 User=solana-desk
 Group=solana-desk
-WorkingDirectory=/opt/solana-desk
+WorkingDirectory=/opt/solana-desk-lean
 Environment=PYTHONDONTWRITEBYTECODE=1
 Environment=PYTHONUNBUFFERED=1
 # Credentials, read only via %d and never logged:
