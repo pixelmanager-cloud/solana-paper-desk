@@ -84,6 +84,10 @@ class Runner:
         self._halt_persisted = False
         self.cursor = 0
         self.cursor_initialized = False
+        # --- L07R hook ---
+        self.paths = None                          # lean.paths.PathRecorder (set by build_runner when paths.enabled)
+        self._l07r_screened = None                 # (mint, candidate_id, Screen) of the candidate being handled
+        # --- end L07R ---
         self.startup()
 
     # -- lifecycle ------------------------------------------------------------------------------------------------
@@ -287,6 +291,24 @@ class Runner:
                 self.retry.append((candidate, attempt + 1))
         except Exception as error:                                             # isolation: recorded, never fatal
             self._error('CANDIDATE_FAILED', transient=False, mint=candidate.mint, message=type(error).__name__)
+        # --- L07R hook ---
+        self._l07r_after(candidate)
+        # --- end L07R ---
+
+    # --- L07R hook ---
+    def _l07r_after(self, candidate):
+        """Path recorder: start the price path of a handled candidate (entered or soft-rejected; the recorder skips
+        hazards). Decided on the final attempt only. Store writes only, no provider I/O, no runner lock; never raises."""
+        screened, self._l07r_screened = self._l07r_screened, None
+        if self.paths is None or screened is None or screened[0] != candidate.mint:
+            return
+        try:
+            if any(queued.mint == candidate.mint for queued, _attempt in self.retry):
+                return
+            self.paths.on_candidate(*screened)
+        except Exception:                                                       # the trader never notices
+            log.debug('path recorder hook failed', exc_info=True)
+    # --- end L07R ---
 
     def _handle_candidate(self, candidate, attempt):
         mint = candidate.mint
@@ -303,6 +325,9 @@ class Runner:
         action = 'PASS' if result.passed else 'FAILED' if result.error else 'REJECT'
         self.store.add_decision('screen', action, mint=mint, candidate_id=cid, reasons=result.reasons,
                                 features={**result.features, 'unknowns': list(result.unknowns), 'attempt': attempt}, ts=self.clock())
+        # --- L07R hook ---
+        self._l07r_screened = (mint, cid, result)
+        # --- end L07R ---
         if result.error:
             error = result.error
             self._error(error['code'], transient=error['transient'], mint=mint, scope='screen:%s' % error.get('stage'),
@@ -531,7 +556,10 @@ class Runner:
                 'dead_loops': dict(self.dead), 'counts': counts, 'errors_by_code': errors, 'open_positions': sorted(positions),
                 'marks': {m: {'source': v[2], 'at': v[1]} for m, v in marks.items()},
                 'cost_basis_mints': list(self.cost_basis_mints), 'cash_lamports': cash, 'cursor': self.cursor,
-                'retry_queue': len(self.retry), 'execution_status': 'EXECUTION_UNVERIFIED', 'live_readiness': False}
+                'retry_queue': len(self.retry), 'execution_status': 'EXECUTION_UNVERIFIED', 'live_readiness': False,
+                # --- L07R hook ---
+                'paths': self.paths.health() if self.paths is not None else {'enabled': False}}
+                # --- end L07R ---
 
     def write_health(self):
         """Atomic: a unique temp file in the state dir, fsync, rename; one writer at a time."""
@@ -584,9 +612,19 @@ class Runner:
                                     name='positions')]
         for t in threads:
             t.start()
+        # --- L07R hook: the path recorder in its own daemon thread; its death or slowness never stops the trader ---
+        recorder = None
+        if self.paths is not None:
+            recorder = threading.Thread(target=self.paths.run, args=(self.stop,), name='paths', daemon=True)
+            recorder.start()
+        # --- end L07R ---
         for t in threads:
             while t.is_alive():
                 t.join(0.5)
+        # --- L07R hook ---
+        if recorder is not None:
+            recorder.join(30.0)                    # bounded: one in-flight low-lane call at most
+        # --- end L07R ---
         try:
             self.write_health()
         except Exception:
