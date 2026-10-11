@@ -25,7 +25,7 @@ ROOT=Path(__file__).resolve().parents[1]
 
 class RuntimeExtensionTests(unittest.TestCase):
     def setUp(self):
-        self.h=fixtures.RuntimeContinuationTests();self.h.setUp();self.addCleanup(self.h.doCleanups)
+        self.h=fixtures.RuntimeContinuationTests();self.addCleanup(self.h.doCleanups);self.h.setUp()
         self.f=self.h.f;self.root=self.h.root;self.source=runtime.implementation_hash()
         self.base_root=self.root/'frozen8c';self.base_root.mkdir()
         with zipfile.ZipFile(ROOT/'fixtures/runtime-extension-predecessor-desk.zip') as z:z.extractall(self.base_root)

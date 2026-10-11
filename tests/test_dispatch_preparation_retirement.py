@@ -37,7 +37,7 @@ class DispatchPreparationRetirementTests(unittest.TestCase):
     def setUp(self):
         self.assertEqual(hashlib.sha256(Path(entry.__file__).read_bytes()).hexdigest(),
             '2cce07d1a2f86c129abc869d29fc152190f283b82c2db11389413e53fb129ef5')
-        fixture=fixtures.PaperObservationCollectorTests();fixture.setUp();self.addCleanup(fixture.doCleanups)
+        fixture=fixtures.PaperObservationCollectorTests();self.addCleanup(fixture.doCleanups);fixture.setUp()
         fixture.at=int(time.time());root=Path(fixture.tmp.name).resolve()
         raw,mint,pool=migration_fixture();raw["transaction"]["signatures"]=[base58(bytes([9])*64)]
         cfg=config()|{'paper_signal_policy_version':3,'paper_quote_execution_version':1,'paper_usd_valuation_version':1}

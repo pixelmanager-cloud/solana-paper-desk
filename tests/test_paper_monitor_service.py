@@ -15,7 +15,7 @@ class MonitorServiceTests(unittest.TestCase):
  def args(self,f,cfg):return ['--config',str(cfg),'--research-db',str(f.research),'--evidence-db',str(f.evidence),
                             '--ledger-db',str(f.f.path),'--pool-fee-bps','25']
  def test_actual_exported_remaining_quantity_and_positions_only_invocation(self):
-  f=exporter_fixtures.TargetExportTests();f.setUp();self.addCleanup(f.doCleanups)
+  f=exporter_fixtures.TargetExportTests();self.addCleanup(f.doCleanups);f.setUp()
   f.f.http_calls=[];f.f.sell_output=10_000_000
   self.assertEqual(f.f.actual_cycle()['status'],'COMPLETE')
   state=cycle._state(f.f.path,f.f.cfg);position=state['positions'][f.target.mint]
@@ -39,13 +39,13 @@ class MonitorServiceTests(unittest.TestCase):
    self.assertEqual(service.main(self.args(f,cfg)),2)
   self.assertEqual(len(seen),1)
  def test_dependency_hold_stops_before_export_or_credentials(self):
-  f=cli_fixtures.PaperCycleCliTests();f.setUp();self.addCleanup(f.doCleanups)
+  f=cli_fixtures.PaperCycleCliTests();self.addCleanup(f.doCleanups);f.setUp()
   args=['--config',str(f.config_path),'--research-db','missing-r','--evidence-db','missing-e',
         '--ledger-db','missing-l','--pool-fee-bps','25','--systemd-credentials','--dependency-blocker','RUNTIME_HOLD']
   with redirect_stdout(io.StringIO()),patch.object(service,'export_targets',side_effect=AssertionError('export')),patch.object(service.cli,'_credentials',side_effect=AssertionError('credentials')):
    self.assertEqual(service.main(args),2)
  def test_actual_empty_export_does_not_load_credentials_or_call_cycle(self):
-  f=exporter_fixtures.TargetExportTests();f.setUp();self.addCleanup(f.doCleanups)
+  f=exporter_fixtures.TargetExportTests();self.addCleanup(f.doCleanups);f.setUp()
   cfg=f.f.path.parent/'cfg.json';cfg.write_text(json.dumps(f.f.cfg))
   with redirect_stdout(io.StringIO()),patch.object(service.cli,'main',side_effect=AssertionError('cycle')),patch.object(service.cli,'_credentials',side_effect=AssertionError('credentials')):
    self.assertEqual(service.main(self.args(f,cfg)+['--systemd-credentials']),0)

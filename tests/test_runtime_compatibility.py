@@ -44,7 +44,7 @@ paper_cycle.initialize(sys.argv[1],json.loads(Path('config.json').read_text()))
         result=subprocess.run([sys.executable,'-c',script,str(self.ledger),OLD],cwd=self.oldroot,capture_output=True,text=True,timeout=20)
         self.assertEqual(result.returncode,0,result.stderr)
         from tests.test_paper_observation_collector import PaperObservationCollectorTests
-        self.context=PaperObservationCollectorTests();self.context.setUp();self.addCleanup(self.context.doCleanups)
+        self.context=PaperObservationCollectorTests();self.addCleanup(self.context.doCleanups);self.context.setUp()
         target=self.context.target()
         from desk.ownership_acquisition import _Setup
         _Setup(self.context.progress.store,self.context.jobs.descriptor(target.scan_id),
@@ -75,7 +75,7 @@ paper_cycle.initialize(sys.argv[1],json.loads(Path('config.json').read_text()))
 
     def test_different_valid_context_and_missing_empty_ledger_pin_refused(self):
         from tests.test_paper_observation_collector import PaperObservationCollectorTests
-        other=PaperObservationCollectorTests();other.setUp();self.addCleanup(other.doCleanups);other.target()
+        other=PaperObservationCollectorTests();self.addCleanup(other.doCleanups);other.setUp();other.target()
         before=dump(self.ledger)
         with self.assertRaisesRegex(ValueError,'context'):
             rc.transition(other.jobs.path,other.progress.store.path,self.ledger,self.cfg,predecessor=OLD,successor=self.current)

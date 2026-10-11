@@ -160,7 +160,7 @@ class QuoteV3SeamTests(unittest.TestCase):
         with self.assertRaises(ValueError):qe.plan(engine.initial_state(self.cfg),bad,self.cfg)
 
     def test_repaired_builder_wallet_binding_replays_actual_quote_without_fallback(self):
-        f=adapter_fixture.PaperMarketAdapterTests();f.setUp();self.addCleanup(f.doCleanups)
+        f=adapter_fixture.PaperMarketAdapterTests();self.addCleanup(f.doCleanups);f.setUp()
         built=f.build()['event'];self.assertIsNotNone(built)
         self.assertEqual(built['taker'],f.target.taker)
         state=engine.initial_state(self.cfg);before=copy.deepcopy(state)

@@ -10,7 +10,7 @@ from tests.helpers import T
 
 class QuoteReportTests(unittest.TestCase):
     def lifecycle(self, decimals=6):
-        c=fixtures.QuoteExecutionTests();c.setUp();self.addCleanup(c.doCleanups)
+        c=fixtures.QuoteExecutionTests();self.addCleanup(c.doCleanups);c.setUp()
         buy=c.quote('buy',10_000_000,1_000_003,decimals=decimals)
         raw=q.output_raw(buy,c.cfg)
         c.apply(c.market(),(buy,c.quote('sell',raw,10_000_000,decimals=decimals)))

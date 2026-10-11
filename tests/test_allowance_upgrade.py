@@ -93,7 +93,7 @@ class ResearchUpgradeTests(unittest.TestCase):
 
 class MonitoringUpgradeTests(unittest.TestCase):
     def setUp(self):
-        self.f=fixtures.MonitoringBudgetTests();self.f.setUp();self.addCleanup(self.f.doCleanups)
+        self.f=fixtures.MonitoringBudgetTests();self.addCleanup(self.f.doCleanups);self.f.setUp()
         from desk.ownership_acquisition import _Setup
         _Setup(self.f.store,self.f.jobs.descriptor(self.f.scan),self.f.progress.admission(self.f.scan))
 

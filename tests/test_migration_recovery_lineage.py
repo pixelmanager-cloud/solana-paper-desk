@@ -47,7 +47,7 @@ def mint_fixture(n):
 class MigrationRecoveryLineageTests(unittest.TestCase):
     def test_real_prefix_prospective_pin_equals_post_extension_and_apply_strict(self):
         predecessor=runtime.implementation_hash()
-        f=old_fixture.DispatchPreparationRetirementTests();f.setUp();self.addCleanup(f.doCleanups)
+        f=old_fixture.DispatchPreparationRetirementTests();self.addCleanup(f.doCleanups);f.setUp()
         f.test_real_first_receipt_then_continuation_then_retirement_with_distinct_backup()
         producer=copy.deepcopy(f.pin['successor_context'])
         rp=patch.object(runtime,'POLICY',f.f.root/'runtime-policy.json');rp.start();self.addCleanup(rp.stop)

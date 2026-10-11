@@ -257,7 +257,7 @@ class ReceiptChainTests(unittest.TestCase):
 
     @unittest.skipUnless(Path('/proc/self/mountinfo').is_file(),'Legacy protected ledger fixture requires Linux')
     def test_actual_persisted_v1_rows_and_file_bytes_unchanged_by_pure_dispatch(self):
-        f=legacy_fixture.PoolReceiptLedgerTests();f.setUp();self.addCleanup(f.doCleanups)
+        f=legacy_fixture.PoolReceiptLedgerTests();self.addCleanup(f.doCleanups);f.setUp()
         f.writer.publish('legacy-original',f.receipt)
         with sqlite3.connect(f.writer.path) as c:
             self.descriptor=json.loads(c.execute('SELECT body FROM ledger_descriptor').fetchone()[0])

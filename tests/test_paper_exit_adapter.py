@@ -14,8 +14,8 @@ from tests.helpers import T,config
 
 class ExitObservationTests(unittest.TestCase):
     def setUp(self):
-        self.a=adapter_fixture.PaperMarketAdapterTests();self.a.setUp();self.addCleanup(self.a.doCleanups)
-        self.f=execution_fixture.QuoteExecutionTests();self.f.setUp();self.addCleanup(self.f.doCleanups)
+        self.a=adapter_fixture.PaperMarketAdapterTests();self.addCleanup(self.a.doCleanups);self.a.setUp()
+        self.f=execution_fixture.QuoteExecutionTests();self.addCleanup(self.f.doCleanups);self.f.setUp()
         self.a.fixture.at=T;self.a.now=T
         self.a.context=replace(self.a.context,now=T,graduated_at=T-600)
         self.f.mint=self.a.target.mint;self.f.pool=self.a.target.pool

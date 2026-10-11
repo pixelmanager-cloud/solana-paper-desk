@@ -23,7 +23,7 @@ def dump(path):
 
 class HTTP403RetirementTests(unittest.TestCase):
     def setUp(self):
-        self.h=fixtures.PaperCycleTests();self.h.setUp();self.addCleanup(self.h.doCleanups)
+        self.h=fixtures.PaperCycleTests();self.addCleanup(self.h.doCleanups);self.h.setUp()
         self.f=self.h.f;self.store=self.f.progress.store;self.cfg=self.h.cfg
         self.policy=Path(self.f.tmp.name)/'http403-policy.json'
         self.policy.write_text(canonical({'version':1,'associations':[]}))

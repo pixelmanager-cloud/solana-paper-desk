@@ -34,7 +34,7 @@ def _reader_death(research,evidence):
 @unittest.skipUnless(Path('/proc/self/mountinfo').is_file(),'Linux guarded journal contract')
 class JournalSemanticReplayTests(unittest.TestCase):
     def setUp(self):
-        self.f=fixture.CommonBankJournalTests();self.f.setUp();self.addCleanup(self.f.doCleanups)
+        self.f=fixture.CommonBankJournalTests();self.addCleanup(self.f.doCleanups);self.f.setUp()
         f=self.f;original=f.store;f.path=f.root/'semantic-evidence.sqlite';f.research=f.root/'semantic-research.sqlite'
         f.store=EvidenceStore(f.path)
         with original.connect() as c:hashes=[r[0] for r in c.execute('SELECT hash FROM pages')]
@@ -352,7 +352,7 @@ class SemanticResourceLatchTests(unittest.TestCase):
 @unittest.skipUnless(Path('/proc/self/mountinfo').is_file(),'Linux guarded journal contract')
 class WholeSetReplayRefusalTests(unittest.TestCase):
     def test_malformed_suffix_row_count_is_rejected_before_any_audit(self):
-        f=JournalSemanticReplayTests();f.setUp();self.addCleanup(f.doCleanups);f.complete()
+        f=JournalSemanticReplayTests();self.addCleanup(f.doCleanups);f.setUp();f.complete()
         with f.f.store.connect() as c:
             c.execute('DROP TRIGGER common_bank_clock_intent_insert')
             for i in range(128):

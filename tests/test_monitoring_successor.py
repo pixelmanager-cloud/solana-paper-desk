@@ -18,7 +18,7 @@ from tests.helpers import T
 
 class MonitoringSuccessorTests(unittest.TestCase):
     def setUp(self):
-        self.f=fixtures.MonitoringHandoffTests();self.f.setUp();self.addCleanup(self.f.doCleanups)
+        self.f=fixtures.MonitoringHandoffTests();self.addCleanup(self.f.doCleanups);self.f.setUp()
         self.f.charge_original();self.first=self.f.activate()
         self.policy=self.f.root/'successor-policy.json'
         self.policy.write_text(canonical({'version':1,'successors':[]}))
@@ -149,7 +149,7 @@ class MonitoringSuccessorTests(unittest.TestCase):
         from desk import paper_terminal_reconciliation as terminal, paper_read_sources as transport, provider_pacing
         from desk.ownership_acquisition import _Setup
         from tests import test_paper_terminal_reconciliation as terminal_fixtures
-        t=terminal_fixtures.TerminalReconciliationTests();t.setUp();self.addCleanup(t.doCleanups)
+        t=terminal_fixtures.TerminalReconciliationTests();self.addCleanup(t.doCleanups);t.setUp()
         for key in t.h.item.graduation_refs:
             manifest=t.store.load(key)
             self.f.store.save(t.store.load(manifest['response_hash']))

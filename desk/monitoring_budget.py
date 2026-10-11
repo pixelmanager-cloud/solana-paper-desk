@@ -108,15 +108,54 @@ def _lock_holders(path):
     return holders
 
 
+def _flock_pids():
+    """PIDs other than ours that hold any flock according to the kernel lock table; None when unreadable."""
+    try:
+        with open(LOCK_TABLE) as table:
+            lines = table.read().splitlines()
+    except OSError:
+        return None
+    pids = set()
+    for line in lines:
+        parts = line.split()
+        if '->' in parts or 'FLOCK' not in parts:
+            continue
+        try:
+            pids.add(int(parts[parts.index('FLOCK') + 3]))
+        except (IndexError, ValueError):
+            return None
+    return pids - {os.getpid()}
+
+
+def _real_uid(pid):
+    """Real uid of ``pid`` from /proc/<pid>/status; None when it cannot be read (treated as the owner's: fail closed)."""
+    try:
+        with open(f'{PROC_ROOT}/{pid}/status') as status:
+            for line in status:
+                if line.startswith('Uid:'):
+                    return int(line.split()[1])
+    except (OSError, ValueError, IndexError):
+        pass
+    return None
+
+
 def _deleted_lock_holders(path):
     """PIDs other than ours holding an open descriptor on a DELETED lock file at ``path``.
 
     That is the recreated-lock-file hazard: the live owner's flock sits on an unlinked inode the
-    path no longer names. None when the process table cannot be read (fail closed). Processes of
-    other users whose descriptors are unreadable are skipped only when they are not the lock
-    file's owner (a root-owned holder of a user's lock file is a documented residual risk).
+    path no longer names. None when the process table cannot be read (fail closed). A process whose
+    descriptors cannot be read is skipped unless it could be our owner: the kernel lock table must show
+    it holding a flock (readable for every pid) AND it must run as the lock file's owner (read from
+    /proc/<pid>/status, readable even when fd/ is not). That skips system daemons of other users (root
+    services holding their own locks) and same-user helpers such as `(sd-pam)` that hold none, which
+    made an orphan permanently unprovable on GitHub runners (T38). Residual risk: a process of
+    ANOTHER user (for example root) holding our deleted lock inode is not covered; the desk services
+    never run as root.
     """
     target = str(path) + ' (deleted)'
+    flock_pids = _flock_pids()
+    if flock_pids is None:
+        return None
     try:
         owner = os.stat(path).st_uid
     except OSError:
@@ -133,11 +172,8 @@ def _deleted_lock_holders(path):
         try:
             names = os.listdir(fd_dir)
         except PermissionError:
-            try:
-                if os.stat(f'{PROC_ROOT}/{pid}').st_uid == owner:
-                    return None                         # same user but unreadable: cannot prove
-            except OSError:
-                pass
+            if int(pid) in flock_pids and _real_uid(pid) in (owner, None):
+                return None                             # a same-user flock holder we cannot inspect: cannot prove it is not ours
             continue
         except OSError:
             continue                                    # exited meanwhile

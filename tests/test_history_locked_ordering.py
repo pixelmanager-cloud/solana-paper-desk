@@ -13,7 +13,7 @@ from tests.test_paper_read_sources import Response
 
 class LockedHistoryTests(unittest.TestCase):
     def _native_path(self,stale=False,held=False):
-        h=fixture.HistoryFirstTests();h.setUp();self.addCleanup(h.doCleanups)
+        h=fixture.HistoryFirstTests();self.addCleanup(h.doCleanups);h.setUp()
         from desk import kraken_pacing_migration
         policy=Path(h.root)/'kraken-migration.json';policy.write_text(canonical({'version':1,'pins':[]}))
         pinning=patch.object(kraken_pacing_migration,'POLICY',policy);pinning.start();self.addCleanup(pinning.stop)

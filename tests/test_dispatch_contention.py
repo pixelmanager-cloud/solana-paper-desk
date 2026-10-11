@@ -16,7 +16,7 @@ with open(sys.argv[1],'a') as lock:
 
 class DispatchContentionTests(unittest.TestCase):
     def setUp(self):
-        self.f=fixture.DispatcherTests();self.f.setUp();self.addCleanup(self.f.doCleanups)
+        self.f=fixture.DispatcherTests();self.addCleanup(self.f.doCleanups);self.f.setUp()
         self.processes=[];self.addCleanup(self.release)
     def hold(self,path):
         child=subprocess.Popen([sys.executable,'-c',_LOCKER,str(path)],stdin=subprocess.PIPE,

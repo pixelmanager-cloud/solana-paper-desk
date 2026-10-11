@@ -114,7 +114,7 @@ class PolicyTests(unittest.TestCase):
 
 class AcquisitionProfileTests(unittest.TestCase):
     def setUp(self):
-        self.f=acquisition_fixtures.AcquisitionTests();self.f.setUp();self.addCleanup(self.f.doCleanups)
+        self.f=acquisition_fixtures.AcquisitionTests();self.addCleanup(self.f.doCleanups);self.f.setUp()
         self.f.values[0]=account(mint_bytes(self.f.mint))
 
     def test_persisted_acquisition_profile_and_resume_no_reset(self):
