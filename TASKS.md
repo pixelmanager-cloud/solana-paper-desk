@@ -1883,6 +1883,7 @@ Every candidate that passes the HAZARD checks gets its price path recorded for `
 
 ## L08 — Offline strategy replay + tuning report
 STATUS: OPEN
+ADDENDUM (CK 2026-10-11): the replay grid must also include ENTRY-TIMING variants: enter at the first path mark, after the first pullback of ≥X% from the local high, or after N minutes of positive momentum.
 DEPENDS: none (build against the L01 schema + L07 `path_mark` rows; use synthetic paths in tests)
 BASE: origin/integration/r1
 OWNS: lean/replay.py, lean/tune.py, tests/lean/test_replay.py, tests/lean/test_tune.py
@@ -1894,3 +1895,99 @@ AVOID: desk/**
 - **Promotion.** Never auto-promote. Emit `config/lean/proposals/<ts>.json` with the diff vs current `strategy_version` and the evidence.
 - **Calibration test.** Replaying the live `lean-1` config on the paths of tokens actually traded must reproduce the live fills' exit reasons. A mismatch is reported, not hidden.
 - **Report.** Generate an HTML report in the same style as L06.
+
+---
+
+# LEAN UPGRADES L10–L16 (CK approved 2026-10-11). Rules for ALL of these:
+- BASE: `origin/cloud/L09` (the integrated lean desk; its interfaces are REAL; do NOT invent stubs). If `origin/lean/main` exists when you start, use that instead.
+- Put your logic in your OWN new module. In `lean/runner.py`, add only a small, clearly delimited hook (`# --- L1x hook ---` … `# --- end L1x ---`), at most ~30 lines.
+- Shared files (`lean/runner.py`, `lean/adapters.py`, `tests/lean/fakeworld.py`, `config/lean/lean.example.json`) may only be extended ADDITIVELY. Do not reformat or rename them.
+- New config keys go in `lean.json` with a default that keeps today's behaviour when the key is absent.
+- **Acceptance:** `python -m unittest discover -s tests/lean -t .` passes in ONE process (real rc=0), including `tests/lean/test_e2e_real.py`. You must also add an e2e scenario of your own, `tests/lean/test_e2e_<topic>.py`, built on `fakeworld` with real modules and only HTTP faked, plus 2–3 mutations you tried that the test kills (list them in your report).
+- Paper only. No signing, no broadcasting, no keys in logs. Each Helius/Jupiter call goes through the shared limiters (`lean/providers.py`). Data-collection features use the low-priority lane and are shed first. Exits are never slowed.
+- AVOID: `desk/**`. Finish with `reports/L1x.md` and a commit starting `DONE L1x:`.
+
+## L10 — Latency-aware fills + realistic costs (P1)
+STATUS: OPEN
+OWNS: lean/execution.py, tests/lean/test_execution.py, tests/lean/test_e2e_execution.py
+Paper fills must model a real bot that is a few seconds late.
+- **Delayed re-quote.** On every BUY and SELL decision, keep the decision quote (q0) and re-quote after `exec_delay_s`, default 3s, configurable.
+  - Fill at the WORSE of q0 and q1.
+  - If q1 has no route or breaks the cost cap on entry, record `ENTRY_ABORTED_LATENCY` and skip; it is not an error.
+  - On an exit, always fill at q1. If q1 fails, retry until a quote exists.
+- **Record both quotes** in the fill or decision payload, plus `latency_tax_bps = (q0 - fill)/q0` for every fill.
+- **Cost model.** Add the cost model to the paper fee calculation:
+  - priority fee + Jito tip (config defaults 0.0001 + 0.0001 SOL per tx);
+  - token ATA rent 0.00203928 SOL on the first buy of a mint, refunded on full close (track it, report it separately);
+  - Token-2022 transfer-fee extension: haircut by the mint's transfer fee bps (read from the mint account the screen already loaded).
+- **Report.** In `lean/report.py`, add a latency-tax distribution (p50/p90 per side) and the total fees broken down.
+
+## L11 — Held-position rug / unsellable handling (P1)
+STATUS: OPEN
+OWNS: lean/held_risk.py, tests/lean/test_held_risk.py, tests/lean/test_e2e_held_risk.py
+In the position loop, detect for each held mint:
+- (a) pool liquidity (quote vault) dropped more than `rug_liq_drop_frac` (default 0.7) since entry;
+- (b) the mint's freeze authority is set or used, or the account is frozen; a cheap check every N marks;
+- (c) the Jupiter sell quote has no route for more than `unsellable_after_s` (default 120s);
+- (d) the pool account is closed or migrated.
+
+On (a), (c) or (d), force an exit attempt at q1. If no route exists, mark the position `UNSELLABLE`.
+- **Accounting.** An UNSELLABLE position is valued at the best executable quote, or 0 if there is none, and closed in the books after `unsellable_writeoff_s` (default 6h) at that value, with exit reason `RUG_WRITEOFF`.
+- **Report.** Show rug and write-off counts and losses separately.
+- **Restart.** UNSELLABLE state survives a restart.
+
+## L12 — Entry feature capture (P1)
+STATUS: OPEN
+OWNS: lean/features.py, tests/lean/test_features.py, tests/lean/test_e2e_features.py
+For every screened candidate (entered or not), write one `observations(kind='features')` row with a versioned schema (`features_version`).
+- **Fields:**
+  - holder count;
+  - top-10 % (excluding the pool vault and the burn address);
+  - dev/creator wallet holding %;
+  - seconds from token creation to graduation;
+  - the first-N-minutes trade counts (buys and sells), unique buyers, and buy volume in SOL;
+  - market cap and liquidity at the screen;
+  - metadata socials present (twitter/telegram/website booleans);
+  - mint and freeze authority state;
+  - Token-2022 extensions;
+  - SOL/USD.
+- **Budget.** Cheap first: reuse the accounts the screen already loaded. At most 3 extra Helius calls per candidate, on the low-priority lane. Missing fields are null, with a reason, never an error.
+- **Report.** In L06 or L08, add a feature-vs-outcome table: per-feature quantile buckets × win rate / mean PnL, with an insufficient-sample flag.
+
+## L13 — Bundle/sniper detection + smart-wallet signal (P2)
+STATUS: OPEN
+OWNS: lean/wallet_signals.py, tests/lean/test_wallet_signals.py, tests/lean/test_e2e_wallet_signals.py
+DEPENDS: none. Write into the L12 features row if L12 is merged; otherwise use your own `observations(kind='wallet_signals')` row.
+- **Bundle and sniper detection** from the first ~2 minutes of swaps after graduation (or creation):
+  - buys in the same slot as the pool creation or graduation;
+  - the number of distinct buyers funded by the same source wallet within 1 hop (use Helius parsed transactions or `getSignaturesForAddress`, bounded);
+  - the share of supply held by the bundled wallets.
+
+  Output `bundle_score`, `sniper_count` and `bundled_supply_pct`.
+- **Smart-wallet signal.** Maintain `lean_wallets` (wallet → paper-observed record, built ONLY from tokens this desk recorded paths for (L07) or traded). Score wallets that bought early in tokens that later 2x'd vs those that rugged. Record `smart_buyers_count` for each new candidate.
+- **Use.** Features only; NOT used in entry decisions yet. Hard per-candidate call cap, on the low-priority lane.
+
+## L14 — More candidate sources + watchlist re-evaluation (P2)
+STATUS: OPEN
+OWNS: lean/sources.py, lean/watchlist.py, tests/lean/test_sources.py, tests/lean/test_watchlist.py, tests/lean/test_e2e_sources.py
+- **Source interface.** Abstract a `Source` (`iter_new(cursor) -> (candidates, next_cursor)`). The existing discovery DB becomes `PumpGraduationSource`.
+- **New pools.** Add Raydium CPMM / Raydium AMM v4 / Meteora DAMM and DLMM new-pool discovery for SOL-quoted pools, polling the program accounts or signatures via Helius with a bounded budget (document the cost per hour). Decode pool accounts with pure decoders. If a program's layout is not certain, implement only the ones you can verify against fixtures, and list the rest as TODO.
+- **Watchlist.** Candidates rejected for soft reasons (market cap too low or high, liquidity, cost cap, portfolio full, cooldown) are re-screened every `watch_interval_s` (default 300s) for up to `watch_hours` (default 6). Hazard rejects are NEVER re-screened.
+- **Record keeping.** Each candidate row records its `source`. The funnel in the report is per source.
+
+## L15 — Ops: credit tracker, watchdog, regime log, morning report (P3)
+STATUS: OPEN
+OWNS: lean/ops.py, lean/regime.py, deploy/lean/desk-lean-report.service, deploy/lean/desk-lean-report.timer, tests/lean/test_ops.py, tests/lean/test_regime.py
+- **Credit tracker.** Count calls per provider and method, with an estimated credit cost from a config table (Helius credits per method). Track the monthly projection in health.json. When the projection exceeds `credit_budget_month`, shed the low-priority lanes (paths, features, wallet signals) first and record `CREDIT_SHED`.
+- **Watchdog.** Each loop has a heartbeat in health. Use systemd `WatchdogSec=` with `sd_notify` (stdlib socket, no new deps) from the main loop, and only when both loop heartbeats are fresh. A stalled loop leads to a restart.
+- **Regime log.** Every 5 minutes, record `observations(kind='regime')`: SOL/USD and its 1h/24h change, plus discovery candidates per hour. A feature only, never a gate.
+- **Morning report.** A timer at 08:00 KST (23:00 UTC) runs the L06 (+L08 if present) report into `/var/lib/solana-desk-lean/reports/YYYY-MM-DD.html`. No notifications.
+
+## L16 — Live-route check at entry (no signing) (P3)
+STATUS: OPEN
+OWNS: lean/route_check.py, tests/lean/test_route_check.py
+- **Check.** At each paper BUY (and each full exit), call Jupiter's swap build endpoint (Ultra order or swap/v2/build, whichever L02 already supports or can safely add) with the paper taker.
+- **Record.** Store whether a transaction would have been built: route, compute units, prioritization fee suggestion, and error code.
+- **Never sign, never send.** Add a test that greps `lean/` for signing and broadcast primitives (`sign`, `send_transaction`, `sendTransaction`, a Keypair import) and fails if any are found.
+- **If the endpoint requires a funded taker,** record `ROUTE_CHECK_UNSUPPORTED` once and disable the check (config). Do not work around it.
+- **Report.** Show the routable % at entry and at exit.
