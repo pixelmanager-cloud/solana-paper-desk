@@ -60,7 +60,7 @@ class Token:
 
     def __init__(self, tag, *, quote_sol=80, base_raw=2 * 10 ** 14, hazard=None, route_fee_bps=0, path=None,
                  no_route=False, no_route_from=None, route_back_at=None, pool_closed_from=None, freeze_from=None,
-                 owner_change_from=None, pool_closed_until=None, coin_creator_tag=None):
+                 owner_change_from=None, pool_closed_until=None, coin_creator_tag=None, holder_rows=None):
         from solders.pubkey import Pubkey
         self.tag = tag
         self.mint_pk = Pubkey.from_bytes(bytes([tag]) * 32)
@@ -86,6 +86,7 @@ class Token:
         self.no_route_from, self.route_back_at = no_route_from, route_back_at
         self.pool_closed_from, self.freeze_from, self.owner_change_from = pool_closed_from, freeze_from, owner_change_from
         self.pool_closed_until = pool_closed_until          # L11F: the pool comes back at this age (a transient empty read)
+        self.holder_rows = holder_rows                      # L24: [(token account, owner, amount)] replaces the default holders
 
     # -- state at time t
     def multiplier(self, t):
@@ -148,8 +149,21 @@ class Token:
                 del accounts[key]
         return accounts
 
+    def holder_accounts(self):
+        """L24: the SPL token accounts of ``holder_rows`` (mint, owner, amount), so getMultipleAccounts resolves their owners."""
+        from solders.pubkey import Pubkey
+        out = {}
+        for address, owner, amount in self.holder_rows or ():
+            d = bytearray(165)
+            d[:32] = bytes(self.mint_pk); d[32:64] = bytes(Pubkey.from_string(owner)); d[64:72] = int(amount).to_bytes(8, 'little'); d[108] = 1
+            out[address] = self.account(d, TOKEN_PROGRAM)
+        return out
+
     def holders(self):
         rows = [{'address': self.base_vault, 'amount': str(self.base_raw)}]
+        if self.holder_rows is not None:                    # L24
+            rows += [{'address': a, 'amount': str(n)} for a, _, n in sorted(self.holder_rows, key=lambda r: -r[2])]
+            return [dict(r, decimals=DECIMALS, uiAmountString=str(Decimal(r['amount']) / 10 ** DECIMALS)) for r in rows]
         if self.hazard == 'concentrated':
             rows.append({'address': base58(bytes([200]) * 32), 'amount': str(SUPPLY * 7 // 10)})
         rows += [{'address': base58(bytes([100 + i]) * 32), 'amount': str(SUPPLY // 100)} for i in range(10)]
@@ -238,6 +252,7 @@ class World:
             known = {}
             for token in self.tokens.values():
                 known.update(token.accounts(t))
+                known.update(token.holder_accounts())       # L24
             result = {'context': {'apiVersion': '2.2.7', 'slot': self.slot}, 'value': [copy.deepcopy(known.get(k)) for k in params[0]]}
         elif method == 'getTokenLargestAccounts':
             result = {'context': {'apiVersion': '2.2.7', 'slot': self.slot}, 'value': self.tokens[params[0]].holders()}
