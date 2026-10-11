@@ -17,6 +17,7 @@ from __future__ import annotations
 
 import argparse
 import copy
+import dataclasses
 import datetime
 import itertools
 import json
@@ -69,7 +70,10 @@ def _set(raw: dict, key: str, value) -> None:
         raise TuneError('unknown or immutable grid key %r' % key)
 
 
-def _canonical(cfg: S.StrategyConfig) -> str:
+REPLAY_KEYS = ('entry_timing', 'entry_delay_s')
+
+
+def _canonical(cfg: S.StrategyConfig, rcfg: Optional[R.ReplayConfig] = None) -> str:
     """Identity by VALUE ('0.3' and '0.30' are the same setting), unlike config_hash which hashes the raw text."""
     def norm(v):
         if isinstance(v, str):
@@ -80,42 +84,70 @@ def _canonical(cfg: S.StrategyConfig) -> str:
         if isinstance(v, list):
             return [{k: norm(x) for k, x in r.items()} for r in v]
         return v
-    return json.dumps({k: norm(v) for k, v in config_to_dict(cfg).items()}, sort_keys=True)
+    body = {k: norm(v) for k, v in config_to_dict(cfg).items()}
+    return json.dumps({'strategy': body, 'replay': None if rcfg is None else rcfg.to_dict()}, sort_keys=True)
 
 
-def expand_grid(grid: Mapping, base: S.StrategyConfig, max_configs: int = MAX_CONFIGS):
-    """-> (candidates, invalid). candidates = [{label, overrides, cfg}] starting with the base; invalid = combos that
-    StrategyConfig refused (reported, never silently dropped). Duplicates of an already seen config hash are dropped."""
+def _replay_override(rcfg: R.ReplayConfig, name: str, value) -> R.ReplayConfig:
+    try:
+        if name == 'entry_timing':
+            return dataclasses.replace(rcfg, entry_timing=R.EntryTiming.from_spec(value))
+        return dataclasses.replace(rcfg, entry_delay_s=value)
+    except (R.ReplayError, TypeError) as error:
+        raise S.ConfigError('replay.%s: %s' % (name, error)) from None
+
+
+def _label_part(key, value):
+    if key == 'replay.entry_timing':
+        try:
+            return 'entry_timing=%s' % R.EntryTiming.from_spec(value).label
+        except R.ReplayError:
+            pass
+    return '%s=%s' % (key, value)
+
+
+def expand_grid(grid: Mapping, base: S.StrategyConfig, max_configs: int = MAX_CONFIGS, base_rcfg: Optional[R.ReplayConfig] = None):
+    """-> (candidates, invalid). candidates = [{label, overrides, cfg, rcfg}] starting with the base; invalid = combos that
+    StrategyConfig / ReplayConfig refused (reported, never silently dropped). Value-duplicates of a seen setting are dropped.
+    Grid keys are strategy config names, `tp_ladder.<i>.<field>`, or `replay.entry_timing` / `replay.entry_delay_s`
+    (entry-timing variants: 'first_mark', {'kind': 'pullback', 'pullback_pct': '0.1'}, {'kind': 'momentum', 'momentum_minutes': 3})."""
+    base_rcfg = base_rcfg or R.ReplayConfig()
     if not isinstance(grid, Mapping):
         raise TuneError('grid must be an object {param: [values]}')
     keys = sorted(grid)
     for key in keys:
         if not isinstance(grid[key], (list, tuple)) or not grid[key]:
             raise TuneError('grid[%r] must be a non-empty list' % key)
+        if key.startswith('replay.') and key[7:] not in REPLAY_KEYS:
+            raise TuneError('unknown replay grid key %r (allowed: %s)' % (key, ', '.join('replay.' + k for k in REPLAY_KEYS)))
     total = 1
     for key in keys:
         total *= len(grid[key])
     if total > max_configs:
         raise TuneError('grid has %d combinations (max %d)' % (total, max_configs))
     base_raw = config_to_dict(base)
-    seen = {_canonical(base): 'base'}
-    candidates = [{'label': 'base', 'overrides': {}, 'cfg': base}]
+    seen = {_canonical(base, base_rcfg): 'base'}
+    candidates = [{'label': 'base', 'overrides': {}, 'cfg': base, 'rcfg': base_rcfg}]
     invalid = []
     for combo in itertools.product(*(grid[k] for k in keys)):
         raw = copy.deepcopy(base_raw)
         overrides = dict(zip(keys, combo))
-        for key, value in overrides.items():
-            _set(raw, key, value)
-        label = ' '.join('%s=%s' % (k, overrides[k]) for k in keys)
+        label = ' '.join(_label_part(k, overrides[k]) for k in keys)
+        rcfg = base_rcfg
         try:
+            for key, value in overrides.items():
+                if key.startswith('replay.'):
+                    rcfg = _replay_override(rcfg, key[7:], value)
+                else:
+                    _set(raw, key, value)
             cfg = S.StrategyConfig.from_dict(raw)
         except S.ConfigError as error:
             invalid.append({'label': label, 'overrides': overrides, 'error': str(error)})
             continue
-        if _canonical(cfg) in seen:
+        if _canonical(cfg, rcfg) in seen:
             continue
-        seen[_canonical(cfg)] = label
-        candidates.append({'label': label, 'overrides': overrides, 'cfg': cfg})
+        seen[_canonical(cfg, rcfg)] = label
+        candidates.append({'label': label, 'overrides': overrides, 'cfg': cfg, 'rcfg': rcfg})
     return candidates, invalid
 
 
@@ -154,21 +186,22 @@ def tune(db, grid: Mapping, split: float = 0.7, *, base: Optional[S.StrategyConf
          min_oos: int = MIN_OOS, embargo_s: float = 0, now: Optional[float] = None, proposals_dir=None,
          max_configs: int = MAX_CONFIGS) -> dict:
     base = base or S.StrategyConfig.load(Path(__file__).resolve().parents[1] / 'config' / 'lean' / 'strategy-default.json')
-    rcfg = rcfg or R.ReplayConfig()
     connection, owned = _connect(db)
     try:
+        # the replay starts from the cash the live store started from unless the caller says otherwise
+        rcfg = rcfg or R.ReplayConfig(initial_cash_sol=R.store_initial_cash_sol(connection) or R.ReplayConfig().initial_cash_sol)
         paths, load_skipped = R.load_paths(connection)
     finally:
         if owned:
             connection.close()
     older, newer, boundary = split_paths(paths, split, embargo_s)
-    candidates, invalid = expand_grid(grid, base, max_configs)
+    candidates, invalid = expand_grid(grid, base, max_configs, rcfg)
     entries = []
     for c in candidates:
-        ins = _evaluate(older, c['cfg'], rcfg)
-        oos = _evaluate(newer, c['cfg'], rcfg)
+        ins = _evaluate(older, c['cfg'], c['rcfg'])
+        oos = _evaluate(newer, c['cfg'], c['rcfg'])
         flags = ['INSUFFICIENT'] if oos['n_trades'] < min_oos else []
-        entries.append({'label': c['label'], 'is_base': c['label'] == 'base', 'overrides': c['overrides'], 'config_hash': c['cfg'].config_hash,
+        entries.append({'label': c['label'], 'is_base': c['label'] == 'base', 'overrides': c['overrides'], 'config_hash': c['cfg'].config_hash, 'replay': c['rcfg'].to_dict(),
                         'in_sample': ins, 'out_of_sample': oos, 'flags': flags})
     entries.sort(key=lambda e: ('INSUFFICIENT' in e['flags'], -_total(e), -e['out_of_sample']['n_trades'], e['label']))
     for rank, entry in enumerate(entries, 1):
@@ -219,12 +252,16 @@ def _maybe_propose(result, entries, base, proposals_dir, now):
         result['proposal_status'] = 'WOULD_PROPOSE_NO_DIRECTORY_GIVEN'
         return
     ts = result['generated_at'].replace('-', '').replace(':', '')
-    raw = config_to_dict(next(c for c in _rebuild(base, best['overrides'])))
+    strategy_overrides = {k: v for k, v in best['overrides'].items() if not k.startswith('replay.')}
+    replay_overrides = {k: v for k, v in best['overrides'].items() if k.startswith('replay.')}
+    raw = config_to_dict(next(c for c in _rebuild(base, strategy_overrides)))
     raw['strategy_version'] = '%s-proposal-%s' % (base.strategy_version, ts)
     S.StrategyConfig.from_dict(raw)  # a proposal must itself be a valid config
     doc = {'status': PROPOSAL_STATUS, 'label': LABEL, 'generated_at': result['generated_at'],
            'current': result['base'], 'proposed_strategy_version': raw['strategy_version'],
-           'diff': {k: {'from': _get(config_to_dict(base), k), 'to': v} for k, v in best['overrides'].items()},
+           'diff': {k: {'from': _get(config_to_dict(base), k), 'to': v} for k, v in strategy_overrides.items()},
+           'replay_overrides': replay_overrides,
+           'requires_runner_change': sorted(replay_overrides),  # entry timing is not a runner setting yet: code change needed
            'proposed_config': raw, 'evidence': {'in_sample': best['in_sample'], 'out_of_sample': oos,
                                                 'base_out_of_sample': base_oos, 'split': result['split'],
                                                 'configs_evaluated': len(entries), 'replay_assumptions': result['replay_assumptions']},
@@ -333,19 +370,22 @@ def main(argv=None):
     p.add_argument('--split', type=float, default=0.7)
     p.add_argument('--min-oos', type=int, default=MIN_OOS)
     p.add_argument('--embargo-s', type=float, default=0)
+    p.add_argument('--pool-fee-bps', type=int, default=30, help='pool fee assumed when synthesising quotes (the runner config\'s pool_fee_bps)')
     p.add_argument('--calibrate', action='store_true', help='also compare replay with the live exit reasons')
     p.add_argument('--now', type=float, required=True, help='epoch seconds used for names/timestamps (explicit: no hidden clock)')
     args = p.parse_args(argv)
     try:
         with open(args.grid, 'r', encoding='utf-8') as stream:
             grid = json.load(stream)
-        result = tune(args.db, grid, args.split, min_oos=args.min_oos, embargo_s=args.embargo_s, now=args.now, proposals_dir=args.proposals_dir)
+        rcfg = R.ReplayConfig(pool_fee_bps=args.pool_fee_bps)
+        result = tune(args.db, grid, args.split, rcfg=rcfg, min_oos=args.min_oos, embargo_s=args.embargo_s, now=args.now, proposals_dir=args.proposals_dir)
         calibration = None
         if args.calibrate:
             from lean.report import open_ro
             connection = open_ro(args.db)
             try:
-                calibration = R.calibrate(connection, S.StrategyConfig.load(Path(__file__).resolve().parents[1] / 'config' / 'lean' / 'strategy-default.json'))
+                calibration = R.calibrate(connection, S.StrategyConfig.load(Path(__file__).resolve().parents[1] / 'config' / 'lean' / 'strategy-default.json'),
+                                          R.ReplayConfig(initial_cash_sol=R.store_initial_cash_sol(connection) or R.ReplayConfig().initial_cash_sol, pool_fee_bps=args.pool_fee_bps))
             finally:
                 connection.close()
         html_path, json_path = write_report(args.out_dir, result, calibration)

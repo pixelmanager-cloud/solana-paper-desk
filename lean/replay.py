@@ -5,14 +5,17 @@ Nothing here re-implements a rule. Entry and exit decisions are `lean.strategy.e
 called directly, fills are `lean.paper.buy` / `sell` / `apply_fill` (integer lamports, the same fee and adverse
 slippage as the live trader), so a change to either module changes the replay with it.
 
-Input contract (what L07 writes into `observations`; this module only reads):
-  * `kind='path_start'`, `mint`, `ts` = when the candidate passed the hazard checks; `meta` JSON
-    {"features": {market_cap_usd, liquidity_usd, reserve_sol, ...}, "not_entered_reason": str|null, "decimals": int(opt)}
-  * `kind='path_mark'`, `mint`, `ts`; `meta` JSON {"price_sol": SOL per whole token, "liquidity_sol": SOL-side pool reserve}
-    (the same two fields are accepted from a JSON `raw` body). `liquidity_sol` may be null: then fills are linear at the
-    spot price with no price impact.
-A path without a usable start, or with fewer than 2 usable marks, is skipped and counted; a corrupt mark (non-finite,
-<= 0) is skipped and counted. Corrupt evidence never becomes an entry.
+Input contract (what L07 `lean/paths.py` writes into `observations`; this module only reads):
+  * `kind='path_start'`, `mint`, `ts`; `raw` = canonical JSON {"features": <the screen features>, "reason": str|null, ...},
+    `meta` = {"entered": bool, "reason": str|null, ...}. Features are turned into strategy features with
+    `lean.adapters.entry_features` (the runner's own conversion), `decimals` comes from the features.
+  * `kind='path_mark'`, `mint`, `ts`; `meta` (and `raw`) = {"price_sol", "liquidity_sol", "status", ...}. `liquidity_sol` is
+    TWO-SIDED (2 x the SOL reserve), so the replay uses half of it as the pool's SOL reserve. `status` is OK, or
+    ACCOUNT_MISSING / EMPTY_POOL (the pool is gone: a rug signal, price null), or MALFORMED (unknown, skipped and counted).
+A path without a usable start, or with fewer than 2 usable marks, is skipped and counted; a corrupt mark (non-finite, <= 0)
+is skipped and counted. Corrupt evidence never becomes an entry. A DEAD mark (ACCOUNT_MISSING / EMPTY_POOL) blocks any entry
+or exit at that mark and values an open position at 0; a position still in a dead pool when its path ends is written off as
+`RUG_WRITEOFF` (a closed trade with its whole remaining cost lost) so rugs are never silently censored out of the statistics.
 
 Simulation model (every item is an ASSUMPTION the calibration test and the report make visible):
   * Quotes are synthesised from the recorded spot price and SOL reserve with a constant-product pool and a pool fee of
@@ -29,6 +32,7 @@ from __future__ import annotations
 
 import json
 import math
+import sqlite3
 from dataclasses import dataclass, field
 from decimal import Decimal, InvalidOperation
 from typing import Optional, Sequence
@@ -42,6 +46,7 @@ LAMPORTS = Decimal(paper.LAMPORTS)
 DAY = 86400
 DEFAULT_DECIMALS = 6
 MIN_MARKS = 2
+DEAD_STATUSES = ('ACCOUNT_MISSING', 'EMPTY_POOL')
 
 
 class ReplayError(ValueError):
@@ -51,8 +56,13 @@ class ReplayError(ValueError):
 @dataclass(frozen=True)
 class Point:
     ts: float
-    price_sol: Decimal  # SOL per whole token
-    liquidity_sol: Optional[Decimal] = None  # SOL-side reserve; None = unknown (no impact)
+    price_sol: Optional[Decimal]  # SOL per whole token; None only for a dead mark
+    liquidity_sol: Optional[Decimal] = None  # SOL-side reserve (half of L07's two-sided figure); None = unknown (no impact)
+    status: str = 'OK'  # OK | ACCOUNT_MISSING | EMPTY_POOL (dead)
+
+    @property
+    def dead(self) -> bool:
+        return self.status != 'OK'
 
 
 @dataclass(frozen=True)
@@ -65,12 +75,102 @@ class Path:
     not_entered_reason: Optional[str] = None  # what the live trader said; informational only
 
 
+TIMING_KINDS = ('first_mark', 'pullback', 'momentum')
+
+
+@dataclass(frozen=True)
+class EntryTiming:
+    """WHEN a candidate that passed screening is first offered to the entry rules. Causal: every trigger uses only marks
+    at or before the current one.
+      * first_mark: the first mark at/after start + entry_delay_s (the L08 behaviour).
+      * pullback:  the first mark whose price is at least `pullback_pct` (a fraction, 0.10 = 10%) below the highest mark seen
+                   since the path started (the first mark counts as the initial high, so an immediate dip also qualifies).
+      * momentum:  the first mark at which prices sampled every minute for the last `momentum_minutes` minutes (the latest
+                   mark at or before t, t-60 s, ..., t-N*60 s) are STRICTLY increasing; needs N minutes of history.
+    A candidate that has not triggered within `max_wait_s` of its start (or before its path ends) is dropped and recorded as
+    ENTRY_TIMING_NO_TRIGGER. Once triggered it is considered exactly once: a portfolio block at that moment drops it, as live."""
+    kind: str = 'first_mark'
+    pullback_pct: Optional[Decimal] = None
+    momentum_minutes: Optional[int] = None
+    max_wait_s: float = 3600
+
+    def __post_init__(self):
+        if self.kind not in TIMING_KINDS:
+            raise ReplayError('entry timing kind must be one of %s' % (TIMING_KINDS,))
+        if isinstance(self.max_wait_s, bool) or not isinstance(self.max_wait_s, (int, float)) or not math.isfinite(self.max_wait_s) or self.max_wait_s <= 0:
+            raise ReplayError('max_wait_s must be a finite number > 0')
+        if self.kind == 'pullback':
+            if not (isinstance(self.pullback_pct, Decimal) and self.pullback_pct.is_finite() and 0 < self.pullback_pct < 1) or self.momentum_minutes is not None:
+                raise ReplayError('pullback needs pullback_pct in (0, 1) and no momentum_minutes')
+        elif self.kind == 'momentum':
+            if type(self.momentum_minutes) is not int or not 1 <= self.momentum_minutes <= 60 or self.pullback_pct is not None:
+                raise ReplayError('momentum needs momentum_minutes in [1, 60] and no pullback_pct')
+        elif self.pullback_pct is not None or self.momentum_minutes is not None:
+            raise ReplayError('first_mark takes no parameters')
+
+    @classmethod
+    def from_spec(cls, spec):
+        """'first_mark' | {'kind': ..., 'pullback_pct': '0.1', 'momentum_minutes': 3, 'max_wait_s': 1800}; strict on keys."""
+        if isinstance(spec, EntryTiming):
+            return spec
+        if isinstance(spec, str):
+            spec = {'kind': spec}
+        if not isinstance(spec, dict) or set(spec) - {'kind', 'pullback_pct', 'momentum_minutes', 'max_wait_s'} or 'kind' not in spec:
+            raise ReplayError('bad entry timing spec')
+        values = dict(spec)
+        if values.get('pullback_pct') is not None:
+            pct = finite_positive(values['pullback_pct'])
+            if pct is None:
+                raise ReplayError('pullback_pct must be a positive number')
+            values['pullback_pct'] = pct
+        return cls(**values)
+
+    @property
+    def label(self):
+        if self.kind == 'pullback':
+            return 'pullback(%s)' % self.pullback_pct.normalize()
+        if self.kind == 'momentum':
+            return 'momentum(%dm)' % self.momentum_minutes
+        return 'first_mark'
+
+    def to_dict(self):
+        return {'kind': self.kind, 'pullback_pct': None if self.pullback_pct is None else str(self.pullback_pct),
+                'momentum_minutes': self.momentum_minutes, 'max_wait_s': float(self.max_wait_s)}
+
+
+class _Watch:
+    """Per-path causal state for an EntryTiming."""
+
+    def __init__(self, timing: EntryTiming):
+        self.timing, self.high, self.samples = timing, None, []
+
+    def update(self, point: Point) -> bool:
+        t = self.timing
+        if point.dead:
+            return False
+        self.samples.append((point.ts, point.price_sol))
+        self.high = point.price_sol if self.high is None else max(self.high, point.price_sol)
+        if t.kind == 'first_mark':
+            return True
+        if t.kind == 'pullback':
+            return (self.high - point.price_sol) / self.high >= t.pullback_pct
+        chain = []
+        for k in range(t.momentum_minutes + 1):
+            target = point.ts - 60 * k
+            older = [price for ts, price in self.samples if ts <= target]
+            if not older:
+                return False
+            chain.append(older[-1])
+        return all(chain[k] > chain[k + 1] for k in range(len(chain) - 1))
+
+
 @dataclass(frozen=True)
 class ReplayConfig:
     initial_cash_sol: Decimal = Decimal(5)
     pool_fee_bps: int = 30
     entry_delay_s: float = 0
     decimals: int = DEFAULT_DECIMALS
+    entry_timing: EntryTiming = EntryTiming()
 
     def __post_init__(self):
         if not (isinstance(self.initial_cash_sol, Decimal) and self.initial_cash_sol.is_finite() and self.initial_cash_sol > 0):
@@ -79,9 +179,12 @@ class ReplayConfig:
             raise ReplayError('pool_fee_bps must be an integer in [0, 10000)')
         if isinstance(self.entry_delay_s, bool) or not isinstance(self.entry_delay_s, (int, float)) or not math.isfinite(self.entry_delay_s) or self.entry_delay_s < 0:
             raise ReplayError('entry_delay_s must be a finite number >= 0')
+        if not isinstance(self.entry_timing, EntryTiming):
+            raise ReplayError('entry_timing must be an EntryTiming')
 
     def to_dict(self):
-        return {'initial_cash_sol': str(self.initial_cash_sol), 'pool_fee_bps': self.pool_fee_bps, 'entry_delay_s': self.entry_delay_s}
+        return {'initial_cash_sol': str(self.initial_cash_sol), 'pool_fee_bps': self.pool_fee_bps, 'entry_delay_s': float(self.entry_delay_s),
+                'entry_timing': self.entry_timing.to_dict()}
 
 
 def paper_config(cfg: S.StrategyConfig) -> paper.PaperConfig:
@@ -308,6 +411,7 @@ def replay(paths: Sequence[Path], cfg: S.StrategyConfig, rcfg: Optional[ReplayCo
         else:
             h.last_mark = net_mark(path, point, positions[path.mint])
 
+    watches = {}
     for ts, i, j in events:
         path = paths[i]
         point = path.points[j]
@@ -317,18 +421,34 @@ def replay(paths: Sequence[Path], cfg: S.StrategyConfig, rcfg: Optional[ReplayCo
             state['day'] = day
             state['day_start'] = Decimal(equity_lamports()) / LAMPORTS
         if path.mint in held and held[path.mint].path is path:
-            try_exit(path, point, now)
-        elif i not in considered and ts >= path.start_ts + rcfg.entry_delay_s:
-            considered.add(i)
-            if path.mint in held:
-                skipped.append({'mint': path.mint, 'ts': ts, 'reasons': ['ALREADY_HELD']})
+            if point.dead:
+                held[path.mint].last_mark = 0  # an empty/missing pool is worth nothing and cannot be sold into
+                bump('POOL_DEAD_MARK')
             else:
-                try_enter(path, point, now)
+                try_exit(path, point, now)
+        elif i not in considered:
+            triggered = watches.setdefault(i, _Watch(rcfg.entry_timing)).update(point)
+            if ts - path.start_ts > rcfg.entry_timing.max_wait_s:
+                considered.add(i)
+                skipped.append({'mint': path.mint, 'ts': ts, 'reasons': ['ENTRY_TIMING_NO_TRIGGER']})
+            elif triggered and not point.dead and ts >= path.start_ts + rcfg.entry_delay_s:
+                considered.add(i)
+                if path.mint in held:
+                    skipped.append({'mint': path.mint, 'ts': ts, 'reasons': ['ALREADY_HELD']})
+                else:
+                    try_enter(path, point, now)
+    for i, path in enumerate(paths):
+        if i not in considered and path.points:
+            skipped.append({'mint': path.mint, 'ts': path.points[-1].ts, 'reasons': ['ENTRY_TIMING_NO_TRIGGER']})
 
     for mint, h in held.items():
         pos = positions[mint]
         last = h.path.points[-1]
         value = h.realized + h.last_mark - pos.cost_lamports  # realized so far + (what is left worth - its basis)
+        if last.dead:  # the path ended inside a dead pool: the rest is lost, not "still open"
+            trades.append(Trade(mint, 'CLOSED', h.opened_ts, last.ts, h.cost0, value, 'RUG_WRITEOFF', list(h.reasons) + ['RUG_WRITEOFF'], h.fills))
+            bump('RUG_WRITEOFF')
+            continue
         trades.append(Trade(mint, 'OPEN_AT_END', h.opened_ts, last.ts, h.cost0, value, None, list(h.reasons), h.fills, h.last_mark))
     return ReplayResult(trades, skipped, anomalies, len(considered), rcfg.initial_cash_sol, cash, fills)
 
@@ -394,17 +514,24 @@ def load_paths(connection, *, since: Optional[float] = None, until: Optional[flo
             bump('ROW_NO_MINT')
             continue
         if kind == 'path_start':
-            body = _json_or_none(meta)
-            if body is None or not isinstance(body.get('features'), dict):
+            payload = {**(_json_or_none(meta) or {}), **(_json_or_none(raw) or {})}  # L07: features in raw, entered/reason in meta
+            if not isinstance(payload.get('features'), dict):
                 bump('START_UNREADABLE')
             elif mint in starts:
                 bump('START_DUPLICATE')  # first one wins; a later duplicate never moves the entry point
             else:
-                starts[mint] = (float(ts), body)
+                starts[mint] = (float(ts), payload)
             continue
         body = _json_or_none(meta) or {}
-        if 'price_sol' not in body:
+        if 'price_sol' not in body and 'status' not in body:
             body = {**(_json_or_none(raw) or {}), **body}
+        status = body.get('status', 'OK')
+        if status in DEAD_STATUSES:
+            marks.setdefault(mint, []).append(Point(float(ts), None, None, status))
+            continue
+        if status != 'OK':
+            bump('MARK_' + (status if status == 'MALFORMED' else 'UNKNOWN_STATUS'))
+            continue
         price = finite_positive(body.get('price_sol'))
         liq_raw = body.get('liquidity_sol')
         liq = finite_positive(liq_raw)
@@ -413,7 +540,7 @@ def load_paths(connection, *, since: Optional[float] = None, until: Optional[flo
         elif liq_raw is not None and liq is None:
             bump('MARK_BAD_LIQUIDITY')  # a corrupt reserve must not silently turn into "no price impact"
         else:
-            marks.setdefault(mint, []).append(Point(float(ts), price, liq))
+            marks.setdefault(mint, []).append(Point(float(ts), price, None if liq is None else liq / 2))  # two-sided -> SOL side
     paths = []
     for mint, (start_ts, body) in starts.items():
         if (since is not None and start_ts < since) or (until is not None and start_ts >= until):
@@ -431,11 +558,11 @@ def load_paths(connection, *, since: Optional[float] = None, until: Optional[flo
         if len(points) < MIN_MARKS:
             bump('PATH_TOO_FEW_MARKS')
             continue
-        decimals = body.get('decimals', default_decimals)
+        decimals = body['features'].get('decimals', default_decimals)
         if type(decimals) is not int or not 0 <= decimals <= 18:
             bump('PATH_BAD_DECIMALS')
             continue
-        paths.append(Path(mint, start_ts, dict(body['features']), tuple(points), decimals, body.get('not_entered_reason')))
+        paths.append(Path(mint, start_ts, A.entry_features(body['features'], mint), tuple(points), decimals, body.get('reason')))
     for mint in marks:
         if mint not in starts:
             bump('MARKS_WITHOUT_START')
@@ -445,35 +572,41 @@ def load_paths(connection, *, since: Optional[float] = None, until: Optional[flo
 
 # ---------------------------------------------------------------------------------------------- calibration
 def live_sells(connection) -> dict:
-    """mint -> ordered list of live SELL reasons, and the set of mints that were bought, from the generic `events` table the
-    runner writes (kind 'fill', payload {side, mint, reason?}). A sell without a reason is recorded as None, never guessed."""
+    """What the live trader did, from its own store: mints bought (typed `fills`, in order), the ordered SELL reasons per mint
+    (`decisions` rows kind='exit' action='SELL', reasons[0]; a sell without a readable reason is None, never guessed) and the
+    mints whose position is still open (typed `fills.qty_after` of the last fill > 0)."""
     sells: dict = {}
     bought: list = []
     still_open: set = set()
     try:
-        for mint, qty_after in connection.execute('SELECT mint, qty_after FROM fills ORDER BY id'):
+        for mint, side, qty_after in connection.execute('SELECT mint, side, qty_after FROM fills ORDER BY id'):
+            if side == 'buy' and mint not in bought:
+                bought.append(mint)
             (still_open.add if qty_after else still_open.discard)(mint)
-    except Exception:
-        still_open = set()  # no typed fills table: every live position is treated as closed (exact comparison)
-    try:
-        cur = connection.execute("SELECT kind, payload FROM events WHERE kind='fill' ORDER BY id")
-    except Exception:
-        return {'bought': [], 'sells': {}, 'open': still_open}
-    for kind, payload in cur:
-        body = _json_or_none(payload)
-        if not body or not isinstance(body.get('mint'), str):
-            continue
-        if body.get('side') == 'buy':
-            if body['mint'] not in bought:
-                bought.append(body['mint'])
-        elif body.get('side') == 'sell':
-            sells.setdefault(body['mint'], []).append(body.get('reason'))
+        for mint, reasons in connection.execute("SELECT mint, reasons FROM decisions WHERE kind='exit' AND action='SELL' ORDER BY id"):
+            try:
+                parsed = json.loads(reasons)
+                reason = parsed[0] if isinstance(parsed, list) and parsed else None
+            except (ValueError, TypeError):
+                reason = None
+            sells.setdefault(mint, []).append(reason)
+    except sqlite3.Error:
+        return {'bought': [], 'sells': {}, 'open': set()}  # not a lean store with the typed tables: nothing to compare
     return {'bought': bought, 'sells': sells, 'open': still_open}
+
+
+def store_initial_cash_sol(connection) -> Optional[Decimal]:
+    try:
+        row = connection.execute("SELECT value FROM meta WHERE key='initial_cash_lamports'").fetchone()
+        return Decimal(int(row[0])) / LAMPORTS if row else None
+    except (sqlite3.Error, ValueError, TypeError):
+        return None
 
 
 def calibrate(connection, cfg: S.StrategyConfig, rcfg: Optional[ReplayConfig] = None) -> dict:
     """Replay `cfg` on the paths of the tokens the live trader actually bought and compare the ordered sell reasons.
     Mismatches are listed, never hidden. Live positions that are still open compare as a PREFIX of the replay."""
+    rcfg = rcfg or ReplayConfig(initial_cash_sol=store_initial_cash_sol(connection) or ReplayConfig().initial_cash_sol)
     live = live_sells(connection)
     paths, skipped = load_paths(connection)
     by_mint = {p.mint: p for p in paths}
@@ -503,4 +636,4 @@ def calibrate(connection, cfg: S.StrategyConfig, rcfg: Optional[ReplayConfig] = 
     status = 'NO_LIVE_FILLS' if not rows else 'OK' if matched == len(rows) else 'MISMATCH'
     return {'status': status, 'tokens': len(rows), 'matched': matched, 'mismatched': len(rows) - matched,
             'match_rate': matched / len(rows) if rows else None, 'rows': rows, 'load_skipped': skipped,
-            'strategy_version': cfg.strategy_version, 'config_hash': cfg.config_hash, 'replay_assumptions': (rcfg or ReplayConfig()).to_dict()}
+            'strategy_version': cfg.strategy_version, 'config_hash': cfg.config_hash, 'replay_assumptions': rcfg.to_dict()}

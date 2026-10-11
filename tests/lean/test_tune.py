@@ -27,6 +27,9 @@ Y_BLEED = [1, 1, 0.97, 0.93, 0.88, 0.7, 0.6]
 # type W: pops +30% (never reaching the 1.4x first rung), then fades. A lower first rung (1.2x) banks part of it and wins.
 W_POP_FADE = [1, 1, 1.1, 1.3, 1.3, 1.25, 1.1, 0.9, 0.7, 0.6]
 PROPOSE_GRID = {'tp_ladder.0.trigger': ['1.2']}
+# type D: pumps, dumps 20%, then rallies hard. Entering on the pullback buys the dump; entering at the first mark gets stopped out by it.
+D_DUMP_RALLY = [1, 1, 0.8, 0.8, 1.2, 1.7, 2.2, 2.8, 2.7, 1.2]
+TIMING_GRID = {'replay.entry_timing': [{'kind': 'pullback', 'pullback_pct': '0.15'}, {'kind': 'momentum', 'momentum_minutes': 3}]}
 
 
 def cfg(**over):
@@ -44,10 +47,11 @@ def make_db(directory, kinds, name='lean.sqlite', spacing=3600):
     store = Store(Path(directory) / name, initial_cash_sol=5, code_version='c', strategy_version='lean-1', clock=lambda: float(T0))
     for i, ratios in enumerate(kinds):
         mint, start = 'P%03d' % i, T0 + spacing * i
-        store.add_observation('path_start', b'{}', mint=mint, ts=start, meta={'features': dict(FEATS), 'not_entered_reason': None})
+        store.add_observation('path_start', json.dumps({'features': dict(FEATS), 'reason': None}).encode(), mint=mint, ts=start,
+                              meta={'entered': False, 'reason': None})
         for k, ratio in enumerate(ratios):
             store.add_observation('path_mark', b'{}', mint=mint, ts=start + 15 * k,
-                                  meta={'price_sol': str(BASE_PRICE * D(str(ratio))), 'liquidity_sol': '100'})
+                                  meta={'price_sol': str(BASE_PRICE * D(str(ratio))), 'liquidity_sol': '200', 'status': 'OK'})  # two-sided, as L07 writes it
     store.close()
     return Path(directory) / name
 
@@ -288,6 +292,64 @@ class TuneTests(Tmp):
         r = self.run_tune(store.path)
         self.assertEqual(r['load_skipped'], {'MARK_BAD_PRICE': 1})
         self.assertTrue(any('unusable' in w for w in r['warnings']))
+
+
+class TimingGridTests(Tmp):
+    def test_replay_keys_expand_alongside_strategy_keys(self):
+        cands, invalid = T.expand_grid({'replay.entry_timing': ['first_mark', {'kind': 'pullback', 'pullback_pct': '0.1'}, 'bogus', {'kind': 'momentum', 'momentum_minutes': 99}],
+                                        'stop_fraction': ['0.18', '0.25']}, BASE)
+        labels = [c['label'] for c in cands]
+        self.assertEqual(labels[0], 'base')
+        self.assertIn('entry_timing=pullback(0.1) stop_fraction=0.25', labels)  # labels list keys in sorted order
+        self.assertEqual(len(cands), 1 + 3)  # first_mark+0.18 is the base; pullback x2 stops, first_mark+0.25
+        self.assertEqual(len(invalid), 4)  # bogus x2 and momentum 99 x2
+        self.assertTrue(all('replay.entry_timing' in i['error'] for i in invalid))
+        self.assertEqual(sorted(c['rcfg'].entry_timing.label for c in cands[1:]), ['first_mark', 'pullback(0.1)', 'pullback(0.1)'])
+
+    def test_unknown_or_malformed_replay_keys(self):
+        with self.assertRaises(T.TuneError):
+            T.expand_grid({'replay.pool_fee_bps': [10]}, BASE)
+        with self.assertRaises(T.TuneError):
+            T.expand_grid({'replay.entry_timing': []}, BASE)
+        cands, invalid = T.expand_grid({'replay.entry_delay_s': [-5, 30, 30.0]}, BASE)
+        self.assertEqual(len(invalid), 1)
+        self.assertEqual(len(cands), 2)  # 30 and 30.0 are the same setting
+
+    def test_the_base_replay_config_is_kept_and_not_mutated(self):
+        base_r = R.ReplayConfig(pool_fee_bps=25)
+        cands, _ = T.expand_grid({'replay.entry_delay_s': [30]}, BASE, base_rcfg=base_r)
+        self.assertEqual((cands[0]['rcfg'], cands[1]['rcfg'].pool_fee_bps, cands[1]['rcfg'].entry_delay_s), (base_r, 25, 30))
+        self.assertEqual(base_r.entry_delay_s, 0)
+
+    def test_variants_are_ranked_out_of_sample_and_the_better_timing_wins(self):
+        db = make_db(self.dir, [D_DUMP_RALLY] * 20)
+        r = T.tune(db, TIMING_GRID, 0.7, base=BASE, min_oos=5, now=NOW)
+        top = r['configs'][0]
+        self.assertEqual(top['label'], 'entry_timing=pullback(0.15)')
+        self.assertEqual(top['replay']['entry_timing']['kind'], 'pullback')
+        by = {c['label']: c for c in r['configs']}
+        self.assertLess(D(by['base']['out_of_sample']['total_pnl_sol']), 0)
+        self.assertGreater(D(top['out_of_sample']['total_pnl_sol']), 0)
+        self.assertEqual(by['entry_timing=momentum(3m)']['out_of_sample']['n_trades'], 0)  # the dump path never builds 3 rising minutes
+        self.assertIn('INSUFFICIENT', by['entry_timing=momentum(3m)']['flags'])
+        self.assertEqual(r['configs'][-1]['label'], 'entry_timing=momentum(3m)')  # insufficient ranks last even though it never lost
+
+    def test_timing_proposal_names_the_runner_change_it_needs(self):
+        db = make_db(self.dir, [D_DUMP_RALLY] * 20)
+        props = self.dir / 'proposals'
+        r = T.tune(db, TIMING_GRID, 0.7, base=BASE, min_oos=5, now=NOW, proposals_dir=props)
+        self.assertEqual(r['proposal_status'], 'WRITTEN')
+        doc = json.loads(Path(r['proposal']).read_text())
+        self.assertEqual(doc['diff'], {})  # no strategy parameter changes
+        self.assertEqual(doc['requires_runner_change'], ['replay.entry_timing'])
+        self.assertEqual(doc['replay_overrides'], {'replay.entry_timing': {'kind': 'pullback', 'pullback_pct': '0.15'}})
+        self.assertEqual(doc['status'], 'PROPOSAL_NOT_APPLIED')
+
+    def test_report_shows_the_timing_variant(self):
+        db = make_db(self.dir, [D_DUMP_RALLY] * 20)
+        html = T.render_html(T.tune(db, TIMING_GRID, 0.7, base=BASE, min_oos=5, now=NOW))
+        self.assertIn('entry_timing=pullback(0.15)', html)
+        self.assertIn('pullback_pct', html)  # the replay assumptions list the base timing config
 
 
 class ReportTests(Tmp):
