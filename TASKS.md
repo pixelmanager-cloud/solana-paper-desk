@@ -2163,3 +2163,6 @@ OWNS: same as L08BF
 - Treat `path_gaps` as missing data, not flat prices.
 - Include the L10 execution model (3 s re-quote, priority fee + tip, ATA rent) so replay costs match live.
 - The full lean suite must pass in one process, rc=0. Commit `DONE L08BH:`.
+
+## L20 — Sellability evidence at paper SELL + bot-pump/manipulation features
+STATUS: CLAIMED by coordinator (local agent, branch cloud/L20). Do not take.
