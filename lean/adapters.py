@@ -179,7 +179,8 @@ def portfolio(store, cfg, now, *, marks, day_start_equity):
     last_buy = store.last_fill_ts('buy')
     return S.Portfolio(now=int(now), equity=equity, cash=cash, exposure=exposure, day_start_equity=day_start_equity,
                        open_mints=frozenset(positions), cooldowns=cooldowns,
-                       last_entry_minute=-1 if last_buy is None else int(last_buy) // 60, loss_streak=streak)
+                       last_entry_minute=-1 if last_buy is None else int(last_buy) // 60, loss_streak=streak,
+                       last_entry_at=None if last_buy is None else int(last_buy))
 
 
 def equity_and_freshness(store, now, marks, ttl):
