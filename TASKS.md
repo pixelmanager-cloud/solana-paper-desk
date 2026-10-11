@@ -2083,7 +2083,7 @@ OWNS: same as L12 (+ the feature table section in `lean/report.py`)
 6. **Production config.** Wire it in `build_runner` and add the `lean.json` keys (default off).
 
 ## L08BF — Fix L08B (replay/tune)
-STATUS: OPEN
+STATUS: STALLED → taken over by L08BH
 DEPENDS: `DONE L07R:` (the path_mark rows store `base_raw`/`quote_raw`)
 BASE: origin/integration/r1 (after L07R), merging cloud/L08B
 OWNS: lean/replay.py, lean/tune.py, tests/lean/test_replay.py, tests/lean/test_tune.py, tests/lean/test_e2e_replay.py
@@ -2153,3 +2153,13 @@ Fix:
 2. Smart-wallet outcomes come from the L07R2 path data in `paths.sqlite` (tables `paths`/`path_marks`, read-only, plus the archived `paths-*.sqlite`), via ONE reader function.
 3. The hook is delimited and additive; the default is OFF when the key is absent; add a `wallet_signals` key to the example config.
 4. The full suite passes in one process (rc=0). Add an e2e test on fakeworld, and try mutations.
+
+## L08BH — Take over L08BF (worker silent for 2h)
+STATUS: OPEN
+BASE: origin/cloud/L08BF (continue it), then merge the CURRENT origin/integration/r1 (it has L07R2 paths.sqlite, LINT1, LINT2/LINT2b)
+OWNS: same as L08BF
+- Finish every item in `## L08BF`.
+- Replay must read paths from `paths.sqlite` (+ the `paths-*.sqlite` archives) and mark with `adapters.mark` on `base_raw`/`quote_raw`.
+- Treat `path_gaps` as missing data, not flat prices.
+- Include the L10 execution model (3 s re-quote, priority fee + tip, ATA rent) so replay costs match live.
+- The full lean suite must pass in one process, rc=0. Commit `DONE L08BH:`.
