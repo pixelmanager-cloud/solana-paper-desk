@@ -27,6 +27,7 @@ CONFIG_KEYS = {
     'lanes': None,                     # {"main","exit","low"} shares of each provider rate (+ "low_shed_s"); None = 0.55/0.25/0.20
     'paths': None,                     # lean.paths settings ({"enabled", "path_hours", "interval_s", ...}); None = disabled
     # --- end L07R ---
+    'route_check': {},                 # L16: {"enabled": true} records whether a real bot could build each BUY / full exit
 }
 REQUIRED = ('strategy_config', 'initial_cash_sol')
 
@@ -63,6 +64,10 @@ def load_config(path):
     except ValueError as error:
         raise ConfigError(str(error)) from None
     # --- end L07R ---
+    rc = cfg['route_check']                                                 # --- L16 hook ---
+    if not isinstance(rc, dict) or set(rc) - {'enabled'} or not isinstance(rc.get('enabled', False), bool):
+        raise ConfigError('route_check must be an object like {"enabled": true}')
+    # --- end L16 ---
     return cfg
 
 
@@ -100,7 +105,7 @@ def build_runner(cfg, *, state_dir, discovery_db, keys, code_version, clock=None
         discovery_db=discovery_db, state_dir=state, code_version=code_version, screen_overrides=cfg['screen'],
         pool_fee_bps=cfg['pool_fee_bps'], clock=clock, scan_limit=cfg['scan_limit'],
         max_retries=cfg['max_candidate_retries'], sol_usd_ttl_s=cfg['sol_usd_ttl_s'], stale_mark_s=cfg['stale_mark_s'],
-        unexitable_after_s=cfg['unexitable_after_s'])
+        unexitable_after_s=cfg['unexitable_after_s'], route_check=cfg['route_check'])
     # --- L07R: the path recorder (low lane), resumed from the store before any loop runs ---
     r.paths = paths.build(paths.config(cfg.get('paths')), store=the_store, keys=keys, pcfg=r.pcfg,
                           code_version=code_version, strategy_version=strategy_cfg.strategy_version,

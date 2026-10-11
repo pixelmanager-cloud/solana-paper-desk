@@ -406,6 +406,18 @@ def errors_by_code(events):
 
 
 # --------------------------------------------------------------------------- build
+def _route_check_section(db):
+    from lean import route_check
+    connection = open_ro(db)
+    try:
+        if 'decisions' not in {r[0] for r in connection.execute("SELECT name FROM sqlite_master WHERE type='table'")}:
+            return route_check.summary([])
+        rows = connection.execute("SELECT action,features FROM decisions WHERE kind=? ORDER BY id LIMIT 100000", (route_check.KIND,)).fetchall()
+        return route_check.summary([{'action': a, 'features': f} for a, f in rows])
+    finally:
+        connection.close()
+
+
 def _section(function, *args):
     try:
         return {'status': 'OK', 'data': function(*args)}
@@ -441,6 +453,9 @@ def build(db, *, counterfactual_db=None, horizon=3600, now=None):
     summary['pnl_by_strategy'] = {'status': 'OK', 'data': pnl_by_strategy(all_trades)}
     summary['exit_reasons'] = {'status': 'OK', 'data': exit_breakdown(all_trades)}
     summary['errors'] = {'status': 'OK', 'data': errors_by_code(events)}
+    # --- L16 hook ---
+    summary['route_check'] = _section(_route_check_section, db)
+    # --- end L16 ---
     if counterfactual_db is None:
         summary['counterfactual'] = {'status': 'NOT_PROVIDED'}
     elif funnel_result['status'] != 'OK':
@@ -516,6 +531,13 @@ def render_html(s):
                      table(['reason', 'rejected', 'with return', 'baseline missing', 'mean', 'median', 'share positive', 'dead', 'sample'],
                            [[k, v['rejected'], v['with_return'], v['baseline_missing'], v['return']['mean'], v['return']['median'],
                              v['share_positive'], v['pool_dead'], v['sample']] for k, v in d['groups'].items()]))
+    rc = s.get('route_check')
+    if rc and rc['status'] == 'OK' and (rc['data']['entry']['checked'] or rc['data']['exit']['checked'] or rc['data']['unsupported']):
+        d = rc['data']
+        parts.append('<h2>Live-route check (paper: nothing was signed or sent)</h2>' + table(['side', 'checked', 'routable', 'routable %'],
+            [[k, d[k]['checked'], d[k]['routable'], d[k]['pct']] for k in ('entry', 'exit')]) +
+            ('<p class="flag">ROUTE_CHECK_UNSUPPORTED: the build endpoint needs a funded taker; the check disabled itself.</p>' if d['unsupported'] else '') +
+            (table(['not routable: reason', 'count'], list(d['not_routable_reasons'].items())) if d['not_routable_reasons'] else ''))
     parts.append('<h2>Errors by code</h2>' + (table(['code', 'count'], list(s['errors']['data'].items())) if s['errors']['data'] else '<p>None recorded.</p>'))
     parts.append('<h2>Versions</h2>' + table(['kind', 'version', 'events'], [['strategy', k, v] for k, v in s['versions']['strategy'].items()] +
                                               [['code', k, v] for k, v in s['versions']['code'].items()]))

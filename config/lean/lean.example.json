@@ -8,6 +8,7 @@
   "scan_limit": 500,
   "max_candidate_retries": 3,
   "sol_usd_ttl_s": 30,
+  "route_check": {"enabled": false},
   "stale_mark_s": 30,
   "unexitable_after_s": 7200,
   "screen": {
