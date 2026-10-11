@@ -39,6 +39,9 @@ CONFIG_KEYS = {
     # --- L13 ---
     'wallet_signals': None,            # lean.wallet_signals settings (an object, may be {}, turns it on); None = off
     # --- end L13 ---
+    # --- L24 ---
+    'clusters': None,                  # lean.clusters settings (an object, may be {}, turns it on); None = off
+    # --- end L24 ---
 }
 REQUIRED = ('strategy_config', 'initial_cash_sol')
 
@@ -119,6 +122,14 @@ def load_config(path):
         except wallet_signals.ConfigError as error:
             raise ConfigError(str(error)) from None
     # --- end L13 ---
+    # --- L24 ---
+    if cfg['clusters'] is not None:                                        # strict, validated at load
+        from lean import clusters
+        try:
+            clusters.make_config(cfg['clusters'])
+        except clusters.ConfigError as error:
+            raise ConfigError(str(error)) from None
+    # --- end L24 ---
     return cfg
 
 
@@ -213,6 +224,13 @@ def build_runner(cfg, *, state_dir, discovery_db, keys, code_version, clock=None
                                                 transport_kwargs=transport_kwargs,
                                                 paths_db=paths.db_path(paths_cfg, state) if paths_cfg['enabled'] else None)   # LINT2
     # --- end L13 ---
+    # --- L24: the linked-wallet cluster collector (low lane, its own thread; recording only) ---
+    if cfg.get('clusters') is not None:
+        from lean import clusters
+        r.clusters = clusters.build(clusters.make_config(cfg['clusters']), store=the_store, keys=keys, code_version=code_version,
+                                    strategy_version=strategy_cfg.strategy_version, clock=clock, transport_kwargs=transport_kwargs,
+                                    signals_enabled=cfg.get('wallet_signals') is not None)
+    # --- end L24 ---
     return r
 
 

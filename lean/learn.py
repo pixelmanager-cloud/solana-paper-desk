@@ -73,7 +73,13 @@ ROW_FEATURES = ('top10_pct', 'top1_pct', 'dev_holding_pct', 'seconds_graduation_
                 'liquidity_usd', 'age_seconds_at_screen', 'transfer_fee_bps')
 # L13 wallet-signal row figures
 WALLET_FEATURES = ('bundle_score', 'sniper_count', 'same_slot_buyers', 'bundled_supply_pct', 'smart_buyers_count')
-FEATURE_NAMES = ROW_FEATURES + WALLET_FEATURES
+# --- L24: linked-wallet cluster row figures (lean.clusters) ---
+CLUSTER_FEATURES = ('cluster_count', 'largest_cluster_supply_pct', 'top_cluster_holders', 'creator_cluster_supply_pct',
+                    'linked_supply_pct_total', 'jito_bundled_buys', 'fresh_wallet_share')
+CLUSTER_SUPPLY_FEATURES = frozenset({'largest_cluster_supply_pct', 'creator_cluster_supply_pct', 'linked_supply_pct_total'})
+CLUSTERS_VERSION = 'clusters_v1'
+# --- end L24 ---
+FEATURE_NAMES = ROW_FEATURES + WALLET_FEATURES + CLUSTER_FEATURES
 # known from the screen itself; the others come from the extra calls (L12F) or the wallet collector (L13) that run after it
 SCREEN_TIME_FEATURES = frozenset({'market_cap_usd', 'liquidity_usd', 'age_seconds_at_screen', 'transfer_fee_bps'})
 MIN_FEATURES_VERSION = 3
@@ -172,7 +178,7 @@ class LookaheadPolicy:
 
     def to_dict(self):
         return {'max_late_s': float(self.max_late_s), 'eps_s': float(self.eps_s), 'min_features_version': MIN_FEATURES_VERSION,
-                'wallet_version': WALLET_VERSION, 'ok_flags': sorted(OK_FLAGS)}
+                'wallet_version': WALLET_VERSION, 'clusters_version': CLUSTERS_VERSION, 'ok_flags': sorted(OK_FLAGS)}
 
 
 class _Counts:
@@ -300,6 +306,45 @@ def wallet_values(row, decision_ts, policy, counts, names=WALLET_FEATURES) -> di
     return out
 
 
+# --- L24 ---
+def cluster_values(row, decision_ts, policy, counts, names=CLUSTER_FEATURES) -> dict:
+    """``{name: Decimal | None}`` of one L24 clusters row, as of the decision only (every exclusion counted): the pool-window figure
+    only when the window was cut at the decision; a holder snapshot read at collection (``AT_COLLECTION``) only within ``max_late_s``;
+    any other flag excluded; a supply share only with the screen's supply."""
+    out = {name: None for name in names}
+    if row is None:
+        return out
+    if row.get('version') != CLUSTERS_VERSION:
+        counts.skip('CLUSTERS_OLD_VERSION')
+        return out
+    flags, late = row.get('flags') or {}, row.get('late_s')
+    after = row.get('window_after_decision_s')
+    for name in names:
+        value = _to_decimal(row.get(name))
+        if value is None:
+            continue
+        flag = flags.get(name) if isinstance(flags, dict) else None
+        if flag == 'AT_COLLECTION':
+            if not (_num(late) and late <= policy.max_late_s):          # a snapshot read too long after the decision
+                counts.exclude(name, 'AT_COLLECTION_LATE')
+                continue
+        elif flag not in (None, *OK_FLAGS):
+            counts.exclude(name, 'FLAG_' + str(flag)[:40])
+            continue
+        elif name != 'jito_bundled_buys' and row.get('holders_source') != 'screen':
+            counts.exclude(name, 'HOLDERS_NOT_FROM_SCREEN')         # an unflagged holder figure must come from the screen's snapshot
+            continue
+        if name == 'jito_bundled_buys' and (not _num(after) or after > 0):
+            counts.exclude(name, 'WINDOW_NOT_CUT_AT_DECISION')
+            continue
+        if name in CLUSTER_SUPPLY_FEATURES and row.get('supply_source') != 'screen':
+            counts.exclude(name, 'SUPPLY_READ_AFTER_DECISION')
+            continue
+        out[name] = value
+    return out
+# --- end L24 ---
+
+
 def enterable(path: LB.PathRecord) -> bool:
     """Entered, or passed the screen and refused ONLY by a portfolio limit (it would have been entered on its own merits)."""
     if path.entered:
@@ -336,6 +381,7 @@ def build_dataset(lean_db, paths_db, strategy: S.StrategyConfig, *, label_cfg=No
         decisions = read_decisions(live)
         feature_rows = _observations(live, 'features', counts, 'FEATURES')
         wallet_rows = _observations(live, 'wallet_signals', counts, 'WALLET_SIGNALS')
+        cluster_rows = _observations(live, 'clusters', counts, 'CLUSTERS')          # L24
         for path in LB.iter_paths(connections, load_skipped):           # one path's marks in memory at a time
             n_paths += 1
             decision = decision_time(decisions.get(path.mint, []), path.candidate_id, path.start_ts)
@@ -354,10 +400,12 @@ def build_dataset(lean_db, paths_db, strategy: S.StrategyConfig, *, label_cfg=No
                 continue
             frow = _pick(feature_rows.get(path.mint, []), decision, path.candidate_id, policy, counts, 'FEATURES')
             wrow = _pick(wallet_rows.get(path.mint, []), decision, path.candidate_id, policy, counts, 'WALLET_SIGNALS')
-            if frow is None and wrow is None:
+            crow = _pick(cluster_rows.get(path.mint, []), decision, path.candidate_id, policy, counts, 'CLUSTERS')     # L24
+            if frow is None and wrow is None and crow is None:
                 counts.skip('NO_FEATURES_AT_DECISION')
                 continue
-            values = {**feature_values(frow, decision, policy, counts), **wallet_values(wrow, decision, policy, counts)}
+            values = {**feature_values(frow, decision, policy, counts), **wallet_values(wrow, decision, policy, counts),
+                      **cluster_values(crow, decision, policy, counts)}
             trade = LB.simulate_exits(path, decision, ref, strategy, pool_fee_bps=pool_fee_bps, pcfg=pcfg)
             rows.append(Row(path.mint, decision, label, {n: values[n] for n in feature_names}, trade.pnl_lamports, enterable(path),
                             trade.status))
@@ -682,10 +730,13 @@ def runner_changes(chosen):
     out = ['selection_rules'] if chosen else []
     enriched = sorted((names & set(ROW_FEATURES)) - SCREEN_TIME_FEATURES)
     wallet = sorted(names & set(WALLET_FEATURES))
+    cluster = sorted(names & set(CLUSTER_FEATURES))
     if enriched:
         out.append('wait_for_enrichment:' + ','.join(enriched))
     if wallet:
         out.append('wait_for_wallet_signals:' + ','.join(wallet))
+    if cluster:
+        out.append('wait_for_clusters:' + ','.join(cluster))           # L24
     return out
 
 

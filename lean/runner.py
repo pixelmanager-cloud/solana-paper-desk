@@ -123,6 +123,9 @@ class Runner:
         # --- L13 hook ---
         self.wallet_signals = None                 # lean.wallet_signals.WalletSignals (set by build_runner when configured)
         # --- end L13 ---
+        # --- L24 hook ---
+        self.clusters = None                       # lean.clusters.Clusters (set by build_runner when configured)
+        # --- end L24 ---
         # --- LINT2b hook: the feature / wallet-signal threads (health ``alive``; one shared shutdown deadline) ---
         self._aux_threads = {}                     # 'features' / 'wallet_signals' -> Thread
         # --- end LINT2b ---
@@ -736,6 +739,9 @@ class Runner:
                 # --- L13 hook ---
                 'wallet_signals': self._aux_health('wallet_signals', self.wallet_signals),
                 # --- end L13 ---
+                # --- L24 hook ---
+                'clusters': self._aux_health('clusters', self.clusters),
+                # --- end L24 ---
                 # --- L07R hook ---
                 'paths': self._l07r_health(),
                 # --- end L07R ---
@@ -849,6 +855,13 @@ class Runner:
                                                                                     name='wallet_signals', daemon=True)
             signals_thread.start()
         # --- end L13 ---
+        # --- L24 hook --- (linked-wallet clusters: its own daemon thread on the shared low lane; recording only)
+        clusters_thread = None
+        if self.clusters is not None:
+            self.clusters.stop = self.stop
+            clusters_thread = self._aux_threads['clusters'] = threading.Thread(target=self.clusters.run_loop, name='clusters', daemon=True)
+            clusters_thread.start()
+        # --- end L24 ---
         for t in threads:
             while t.is_alive():
                 t.join(0.5)
@@ -856,7 +869,7 @@ class Runner:
         # AUX_JOIN_S in total, so a slow one can never push the stop past systemd's TimeoutStopSec (30 s); each checks
         # ``stop`` before every request, so they normally end within one in-flight call ---
         aux_deadline = time.monotonic() + AUX_JOIN_S
-        for aux in (recorder, feature_thread, signals_thread):
+        for aux in (recorder, feature_thread, signals_thread, clusters_thread):          # L24: + clusters
             if aux is not None:
                 aux.join(max(0.0, aux_deadline - time.monotonic()))
         # --- end LINT2b ---

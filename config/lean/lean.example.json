@@ -1,5 +1,5 @@
 {
-  "_comment": "PAPER ONLY lean trader config (python -m lean --config). Every key the runner reads is listed; unknown keys are refused. strategy_config is relative to this file. initial_cash_sol creates a NEW store; an existing store must match it. LINT1/LINT2: every merged feature is ON at paper-collection defaults (L07R paths, L10 execution, L11 held_risk, L14 watchlist, L15 ops, L16 route_check, L12F features, L13 wallet_signals). features and wallet_signals are FEATURES ONLY (never read by the strategy) and run on the shared LOW lane in their own threads (run mode only). route_check (L16) re-uses the quote response: no extra provider call, never signs or sends. watchlist (L14): soft rejects (incl. ENTRY_THROTTLE) are re-screened on the MAIN lane after the fresh scan, portfolio-blocked mints cost nothing, hard cap watch_max_rescreens_per_hour (<= 360 Helius + 240 Jupiter calls/h), watch_hours must be <= screen.max_age_seconds. held_risk (L11) probes and account checks run on the shared LOW lane after the exits.",
+  "_comment": "PAPER ONLY lean trader config (python -m lean --config). Every key the runner reads is listed; unknown keys are refused. strategy_config is relative to this file. initial_cash_sol creates a NEW store; an existing store must match it. LINT1/LINT2: every merged feature is ON at paper-collection defaults (L07R paths, L10 execution, L11 held_risk, L14 watchlist, L15 ops, L16 route_check, L12F features, L13 wallet_signals, L24 clusters). features, wallet_signals and clusters are FEATURES ONLY (never read by the strategy) and run on the shared LOW lane in their own threads (run mode only). route_check (L16) re-uses the quote response: no extra provider call, never signs or sends. watchlist (L14): soft rejects (incl. ENTRY_THROTTLE) are re-screened on the MAIN lane after the fresh scan, portfolio-blocked mints cost nothing, hard cap watch_max_rescreens_per_hour (<= 360 Helius + 240 Jupiter calls/h), watch_hours must be <= screen.max_age_seconds. held_risk (L11) probes and account checks run on the shared LOW lane after the exits.",
   "strategy_config": "strategy-default.json",
   "initial_cash_sol": "10",
   "candidate_interval_s": 5.0,
@@ -104,5 +104,22 @@
     "hub_window_s": 86400.0,
     "min_wins": 2,
     "smart_threshold": 0.7
+  },
+  "clusters": {
+    "_comment": "L24 linked-wallet clusters (this object turns it on; null/absent = off). RECORDING ONLY, never read by the strategy. Per screened candidate, as of its decision: a graph over the top-20 holders (the screen's own snapshot), the early buyers (L13) and the creator, linked by shared non-hub funders (L13's map + bounded lookups), direct SOL/token transfers, same-slot first buys, Jito bundles (adjacent same-slot pool signatures with a tip) and same-transaction co-signers; connected components -> cluster_count, largest_cluster_supply_pct, top_cluster_holders, creator_cluster_supply_pct, linked_supply_pct_total, jito_bundled_buys, fresh_wallet_share. <= max_calls Helius calls per candidate on the shared low lane (2 pool pages + owners + 4 window txs + 6 x (history page + funding tx)), only while reserve_tokens more tokens stay for the path recorder / L11 / L12F / L13, paced at 0.5 s, on its own thread; it waits up to signals_wait_s for L13's row.",
+    "top_n": 20,
+    "max_window_txs": 4,
+    "holder_lookups": 6,
+    "history_limit": 25,
+    "max_calls": 20,
+    "pace_s": 0.5,
+    "reserve_tokens": 1,
+    "shed_wait_s": 30.0,
+    "max_per_pass": 2,
+    "backfill_max_age_s": 1800,
+    "signals_wait_s": 600.0,
+    "hub_min_mints": 5,
+    "hub_window_s": 86400.0,
+    "ignore_funders": []
   }
 }
