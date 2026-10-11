@@ -5,6 +5,7 @@ recomputes the chain from SQL scalars (no evidence loads), re-proves only unchai
 chained ones from their blobs. Corruption of an already-verified row must be caught by the chain even when it is not sampled.
 Everything is seeded and deterministic.
 """
+import os
 import random
 import sqlite3
 import unittest
@@ -27,7 +28,7 @@ for _name in dir(base.MonitoringBudgetTests):      # reuse setUp/helpers only
     if _name.startswith('test_'):
         setattr(_Fixture, _name, None)
 
-TABLES = ('paper_monitoring_budget', 'paper_monitoring_reservations', 'paper_monitoring_outcomes', mb.CHAIN_TABLE)
+TABLES = ('paper_monitoring_budget', 'paper_monitoring_reservations', 'paper_monitoring_outcomes', mb.CHAIN_TABLE, mb.HEAD_TABLE)
 
 
 def independent_chain(c):
@@ -41,6 +42,9 @@ def independent_chain(c):
                        'checkpoint': checkpoint, 'method': method, 'params': params, 'evidence': evidence})
         out.append((identity, prev))
     return out
+
+
+FULL = {'DESK_CHAIN_FULL_VERIFY': '1'}
 
 
 class ChainTests(_Fixture):
@@ -153,10 +157,11 @@ class ChainTests(_Fixture):
     def test_corrupting_a_verified_row_is_detected_even_when_it_is_not_sampled(self):
         for _ in range(6):
             self.read()
-        with patch.object(mb, 'CHAIN_SAMPLE', 0):
+        with patch.object(mb, 'CHAIN_SAMPLE', 0), patch.object(mb, 'CHAIN_HASH_SAMPLE', 0):
             self.assertEqual(self.budget.snapshot()['blockers'], [])
             self.corrupt("UPDATE paper_monitoring_reservations SET params_hash=? WHERE id=3", ('f' * 64,))
-            with self.assertRaises(MonitoringBlocked) as caught:
+            self.assertEqual(self.budget.snapshot()['blockers'], [])           # T24S: verified once, not re-hashed every call ...
+            with patch.dict(os.environ, FULL), self.assertRaises(MonitoringBlocked) as caught:      # ... until a full verification
                 self.budget.snapshot()
         self.assertEqual(caught.exception.code, 'MONITORING_ACCOUNTING_INVALID')
 
@@ -167,7 +172,7 @@ class ChainTests(_Fixture):
                 for _ in range(4):
                     self.read()
                 self.corrupt(f'UPDATE paper_monitoring_reservations SET {column}=? WHERE id=2', (value,))
-                with patch.object(mb, 'CHAIN_SAMPLE', 0), self.assertRaises(MonitoringBlocked):
+                with patch.object(mb, 'CHAIN_SAMPLE', 0), patch.dict(os.environ, FULL), self.assertRaises(MonitoringBlocked):
                     self.budget.snapshot()
 
     def test_swapped_outcome_evidence_is_detected(self):
@@ -176,7 +181,7 @@ class ChainTests(_Fixture):
         with closing(self.store.connect()) as c:
             first, second = (r[0] for r in c.execute('SELECT evidence_hash FROM paper_monitoring_outcomes WHERE reservation_id IN (1,2) ORDER BY reservation_id'))
         self.corrupt('UPDATE paper_monitoring_outcomes SET evidence_hash=? WHERE reservation_id=1', (second,))
-        with patch.object(mb, 'CHAIN_SAMPLE', 0), self.assertRaises(MonitoringBlocked):
+        with patch.object(mb, 'CHAIN_SAMPLE', 0), patch.dict(os.environ, FULL), self.assertRaises(MonitoringBlocked):
             self.budget.snapshot()
 
     def test_chain_row_tampering_is_detected(self):
@@ -191,7 +196,7 @@ class ChainTests(_Fixture):
                 for _ in range(5):
                     self.read()
                 self.corrupt(statement, args)
-                with patch.object(mb, 'CHAIN_SAMPLE', 0), self.assertRaises(MonitoringBlocked):
+                with patch.object(mb, 'CHAIN_SAMPLE', 0), patch.dict(os.environ, FULL), self.assertRaises(MonitoringBlocked):
                     self.budget.snapshot()
 
     def test_chain_schema_deviation_is_refused(self):
@@ -200,10 +205,18 @@ class ChainTests(_Fixture):
         with self.assertRaises(MonitoringBlocked):
             self.budget.snapshot()
 
-    def test_dropping_the_last_chain_row_is_harmless_because_that_row_is_then_proved_from_its_blob(self):
+    def test_dropping_the_last_chain_row_but_not_the_head_is_refused(self):
+        for _ in range(4):
+            self.read()
+        self.corrupt(f'DELETE FROM {mb.CHAIN_TABLE} WHERE seq=4')                 # the head still vouches for link 4
+        with patch.object(mb, 'CHAIN_SAMPLE', 0), self.assertRaises(MonitoringBlocked):
+            self.budget.snapshot()
+
+    def test_dropping_the_last_chain_row_and_rewinding_the_head_is_harmless_because_that_row_is_then_proved_from_its_blob(self):
         for _ in range(4):
             self.read()
         self.corrupt(f'DELETE FROM {mb.CHAIN_TABLE} WHERE seq=4')
+        self.corrupt(f'UPDATE {mb.HEAD_TABLE} SET seq=3,chain_hash=(SELECT chain_hash FROM {mb.CHAIN_TABLE} WHERE seq=3)')
         with patch.object(mb, 'CHAIN_SAMPLE', 0):
             self.assertEqual(self.loads_during(self.budget.snapshot), 1)       # row 4 now unchained: one full proof
             self.assertEqual(self.budget.snapshot()['blockers'], [])
@@ -213,6 +226,9 @@ class ChainTests(_Fixture):
         for _ in range(5):
             self.read()
         self.corrupt(f'DROP TABLE {mb.CHAIN_TABLE}')
+        with patch.object(mb, 'CHAIN_SAMPLE', 0), self.assertRaises(MonitoringBlocked):       # a surviving head without its chain is tampering
+            self.budget.snapshot()
+        self.corrupt(f'DROP TABLE {mb.HEAD_TABLE}')                                              # an older store has neither
         with patch.object(mb, 'CHAIN_SAMPLE', 0):
             self.assertEqual(self.loads_during(self.budget.snapshot), 5)        # every old row is proved from its blob
             self.read()
@@ -234,14 +250,16 @@ class ChainTests(_Fixture):
         for _ in range(10):
             self.read()
         with closing(self.store.connect()) as c:
-            covered, head = mb._chain_rows(c)
-        first = mb._chain_sample(covered, head)
-        self.assertEqual(first, mb._chain_sample(covered, head))
+            count, head, _ = mb._chain_state(c)
+        self.assertEqual(count, 10)
+        first = mb._chain_sample(count, head)
+        self.assertEqual(first, mb._chain_sample(count, head))
         self.assertEqual(len(first), mb.CHAIN_SAMPLE)
+        self.assertTrue(first <= set(range(1, count + 1)))
         seen = set()
         for i in range(80):
-            seen |= mb._chain_sample(covered, str(i))
-        self.assertEqual(seen, set(covered), 'over time every chained row is re-proved from its blob')
+            seen |= mb._chain_sample(count, str(i))
+        self.assertEqual(seen, set(range(1, count + 1)), 'over time every chained row is re-proved from its blob')
 
 
 if __name__ == '__main__':

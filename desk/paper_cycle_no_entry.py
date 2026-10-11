@@ -19,7 +19,7 @@ from pathlib import Path
 import sqlite3
 from . import paper_terminal_reconciliation as terminal, runtime_compatibility as runtime
 from . import paper_preparation_retirement as historical
-from . import verified_index
+from . import verified_index, pass_inventory
 from .history_progress import HistoryProgress
 from .model import BOOST_VOLUME_FEATURE, OBSERVABLE_FORMULAS, canonical, digest
 
@@ -359,6 +359,7 @@ def publish(store, progress, *, pass_id, intent_hash, result, ledger):
                 raise ValueError('Cycle no-entry pass publication changed')
             # T24R F7: the full proof above passed; record what was proved in the same transaction as the receipt.
             verified_index.record(c, INDEX_KIND, pass_id, key, verified_index.proof_digest(INDEX_KIND, key, pass_id, scan, intent_hash))
+            pass_inventory.record(c, pass_id, intent_hash, key, KIND, scan, intent_hash)      # T24S: same transaction as the outcome
             verified_index.rows(c)
             total = len(rows(c)); c.commit()
         except BaseException:
@@ -428,16 +429,15 @@ def gate(store, research, scan_ids, *, ledger_locked=None, review_source=None, f
                 raise ValueError('Cycle no-entry original pass table missing')
             return None
         terminal._passes(c)
-        passes = c.execute('SELECT id,intent_hash,outcome_hash FROM paper_observation_passes WHERE outcome_hash IS NOT NULL').fetchall()
         newest = c.execute('SELECT count(*),COALESCE(max(rowid),0) FROM paper_observation_passes').fetchone()
         index = verified_index.rows(c)
+    # T24S: page loads only for passes that are new since the last call and a bounded sample (desk/pass_inventory.py).
+    inventory = pass_inventory.completed(store, (KIND,), persist=review_source is None, full=full)
     bound = set()
-    for identity, intent_key, outcome_key in passes:
-        kind, scan, intent = terminal._classification(store, outcome_key)
-        if kind == KIND:
-            if intent != intent_key or scan is None:
-                raise ValueError('Cycle no-entry outcome original pass conflict')
-            bound.add((identity, scan, intent_key, outcome_key))
+    for identity, scan, intent, intent_key, outcome_key in inventory.of(KIND):
+        if intent != intent_key or scan is None:
+            raise ValueError('Cycle no-entry outcome original pass conflict')
+        bound.add((identity, scan, intent_key, outcome_key))
     if bound != set(retired):
         raise ValueError('Cycle no-entry inventory incomplete')
     seed = digest({'passes': newest[0], 'last': newest[1]})

@@ -9,7 +9,7 @@ import sqlite3
 import time
 from desk import paper_terminal_reconciliation as terminal, runtime_compatibility as runtime
 from desk import paper_preparation_retirement as historical
-from desk import verified_index
+from desk import verified_index, pass_inventory
 from desk.evidence import EvidenceStore
 from desk.history_progress import HistoryProgress
 from desk.live_strategy_features import MAX_RECORDS, MAX_RECORD_BYTES, MAX_TOTAL_BYTES, calculate
@@ -20,6 +20,7 @@ TABLE='paper_history_preparation_rejections'
 MAX_REJECTIONS=512
 WINDOW_MAX_PAGES=4096   # pages written during ONE preparation (intent..outcome); not a store-wide cap
 KIND='history_preparation_rejection'
+PAGE_KIND='history_preparation_no_entry_v1'   # the kind field of the retained outcome page
 REASONS={'HISTORY_FEATURE_RECORD_BYTES_EXCEEDED','HISTORY_FEATURE_RECORD_COUNT_EXCEEDED',
          'HISTORY_FEATURE_AGGREGATE_BYTES_EXCEEDED','HISTORY_FRESH_ENTRY_REQUESTS_UNAVAILABLE',
          'HISTORY_FEATURE_MOMENTUM_STALE','HISTORY_FEATURE_EMPTY_WINDOW','HISTORY_REQUIRED_MEASUREMENTS_UNAVAILABLE'}
@@ -250,6 +251,7 @@ def publish(store,progress,ledger,cfg,*,pass_id,intent_hash,history_id,reason):
             if c.execute('UPDATE paper_observation_passes SET outcome_hash=? WHERE id=? AND intent_hash=? AND outcome_hash IS NULL',(key,pass_id,intent_hash)).rowcount!=1:raise ValueError('Preparation pass publication changed')
             # T24R F7: the full proof above passed; record what was proved in the same transaction as the receipt.
             verified_index.record(c,KIND,pass_id,key,verified_index.proof_digest(KIND,key,pass_id,scan,intent_hash))
+            pass_inventory.record(c,pass_id,intent_hash,key,PAGE_KIND,scan,intent_hash)      # T24S: same transaction as the outcome
             verified_index.rows(c);rows(c);c.commit()
         except BaseException:c.rollback();raise
     from desk.paper_cycle_no_entry import warn_if_crowded
@@ -279,21 +281,18 @@ def gate(store,research,scan_ids,*,ledger_locked=None,review_source=None,full=Fa
         if not found:
             if retired:raise ValueError('Preparation original pass table missing')
             return None
-        passes=_passes(c)
+        terminal._passes(c)
+        total,last=c.execute('SELECT count(*),COALESCE((SELECT id FROM paper_observation_passes ORDER BY rowid DESC LIMIT 1),0) FROM paper_observation_passes').fetchone()
         index=verified_index.rows(c)
-    # Two-way inventory: deleting the rejection table cannot erase a bound
-    # outcome's retirement. All references are bounded by the original pass
-    # validator, and their stored bytes are independently checked.
+    # Two-way inventory: deleting the rejection table cannot erase a bound outcome's retirement. T24S: page loads only for
+    # passes that are new since the last call and a bounded sample (desk/pass_inventory.py); the rest is checked as SQL scalars.
+    inventory=pass_inventory.completed(store,(PAGE_KIND,),persist=review_source is None,full=full)
     bound=set()
-    for _,identity,intent_key,outcome_key in passes:
-        if outcome_key is None:continue
-        outcome=terminal._load(store,outcome_key)
-        if type(outcome) is dict and outcome.get('kind')=='history_preparation_no_entry_v1':
-            if outcome.get('pass_id')!=identity or outcome.get('intent_hash')!=intent_key:
-                raise ValueError('Preparation outcome original pass conflict')
-            bound.add((identity,outcome.get('scan_id'),intent_key,outcome_key))
+    for identity,scan,page_intent,intent_key,outcome_key in inventory.of(PAGE_KIND):
+        if page_intent!=intent_key:raise ValueError('Preparation outcome original pass conflict')
+        bound.add((identity,scan,intent_key,outcome_key))
     if bound!=set(retired):raise ValueError('Preparation rejection inventory incomplete')
-    seed=digest({'passes':len(passes),'last':passes[-1][0] if passes else 0})
+    seed=digest({'passes':total,'last':last})
     replay,quick=verified_index.plan(index,KIND,retired,seed=seed,full=full)
     for identity,scan,intent_key,outcome_key in quick:
         value=terminal._load(store,outcome_key)

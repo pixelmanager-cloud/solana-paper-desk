@@ -214,7 +214,20 @@ CHAIN_GUARDS={
     f'{CHAIN_TABLE}_update':f"CREATE TRIGGER {CHAIN_TABLE}_update BEFORE UPDATE ON {CHAIN_TABLE} BEGIN SELECT RAISE(ABORT,'Monitoring accounting chain is append-only'); END",
     f'{CHAIN_TABLE}_delete':f"CREATE TRIGGER {CHAIN_TABLE}_delete BEFORE DELETE ON {CHAIN_TABLE} BEGIN SELECT RAISE(ABORT,'Monitoring accounting chain is append-only'); END"}
 CHAIN_SAMPLE=2          # chained completed rows re-proved from their blobs per accounting call (deterministic, moves with the head)
+CHAIN_HASH_SAMPLE=16    # already-verified chain links whose hash is recomputed from their SQL scalars per call (cheap, no blob loads)
 CHAIN_GENESIS='0'*64
+# T24S: the chain HEAD. One row (seq, chain_hash) says "every link up to seq was verified". A later call recomputes only the links
+# after it (O(new)) plus the samples above. The row can only move FORWARD and only onto the stored hash of an existing chain row
+# (triggers), so it cannot be made to vouch for rows that do not exist; it cannot vouch for rows that CHANGED after it was set
+# except through the samples, which is the point of the sample (``DESK_CHAIN_FULL_VERIFY=1`` recomputes everything).
+HEAD_TABLE=CHAIN_TABLE+'_head'
+HEAD_SQL=f'CREATE TABLE {HEAD_TABLE}(id INTEGER PRIMARY KEY CHECK(id=1),seq INTEGER NOT NULL,chain_hash TEXT NOT NULL)'
+_HEAD_BINDS=(f"NEW.seq<1 OR NEW.seq>(SELECT count(*) FROM {CHAIN_TABLE}) OR typeof(NEW.seq)!='integer' "
+             f"OR NEW.chain_hash IS NOT (SELECT chain_hash FROM {CHAIN_TABLE} WHERE seq=NEW.seq)")
+HEAD_GUARDS={
+    f'{HEAD_TABLE}_insert':f"CREATE TRIGGER {HEAD_TABLE}_insert BEFORE INSERT ON {HEAD_TABLE} WHEN {_HEAD_BINDS} BEGIN SELECT RAISE(ABORT,'Monitoring chain head is invalid'); END",
+    f'{HEAD_TABLE}_update':f"CREATE TRIGGER {HEAD_TABLE}_update BEFORE UPDATE ON {HEAD_TABLE} WHEN NEW.id!=OLD.id OR NEW.seq<OLD.seq OR {_HEAD_BINDS} BEGIN SELECT RAISE(ABORT,'Monitoring chain head moves forward only'); END",
+    f'{HEAD_TABLE}_delete':f"CREATE TRIGGER {HEAD_TABLE}_delete BEFORE DELETE ON {HEAD_TABLE} BEGIN SELECT RAISE(ABORT,'Monitoring chain head is permanent'); END"}
 
 
 def _chain_hash(prev, identity, at, scan, mint, checkpoint, method, params_hash, evidence_hash):
@@ -222,17 +235,29 @@ def _chain_hash(prev, identity, at, scan, mint, checkpoint, method, params_hash,
                    'method':method,'params':params_hash,'evidence':evidence_hash})
 
 
-def _chain_rows(c):
-    """({reservation_id: chain_hash}, head) after recomputing the whole chain from SQL scalars (no evidence loads).
+def _chain_objects(c):
+    """(has_chain, has_head); raises MonitoringBlocked for any schema that is not exactly the chain (with or without a head)."""
+    objects=c.execute("SELECT type,name,tbl_name,sql FROM sqlite_master WHERE name=? OR substr(name,1,?)=? OR tbl_name=? OR tbl_name=?",
+                      (CHAIN_TABLE,len(CHAIN_TABLE)+1,CHAIN_TABLE+'_',CHAIN_TABLE,HEAD_TABLE)).fetchall()
+    if not objects:return False,False
+    base={('table',CHAIN_TABLE,CHAIN_TABLE,CHAIN_SQL)}|{('trigger',n,CHAIN_TABLE,q) for n,q in CHAIN_GUARDS.items()}
+    base|={('index',f'sqlite_autoindex_{CHAIN_TABLE}_1',CHAIN_TABLE,None)}
+    head={('table',HEAD_TABLE,HEAD_TABLE,HEAD_SQL)}|{('trigger',n,HEAD_TABLE,q) for n,q in HEAD_GUARDS.items()}
+    found=set(objects)
+    if len(found)!=len(objects):raise MonitoringBlocked('MONITORING_ACCOUNTING_INVALID')
+    if found==base:return True,False
+    if found==base|head:return True,True
+    raise MonitoringBlocked('MONITORING_ACCOUNTING_INVALID')
 
-    A chain entry whose reservation or outcome row changed, vanished or was reordered fails the hash; an extra, missing or
+
+def _chain_rows(c):
+    """({reservation_id: chain_hash}, head) after recomputing the WHOLE chain from SQL scalars (no evidence loads).
+
+    The reference (full) verification: used when there is no stored head, by ``DESK_CHAIN_FULL_VERIFY=1`` and by tests. A chain
+    entry whose reservation or outcome row changed, vanished or was reordered fails the hash; an extra, missing or
     non-contiguous entry fails the shape checks. No chain table (older store) means nothing is covered."""
-    objects=c.execute("SELECT type,name,tbl_name,sql FROM sqlite_master WHERE name=? OR substr(name,1,?)=? OR tbl_name=?",
-                      (CHAIN_TABLE,len(CHAIN_TABLE)+1,CHAIN_TABLE+'_',CHAIN_TABLE)).fetchall()
-    if not objects:return {},CHAIN_GENESIS
-    expected={('table',CHAIN_TABLE,CHAIN_TABLE,CHAIN_SQL)}|{('trigger',n,CHAIN_TABLE,q) for n,q in CHAIN_GUARDS.items()}
-    expected|={('index',f'sqlite_autoindex_{CHAIN_TABLE}_1',CHAIN_TABLE,None)}
-    if set(objects)!=expected or len(objects)!=len(expected):raise MonitoringBlocked('MONITORING_ACCOUNTING_INVALID')
+    has_chain,_=_chain_objects(c)
+    if not has_chain:return {},CHAIN_GENESIS
     count=c.execute(f'SELECT count(*) FROM {CHAIN_TABLE}').fetchone()[0]
     rows=c.execute(f'SELECT ch.seq,ch.reservation_id,ch.chain_hash,r.at,r.scan_id,r.mint,r.checkpoint_hash,r.method,r.params_hash,o.evidence_hash '
                    f'FROM {CHAIN_TABLE} ch JOIN paper_monitoring_reservations r ON r.id=ch.reservation_id '
@@ -246,9 +271,69 @@ def _chain_rows(c):
     return covered,prev
 
 
-def _chain_sample(covered, head):
-    ranked=sorted(covered,key=lambda i:digest({'head':head,'id':i}))
-    return set(ranked[:CHAIN_SAMPLE])
+def _chain_full_forced():
+    return os.environ.get('DESK_CHAIN_FULL_VERIFY')=='1'
+
+
+_LINK=(f'SELECT ch.seq,ch.reservation_id,ch.chain_hash,r.at,r.scan_id,r.mint,r.checkpoint_hash,r.method,r.params_hash,o.evidence_hash '
+       f'FROM {CHAIN_TABLE} ch JOIN paper_monitoring_reservations r ON r.id=ch.reservation_id '
+       'JOIN paper_monitoring_outcomes o ON o.reservation_id=ch.reservation_id')
+
+
+def _chain_state(c, *, full=False):
+    """(count, head_hash, head_seq) after verifying ONLY what is new since the stored head, plus a bounded sample of older links.
+
+    ``count`` = links in the chain, ``head_hash`` = the stored hash of the last link, ``head_seq`` = the verified head that was
+    on disk before this call (0 when there was none). No chain table: (0, GENESIS, 0)."""
+    has_chain,has_head=_chain_objects(c)
+    if not has_chain:return 0,CHAIN_GENESIS,0
+    count,high=c.execute(f'SELECT count(*),COALESCE(max(seq),0) FROM {CHAIN_TABLE}').fetchone()
+    if count!=high:raise MonitoringBlocked('MONITORING_ACCOUNTING_INVALID')
+    mark=(0,CHAIN_GENESIS)
+    if has_head and not (full or _chain_full_forced()):
+        rows=c.execute(f'SELECT id,seq,chain_hash FROM {HEAD_TABLE}').fetchall()
+        if len(rows)>1:raise MonitoringBlocked('MONITORING_ACCOUNTING_INVALID')
+        if rows:
+            if rows[0][0]!=1 or type(rows[0][1]) is not int or not 1<=rows[0][1]<=count:raise MonitoringBlocked('MONITORING_ACCOUNTING_INVALID')
+            stored=c.execute(f'SELECT chain_hash FROM {CHAIN_TABLE} WHERE seq=?',(rows[0][1],)).fetchone()
+            if stored is None or stored[0]!=rows[0][2]:raise MonitoringBlocked('MONITORING_ACCOUNTING_INVALID')
+            mark=(rows[0][1],rows[0][2])
+    start,prev=mark
+    fresh=c.execute(_LINK+' WHERE ch.seq>? ORDER BY ch.seq',(start,)).fetchall()
+    if len(fresh)!=count-start:raise MonitoringBlocked('MONITORING_ACCOUNTING_INVALID')
+    head=prev
+    for n,(seq,identity,stored,at,scan,mint,checkpoint,method,params_hash,evidence_hash) in enumerate(fresh,start+1):
+        head=_chain_hash(head,identity,at,scan,mint,checkpoint,method,params_hash,evidence_hash)
+        if seq!=n or stored!=head or type(stored) is not str:raise MonitoringBlocked('MONITORING_ACCOUNTING_INVALID')
+    # Older links: recompute a bounded, deterministic sample (and the head link) from its own scalars and its stored predecessor.
+    for seq in sorted(_chain_picks(start,head,CHAIN_HASH_SAMPLE)):
+        row=c.execute(_LINK+' WHERE ch.seq=?',(seq,)).fetchone()
+        before=c.execute(f'SELECT chain_hash FROM {CHAIN_TABLE} WHERE seq=?',(seq-1,)).fetchone() if seq>1 else (CHAIN_GENESIS,)
+        if row is None or before is None:raise MonitoringBlocked('MONITORING_ACCOUNTING_INVALID')
+        if row[2]!=_chain_hash(before[0],*row[1:2],*row[3:]) or type(row[2]) is not str:raise MonitoringBlocked('MONITORING_ACCOUNTING_INVALID')
+    return count,head,start
+
+
+def _distinct_picks(upto, seed, k):
+    """``min(k, upto)`` DISTINCT numbers in 1..upto, pseudo-randomly but deterministically from ``seed`` (bounded draws)."""
+    chosen,i=set(),0
+    while len(chosen)<min(k,upto) and i<64*max(1,k):
+        chosen.add(int(digest({'seed':seed,'i':i})[:12],16)%upto+1)
+        i+=1
+    n=1
+    while len(chosen)<min(k,upto):                       # vanishingly unlikely: fill deterministically
+        chosen.add(n);n+=1
+    return chosen
+
+
+def _chain_picks(upto, head, k):
+    """Up to ``k`` distinct link numbers in 1..upto (plus the newest), deterministic in (upto, head); moves with the head."""
+    return {upto}|_distinct_picks(upto,{'head':head,'upto':upto},k) if upto>=1 else set()
+
+
+def _chain_sample(count, head):
+    """The distinct link numbers whose reservations are re-proved from their evidence blobs this call."""
+    return _distinct_picks(count,{'head':head,'count':count,'blobs':1},CHAIN_SAMPLE) if count else set()
 
 
 def _chain_append(c, identity):
@@ -259,10 +344,17 @@ def _chain_append(c, identity):
     if not c.execute("SELECT 1 FROM sqlite_master WHERE type='table' AND name=?",(CHAIN_TABLE,)).fetchone():
         c.execute(CHAIN_SQL)
         for q in CHAIN_GUARDS.values():c.execute(q)
-    covered,head=_chain_rows(c)
-    if identity in covered:return
-    c.execute(f'INSERT INTO {CHAIN_TABLE}(seq,reservation_id,chain_hash) VALUES((SELECT count(*)+1 FROM {CHAIN_TABLE}),?,?)',
-              (identity,_chain_hash(head,identity,*row)))
+    count,head,_=_chain_state(c)
+    if c.execute(f'SELECT 1 FROM {CHAIN_TABLE} WHERE reservation_id=?',(identity,)).fetchone():return
+    new=_chain_hash(head,identity,*row)
+    c.execute(f'INSERT INTO {CHAIN_TABLE}(seq,reservation_id,chain_hash) VALUES((SELECT count(*)+1 FROM {CHAIN_TABLE}),?,?)',(identity,new))
+    if not c.execute("SELECT 1 FROM sqlite_master WHERE type='table' AND name=?",(HEAD_TABLE,)).fetchone():
+        c.execute(HEAD_SQL)
+        for q in HEAD_GUARDS.values():c.execute(q)
+    if c.execute(f'SELECT 1 FROM {HEAD_TABLE}').fetchone():
+        c.execute(f'UPDATE {HEAD_TABLE} SET seq=?,chain_hash=? WHERE id=1',(count+1,new))
+    else:
+        c.execute(f'INSERT INTO {HEAD_TABLE}(id,seq,chain_hash) VALUES(1,?,?)',(count+1,new))
 
 
 class MonitoringBudget:
@@ -448,11 +540,20 @@ class MonitoringBudget:
         # no blob loads); only unchained rows and a bounded deterministic sample of chained ones are re-proved from the blobs.
         from .monitoring_successor import rows as successor_rows
         history=successor_rows(c,handoff) if handoff else []
-        chained,head=_chain_rows(c)
-        sample=_chain_sample(chained,head)
-        for identity, at, scan, mint, checkpoint, method, params_hash, evidence_hash in c.execute(
-                'SELECT r.id,r.at,r.scan_id,r.mint,r.checkpoint_hash,r.method,r.params_hash,o.evidence_hash FROM paper_monitoring_reservations r JOIN paper_monitoring_outcomes o ON o.reservation_id=r.id'):
-            if identity in chained and identity not in sample:continue
+        chain_count,head,_=_chain_state(c)
+        has_chain=_chain_objects(c)[0]
+        # T24S: re-prove from the blobs only the reservations the chain does not cover plus a bounded deterministic sample of the
+        # covered ones (looked up by link number, never by scanning every reservation).
+        sampled=sorted(_chain_sample(chain_count,head))
+        columns='r.id,r.at,r.scan_id,r.mint,r.checkpoint_hash,r.method,r.params_hash,o.evidence_hash'
+        source='FROM paper_monitoring_reservations r JOIN paper_monitoring_outcomes o ON o.reservation_id=r.id'
+        if not has_chain:
+            proving=c.execute(f'SELECT {columns} {source}').fetchall()
+        else:
+            marks=','.join('?'*len(sampled))
+            proving=c.execute(f'SELECT {columns} {source} WHERE r.id NOT IN (SELECT reservation_id FROM {CHAIN_TABLE})'
+                              +(f' OR r.id IN (SELECT reservation_id FROM {CHAIN_TABLE} WHERE seq IN ({marks}))' if sampled else ''),sampled).fetchall()
+        for identity, at, scan, mint, checkpoint, method, params_hash, evidence_hash in proving:
             try:
                 original = self.store.load(evidence_hash)
                 receipt = original.get('monitoring_reservation', {})
