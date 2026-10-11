@@ -22,6 +22,7 @@ import json
 import os
 import signal
 import sqlite3
+import sys
 import tempfile
 import threading
 import time
@@ -43,7 +44,7 @@ class _Halt(Exception):
 class Runner:
     def __init__(self, *, store, providers, exit_providers, strategy_cfg, discovery_db, state_dir, code_version,
                  screen_overrides=None, pool_fee_bps=25, taker=PAPER_TAKER, kill_switch=None, clock=time.time,
-                 scan_limit=500, max_retries=3, sol_usd_ttl_s=30):
+                 scan_limit=500, max_retries=3, sol_usd_ttl_s=30, features_recorder=None):
         self.store, self.providers, self.exit_providers = store, providers, exit_providers
         self.cfg = strategy_cfg
         self.pcfg = A.paper_config(strategy_cfg)
@@ -55,6 +56,7 @@ class Runner:
         self.scan_limit, self.max_retries, self.sol_usd_ttl_s = scan_limit, max_retries, sol_usd_ttl_s
         self.health_path = os.path.join(self.state_dir, 'health.json')
         self.cursor_path = os.path.join(self.state_dir, 'cursor.json')
+        self.features_recorder = features_recorder    # lean.features.FeatureRecorder or None (L12)
         self.stop = threading.Event()
         self._trade_lock = threading.RLock()       # final re-check + fill, and the day-start baseline
         self._counts_lock = threading.Lock()       # shared counters
@@ -254,8 +256,28 @@ class Runner:
             if error['transient'] and attempt < self.max_retries:
                 self.retry.append((candidate, attempt + 1))
             return
-        if not result.passed:
+        track = {'entered': False, 'reason': ','.join(result.reasons) or None}
+        try:
+            if result.passed:
+                track['reason'] = 'ABORTED_BY_ERROR'
+                self._after_screen(candidate, cid, result, track)
+        finally:
+            exc = sys.exc_info()[1]
+            retried = isinstance(exc, ProviderError) and exc.transient and attempt < self.max_retries     # the retry writes the row
+            if not retried:
+                self._track_features(candidate, cid, result, track)
+
+    def _track_features(self, candidate, cid, result, track):
+        """Hand a screened candidate to the feature recorder (L12). Never raises: a recorder bug cannot touch an entry."""
+        if self.features_recorder is None:
             return
+        try:
+            self.features_recorder.submit(candidate, result, entered=track['entered'], reason=track['reason'], candidate_id=cid)
+        except Exception:                                                      # noqa: BLE001
+            pass
+
+    def _after_screen(self, candidate, cid, result, track):
+        mint = candidate.mint
         self._count('passed')
         features = A.entry_features(result.features, mint)
         now = self._now()
@@ -263,6 +285,7 @@ class Runner:
         if gate.action != 'BUY' or not gate.quote_required:
             self.store.add_decision('entry', gate.action, mint=mint, candidate_id=cid, reasons=gate.reasons,
                                     features=_jsonable(gate.detail), ts=self.clock())
+            track['reason'] = ','.join(gate.reasons) or gate.action
             return
         # Quote at the decided size, then the sell leg for exactly the tokens the paper fill will hold.
         size_lamports = A.lamports(gate.size_sol)
@@ -275,11 +298,13 @@ class Runner:
             self.store.add_decision('entry', decision.action, mint=mint, candidate_id=cid, reasons=decision.reasons,
                                     features={**_jsonable(decision.detail), 'size_sol': str(decision.size_sol)}, ts=self.clock())
             if decision.action != 'BUY':
+                track['reason'] = ','.join(decision.reasons) or decision.action
                 return
             fill = paper.buy(A.paper_quote(buy_q, mint=mint, side='buy', decimals=features['decimals'], ts=self.clock(),
                                            ref=buy_ref), decision.size_sol, self.pcfg)
             self.store.add_fill(fill, candidate_id=cid, state={'event': 'open', 'state': A.open_state(features, fill, self.cfg)})
             self._count('entered')
+            track['entered'], track['reason'] = True, None
             self._check()
 
     # -- position loop --------------------------------------------------------------------------------------------
@@ -441,6 +466,8 @@ class Runner:
                 self.stop.wait(interval)
         threads = [threading.Thread(target=loop, args=(self.candidate_pass, candidate_interval), name='candidates'),
                    threading.Thread(target=loop, args=(self.position_pass, min(10.0, position_interval)), name='positions')]
+        if self.features_recorder is not None:
+            threads.append(threading.Thread(target=self.features_recorder.run, args=(self.stop,), name='features'))
         for t in threads:
             t.start()
         for t in threads:
