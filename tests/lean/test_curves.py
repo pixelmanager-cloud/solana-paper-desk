@@ -189,7 +189,7 @@ class ConfigTests(unittest.TestCase):
         cfg = C.config(None)
         self.assertFalse(cfg['enabled'])
         self.assertEqual(C.config(cfg), cfg)
-        self.assertEqual((cfg['poll_s'], cfg['method'], cfg['min_progress']), (10.0, 'getProgramAccounts', 0.5))
+        self.assertEqual((cfg['poll_s'], cfg['method'], cfg['min_progress']), (10.0, 'getProgramAccountsV2', 0.5))   # LINT5: v1 cannot list mainnet
 
     def test_refusals(self):
         bad = [{'typo': 1}, [], 'x', {'enabled': 1}, {'method': 'getAccountInfo'}, {'method': None}, {'poll_s': 0}, {'poll_s': True},
@@ -202,10 +202,10 @@ class ConfigTests(unittest.TestCase):
 
     def test_default_budget_stays_under_half_a_million_credits(self):
         e = C.estimate(C.config(None))
-        self.assertEqual((e['requested_poll_s'], e['effective_poll_s']), (10.0, 51.84))
-        self.assertEqual(e['max_calls_per_hour_by_budget'], 69)
-        self.assertLessEqual(e['credits_per_month'], 500_000)
-        self.assertLessEqual(e['calls_per_hour'], 69.5)
+        self.assertEqual((e['requested_poll_s'], e['effective_poll_s']), (10.0, 57.6))        # LINT5: 450k/month default
+        self.assertEqual(e['max_calls_per_hour_by_budget'], 62)
+        self.assertLess(e['credits_per_month'], 500_000)
+        self.assertLessEqual(e['calls_per_hour'], 62.5)
 
     def test_estimate_follows_the_config(self):
         slow = C.estimate(C.config({'poll_s': 300}))
@@ -373,7 +373,7 @@ class GapAndBudgetTests(Base):
         self.assertEqual(len(self.rpc.calls), 2)                               # a new hour
 
     def test_effective_interval_is_stretched_by_the_budget(self):
-        self.assertAlmostEqual(self.recorder.effective_interval_s(), 51.84)
+        self.assertAlmostEqual(self.recorder.effective_interval_s(), 57.6)
         fast = self.make(max_credits_month=5_000_000)
         self.assertEqual(fast.effective_interval_s(), 10.0)
         slow = self.make(poll_s=120)
@@ -446,13 +446,13 @@ class V2Tests(Base):
         first = self.rpc.calls[0][1][1]
         self.assertEqual((first['limit'], 'changedSinceSlot' in first, 'paginationKey' in first, 'withContext' in first), (1000, False, False, False))
         self.assertEqual([c[1][1].get('paginationKey') for c in self.rpc.calls], [None, 'k1', 'k2'])
-        self.assertEqual(self.recorder.cursor, 102)
-        self.assertEqual(self.db.meta('changed_since_slot'), '102')
+        self.assertEqual(self.recorder.cursor, 100)                          # LINT5: the LOWEST slot of the poll's pages
+        self.assertEqual(self.db.meta('changed_since_slot'), '100')
         self.assertEqual(len(self.rows('SELECT curve FROM curve_paths')), 3)
         self.rpc.script.append(v2([], slot=110))
         self.clock.t += 60
         self.recorder.poll()
-        self.assertEqual(self.rpc.calls[-1][1][1]['changedSinceSlot'], 102)
+        self.assertEqual(self.rpc.calls[-1][1][1]['changedSinceSlot'], 100)
         self.assertEqual(self.recorder.cursor, 110)
 
     def test_cursor_survives_a_restart_and_changed_since_can_be_off(self):
@@ -475,13 +475,19 @@ class V2Tests(Base):
         self.assertIsNone(self.db.meta('changed_since_slot'))
         self.assertEqual(self.rows('SELECT cause FROM curve_poll_gaps'), [('HTTP_503',)])
 
-    def test_running_out_of_pages_is_a_gap_and_does_not_advance_the_cursor(self):
+    def test_running_out_of_pages_is_a_gap_and_still_advances_the_cursor(self):
+        # LINT5: the first (cursor-less) poll of mainnet can never list millions of curves in max_pages: it must move on
         self.rpc.script += [v2([], slot=100 + i, key='k%d' % i) for i in range(5)]
         self.clock.t += 60
         self.recorder.poll()
         self.assertEqual(len(self.rpc.calls), 3)                              # max_pages
-        self.assertIsNone(self.recorder.cursor)
+        self.assertEqual(self.recorder.cursor, 100)
         self.assertEqual(self.rows('SELECT cause FROM curve_poll_gaps'), [('max_pages',)])
+        self.rpc.script[:] = [v2([], slot=200)]
+        self.clock.t += 60
+        self.recorder.poll()
+        self.assertEqual(self.rpc.calls[-1][1][1]['changedSinceSlot'], 100)  # incremental from then on
+        self.assertEqual(self.recorder.cursor, 200)
 
     def test_avg_pages_stretches_the_interval(self):
         self.rpc.script += [v2([], slot=1, key='a'), v2([], slot=2, key='b'), v2([], slot=3)]
@@ -600,7 +606,7 @@ class JoinAndReportTests(Base):
         self.assertEqual(out.returncode, 0, out.stderr)
         report = json.loads(out.stdout)
         self.assertEqual(report['status'], 'OK')
-        self.assertEqual(report['estimate']['effective_poll_s'], 51.84)
+        self.assertEqual(report['estimate']['effective_poll_s'], 57.6)
         bad = subprocess.run([sys.executable, '-m', 'lean.curves', 'report', '--db', str(self.dir / 'none.sqlite')], capture_output=True, text=True, cwd=ROOT)
         self.assertEqual(bad.returncode, 2)
 

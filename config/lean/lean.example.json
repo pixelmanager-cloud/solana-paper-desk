@@ -299,7 +299,7 @@
     "day_history": 14
   },
   "curves": {
-    "_comment": "C2 bonding-curve recorder (recording only; low lane; own curves.sqlite). OFF here: the V2 call (getProgramAccountsV2 + changedSinceSlot) must be verified live first. getProgramAccounts costs ~10 credits per call; max_credits_month (500k) becomes a rolling-hour budget and stretches poll_s to ~52 s. method: getProgramAccounts (one huge response, small clusters/fakes only) or getProgramAccountsV2.",
+    "_comment": "C2 bonding-curve recorder (RECORDING ONLY; shared LOW lane, shed = skip; own curves.sqlite with size rollover and a disk floor; absent/null or enabled false = off and left out of lean_config_hash). OFF here: the V2 call must be verified live first (reports/LINT5.md 'C2 live verification'). One getProgramAccountsV2 listing per poll (memcmp on the 8-byte BondingCurve discriminator, limit page_limit, changedSinceSlot = the lowest slot of the last poll; max_pages per poll, an overflow is a gap and moves on); getProgramAccounts (v1) lists EVERY pump curve ever made and is for fakes/small clusters only. ~10 credits per page (+1 getSlot only if the V2 response carries no slot); max_credits_month 450,000 becomes a rolling-hour budget checked before every call and stretches poll_s 10 s to ~58 s (62 calls/hour, < 0.5M credits/month). Tracks SOL-quoted curves at progress >= min_progress (0.5), at most max_tracked; marks on change; ends GRADUATED / STALE; join_by_mint() continues into paths.sqlite.",
     "enabled": false,
     "db": null,
     "poll_s": 10,
@@ -312,7 +312,7 @@
     "changed_since": true,
     "data_slice_len": 125,
     "credit_per_call": 10,
-    "max_credits_month": 500000,
+    "max_credits_month": 450000,
     "max_db_gb": 2,
     "min_free_gb": 2
   }

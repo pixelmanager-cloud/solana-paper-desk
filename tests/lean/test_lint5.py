@@ -327,5 +327,91 @@ class C4CpiEndToEnd(BackfillEndToEnd):
         return END
 
 
+
+# ================================================================================================================ C2
+import hashlib as _hashlib  # noqa: E402
+
+from lean import curves as CV  # noqa: E402
+from lean.providers import LANE_SHED as _SHED, ProviderError as _PE  # noqa: E402
+from tests.lean.test_curves import FakeRPC, curve_bytes, entry as curve_entry, key as curve_key, v2  # noqa: E402
+
+
+class C2LayoutProvenance(unittest.TestCase):
+    def test_discriminator_is_the_anchor_hash_and_the_schema_file_is_the_pinned_one(self):
+        self.assertEqual(CV.DISCRIMINATOR, _hashlib.sha256(b'account:BondingCurve').digest()[:8])
+        manifest = json.loads((ROOT / 'desk' / 'schemas' / 'manifest.json').read_text())
+        pinned = manifest['files']['pump']['sha256']
+        self.assertEqual(_hashlib.sha256((ROOT / 'desk' / 'schemas' / 'pump.json').read_bytes()).hexdigest(), pinned)
+        for older in ('pump_previous1.json', 'pump_previous2.json'):          # the 115-byte layouts share every offset they have
+            schema = json.loads((ROOT / 'desk' / 'schemas' / older).read_text())
+            fields = next(t for t in schema['types'] if t['name'] == 'BondingCurve')['type']['fields']
+            offset = 8
+            for field in fields:
+                self.assertEqual(CV.OFFSETS[field['name']], offset, (older, field['name']))
+                offset += {'u64': 8, 'bool': 1, 'pubkey': 32}[field['type']]
+
+
+class C2PollingMethod(unittest.TestCase):
+    def setUp(self):
+        self.tmp = tempfile.TemporaryDirectory()
+        self.addCleanup(self.tmp.cleanup)
+        self.t = [1_800_000_000.0]
+        self.rpc = FakeRPC()
+
+    def recorder(self, **raw):
+        db = CV.CurveStore(Path(self.tmp.name) / ('c%d.sqlite' % len(raw)), clock=lambda: self.t[0])
+        self.addCleanup(db.close)
+        return CV.CurveRecorder(db=db, helius=self.rpc, cfg=CV.config({'enabled': True, 'min_free_gb': 0, **raw}), code_version='t',
+                                clock=lambda: self.t[0])
+
+    def test_the_method_is_configurable_and_v2_is_the_default(self):
+        self.assertEqual(CV.config({'enabled': True})['method'], 'getProgramAccountsV2')
+        v1 = self.recorder(method='getProgramAccounts')
+        self.rpc.script.append({'context': {'slot': 5}, 'value': []})
+        v1.poll()
+        self.assertEqual(self.rpc.calls[-1][0], 'getProgramAccounts')
+        self.assertNotIn('limit', self.rpc.calls[-1][1][1])
+        new = self.recorder()
+        self.rpc.script.append(v2([], slot=7))
+        new.poll()
+        self.assertEqual(self.rpc.calls[-1][0], 'getProgramAccountsV2')
+        self.assertEqual(self.rpc.calls[-1][1][1]['limit'], 1000)
+
+    def test_a_listing_without_a_slot_makes_the_next_poll_read_get_slot_first(self):
+        r = self.recorder()
+        self.rpc.script.append({'accounts': [curve_entry(curve_key(1), curve_bytes())]})
+        r.poll()
+        self.assertTrue(r.slotless)
+        self.assertIsNone(r.cursor)
+        self.t[0] += 60
+        self.rpc.script += [900, {'accounts': []}]
+        r.poll()
+        self.assertEqual([c[0] for c in self.rpc.calls[-2:]], ['getSlot', 'getProgramAccountsV2'])
+        self.assertEqual(r.cursor, 900)
+        self.t[0] += 60
+        self.rpc.script += [950, {'accounts': []}]
+        r.poll()
+        self.assertEqual(self.rpc.calls[-1][1][1]['changedSinceSlot'], 900)
+        self.assertEqual(r.cursor, 950)
+        self.t[0] += 60
+        self.rpc.script += [_PE(_SHED, True)]                                       # a shed getSlot: skip, no listing, no credit
+        before = len(self.rpc.calls)
+        r.poll()
+        self.assertEqual(len(self.rpc.calls), before + 1)
+        self.assertEqual(r.cursor, 950)
+
+    def test_the_default_budget_holds_over_simulated_hours(self):
+        r = self.recorder()
+        self.rpc.default = lambda method, params: v2([], slot=int(self.t[0]))
+        spent = 0.0
+        for _ in range(3 * 3600 // 10):                                             # a 10 s poll loop for 3 hours: the budget binds
+            self.t[0] += 10
+            r.poll()
+        calls, credits = r.db.poll_usage(0)
+        self.assertLessEqual(credits, 3 * 450_000 / 720 + 1e-6)
+        self.assertLess(CV.estimate(CV.config(None))['credits_per_month'], 500_000)
+        self.assertGreater(calls, 100)
+
+
 if __name__ == '__main__':
     unittest.main()

@@ -234,12 +234,12 @@ them and a recorder failure never reaches the trader. Own daemon thread in run m
 and a `curve_poll_gaps` row says so).
 * **Call.** One `getProgramAccounts`-style call per poll on the pump program, filtered by the 8-byte BondingCurve discriminator (all layout versions;
   no server-side `complete` filter, so graduation is seen). `method` is `getProgramAccounts` (one huge response: only for fakes/small clusters) or
-  `getProgramAccountsV2` (Helius: `limit`, `paginationKey`, `changedSinceSlot` = only curves changed since the last COMPLETE poll; the coordinator verifies
-  it live). The account layout relied on (offsets, sizes 49..125 bytes) is in the module docstring and pinned to `desk/schemas/pump.json` by a test.
+  `getProgramAccountsV2` (Helius: `limit`, `paginationKey`, `changedSinceSlot` = only curves changed since the lowest slot of the last poll; an overflow of
+  `max_pages` is a gap and still moves on; the DEFAULT since LINT5; the coordinator verifies it live). The account layout relied on (offsets, sizes 49..125 bytes) is in the module docstring and pinned to `desk/schemas/pump.json` by a test.
 * **What is tracked.** SOL-quoted curves from the first poll that shows them incomplete with progress >= `min_progress` (0.5), at most `max_tracked` (500).
   A mark (price, progress, SOL raised, raw reserves) is written when a curve CHANGES; the path ends `GRADUATED` (final complete mark first) or `STALE`
   (no change for `stale_s`; a later change starts segment 1). The account has no mint: a mint's curve is the PDA `["bonding-curve", mint]` (`curve_address`).
-* **Budget.** `getProgramAccounts` ~10 credits per call; `max_credits_month` (500,000) becomes a rolling HOUR budget checked before every call (read from
-  the file, so a restart does not reset it) and stretches the requested `poll_s` (10 s) to ~52 s (69 calls/hour); V2 paging counts every page.
+* **Budget.** `getProgramAccounts` ~10 credits per call; `max_credits_month` (450,000 since LINT5) becomes a rolling HOUR budget checked before every call (read from
+  the file, so a restart does not reset it) and stretches the requested `poll_s` (10 s) to ~58 s (62 calls/hour); V2 paging counts every page.
   `python -m lean.curves report --db curves.sqlite [--config lean.json]` prints the summary and the calls/hour, credits/month estimate; `health.json` has both.
 * **Retention.** Own WAL file; past `max_db_gb` it rolls to `curves-YYYYMMDD.sqlite` carrying the live paths; below `min_free_gb` of free disk nothing is written.

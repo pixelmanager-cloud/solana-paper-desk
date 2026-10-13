@@ -185,7 +185,13 @@ class EndToEndCurvesTest(unittest.TestCase):
     def dump(path):
         with sqlite3.connect(path) as c:
             names = [n for (n,) in c.execute("SELECT name FROM sqlite_master WHERE type='table' ORDER BY name")]
-            return {n: c.execute('SELECT * FROM %s ORDER BY rowid' % n).fetchall() for n in names}
+            out = {n: c.execute('SELECT * FROM %s ORDER BY rowid' % n).fetchall() for n in names}
+        # LINT5 (after M1): the start event carries lean_config_hash, and turning the recorder on IS a new run's hash by design
+        # (an absent / disabled block leaves it unchanged: tests/lean/test_lint5.py RoundCConfigHash). Everything else must match.
+        out['events'] = [tuple(json.dumps({k: v for k, v in json.loads(cell).items() if k != 'lean_config_hash'}, sort_keys=True)
+                               if isinstance(cell, str) and cell.startswith('{') and 'lean_config_hash' in cell else cell for cell in row)
+                         for row in out.get('events', [])]
+        return out
 
     def test_end_to_end(self):
         out = self.run_scenario('on', True)

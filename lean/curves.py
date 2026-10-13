@@ -35,9 +35,17 @@ Tracking. A curve is tracked from the first poll that shows it incomplete with p
 gap row in between nothing changed). The path ends with ``GRADUATED`` (complete seen; the final mark is written first) or ``STALE``
 (no change for ``stale_s``; the slot is freed and a later change starts a new segment).
 
-Budget. ``getProgramAccounts`` costs ~10 credits per call. The hard cap ``max_credits_month`` (default 500,000 = 69 calls/hour) is turned
+LINT5 (integration review). ``getProgramAccounts`` with only the discriminator filter returns EVERY pump.fun curve ever created
+(millions of accounts): it cannot work on mainnet, so the default ``method`` is now ``getProgramAccountsV2`` (v1 stays selectable for
+fakes / small clusters). V2 cursor rules: the cursor (``changedSinceSlot``) is the LOWEST slot any page of a poll reported (a change made
+while later pages were read is not skipped); a poll that runs out of ``max_pages`` is a ``max_pages`` gap AND still advances the cursor
+(otherwise the first, cursor-less, poll of mainnet could never finish and every later poll would re-list the same first pages); a V2
+response without a slot makes the next polls read ``getSlot`` (1 credit, before the listing) to keep the cursor moving. The default
+``max_credits_month`` is 450,000 (under the 0.5M/month cap with room for transport retries).
+
+Budget. ``getProgramAccounts`` costs ~10 credits per call. The hard cap ``max_credits_month`` (default 450,000 = 62 calls/hour) is turned
 into a rolling hour budget that is checked before EVERY call (restart-proof: it is read from ``curve_polls``) and into a minimum
-interval, so the requested ``poll_s`` (10 s) is stretched to about 52 s by default: ``estimate`` and ``health`` show both.
+interval, so the requested ``poll_s`` (10 s) is stretched to about 58 s by default: ``estimate`` and ``health`` show both.
 
 Retention follows lean.paths (L07R2): its own file, WAL, size rollover to ``curves-YYYYMMDD[-n].sqlite`` carrying the live paths, and a
 free-disk floor below which nothing is written.
@@ -75,12 +83,13 @@ GB = 1024 ** 3
 HOURS_PER_MONTH = 720
 MAX_ENTRIES = 200_000
 METHODS = ('getProgramAccounts', 'getProgramAccountsV2')
+SLOT_CREDITS = 1                     # LINT5: a getSlot (only after a V2 response without a slot)
 _BASE58 = re.compile(r'[1-9A-HJ-NP-Za-km-z]{32,44}')
 _ALPHABET = '123456789ABCDEFGHJKLMNPQRSTUVWXYZabcdefghijkmnopqrstuvwxyz'
 DEFAULTS = {
-    'enabled': False, 'db': None, 'poll_s': 10.0, 'method': 'getProgramAccounts', 'min_progress': 0.5, 'max_tracked': 500,
+    'enabled': False, 'db': None, 'poll_s': 10.0, 'method': 'getProgramAccountsV2', 'min_progress': 0.5, 'max_tracked': 500,
     'page_limit': 1000, 'max_pages': 3, 'stale_s': 7200.0, 'changed_since': True, 'data_slice_len': CURRENT_LEN,
-    'credit_per_call': 10, 'max_credits_month': 500_000, 'max_db_gb': 2.0, 'min_free_gb': 2.0,
+    'credit_per_call': 10, 'max_credits_month': 450_000, 'max_db_gb': 2.0, 'min_free_gb': 2.0,
     'initial_real_token_reserves': INITIAL_REAL_TOKEN_RESERVES,
 }
 
@@ -402,6 +411,7 @@ class CurveRecorder:
                       'rollovers': 0, 'credits': 0.0}
         self._floor_bytes = 0
         self.avg_pages = 1.0                                 # moving average of the calls a poll needed (V2 pagination)
+        self.slotless = False                                # LINT5: a V2 response came without a slot: read getSlot before a poll
         self.resume()
 
     # -- bookkeeping ----------------------------------------------------------------------------------------------
@@ -514,6 +524,23 @@ class CurveRecorder:
             return 0
         entries, slot, complete, calls, credits, error_code = [], None, True, 0, 0.0, None
         page_key = None
+        v2_cursor = self.method == 'getProgramAccountsV2' and self.cfg['changed_since']
+        if v2_cursor and self.slotless:                        # LINT5: the listing carries no slot: read it BEFORE the listing
+            _calls, spent = self.db.poll_usage(now - 3600)
+            if spent + SLOT_CREDITS + self.credit_per_call > self.budget_hour + 1e-9:
+                self._bump('budget_skips')
+                return self._process(now, [], None, False, 0, 0.0, 'budget')
+            try:
+                result, _raw, meta = self.helius.rpc('getSlot', [{'commitment': 'confirmed'}])
+                calls, credits = calls + 1, credits + SLOT_CREDITS * max(1, int((meta or {}).get('attempts', 1) or 1))
+            except ProviderError as error:
+                if error.code == LANE_SHED:
+                    self._bump('shed')
+                    return self._process(now, [], None, False, 0, 0.0, 'shed')
+                self._fail('PROVIDER', error)
+                return self._process(now, [], None, False, 1, float(SLOT_CREDITS), error.code)
+            if type(result) is int and result >= 0:
+                slot = result
         for _page in range(self.cfg['max_pages'] if self.method == 'getProgramAccountsV2' else 1):
             if self.stop.is_set():
                 error_code, complete = 'stopped', False
@@ -548,7 +575,11 @@ class CurveRecorder:
                 error_code, complete = 'MALFORMED_RESPONSE', False
                 break
             entries += page
-            slot = page_slot if page_slot is not None else slot
+            if page_slot is None:
+                if v2_cursor:
+                    self.slotless = True                       # LINT5: from now on getSlot before each listing
+            else:                                              # LINT5: the LOWEST slot of the poll (nothing changed later is skipped)
+                slot = page_slot if slot is None else min(slot, page_slot)
             page_key = next_key
             if next_key is None:
                 break
@@ -616,8 +647,8 @@ class CurveRecorder:
                 ends.append((pubkey, state.segment, now, 'STALE', state.marks))
                 removed.append(pubkey)
         meta = None
-        if complete and slot is not None and self.method == 'getProgramAccountsV2':
-            meta = {'changed_since_slot': slot}
+        if (complete or error_code == 'max_pages') and slot is not None and self.method == 'getProgramAccountsV2':
+            meta = {'changed_since_slot': slot}                # LINT5: an overflow is a gap AND moves on (never stuck re-listing)
         poll_row = (now, self.method, calls, credits, accepted, tracked_now, len(marks), slot, int(error_code is None))
         gaps = [] if error_code is None else [(now, error_code)]
         if not self._write(paths=new_paths, marks=marks, ends=ends, gaps=gaps, polls=[poll_row] if calls else [], meta=meta):
