@@ -259,6 +259,9 @@ def arms_config_hash(cfg):
     return hashlib.sha256(text.encode()).hexdigest()
 
 
+NEUTRAL_WHEN_OFF = ('census', 'backfill', 'curves')      # LINT5: C3 / C4 / C2 blocks never change the hash while they are off
+
+
 def _strip_neutral(cfg):
     """W2b: the keys this code added are left out of the hash while they are OFF (``prefetch`` disabled, ``paths.hazard_path_sample`` 0), so a
     production config that does not use them keeps the hash it had before they existed (the learner / report ``--config-hash`` windows do
@@ -267,6 +270,10 @@ def _strip_neutral(cfg):
     prefetch = out.get('prefetch')
     if prefetch is None or (isinstance(prefetch, dict) and not prefetch.get('enabled')):
         out.pop('prefetch', None)
+    for key in NEUTRAL_WHEN_OFF:                                # LINT5: the Round C recorders, while off (absent = off)
+        block = out.get(key)
+        if block is None or (isinstance(block, dict) and not block.get('enabled')):
+            out.pop(key, None)
     paths = out.get('paths')
     if isinstance(paths, dict) and not paths.get('hazard_path_sample'):
         out['paths'] = {k: v for k, v in paths.items() if k != 'hazard_path_sample'}

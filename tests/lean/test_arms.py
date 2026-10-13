@@ -193,6 +193,9 @@ class ProductionConfig(unittest.TestCase):
     def old_hash(self, cfg):
         import hashlib
         plain = {k: v for k, v in cfg.items() if k not in ('arms', 'prefetch')}                      # (W2b's prefetch block is OFF in these)
+        for key in ('census', 'backfill', 'curves'):                                                # (LINT5: the Round C blocks are OFF in these)
+            if not (plain.get(key) or {}).get('enabled'):
+                plain.pop(key, None)
         if 'paths' in plain:
             plain['paths'] = {k: v for k, v in plain['paths'].items() if k != 'hazard_path_sample'}   # (W2b: 0 = off)
         text = json.dumps(entry._strip_comments(plain), sort_keys=True, separators=(',', ':'), ensure_ascii=True, default=str)

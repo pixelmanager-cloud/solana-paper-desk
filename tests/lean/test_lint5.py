@@ -138,5 +138,50 @@ class C1ProposalNeedsItsOwnTestBlock(unittest.TestCase):
         self.assertEqual(proposal['policy'], pol.name)
 
 
+
+# ================================================================================================================ C3
+from tests.lean.test_census import Env as _CensusEnv, LAUNCHLAB as _LAUNCHLAB  # noqa: E402
+
+
+class C3TransactionVersion(_CensusEnv):
+    def test_census_samples_ask_for_version_1_transactions(self):
+        from lean import providers
+        seen = []
+        self.chain.add(_LAUNCHLAB, T0 - 100, 'create')
+        c = self.census()
+        c.poll_once()
+        self.chain.fail['getTransaction'] = lambda params: seen.append(params[1]) or None
+        self.now[0] += 601
+        self.chain.add(_LAUNCHLAB, self.now[0], 'create')
+        self.now[0] += 1
+        c.poll_once()
+        self.assertTrue(seen)
+        self.assertEqual({o['maxSupportedTransactionVersion'] for o in seen}, {providers.MAX_TX_VERSION})
+        self.assertGreaterEqual(providers.MAX_TX_VERSION, 1)
+
+
+# ======================================================================================================== config hash
+class RoundCConfigHash(unittest.TestCase):
+    """Merging C2/C3/C4 must not change lean_config_hash of a production config that does not have their keys."""
+
+    def configs(self):
+        from lean.__main__ import load_config
+        return {name: load_config(ROOT / 'tests' / 'lean' / name) for name in ('lean.r1-prod.json', 'lean.r1-live.json', 'lean.baseline.json')}
+
+    def test_absent_blocks_leave_the_hash_as_it_was(self):
+        from lean.__main__ import NEUTRAL_WHEN_OFF, lean_config_hash
+        for name, cfg in self.configs().items():
+            before = {k: v for k, v in cfg.items() if k not in NEUTRAL_WHEN_OFF}         # the r1 config shape (no Round C keys)
+            self.assertEqual(lean_config_hash(cfg), lean_config_hash(before), name)
+
+    def test_turning_one_on_is_a_new_run(self):
+        from lean.__main__ import lean_config_hash
+        cfg = self.configs()['lean.r1-prod.json']
+        base = lean_config_hash(cfg)
+        on = dict(cfg, census=dict(cfg['census'], enabled=True))
+        self.assertNotEqual(lean_config_hash(on), base)
+        self.assertEqual(lean_config_hash(dict(cfg, census=None)), base)
+
+
 if __name__ == '__main__':
     unittest.main()

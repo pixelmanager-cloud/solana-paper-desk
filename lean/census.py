@@ -38,7 +38,7 @@ from pathlib import Path
 
 from lean import candidates as C
 from lean.flow import HourBudget, LowCalls, Stop
-from lean.providers import ProviderError
+from lean.providers import MAX_TX_VERSION, ProviderError
 
 SOL_MINT = 'So11111111111111111111111111111111111111112'
 LABEL = 'CENSUS'
@@ -375,7 +375,7 @@ class Census:
         sampled, creates, mints = 0, 0, []
         for signature in picked:
             try:
-                transaction = calls.rpc('getTransaction', [signature, {'encoding': 'json', 'maxSupportedTransactionVersion': 0,
+                transaction = calls.rpc('getTransaction', [signature, {'encoding': 'json', 'maxSupportedTransactionVersion': MAX_TX_VERSION,
                                                                          'commitment': 'confirmed'}])
                 self.counts['calls'] += 1
             except Stop as stop:
