@@ -63,6 +63,9 @@ CONFIG_KEYS = {
     'peak_persist_s': 60,              # #13 a peak-only state change is persisted at most this often, or on a >= 1% rise (0 = every change)
     'discovery_stale_s': 600,          # #10 the discovery feed silent longer than this writes a discovery_stale event (and _recovered)
     # --- end M1 ---
+    # --- W2b ---
+    'prefetch': None,                  # #8 lean.prefetch settings ({"enabled", "kinds", "lead_s", ...}): collectors start during the min-age wait; None = off
+    # --- end W2b ---
     # --- W2a ---
     'arms': None,                      # lean.arms shadow paper arms ({"enabled", "db", "arms": [{name, strategy_config, entry_filter}]}); None/absent = off
     # --- end W2a ---
@@ -202,6 +205,13 @@ def load_config(path):
     if cfg['discovery_stale_s'] < 60:
         raise ConfigError('discovery_stale_s must be at least 60')
     # --- end M1 ---
+    # --- W2b: strict at load (unknown keys, bad types); absent / null = off ---
+    from lean import prefetch
+    try:
+        cfg['prefetch'] = prefetch.config(cfg['prefetch'])
+    except prefetch.ConfigError as error:
+        raise ConfigError(str(error)) from None
+    # --- end W2b ---
     # --- W2a: strict at load (unknown keys, bad strategies and filters fail before the trader starts); None stays None ---
     from lean import arms
     try:
@@ -225,7 +235,7 @@ def lean_config_hash(cfg):
     its default is not a new run; canonical JSON; ``_comment`` keys left out so a comment edit is not one either). The strategy
     file has its own ``StrategyConfig.config_hash``; both go into the start event and health."""
     plain = {k: v for k, v in cfg.items() if k != 'arms'}      # W2a2 #1: the shadow arms never change the main run's identity (the learner's window)
-    text = json.dumps(_strip_comments(plain), sort_keys=True, separators=(',', ':'), ensure_ascii=True, default=str)
+    text = json.dumps(_strip_neutral(_strip_comments(plain)), sort_keys=True, separators=(',', ':'), ensure_ascii=True, default=str)
     return hashlib.sha256(text.encode()).hexdigest()
 
 
@@ -237,6 +247,20 @@ def arms_config_hash(cfg):
         return None
     text = json.dumps(_strip_comments(dict(block)), sort_keys=True, separators=(',', ':'), ensure_ascii=True, default=str)
     return hashlib.sha256(text.encode()).hexdigest()
+
+
+def _strip_neutral(cfg):
+    """W2b: the keys this code added are left out of the hash while they are OFF (``prefetch`` disabled, ``paths.hazard_path_sample`` 0), so a
+    production config that does not use them keeps the hash it had before they existed (the learner / report ``--config-hash`` windows do
+    not split at the deploy). Turning one on is a new run, as it should be."""
+    out = dict(cfg)
+    prefetch = out.get('prefetch')
+    if prefetch is None or (isinstance(prefetch, dict) and not prefetch.get('enabled')):
+        out.pop('prefetch', None)
+    paths = out.get('paths')
+    if isinstance(paths, dict) and not paths.get('hazard_path_sample'):
+        out['paths'] = {k: v for k, v in paths.items() if k != 'hazard_path_sample'}
+    return out
 
 
 def code_version():
@@ -372,6 +396,15 @@ def build_runner(cfg, *, state_dir, discovery_db, keys, code_version, clock=None
     r.risk_external = risk_external.build(risk_external.config(cfg.get('risk_external')), store=the_store, code_version=code_version,
                                           strategy_version=strategy_cfg.strategy_version, clock=clock, transport_kwargs=transport_kwargs)
     # --- end L21 ---
+    # --- W2b #8: the prefetcher (low lane; the collectors above start their work for a candidate during the min-age wait) ---
+    from lean import prefetch
+    r.prefetch = prefetch.build(prefetch.config(cfg.get('prefetch')), store=the_store, keys=keys, discovery_db=discovery_db,
+                                screen_cfg=r.screen_cfg, min_age_s=r.screen_cfg['min_age_seconds'], code_version=code_version,
+                                strategy_version=strategy_cfg.strategy_version, clock=clock, transport_kwargs=transport_kwargs)
+    if r.prefetch is not None:
+        r.prefetch.attach(features=r.features, risk_external=r.risk_external, wallet_signals=r.wallet_signals, clusters=r.clusters, flow=r.flow)
+        r.prefetch.gate = r.entries_allowed                                  # a halted trader / the kill switch also stops the prefetch
+    # --- end W2b ---
     # --- W2a: the shadow arms (own arms.sqlite, shared low lane). A store that cannot be opened never stops the trader. ---
     if cfg.get('arms') is not None:
         from lean import arms

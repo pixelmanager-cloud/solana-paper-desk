@@ -145,6 +145,7 @@ class PathRecord:
     points: tuple                         # Points, by time
     missing: tuple                        # times of the observations that were due but not taken (path_gaps + MALFORMED marks)
     ended: Optional[str] = None           # path_ends.why, None while the path is live
+    stage: Optional[str] = None           # W2b #9: paths.stage ('hazard_reject' = a sampled hazard reject, never traded)
 
     @property
     def decimals(self):
@@ -200,8 +201,8 @@ def iter_paths(connections, skipped):
         skipped[name] = skipped.get(name, 0) + n
     rows, mark_mints = {}, set()
     for connection in connections:
-        for (mint, cid, start_ts, ends_ts, entered, reason, screen_reasons, features, target) in connection.execute(
-                'SELECT mint, candidate_id, start_ts, ends_ts, entered, reason, screen_reasons, features, target FROM paths'):
+        for (mint, cid, start_ts, ends_ts, entered, reason, screen_reasons, features, target, stage) in connection.execute(
+                'SELECT mint, candidate_id, start_ts, ends_ts, entered, reason, screen_reasons, features, target, stage FROM paths'):
             if not isinstance(mint, str) or not mint or not _finite(start_ts) or not _finite(ends_ts):
                 bump('PATH_ROW_UNREADABLE')
                 continue
@@ -210,11 +211,11 @@ def iter_paths(connections, skipped):
                 if float(start_ts) >= rows[mint][0]:
                     continue
             rows[mint] = (float(start_ts), float(ends_ts), cid if type(cid) is int else None, bool(entered), screen_reasons, reason,
-                          features, target)
+                          features, target, stage if isinstance(stage, str) else None)
         mark_mints.update(m for (m,) in connection.execute('SELECT DISTINCT mint FROM path_marks'))
     for mint in mark_mints - set(rows):
         bump('MARKS_WITHOUT_PATH')
-    for mint, (start_ts, ends_ts, cid, entered, screen_reasons, reason, features, target) in sorted(rows.items(), key=lambda kv: (kv[1][0], kv[0])):
+    for mint, (start_ts, ends_ts, cid, entered, screen_reasons, reason, features, target, stage) in sorted(rows.items(), key=lambda kv: (kv[1][0], kv[0])):
         features, target = _json(features, dict), _json(target, dict)
         if features is None or target is None:
             bump('PATH_ROW_UNREADABLE')
@@ -246,7 +247,7 @@ def iter_paths(connections, skipped):
                 ended = str(end[0])
         yield PathRecord(mint, cid, start_ts, ends_ts, entered, tuple(_json(screen_reasons, list) or ()), tuple(_json(reason, list) or ()),
                          features, target, tuple(sorted(marks.values(), key=lambda p: p.ts)),
-                         tuple(sorted(t for t in missing if t not in marks)), ended)
+                         tuple(sorted(t for t in missing if t not in marks)), ended, stage)
 
 
 def load_paths(connections):

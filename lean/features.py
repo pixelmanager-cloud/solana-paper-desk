@@ -454,6 +454,47 @@ def build_row(candidate, screen, *, entered, reason=None, extra=None, extra_miss
             'flags': {k: v for k, v in (flags or {}).items() if k not in fields or fields[k] is not None}}
 
 
+# --- W2b #8: the prefetch half of the enrichment ---------------------------------------------------------------------------------
+def prefetch_enrich(candidate, probe, helius, *, asof, sleep=None, stop=None, shed_wait_s=0.0):
+    """The enrichment of a candidate BEFORE its screen, from a shadow screen (``probe``: the same figures the screen will load, a minute
+    earlier): the dev balance and the pool's history cut at ``asof`` (``enrich`` with ``decision_ts=asof``, so no transaction after it is
+    counted), plus the holder shares of the probe's own ``getTokenLargestAccounts`` (what a soft reject would otherwise read after its
+    decision). Returns a JSON-able dict; ``seconds_graduation_to_screen`` is left for the commit (the screen time is not known yet).
+    Never raises (``enrich`` records a failure as the reason of its fields)."""
+    creator, _ = dev_wallet(probe)
+    flags = {}
+    extra, extra_missing, calls = enrich(candidate, probe, helius, creator=creator, need_holders=False, screen_time=None, decision_ts=asof,
+                                         flags=flags, late_s=None, max_late_s=None, sleep=sleep, stop=stop, shed_wait_s=shed_wait_s)
+    holders = None
+    rows, skip, supply = _screen_rows(probe), exclusions(probe), (_get(probe, 'features', {}) or {}).get('supply_raw')
+    if isinstance(rows, list) and skip is not None and supply is not None:
+        try:
+            holders = list(holder_shares(rows, supply, skip))
+        except (ValueError, KeyError, TypeError):
+            holders = None
+    return {'extra': extra, 'missing': extra_missing, 'flags': flags, 'calls': calls, 'creator': creator, 'holders': holders}
+
+
+def apply_prefetch(pre, *, need_holders, screen_time):
+    """``(extra, extra_missing, calls, flags, collected_at)`` for ``build_row`` from a finished prefetch (``pre`` = a ``Prefetch.take``
+    result): the prefetched fields, the soft reject's holder shares from the probe (``AT_COLLECTION``, read before the decision),
+    ``seconds_graduation_to_screen`` from the real screen time. ``collected_at`` is when the prefetch FINISHED (never later than the
+    decision): the row's ``late_s`` is <= 0."""
+    payload = pre['payload']
+    extra, missing, flags = dict(payload['extra']), dict(payload['missing']), dict(payload['flags'])
+    born = extra.get('graduation_block_time')
+    if isinstance(born, int) and not isinstance(born, bool) and screen_time is not None:
+        extra['seconds_graduation_to_screen'] = round(float(screen_time) - born, 3)
+        missing.pop('seconds_graduation_to_screen', None)
+    if need_holders and payload.get('holders'):
+        extra['top1_pct'], extra['top10_pct'] = payload['holders']
+        flags['top10_pct'] = flags['top1_pct'] = 'AT_COLLECTION'
+        missing.pop('top1_pct', None)
+        missing.pop('top10_pct', None)
+    return extra, missing, payload['calls'], flags, pre['finished_at']
+# --- end W2b ---
+
+
 def hazard_free(screen):
     """True for a PASS or a screen rejected ONLY for the soft market bands (no hazard): worth the enrichment calls."""
     if _get(screen, 'passed'):
@@ -475,6 +516,7 @@ class FeatureRecorder:
         self.queue = queue.Queue(maxsize=queue_size)
         self.stats = {'rows': 0, 'enriched': 0, 'shed': 0, 'queue_full': 0, 'errors': 0, 'calls': 0, 'dropped': 0, 'stopped': 0}
         self.last_error = None
+        self.prefetch = None                              # W2b #8: lean.prefetch.Prefetch (set by build_runner when configured)
         self._written = set()
         self._lock = threading.Lock()
 
@@ -482,9 +524,12 @@ class FeatureRecorder:
         self.stats['errors'] += 1
         self.last_error = type(error).__name__
 
-    def _write(self, candidate, candidate_id, screen, entered, reason, screen_at, decision_ts=None, **kwargs):
-        payload = build_row(candidate, screen, entered=entered, reason=reason, screen_at=screen_at, collected_at=self.clock(),
+    def _write(self, candidate, candidate_id, screen, entered, reason, screen_at, decision_ts=None, collected_at=None, stamp=None, **kwargs):
+        payload = build_row(candidate, screen, entered=entered, reason=reason, screen_at=screen_at,
+                            collected_at=self.clock() if collected_at is None else collected_at,        # W2b: a prefetched row keeps its real time
                             decision_ts=decision_ts, **kwargs)
+        if stamp is not None:                                                                            # W2b: when the prefetch measured it
+            payload['prefetch'] = stamp
         # the same payload in ``meta`` (queryable; the report never selects the ``raw`` blob) and as canonical bytes in ``raw``
         self.store.add_observation(KIND, canonical(payload), mint=payload['mint'], candidate_id=candidate_id, meta=payload,
                                    code_version=self.code_version, strategy_version=self.strategy_version, ts=self.clock())
@@ -575,6 +620,19 @@ class FeatureRecorder:
                 age = _num(f.get('age_seconds'))
                 screen_time = screen_at if screen_at is not None else (
                     None if age is None or not isinstance(_get(candidate, 'migrated_at'), (int, float)) else float(candidate.migrated_at) + float(age))
+                # --- W2b #8 hook: a PREFETCH finished before the decision replaces the calls (the row keeps its real, earlier time) ---
+                pre = (None if self.prefetch is None or decision_ts is None
+                       else self.prefetch.take_features(_get(candidate, 'mint'), decision_ts, need_holders))
+                if pre is not None:
+                    extra, extra_missing, calls, flags, collected_at = apply_prefetch(pre, need_holders=need_holders, screen_time=screen_time)
+                    self.stats['calls'] += calls
+                    self.stats['enriched'] += 1
+                    self.stats['prefetched'] = self.stats.get('prefetched', 0) + 1
+                    self._write(candidate, candidate_id, screen, entered, reason, screen_at, decision_ts, extra=extra, extra_missing=extra_missing,
+                                default_why=why, calls=calls, flags=flags, collected_at=collected_at,
+                                stamp=self.prefetch._stamp(pre, decision_ts))
+                    return True
+                # --- end W2b ---
                 extra, extra_missing, calls = enrich(candidate, screen, self.helius, creator=creator, need_holders=need_holders,
                                                      screen_time=screen_time, decision_ts=decision_ts, flags=flags,
                                                      late_s=None if decision_ts is None else self.clock() - decision_ts,
@@ -594,6 +652,10 @@ class FeatureRecorder:
                 self._count_error(again)
                 self.stats['dropped'] += 1
         return True
+
+    def prefetch_run(self, candidate, probe, asof, *, patience_s, stop=None):
+        """W2b #8: the enrichment of ``candidate`` before its screen (see ``prefetch_enrich``), on this recorder's low-lane client."""
+        return prefetch_enrich(candidate, probe, self.helius, asof=asof, sleep=self.sleep, stop=stop or self._stop, shed_wait_s=patience_s)
 
     def run(self, stop, tick=0.5):
         self._stop = stop                                 # LINT2b: enrich() checks it before every request
