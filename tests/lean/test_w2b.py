@@ -429,6 +429,25 @@ class PrefetchRules(unittest.TestCase):
         self.assertEqual(p.prefetch_pass(), 0)
         self.assertEqual((p.counts['errors'], p.last_error), (1, 'RuntimeError'))
 
+    def test_the_thread_loop_runs_and_stops_with_the_runners_event(self):
+        import threading
+        p = self.build(pass_interval_s=0.1)
+        p._discover = mock.Mock()
+        stop = threading.Event()
+        p.stop = stop
+        thread = threading.Thread(target=p.run_loop, daemon=True)
+        thread.start()
+        try:
+            for _ in range(100):
+                if p._discover.called:
+                    break
+                threading.Event().wait(0.05)
+            self.assertTrue(p._discover.called)
+        finally:
+            stop.set()
+            thread.join(5)
+        self.assertFalse(thread.is_alive())
+
     def test_the_stamp_names_the_real_times(self):
         pre = {'asof': 1030.0, 'started_at': 1033.0, 'finished_at': 1036.5}
         stamp = PF.Prefetch._stamp(pre, 1062.0)
