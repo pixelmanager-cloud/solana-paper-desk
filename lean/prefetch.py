@@ -627,7 +627,21 @@ READINESS_FIELDS = (            # (name, observation kind, field, population)
 )
 
 
-def readiness(db, *, max_late_s=15.0):
+def _meta_rows(connection, kind):
+    """{mint: [row dicts]} of one observation kind from the small ``meta`` column (never the ``raw`` blob), each with ``_candidate_id``."""
+    out = {}
+    for mint, cid, meta in connection.execute('SELECT mint, candidate_id, meta FROM observations WHERE kind=? ORDER BY id', (kind,)):
+        try:
+            row = json.loads(meta)
+        except (ValueError, TypeError):
+            continue
+        if isinstance(row, dict) and isinstance(mint, str):
+            row['_candidate_id'] = cid
+            out.setdefault(mint, []).append(row)
+    return out
+
+
+def readiness(db, *, max_late_s=15.0, use_raw=True):
     """How many of the hazard-free (PASS or soft-rejected) candidates had each feature AT THE DECISION. Read-only, from a lean.sqlite.
 
     For every candidate with a screen decision: ``decision`` = its first PASS / REJECT screen decision. Per feature:
@@ -636,7 +650,8 @@ def readiness(db, *, max_late_s=15.0):
                    strategy could have used it at the decision;
       ``usable``   ... and the selection learner's lookahead guards accept it (``lean.learn``, ``max_late_s``): a value collected after the
                    decision can still be usable (a window cut at the decision), but only a READY one was available to decide with.
-    Returns ``{'population': {...}, 'features': {name: {'n', 'row', 'ready', 'usable', 'ready_rate', 'usable_rate'}}}``."""
+    Returns ``{'population': {...}, 'features': {name: {'n', 'row', 'ready', 'usable', 'ready_rate', 'usable_rate'}}}``. ``use_raw=False``
+    reads the small ``meta`` column only (the lean report never selects an observation blob) and then ``usable`` is None."""
     from lean import learn as LN
     from lean.report import open_ro
     policy = LN.LookaheadPolicy(max_late_s=max_late_s)
@@ -649,7 +664,9 @@ def readiness(db, *, max_late_s=15.0):
         for _id, ts, mint, cid, action, reasons in decisions:
             first.setdefault((mint, cid), (ts, action, reasons))
         learner_decisions = LN.read_decisions(connection)
-        by_kind = {k: LN._observations(connection, k, counts, k.upper()) for k in ('features', 'flow', 'wallet_signals', 'risk_external', 'clusters')}
+        kinds = ('features', 'flow', 'wallet_signals', 'risk_external', 'clusters')
+        by_kind = ({k: LN._observations(connection, k, counts, k.upper()) for k in kinds} if use_raw
+                   else {k: _meta_rows(connection, k) for k in kinds})
     finally:
         connection.close()
     soft = {'MARKET_CAP_BELOW_MIN', 'MARKET_CAP_ABOVE_MAX', 'LIQUIDITY_BELOW_MIN'}
@@ -680,7 +697,7 @@ def readiness(db, *, max_late_s=15.0):
                 continue
             # the learner's decision of this candidate (the entry decision that followed its screen, else the screen)
             decision = LN.decision_time(learner_decisions.get(mint, []), cid, float('inf')) or screen_ts
-            picked = LN._pick(rows, decision, cid, policy, LN._Counts(), kind)
+            picked = LN._pick(rows, decision, cid, policy, LN._Counts(), kind) if use_raw else None
             observed = [r for r in rows if _value(kind, r, field) is not None]
             if observed:
                 row += 1
@@ -688,8 +705,8 @@ def readiness(db, *, max_late_s=15.0):
                     ready += 1
             if picked is not None and guards[kind](picked, decision, policy, LN._Counts(), (field,)).get(field) is not None:
                 usable += 1
-        out[name] = {'n': n, 'row': row, 'ready': ready, 'usable': usable,
-                     'ready_rate': None if not n else round(ready / n, 4), 'usable_rate': None if not n else round(usable / n, 4)}
+        out[name] = {'n': n, 'row': row, 'ready': ready, 'usable': usable if use_raw else None,
+                     'ready_rate': None if not n else round(ready / n, 4), 'usable_rate': None if not n or not use_raw else round(usable / n, 4)}
     return {'population': population, 'features': out}
 
 

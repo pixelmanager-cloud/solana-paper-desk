@@ -80,6 +80,58 @@ class Readiness(Base):
             self.assertEqual(health['ready'][kind], b['features'][name]['ready'], kind)
         self.assertEqual((health['hazard_free'], health['passed']), (b['population']['free'], b['population']['passed']))
 
+    def test_the_report_and_the_health_show_the_readiness(self):
+        sim = self.run_sim(PLAN, prefetch=True)
+        summary = report.build(sim.runner.store.path, now=sim.clock.time())
+        data = summary['readiness']['data']
+        self.assertEqual(summary['readiness']['status'], 'OK')
+        raw = PF.readiness(sim.runner.store.path)                                  # the learner-based one: same ready counts as the meta-based
+        for name, row in data['features'].items():
+            self.assertEqual((row['n'], row['row'], row['ready']), (raw['features'][name]['n'], raw['features'][name]['row'],
+                                                                    raw['features'][name]['ready']), name)
+            self.assertIsNone(row['usable'])                                           # (the report never reads an observation blob)
+        self.assertGreaterEqual(data['features']['flow.buy_sell_ratio']['ready_rate'], 0.9)
+        html = report.render_html(summary)
+        self.assertIn('Features ready at the decision', html)
+        self.assertIn('flow.buy_sell_ratio', html)
+        off = self.run_sim(PLAN[:10], prefetch=False)
+        self.assertEqual({r['ready'] for r in report.build(off.runner.store.path, now=off.clock.time())['readiness']['data']['features'].values()}, {0})
+        self.assertIn('prefetch', sim.runner.health())
+        self.assertIn(sim.runner.health()['prefetch']['alive'], (True, False))
+
+    def test_the_runner_starts_the_prefetch_thread_with_the_other_collectors(self):
+        sim = self.run_sim(PLAN[:3], prefetch=True, until=100.0)
+        names = [name for name, _target, _args in sim.runner._aux_specs()]
+        self.assertIn('prefetch', names)
+        self.assertIs(sim.runner.prefetch.stop, sim.runner.stop)                  # one shutdown for all of them
+        off = self.run_sim(PLAN[:3], prefetch=False, until=100.0)
+        self.assertNotIn('prefetch', [name for name, _t, _a in off.runner._aux_specs()])
+
+    def test_a_halted_trader_or_the_kill_switch_pauses_the_prefetch(self):
+        tmp = tempfile.TemporaryDirectory()
+        self.addCleanup(tmp.cleanup)
+        sim = W.Sim(Path(os.path.realpath(tmp.name)), PLAN[:6], prefetch=True)
+        self.addCleanup(sim.close)
+        self.addCleanup(providers.configure_lanes)
+        Path(sim.runner.kill_switch).write_text('stop')
+        sim.run(PLAN[2][1] + 150.0)                                                # the first three launches arrive while the trader takes no entries
+        self.assertEqual(sim.runner.prefetch.counts['discovered'], 0)
+        self.assertEqual(sum(1 for (actor, _m), _n in sim.scene.net.calls.items() if actor == 'prefetch'), 0)
+        os.unlink(sim.runner.kill_switch)
+        sim.run(PLAN[5][1] + 300.0)
+        self.assertGreater(sim.runner.prefetch.counts['discovered'], 0)           # and it resumes, for the launches that arrive after
+        self.assertFalse({t.mint for t in sim.scene.tokens[:3]} & set(sim.runner.prefetch.entries))
+
+    def test_a_soft_reject_gets_its_holder_shares_from_the_probe_flagged_as_a_snapshot(self):
+        sim = self.run_sim(PLAN, prefetch=True)
+        soft = [r for r in rows_of(sim.runner, 'features') if sim.scene.role[r['mint']] == 'mcap_high']
+        self.assertTrue(soft)
+        for row in soft:
+            self.assertIn('prefetch', row)
+            self.assertIsNotNone(row['fields']['top10_pct'])
+            self.assertEqual((row['flags']['top10_pct'], row['flags']['top1_pct']), ('AT_COLLECTION', 'AT_COLLECTION'))
+            self.assertLessEqual(row['late_s'], 0)                                       # read before the decision
+
     def test_a_stressed_world_still_has_nearly_everything_ready(self):
         sim = self.run_sim(STRESS, prefetch=True, fault_p=0.05, latency=1.5)
         sim_shed = self.run_sim(STRESS, prefetch=True, fault_p=0.05, latency=1.5, shed_windows=[(T0 + 300.0, T0 + 330.0)])

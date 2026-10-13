@@ -87,6 +87,95 @@ class PathsConfigTests(unittest.TestCase):
         self.assertEqual(L.config({'hazard_path_sample': 1})['hazard_path_sample'], 1.0)
 
 
+class HazardRecorderTests(unittest.TestCase):
+    """The recorder's side of #9 on its own: queue, first read, shed, expiry, unrecordable. The vault reads are a fake low-lane Helius."""
+
+    def setUp(self):
+        from tests.lean import test_paths as TPATH
+        self.T = TPATH
+        TPATH.P.configure_lanes()
+        self.addCleanup(TPATH.P.configure_lanes)
+        self.tmp = tempfile.TemporaryDirectory()
+        self.addCleanup(self.tmp.cleanup)
+        self.clock = TPATH.Clock()
+        self.rpc = TPATH.Rpc()
+        self.db = L.PathStore(Path(self.tmp.name) / 'paths.sqlite', clock=self.clock.now)
+        self.addCleanup(self.db.close)
+        c = self.clock
+        transport = TPATH.P.Transport('helius', opener=self.rpc, clock=c.now, monotonic=c.now, sleep=c.sleep, rng=lambda: 0.5, lane='low')
+        self.rec = L.PathRecorder(db=self.db, helius=TPATH.P.Helius(TPATH.KEY, transport), pcfg=TPATH.PCFG, code_version='t', strategy_version='s',
+                                  pool_fee_bps=25, clock=c.now, sleep=c.sleep, min_free_gb=0, hazard_path_sample=1.0)
+
+    def hazard(self, i=0, role='mayhem'):
+        from tests.lean import w2bworld as W
+        from desk.providers import PUMPSWAP
+        token = W.make_token(role, i)
+        body = json.dumps({'result': {'value': [token.mint_account(), token.account(token.pool_raw, PUMPSWAP)]}}).encode()
+        self.rpc.amounts[token.base_vault], self.rpc.amounts[token.quote_vault] = 2 * 10 ** 14, 80 * 10 ** 9
+        screen = Screen(False, ('MAYHEM_POOL',), {'age_seconds': 62.0}, (), (('accounts_mint_pool', body),))
+        return token, {'mint': token.mint, 'cid': i + 1, 'screen': screen, 'entry_reasons': None, 'fill': None, 'error': None}
+
+    def paths(self):
+        return self.db.db.execute('SELECT mint, stage, reason, entered FROM paths').fetchall()
+
+    def test_a_queued_hazard_is_started_by_the_next_poll_with_one_read_of_its_two_vaults(self):
+        token, note = self.hazard()
+        self.assertTrue(self.rec.on_candidate(note))
+        self.assertEqual(self.paths(), [])                                           # nothing is written on the trader's thread
+        self.assertEqual(self.rpc.requests, [])                                      # and nothing is requested there
+        self.rec.poll()
+        self.assertEqual(self.rpc.requests[0], [token.base_vault, token.quote_vault])      # ONE read, the two vaults, then the mark
+        self.assertEqual(self.paths(), [(token.mint, 'hazard_reject', '["hazard_reject: MAYHEM_POOL"]', 0)])
+        health = self.rec.health()
+        self.assertEqual((health['hazard_seen'], health['hazard_sampled'], health['hazard_started'], health['hazard_queued']), (1, 1, 1, 0))
+        self.assertEqual(health['hazard_by_reason'], {'MAYHEM_POOL': 1})
+
+    def test_a_pool_without_a_retained_account_body_cannot_be_recorded(self):
+        _token, note = self.hazard()
+        note['screen'] = Screen(False, ('MAYHEM_POOL',), {}, (), ())
+        self.rec.on_candidate(note)
+        self.rec.poll()
+        self.assertEqual(self.paths(), [])
+        self.assertEqual(self.rec.health()['hazard_unrecordable'], 1)
+
+    def test_a_shed_lane_keeps_the_sample_for_the_next_poll_and_an_old_one_is_dropped(self):
+        token, note = self.hazard()
+        self.rec.on_candidate(note)
+        self.rec.helius.transport.limiter.shed(60)                                   # the low lane is shed: nothing is sent
+        self.rec.poll()
+        self.assertEqual((self.paths(), self.rpc.requests), ([], []))
+        self.assertEqual(self.rec.health()['hazard_queued'], 1)                      # still waiting
+        self.clock.t += 61
+        self.rec.poll()
+        self.assertEqual(len(self.paths()), 1)                                       # started once the lane is back
+        old_token, old = self.hazard(1)
+        self.rec.on_candidate(old)
+        self.clock.t += L.HAZARD_MAX_WAIT_S + 1
+        self.rec.poll()
+        self.assertEqual(len(self.paths()), 1)
+        self.assertEqual(self.rec.health()['hazard_expired'], 1)
+
+    def test_the_queue_is_bounded_and_an_unsampled_hazard_is_only_counted(self):
+        _t, note = self.hazard()
+        self.rec.hazard_path_sample = 0.0
+        self.rec.on_candidate(note)
+        self.assertEqual(self.rec.health()['hazard_queued'], 0)
+        self.assertEqual((self.rec.health()['hazard_seen'], self.rec.health()['hazard_skipped'], self.rec.health()['hazard_sampled']), (1, 1, 0))
+        self.rec.hazard_path_sample = 1.0
+        for i in range(L.HAZARD_QUEUE_MAX):
+            self.rec._hazard_queue.append({'mint': 'm%d' % i, 'cid': None, 'screen': note['screen'], 'queued_at': self.clock.now()})
+        _t2, another = self.hazard(2)
+        self.assertFalse(self.rec.on_candidate(another))                              # full: counted as an unrecorded hazard
+        self.assertEqual(self.rec.health()['hazard_queue_full'], 1)
+
+    def test_a_failed_screen_and_a_soft_reject_are_not_hazards(self):
+        _t, note = self.hazard()
+        for screen in (Screen(False, ('HOLDERS_UNAVAILABLE',), {}, (), (), {'code': 'HTTP_503', 'transient': True, 'stage': 'holders'}),
+                       Screen(False, ('MARKET_CAP_ABOVE_MAX',), {'mint': 'x'}, (), ())):
+            self.rec.on_candidate(dict(note, screen=screen))
+        self.assertEqual(self.rec.health()['hazard_seen'], 0)
+
+
 # ============================================================================================================ configs / production
 class PrefetchConfigTests(unittest.TestCase):
     def test_absent_is_off_and_every_default_validates(self):
@@ -346,6 +435,74 @@ class PrefetchRules(unittest.TestCase):
         self.assertEqual((stamp['asof'], stamp['started_at'], stamp['finished_at'], stamp['staleness_s']), (1030.0, 1033.0, 1036.5, 32.0))
 
 
+class PrefetchJobs(unittest.TestCase):
+    """What a job does with what its collector returned (stubbed collectors: no HTTP)."""
+
+    def setUp(self):
+        self.clock = Clock(1040.0)
+        self.p = PF.Prefetch(cfg=PF.config({'enabled': True}), store=mock.Mock(), helius=mock.Mock(transport=None), discovery_db='x',
+                             screen_cfg={'min_age_seconds': 60}, min_age_s=60, clock=self.clock, sleep=lambda s: None)
+        self.entry = PF.Entry(candidate(), 1000.0)
+        self.p.entries['MintA'] = self.entry
+
+    def run_job(self, kind):
+        job = self.entry.jobs[kind]
+        self.p._run(self.entry, job)
+        return job
+
+    @staticmethod
+    def payload(rc_score=None, why=None):
+        return {'fields': {'rc_score': rc_score}, 'missing': {} if why is None else {'rc_score': why}, 'calls': 1}
+
+    def test_a_rugcheck_report_that_could_not_be_read_for_a_transient_reason_is_asked_for_again(self):
+        for why in ('RC_HTTP_429', 'RC_BACKOFF', 'RC_TIMEOUT', 'RC_HTTP_503'):
+            self.entry.jobs['risk_external'] = PF.Job('risk_external')
+            self.p.risk_external = mock.Mock(collect=mock.Mock(return_value=self.payload(None, why)))
+            job = self.run_job('risk_external')
+            self.assertEqual((job.state, job.why), ('pending', why), why)
+            self.assertGreater(job.next_at, self.clock())                          # not at once
+
+    def test_unknown_mint_is_an_answer_and_a_report_is_a_result(self):
+        for payload in (self.payload(None, 'RC_UNKNOWN_MINT'), self.payload(120)):
+            self.entry.jobs['risk_external'] = PF.Job('risk_external')
+            self.p.risk_external = mock.Mock(collect=mock.Mock(return_value=payload))
+            self.assertEqual(self.run_job('risk_external').state, 'done')
+
+    def test_a_job_gives_up_after_max_attempts_and_the_collector_then_runs_as_before(self):
+        self.p.risk_external = mock.Mock(collect=mock.Mock(return_value=self.payload(None, 'RC_BACKOFF')))
+        for _ in range(3):
+            self.clock.t += 5.0
+            job = self.run_job('risk_external')
+        self.assertEqual((job.state, job.attempts), ('failed', 3))
+        self.assertIsNone(self.p.take('risk_external', 'MintA', 1062.0))
+
+    def test_features_on_a_shed_lane_with_nothing_sent_are_asked_for_again_but_a_partial_result_is_kept(self):
+        shed = {'extra': {}, 'missing': {'dev_holding_pct': 'LANE_SHED', 'graduation_block_time': 'LANE_SHED'}, 'flags': {}, 'calls': 0,
+                'creator': 'C', 'holders': None}
+        partial = {**shed, 'calls': 1, 'extra': {'dev_holding_pct': '2.0000'}, 'missing': {'graduation_block_time': 'LANE_SHED'}}
+        self.entry.probe = Screen(True, (), {}, (), ())
+        for payload, state in ((shed, 'pending'), (partial, 'done')):
+            self.entry.jobs['features'] = PF.Job('features')
+            self.p.features = mock.Mock(prefetch_run=mock.Mock(return_value=payload))
+            self.assertEqual(self.run_job('features').state, state)
+
+    def test_a_collector_bug_is_a_failed_job_never_an_exception(self):
+        self.p.risk_external = mock.Mock(collect=mock.Mock(side_effect=RuntimeError('boom')))
+        job = self.run_job('risk_external')
+        self.assertEqual((job.state, job.why), ('failed', 'ERROR:RuntimeError'))
+        self.assertEqual((self.p.counts['errors'], self.p.last_error), (1, 'RuntimeError'))
+
+    def test_a_flow_job_whose_collector_wants_a_retry_is_retried_and_one_that_learned_nothing_leaves_no_result(self):
+        from lean import flow as FL
+
+        def collect(*args, sink=None, **kw):
+            raise FL._Retry('LANE_SHED')
+        self.p.flow = mock.Mock(collect=collect)
+        job = self.run_job('flow')
+        self.assertEqual((job.state, job.why), ('pending', 'LANE_SHED'))
+        self.assertIsNone(self.p.take('flow', 'MintA', 1062.0))
+
+
 class LearnerAcceptsPrefetchedRows(unittest.TestCase):
     """The learner's lookahead guards read ``late_s``, ``window_after_decision_s`` and ``supply_source`` of a row: a prefetched row stays
     inside them, and a row that is not (a late one, or one whose supply was read after the decision) is excluded exactly as before."""
@@ -366,6 +523,20 @@ class LearnerAcceptsPrefetchedRows(unittest.TestCase):
         self.assertIsNone(self.wallet(late_s=None)['bundled_supply_pct'])
         self.assertIsNone(self.wallet(supply_source='rpc_after_decision')['bundled_supply_pct'])
         self.assertIsNotNone(self.wallet(late_s=4.0)['bundle_score'])                 # (the window figure is cut at the decision either way)
+
+    def test_a_cluster_row_from_a_prefetch_counts_only_if_it_was_observed_before_the_decision(self):
+        def cluster(**kw):
+            row = {'version': LN.CLUSTERS_VERSION, 'holders_source': 'prefetch', 'supply_source': 'prefetch', 'late_s': -20.0,
+                   'window_after_decision_s': 0.0, 'cluster_count': 2, 'largest_cluster_supply_pct': 12.5, 'jito_bundled_buys': 1, 'flags': {}}
+            row.update(kw)
+            return LN.cluster_values(row, 1062.0, self.POLICY, LN._Counts())
+        timely = cluster()
+        self.assertEqual((timely['cluster_count'], timely['largest_cluster_supply_pct'], timely['jito_bundled_buys']), (2, 12.5, 1))
+        for late in (4.0, None):
+            late_row = cluster(late_s=late)
+            self.assertIsNone(late_row['largest_cluster_supply_pct'])                    # the holder snapshot / supply were read after the decision
+        self.assertIsNone(cluster(holders_source='rpc_after')['largest_cluster_supply_pct'])
+        self.assertIsNone(cluster(window_after_decision_s=3.0)['jito_bundled_buys'])
 
     def test_a_smart_table_newer_than_the_decision_is_still_refused(self):
         self.assertIsNone(self.wallet(smart_asof_ts=1063.0)['smart_buyers_count'])
