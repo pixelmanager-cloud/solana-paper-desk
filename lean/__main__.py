@@ -72,6 +72,9 @@ CONFIG_KEYS = {
     # --- W2a ---
     'arms': None,                      # lean.arms shadow paper arms ({"enabled", "db", "arms": [{name, strategy_config, entry_filter}]}); None/absent = off
     # --- end W2a ---
+    # --- C4 ---
+    'backfill': None,                  # lean.backfill settings ({"interval_s", "limit", ...}): graduations the discovery feed missed; None = off
+    # --- end C4 ---
 }
 RAW_POLICIES = ('all', 'errors_only')
 REQUIRED = ('strategy_config', 'initial_cash_sol')
@@ -229,6 +232,13 @@ def load_config(path):
     except arms.ArmsConfigError as error:
         raise ConfigError(str(error)) from None
     # --- end W2a ---
+    # --- C4: strict at load ---
+    from lean import backfill
+    try:
+        cfg['backfill'] = backfill.make_config(cfg['backfill'])
+    except backfill.ConfigError as error:
+        raise ConfigError(str(error)) from None
+    # --- end C4 ---
     return cfg
 
 
@@ -320,6 +330,17 @@ def build_runner(cfg, *, state_dir, discovery_db, keys, code_version, clock=None
     from lean import adapters, sources, watchlist
     screen_cfg = adapters.screen_config(strategy_cfg, cfg['screen'])
     extra = sources.build_sources(cfg['sources'], screen_cfg=screen_cfg, limit=cfg['scan_limit'], clock=clock)
+    # --- C4 hook: the discovery gap backfill is one more extra source (LOW lane, its own cursor + state in the state dir) ---
+    from lean import backfill
+    backfill_source = None
+    if (cfg.get('backfill') or {}).get('enabled'):
+        backfill_source = backfill.build(cfg['backfill'], helius_low=providers.low(keys, **transport_kwargs).helius,
+                                         discovery_db=discovery_db, state_dir=state, screen_cfg=screen_cfg, clock=clock)
+    if backfill_source is not None:
+        if backfill_source.name in {s.name for s in extra}:
+            raise ConfigError('backfill.name collides with a configured source: %s' % backfill_source.name)
+        extra.append(backfill_source)
+    # --- end C4 ---
     watch_cfg = watchlist.WatchConfig.from_dict(cfg['watchlist'])
     l14 = {'extra_sources': sources.SourceSet(extra, state) if extra else None,
            'watchlist': (watchlist.Watchlist(the_store, watch_cfg, clock=clock, code_version=code_version,

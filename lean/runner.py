@@ -608,7 +608,10 @@ class Runner:
             self._count('candidates')
         cid = self.store.add_candidate(mint, pool=candidate.pool, signature=candidate.signature, slot=candidate.slot,
                                        migrated_at=candidate.migrated_at, hint_seq=candidate.seq,
-                                       meta={'payload_hash': candidate.payload_hash}, ts=self.clock())
+                                       # --- C4 hook: a candidate may carry its own labels (source, detection latency) ---
+                                       meta={'payload_hash': candidate.payload_hash, **(getattr(candidate, 'meta', None) or {})},
+                                       # --- end C4 ---
+                                       ts=self.clock())
         sol_usd = self._sol_usd_value()
         result = C.screen(candidate, self.providers, self.screen_cfg, now=self.clock(), sol_usd=sol_usd)
         self._count('screened')
@@ -1146,6 +1149,9 @@ class Runner:
                 'discovery_feed': {**self._feed, 'stale_after_s': self.discovery_stale_s},
                 'last_outage': self.last_outage, 'log_throttle': self._m1_health(),
                 # --- end M1 ---
+                # --- C4 hook: extra-source health (the backfill source reports its feed-gap rate per day) ---
+                'sources': self._sources_health(),
+                # --- end C4 ---
                 # --- L15 hook ---
                 **({} if self.ops is None else self.ops.health())}
                 # --- end L15 ---
@@ -1158,6 +1164,19 @@ class Runner:
                 'peak_persist_s': self.peak_persist_s, 'backing_off': sorted(self._exit_backoff),
                 'pending_peak_states': len(self._pending_state)}
     # --- end M1 ---
+    # --- C4 hook ---
+    def _sources_health(self):
+        """``health()`` of every extra source that has one. Never raises."""
+        out = {}
+        for source in (getattr(self.extra_sources, 'sources', None) or ()):
+            reporter = getattr(source, 'health', None)
+            if callable(reporter):
+                try:
+                    out[source.name] = reporter()
+                except Exception as error:                                    # noqa: BLE001 - health must not fail
+                    out[source.name] = {'enabled': True, 'health_error': type(error).__name__}
+        return out
+    # --- end C4 ---
 
     # --- L20 hook ---
     def _sell_evidence_health(self):
