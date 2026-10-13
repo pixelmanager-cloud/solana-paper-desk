@@ -66,6 +66,9 @@ READ_ONLY_RPC = frozenset({
     'getTokenAccountsByOwner', 'getSlot', 'getBlockTime', 'getBalance', 'getTransaction',
     'getSignaturesForAddress', 'getLatestBlockhash', 'getMinimumBalanceForRentExemption',
     'getProgramAccounts', 'getTokenAccountBalance',
+    # --- C2 hook: Helius' paginated, change-since-slot variant of getProgramAccounts (read-only), used by lean.curves ---
+    'getProgramAccountsV2',
+    # --- end C2 ---
     # --- L22 hook: simulateTransaction executes a transaction against a COPY of the node's bank and returns logs; it never
     # broadcasts and nothing lands on chain. Helius.rpc only lets it through UNSIGNED (every signature slot all-zero) with
     # sigVerify=false and replaceRecentBlockhash=true (``_unsigned_simulation``); any other shape is METHOD_NOT_ALLOWED. ---

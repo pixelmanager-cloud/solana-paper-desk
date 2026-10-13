@@ -138,6 +138,9 @@ class Runner:
         # --- L23 hook ---
         self.bot_exit = None                       # lean.bot_exit.BotExit (set by build_runner when bot_exit.enabled)
         # --- end L23 ---
+        # --- C2 hook ---
+        self.curves = None                         # lean.curves.CurveRecorder (set by build_runner when curves.enabled)
+        # --- end C2 ---
         # --- L21 hook ---
         self.risk_external = None                  # lean.risk_external.RiskExternal (set by build_runner when risk_external.enabled)
         # --- end L21 ---
@@ -777,6 +780,7 @@ class Runner:
                 # --- end L20 ---
                 # --- L24 hook ---
                 'clusters': self._aux_health('clusters', self.clusters),
+                'curves': self._aux_health('curves', self.curves),                              # C2
                 # --- end L24 ---
                 # --- L21 hook ---
                 'risk_external': self._aux_health('risk_external', self.risk_external),
@@ -875,7 +879,7 @@ class Runner:
         specs = []
         if self.features is not None:                                       # L12: on stop it writes the queued rows unenriched
             specs.append(('features', self.features.run, (self.stop,)))
-        for name in ('wallet_signals', 'flow', 'clusters'):                 # L13, L20, L24: run_loop() polls their own .stop
+        for name in ('wallet_signals', 'flow', 'clusters', 'curves'):       # L13, L20, L24, C2: run_loop() polls their own .stop
             worker = getattr(self, name)
             if worker is not None:
                 worker.stop = self.stop
