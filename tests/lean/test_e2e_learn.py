@@ -6,6 +6,8 @@ Worlds of 100 launches, one per 240 s, each with a dev wallet holding a differen
   PLANTED  a launch whose dev holds more than 15 % usually rugs (the price collapses a minute after the entry); the others are winners
            (ladder to 3.2x) or small losers (-25 % stop). The tx count of the pool's first 10 minutes is independent noise.
   NOISE    the same dev shares and tx counts, but the outcome is drawn independently of every feature.
+  LOSING   NOISE with a losing baseline (like the live run: every window loses on average): mostly rugs and stop losses, rare winners,
+           independent of every feature. The pre-M2 learner (rejected PnL t-tested against 0) CONFIRMED a rule here; it must not.
   LATE     the PLANTED world, but the feature recorder reads the dev balance a minute AFTER the decision (an AT_COLLECTION snapshot,
            late_s ~ 60 s): the planted signal exists only after the decision, so the learner must NOT find it (and does, if the
            lookahead guard is relaxed: the test is sensitive).
@@ -51,7 +53,7 @@ def setUpModule():
     unittest.addModuleCleanup(patcher.stop)
 
 
-def plan(planted, seed):
+def plan(planted, seed, losing=False):
     rng = random.Random(seed)
     out = []
     for i in range(N):
@@ -59,6 +61,8 @@ def plan(planted, seed):
         tx = rng.randint(3, 60)
         if planted:
             kind = 'RUG' if (dev > 15 and rng.random() < 0.97) or (dev <= 15 and rng.random() < 0.03) else rng.choice(('WIN', 'WIN', 'LOSS'))
+        elif losing:
+            kind = rng.choices(('RUG', 'LOSS', 'WIN'), weights=(0.45, 0.5, 0.05))[0]
         else:
             kind = rng.choice(('RUG', 'WIN', 'LOSS'))
         out.append({'dev': dev, 'tx': tx, 'kind': kind})
@@ -68,8 +72,8 @@ def plan(planted, seed):
 class World_:
     """One simulated run: the runner + both recorders over the whole scenario, then the files closed."""
 
-    def __init__(self, root, planted, seed, late=False):
-        self.root, self.plan = root, plan(planted, seed)
+    def __init__(self, root, planted, seed, late=False, losing=False):
+        self.root, self.plan = root, plan(planted, seed, losing)
         clock = FakeTime(T0)
         tokens = [Token(10 + i, coin_creator_tag=120 + i, path=PATHS[p['kind']]) for i, p in enumerate(self.plan)]
         self.role = {t.mint: i for i, t in enumerate(tokens)}
@@ -152,10 +156,11 @@ class E2ELearn(unittest.TestCase):
         cls.tmp = tempfile.TemporaryDirectory()
         base = Path(os.path.realpath(cls.tmp.name))
         cls.worlds = {}
-        for name, planted, seed, late in (('planted', True, 7, False), ('noise', False, 11, False), ('late', True, 7, True)):
+        for name, planted, seed, late, losing in (('planted', True, 7, False, False), ('noise', False, 11, False, False),
+                                                  ('late', True, 7, True, False), ('losing', False, 13, False, True)):
             root = base / name
             root.mkdir()
-            cls.worlds[name] = World_(root, planted, seed, late)
+            cls.worlds[name] = World_(root, planted, seed, late, losing)
         cls.strategy = S.StrategyConfig.load(cls.worlds['planted'].strategy_path)
         cls.sha = {n: {p: hashlib.sha256(p.read_bytes()).hexdigest() for p in (w.db, w.paths_db)} for n, w in cls.worlds.items()}
 
@@ -280,6 +285,12 @@ class E2ELearn(unittest.TestCase):
         self.assertTrue(8 <= D(first['value']) <= 20, first)
         conf = r['union']['confirm']
         self.assertGreater(conf['gain_per_candidate_sol'], 0)
+        self.assertGreater(conf['kept_mean_pnl_sol'], 0)                             # the kept candidates make money after costs
+        self.assertTrue(conf['beats_null'])
+        self.assertGreater(conf['diff_kept_minus_rejected_sol'], conf['null_p95_diff_sol'])
+        self.assertLessEqual(conf['welch_p'], LN.ALPHA)
+        self.assertLessEqual(conf['reject_fraction'], LN.MAX_REJECT_FRACTION)
+        self.assertGreater(r['tested']['rules'], 1)
         self.assertGreater(conf['rug_rate_rejected'], 0.6)
         self.assertLess(conf['rug_rate_kept'], 0.2)
         self.assertGreater(r['union']['confirm']['policy_mean_pnl_sol'], r['baseline']['confirm']['baseline_mean_pnl_sol'])
@@ -292,6 +303,21 @@ class E2ELearn(unittest.TestCase):
         self.assertLess(buckets[0]['rug_rate'], 0.25)
         self.assertGreater(D(r['winners_vs_rugs']['RUG']['features']['dev_holding_pct']['median']), D(r['winners_vs_rugs']['WIN']['features']['dev_holding_pct']['median']))
         self.assertNotIn('tx_count_first_10m', [c['feature'] for rule in r['selected'] for c in rule['if']][:1])
+
+    def test_a_losing_world_whose_outcomes_ignore_every_feature_is_never_confirmed(self):
+        """THE regression test for the pre-M2 bug (a): every window loses on average and the outcome ignores every feature. A t-test of
+        the rejected PnL against 0 "confirms" any rule here (rejecting losers always "saves"); kept vs rejected against a random rule of
+        the same size does not. (Only the API both versions share is used, so this test also runs against the old learner.)"""
+        ds = self.dataset('losing')
+        pnl = [r.pnl_lamports for r in ds.rows if r.enterable]
+        self.assertEqual(len(pnl), N)
+        self.assertLess(sum(pnl) / len(pnl), -0.02 * 10 ** 9)                       # a losing baseline, like the live run
+        self.assertGreater(sum(1 for x in pnl if x > 0), 0)                        # a few winners: the kept set COULD make money
+        r = self.run_learn('losing', ds)
+        self.assertFalse(r['confirmed'], (r['proposal_status'], r['selected']))
+        self.assertNotEqual(r['proposal_status'], 'CONFIRMED')
+        doc = json.loads(Path(r['proposal']).read_text())
+        self.assertEqual((doc['status'], doc['proposed']['selection_rules']), ('NO_PROPOSAL', []))
 
     def test_a_world_whose_outcomes_ignore_every_feature_yields_no_confirmed_rule(self):
         r = self.run_learn('noise', self.dataset('noise'))
@@ -325,6 +351,7 @@ class E2ELearn(unittest.TestCase):
         out.mkdir()
         cfg = json.loads((ROOT / 'config' / 'lean' / 'lean.example.json').read_text())
         cfg['strategy_config'] = str(w.strategy_path)
+        cfg['paths']['path_hours'] = 0.5                                       # what the world recorded: the embargo is 30 min
         (w.root / 'lean.json').write_text(json.dumps(cfg))
         buf = io.StringIO()
         with contextlib.redirect_stdout(buf):
@@ -333,6 +360,10 @@ class E2ELearn(unittest.TestCase):
         self.assertEqual(code, 0, buf.getvalue())
         summary = json.loads(buf.getvalue())
         self.assertEqual((summary['status'], summary['proposal_status'], summary['confirmed']), ('OK', 'CONFIRMED', True))
+        self.assertEqual((summary['embargo_s'], summary['eta_hours']), (1800.0, 0.0))     # embargo = paths.path_hours of the config
+        self.assertGreater(summary['rules_tested'], 1)
+        report = json.loads(Path(summary['json']).read_text())
+        self.assertGreater(report['split']['purged'], 0)                              # the 30 min embargo purged dev rows
         self.assertEqual(Path(summary['proposal']).parent, out / 'proposals')
         self.assertTrue(Path(summary['proposal']).name.endswith('-selection.json'))
         page = Path(summary['html']).read_text()
