@@ -316,6 +316,10 @@ class Store:
             (stamp, str(kind)[:64], mint, candidate_id, kept, hashlib.sha256(kept).hexdigest(), int(len(full) > len(kept)), len(full),
              full_sha, text, code, strategy)).lastrowid)
 
+    def keeps_raw(self, kind):
+        """M1b #4: True when ``add_observation(kind, ...)`` keeps the body itself (not only its sha256 / size / meta)."""
+        return not (self.raw_policy == 'errors_only' and raw_droppable(kind))
+
     def observation(self, observation_id):
         with self._lock:
             row = self.db.execute('SELECT raw,sha256,kind,mint,meta,raw_truncated,full_bytes,full_sha256 FROM observations WHERE id=?',

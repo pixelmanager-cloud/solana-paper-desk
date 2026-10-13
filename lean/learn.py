@@ -1320,6 +1320,17 @@ def write_report(out_dir, result):
     return html_path, json_path
 
 
+def latest_config_hash(lean_db):
+    """M1b #5: the ``lean_config_hash`` of the store's newest ``start`` event (opened read-only), or None (a pre-M1 store)."""
+    from lean.report import open_ro, run_windows
+    connection = open_ro(lean_db)
+    try:
+        windows = run_windows(connection)
+    finally:
+        connection.close()
+    return windows[-1][2] if windows else None
+
+
 def main(argv=None):
     p = argparse.ArgumentParser(description=__doc__.split('\n')[0])
     p.add_argument('--lean-db', required=True, help="the trader's lean.sqlite (opened mode=ro: decisions, features and wallet-signal rows)")
@@ -1345,7 +1356,8 @@ def main(argv=None):
     p.add_argument('--max-hole-s', type=float, default=LB.LabelConfig.max_hole_s)
     p.add_argument('--embargo-s', type=float, default=None,
                    help='the label horizon between training and test blocks (default: paths.path_hours x 3600 of --config, else the recorder default)')
-    p.add_argument('--config-hash', default=None, help='M1: only candidates decided in runs whose lean.json or strategy hash starts with this')
+    p.add_argument('--config-hash', default=None, help='M1: only candidates decided in runs whose lean.json or strategy hash starts with this (default: the LATEST run of the store, M1b)')
+    p.add_argument('--all-configs', action='store_true', help='M1b: every run of the store, whatever its lean.json (vault and effective marks may mix)')
     p.add_argument('--now', type=float, default=None, help='epoch seconds for the file names (default: the current time)')
     args = p.parse_args(argv)
     try:
@@ -1368,9 +1380,14 @@ def main(argv=None):
         out = Path(args.out_dir)
         if out.is_symlink() or not out.is_dir():
             raise LearnError('out_dir missing or a symlink')
+        # M1b #5: by default only the store's LATEST run (one lean.json, so one mark model): vault and effective data are never
+        # pooled silently. --all-configs opts out; a store written before M1 (no hash) is read whole.
+        if args.config_hash and args.all_configs:
+            raise LearnError('--config-hash and --all-configs exclude each other')
+        config_hash = None if args.all_configs else (args.config_hash or latest_config_hash(args.lean_db))
         label_cfg = LB.LabelConfig.from_strategy(strategy, max_gap_fraction=args.max_gap_fraction, max_hole_s=args.max_hole_s)
         dataset = build_dataset(args.lean_db, args.paths_db, strategy, label_cfg=label_cfg, policy=LookaheadPolicy(max_late_s=args.max_late_s),
-                                pool_fee_bps=pool_fee_bps, extra_paths=args.paths_archive, config_hash=args.config_hash)
+                                pool_fee_bps=pool_fee_bps, extra_paths=args.paths_archive, config_hash=config_hash)
         now = time.time() if args.now is None else args.now
         embargo_s = float(path_hours) * 3600 if args.embargo_s is None else args.embargo_s
         result = learn(dataset.rows, strategy=strategy, confirm_fraction=args.confirm_fraction, folds=args.folds, min_n=args.min_n,
@@ -1385,7 +1402,8 @@ def main(argv=None):
                       'proposal_status': result['proposal_status'], 'confirmed': result['confirmed'],
                       'candidates': result['counts']['candidates'], 'enterable': result['counts']['enterable'],
                       'embargo_s': result['split']['embargo_s'], 'rules_tested': result['tested']['rules'],
-                      'eta_hours': result['feasibility']['eta_hours'], 'rate_per_hour': result['feasibility']['rate_per_hour']}))
+                      'eta_hours': result['feasibility']['eta_hours'], 'rate_per_hour': result['feasibility']['rate_per_hour'],
+                      'config_hash': config_hash}))
     return 0
 
 

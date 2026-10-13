@@ -46,6 +46,8 @@ MAX_KEYS_PER_CALL = 100
 AUX_JOIN_S = 10.0             # LINT2b: total wait for the auxiliary threads on stop (TimeoutStopSec is 30 s)
 UNEXITABLE_BLOCKS = ('NO_ROUTE', 'STUCK_POSITION', 'SELL_QUOTE_INVALID', 'SELL_QUOTE_MISSING')
 EXIT_BACKOFF_BASE_S = 10.0    # M1 #13: first back-off of a failing exit (one position pass)
+# M1b #1: exits that are never backed off (unless the quote said worthless, or the mark is zero)
+PRIORITY_EXITS = frozenset({'STOP', 'DANGER', 'LIQUIDATE', 'MAX_HOLD', 'TIME_STOP', 'BOT_EXIT'})
 PEAK_PERSIST_STEP = Decimal('1.01')    # M1 #13: a peak rise of >= 1% is always persisted at once
 
 
@@ -617,9 +619,10 @@ class Runner:
                 fill, open_extra = self.execution.finish_buy(self, fill, xmeta)
                 features = {**features, '_exec_state': open_extra}
             # --- end L10 ---
-            if self.mark_model.effective:                                      # M1 #7: the screen's pool fields, for the marks
-                from lean import marks as _marks
-                features = {**features, '_pool_info': _marks.screen_pool_info(result.features)}
+            # M1 #7: the screen's pool fields, for the marks; M1b #6: and the mark model + vault fee this position is marked with
+            # until it closes (a config switch never re-marks an open position)
+            from lean import marks as _marks
+            features = {**features, '_pool_info': {**(_marks.screen_pool_info(result.features) or {}), **self.mark_model.pin()}}
             self.store.add_fill(fill, candidate_id=cid, state={'event': 'open', 'state': A.open_state(features, fill, self.cfg)})
             self.route_check.on_fill('entry', mint, buy_ref, candidate_id=cid, trade=cid, raw=self._raw_cache.get(buy_ref))   # L16 (+M1 raw)
             self._count('entered')
@@ -682,14 +685,26 @@ class Runner:
         """ONE getMultipleAccounts per <=50 positions (base + quote vault each) on the exit lane; net marks with read time.
         After a failed read, marks older than ``stale_mark_s`` are evicted."""
         mints = [m for m in positions if m in states]
-        # M1 #7: marks.model effective also reads each pool account (+1 key per position) and the fee schedule (+1 key per call)
+        # M1 #7: an effective mark also reads the position's pool account (+1 key) and the fee schedule (+1 key per call).
+        # M1b #6: each position is marked with the model it was OPENED with (pool_info.model), not the configured one.
         model = self.mark_model
-        per_key, call_keys = model.keys_per_position, model.call_keys()
-        per_call = (MAX_KEYS_PER_CALL - len(call_keys)) // per_key
-        for start in range(0, len(mints), per_call):
-            chunk = mints[start:start + per_call]
-            keys = [k for m in chunk for k in model.position_keys(states[m]['state']['base_vault'], states[m]['state']['quote_vault'],
-                                                                  states[m]['state'].get('pool'))] + call_keys
+        pins = {m: model.pinned(states[m]['state'].get('pool_info')) for m in mints}
+        chunks, chunk, used = [], [], 0
+        for mint in mints:
+            need = model.keys_for(pins[mint][0])
+            reserve = len(model.call_keys([pins[m][0] for m in chunk] + [pins[mint][0]]))
+            if chunk and used + need + reserve > MAX_KEYS_PER_CALL:
+                chunks.append(chunk)
+                chunk, used = [], 0
+            chunk.append(mint)
+            used += need
+        if chunk:
+            chunks.append(chunk)
+        for chunk in chunks:
+            call_keys = model.call_keys([pins[m][0] for m in chunk])
+            layouts = {m: model.position_keys(states[m]['state']['base_vault'], states[m]['state']['quote_vault'],
+                                              states[m]['state'].get('pool'), model=pins[m][0]) for m in chunk}
+            keys = [k for m in chunk for k in layouts[m]] + call_keys
             try:
                 result, raw, _meta = self.exit_providers.helius.get_multiple_accounts(keys)
             except ProviderError as error:
@@ -697,21 +712,26 @@ class Runner:
                 continue
             mark_at = self._now()
             values = result['value']
+            position_keys = sum(len(v) for v in layouts.values())
             if call_keys:
-                model.observe_call(values[len(chunk) * per_key:], mark_at)
-            stored = {}
-            for i, mint in enumerate(chunk):
-                accounts = values[per_key * i:per_key * (i + 1)]
+                model.observe_call(values[position_keys:], mark_at)
+            stored, offset = {}, 0
+            for mint in chunk:
+                pinned, vault_fee = pins[mint]
+                accounts = values[offset:offset + len(layouts[mint])]
+                offset += len(layouts[mint])
                 try:
-                    if model.effective:
-                        net, info = model.value_accounts(positions[mint].qty_raw, accounts, now=mark_at,
+                    if pinned == 'effective':
+                        net, info = model.value_accounts(positions[mint].qty_raw, accounts, now=mark_at, model='effective',
                                                          pool_info=states[mint]['state'].get('pool_info'), fee_lamports=self.pcfg.fee_lamports)
                         mark = A.sol(net)
                         base, quote = info['base_raw'], info['quote_raw']
-                    else:                                                     # today's mark, unchanged
+                    else:                                                     # today's mark, at the fee the position opened with
                         base, quote = A.vault_amount(accounts[0]), A.vault_amount(accounts[1])
-                        mark = A.mark(positions[mint].qty_raw, base, quote, pool_fee_bps=self.pool_fee_bps, pcfg=self.pcfg)
-                        info = {'model': 'vault', 'base_raw': base, 'quote_raw': quote, 'fee_bps': self.pool_fee_bps}
+                        mark = A.mark(positions[mint].qty_raw, base, quote, pool_fee_bps=vault_fee, pcfg=self.pcfg)
+                        info = {'model': 'vault', 'base_raw': base, 'quote_raw': quote, 'fee_bps': vault_fee}
+                    if pinned != model.model:                                 # M1b #6: opened under the other model
+                        info = {**info, 'pinned_from_open': True}
                     self.marks[mint] = (mark, mark_at, 'vaults')
                     self.mark_info[mint] = info
                     stored[mint] = {**info, 'net_lamports': int(mark * paper.LAMPORTS)}
@@ -726,8 +746,10 @@ class Runner:
                     # --- end L11 ---
                     self._error('MARK_INVALID', transient=False, mint=mint, scope='marks', message=str(error))
             # the decoded inputs of every mark ride in the meta, so a mark is reproducible even when the body is not kept (#12)
+            kinds = {','.join(('base', 'quote', 'pool')[:len(v)]) for v in layouts.values()}
             self.store.add_observation('marks', raw, meta={'mints': chunk, 'slot': result['context']['slot'], 'model': model.model,
-                                                           'layout': 'base,quote,pool' if model.effective else 'base,quote',
+                                                           'layout': kinds.pop() if len(kinds) == 1 else 'mixed',
+                                                           'layouts': {m: len(v) for m, v in layouts.items()},
                                                            'call_keys': len(call_keys), 'marks': stored}, ts=self.clock())
         now = self._now()
         for mint in list(self.marks):
@@ -822,20 +844,30 @@ class Runner:
         for table in (self._pending_state, self._persisted, self._blocked_log, self._exit_backoff, self.mark_info):
             table.pop(mint, None)
 
-    def _backoff_active(self, mint, open_id):
+    def _backoff_active(self, mint, open_id, reason, mark):
+        """True when this pass must NOT re-quote the wanted exit ``reason``. M1b #1: a STOP / DANGER / LIQUIDATE / MAX_HOLD /
+        TIME_STOP / BOT_EXIT exit is never backed off unless its quote proved the position worthless (STUCK_POSITION) or the
+        mark is zero: the route may come back on any pass. A different exit reason than the failed one resets the back-off."""
         held = self._exit_backoff.get(mint)
-        return (self.exit_backoff_max_s > 0 and held is not None and held[0] == open_id and self.clock() < held[2])
+        if self.exit_backoff_max_s <= 0 or held is None or held[0] != open_id:
+            return False
+        if held[3] != reason:
+            self._exit_backoff.pop(mint, None)
+            return False
+        if reason in PRIORITY_EXITS and not held[4] and not (mark is not None and mark <= 0):
+            return False
+        return self.clock() < held[2]
 
-    def _exit_attempt_failed(self, mint, open_id):
+    def _exit_attempt_failed(self, mint, open_id, reason, *, stuck):
         """No route / an unexitable quote / a failing quote on a zero mark: the next exit quote waits 10 s, 20 s, 40 s ... capped
-        at ``exit_backoff_max_s``. Only the re-quoting backs off: the D2 write-off clock (``exit_failing_since``) is persisted
-        and checked every pass."""
+        at ``exit_backoff_max_s`` (see ``_backoff_active`` for which exits may wait). Only the re-quoting backs off: the D2
+        write-off clock (``exit_failing_since``) is persisted and checked every pass. ``stuck``: the quote said worthless."""
         if self.exit_backoff_max_s <= 0:
             return
         held = self._exit_backoff.get(mint)
-        failures = held[1] + 1 if held is not None and held[0] == open_id else 1
+        failures = held[1] + 1 if held is not None and held[0] == open_id and held[3] == reason else 1
         delay = min(self.exit_backoff_max_s, EXIT_BACKOFF_BASE_S * 2 ** (failures - 1))
-        self._exit_backoff[mint] = [open_id, failures, self.clock() + delay]
+        self._exit_backoff[mint] = [open_id, failures, self.clock() + delay, reason, bool(stuck)]
 
     def _exit_decision_row(self, mint, open_id, final, features):
         """The exit decision row. An unchanged BLOCKED (same reasons, same lifecycle) is written at most once per ``blocked_log_s``;
@@ -918,7 +950,7 @@ class Runner:
                                       force=decision.action == 'HOLD' and since is not None)          # M1 #13
             return 0
         # --- M1 #13: a failing exit (no route, unexitable quote, zero mark) is re-quoted with a back-off, not every pass ---
-        if self._backoff_active(mint, open_id):
+        if self._backoff_active(mint, open_id, decision.reason, mark):
             with self._counts_lock:
                 self.m1_counts['exit_backoff_skips'] += 1
             if decision.position_updates:
@@ -932,7 +964,7 @@ class Runner:
             if qty == position.qty_raw:                                             # --- L16 hook --- (full exits only)
                 self.route_check.on_quote_error('exit', mint, error, trade=open_id)  # --- end L16 ---
             if not error.transient or (mark is not None and mark <= 0):            # M1 #13: no route, or a zero mark
-                self._exit_attempt_failed(mint, open_id)
+                self._exit_attempt_failed(mint, open_id, decision.reason, stuck=False)
             if not error.transient:
                 self._exit_failed(mint, open_id, state, error.code, bool(decision.position_updates))
             elif decision.position_updates:
@@ -953,7 +985,7 @@ class Runner:
                                      'mark_source': _source, 'mark_info': _jsonable(self.mark_info.get(mint))})
             if final.action != 'SELL' or A.sell_qty_raw(final.qty, position.qty_raw) != qty:
                 if final.action == 'BLOCKED' and final.reason in UNEXITABLE_BLOCKS:
-                    self._exit_attempt_failed(mint, open_id)                                # M1 #13
+                    self._exit_attempt_failed(mint, open_id, decision.reason, stuck=final.reason == 'STUCK_POSITION')   # M1 #13, M1b #1
                     self._exit_failed(mint, open_id, state, final.reason, bool(decision.position_updates))
                 elif decision.position_updates:
                     self._persist_updates(mint, open_id, state, decision.position_updates)  # M1 #13

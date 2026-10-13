@@ -16,7 +16,7 @@ TESTS = ['tests.lean.test_labels', 'tests.lean.test_learn', 'tests.lean.test_e2e
 
 MUTANTS = [
     # --- labels: the mark, the decision, the gaps, the reference, the live exits
-    ('labels', 'mark without the pool fee', "pool_fee_bps=pool_fee_bps, pcfg=pcfg) * paper.LAMPORTS)", "pool_fee_bps=0, pcfg=pcfg) * paper.LAMPORTS)"),
+    ('labels', 'mark without the pool fee', "pool_fee_bps=point.vault_fee_bps, pcfg=pcfg) * paper.LAMPORTS)", "pool_fee_bps=0, pcfg=pcfg) * paper.LAMPORTS)"),
     ('labels', 'label reads marks before the decision', "points = [p for p in path.points if p.ts >= decision_ts]", "points = list(path.points)"),
     ('labels', 'gaps ignored', "if fraction > cfg.max_gap_fraction:", "if False:"),
     ('labels', 'holes ignored', "if hole > cfg.max_hole_s:", "if False:"),

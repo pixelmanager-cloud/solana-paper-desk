@@ -113,7 +113,9 @@ class Point:
     quote_raw: Optional[int] = None       # the pool's quote (SOL) vault amount in lamports; None for a dead mark
     status: str = 'OK'                    # OK | ACCOUNT_MISSING | EMPTY_POOL
     virtual_raw: Optional[int] = None     # M1 #7: set when the recorder marked with marks.model effective (virtual quote reserves)
-    fee_bps: Optional[int] = None         # M1 #7: the total pool fee of that mark (dynamic tier or the config fallback)
+    fee_bps: Optional[int] = None         # M1 #7: the total pool fee of that mark (dynamic tier or the config fallback); M1b #5: also
+                                          # the vault fee a vault row was marked with (None = a pre-M1 row: DEFAULT_POOL_FEE_BPS)
+    model: Optional[str] = None           # M1b #5: 'vault' | 'effective' (None = a pre-M1 row, i.e. vault)
 
     @property
     def dead(self):
@@ -121,7 +123,12 @@ class Point:
 
     @property
     def effective(self):
-        return self.virtual_raw is not None and self.fee_bps is not None
+        return self.model == 'effective' and self.virtual_raw is not None and self.fee_bps is not None
+
+    @property
+    def vault_fee_bps(self):
+        """M1b #5: a vault row is valued at the fee IT was marked with, never at today's lean.json pool_fee_bps."""
+        return DEFAULT_POOL_FEE_BPS if self.fee_bps is None else self.fee_bps
 
 
 @dataclass(frozen=True)
@@ -225,9 +232,11 @@ def iter_paths(connections, skipped):
                 if status in DEAD_STATUSES:
                     marks.setdefault(float(ts), Point(float(ts), None, None, status))
                 elif status == 'OK' and type(base) is int and type(quote) is int and base > 0 and quote > 0:
-                    effective = model == 'effective' and type(virtual) is int and type(fee) is int and 0 <= fee < paper.MAX_BPS
+                    fee_ok = type(fee) is int and 0 <= fee < paper.MAX_BPS
+                    effective = model == 'effective' and type(virtual) is int and fee_ok
                     marks.setdefault(float(ts), Point(float(ts), base, quote, virtual_raw=virtual if effective else None,
-                                                      fee_bps=fee if effective else None))
+                                                      fee_bps=fee if fee_ok else None,
+                                                      model='effective' if effective else 'vault' if model in (None, 'vault') else 'unknown'))
                 else:                                               # MALFORMED / corrupt amounts: an observation that was NOT made
                     bump('MARK_NOT_USABLE')
                     missing.add(float(ts))
@@ -275,13 +284,14 @@ def reference(path: PathRecord, pcfg: paper.PaperConfig) -> Reference:
 
 
 def mark_lamports(point: Point, qty_raw: int, pool_fee_bps: int, pcfg) -> int:
-    """THE live mark (``lean.adapters.mark``) in lamports; a dead or empty pool is worth nothing."""
+    """THE live mark (``lean.adapters.mark``) in lamports; a dead or empty pool is worth nothing. M1b #5: the row's own model and
+    fee (``pool_fee_bps`` is kept for the signature; a recorded row never takes today's lean.json fee)."""
     if point.dead:
         return 0
     if point.effective:                                       # M1 #7: the recorder's effective-reserves mark, reproduced
         return max(0, sell_quote_lamports(point, qty_raw, pool_fee_bps) - pcfg.fee_lamports)
     try:
-        return int(A.mark(qty_raw, point.base_raw, point.quote_raw, pool_fee_bps=pool_fee_bps, pcfg=pcfg) * paper.LAMPORTS)
+        return int(A.mark(qty_raw, point.base_raw, point.quote_raw, pool_fee_bps=point.vault_fee_bps, pcfg=pcfg) * paper.LAMPORTS)
     except A.AdapterError:
         return 0
 
@@ -335,6 +345,8 @@ def label_path(path: PathRecord, decision_ts: float, ref: Reference, cfg: LabelC
                      round(fraction, 6), round(hole, 3), why)
     if not points:
         return insufficient('NO_MARK')
+    if len({p.model or 'vault' for p in points if not p.dead}) > 1:        # M1b #5: never pool vault and effective marks
+        return insufficient('MIXED_MARK_MODELS', len(points))
     spendable0 = path.features.get('quote_spendable_raw')
     try:
         base_liquidity = int(spendable0)
@@ -413,7 +425,7 @@ def sell_quote_lamports(point: Point, qty_raw: int, pool_fee_bps: int) -> int:
                                  M.config_fees(point.fee_bps))
         except M.MarkError:
             return 0
-    return point.quote_raw * qty_raw // (point.base_raw + qty_raw) * (paper.MAX_BPS - pool_fee_bps) // paper.MAX_BPS
+    return point.quote_raw * qty_raw // (point.base_raw + qty_raw) * (paper.MAX_BPS - point.vault_fee_bps) // paper.MAX_BPS
 
 
 def simulate_exits(path: PathRecord, decision_ts: float, ref: Reference, strategy: S.StrategyConfig, *, pool_fee_bps, pcfg,
