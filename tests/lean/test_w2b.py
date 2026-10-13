@@ -225,6 +225,8 @@ class ProductionConfigUnchanged(unittest.TestCase):
         del before['prefetch']
         del before['paths']['hazard_path_sample']
         before.pop('arms', None)                                                      # (W2a's key is left out of the hash while it is None)
+        for key in ('census', 'backfill', 'curves'):                                  # (LINT5: the Round C keys, off in the live config)
+            before.pop(key, None)
         text = json.dumps(before, sort_keys=True, separators=(',', ':'), ensure_ascii=True, default=str)
         self.assertEqual(lean_config_hash(cfg), hashlib.sha256(text.encode()).hexdigest())
 

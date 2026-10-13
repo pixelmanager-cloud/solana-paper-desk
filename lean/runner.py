@@ -60,7 +60,8 @@ class Runner:
                  screen_overrides=None, pool_fee_bps=25, taker=PAPER_TAKER, kill_switch=None, clock=time.time,
                  scan_limit=500, max_retries=3, sol_usd_ttl_s=30, stale_mark_s=30, unexitable_after_s=7200, route_check=None,
                  execution=None, held_risk=None, extra_sources=None, watchlist=None, ops=None, mark_model=None,
-                 blocked_log_s=300, exit_backoff_max_s=60, peak_persist_s=60, discovery_stale_s=600, lean_config_hash=None):
+                 blocked_log_s=300, exit_backoff_max_s=60, peak_persist_s=60, discovery_stale_s=600, lean_config_hash=None,
+                 arms_config_hash=None):
         # --- L10 hook: latency-aware fills + cost model (None = today's instant fills). The priority fee + Jito tip enter
         # through the strategy config, so the fill fee, the marks and the entry/exit cost checks share one number. ---
         self.execution = execution
@@ -137,6 +138,9 @@ class Runner:
         # --- W2b hook ---
         self.prefetch = None                       # lean.prefetch.Prefetch (set by build_runner when prefetch.enabled): collectors start before the screen
         # --- end W2b ---
+        # --- C3 hook ---
+        self.census = None                         # lean.census.Census (set by build_runner when census.enabled; recording only)
+        # --- end C3 ---
         # --- LINT2b hook: the feature / wallet-signal threads (health ``alive``; one shared shutdown deadline) ---
         self._aux_threads = {}                     # name -> Thread (features, wallet_signals, flow, bot_exit, clusters, risk_external)
         # --- end LINT2b ---
@@ -146,6 +150,9 @@ class Runner:
         # --- L23 hook ---
         self.bot_exit = None                       # lean.bot_exit.BotExit (set by build_runner when bot_exit.enabled)
         # --- end L23 ---
+        # --- C2 hook ---
+        self.curves = None                         # lean.curves.CurveRecorder (set by build_runner when curves.enabled)
+        # --- end C2 ---
         # --- L21 hook ---
         self.risk_external = None                  # lean.risk_external.RiskExternal (set by build_runner when risk_external.enabled)
         # --- end L21 ---
@@ -158,6 +165,7 @@ class Runner:
         self.mark_model = mark_model if mark_model is not None else _marks.MarkModel(None, pool_fee_bps=self.pool_fee_bps)   # #7
         self.mark_info = {}                        # mint -> the inputs of its latest vault mark (model, reserves, fee)
         self.lean_config_hash = lean_config_hash   # #10 sha256 of the whole lean.json (None when not built from a file)
+        self.arms_config_hash = arms_config_hash   # W2a2 #1: sha256 of the arms block alone (None = no arms); NOT part of lean_config_hash
         self.discovery_stale_s = float(discovery_stale_s)
         self._feed = {'newest_at': None, 'stale': False, 'stale_since': None, 'events': 0}
         self.blocked_log_s, self.exit_backoff_max_s = float(blocked_log_s), float(exit_backoff_max_s)          # #13
@@ -198,6 +206,7 @@ class Runner:
         if self.halted is None:
             self.store.record('start', {'cursor': self.cursor, 'config_hash': self.cfg.config_hash,
                                         'strategy_config_hash': self.cfg.config_hash, 'lean_config_hash': self.lean_config_hash,
+                                        'arms_config_hash': self.arms_config_hash,
                                         'marks': self.mark_model.cfg, 'raw_policy': getattr(self.store, 'raw_policy', 'all'),
                                         'paper': {'fee_lamports': self.pcfg.fee_lamports, 'slippage_bps': self.pcfg.slippage_bps},
                                         'pool_fee_bps': self.pool_fee_bps, 'stale_mark_s': self.stale_mark_s,
@@ -602,7 +611,10 @@ class Runner:
             self._count('candidates')
         cid = self.store.add_candidate(mint, pool=candidate.pool, signature=candidate.signature, slot=candidate.slot,
                                        migrated_at=candidate.migrated_at, hint_seq=candidate.seq,
-                                       meta={'payload_hash': candidate.payload_hash}, ts=self.clock())
+                                       # --- C4 hook: a candidate may carry its own labels (source, detection latency) ---
+                                       meta={'payload_hash': candidate.payload_hash, **(getattr(candidate, 'meta', None) or {})},
+                                       # --- end C4 ---
+                                       ts=self.clock())
         sol_usd = self._sol_usd_value()
         result = C.screen(candidate, self.providers, self.screen_cfg, now=self.clock(), sol_usd=sol_usd)
         self._count('screened')
@@ -1117,6 +1129,12 @@ class Runner:
                 # --- L24 hook ---
                 'clusters': self._aux_health('clusters', self.clusters),
                 # --- end L24 ---
+                # --- C2 hook ---
+                'curves': self._aux_health('curves', self.curves),
+                # --- end C2 ---
+                # --- C3 hook ---
+                'census': self._aux_health('census', self.census),
+                # --- end C3 ---
                 # --- L21 hook ---
                 'risk_external': self._aux_health('risk_external', self.risk_external),
                 # --- end L21 ---
@@ -1132,11 +1150,15 @@ class Runner:
                 'bot_exit': self._aux_health('bot_exit', self.bot_exit),                        # L23
                 'arms': self._aux_health('arms', self.arms),                                    # W2a
                 # --- M1 hook ---
-                'lean_config_hash': self.lean_config_hash, 'strategy_config_hash': self.cfg.config_hash,
+                'lean_config_hash': self.lean_config_hash, 'arms_config_hash': self.arms_config_hash,
+                'strategy_config_hash': self.cfg.config_hash,
                 'marks_model': self.mark_model.health(), 'raw_policy': getattr(self.store, 'raw_policy', 'all'),
                 'discovery_feed': {**self._feed, 'stale_after_s': self.discovery_stale_s},
                 'last_outage': self.last_outage, 'log_throttle': self._m1_health(),
                 # --- end M1 ---
+                # --- C4 hook: extra-source health (the backfill source reports its feed-gap rate per day) ---
+                'sources': self._sources_health(),
+                # --- end C4 ---
                 # --- L15 hook ---
                 **({} if self.ops is None else self.ops.health())}
                 # --- end L15 ---
@@ -1167,6 +1189,19 @@ class Runner:
                 'peak_persist_s': self.peak_persist_s, 'backing_off': sorted(self._exit_backoff),
                 'pending_peak_states': len(self._pending_state)}
     # --- end M1 ---
+    # --- C4 hook ---
+    def _sources_health(self):
+        """``health()`` of every extra source that has one. Never raises."""
+        out = {}
+        for source in (getattr(self.extra_sources, 'sources', None) or ()):
+            reporter = getattr(source, 'health', None)
+            if callable(reporter):
+                try:
+                    out[source.name] = reporter()
+                except Exception as error:                                    # noqa: BLE001 - health must not fail
+                    out[source.name] = {'enabled': True, 'health_error': type(error).__name__}
+        return out
+    # --- end C4 ---
 
     # --- L20 hook ---
     def _sell_evidence_health(self):
@@ -1252,7 +1287,7 @@ class Runner:
         specs = []
         if self.features is not None:                                       # L12: on stop it writes the queued rows unenriched
             specs.append(('features', self.features.run, (self.stop,)))
-        for name in ('wallet_signals', 'flow', 'clusters'):                 # L13, L20, L24: run_loop() polls their own .stop
+        for name in ('wallet_signals', 'flow', 'clusters', 'census', 'curves'):   # L13, L20, L24, C3, C2: run_loop() polls their own .stop
             worker = getattr(self, name)
             if worker is not None:
                 worker.stop = self.stop

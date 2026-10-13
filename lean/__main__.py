@@ -39,6 +39,9 @@ CONFIG_KEYS = {
     # --- L13 ---
     'wallet_signals': None,            # lean.wallet_signals settings (an object, may be {}, turns it on); None = off
     # --- end L13 ---
+    # --- C3 ---
+    'census': None,                    # lean.census settings ({"enabled", "interval_s", ...}); None / absent = off. Recording only.
+    # --- end C3 ---
     # --- L20 ---
     'sell_evidence': None,             # lean.sell_evidence settings ({"enabled", "min_organic_sells", ...}); None / absent = off. Needs execution.
     'flow': None,                      # lean.flow settings ({"enabled", "window_s", ...}); None / absent = off
@@ -69,6 +72,12 @@ CONFIG_KEYS = {
     # --- W2a ---
     'arms': None,                      # lean.arms shadow paper arms ({"enabled", "db", "arms": [{name, strategy_config, entry_filter}]}); None/absent = off
     # --- end W2a ---
+    # --- C2 ---
+    'curves': None,                    # lean.curves settings ({"enabled", "method", "poll_s", ...}); None / absent = off. Recording only.
+    # --- end C2 ---
+    # --- C4 ---
+    'backfill': None,                  # lean.backfill settings ({"interval_s", "limit", ...}): graduations the discovery feed missed; None = off
+    # --- end C4 ---
 }
 RAW_POLICIES = ('all', 'errors_only')
 REQUIRED = ('strategy_config', 'initial_cash_sol')
@@ -151,6 +160,13 @@ def load_config(path):
         except wallet_signals.ConfigError as error:
             raise ConfigError(str(error)) from None
     # --- end L13 ---
+    # --- C3: strict at load ---
+    from lean import census
+    try:
+        cfg['census'] = census.config(cfg['census'])
+    except census.ConfigError as error:
+        raise ConfigError(str(error)) from None
+    # --- end C3 ---
     # --- L20: strict at load; the sell-evidence probe uses the L10 delay window, so it needs the execution model ---
     from lean import flow, sell_evidence
     try:
@@ -161,6 +177,13 @@ def load_config(path):
     if cfg['sell_evidence']['enabled'] and cfg['execution'] is None:
         raise ConfigError('sell_evidence needs execution (the probe runs inside the L10 exit delay)')
     # --- end L20 ---
+    # --- C2: strict at load (unknown keys, bad method and out-of-range values are refused); absent = off ---
+    from lean import curves
+    try:
+        cfg['curves'] = curves.config(cfg['curves'])
+    except curves.ConfigError as error:
+        raise ConfigError(str(error)) from None
+    # --- end C2 ---
     # --- L22 ---
     from lean import honeypot_sim
     try:
@@ -219,6 +242,13 @@ def load_config(path):
     except arms.ArmsConfigError as error:
         raise ConfigError(str(error)) from None
     # --- end W2a ---
+    # --- C4: strict at load ---
+    from lean import backfill
+    try:
+        cfg['backfill'] = backfill.make_config(cfg['backfill'])
+    except backfill.ConfigError as error:
+        raise ConfigError(str(error)) from None
+    # --- end C4 ---
     return cfg
 
 
@@ -234,9 +264,22 @@ def lean_config_hash(cfg):
     """M1 #10: sha256 of the WHOLE loaded lean.json (``load_config`` output: every key, defaults filled in, so an added key at
     its default is not a new run; canonical JSON; ``_comment`` keys left out so a comment edit is not one either). The strategy
     file has its own ``StrategyConfig.config_hash``; both go into the start event and health."""
-    plain = {k: v for k, v in cfg.items() if not (k == 'arms' and v is None)}      # W2a: arms OFF leaves every earlier config's hash as it was
+    plain = {k: v for k, v in cfg.items() if k != 'arms'}      # W2a2 #1: the shadow arms never change the main run's identity (the learner's window)
     text = json.dumps(_strip_neutral(_strip_comments(plain)), sort_keys=True, separators=(',', ':'), ensure_ascii=True, default=str)
     return hashlib.sha256(text.encode()).hexdigest()
+
+
+def arms_config_hash(cfg):
+    """W2a2 #1: sha256 of the loaded ``arms`` block alone (None when the arms are off). It rides in the start event and health next to
+    ``lean_config_hash``, which no longer covers the arms: turning them on or editing them must not look like a new main run."""
+    block = cfg.get('arms')
+    if block is None:
+        return None
+    text = json.dumps(_strip_comments(dict(block)), sort_keys=True, separators=(',', ':'), ensure_ascii=True, default=str)
+    return hashlib.sha256(text.encode()).hexdigest()
+
+
+NEUTRAL_WHEN_OFF = ('census', 'backfill', 'curves')      # LINT5: C3 / C4 / C2 blocks never change the hash while they are off
 
 
 def _strip_neutral(cfg):
@@ -247,6 +290,10 @@ def _strip_neutral(cfg):
     prefetch = out.get('prefetch')
     if prefetch is None or (isinstance(prefetch, dict) and not prefetch.get('enabled')):
         out.pop('prefetch', None)
+    for key in NEUTRAL_WHEN_OFF:                                # LINT5: the Round C recorders, while off (absent = off)
+        block = out.get(key)
+        if block is None or (isinstance(block, dict) and not block.get('enabled')):
+            out.pop(key, None)
     paths = out.get('paths')
     if isinstance(paths, dict) and not paths.get('hazard_path_sample'):
         out['paths'] = {k: v for k, v in paths.items() if k != 'hazard_path_sample'}
@@ -293,6 +340,17 @@ def build_runner(cfg, *, state_dir, discovery_db, keys, code_version, clock=None
     from lean import adapters, sources, watchlist
     screen_cfg = adapters.screen_config(strategy_cfg, cfg['screen'])
     extra = sources.build_sources(cfg['sources'], screen_cfg=screen_cfg, limit=cfg['scan_limit'], clock=clock)
+    # --- C4 hook: the discovery gap backfill is one more extra source (LOW lane, its own cursor + state in the state dir) ---
+    from lean import backfill
+    backfill_source = None
+    if (cfg.get('backfill') or {}).get('enabled'):
+        backfill_source = backfill.build(cfg['backfill'], helius_low=providers.low(keys, **transport_kwargs).helius,
+                                         discovery_db=discovery_db, state_dir=state, screen_cfg=screen_cfg, clock=clock)
+    if backfill_source is not None:
+        if backfill_source.name in {s.name for s in extra}:
+            raise ConfigError('backfill.name collides with a configured source: %s' % backfill_source.name)
+        extra.append(backfill_source)
+    # --- end C4 ---
     watch_cfg = watchlist.WatchConfig.from_dict(cfg['watchlist'])
     l14 = {'extra_sources': sources.SourceSet(extra, state) if extra else None,
            'watchlist': (watchlist.Watchlist(the_store, watch_cfg, clock=clock, code_version=code_version,
@@ -326,7 +384,7 @@ def build_runner(cfg, *, state_dir, discovery_db, keys, code_version, clock=None
         exit_backoff_max_s=cfg.get('exit_backoff_max_s', CONFIG_KEYS['exit_backoff_max_s']),
         peak_persist_s=cfg.get('peak_persist_s', CONFIG_KEYS['peak_persist_s']),
         discovery_stale_s=cfg.get('discovery_stale_s', CONFIG_KEYS['discovery_stale_s']),
-        lean_config_hash=lean_config_hash(cfg))
+        lean_config_hash=lean_config_hash(cfg), arms_config_hash=arms_config_hash(cfg))
         # --- end M1 ---
     # --- L07R: the path recorder (low lane, its own paths.sqlite) is only a FACTORY here: Runner.run() builds and
     # resumes it; --once and --clear-halt never open paths.sqlite ---
@@ -354,6 +412,11 @@ def build_runner(cfg, *, state_dir, discovery_db, keys, code_version, clock=None
                                                 transport_kwargs=transport_kwargs,
                                                 paths_db=paths.db_path(paths_cfg, state) if paths_cfg['enabled'] else None)   # LINT2
     # --- end L13 ---
+    # --- C3: the launchpad census (low lane, its own thread and census.sqlite; recording only) ---
+    from lean import census
+    r.census = census.build(census.config(cfg.get('census')), state_dir=state, keys=keys, code_version=code_version,
+                            discovery_db=discovery_db, clock=clock, transport_kwargs=transport_kwargs)
+    # --- end C3 ---
     # --- L20: sellability evidence (inside the L10 exit delay) and the order-flow collector, both on the shared low lane ---
     from lean import flow, sell_evidence
     se_cfg = sell_evidence.config(cfg.get('sell_evidence'))
@@ -381,6 +444,11 @@ def build_runner(cfg, *, state_dir, discovery_db, keys, code_version, clock=None
                                     strategy_version=strategy_cfg.strategy_version, clock=clock, transport_kwargs=transport_kwargs,
                                     signals_enabled=cfg.get('wallet_signals') is not None)
     # --- end L24 ---
+    # --- C2: the bonding-curve recorder (low lane, its own curves.sqlite, own thread in run mode; None when absent/disabled) ---
+    from lean import curves
+    r.curves = curves.build(curves.config(cfg.get('curves')), state_dir=state, keys=keys, code_version=code_version, clock=clock,
+                            transport_kwargs=transport_kwargs)
+    # --- end C2 ---
     # --- L21: external risk rows (RugCheck, its own bucket; recording only) ---
     from lean import risk_external
     r.risk_external = risk_external.build(risk_external.config(cfg.get('risk_external')), store=the_store, code_version=code_version,

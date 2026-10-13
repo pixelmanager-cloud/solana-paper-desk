@@ -82,7 +82,8 @@ SKIP_SHED = 'ARM_SKIPPED_SHED'
 FEATURE_NOT_READY = 'FEATURE_NOT_READY'
 PEAK_STEP = Decimal('1.01')
 CONFIG_DEFAULTS = {'enabled': True, 'db': None, 'initial_cash_sol': None, 'queue_size': 200, 'max_scale': 2.0, 'exit_wait_s': 120.0,
-                   'exit_grace_s': 1.0, 'eval_interval_s': 15.0, 'quote_marks_per_pass': 3, 'peak_persist_s': 60.0}
+                   'exit_grace_s': 1.0, 'eval_interval_s': 15.0, 'quote_marks_per_pass': 3, 'peak_persist_s': 60.0,
+                   'reserve_tokens': 1, 'row_grace_s': 10.0}
 
 
 class ArmsConfigError(ValueError):
@@ -231,14 +232,19 @@ def config(raw, base_dir=None):
     out['peak_persist_s'] = _number(out['peak_persist_s'], 'peak_persist_s', 0, 3600)
     if type(out['quote_marks_per_pass']) is not int or not 0 <= out['quote_marks_per_pass'] <= 20:
         raise ArmsConfigError('arms.quote_marks_per_pass must be an integer between 0 and 20')
+    out['row_grace_s'] = _number(out['row_grace_s'], 'row_grace_s', 0, 600)
+    if type(out['reserve_tokens']) is not int or not 0 <= out['reserve_tokens'] <= 10:
+        raise ArmsConfigError('arms.reserve_tokens must be an integer between 0 and 10')
     listed = raw.get('arms')
     if not isinstance(listed, list) or not 1 <= len(listed) <= MAX_ARMS:
         raise ArmsConfigError('arms.arms must be a list of 1-%d arms' % MAX_ARMS)
     names, arms = set(), []
     for i, spec in enumerate(listed):
         where = 'arms.arms[%d]' % i
-        if not isinstance(spec, dict) or set(spec) - {'name', 'strategy_config', 'entry_filter', '_comment'}:
-            raise ArmsConfigError('%s: name, strategy_config, entry_filter' % where)
+        if not isinstance(spec, dict) or set(spec) - {'name', 'strategy_config', 'entry_filter', 'mirror_main', '_comment'}:
+            raise ArmsConfigError('%s: name, strategy_config, entry_filter, mirror_main' % where)
+        if type(spec.get('mirror_main', False)) is not bool:
+            raise ArmsConfigError('%s: mirror_main must be true or false' % where)
         name = spec.get('name')
         if not isinstance(name, str) or not NAME_RE.fullmatch(name) or name == 'main':
             raise ArmsConfigError('%s: name must match %s and not be "main"' % (where, NAME_RE.pattern))
@@ -251,7 +257,8 @@ def config(raw, base_dir=None):
         file = _referenced_file(ref, base_dir)
         if file is None or file.is_file():
             resolve_strategy(ref, base_dir, where)
-        arms.append({'name': name, 'strategy_config': ref, 'entry_filter': filter_config(spec.get('entry_filter'), where + '.entry_filter')})
+        arms.append({'name': name, 'strategy_config': ref, 'entry_filter': filter_config(spec.get('entry_filter'), where + '.entry_filter'),
+                     'mirror_main': spec.get('mirror_main', False)})
     out['arms'] = arms
     return ArmsConfig(out, base_dir)
 
@@ -483,19 +490,31 @@ class RowsReader:
                 self._db = None
 
     def latest(self, kind, mint, upto_ts):
-        """('OK', ts, meta) for the newest row of ``kind`` written at or before ``upto_ts``; ('AFTER', ts, None) when rows exist but
-        all were written later; ('NO_ROW', None, None); ('UNREADABLE', None, None)."""
+        """('OK', ts, meta) for the newest row of ``kind`` that was known at ``upto_ts``: written at or before it, OR (a W2b prefetch commits
+        its row a few seconds after the screen decision) OBSERVED before the screen decision, i.e. ``late_s`` <= 0 with ``collected_at`` and
+        ``decision_ts`` not after ``upto_ts``. ('AFTER', ts, None) when rows exist but none was known yet; ('NO_ROW', None, None);
+        ('UNREADABLE', None, None)."""
         try:
             with self._lock:
-                db = self._connect()
-                row = db.execute('SELECT ts,meta FROM observations WHERE mint=? AND kind=? AND ts<=? ORDER BY id DESC LIMIT 1',
-                                 (mint, kind, upto_ts)).fetchone()
-                if row is not None:
-                    return 'OK', row[0], json.loads(row[1])
-                later = db.execute('SELECT MIN(ts) FROM observations WHERE mint=? AND kind=?', (mint, kind)).fetchone()[0]
-            return ('NO_ROW', None, None) if later is None else ('AFTER', later, None)
-        except (sqlite3.Error, ValueError, OSError):
+                rows = self._connect().execute('SELECT ts,meta FROM observations WHERE mint=? AND kind=? ORDER BY id DESC LIMIT 20',
+                                               (mint, kind)).fetchall()
+            for ts, text in rows:
+                meta = json.loads(text)
+                if ts <= upto_ts or observed_before(meta, upto_ts):
+                    return 'OK', ts, meta
+            return ('NO_ROW', None, None) if not rows else ('AFTER', min(r[0] for r in rows), None)
+        except (sqlite3.Error, ValueError, OSError, TypeError):
             return 'UNREADABLE', None, None
+
+
+def observed_before(meta, upto_ts):
+    """The row's figures were all OBSERVED before the screen decision it belongs to (``late_s`` <= 0: ``collected_at`` is not after
+    ``decision_ts``), and that decision is not after ``upto_ts``: no lookahead, whenever the row was written."""
+    def number(value):
+        return value if isinstance(value, (int, float)) and not isinstance(value, bool) else None
+    late, collected, decision = number(meta.get('late_s')), number(meta.get('collected_at')), number(meta.get('decision_ts'))
+    return (late is not None and late <= 0 and collected is not None and decision is not None and collected <= decision
+            and decision <= upto_ts)
 
 
 def _decimal(value):
@@ -527,6 +546,8 @@ def evaluate_filter(flt, screen, reader, mint, t_dec):
             else:
                 value, why = _decimal((meta or {}).get(feature)), 'VALUE_NULL'
                 info['row_written_at'] = ts
+                info.update(row_collected_at=(meta or {}).get('collected_at'), row_late_s=(meta or {}).get('late_s'),
+                            row_known_at_decision=ts is not None and ts <= t_dec)
                 if value is None:
                     info['unavailable'] = ((meta or {}).get('unavailable') or {}).get(feature)
         if value is None:
@@ -585,6 +606,23 @@ class PendingExit:
     failing_since: float = None
     retry_at: float = 0.0
     attempts: int = 0
+    fill_mark: tuple = None          # (mark SOL, mark_at) a MARK_FILL was priced from: the LATEST mark, never the decision-time one
+
+
+@dataclasses.dataclass
+class PendingFill:
+    """A low-lane entry between its q0 and its L10 re-quote q1."""
+    ev: object
+    lamports: int
+    q0: object
+    q0_at: int
+    q0_t: float
+    due_at: float
+    fee_bps: int
+    flags: list
+    sell_q0: object
+    detail: dict = dataclasses.field(default_factory=dict)
+    deferred_from: float = None
 
 
 @dataclasses.dataclass
@@ -602,12 +640,14 @@ class Evidence:
     hazard: str = None           # the main arm rejected the candidate at the L22 honeypot simulation
     main_acted: bool = False     # the main arm filled a BUY
     attempt: int = 1
-    low: tuple = None            # the ONE low-lane buy quote of this candidate, shared by every arm that needs one: (quote, at) or ('ERROR', code)
+    low: tuple = None            # the ONE low-lane buy quote (q0) of this candidate, shared by every arm that needs one: (quote, at) or ('ERROR', code)
+    low1: tuple = None           # the ONE low-lane re-quote (q1, an execution delay later), shared the same way
 
 
 class Arm:
-    def __init__(self, name, raw_strategy, flt, runner, code_version, initial_lamports):
+    def __init__(self, name, raw_strategy, flt, runner, code_version, initial_lamports, mirror=False):
         self.name = name
+        self.mirror = mirror                                             # W2a2 #4: enters only when the main arm bought
         self.cfg = S.StrategyConfig.from_dict(raw_strategy)               # strict, hash of the raw dict
         self.strategy_version, self.config_hash, self.code_version = self.cfg.strategy_version, self.cfg.config_hash, code_version
         if runner.execution is not None:                                 # the same cost model as live: fees + priority/tip in fixed_fee
@@ -619,13 +659,27 @@ class Arm:
         self.view = BookView(self.book)
         self.shim = types.SimpleNamespace(store=self.view)               # lean.execution.finish_buy reads runner.store.positions()
         self.marks = {}                                                  # mint -> (Decimal SOL, mark_at, source)
-        self.pending_exits, self.pending_entries = {}, []
+        self.pending_exits, self.pending_entries, self.pending_fills, self.pending_rows = {}, [], [], []
+        self.filter_stats = collections.Counter()                        # W2a2 #5: PASS / REJECT / NOT_READY (+ why) of the entry filter
+        self.filter_counted = set()                                      # ... once per candidate, at its final verdict
         self.persisted = {}                                              # mint -> (ts, peak Decimal)
         self.decided = set()
         self.halted = None
         self.store = None                                                # set by Arms: the day baseline is persisted
         self.counts = collections.Counter()
         self.skips = collections.Counter()
+
+    def holds(self, cid):
+        """The candidate is waiting for this arm's feature or L10 re-quote."""
+        return (any(e.cid == cid for e in self.pending_entries) or any(p.ev.cid == cid for p in self.pending_fills)
+                or any(e.cid == cid for e in self.pending_rows))
+
+    def count_filter(self, cid, verdict, info):
+        if cid not in self.filter_counted:
+            self.filter_counted.add(cid)
+            self.filter_stats[verdict] += 1
+            if verdict == 'NOT_READY':
+                self.filter_stats['why:' + str(info.get('why'))] += 1
 
     def portfolio(self, now, usable_s):
         marks = {m: v for m, v in self.marks.items() if 0 <= now - v[1] <= usable_s}
@@ -640,6 +694,14 @@ class Arm:
                 self.store.event(self, 'day_start', {'day': current[0], 'equity': str(current[1]), 'marks_fresh': fresh})
             self.book.day = current
         return current[1]
+
+
+def filter_health(stats):
+    """The entry filter's readiness: how many candidates it saw, how often the figure was NOT_READY (and why). W2a2 #5."""
+    seen = stats['PASS'] + stats['REJECT'] + stats['NOT_READY']
+    return {'evaluated': seen, 'pass': stats['PASS'], 'reject': stats['REJECT'], 'not_ready': stats['NOT_READY'],
+            'not_ready_share': None if not seen else round(stats['NOT_READY'] / seen, 4),
+            'not_ready_why': {k[4:]: v for k, v in stats.items() if k.startswith('why:')}}
 
 
 # ---------------------------------------------------------------------------------------------------------------- Arms
@@ -661,13 +723,15 @@ class _SharedScheduleModel(M.MarkModel):
     def schedule(self, now):
         return super().schedule(now) or self.parent.schedule(now)
 
+    def schedule_stale(self):
+        return super().schedule_stale() if self._schedule is not None else self.parent.schedule_stale()
+
 
 class Arms:
     def __init__(self, cfg, *, runner, store, reader, low, code_version, clock=time.time):
         self.cfg, self.runner, self.store, self.reader, self.low = cfg, runner, store, reader, low
         self.clock, self.code_version = clock, code_version
         self.model = _SharedScheduleModel(runner.mark_model)
-        self.estimator = M.MarkModel({'model': 'effective', 'fee_source': 'config'}, pool_fee_bps=120)   # sell leg of a low-lane entry
         self.threaded = False
         self._lock = threading.Lock()                                    # guards the queue and the two capture dicts; never held over I/O
         self._queue = collections.deque()
@@ -683,7 +747,8 @@ class Arms:
         self.last_error = None
         self.last_at = None
         initial = self._initial_lamports()
-        specs = [(spec['name'], resolve_strategy(spec['strategy_config'], getattr(cfg, 'base_dir', None), 'arm %s' % spec['name']), spec['entry_filter'])
+        specs = [(spec['name'], resolve_strategy(spec['strategy_config'], getattr(cfg, 'base_dir', None), 'arm %s' % spec['name']), spec['entry_filter'],
+                  spec.get('mirror_main', False))
                  for spec in cfg['arms']]
         self.arms = [self._make_arm(spec, initial) for spec in specs]
 
@@ -694,7 +759,7 @@ class Arms:
         return int(self.runner.store.initial_cash)
 
     def _make_arm(self, spec, initial):
-        arm = Arm(spec[0], spec[1], spec[2], self.runner, self.code_version, initial)
+        arm = Arm(spec[0], spec[1], spec[2], self.runner, self.code_version, initial, mirror=spec[3])
         arm.store = self.store
         try:
             self._restore(arm, initial)
@@ -819,6 +884,7 @@ class Arms:
             self.last_at = now_f
             self._drain_candidates(now_f)
             self._retry_deferred(now_f)
+            self._fulfil_entries(now_f)
             kicked, self._marks_kicked = self._marks_kicked, False
             if any(arm.book.positions for arm in self.arms) and (kicked or now_f - self.last_eval >= self.cfg['eval_interval_s']):
                 self.last_eval = now_f
@@ -851,13 +917,21 @@ class Arms:
             if ev is None:
                 return
             for arm in self.arms:
-                if arm.halted or ev.cid in arm.decided or any(p.cid == ev.cid for p in arm.pending_entries):
+                if arm.halted or ev.cid in arm.decided or arm.holds(ev.cid):
                     continue
-                if self._guard(arm, 'entry', self._entry, arm, ev, now_f, False) == 'DEFER':
+                verdict = self._guard(arm, 'entry', self._entry, arm, ev, now_f, False)
+                if verdict == 'DEFER':
                     arm.pending_entries.append(ev)
+                elif verdict == 'ROWWAIT':
+                    arm.pending_rows.append(ev)
 
     def _retry_deferred(self, now_f):
         for arm in self.arms:
+            if not arm.halted and arm.pending_rows:                        # the prefetch's row is written a few seconds after the screen decision
+                waiting, arm.pending_rows = arm.pending_rows, []
+                for ev in waiting:
+                    if ev.cid not in arm.decided and self._guard(arm, 'entry', self._entry, arm, ev, now_f, False, True) == 'ROWWAIT':
+                        arm.pending_rows.append(ev)
             if arm.halted or not arm.pending_entries:
                 continue
             waiting, arm.pending_entries = arm.pending_entries, []
@@ -886,13 +960,38 @@ class Arms:
         self._record(arm, ev, 'SKIP', reasons, {'honeypot': self._honeypot(ev), **_plain(features)}, now_f)
         return 'DONE'
 
-    def _entry(self, arm, ev, now_f, deferred):
-        """One arm, one candidate. Returns 'DEFER' (hold it for the feature) or 'DONE'."""
+    def _abort(self, arm, ev, reasons, features, now_f):
+        """The L10 rule on a low-lane entry: the re-quote (q1) has no route, or the round trip on it breaks the cost cap."""
+        for reason in reasons:
+            arm.skips[reason.split(':')[0]] += 1
+        arm.counts['entry_aborted_latency'] += 1
+        self._record(arm, ev, X.ABORT, reasons, {'honeypot': self._honeypot(ev), **_plain(features)}, now_f)
+        return 'DONE'
+
+    def _lane_open(self, client):
+        """A call on the shared LOW lane only while ``reserve_tokens`` more tokens stay for its other users (path recorder, L11, L12F, L13,
+        L24), like their collectors do. A bucket that can never hold 1 + reserve tokens needs to be full."""
+        reserve = self.cfg['reserve_tokens']
+        limiter = getattr(getattr(client, 'transport', None), 'limiter', None)
+        available = getattr(limiter, 'available', None)
+        if not reserve or available is None:
+            return True
+        need = min(1.0 + reserve, float(getattr(limiter, 'burst', 1.0 + reserve)))
+        if available() >= need:
+            return True
+        self.counts['lane_yielded'] += 1
+        return False
+
+    def _entry(self, arm, ev, now_f, deferred, again=False):
+        """One arm, one candidate. Returns 'DEFER' (hold it for the feature), 'ROWWAIT' (the feature row is a few seconds from being written:
+        a W2b prefetch), 'PENDING' (waiting for its L10 re-quote) or 'DONE'. ``again``: the retry of a 'ROWWAIT'."""
         usable = self.runner.stale_mark_s
         t_dec = now_f if deferred else ev.ts
         t_int = int(t_dec)
         if ev.hazard:
             return self._skip(arm, ev, ['MAIN_HAZARD:' + ev.hazard], {}, now_f)
+        if arm.mirror and not ev.main_acted:                              # W2a2 #4: the control follows the main arm, never leads it
+            return self._skip(arm, ev, ['MAIN_DID_NOT_BUY'], {}, now_f)
         gate = S.entry_decision(ev.features, None, arm.portfolio(t_int, usable), arm.cfg)
         if gate.action != 'BUY' or not gate.quote_required:
             return self._skip(arm, ev, gate.reasons or (gate.action,), gate.detail, now_f)
@@ -905,17 +1004,36 @@ class Arms:
                     if not deferred:
                         self._record(arm, ev, 'DEFER', [FEATURE_NOT_READY], {'wait_s': arm.filter['wait_s'], **_plain(detail)}, now_f)
                     return 'DEFER'
+                # W2b: with the prefetch on, a row OBSERVED before the decision is written a few seconds after it. Waiting for that write
+                # costs no lookahead (the row's figures predate the decision; the entry keeps the main arm's own prices) and is bounded.
+                if (self.runner.prefetch is not None and not deferred and info.get('why') in ('NO_ROW', 'WRITTEN_AFTER_DECISION')
+                        and now_f - ev.ts < self.cfg['row_grace_s']):
+                    if not again:
+                        self._record(arm, ev, 'DEFER', ['ROW_PENDING'], {'row_grace_s': self.cfg['row_grace_s'], **_plain(detail)}, now_f)
+                    return 'ROWWAIT'
+                arm.count_filter(ev.cid, verdict, info)                  # W2a2 #5: how often the feature is ready (health)
                 return self._skip(arm, ev, [FEATURE_NOT_READY], detail, now_f)
+            arm.count_filter(ev.cid, verdict, info)
             if verdict == 'REJECT':
                 return self._skip(arm, ev, ['ENTRY_FILTER'], detail, now_f)
         priced = self._price_entry(arm, ev, gate.size_sol, now_f, deferred)
         if priced[0] == 'SKIP':
             return self._skip(arm, ev, priced[1], {**detail, **priced[2]}, now_f)
+        if priced[0] == 'PENDING':
+            priced[1].detail = detail
+            priced[1].deferred_from = ev.ts if deferred else None
+            arm.pending_fills.append(priced[1])
+            return 'PENDING'
+        return self._enter(arm, ev, priced, now_f, detail, round(now_f - ev.ts, 3) if deferred else 0.0)
+
+    def _enter(self, arm, ev, priced, now_f, detail, deferred_s):
+        """The entry decision on a priced round trip, and the paper BUY."""
+        usable = self.runner.stale_mark_s
         buy, sell, meta, source, flags, fill_ts = priced
-        when = max(t_int if source.startswith('main_') else int(now_f), buy[2], sell[1])
+        when = max(int(ev.ts) if source.startswith('main_') else int(now_f), buy[2], sell[1])
         decision = S.entry_decision(ev.features, A.roundtrip(buy[0], buy[2], sell[0], sell[1]), arm.portfolio(when, usable), arm.cfg)
         info = {**detail, 'price_source': source, 'flags': flags, 'size_sol': str(decision.size_sol), 'decision_detail': decision.detail,
-                'deferred_s': round(now_f - ev.ts, 3) if deferred else 0.0,
+                'deferred_s': deferred_s,
                 'buy_quote': {'in': buy[0].in_amount, 'out': buy[0].out_amount, 'at': buy[2], 'ref': buy[1]},
                 'sell_leg': {'in': sell[0].in_amount, 'out': sell[0].out_amount, 'at': sell[1]}}
         if decision.action != 'BUY':
@@ -926,15 +1044,16 @@ class Arms:
         if meta is not None:                                             # L10: ATA rent, transfer-fee haircut, both quotes + latency tax
             fill, extra = self.runner.execution.finish_buy(arm.shim, fill, meta)
             features = {**features, '_exec_state': extra}
-        if self.runner.mark_model.effective:                             # M1 #7: the screen's pool fields, for the marks
-            features = {**features, '_pool_info': M.screen_pool_info(ev.screen)}
+        # M1 #7 + M1b #6: the screen's pool fields for the marks, and the mark model + vault fee this position is marked with until it
+        # closes (a config switch never re-marks an open position): the same pin the main arm writes
+        features = {**features, '_pool_info': {**(M.screen_pool_info(ev.screen) or {}), **self.runner.mark_model.pin()}}
         self._book(arm, fill, ev.cid, source, flags, 'open', A.open_state(features, fill, arm.cfg), None,
                    {'action': 'BUY', 'reasons': ['ENTRY'], 'features': {**info, 'honeypot': self._honeypot(ev)}}, kind='entry', mint=ev.mint)
         arm.counts['entries'] += 1
         return 'DONE'
 
     def _price_entry(self, arm, ev, size_sol, now_f, deferred):
-        """(buy (quote, ref, at), sell leg (quote, at), L10 meta, source, flags, fill ts) or ('SKIP', reasons, detail)."""
+        """(buy (quote, ref, at), sell leg (quote, at), L10 meta, source, flags, fill ts), ('PENDING', PendingFill) or ('SKIP', reasons, detail)."""
         lamports = A.lamports(size_sol)
         plan = None if deferred else ev.plan
         if plan is not None:
@@ -952,69 +1071,137 @@ class Arms:
                     for key in ('q0_out', 'q1_out', 'fill_out'):
                         if meta.get(key):
                             meta[key] = meta[key] * lamports // mq.in_amount
-                flags = ['SCALED_FROM_MAIN'] + ([] if xmeta is not None else ['LATENCY_MODEL_ABSENT'])
+                flags = ['SCALED_FROM_MAIN'] + ([] if xmeta is not None or self.runner.execution is None else ['LATENCY_MODEL_ABSENT'])
                 return ((buy_q, 'main:%s' % mref, mat), (sell_q, sat), meta,
                         'main_entry_quote:%s' % (xmeta or {}).get('fill', 'q0'), flags, ev.ts)
         elif ev.aborted and not deferred:
             return 'SKIP', ['MAIN_ENTRY_ABORTED_LATENCY'], {}
         return self._price_low_lane(arm, ev, lamports, now_f)
 
+    def _low_quote(self, ev, slot, lamports, now_f, not_before=None):
+        """The candidate's low-lane buy quote in ``ev.<slot>`` ('low' = q0, 'low1' = q1): the first arm that needs it pays one call, the others
+        scale it. -> ('OK', quote, at, shared) | ('SHED', why) | ('ERROR', code)."""
+        shared = getattr(ev, slot)
+        ttl = self.runner.cfg.price_ttl_seconds
+        if shared is not None and shared[0] == 'ERROR':
+            return shared
+        if (shared is not None and 0 <= int(now_f) - shared[1] <= ttl and (not_before is None or shared[1] >= not_before)
+                and 1 / self.cfg['max_scale'] <= lamports / shared[0].in_amount <= self.cfg['max_scale']):
+            try:
+                return 'OK', scale_quote(shared[0], lamports), shared[1], True        # another arm paid for this quote already
+            except ValueError:
+                return 'ERROR', 'QUOTE_SCALE_FAILED'
+        if not self._lane_open(self.low.jupiter):
+            self.counts['entry_shed'] += 1
+            return 'SHED', 'reserve'
+        call = 'jupiter_entry_quote' if slot == 'low' else 'jupiter_entry_requote'
+        try:
+            quote, _raw, _meta = self.low.jupiter.quote(SOL_MINT, ev.mint, lamports, self.runner.taker)
+        except ProviderError as error:
+            if is_shed(error):                                           # nothing was sent: no call spent
+                self.counts['entry_shed'] += 1
+                return 'SHED', (getattr(error, 'meta', None) or {}).get('why')
+            self.calls[call] += 1
+            setattr(ev, slot, ('ERROR', error.code))
+            return 'ERROR', error.code
+        self.calls[call] += 1
+        at = self._now()
+        setattr(ev, slot, (quote, at))
+        return 'OK', quote, at, False
+
     def _price_low_lane(self, arm, ev, lamports, now_f):
-        """ONE buy quote on the shared LOW lane; the sell leg is MODELED from the screen's reserves (no second call)."""
+        """A candidate the main arm did not quote. Under the L10 model (the main arm has one) the SAME rules apply: q0 now, a re-quote q1
+        ``exec_delay_s`` later, the fill at the worse of the two, the entry dropped when q1 has no route or breaks the cost cap
+        (``_finish_entry``). Each of q0 and q1 is ONE low-lane call per candidate, shared by every arm that needs it. The sell leg is
+        MODELED (M1's effective mark with the dynamic Pump fee tier)."""
         try:
             fee_bps = X.transfer_fee_bps_from_screen(ev.raw) if self.runner.execution is not None else 0
         except X.ExecutionError:
             return 'SKIP', ['TRANSFER_FEE_UNREADABLE'], {}
-        shared = ev.low
-        ttl = self.runner.cfg.price_ttl_seconds
-        if shared is not None and shared[0] == 'ERROR':
-            return 'SKIP', ['ARM_QUOTE_FAILED:%s' % shared[1]], {'shared_quote': True}
-        if (shared is not None and 0 <= int(now_f) - shared[1] <= ttl
-                and 1 / self.cfg['max_scale'] <= lamports / shared[0].in_amount <= self.cfg['max_scale']):
-            try:
-                quote, at = scale_quote(shared[0], lamports), shared[1]            # another arm paid for this candidate's quote already
-            except ValueError:
-                return 'SKIP', ['QUOTE_SCALE_FAILED'], {}
-            shared_flag = ['SHARED_QUOTE']
-        else:
-            try:
-                quote, _raw, _meta = self.low.jupiter.quote(SOL_MINT, ev.mint, lamports, self.runner.taker)
-            except ProviderError as error:
-                if is_shed(error):                                       # nothing was sent: no call spent
-                    self.counts['entry_shed'] += 1
-                    return 'SKIP', [SKIP_SHED], {'shed': (getattr(error, 'meta', None) or {}).get('why')}
-                self.calls['jupiter_entry_quote'] += 1
-                ev.low = ('ERROR', error.code)
-                return 'SKIP', ['ARM_QUOTE_FAILED:%s' % error.code], {}
-            self.calls['jupiter_entry_quote'] += 1
-            at = self._now()
-            ev.low = (quote, at)
-            shared_flag = []
-        tokens = A.sell_leg_qty(quote.out_amount, arm.pcfg)
-        out = self._modeled_sell(ev.screen, quote, tokens, at)
-        if out is None:
+        got = self._low_quote(ev, 'low', lamports, now_f)
+        if got[0] == 'SHED':
+            return 'SKIP', [SKIP_SHED], {'shed': got[1]}
+        if got[0] == 'ERROR':
+            return 'SKIP', ['ARM_QUOTE_FAILED:%s' % got[1]], {'shared_quote': True}
+        _, quote, at, shared = got
+        flags = ['SELL_LEG_MODELED'] + (['SHARED_QUOTE'] if shared else [])
+        sell_out = self._modeled_sell(ev.screen, quote, A.sell_leg_qty(quote.out_amount, arm.pcfg), at)
+        if sell_out is None:
             return 'SKIP', ['ARM_SKIPPED_NO_SELL_LEG_MODEL'], {}
-        sell_q = dataclasses.replace(quote, in_amount=tokens, out_amount=out, other_amount_threshold=None)
-        meta = None
-        if self.runner.execution is not None:
-            meta = {'delay_s': self.runner.execution.cfg.exec_delay_s, 'q0_ref': None, 'q0_out': quote.out_amount, 'q1_ref': None,
-                    'q1_out': None, 'transfer_fee_bps': fee_bps, 'fill': 'q0', 'fill_out': quote.out_amount, 'fill_ref': None}
-        return ((quote, None, at), (sell_q, at), meta, 'low_lane_entry_quote',
-                ['LATENCY_MODEL_ABSENT', 'SELL_LEG_MODELED'] + shared_flag, self.clock())
+        sell_q = dataclasses.replace(quote, in_amount=A.sell_leg_qty(quote.out_amount, arm.pcfg), out_amount=sell_out[0],
+                                     other_amount_threshold=None)
+        if sell_out[1]:
+            flags.append('SELL_LEG_FEE_FALLBACK')
+        execution = self.runner.execution
+        if execution is None:                                            # the main arm has no latency model either: one quote, as it does
+            return ((quote, None, at), (sell_q, at), None, 'low_lane_entry_quote:single', flags, self.clock())
+        delay = float(execution.cfg.exec_delay_s)
+        return 'PENDING', PendingFill(ev=ev, lamports=lamports, q0=quote, q0_at=at, q0_t=now_f, due_at=now_f + delay, fee_bps=fee_bps,
+                                      flags=flags, sell_q0=sell_q)
+
+    def _fulfil_entries(self, now_f):
+        for arm in self.arms:
+            if arm.halted or not arm.pending_fills:
+                continue
+            for pf in [p for p in arm.pending_fills if now_f >= p.due_at]:
+                arm.pending_fills.remove(pf)
+                self._guard(arm, 'entry_requote', self._finish_entry, arm, pf, now_f)
+
+    def _finish_entry(self, arm, pf, now_f):
+        """L10 for a low-lane entry (lean.execution.entry_requote, step for step): re-quote the same spend after the delay, fill at the WORSE of
+        q0 and q1; no route for q1 or a round trip on it over the cost cap = ENTRY_ABORTED_LATENCY."""
+        ev, execution = pf.ev, self.runner.execution
+        if ev.cid in arm.decided:
+            return 'DONE'
+        detail = dict(pf.detail)
+        got = self._low_quote(ev, 'low1', pf.lamports, now_f, not_before=int(pf.due_at))
+        if got[0] == 'SHED':
+            return self._skip(arm, ev, [SKIP_SHED], {**detail, 'shed': got[1], 'stage': 'q1'}, now_f)
+        if got[0] == 'ERROR':
+            return self._abort(arm, ev, ['Q1_UNAVAILABLE:%s' % got[1]], detail, now_f)
+        _, q1, q1_at, shared1 = got
+        q0 = pf.q0
+        flags = list(pf.flags) + (['SHARED_REQUOTE'] if shared1 else [])
+        meta = {'delay_s': execution.cfg.exec_delay_s, 'q0_ref': None, 'q0_out': q0.out_amount, 'q1_ref': None, 'q1_out': q1.out_amount,
+                'transfer_fee_bps': pf.fee_bps}
+        if q1.out_amount >= q0.out_amount:                               # the market did not move against us: fill at q0
+            meta.update(fill='q0', fill_out=q0.out_amount, fill_ref=None)
+            priced = ((q0, None, pf.q0_at), (pf.sell_q0, pf.q0_at), meta, 'low_lane_entry_quote:q0', flags, self.clock())
+        else:                                                            # worse: the sell leg for what we would now hold, and the cost cap
+            tokens = A.sell_leg_qty(q1.out_amount, arm.pcfg)
+            out1 = self._modeled_sell(ev.screen, q1, tokens, q1_at)
+            if out1 is None:
+                return self._abort(arm, ev, ['Q1_SELL_LEG_UNAVAILABLE:NO_MODEL'], detail, now_f)
+            sell1 = dataclasses.replace(q1, in_amount=tokens, out_amount=out1[0], other_amount_threshold=None)
+            check = S.entry_decision(ev.features, A.roundtrip(q1, q1_at, sell1, q1_at), arm.portfolio(max(int(now_f), q1_at), self.runner.stale_mark_s),
+                                     arm.cfg)
+            if check.action != 'BUY':
+                return self._abort(arm, ev, ['LATENCY_%s' % r for r in (check.reasons or (check.action,))], detail, now_f)
+            meta.update(fill='q1', fill_out=q1.out_amount, fill_ref=None)
+            priced = ((q1, None, q1_at), (sell1, q1_at), meta, 'low_lane_entry_quote:q1', flags, self.clock())
+        deferred_s = round(now_f - pf.deferred_from, 3) if pf.deferred_from is not None else 0.0
+        return self._enter(arm, ev, priced, now_f, detail, deferred_s)
 
     def _modeled_sell(self, screen, quote, tokens, now):
-        """Lamports a sell quote for ``tokens`` would return from the screen's reserves: the effective mark model, constant product, the
-        pool fee and the Pump fee tier, exactly as the main arm's sell-leg quote (taken against the pool as it is, before the entry).
-        None when the screen did not carry the reserves."""
+        """(lamports, fee_fallback) a sell quote for ``tokens`` would return: M1's EFFECTIVE mark model (constant product on vault + virtual
+        reserves, the Pump fee program's market-cap tier from the schedule the main marks read, each fee component rounded up; ``fee_fallback``
+        when the schedule is not usable and the configured pool fee stood in) on the pool AS THE BUY QUOTE SAW IT: the screen's base reserve and
+        fee shape, the quote reserve re-derived from the quote itself (so a price that moved since the screen moves the sell leg with it, as
+        the main arm's sell-leg quote would). None when the screen did not carry the reserves."""
         try:
             base, gross = int(screen['base_reserve_raw']), int(screen['quote_gross_raw'])
-            virtual, supply = int(screen.get('virtual_quote_reserves_raw') or 0), int(screen['supply_raw'])
-            if not 0 < quote.out_amount < base:
+            info = M.screen_pool_info(screen)
+            if info is None or not 0 < quote.out_amount < base:
                 return None
-            info = {'virtual_quote_reserves_raw': virtual, 'accrued_fees_raw': 0, 'supply_raw': supply}
-            net, _ = self.estimator.value(tokens, base, gross, pool_info=info, now=now, fee_lamports=0)
-            return net if net > 0 else None
-        except (KeyError, TypeError, ValueError, M.MarkError):
+            virtual = info['virtual_quote_reserves_raw']
+            _net, shape = self.model.value(tokens, base, gross, pool_info=info, now=now, fee_lamports=0, model='effective')
+            net_in = quote.in_amount * 10000 // (10000 + shape['fee_bps'])               # the buy fee comes off the input
+            effective = base * net_in // quote.out_amount - net_in                       # the reserve this quote was priced from
+            if effective - virtual <= 0:
+                return None
+            net, detail = self.model.value(tokens, base, effective - virtual, pool_info=info, now=now, fee_lamports=0, model='effective')
+            return (net, bool(detail.get('fee_fallback'))) if net > 0 else None
+        except (KeyError, TypeError, ValueError, ZeroDivisionError, M.MarkError):
             return None
 
     # -- persistence of a fill ---------------------------------------------------------------------------------------------
@@ -1056,66 +1243,123 @@ class Arms:
                 continue
             self._guard(arm, 'exits', self._evaluate_arm, arm, now, now_f)
 
+    def _pin_of(self, state):
+        """(model, vault fee bps) a position is marked with: the ones recorded at its open (M1b #6), whatever is configured now."""
+        return self.model.pinned(state.get('pool_info'))
+
     def _refresh_marks(self, now_f, mints):
         """Value every arm position: from the accounts the main read just now when it holds the mint, else ONE batched low-lane read,
-        else a low-lane quote-mark. The exit lane is never used."""
+        else a low-lane quote-mark. The exit lane is never used. Each position is valued with the model it was OPENED with (M1b #6) and
+        every step is guarded per mint / per position: one bad position never costs the others their marks."""
         ttl = self.runner.cfg.price_ttl_seconds
+        needs = {}                                                         # mint -> the widest account layout any holder needs
+        for arm in self.arms:
+            if arm.halted:
+                continue
+            for mint in arm.book.positions:
+                row = arm.book.states.get(mint)
+                if row is None:
+                    continue
+                try:
+                    pinned = self._pin_of(row['state'])[0]
+                except Exception:                                          # noqa: BLE001 - a malformed pin: marked as a vault position
+                    pinned = 'vault'
+                if needs.get(mint) != 'effective':
+                    needs[mint] = pinned
         with self._lock:
-            captured = {m: v for m, v in self._accounts.items() if m in mints}
-        fresh = {m: v for m, v in captured.items() if 0 <= now_f - v[1] <= ttl}
-        missing = [m for m in mints if m not in fresh]
+            captured = {m: v for m, v in self._accounts.items() if m in needs}
+        fresh = {m: v for m, v in captured.items() if 0 <= now_f - v[1] <= ttl and len(v[0]) >= self.model.keys_for(needs[m])}
+        missing = [m for m in needs if m not in fresh]
         source = {m: 'main_marks' for m in fresh}
         if missing:
-            read = self._read_low(missing, now_f)
+            try:
+                read = self._read_low(missing, needs, now_f)
+            except Exception:                                              # noqa: BLE001 - the marks of the others still count
+                self.counts['failures'] += 1
+                self.last_error = 'marks:read_low'
+                log.exception('arms low-lane marks read failed')
+                read = {}
             fresh.update(read)
             source.update({m: 'low_lane_marks' for m in read})
         for arm in self.arms:
             if arm.halted:
                 continue
-            for mint, position in arm.book.positions.items():
+            for mint, position in list(arm.book.positions.items()):
                 accounts = fresh.get(mint)
                 row = arm.book.states.get(mint)
                 if accounts is None or row is None:
                     continue
                 try:
+                    pinned, vault_fee = self._pin_of(row['state'])
                     net, _info = self.model.value_accounts(position.qty_raw, accounts[0], pool_info=row['state'].get('pool_info'),
-                                                           now=accounts[1], fee_lamports=arm.pcfg.fee_lamports)
-                except (A.AdapterError, KeyError, IndexError):
-                    continue
-                arm.marks[mint] = (A.sol(net), accounts[1], source[mint])
+                                                           now=accounts[1], fee_lamports=arm.pcfg.fee_lamports, model=pinned,
+                                                           vault_fee_bps=vault_fee)
+                    arm.marks[mint] = (A.sol(net), accounts[1], source[mint])
+                except (A.AdapterError, M.MarkError):
+                    arm.counts['mark_unusable'] += 1
+                except Exception:                                          # noqa: BLE001 - this position only
+                    arm.counts['failures'] += 1
+                    self.counts['failures'] += 1
+                    self.last_error = '%s:mark:%s' % (arm.name, mint[:8])
+                    log.exception('arm %s mark of %s failed', arm.name, mint)
         budget = self.cfg['quote_marks_per_pass']
         for arm in self.arms:
             if arm.halted:
                 continue
-            for mint, position in arm.book.positions.items():
+            for mint, position in list(arm.book.positions.items()):
                 mark = arm.marks.get(mint)
                 if budget <= 0 or (mark is not None and now_f - mark[1] <= self.runner.stale_mark_s):
                     continue
                 budget -= 1
-                got = self._quote_mark(arm, mint, position, now_f)
+                try:
+                    got = self._quote_mark(arm, mint, position, now_f)
+                except Exception:                                          # noqa: BLE001
+                    arm.counts['failures'] += 1
+                    self.counts['failures'] += 1
+                    log.exception('arm %s quote-mark of %s failed', arm.name, mint)
+                    continue
                 if got is not None:
                     arm.marks[mint] = got
         for arm in self.arms:
             for mint in [m for m in arm.marks if m not in arm.book.positions]:
                 del arm.marks[mint]
 
-    def _read_low(self, mints, now_f):
-        """{mint: (accounts, read_at)} from ONE (chunked) getMultipleAccounts on the low lane. A shed or an error: nothing."""
+    def _read_low(self, mints, needs, now_f):
+        """{mint: (accounts, read_at)} from ONE (chunked) getMultipleAccounts on the low lane. A shed, a yield to the lane's other users or
+        an error: nothing for that chunk. A mint whose state cannot be laid out is left out, never the others."""
         model = self.model
-        per_key, call_keys = model.keys_per_position, model.call_keys()
-        per_call = (100 - len(call_keys)) // per_key
         owners = {}
         for arm in self.arms:
             for mint in arm.book.positions:
                 row = arm.book.states.get(mint)
                 if row is not None and mint in mints:
                     owners.setdefault(mint, row['state'])
-        todo = [m for m in mints if m in owners]
+        layouts, chunks, chunk, used = {}, [], [], 0
+        for mint in mints:
+            state = owners.get(mint)
+            if state is None:
+                continue
+            try:
+                layouts[mint] = model.position_keys(state['base_vault'], state['quote_vault'], state.get('pool'), model=needs.get(mint))
+            except Exception:                                              # noqa: BLE001
+                self.counts['marks_layout_errors'] += 1
+                continue
+            need = len(layouts[mint])
+            reserve = len(model.call_keys([needs.get(m) for m in chunk] + [needs.get(mint)]))
+            if chunk and used + need + reserve > 100:
+                chunks.append(chunk)
+                chunk, used = [], 0
+            chunk.append(mint)
+            used += need
+        if chunk:
+            chunks.append(chunk)
         out = {}
-        for start in range(0, len(todo), per_call):
-            chunk = todo[start:start + per_call]
-            keys = [k for m in chunk for k in model.position_keys(owners[m]['base_vault'], owners[m]['quote_vault'], owners[m].get('pool'))]
-            keys += call_keys
+        for chunk in chunks:
+            call_keys = model.call_keys([needs.get(m) for m in chunk])
+            keys = [k for m in chunk for k in layouts[m]] + call_keys
+            if not self._lane_open(self.low.helius):
+                self.counts['marks_shed'] += 1
+                continue
             try:
                 result, _raw, _meta = self.low.helius.get_multiple_accounts(keys)
                 self.calls['helius_marks'] += 1
@@ -1128,16 +1372,22 @@ class Arms:
                 continue
             at = self._now()
             values = result['value']
+            position_keys = sum(len(layouts[m]) for m in chunk)
             if call_keys:
-                model.observe_call(values[len(chunk) * per_key:], at)
-            for i, mint in enumerate(chunk):
-                accounts = values[per_key * i:per_key * (i + 1)]
-                if None not in accounts[:2]:
+                model.observe_call(values[position_keys:], at)
+            offset = 0
+            for mint in chunk:
+                accounts = values[offset:offset + len(layouts[mint])]
+                offset += len(layouts[mint])
+                if len(accounts) >= 2 and None not in accounts[:2]:
                     out[mint] = (accounts, at)
         return out
 
     def _quote_mark(self, arm, mint, position, now_f):
         """D1 for an arm: no usable mark, so one low-lane sell quote of the whole quantity values the position."""
+        if not self._lane_open(self.low.jupiter):
+            self.counts['quote_mark_shed'] += 1
+            return None
         try:
             quote, _raw, _meta = self.low.jupiter.quote(mint, SOL_MINT, position.qty_raw, self.runner.taker)
             self.calls['jupiter_quote_mark'] += 1
@@ -1157,25 +1407,36 @@ class Arms:
         for mint, position in list(arm.book.positions.items()):
             if mint in arm.pending_exits:
                 continue
-            row = arm.book.states[mint]
-            mark, mark_at, source = arm.marks.get(mint, (None, None, None))
-            held = A.strategy_position(position, row['state'])
-            decision = S.exit_decision(held, mark, None, now, arm.cfg, mark_at=mark_at, liquidate=liquidate)
-            if decision.position_updates:
-                row['state'] = A.apply_updates(row['state'], decision.position_updates)
-                self._persist_update(arm, mint, row, now_f, force='touched_15' in decision.position_updates)
-            if decision.action != 'BLOCKED':
-                row.pop('no_mark_since', None)
-            else:
-                arm.counts['exit_blocked'] += 1
-                self._write_off_if_stuck(arm, mint, position, row, now_f, decision)
-                continue
-            if decision.action != 'SELL' or not decision.quote_required:
-                continue
-            arm.pending_exits[mint] = PendingExit(mint=mint, open_id=row['open_fill_id'], decided_at=now_f, due_at=now_f + delay,
-                                                  decided_int=now, qty=A.sell_qty_raw(decision.qty, position.qty_raw),
-                                                  reason=decision.reason, mark=mark, mark_at=mark_at, mark_source=source,
-                                                  liquidate=liquidate)
+            try:
+                self._evaluate_position(arm, mint, position, now, now_f, liquidate, delay)
+            except AccountingHalt:
+                raise
+            except Exception:                                                # noqa: BLE001 - this position only (W2a2 #7)
+                self.counts['failures'] += 1
+                arm.counts['failures'] += 1
+                self.last_error = '%s:position:%s' % (arm.name, mint[:8])
+                log.exception('arm %s position %s failed', arm.name, mint)
+
+    def _evaluate_position(self, arm, mint, position, now, now_f, liquidate, delay):
+        row = arm.book.states[mint]
+        mark, mark_at, source = arm.marks.get(mint, (None, None, None))
+        held = A.strategy_position(position, row['state'])
+        decision = S.exit_decision(held, mark, None, now, arm.cfg, mark_at=mark_at, liquidate=liquidate)
+        if decision.position_updates:
+            row['state'] = A.apply_updates(row['state'], decision.position_updates)
+            self._persist_update(arm, mint, row, now_f, force='touched_15' in decision.position_updates)
+        if decision.action != 'BLOCKED':
+            row.pop('no_mark_since', None)
+        else:
+            arm.counts['exit_blocked'] += 1
+            self._write_off_if_stuck(arm, mint, position, row, now_f, decision)
+            return
+        if decision.action != 'SELL' or not decision.quote_required:
+            return
+        arm.pending_exits[mint] = PendingExit(mint=mint, open_id=row['open_fill_id'], decided_at=now_f, due_at=now_f + delay,
+                                              decided_int=now, qty=A.sell_qty_raw(decision.qty, position.qty_raw),
+                                              reason=decision.reason, mark=mark, mark_at=mark_at, mark_source=source,
+                                              liquidate=liquidate)
 
     def _persist_update(self, arm, mint, row, now_f, force=False):
         """A peak-only change is written at most once per ``peak_persist_s`` unless it rose >= 1%; memory is authoritative."""
@@ -1250,7 +1511,7 @@ class Arms:
             mq, mref, mat, kind = got
             quote = scale_quote(mq, qty)
             if kind == QUOTE_MARK_KIND:
-                source, flags = 'main_quote_mark', ['LATENCY_MODEL_ABSENT', 'SCALED_FROM_MAIN']
+                source, flags = 'main_quote_mark', (['LATENCY_MODEL_ABSENT'] if execution is not None else []) + ['SCALED_FROM_MAIN']
             else:
                 source, flags = 'main_exit_quote', ['SCALED_FROM_MAIN']
             meta = self._exit_meta(execution, None, None, quote.out_amount, 'main:%s' % mref)
@@ -1259,6 +1520,12 @@ class Arms:
                                                               and now_f < pend.due_at + self.cfg['exit_grace_s'] + 3.0):
             return None                                              # the main arm may be about to quote the same mint
         shared = self._low_sells.get(pend.mint)
+        if not (shared is not None and shared[1] >= int(pend.due_at)) and not self._lane_open(self.low.jupiter):
+            self.counts['exit_shed_waits'] += 1                          # the lane keeps its reserve for its other users: wait
+            pend.retry_at = now_f + 1.0
+            if now_f - pend.decided_at >= self.cfg['exit_wait_s']:
+                return self._mark_fill(arm, pend, position, now_f)
+            return None
         if (shared is not None and shared[1] >= int(pend.due_at) and 0 <= int(now_f) - shared[1] <= self.runner.cfg.price_ttl_seconds
                 and 1 / self.cfg['max_scale'] <= qty / shared[0].in_amount <= self.cfg['max_scale']):
             quote, at, shared_flag = scale_quote(shared[0], qty), shared[1], ['SHARED_QUOTE']      # another arm just paid for this quote
@@ -1286,7 +1553,7 @@ class Arms:
             while len(self._low_sells) > 64:
                 self._low_sells.popitem(last=False)
         meta = self._exit_meta(execution, None, None, quote.out_amount, None)
-        return quote, None, at, meta, 'low_lane_exit_quote', ([] if execution is not None else ['LATENCY_MODEL_ABSENT']) + shared_flag
+        return quote, None, at, meta, 'low_lane_exit_quote', shared_flag
 
     @staticmethod
     def _exit_meta(execution, q0_out, q0_ref, q1_out, q1_ref):
@@ -1296,13 +1563,20 @@ class Arms:
                 'fill': 'q1', 'fill_out': q1_out, 'fill_ref': q1_ref}
 
     def _mark_fill(self, arm, pend, position, now_f):
-        """No quote could be had for ``exit_wait_s``: fill at the arm's own mark, FLAGGED (no latency model, no executable quote)."""
-        if pend.mark is None or pend.mark <= 0:
+        """No quote could be had for ``exit_wait_s`` (a shed, a transient failure): fill at the arm's LATEST mark, FLAGGED (no latency model, no
+        executable quote). Never at the mark of the decision: the price moved while the arm waited. With no mark younger than the price ttl
+        nothing is filled and the exit keeps retrying (W2a2 #3)."""
+        latest = arm.marks.get(pend.mint)
+        ttl = self.runner.cfg.price_ttl_seconds
+        if latest is None or latest[0] <= 0 or not 0 <= now_f - latest[1] <= ttl:
+            self.counts['mark_fill_waiting_for_a_mark'] += 1
             return None
-        gross = int(pend.mark * paper.LAMPORTS) + arm.pcfg.fee_lamports
+        pend.fill_mark = (latest[0], latest[1])
+        gross = int(latest[0] * paper.LAMPORTS) + arm.pcfg.fee_lamports
         quote = types.SimpleNamespace(in_amount=pend.qty, out_amount=max(1, gross))
         meta = self._exit_meta(self.runner.execution, None, None, quote.out_amount, None)
-        return quote, None, self._now(), meta, 'mark_model', ['MARK_FILL', 'LATENCY_MODEL_ABSENT']
+        flags = ['MARK_FILL'] + (['LATENCY_MODEL_ABSENT'] if self.runner.execution is not None else [])
+        return quote, None, self._now(), meta, 'mark_model', flags
 
     def _fulfil(self, arm, pend, now_f):
         mint = pend.mint
@@ -1338,7 +1612,9 @@ class Arms:
             state = {**state, **extra}
         detail = {'reason': final.reason, 'mark_sol': None if pend.mark is None else str(pend.mark), 'mark_source': pend.mark_source,
                   'price_source': source, 'flags': flags, 'decided_at': pend.decided_at, 'delay_s': round(fill_ts - pend.decided_at, 3),
-                  'qty_raw': pend.qty, 'ratio': final.detail.get('ratio')}
+                  'qty_raw': pend.qty, 'ratio': final.detail.get('ratio'),
+                  'fill_mark_sol': None if pend.fill_mark is None else str(pend.fill_mark[0]),
+                  'fill_mark_age_s': None if pend.fill_mark is None else round(now_f - pend.fill_mark[1], 3)}
         if fill.qty_raw == position.qty_raw:
             closed = dict(state, reason=final.reason, trade_pnl_lamports=position.realized_lamports + fill.realized_lamports,
                           cooldown_until=S.cooldown_until(final.reason, now_i, arm.cfg))
@@ -1361,8 +1637,11 @@ class Arms:
         for arm in self.arms:
             arms[arm.name] = {'strategy_version': arm.strategy_version, 'config_hash': arm.config_hash, 'halted': arm.halted,
                               'open_positions': len(arm.book.positions), 'pending_exits': len(arm.pending_exits),
-                              'pending_entries': len(arm.pending_entries), 'cash_lamports': arm.book.cash,
-                              'realized_lamports': arm.book.realized, **dict(arm.counts), 'skips': dict(arm.skips)}
+                              'pending_entries': len(arm.pending_entries), 'pending_fills': len(arm.pending_fills),
+                              'pending_rows': len(arm.pending_rows),
+                              'mirror_main': arm.mirror, 'cash_lamports': arm.book.cash,
+                              'realized_lamports': arm.book.realized, **dict(arm.counts), 'skips': dict(arm.skips),
+                              **({'filter': filter_health(arm.filter_stats)} if arm.filter is not None else {})}
         return {'enabled': True, 'threaded': self.threaded, 'queued': queued, 'captured_quotes': held_quotes,
                 'captured_accounts': held_accounts, **dict(self.counts), 'failures': self.counts['failures'],
                 'last_error': self.last_error, 'last_at': self.last_at, 'calls': dict(self.calls), 'arms': arms,
@@ -1416,15 +1695,17 @@ def closed_trades(connection, arm=None):
                           'cost_sold_lamports': cost_sold}, payload)
         t = trades.setdefault((name, open_id), {'arm': name, 'open_fill_id': open_id, 'mint': mint, 'entry_at': ts, 'exit_at': None,
                                                 'cost': 0, 'proceeds': 0, 'reason': None, 'closed': False, 'sources': set(),
-                                                'flags': set(), 'reasons': []})
+                                                'flags': set(), 'reasons': [], 'entry_source': None, 'exit_source': None})
         t['sources'].add(source)
         t['flags'].update(json.loads(flags))
         if side == 'buy':
             t['cost'] += row['sol_lamports'] + row['fee_lamports']
             t['entry_at'] = min(t['entry_at'], ts)
+            t['entry_source'] = t['entry_source'] or source
         else:
             t['proceeds'] += row['sol_lamports'] - row['fee_lamports']
             t['exit_at'] = ts
+            t['exit_source'] = source
             t['reasons'].append((json.loads(state_text) or {}).get('last_reason') or (json.loads(state_text) or {}).get('reason'))
         if event == 'closed':
             t['closed'], t['reason'] = True, (json.loads(state_text) or {}).get('reason')
@@ -1467,17 +1748,53 @@ def stats(trades, initial_lamports=None, points=200):
     return out
 
 
+FORCED_REASONS = {'DANGER': 'L11', 'RUG_WRITEOFF': 'L11', 'BOT_EXIT': 'L23', 'UNEXITABLE': 'D2'}
+
+
+def forced_main_exits(connection):
+    """{mint: [labels]} of the main arm's trades that ended by an exit the arms do not model (W2a2 #4): an L11 rug (DANGER / RUG_WRITEOFF /
+    a rug trigger), an L20 unverified sell (SELL_UNVERIFIED), an L23 live bot exit (BOT_EXIT) or a D2 write-off (UNEXITABLE). From an open
+    READ-ONLY connection to lean.sqlite; one entry per mint (the comparison pairs the first trade of a mint)."""
+    tables = {r[0] for r in connection.execute("SELECT name FROM sqlite_master WHERE type='table'")}
+    out = {}
+    if 'position_state' not in tables:
+        return out
+    for mint, event, text in connection.execute('SELECT mint,event,state FROM position_state WHERE fill_id IS NOT NULL ORDER BY id'):
+        try:
+            state = json.loads(text) or {}
+        except ValueError:
+            continue
+        labels = set()
+        reason = state.get('reason') if event == 'closed' else state.get('last_reason')
+        if reason in FORCED_REASONS:
+            labels.add('%s:%s' % (FORCED_REASONS[reason], reason))
+        if state.get('rug_trigger'):
+            labels.add('L11:rug_trigger')
+        payload = state.get('execution') if isinstance(state.get('execution'), dict) else {}
+        if payload.get('sell_status') == 'SELL_UNVERIFIED' or payload.get('write_off_reason') == 'SELL_UNVERIFIED':
+            labels.add('L20:SELL_UNVERIFIED')
+        if labels:
+            out.setdefault(mint, set()).update(labels)
+    return {m: sorted(v) for m, v in out.items()}
+
+
 def paired(arm_trades, main_trades):
-    """The arm against the main arm on the SAME candidates (a mint both traded; first trade of each). ``main_trades``: [{'mint','ret'}]."""
-    first = {}
+    """The arm against the main arm on the SAME candidates (a mint both traded; first trade of each). ``main_trades``: [{'mint','ret'}].
+    A main trade with a ``forced`` label (it left by an exit the arms do not model) is NOT compared: it is listed in
+    ``main_forced_excluded`` instead."""
+    first, forced = {}, {}
     for t in sorted(main_trades, key=lambda t: t['entry_at']):
-        first.setdefault(t['mint'], t)
+        if t.get('forced'):
+            forced.setdefault(t['mint'], t['forced'])
+        else:
+            first.setdefault(t['mint'], t)
     mine = {}
     for t in sorted(arm_trades, key=lambda t: t['entry_at']):
         mine.setdefault(t['mint'], t)
     both = [(mine[m], first[m]) for m in mine if m in first]
     diffs = [a['ret'] - b['ret'] for a, b in both]
-    out = {'pairs': len(both), 'arm_only': len(set(mine) - set(first)), 'main_only': len(set(first) - set(mine)),
+    out = {'pairs': len(both), 'arm_only': len(set(mine) - set(first) - set(forced)), 'main_only': len(set(first) - set(mine)),
+           'main_forced_excluded': [{'mint': m, 'labels': forced[m]} for m in sorted(set(mine) & set(forced))],
            'mean_diff': None, 'median_diff': None, 'arm_better_share': None, 'diff_ci95': None,
            'arm_mean': None, 'main_mean': None}
     if both:
@@ -1494,10 +1811,29 @@ def paired(arm_trades, main_trades):
     return out
 
 
-def report_section(connection, main_trades=None, *, min_sample=30):
+DEFAULT_EXCLUDE_FLAGS = ('MARK_FILL', 'LATENCY_MODEL_ABSENT')
+
+
+def _brief(s):
+    return {k: s[k] for k in ('trades', 'ev_per_trade', 'win_rate', 'p_le_minus_50', 'pnl_sol')}
+
+
+def _by(trades, key):
+    groups = collections.defaultdict(list)
+    for t in trades:
+        groups[t[key] or 'UNKNOWN'].append(t)
+    return {name: _brief(stats(items)) for name, items in sorted(groups.items())}
+
+
+def report_section(connection, main_trades=None, *, min_sample=30, exclude_flags=DEFAULT_EXCLUDE_FLAGS):
     """The per-arm section of lean.report: trades, EV per trade, win rate, P(<= -50%), equity curve, skips, price sources, health of the
-    pricing and the paired comparison vs the main arm. ``connection`` is an open READ-ONLY connection to arms.sqlite."""
+    pricing and the paired comparison vs the main arm. ``connection`` is an open READ-ONLY connection to arms.sqlite.
+
+    W2a2 #3: the headline (stats, equity curve, paired) leaves out every trade with a fill flagged in ``exclude_flags`` (default MARK_FILL and
+    LATENCY_MODEL_ABSENT: a fill priced without the L10 model or without an executable quote); those trades are shown separately under
+    ``excluded``. ``by_entry_source`` / ``by_exit_source`` give EV by ``price_source`` over ALL trades."""
     main_trades = main_trades or []
+    excluded_flags = set(exclude_flags or ())
     names = [r[0] for r in connection.execute('SELECT DISTINCT arm_name FROM arm_events ORDER BY arm_name')]
     arms = {}
     for name in names:
@@ -1507,10 +1843,12 @@ def report_section(connection, main_trades=None, *, min_sample=30):
         hashes = [r[0] for r in connection.execute('SELECT DISTINCT config_hash FROM arm_fills WHERE arm_name=?', (name,))] or [
             r[0] for r in connection.execute('SELECT DISTINCT config_hash FROM arm_events WHERE arm_name=?', (name,))]
         versions = [r[0] for r in connection.execute('SELECT DISTINCT strategy_version FROM arm_events WHERE arm_name=?', (name,))]
-        trades = closed_trades(connection, name)
+        every = closed_trades(connection, name)
+        trades = [t for t in every if not (t['flags'] & excluded_flags)]
+        left_out = [t for t in every if t['flags'] & excluded_flags]
         entry = stats(trades, initial)
         skips = collections.Counter()
-        for (reasons,) in connection.execute("SELECT reasons FROM arm_decisions WHERE arm_name=? AND kind='entry' AND action='SKIP'", (name,)):
+        for (reasons,) in connection.execute("SELECT reasons FROM arm_decisions WHERE arm_name=? AND kind='entry' AND action IN ('SKIP','ENTRY_ABORTED_LATENCY')", (name,)):
             for reason in set(json.loads(reasons)):
                 skips[reason.split(':')[0]] += 1
         decisions = collections.Counter(a for (a,) in connection.execute(
@@ -1523,8 +1861,12 @@ def report_section(connection, main_trades=None, *, min_sample=30):
         open_positions = connection.execute(
             "SELECT COUNT(*) FROM (SELECT mint, event FROM arm_states WHERE arm_name=? AND id IN (SELECT MAX(id) FROM arm_states "
             "WHERE arm_name=? GROUP BY mint)) WHERE event!='closed'", (name, name)).fetchone()[0]
+        by_flag = collections.Counter(f for t in left_out for f in (t['flags'] & excluded_flags))
         arms[name] = {**entry, 'config_hashes': hashes, 'strategy_versions': versions, 'sample': 'INSUFFICIENT_SAMPLE' if len(trades) < min_sample else 'OK',
                       'open': open_positions, 'entry_decisions': dict(decisions), 'skips': dict(skips.most_common()),
                       'price_sources': dict(sources), 'fill_flags': dict(flags), 'exit_reasons': dict(reasons.most_common()),
+                      'excluded': {'flags': sorted(excluded_flags), 'trades': len(left_out), 'by_flag': dict(by_flag),
+                                   'stats': _brief(stats(left_out))},
+                      'by_entry_source': _by(every, 'entry_source'), 'by_exit_source': _by(every, 'exit_source'),
                       'paired_vs_main': paired(trades, main_trades) if main_trades else None}
-    return {'arms': arms, 'schema_version': SCHEMA_VERSION}
+    return {'arms': arms, 'schema_version': SCHEMA_VERSION, 'exclude_flags': sorted(excluded_flags)}

@@ -193,6 +193,9 @@ class ProductionConfig(unittest.TestCase):
     def old_hash(self, cfg):
         import hashlib
         plain = {k: v for k, v in cfg.items() if k not in ('arms', 'prefetch')}                      # (W2b's prefetch block is OFF in these)
+        for key in ('census', 'backfill', 'curves'):                                                # (LINT5: the Round C blocks are OFF in these)
+            if not (plain.get(key) or {}).get('enabled'):
+                plain.pop(key, None)
         if 'paths' in plain:
             plain['paths'] = {k: v for k, v in plain['paths'].items() if k != 'hazard_path_sample'}   # (W2b: 0 = off)
         text = json.dumps(entry._strip_comments(plain), sort_keys=True, separators=(',', ':'), ensure_ascii=True, default=str)
@@ -218,7 +221,7 @@ class ProductionConfig(unittest.TestCase):
         self.assertEqual({k: v for k, v in on.items() if k != 'arms'}, {k: v for k, v in base.items() if k not in ('arms', 'strategy_config')}
                          | {'strategy_config': on['strategy_config']})
         self.assertEqual(len(on['arms']['arms']), 4)
-        self.assertNotEqual(entry.lean_config_hash(on), entry.lean_config_hash(base))
+        self.assertEqual(entry.lean_config_hash(on), entry.lean_config_hash({**on, 'arms': None}))     # W2a2 #1: the arms are not part of the run's hash
         self.assertEqual(entry.lean_config_hash({**on, 'arms': None}), self.old_hash({**on, 'arms': None}))
 
     def test_a_typo_in_the_arms_block_stops_the_start(self):
@@ -419,27 +422,63 @@ class QuoteTests(unittest.TestCase):
         with self.assertRaises(ValueError):
             W.scale_quote(q, 0)
 
+    def screen(self, **over):
+        base, gross = 2 * 10 ** 14, 80 * 10 ** 9
+        return {'base_reserve_raw': str(base), 'quote_gross_raw': str(gross), 'quote_spendable_raw': str(gross), 'virtual_quote_reserves_raw': '0',
+                'supply_raw': str(10 ** 15), 'decimals': 6, **over}
+
     def test_the_modeled_sell_leg_follows_the_pool(self):
         run = E.Run(self)
         arms = run.r.arms
-        base, gross = 2 * 10 ** 14, 80 * 10 ** 9
-        screen = {'base_reserve_raw': str(base), 'quote_gross_raw': str(gross), 'virtual_quote_reserves_raw': '0', 'supply_raw': str(10 ** 15)}
+        screen = self.screen()
+        base, gross = int(screen['base_reserve_raw']), int(screen['quote_gross_raw'])
         spend = 200_000_000
         net = spend * 10000 // (10000 + 120)
-        bought = base * net // (gross + net)                                                  # buy with a 1.2 % fee off the input
+        bought = base * net // (gross + net)
         quote = self.quote(spend, bought)
         tokens = bought * 9950 // 10000
-        out = arms._modeled_sell(screen, quote, tokens, T0)
-        self.assertTrue(0.955 * spend < out < 0.995 * spend, out / spend)                    # fees both ways, almost no impact at 0.25 %
+        out, fallback = arms._modeled_sell(screen, quote, tokens, T0)
+        self.assertTrue(0.97 * spend < out < 0.995 * spend, out / spend)                   # the pool fee (25 bps fallback) and the slippage haircut
+        self.assertTrue(fallback)                                                           # no fee schedule has been read: flagged
         big_net = 20 * net
         big_bought = base * big_net // (gross + big_net)
-        bigger = arms._modeled_sell(screen, self.quote(20 * spend, big_bought), big_bought * 9950 // 10000, T0)
+        bigger, _ = arms._modeled_sell(screen, self.quote(20 * spend, big_bought), big_bought * 9950 // 10000, T0)
         self.assertLess(bigger / (20 * spend), out / spend)                                  # price impact grows with the size
-        boosted = {**screen, 'virtual_quote_reserves_raw': str(30 * 10 ** 9)}
-        self.assertGreater(arms._modeled_sell(boosted, quote, tokens, T0), out)              # virtual reserves make the pool deeper
-        for broken in ({}, {**screen, 'base_reserve_raw': 'x'}, {k: v for k, v in screen.items() if k != 'supply_raw'}):
+        boosted = self.screen(virtual_quote_reserves_raw=str(30 * 10 ** 9))
+        self.assertEqual(arms._modeled_sell(boosted, quote, tokens, T0)[0], out)             # the quote fixes the effective reserve, vault or virtual
+        dearer = self.quote(spend, bought * 77 // 100)                                       # the price rose 30% since the screen
+        moved, _ = arms._modeled_sell(screen, dearer, bought * 77 // 100 * 9950 // 10000, T0)
+        self.assertLess(abs(moved / out - 1), 0.03)                                          # fewer tokens at a higher price sell back for the same SOL
+        for broken in ({}, {**screen, 'base_reserve_raw': 'x'}, {k: v for k, v in screen.items() if k != 'quote_spendable_raw'}):
             self.assertIsNone(arms._modeled_sell(broken, quote, tokens, T0))
         self.assertIsNone(arms._modeled_sell(screen, self.quote(spend, base), tokens, T0))   # buying the whole pool is not modelable
+
+    def test_the_modeled_sell_leg_uses_the_dynamic_fee_tier_not_a_fixed_fee(self):
+        """W2a2 #2: the Pump fee program's market-cap tier from the schedule the main marks read; the configured pool fee only as a flagged fallback."""
+        from lean import marks as M
+        run = E.Run(self)
+        arms = run.r.arms
+        screen = self.screen()
+        base, gross, supply = int(screen['base_reserve_raw']), int(screen['quote_gross_raw']), int(screen['supply_raw'])
+        spend = 200_000_000
+        bought = base * (spend * 10000 // 10120) // (gross + spend * 10000 // 10120)
+        tokens = bought * 9950 // 10000
+        quote = self.quote(spend, bought)
+        fixed, _ = arms._modeled_sell(screen, quote, tokens, T0)
+        _address, _account, fields = E.fee_schedule()
+        arms.model.parent._schedule = (fields, float(T0))                                    # what the main marks read observed
+        got, fallback = arms._modeled_sell(screen, quote, tokens, T0)
+        shape, _cap = M.tier_fees(fields, gross, base, supply)                               # the tier at the screen's reserves ...
+        net_in = spend * 10000 // (10000 + sum(shape.values()))                              # ... prices the buy fee; the quote gives the reserve
+        effective = base * net_in // bought - net_in
+        fees, _cap = M.tier_fees(fields, effective, base, supply)
+        self.assertFalse(fallback)
+        self.assertEqual(got, M.sell_output(tokens, base, effective, fees))                  # exactly the program's rounding, tier and components
+        self.assertNotEqual(got, fixed)
+        arms.model.parent._schedule = None
+        arms.model.pool_fee_bps = 120
+        cheaper, _ = arms._modeled_sell(screen, quote, tokens, T0)
+        self.assertLess(cheaper, fixed)                                                      # the configured fee still moves the fallback
 
 
 # ------------------------------------------------------------------------------------------------------------------ statistics
@@ -589,8 +628,8 @@ class EvidenceTests(unittest.TestCase):
         self.assertLess(bought['ts'], ready + 30 + 2 * E.STEP)
         self.assertAlmostEqual(bought['features']['deferred_s'], bought['ts'] - self.seen['flat_b'].ts, places=2)
         self.assertGreater(bought['features']['deferred_s'], 20)
-        self.assertEqual(bought['features']['price_source'], 'low_lane_entry_quote')             # a fresh quote, not the main arm's old one
-        self.assertIn('LATENCY_MODEL_ABSENT', bought['features']['flags'])
+        self.assertRegex(bought['features']['price_source'], r'^low_lane_entry_quote:q[01]$')       # a fresh quote, not the main arm's old one
+        self.assertNotIn('LATENCY_MODEL_ABSENT', bought['features']['flags'])               # the L10 model applies to it
         # no row ever: held until wait_s, then skipped as not ready
         d = self.run.decisions('nocluster_hold2m', 'dump_a')
         self.assertEqual([(x['action'], x['reasons']) for x in d], [('DEFER', ['FEATURE_NOT_READY']), ('SKIP', ['FEATURE_NOT_READY'])])
@@ -611,7 +650,7 @@ class EvidenceTests(unittest.TestCase):
                 if d['action'] == 'BUY':
                     sources[(name, role)] = d['features']['price_source']
         self.assertTrue(all(v.startswith('main_entry_quote') for (n, _), v in sources.items() if n == 'live_copy'))
-        self.assertTrue(any(v == 'low_lane_entry_quote' for (n, _), v in sources.items() if n == 'hold2m'), sources)
+        self.assertTrue(any(v.startswith('low_lane_entry_quote') for (n, _), v in sources.items() if n == 'hold2m'), sources)
 
     def test_marks_of_a_mint_the_main_arm_holds_come_from_the_main_read(self):
         self.run.drive(until=T0 + 90)
@@ -813,14 +852,14 @@ class IdleWakeTests(unittest.TestCase):
     def test_arms_holding_alone_get_their_exits_when_the_main_arm_is_flat(self):
         run = E.Run(self, scenario=[('solo', dict(), 0)])
         run.r.cfg = dataclasses.replace(run.r.cfg, min_market_cap_usd=D('50000000'), max_market_cap_usd=D('90000000'))   # the main gate refuses it
-        run.drive(until=T0 + 300, process_arms=False)                                       # nobody but the position pass wakes the arms
+        run.drive(until=T0 + 300, process_arms=False, step=5)                               # nobody but the position pass wakes the arms
         self.assertEqual(run.r.store.rows('fills', limit=10), [])
         self.assertEqual(run.r.store.positions(), {})
         trade = run.trades('hold2m')['solo']
         self.assertEqual(trade['reason'], 'MAX_HOLD')
-        self.assertTrue(120 <= trade['hold_s'] <= 120 + 2 * E.STEP, trade['hold_s'])
+        self.assertTrue(120 <= trade['hold_s'] <= 120 + 12, trade['hold_s'])
         d = run.decisions('hold2m', 'solo')[0]
-        self.assertEqual((d['action'], d['features']['price_source']), ('BUY', 'low_lane_entry_quote'))     # the main arm quoted nothing
+        self.assertEqual((d['action'], d['features']['price_source']), ('BUY', 'low_lane_entry_quote:q0'))   # the main arm quoted nothing
         calls = run.r.arms.calls
         self.assertGreater(calls['helius_marks'], 0)                                        # the mint only an arm holds: batched low-lane reads
         self.assertEqual(run.r.arms.arms[0].marks, {})                                      # hold2m is flat again, no mark is kept

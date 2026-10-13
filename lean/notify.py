@@ -1092,6 +1092,8 @@ class Notifier:
         for name, v in sorted(data.items()):
             paired = v['paired_vs_main']
             extra = ' · 보유 %d' % v['open']
+            if v['excluded']['trades']:
+                extra += ' · 제외 %d건(%s)' % (v['excluded']['trades'], ','.join(sorted(v['excluded']['by_flag'])))
             if paired and paired['pairs']:
                 extra += ' · main 대비 %s (%d쌍)' % (fmt_pct(paired['mean_diff']), paired['pairs'])
             lines.append(line(name, v, extra))

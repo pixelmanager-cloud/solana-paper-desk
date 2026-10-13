@@ -244,12 +244,14 @@
     "db": null,
     "initial_cash_sol": null,
     "queue_size": 200,
-    "max_scale": 2.0,
+    "max_scale": 4.0,
     "exit_wait_s": 120,
     "exit_grace_s": 1.0,
     "eval_interval_s": 15,
     "quote_marks_per_pass": 3,
     "peak_persist_s": 60,
+    "reserve_tokens": 1,
+    "row_grace_s": 10,
     "arms": [
       {
         "name": "hold2m",
@@ -266,8 +268,53 @@
       },
       {
         "name": "live_copy",
-        "strategy_config": "strategy-default.json"
+        "strategy_config": "strategy-default.json",
+        "mirror_main": true
       }
     ]
+  },
+  "census": {
+    "_comment": "C3 launchpad census (RECORDING ONLY; absent/null or enabled false = off, and then it is left out of lean_config_hash). Every interval_s: per launchpad the NEW create count from bounded getSignaturesForAddress (until cursor) + at most max_tx_per_poll getTransaction log samples (maxSupportedTransactionVersion = providers.MAX_TX_VERSION), shared LOW lane, own thread, own census.sqlite; pump.fun graduations are counted from the discovery db (no RPC). Worst case 2 pads x (1 + 4) calls x 4320 polls = 43,200 credits/month (refused above credit_budget_month). The create log patterns are UNVERIFIED on live transactions: run reports/LINT5.md 'C3 live verification' before enabling.",
+    "enabled": false,
+    "db": "census.sqlite",
+    "interval_s": 600,
+    "sig_limit": 100,
+    "max_pages": 1,
+    "max_tx_per_poll": 4,
+    "credit_budget_month": 50000,
+    "pump_graduations": true
+  },
+  "backfill": {
+    "_comment": "C4 discovery gap backfill (OFF here: enabled=false; absent = off). Polls getSignaturesForAddress on the pump.fun migration authority (the address the discovery feed filters on) every interval_s on the LOW lane, decodes the frames the discovery database already holds LOCALLY (no credit; LINT5: a CPI migration, which lean.candidates rejects, is fed from there), fetches the rest (getTransaction with maxSupportedTransactionVersion = providers.MAX_TX_VERSION, at most max_tx_per_poll; migrate accepted at any depth via meta.innerInstructions) and feeds the graduations the feed missed to the runner as source 'backfill' with their detection latency; older than screen.max_age_seconds they are recorded and rejected TOO_OLD, never entered. Credits: ~1 getSignaturesForAddress per interval_s (720/day at 120 s) + 1 getTransaction per MISSING signature; health.sources.backfill reports the per-day feed gap rate and a credit estimate (credits_per_* are the plan's costs, edit them if they differ). Runs inline in the candidates thread (never the positions/exit thread). Absent or enabled false = off and left out of lean_config_hash.",
+    "enabled": false,
+    "name": "backfill",
+    "interval_s": 120,
+    "limit": 100,
+    "max_pages": 3,
+    "max_tx_per_poll": 40,
+    "max_attempts_per_signature": 5,
+    "lookback_s": 21600,
+    "credits_per_signatures_call": 1,
+    "credits_per_transaction": 1,
+    "day_history": 14,
+    "reserve_tokens": 2
+  },
+  "curves": {
+    "_comment": "C2 bonding-curve recorder (RECORDING ONLY; shared LOW lane, shed = skip; own curves.sqlite with size rollover and a disk floor; absent/null or enabled false = off and left out of lean_config_hash). OFF here: the V2 call must be verified live first (reports/LINT5.md 'C2 live verification'). One getProgramAccountsV2 listing per poll (memcmp on the 8-byte BondingCurve discriminator, limit page_limit, changedSinceSlot = the lowest slot of the last poll; max_pages per poll, an overflow is a gap and moves on); getProgramAccounts (v1) lists EVERY pump curve ever made and is for fakes/small clusters only. ~10 credits per page (+1 getSlot only if the V2 response carries no slot); max_credits_month 450,000 becomes a rolling-hour budget checked before every call and stretches poll_s 10 s to ~58 s (62 calls/hour, < 0.5M credits/month). Tracks SOL-quoted curves at progress >= min_progress (0.5), at most max_tracked; marks on change; ends GRADUATED / STALE; join_by_mint() continues into paths.sqlite.",
+    "enabled": false,
+    "db": null,
+    "poll_s": 10,
+    "method": "getProgramAccountsV2",
+    "min_progress": 0.5,
+    "max_tracked": 500,
+    "page_limit": 1000,
+    "max_pages": 3,
+    "stale_s": 7200,
+    "changed_since": true,
+    "data_slice_len": 125,
+    "credit_per_call": 10,
+    "max_credits_month": 450000,
+    "max_db_gb": 2,
+    "min_free_gb": 2
   }
 }
