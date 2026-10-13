@@ -334,6 +334,7 @@ class _Cap(Exception):
 class _Calls:
     def __init__(self, limit, shed, stop=None):
         self.limit, self.used, self.shed, self.learned, self.stop = limit, 0, shed, False, stop
+        self.patience = None                       # W2b #8: a prefetch's own (shorter) patience per request; None = shed_wait_s
 
     def check(self):
         """Raise _Cap before a request that the stop (LINT2b), the cap or the credit shed forbids."""
@@ -373,6 +374,7 @@ class WalletSignals:
         self._last_resolve = 0.0
         self._resolve_cursor = 0
         self.last_pending = None                   # LINT2b: health (queue depth = candidates waiting for a row)
+        self.prefetch = None                       # W2b #8: lean.prefetch.Prefetch (set by build_runner when configured)
         self.last_unresolved = None
         self.counts = {'collected': 0, 'partial': 0, 'transient_failures': 0, 'calls': 0, 'cap_stops': 0, 'shed_stops': 0,
                        'lane_sheds': 0, 'outcomes': 0, 'errors': 0, 'stopped': 0, 'yielded': 0, 'never_resolvable': 0}
@@ -492,7 +494,7 @@ class WalletSignals:
                         raise
                     self.counts['lane_sheds'] += 1
                     why, error = failure.meta.get('why'), failure
-            if why != 'no_token' or waited >= self.cfg['shed_wait_s']:
+            if why != 'no_token' or waited >= (self.cfg['shed_wait_s'] if calls.patience is None else calls.patience):
                 if not calls.learned:
                     raise error
                 raise _Cap(LANE_SHED) from None
@@ -523,11 +525,25 @@ class WalletSignals:
                     return None
         return None
 
-    def collect(self, cid, mint, pool, grad_slot, *, decision_ts=None):
+    def collect(self, cid, mint, pool, grad_slot, *, decision_ts=None, sink=None, supply=None):
         """Collect, analyze and record one candidate AS OF ``decision_ts`` (LINT2b). A transient failure before anything was learned
-        is retried later (up to ``max_retries``); a stop writes nothing; everything else is recorded with its reasons."""
+        is retried later (up to ``max_retries``); a stop writes nothing; everything else is recorded with its reasons.
+
+        W2b #8: with a ``sink`` (a dict) this is a PREFETCH: ``decision_ts`` is the AS-OF time the window ends at (never later than the
+        decision the row will be committed to), the supply is ``supply`` (read before the decision) or one call, nothing is written,
+        ``sink`` receives ``features`` / ``events`` / ``finished_at`` (``sink['patience_s']`` optionally shortens the token patience), and
+        a failure leaves no trace in this collector's own retry bookkeeping. Without a sink, a finished prefetch of this candidate is
+        committed instead of collecting (no request)."""
+        # --- W2b hook ---
+        if sink is None and self.prefetch is not None and decision_ts is not None:
+            committed = self.prefetch.commit_wallet(self, cid, mint, pool, grad_slot, decision_ts)
+            if committed is not None:
+                return committed
+        # --- end W2b ---
         cfg, started = self.cfg, self.clock()
         calls = _Calls(cfg['max_calls'], self.shed, self.stop)
+        if sink is not None:
+            calls.patience = sink.get('patience_s')
         unavailable, notes = {}, {}
         txs, funding, supply, window = [], {}, None, []
         supply_source = None
@@ -564,12 +580,13 @@ class WalletSignals:
             notes.update(signatures_seen=len(seen), window_txs=len(window), examined_txs=0)
             if 'window' not in unavailable:
                 # -- 2. the supply (for bundled_supply_pct): the one the screen read, else a call (flagged: read after the decision)
-                supply = self._screen_supply(cid, mint)
-                supply_source = 'screen' if supply is not None else None
+                # W2b #8: a prefetch has no screen yet: the supply read before the decision (``supply``) or one call, flagged rpc_prefetch
+                supply = self._screen_supply(cid, mint) if sink is None else supply
+                supply_source = ('screen' if sink is None else 'rpc_prefetch') if supply is not None else None
                 if supply is None:
                     try:
                         supply = parse_supply(self._rpc(calls, 'getTokenSupply', [mint], 'supply', False, mint, cid))
-                        supply_source = 'rpc_after_decision'
+                        supply_source = 'rpc_after_decision' if sink is None else 'rpc_prefetch'
                     except ProviderError as error:
                         unavailable['supply'] = 'SUPPLY_UNAVAILABLE:' + error.code
                     except SignalError as error:
@@ -606,6 +623,8 @@ class WalletSignals:
             unavailable['stopped'] = stop.code
             self.counts['shed_stops' if stop.code in ('CREDIT_SHED', LANE_SHED) else 'cap_stops'] += 1
         except ProviderError as error:
+            if sink is not None and not calls.learned and error.transient:      # W2b #8: the prefetch retries on its own schedule
+                return None
             if not calls.learned and error.transient:     # the very first call failed: nothing learned, try again later
                 attempts = self._attempts.get(mint, (0, 0.0))[0] + 1
                 if attempts <= cfg['max_retries']:
@@ -639,27 +658,36 @@ class WalletSignals:
                     'decision_ts': decision_ts, 'collected_at': started,
                     'late_s': None if decision_ts is None else round(started - decision_ts, 3),
                     'unavailable': unavailable, 'partial': bool(unavailable)}
+        # the candidate's own buys are written AFTER its smart count: a wallet is never rated by the token being scored
+        events = [('wallet_buy', {'wallet': wallet, 'mint': mint, 'slot_offset': next(tx for tx in txs if wallet in tx['buyers'])['slot'] - grad_slot})
+                  for wallet in figures['buyer_wallets']]
+        # LINT2b: the funding lookups persist (hub detection); a newly detected hub is recorded once
+        events += [('wallet_funding', {'funder': source, 'wallet': wallet, 'mint': mint}) for wallet, source in sorted(figures['funders'].items())
+                   if source is not None]
+        events += [('wallet_hub', {'funder': hub, 'detected_on': mint, 'asof_ts': decision_ts, 'min_mints': cfg['hub_min_mints'],
+                                   'window_s': cfg['hub_window_s']}) for hub in figures['hub_funders']]
+        # --- W2b hook: a prefetch keeps the row and its events; the commit writes them stamped with the real decision ---
+        if sink is not None:
+            sink.update(features=features, events=events, finished_at=self.clock(), window_end_ts=decision_ts)
+            return features
+        # --- end W2b ---
+        self._persist(features, events, cid, mint)
+        return features
+
+    def _persist(self, features, events, cid, mint):
+        """Write one ``wallet_signals`` row and its events (``wallet_buy`` / ``wallet_funding`` / a newly detected ``wallet_hub``)."""
         row_id = self._write(self.store.add_observation, OBSERVATION_KIND, _canonical(features), mint=mint, candidate_id=cid,
                              meta=_meta_summary(features), ts=self.clock())
-        # the candidate's own buys are written AFTER its smart count: a wallet is never rated by the token being scored
-        for wallet in figures['buyer_wallets']:
-            first = next(tx for tx in txs if wallet in tx['buyers'])
-            self._write(self.store.record, 'wallet_buy', {'wallet': wallet, 'mint': mint, 'candidate_id': cid, 'slot_offset': first['slot'] - grad_slot,
-                                                         'signals_observation': row_id}, ts=self.clock())
-        # LINT2b: the funding lookups persist (hub detection); a newly detected hub is recorded once
-        for wallet, source in sorted(figures['funders'].items()):
-            if source is not None:
-                self._write(self.store.record, 'wallet_funding', {'funder': source, 'wallet': wallet, 'mint': mint, 'candidate_id': cid},
-                            ts=self.clock())
-        for hub in figures['hub_funders']:
-            if hub not in self._hubs:
-                self._hubs.add(hub)
-                self._write(self.store.record, 'wallet_hub', {'funder': hub, 'detected_on': mint, 'asof_ts': decision_ts,
-                                                             'min_mints': cfg['hub_min_mints'], 'window_s': cfg['hub_window_s']},
-                            ts=self.clock())
+        for kind, payload in events:
+            if kind == 'wallet_buy':
+                self._write(self.store.record, kind, {**payload, 'candidate_id': cid, 'signals_observation': row_id}, ts=self.clock())
+            elif kind == 'wallet_funding':
+                self._write(self.store.record, kind, {**payload, 'candidate_id': cid}, ts=self.clock())
+            elif payload['funder'] not in self._hubs:
+                self._hubs.add(payload['funder'])
+                self._write(self.store.record, kind, payload, ts=self.clock())
         self.counts['collected'] += 1
         self.counts['partial'] += 1 if features['partial'] else 0
-        return features
 
     def _funder(self, calls, wallet, buy_signature, mint, cid, unavailable):
         """The source wallet of ``wallet``'s first funding transfer, or None (with the reason in ``unavailable``)."""
@@ -834,6 +862,14 @@ def read_path(paths_db, mint):
             continue
         connection = sqlite3.connect('file:%s?mode=ro' % quote(str(path)), uri=True, timeout=5)
         try:
+            # --- W2b #9: a sampled HAZARD reject's path is never an outcome here (a wallet is not rated by a token the desk rejected) ---
+            try:
+                hazard = connection.execute('SELECT 1 FROM paths WHERE mint=? AND stage=?', (mint, 'hazard_reject')).fetchone() is not None
+            except sqlite3.OperationalError:                           # a file without a ``paths`` table / ``stage`` column: no hazard paths
+                hazard = False
+            if hazard:
+                continue
+            # --- end W2b ---
             marks += connection.execute('SELECT ts,status,net_sol FROM path_marks WHERE mint=? ORDER BY ts', (mint,)).fetchall()
             ended = ended or connection.execute('SELECT 1 FROM path_ends WHERE mint=?', (mint,)).fetchone() is not None
         finally:

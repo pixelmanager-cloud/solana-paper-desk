@@ -37,7 +37,7 @@
     "low_shed_s": 30
   },
   "paths": {
-    "_comment": "L07R price-path recorder (low lane, run mode only): every hazard-free candidate, entered or not, is marked every interval_s for path_hours into its OWN db (null = <state-dir>/paths.sqlite; never lean.sqlite). Past max_db_gb the file rolls over to paths-YYYYMMDD.sqlite; below min_free_gb of free disk nothing is written.",
+    "_comment": "L07R price-path recorder (low lane, run mode only): every hazard-free candidate, entered or not, is marked every interval_s for path_hours into its OWN db (null = <state-dir>/paths.sqlite; never lean.sqlite). Past max_db_gb the file rolls over to paths-YYYYMMDD.sqlite; below min_free_gb of free disk nothing is written. W2b #9 hazard_path_sample (a fraction in [0, 1]; absent = 0 = off): a deterministic random sample (sha256 of the mint) of the HAZARD rejects (MAYHEM_POOL, HOLDER_CONCENTRATION_ABOVE_MAX, HOLDER_REWARD_POOL ...) also gets a path, labelled stage hazard_reject with reason 'hazard_reject: <reason>'. They are NEVER traded; the learner reports them in their own section (was the filter right?) and keeps them out of every table and rule. Cost: one getMultipleAccounts (<= 50 pools) per start batch plus a few more accounts per 15 s poll on the low lane.",
     "enabled": true,
     "db": null,
     "path_hours": 6,
@@ -45,7 +45,8 @@
     "ref_size_sol": "0.2",
     "max_paths": 2000,
     "max_db_gb": 2,
-    "min_free_gb": 2
+    "min_free_gb": 2,
+    "hazard_path_sample": 0.2
   },
   "route_check": {
     "enabled": true
@@ -214,5 +215,27 @@
     "copycat_window_s": 86400.0,
     "raw_max_bytes": 16384,
     "backoff_s": 60.0
+  },
+  "prefetch": {
+    "_comment": "W2b #8 features READY AT DECISION TIME (RECORDING ONLY; absent/null = off). Every candidate waits screen.min_age_seconds before its screen, and the collectors (features, flow, wallet_signals, risk_external) used to start only AFTER it. With this block a daemon thread (low lane only, its own read-only look at the discovery db) runs their work DURING the wait: a shadow screen 2 s after discovery (3 low-lane calls; tells hazard from hazard-free, so the ~58 % hazard rejects cost only that) and then each collector lead_s seconds before the earliest screen (the job's own length plus slack, so the window it measures is as late as possible and the value is still finished at the decision). Nothing is written until the screen has decided: the collector then writes its row from the finished job with NO request, stamped with the REAL decision (decision_ts) and the time the last value was observed (collected_at <= decision_ts, late_s <= 0) plus prefetch = {asof, started_at, finished_at, staleness_s}. No lookahead: every window ends at asof = start - settle_s (never after the decision), a job that finished after the decision, or is older than max_stale_s at it, is ignored and the collector runs as before. The screen, the entry and the exits never wait for or read it. Health prefetch.ready_at_decision is the KPI (share of hazard-free decisions with each collector's value finished before the decision).",
+    "enabled": true,
+    "kinds": ["features", "risk_external", "wallet_signals", "flow"],
+    "probe": true,
+    "skip_hazards": true,
+    "lead_s": {"risk_external": 55.0, "features": 45.0, "wallet_signals": 40.0, "flow": 30.0},
+    "probe_at_s": 2.0,
+    "min_start_s": 2.0,
+    "settle_s": 3.0,
+    "max_stale_s": 120.0,
+    "pass_interval_s": 1.0,
+    "discover_interval_s": 2.0,
+    "max_jobs_per_pass": 3,
+    "max_entries": 300,
+    "ttl_s": 900.0,
+    "max_attempts": 3,
+    "retry_delay_s": 3.0,
+    "patience_s": 3.0,
+    "reserve_tokens": 1,
+    "scan_limit": 200
   }
 }

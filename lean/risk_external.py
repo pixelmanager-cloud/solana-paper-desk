@@ -368,6 +368,7 @@ class RiskExternal:
         self.stats = {'submitted': 0, 'rows': 0, 'calls': 0, 'errors': 0, 'shed': 0, 'queue_full': 0, 'late': 0, 'backoff': 0,
                       'stopped': 0, 'unknown_mint': 0, 'http_429': 0, 'raw_kept': 0, 'dropped': 0}
         self.last_error = None
+        self.prefetch = None                              # W2b #8: lean.prefetch.Prefetch (set by build_runner when configured)
         self._stop = None
         self._seen = set()
         self._seen_lock = threading.Lock()                # only around the dedupe set; never held while anything is sent
@@ -476,9 +477,19 @@ class RiskExternal:
         counter[0] += meta.get('attempts', 1) if isinstance(meta.get('attempts'), int) else 1
         return parsed, raw, meta
 
-    def collect(self, mint, candidate_id, passed, submitted_at):
-        """Build (and return) the row payload of one candidate. Raises only ``_Stopped``."""
-        decision = self.decision_ts(candidate_id, mint, submitted_at)
+    def collect(self, mint, candidate_id, passed, submitted_at, *, asof=None):
+        """Build (and return) the row payload of one candidate. Raises only ``_Stopped``.
+
+        W2b #8: with ``asof`` this is a PREFETCH (before the screen): the creator's tokens are those created before ``asof`` (never
+        later than the decision the row will be committed to) and the payload is returned for ``Prefetch``, not written. Without it, a
+        finished prefetch of this candidate is committed instead of calling RugCheck."""
+        decision = asof if asof is not None else self.decision_ts(candidate_id, mint, submitted_at)
+        # --- W2b hook ---
+        if asof is None and self.prefetch is not None and decision is not None:
+            committed = self._commit_prefetched(mint, candidate_id, passed, decision)
+            if committed is not None:
+                return committed
+        # --- end W2b ---
         fields, missing, identity, raw = {}, {}, {}, {}
         counter = [0]
 
@@ -523,6 +534,34 @@ class RiskExternal:
         self.stats['calls'] += counter[0]
         return build_row(mint, screen_passed=passed, decision_ts=decision, collected_at=self.clock(), calls=counter[0], fields=fields,
                          missing=missing, identity=identity, raw=raw, candidate_id=candidate_id)
+
+    # --- W2b #8 ---
+    def _commit_prefetched(self, mint, candidate_id, passed, decision):
+        """The row of a RugCheck report fetched BEFORE the screen: its fields as collected (``AT_COLLECTION`` snapshots read before the
+        decision, so ``late_s`` <= 0), stamped with the real decision. The copycat figures are recomputed here against the tokens this
+        recorder holds NOW (only those collected at or before the decision count): a prefetch of an earlier candidate may not have been
+        committed yet when this one's report was fetched. None when no usable prefetch exists."""
+        pre = self.prefetch.take('risk_external', mint, decision)
+        if pre is None:
+            return None
+        row = pre['payload']
+        fields = {k: v for k, v in row['fields'].items() if v is not None}
+        missing = dict(row['missing'])
+        identity = dict(row.get('identity') or {})
+        if identity.get('name_key') or identity.get('symbol_key') or identity.get('image_key'):
+            for name in COPYCAT_FIELDS:
+                fields.pop(name, None)
+                missing.pop(name, None)
+            kf, km = copycat(identity, mint, decision, self._recent, self.cfg['copycat_window_s'])
+            fields.update(kf)
+            missing.update(km)
+        self.stats['prefetched'] = self.stats.get('prefetched', 0) + 1
+        out = build_row(mint, screen_passed=passed, decision_ts=decision, collected_at=pre['finished_at'], calls=row['calls'], fields=fields,
+                        missing=missing, identity=identity, raw=row.get('raw'), candidate_id=candidate_id)
+        out['prefetch'] = {'asof': pre['asof'], 'started_at': pre['started_at'], 'finished_at': pre['finished_at'],
+                           'staleness_s': round(decision - pre['asof'], 3)}
+        return out
+    # --- end W2b ---
 
     def _sample(self, picks, decision, fields, missing, counter):
         """``rugged`` of the newest prior tokens of the creator, one report each, while the row is still in time. A partial sample would

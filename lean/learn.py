@@ -52,13 +52,14 @@ import os
 import sqlite3
 import sys
 import time
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from decimal import Decimal, InvalidOperation
 from pathlib import Path
 from typing import Optional
 
 from lean import adapters as A, features as F, labels as LB, strategy as S
 from lean import flow as FLW
+from lean.paths import HAZARD_STAGE            # W2b #9: ``paths.stage`` of a sampled hazard reject (never traded)
 
 SELECTION_VERSION = 2
 PROPOSAL_STATUS = 'SELECTION_PROPOSAL_NOT_APPLIED'
@@ -176,10 +177,23 @@ class Row:
     trade_status: Optional[str] = None
 
 
+@dataclass(frozen=True)
+class HazardRow:
+    """W2b #9: a SAMPLED hazard reject (never traded, never in ``Dataset.rows``): its label from the decision and what the live exit
+    rules would have earned had it been entered."""
+    mint: str
+    ts: float
+    label: LB.Label
+    pnl_lamports: int
+    reasons: tuple                 # the screen's reject reasons
+    trade_status: Optional[str] = None
+
+
 @dataclass
 class Dataset:
     rows: list
     stats: dict
+    hazard: list = field(default_factory=list)        # W2b #9: HazardRow, kept apart from ``rows`` on purpose
 
 
 @dataclass(frozen=True)
@@ -316,8 +330,9 @@ def wallet_values(row, decision_ts, policy, counts, names=WALLET_FEATURES) -> di
         if name == 'smart_buyers_count' and (not _num(row.get('smart_asof_ts')) or row['smart_asof_ts'] > row['decision_ts'] + policy.eps_s):
             counts.exclude(name, 'SMART_TABLE_NOT_AS_OF_DECISION')
             continue
-        if name == 'bundled_supply_pct' and row.get('supply_source') != 'screen':
-            counts.exclude(name, 'SUPPLY_READ_AFTER_DECISION')
+        if name == 'bundled_supply_pct' and not (row.get('supply_source') == 'screen' or (
+                row.get('supply_source') == 'rpc_prefetch' and _num(row.get('late_s')) and row['late_s'] <= policy.eps_s)):
+            counts.exclude(name, 'SUPPLY_READ_AFTER_DECISION')           # (W2b: a supply read BEFORE the decision by a prefetch is fine)
             continue
         out[name] = value
     return out
@@ -446,6 +461,7 @@ def build_dataset(lean_db, paths_db, strategy: S.StrategyConfig, *, label_cfg=No
     else:
         connections, owned = None, True
     rows, by_label, n_paths, load_skipped = [], {}, 0, {}
+    hazard_rows, hazard_labels, hazard_paths = [], {}, 0                 # W2b #9
     try:
         if connections is None:
             connections = LB.open_paths(paths_db, extra_paths)
@@ -476,6 +492,16 @@ def build_dataset(lean_db, paths_db, strategy: S.StrategyConfig, *, label_cfg=No
                 counts.skip('REFERENCE_UNUSABLE')
                 continue
             label = LB.label_path(path, decision, ref, label_cfg, pool_fee_bps=pool_fee_bps, pcfg=pcfg)
+            # --- W2b #9: a sampled hazard reject is labelled and replayed, but kept in its OWN list: never a row of the tables, the
+            # rule search, the windows or the label counts of the real population ---
+            if path.stage == HAZARD_STAGE:
+                hazard_paths += 1
+                hazard_labels[label.label] = hazard_labels.get(label.label, 0) + 1
+                if label.usable:
+                    trade = LB.simulate_exits(path, decision, ref, strategy, pool_fee_bps=pool_fee_bps, pcfg=pcfg)
+                    hazard_rows.append(HazardRow(path.mint, decision, label, trade.pnl_lamports, tuple(path.screen_reasons), trade.status))
+                continue
+            # --- end W2b ---
             by_label[label.label] = by_label.get(label.label, 0) + 1
             if not label.usable:
                 counts.skip('%s:%s' % (LB.INSUFFICIENT, label.why_insufficient))
@@ -504,13 +530,15 @@ def build_dataset(lean_db, paths_db, strategy: S.StrategyConfig, *, label_cfg=No
     for name, n in load_skipped.items():
         counts.skip(name, n)
     rows.sort(key=lambda r: (r.ts, r.mint))
+    hazard_rows.sort(key=lambda r: (r.ts, r.mint))
     return Dataset(rows, {'paths': n_paths, 'labels': dict(sorted(by_label.items())), 'with_features': len(rows),
+                          **({'hazard_paths': hazard_paths, 'hazard_labels': dict(sorted(hazard_labels.items()))} if hazard_paths else {}),
                           'enterable': sum(1 for r in rows if r.enterable), 'skipped': dict(sorted(counts.skipped.items())),
                           'excluded': {k: dict(sorted(v.items())) for k, v in sorted(counts.excluded.items())},
                           'label_config': label_cfg.to_dict(), 'lookahead': policy.to_dict(), 'pool_fee_bps': pool_fee_bps, 'config_hash_filter': config_hash,
                           'strategy_version': strategy.strategy_version, 'feature_names': list(feature_names),
                           'pnl_model': 'lean.labels.simulate_exits: lean.strategy.exit_decision on every recorded mark (adapters.mark), '
-                                       'one isolated position per path; L10 latency and L11 DANGER exits not modelled'})
+                                       'one isolated position per path; L10 latency and L11 DANGER exits not modelled'}, hazard_rows)
 
 
 # ----------------------------------------------------------------------------------------------------------- windows
@@ -736,10 +764,51 @@ def winners_vs_rugs(rows, feature_names):
     return out
 
 
+
+# --- W2b #9: the sampled hazard rejects, in their own section --------------------------------------------------------------------
+def hazard_summary(hazard_rows, enterable_rows=(), *, min_n=MIN_BUCKET, z=Z_SELECT) -> dict:
+    """Was the hazard filter RIGHT? Per screen reject reason (a path with several reasons counts under each, ``ALL`` counts it once):
+    n, label counts, rug / win rate (Wilson 95 %), the mean PnL per candidate had it been entered under the live exit rules
+    (``lean.labels.simulate_exits``) and a one-sided t statistic. ``FILTER_SUPPORTED`` = the sampled rejects lose money (mean PnL < 0 with
+    t <= -z); ``FILTER_COSTS_UPSIDE`` = they earn (mean > 0 with t >= z); anything else is INCONCLUSIVE, and INSUFFICIENT below ``min_n``.
+    These rows are a deterministic random SAMPLE of the rejects, were never traded and are NOT part of any table, rule or window above.
+    ``baseline_mean_pnl_sol`` is the real population's (the enterable rows) for comparison."""
+    groups = {'ALL': list(hazard_rows)}
+    for row in hazard_rows:
+        for reason in row.reasons or ('UNSPECIFIED',):
+            groups.setdefault(str(reason), []).append(row)
+    out = {}
+    for reason, rows in sorted(groups.items()):
+        n = len(rows)
+        rugs, wins = sum(1 for r in rows if r.label.label == 'RUG'), sum(1 for r in rows if r.label.label == 'WIN')
+        pnl = [_sol(r.pnl_lamports) for r in rows]
+        t = t_statistic(pnl)
+        mean = sum(pnl) / n if n else None
+        if n < min_n:
+            verdict = 'INSUFFICIENT'
+        elif t is not None and mean < 0 and t <= -z:
+            verdict = 'FILTER_SUPPORTED'
+        elif t is not None and mean > 0 and t >= z:
+            verdict = 'FILTER_COSTS_UPSIDE'
+        else:
+            verdict = 'INCONCLUSIVE'
+        out[reason] = {'n': n, 'by_label': {label: sum(1 for r in rows if r.label.label == label) for label in LB.LABELS},
+                       'rug_rate': round(rugs / n, 6) if n else None, 'rug_ci': list(wilson(rugs, n)),
+                       'win_rate': round(wins / n, 6) if n else None, 'win_ci': list(wilson(wins, n)),
+                       'mean_sim_pnl_sol': None if mean is None else round(mean, 9), 't': None if t is None else round(t, 4),
+                       'verdict': verdict}
+    enterable_rows = list(enterable_rows)
+    return {'note': 'a deterministic random SAMPLE of the hazard rejects (paths.hazard_path_sample); never traded; not part of any table, rule or '
+                    'window of this report. PnL = what the live exit rules would have earned had each been entered at the decision.',
+            'baseline_mean_pnl_sol': (round(sum(_sol(r.pnl_lamports) for r in enterable_rows) / len(enterable_rows), 9)
+                                      if enterable_rows else None),
+            'baseline_n': len(enterable_rows), 'min_n': min_n, 'z': z, 'by_reason': out}
+# --- end W2b ---
+
 # ----------------------------------------------------------------------------------------------------------- learn
 def learn(rows, *, strategy: Optional[S.StrategyConfig] = None, fractions=DEFAULT_FRACTIONS, min_n=MIN_N, min_confirm=MIN_CONFIRM,
           min_bucket=MIN_BUCKET, embargo_s=0, feature_names=FEATURE_NAMES, now=None, proposals_dir=None, dataset_stats=None,
-          z_select=Z_SELECT, z_confirm=Z_CONFIRM, max_rules=MAX_RULES, max_reject_fraction=MAX_REJECT_FRACTION) -> dict:
+          z_select=Z_SELECT, z_confirm=Z_CONFIRM, max_rules=MAX_RULES, max_reject_fraction=MAX_REJECT_FRACTION, hazard_rows=()) -> dict:
     """Tables over every labelled candidate that has features; rules mined / selected / confirmed on the ENTERABLE ones by time.
     With ``proposals_dir`` the selection file is written (always: it says whether it proposes anything)."""
     rows = list(rows)
@@ -777,6 +846,9 @@ def learn(rows, *, strategy: Optional[S.StrategyConfig] = None, fractions=DEFAUL
         'confirmed': False, 'proposal': None, 'proposal_status': None, 'warnings': [],
     }
     result['warnings'] = _warnings(result, len(candidates))
+    hazard_rows = list(hazard_rows)                                       # W2b #9: reported on their own, never mixed into the rows above
+    if hazard_rows:
+        result['hazard_rejects'] = hazard_summary(hazard_rows, enterable, min_n=min_bucket)
     if not enough:
         result['proposal_status'] = 'INSUFFICIENT_DATA'
     elif not candidates:
@@ -906,6 +978,13 @@ def render_section(result: dict) -> str:
         excluded = [[name, why, n] for name, reasons in (dataset.get('excluded') or {}).items() for why, n in reasons.items()]
         parts.append(table(['feature value excluded', 'why (known only after the decision)', 'n'], excluded) if excluded
                      else '<p>No feature value had to be excluded.</p>')
+    hazard = result.get('hazard_rejects')                                  # W2b #9
+    if hazard:
+        parts.append('<h3>Hazard-reject sample (never traded; separate from everything above)</h3><p>%s Baseline (entered-able candidates): '
+                     'mean sim pnl %s SOL over %d.</p>' % (e(hazard['note']), e(hazard['baseline_mean_pnl_sol']), hazard['baseline_n']))
+        parts.append(table(['reject reason', 'n', 'rug rate', 'rug 95% CI', 'win rate', 'win 95% CI', 'mean sim pnl SOL', 't', 'verdict'],
+                           [[reason, h['n'], h['rug_rate'], '%s-%s' % tuple(h['rug_ci']), h['win_rate'], '%s-%s' % tuple(h['win_ci']),
+                             h['mean_sim_pnl_sol'], h['t'], h['verdict']] for reason, h in hazard['by_reason'].items()]))
     parts.append('<h3>Warnings</h3><ul>%s</ul>' % ''.join('<li>%s</li>' % e(w) for w in result['warnings']))
     return ''.join(parts)
 
@@ -980,7 +1059,7 @@ def main(argv=None):
         now = time.time() if args.now is None else args.now
         result = learn(dataset.rows, strategy=strategy, fractions=fractions, min_n=args.min_n, min_confirm=args.min_confirm,
                        min_bucket=args.min_bucket, embargo_s=args.embargo_s, now=now, proposals_dir=out / 'proposals',
-                       dataset_stats=dataset.stats)
+                       dataset_stats=dataset.stats, hazard_rows=dataset.hazard)
         html_path, json_path = write_report(out, result)
     except Exception as error:                               # noqa: BLE001 - one JSON line, never a traceback with paths
         print(json.dumps({'status': 'ERROR', 'code': type(error).__name__, 'detail': str(error)[:200]}))
