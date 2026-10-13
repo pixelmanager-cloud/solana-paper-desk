@@ -244,12 +244,14 @@
     "db": null,
     "initial_cash_sol": null,
     "queue_size": 200,
-    "max_scale": 2.0,
+    "max_scale": 4.0,
     "exit_wait_s": 120,
     "exit_grace_s": 1.0,
     "eval_interval_s": 15,
     "quote_marks_per_pass": 3,
     "peak_persist_s": 60,
+    "reserve_tokens": 1,
+    "row_grace_s": 10,
     "arms": [
       {
         "name": "hold2m",
@@ -266,7 +268,8 @@
       },
       {
         "name": "live_copy",
-        "strategy_config": "strategy-default.json"
+        "strategy_config": "strategy-default.json",
+        "mirror_main": true
       }
     ]
   }

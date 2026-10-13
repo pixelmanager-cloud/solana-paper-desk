@@ -234,8 +234,18 @@ def lean_config_hash(cfg):
     """M1 #10: sha256 of the WHOLE loaded lean.json (``load_config`` output: every key, defaults filled in, so an added key at
     its default is not a new run; canonical JSON; ``_comment`` keys left out so a comment edit is not one either). The strategy
     file has its own ``StrategyConfig.config_hash``; both go into the start event and health."""
-    plain = {k: v for k, v in cfg.items() if not (k == 'arms' and v is None)}      # W2a: arms OFF leaves every earlier config's hash as it was
+    plain = {k: v for k, v in cfg.items() if k != 'arms'}      # W2a2 #1: the shadow arms never change the main run's identity (the learner's window)
     text = json.dumps(_strip_neutral(_strip_comments(plain)), sort_keys=True, separators=(',', ':'), ensure_ascii=True, default=str)
+    return hashlib.sha256(text.encode()).hexdigest()
+
+
+def arms_config_hash(cfg):
+    """W2a2 #1: sha256 of the loaded ``arms`` block alone (None when the arms are off). It rides in the start event and health next to
+    ``lean_config_hash``, which no longer covers the arms: turning them on or editing them must not look like a new main run."""
+    block = cfg.get('arms')
+    if block is None:
+        return None
+    text = json.dumps(_strip_comments(dict(block)), sort_keys=True, separators=(',', ':'), ensure_ascii=True, default=str)
     return hashlib.sha256(text.encode()).hexdigest()
 
 
@@ -326,7 +336,7 @@ def build_runner(cfg, *, state_dir, discovery_db, keys, code_version, clock=None
         exit_backoff_max_s=cfg.get('exit_backoff_max_s', CONFIG_KEYS['exit_backoff_max_s']),
         peak_persist_s=cfg.get('peak_persist_s', CONFIG_KEYS['peak_persist_s']),
         discovery_stale_s=cfg.get('discovery_stale_s', CONFIG_KEYS['discovery_stale_s']),
-        lean_config_hash=lean_config_hash(cfg))
+        lean_config_hash=lean_config_hash(cfg), arms_config_hash=arms_config_hash(cfg))
         # --- end M1 ---
     # --- L07R: the path recorder (low lane, its own paths.sqlite) is only a FACTORY here: Runner.run() builds and
     # resumes it; --once and --clear-halt never open paths.sqlite ---
