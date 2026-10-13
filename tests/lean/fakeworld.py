@@ -60,7 +60,8 @@ class Token:
 
     def __init__(self, tag, *, quote_sol=80, base_raw=2 * 10 ** 14, hazard=None, route_fee_bps=0, path=None,
                  no_route=False, no_route_from=None, route_back_at=None, pool_closed_from=None, freeze_from=None,
-                 owner_change_from=None, pool_closed_until=None, coin_creator_tag=None, holder_rows=None):
+                 owner_change_from=None, pool_closed_until=None, coin_creator_tag=None, holder_rows=None, virtual_sol=None,
+                 accrued_fees_lamports=0, creator_fee_bps=0):
         from solders.pubkey import Pubkey
         self.tag = tag
         self.mint_pk = Pubkey.from_bytes(bytes([tag]) * 32)
@@ -77,6 +78,15 @@ class Token:
                          + b''.join(bytes(x) for x in (creator, self.mint_pk, sol_pk, lp, *vaults))
                          + (1000).to_bytes(8, 'little') + (bytes([coin_creator_tag]) * 32 if coin_creator_tag is not None else bytes(32)))
         self.coin_creator = str(Pubkey.from_bytes(bytes([coin_creator_tag]) * 32)) if coin_creator_tag is not None else None        # L12F
+        # M1 #7: a BOOSTED pool (the current PumpSwap layout, 287 bytes): virtual quote reserves on top of the vault, accrued fees
+        # inside the vault, an optional per-coin creator fee. Jupiter then quotes like the program: vault + virtual, the Pump fee
+        # program's market-cap tier (World.fee_schedule) or a flat fee, each component rounded up (pump-swap-sdk).
+        self.virtual_lamports = None if virtual_sol is None else int(Decimal(str(virtual_sol)) * 10 ** 9)
+        self.accrued_fees, self.creator_fee_bps = int(accrued_fees_lamports), int(creator_fee_bps)
+        if self.virtual_lamports is not None:
+            self.pool_raw += (bytes(2) + self.virtual_lamports.to_bytes(16, 'little', signed=True) + self.creator_fee_bps.to_bytes(8, 'little')
+                              + bytes(2) + self.accrued_fees.to_bytes(8, 'little') + bytes(8))
+        self.world = None
         self.quote_lamports, self.base_raw = int(quote_sol * 10 ** 9), int(base_raw)
         self.hazard, self.route_fee_bps, self.no_route = hazard, route_fee_bps, no_route
         self.path = path or (lambda age: Decimal(1))
@@ -169,8 +179,34 @@ class Token:
         rows += [{'address': base58(bytes([100 + i]) * 32), 'amount': str(SUPPLY // 100)} for i in range(10)]
         return [dict(r, decimals=DECIMALS, uiAmountString=str(Decimal(r['amount']) / 10 ** DECIMALS)) for r in rows]
 
+    # -- M1 #7: the program's pricing of a boosted pool (written out here, independently of lean.marks)
+    def program_fees(self, t):
+        """{lp, protocol, creator} bps: the fee schedule's tier at the pool's market cap, else a flat POOL_FEE_BPS + route fee."""
+        base, quote = self.reserves(t)
+        schedule = None if self.world is None else self.world.fee_schedule
+        if schedule is None:
+            return {'lp': POOL_FEE_BPS + self.route_fee_bps, 'protocol': 0, 'creator': 0}
+        cap = (quote + self.virtual_lamports) * SUPPLY // base
+        tier = [x for x in schedule['fee_tiers'] if x['market_cap_lamports_threshold'] <= cap][-1]['fees']
+        creator = self.creator_fee_bps or tier['creator_fee_bps']
+        return {'lp': tier['lp_fee_bps'], 'protocol': tier['protocol_fee_bps'],
+                'creator': creator if self.coin_creator not in (None, '11111111111111111111111111111111') else 0}
+
+    def boosted_quote(self, t, input_mint, amount):
+        base, quote = self.reserves(t)
+        pricing = quote + self.virtual_lamports
+        fees = self.program_fees(t)
+        if input_mint == SOL:                                       # buyQuoteInput: the fees come off the input
+            net = amount * 10000 // (10000 + sum(fees.values()))
+            return base * net // (pricing + net), amount - net
+        gross = pricing * amount // (base + amount)                  # sellBaseInput: each fee rounded up on the gross output
+        fee = sum((gross * b + 9999) // 10000 for b in fees.values())
+        return gross - fee, fee
+
     # -- Jupiter constant-product quote (pool fee + any extra route fee)
     def quote(self, t, input_mint, amount):
+        if self.virtual_lamports is not None:
+            return self.boosted_quote(t, input_mint, amount)
         base, quote = self.reserves(t)
         bps = POOL_FEE_BPS + self.route_fee_bps
         if input_mint == SOL:
@@ -183,12 +219,24 @@ class Token:
         return out, fee
 
 
+def mainnet_fee_schedule():
+    """M1 #7: (address, RPC account, decoded fields) of the Pump fee program's FeeConfig captured on mainnet
+    (fixtures/mainnet-dynamic-fees.json, slot 454,363,800; PUBLIC_MAINNET_CAPTURE_NOT_TRADING_EVIDENCE)."""
+    from pathlib import Path
+    capture = json.loads((Path(__file__).resolve().parents[2] / 'fixtures' / 'mainnet-dynamic-fees.json').read_text())
+    return capture['address'], capture['response']['value'], capture['parsed']['fields']
+
+
 class World:
     """The HTTP opener plus the discovery database. ``outage`` = {provider: (start, end)} answers 503 inside the window."""
 
     def __init__(self, root, tokens, clock):
         self.root, self.tokens, self.clock = root, {t.mint: t for t in tokens}, clock
         self.order = list(tokens)
+        for token in tokens:
+            token.world = self
+        self.fee_schedule = None                             # M1 #7: the decoded tiers Jupiter prices boosted pools with
+        self.fee_account = None                              # M1 #7: {address: RPC account} served by getMultipleAccounts
         self.outages = {}
         self.extra_rpc = {}                                  # L13/L12: {method: fn(params, t) -> result} for methods the base world lacks
         self.calls = []                                      # (provider, method, t)
@@ -253,6 +301,7 @@ class World:
             for token in self.tokens.values():
                 known.update(token.accounts(t))
                 known.update(token.holder_accounts())       # L24
+            known.update(self.fee_account or {})             # M1 #7
             result = {'context': {'apiVersion': '2.2.7', 'slot': self.slot}, 'value': [copy.deepcopy(known.get(k)) for k in params[0]]}
         elif method == 'getTokenLargestAccounts':
             result = {'context': {'apiVersion': '2.2.7', 'slot': self.slot}, 'value': self.tokens[params[0]].holders()}

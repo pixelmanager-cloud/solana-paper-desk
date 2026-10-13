@@ -130,6 +130,12 @@ class Target:
     qty_raw: int            # the reference quantity marked by adapters.mark
     cost_lamports: int      # what that quantity cost (net_sol / cost = the strategy's mark ratio)
     basis: str              # 'fill' (entered) or 'ref_size'
+    pool_info: dict = None  # M1 #7 (marks.model effective only): the screen's pool fields (virtual reserves, supply...)
+
+
+def _target_json(target):
+    """The ``paths.target`` JSON: an unset optional field is left out, so a vault-model file is byte-identical to before."""
+    return json.dumps({k: v for k, v in asdict(target).items() if v is not None}, sort_keys=True)
 
 
 @dataclass
@@ -158,6 +164,12 @@ SCHEMA = (
 )
 PATH_COLUMNS = ('mint', 'candidate_id', 'start_ts', 'ends_ts', 'entered', 'stage', 'reason', 'screen_reasons',
                 'holders_checked', 'features', 'target', 'carried_from', 'code_version', 'strategy_version')
+# M1 #7: additive path_marks columns (an older file gets them by ALTER TABLE ADD COLUMN on open; its old rows read NULL): the
+# inputs of ``net_sol`` so every mark is reproducible: the model, the pool's virtual quote reserves and accrued fees read
+# with the mark, the fee (total bps) and where it came from (dynamic tier / config fallback).
+MARK_EXTRA_COLUMNS = (('model', 'TEXT'), ('virtual_raw', 'INTEGER'), ('accrued_fees_raw', 'INTEGER'), ('fee_bps', 'INTEGER'),
+                      ('fee_source', 'TEXT'))
+MARK_COLUMNS = ('mint', 'ts', 'slot', 'base_raw', 'quote_raw', 'net_sol', 'liquidity_sol', 'status') + tuple(c for c, _t in MARK_EXTRA_COLUMNS)
 
 
 class PathStore:
@@ -182,6 +194,15 @@ class PathStore:
         self.db.execute('PRAGMA busy_timeout=5000')
         self._tx(lambda: [self.db.execute(sql) for sql in SCHEMA]
                  + [self.db.execute("INSERT OR IGNORE INTO meta VALUES('schema','paths-1')")])
+        self._tx(self._migrate)
+
+    def _migrate(self):
+        """M1 #7: add the mark-input columns to an older file (additive, idempotent, versioned in meta)."""
+        have = {row[1] for row in self.db.execute('PRAGMA table_info(path_marks)')}
+        for column, kind in MARK_EXTRA_COLUMNS:
+            if column not in have:
+                self.db.execute('ALTER TABLE path_marks ADD COLUMN %s %s' % (column, kind))
+        self.db.execute("INSERT OR IGNORE INTO meta VALUES('mark_columns','m1')")
 
     def _tx(self, function):
         with self._lock:
@@ -209,8 +230,8 @@ class PathStore:
         """One transaction: mark tuples, gap tuples ``(mint, ts, cause)``, end tuples ``(mint, ts, why, marks, gaps)``."""
         def write():
             if marks:
-                self.db.executemany('INSERT INTO path_marks(mint,ts,slot,base_raw,quote_raw,net_sol,liquidity_sol,status) '
-                                    'VALUES(?,?,?,?,?,?,?,?)', marks)
+                self.db.executemany('INSERT INTO path_marks(%s) VALUES(%s)' % (','.join(MARK_COLUMNS), ','.join('?' * len(MARK_COLUMNS))),
+                                    [tuple(m) + (None,) * (len(MARK_COLUMNS) - len(m)) for m in marks])
             if gaps:
                 self.db.executemany('INSERT INTO path_gaps(mint,ts,cause) VALUES(?,?,?)', gaps)
             if ends:
@@ -273,10 +294,12 @@ class _Stopped(Exception):
 class PathRecorder:
     def __init__(self, *, db, helius, pcfg, code_version, strategy_version, pool_fee_bps=25, path_hours=6.0,
                  interval_s=15.0, ref_size_sol='0.2', max_paths=2000, max_db_gb=2.0, min_free_gb=2.0, clock=time.time,
-                 sleep=time.sleep):
+                 sleep=time.sleep, mark_model=None):
         self.db, self.helius, self.pcfg, self.clock, self.sleep = db, helius, pcfg, clock, sleep
         self.code_version, self.strategy_version = code_version, strategy_version
         self.pool_fee_bps = int(pool_fee_bps)
+        from lean import marks as _marks                     # M1 #7: the runner's mark model (vault when absent)
+        self.mark_model = mark_model if mark_model is not None else _marks.MarkModel(None, pool_fee_bps=self.pool_fee_bps)
         self.path_s, self.interval_s = float(path_hours) * 3600, float(interval_s)
         self.ref_lamports = A.lamports(Decimal(str(ref_size_sol)))
         self.max_paths = int(max_paths)
@@ -342,8 +365,21 @@ class PathRecorder:
         base0, gross0, spendable0 = (int(features[k]) for k in ('base_reserve_raw', 'quote_gross_raw', 'quote_spendable_raw'))
         if base0 <= 0 or gross0 <= 0 or not 0 <= spendable0 <= gross0:
             raise ValueError('pool reserves at the screen are unusable')
+        pool_info = None
+        if self.mark_model.effective:                                  # M1 #7: the screen's pool fields ride with the target
+            from lean import marks as _marks
+            pool_info = _marks.screen_pool_info(features)
+            if pool_info is None:
+                raise ValueError('pool fields at the screen are unusable')
         if fill is not None:                                           # the position's cost basis = paid + fee
             qty, cost, basis = int(fill.qty_raw), int(fill.sol_lamports) + int(fill.fee_lamports), 'fill'
+        elif pool_info is not None:                                    # M1 #7: what ref_size buys at the EFFECTIVE reserves
+            from lean import marks as _marks
+            effective = _marks.effective_quote(gross0, pool_info['virtual_quote_reserves_raw'])
+            schedule = self.mark_model.schedule(self.clock())
+            bps = (sum(_marks.tier_fees(schedule, effective, base0, pool_info['supply_raw'])[0].values())
+                   if schedule is not None and pool_info['supply_raw'] > 0 else self.pool_fee_bps)
+            qty, cost, basis = _marks.buy_output(self.ref_lamports, base0, effective, bps), self.ref_lamports, 'ref_size'
         else:
             spent = self.ref_lamports * (10_000 - self.pool_fee_bps) // 10_000
             qty, cost, basis = base0 * spent // (gross0 + spent), self.ref_lamports, 'ref_size'
@@ -351,7 +387,7 @@ class PathRecorder:
             raise ValueError('reference quantity rounds to nothing')
         return Target(mint=_pubkey(mint), pool=str(features.get('pool')), base_vault=base_vault, quote_vault=quote_vault,
                       decimals=int(features['decimals']), fee_raw=gross0 - spendable0, qty_raw=qty, cost_lamports=cost,
-                      basis=basis)
+                      basis=basis, pool_info=pool_info)
 
     def start(self, mint, candidate_id, features, *, entered, stage, reasons, screen_reasons=(), fill=None):
         """Begin recording ``mint`` (no provider I/O: the vault keys come from the screen). Never raises."""
@@ -370,7 +406,7 @@ class PathRecorder:
                    'reason': json.dumps([] if entered else list(reasons)), 'screen_reasons': json.dumps(list(screen_reasons)),
                    'holders_checked': int(features.get('holder_check') == 'OK'),
                    'features': json.dumps(_jsonable(features), sort_keys=True, default=str),
-                   'target': json.dumps(asdict(target), sort_keys=True), 'carried_from': None,
+                   'target': _target_json(target), 'carried_from': None,
                    'code_version': self.code_version, 'strategy_version': self.strategy_version}
             if not self.db.insert_path(row):
                 self._bump('duplicates')
@@ -436,12 +472,15 @@ class PathRecorder:
             self._write([], [], ends)                                  # nothing else is written while the disk is low
             return 0
         offset = 0
+        model = self.mark_model                                        # M1 #7: + the pool account (+ the fee schedule per call)
+        per_key, call_keys = model.keys_per_position, model.call_keys()
+        per_call = (MAX_MULTIPLE_ACCOUNTS - len(call_keys)) // per_key
         while offset < len(due):
-            chunk = due[offset:offset + POOLS_PER_CALL]
+            chunk = due[offset:offset + per_call]
             if stop is not None and stop.is_set():
                 cause = 'stopped'
             else:
-                keys = [k for _m, p in chunk for k in (p.target.base_vault, p.target.quote_vault)]
+                keys = [k for _m, p in chunk for k in model.position_keys(p.target.base_vault, p.target.quote_vault, p.target.pool)] + call_keys
                 cause = None
                 try:
                     result = self._call(keys, deadline, stop)
@@ -461,8 +500,11 @@ class PathRecorder:
             if cause is None:
                 self._bump('calls')
                 at, slot = self.clock(), result['context']['slot']
+                values = result['value']
+                if call_keys:
+                    model.observe_call(values[len(chunk) * per_key:], at)
                 for i, (mint, path) in enumerate(chunk):
-                    marks.append(self._mark_row(mint, path, result['value'][2 * i], result['value'][2 * i + 1], at, slot))
+                    marks.append(self._mark_row(mint, path, values[per_key * i:per_key * (i + 1)], at, slot))
                     marked.append(path)
                 offset += len(chunk)
                 continue
@@ -539,9 +581,11 @@ class PathRecorder:
         rate = getattr(limiter, 'rate', None)
         return 1.0 / rate if isinstance(rate, float) and rate > 0 else 0.5
 
-    def _mark_row(self, mint, path, base_account, quote_account, at, slot):
+    def _mark_row(self, mint, path, accounts, at, slot):
         t = path.target
+        base_account, quote_account = accounts[0], accounts[1]
         status, base, quote, net, liquidity = 'OK', None, None, None, None
+        extra = (self.mark_model.model, None, None, None, None)        # model, virtual_raw, accrued_fees_raw, fee_bps, fee_source
         if base_account is None or quote_account is None:
             status = 'ACCOUNT_MISSING'
         else:
@@ -550,12 +594,23 @@ class PathRecorder:
             except A.AdapterError:
                 status, base, quote = 'MALFORMED', None, None
         if status == 'OK':
-            liquidity = format(A.sol(2 * max(0, quote - t.fee_raw)), 'f')
-            try:
-                net = format(A.mark(t.qty_raw, base, quote, pool_fee_bps=self.pool_fee_bps, pcfg=self.pcfg), 'f')
-            except A.AdapterError:
-                status = 'EMPTY_POOL'
-        return (mint, at, slot, base, quote, net, liquidity, status)
+            if not self.mark_model.effective:
+                liquidity = format(A.sol(2 * max(0, quote - t.fee_raw)), 'f')
+                try:
+                    net = format(A.mark(t.qty_raw, base, quote, pool_fee_bps=self.pool_fee_bps, pcfg=self.pcfg), 'f')
+                    extra = ('vault', None, None, self.pool_fee_bps, 'config')
+                except A.AdapterError:
+                    status = 'EMPTY_POOL'
+            else:                                                      # M1 #7: the effective-reserves mark and its inputs
+                try:
+                    value, info = self.mark_model.value_accounts(t.qty_raw, accounts, pool_info=t.pool_info, now=at,
+                                                                 fee_lamports=self.pcfg.fee_lamports)
+                    net = format(A.sol(value), 'f')
+                    liquidity = format(A.sol(2 * max(0, quote - info['accrued_fees_raw'])), 'f')
+                    extra = ('effective', info['virtual_raw'], info['accrued_fees_raw'], info['fee_bps'], info['fee_source'])
+                except A.AdapterError:
+                    status = 'EMPTY_POOL'
+        return (mint, at, slot, base, quote, net, liquidity, status) + extra
 
     # -- the thread -----------------------------------------------------------------------------------------------
     def run(self, stop, *, monotonic=time.monotonic):
@@ -580,7 +635,7 @@ def _jsonable(value):
 
 
 def build(cfg, *, state_dir, keys, pcfg, code_version, strategy_version, pool_fee_bps, clock=time.time,
-          transport_kwargs=None):
+          transport_kwargs=None, mark_model=None):
     """The recorder of a validated lean.json ``paths`` config, with its own ``paths.sqlite`` and the LOW lane; None if
     disabled. Called by ``Runner.run`` only (never by ``--once`` / ``--clear-halt``)."""
     if not cfg['enabled']:
@@ -592,4 +647,4 @@ def build(cfg, *, state_dir, keys, pcfg, code_version, strategy_version, pool_fe
                         code_version=code_version, strategy_version=strategy_version, pool_fee_bps=pool_fee_bps,
                         path_hours=cfg['path_hours'], interval_s=cfg['interval_s'], ref_size_sol=cfg['ref_size_sol'],
                         max_paths=cfg['max_paths'], max_db_gb=cfg['max_db_gb'], min_free_gb=cfg['min_free_gb'],
-                        clock=clock, sleep=transport_kwargs.get('sleep', time.sleep))
+                        clock=clock, sleep=transport_kwargs.get('sleep', time.sleep), mark_model=mark_model)

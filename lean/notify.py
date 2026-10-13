@@ -441,9 +441,19 @@ class StoreView:
             return out
         rows = self.c.execute("SELECT id,ts,meta FROM observations WHERE kind='marks' ORDER BY id DESC LIMIT ?", (scan,))
         for obs_id, ts, meta_text in rows.fetchall():
-            mints = _loads(meta_text).get('mints')
+            meta = _loads(meta_text)
+            mints = meta.get('mints')
             if not isinstance(mints, list) or not wanted & set(mints):
                 continue
+            # M1: the trader's own mark of each mint rides in the meta (any model, and kept when raw_policy drops the body)
+            stored = meta.get('marks') if isinstance(meta.get('marks'), dict) else {}
+            for mint in [m for m in mints if m in wanted and isinstance((stored.get(m) or {}).get('net_lamports'), int)]:
+                out[mint] = (stored[mint]['net_lamports'], ts)
+                wanted.discard(mint)
+            if not wanted:
+                break
+            if meta.get('layout', 'base,quote') != 'base,quote':
+                continue                                       # older vault-only layout is the only one parsed from raw
             raw = self.c.execute('SELECT raw FROM observations WHERE id=?', (obs_id,)).fetchone()[0]
             try:
                 values = json.loads(bytes(raw).decode())['result']['value']

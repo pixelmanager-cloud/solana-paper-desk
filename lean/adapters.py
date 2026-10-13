@@ -208,5 +208,6 @@ def strategy_position(position, state):                                  # noqa:
 
 
 def open_state(features, fill, cfg):                                     # noqa: F811
-    return {**_open_state_plain(features, fill, cfg), **(features.get('_exec_state') or {})}
+    return {**_open_state_plain(features, fill, cfg), **(features.get('_exec_state') or {}),
+            **({'pool_info': dict(features['_pool_info'])} if features.get('_pool_info') else {})}     # M1 #7 (marks.model effective)
 # --- end L10 ---

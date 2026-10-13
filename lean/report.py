@@ -553,7 +553,59 @@ def _sources(db):
         connection.close()
 
 
-def build(db, *, counterfactual_db=None, horizon=3600, now=None):
+def run_windows(connection):
+    """M1 #10: [(start_ts, end_ts or None, lean_config_hash, strategy_config_hash)] from the store's ``start`` events: each run
+    lasts until the next start. Rows of a store written before M1 carry None hashes."""
+    tables = {r[0] for r in connection.execute("SELECT name FROM sqlite_master WHERE type='table'")}
+    if 'events' not in tables:
+        return []
+    starts = []
+    for ts, payload in connection.execute("SELECT ts, payload FROM events WHERE kind='start' ORDER BY id"):
+        try:
+            data = json.loads(payload) or {}
+        except ValueError:
+            data = {}
+        starts.append((float(ts), data.get('lean_config_hash'), data.get('strategy_config_hash') or data.get('config_hash')))
+    return [(ts, starts[i + 1][0] if i + 1 < len(starts) else None, lean_hash, strategy_hash)
+            for i, (ts, lean_hash, strategy_hash) in enumerate(starts)]
+
+
+def matching_windows(windows, config_hash):
+    """The runs whose lean.json hash OR strategy hash starts with ``config_hash`` (>= 8 hex characters)."""
+    wanted = str(config_hash or '').strip().lower()
+    if len(wanted) < 8:
+        raise ReportError('CONFIG_HASH_TOO_SHORT')
+    return [(a, b) for a, b, lean_hash, strategy_hash in windows
+            if any(isinstance(h, str) and h.lower().startswith(wanted) for h in (lean_hash, strategy_hash))]
+
+
+def in_windows(ts, windows):
+    return ts is not None and any(a <= ts and (b is None or ts < b) for a, b in windows)
+
+
+def filter_events(events, windows):
+    """Events of the selected runs: everything by its time, except fills, which follow their position lifecycle (a lifecycle
+    belongs to the run of its OPENING buy, so a trade is never split between runs)."""
+    out, open_in, qty = [], {}, {}
+    for e in sorted(events, key=lambda e: (e['at'] is None, e['at'] or 0)):
+        if e['kind'] != 'fill':
+            if in_windows(None if e['at'] is None else float(e['at']), windows):
+                out.append(e)
+            continue
+        d = e['data']
+        mint, side, amount = d.get('mint'), str(d.get('side', '')).lower(), dec(d.get('qty')) or Decimal(0)
+        if side == 'buy':
+            if qty.get(mint, Decimal(0)) <= 0:
+                open_in[mint] = in_windows(None if e['at'] is None else float(e['at']), windows)
+            qty[mint] = qty.get(mint, Decimal(0)) + amount
+        else:
+            qty[mint] = qty.get(mint, Decimal(0)) - amount
+        if open_in.get(mint):
+            out.append(e)
+    return out
+
+
+def build(db, *, counterfactual_db=None, horizon=3600, now=None, config_hash=None):
     now = time.time() if now is None else now
     connection = open_ro(db)
     try:
@@ -562,12 +614,23 @@ def build(db, *, counterfactual_db=None, horizon=3600, now=None):
         from lean import execution
         events = execution.adjust_report_events(connection, events)
         # --- end L10 ---
+        # --- M1 #10: only the runs of one lean.json / strategy hash ---
+        windows = None
+        if config_hash:
+            windows = matching_windows(run_windows(connection), config_hash)
+            events = filter_events(events, windows)
+        # --- end M1 ---
     finally:
         connection.close()
     summary = {'kind': 'lean_report_v1', 'label': LABEL, 'generated_at': datetime.datetime.fromtimestamp(now, datetime.timezone.utc).isoformat(),
                'min_sample': MIN_SAMPLE, 'tables': used, 'events': len(events), 'skipped': dict(skipped), 'truncated_tables': truncated,
                'versions': {'strategy': dict(Counter(e['strategy'] for e in events)), 'code': dict(Counter(e['code'] for e in events))},
                'profitability_verdict': 'NOT_ASSESSED'}
+    if windows is not None:                                                  # M1 #10
+        summary['config_hash_filter'] = {'config_hash': str(config_hash), 'runs': len(windows),
+                                         'windows': [[a, b] for a, b in windows],
+                                         'scope': 'funnel, trades, pnl, exit reasons, errors, versions; the store-level sections '
+                                                  '(route_check, execution, sell_evidence, held_risk, bot_exit, sources) are unfiltered'}
     funnel_result = _section(funnel, events)
     all_trades, anomalies = trades(events)
     summary['funnel'] = ({'status': 'OK', 'data': {k: v for k, v in funnel_result['data'][0].items() if k != 'rejected_mints'}}
@@ -797,9 +860,10 @@ def main(argv=None):
     p.add_argument('--counterfactual', help='optional T26 counterfactual.sqlite (opened read-only)')
     p.add_argument('--horizon', type=int, default=3600)
     p.add_argument('--now', type=float)
+    p.add_argument('--config-hash', help='M1: only the runs whose lean.json hash or strategy hash starts with this (>= 8 hex)')
     args = p.parse_args(argv)
     try:
-        summary = build(args.db, counterfactual_db=args.counterfactual, horizon=args.horizon, now=args.now)
+        summary = build(args.db, counterfactual_db=args.counterfactual, horizon=args.horizon, now=args.now, config_hash=args.config_hash)
         html_path, json_path = write_report(args.out_dir, summary)
     except (ReportError, sqlite3.Error, OSError) as error:
         print(json.dumps({'status': 'ERROR', 'code': type(error).__name__, 'detail': str(error)[:200]}))
