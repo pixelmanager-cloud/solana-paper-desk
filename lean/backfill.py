@@ -42,6 +42,7 @@ getTransaction per NEW signature absent from the feed, at most ``max_tx_per_poll
 (~720 calls when the feed is healthy: every authority signature is already in the database and costs nothing more).
 """
 import json
+from decimal import Decimal
 import os
 import sqlite3
 import time
@@ -435,13 +436,26 @@ def migration_candidate(tx, signature, *, now, max_age, name=NAME, entry_max_age
         return None
     if tx['meta'].get('err') is not None or (tx['transaction'].get('signatures') or [None])[0] != signature:
         return None
-    payload = json.dumps(tx, sort_keys=True)
+    payload = json.dumps(_plain(tx), sort_keys=True)     # providers parse fractions as Decimal; frames are plain JSON
     base = frame_candidate_any_depth(tx['slot'], tx['blockTime'], tx['slot'], digest(json.loads(payload)), payload, _stats())
     if base is None:
         return None
     latency = max(0.0, now - tx['blockTime'])
     return BackfillCandidate(base.seq, base.mint, base.pool, base.signature, base.slot, base.migrated_at, base.payload_hash,
                              source=name, latency_s=latency, beyond_max_age=latency > max_age, entry_max_age_s=entry_max_age_s)
+
+
+def _plain(value):
+    """The provider's exact-JSON parse (Decimal fractions) back to plain JSON types, as the discovery feed's json.loads sees
+    the same transaction, so the frame digest and the candidate match the feed's (live 2026-10-14: json.dumps raised on
+    Decimal token-balance amounts in every real getTransaction result)."""
+    if isinstance(value, Decimal):
+        return float(value)
+    if isinstance(value, dict):
+        return {k: _plain(v) for k, v in value.items()}
+    if isinstance(value, list):
+        return [_plain(v) for v in value]
+    return value
 
 
 def _stats():

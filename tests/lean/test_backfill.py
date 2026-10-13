@@ -276,6 +276,21 @@ class AgeTests(Base):
         self.assertGreater(T - found[0].migrated_at, MAX_AGE)         # the screen's own TOO_OLD test will reject it
 
 
+class ProviderDecimalTests(Base):
+    """Live 2026-10-14: providers parse fractions as Decimal (exact JSON); migration_candidate must accept that shape."""
+
+    def test_a_decimal_parsed_transaction_is_a_candidate(self):
+        import json as _json
+        from decimal import Decimal
+        token = self.tokens[0]
+        tx = tx_for(token, slot=100, block_time=T - 400)
+        exact = _json.loads(_json.dumps({**tx, 'meta': {**tx['meta'], 'fee_ui': 0.000005}}), parse_float=Decimal)
+        plain = B.migration_candidate(_json.loads(_json.dumps(tx)), signature_of(token), now=T, max_age=MAX_AGE)
+        got = B.migration_candidate(exact, signature_of(token), now=T, max_age=MAX_AGE)
+        self.assertIsNotNone(got)
+        self.assertEqual((got.mint, got.pool), (plain.mint, plain.pool))
+
+
 class EntryAgeCapTests(Base):
     """backfill.max_entry_age_s (coordinator, 2026-10-14): a late-found graduation is recorded but never entered once older
     than the cap, even when screen.max_age_seconds would still allow it."""
