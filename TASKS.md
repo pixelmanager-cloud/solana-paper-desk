@@ -2174,6 +2174,14 @@ STATUS: CLAIMED by coordinator (local agents, branches cloud/L21..L24). Do not t
 
 > **UPDATE (M1 merged into integration/r1):** marks now live in `lean/marks.py`. `adapters.mark` supports `marks.model: effective` (vault+virtual reserves, dynamic fee tier from FeeConfig). `path_marks` gained columns `model, virtual_raw, accrued_fees_raw, fee_bps, fee_source`. There is also `raw_policy` and `--config-hash` filtering. BEFORE your DONE, merge the latest `origin/integration/r1` into your branch and re-run the full suite. C1: replay with the EFFECTIVE model where the path rows carry the fields.
 
+> **UPDATE 2 (live findings, 2026-10-13):**
+> - **Transaction version.** Mainnet now has VERSION-1 transactions. Every `getTransaction` must pass `maxSupportedTransactionVersion: providers.MAX_TX_VERSION` (=1). With 0, 37% of live pool transactions fail with RPC -32015. This is fixed in r1 (`lean/providers.py`), and a test bans the literal 0.
+> - **C4 (and C2/C3) parsing.**
+>   - About 27% of signatures on the pump migration authority are no-op or bot txs that never call pump.
+>   - MANY real migrations happen via CPI (an inner instruction from another program). Parse INNER instructions (`meta.innerInstructions`), not only top-level ones.
+>   - Our current intake misses about 25% of on-chain graduations. C4's main job is to recover these.
+> - **Mayhem pools.** About 28% of graduations are "mayhem" pools, flagged at byte 243 of the PumpSwap pool account (matches the lean screen's `MAYHEM_POOL`).
+
 # ROUND C (2026-10-13). Cloud workers: take ONLY these C-tasks. Every other open item is SUPERSEDED or coordinator-owned.
 
 **Context, read first:** `~/` is not available to you, so the coordinator copied the key findings here.
