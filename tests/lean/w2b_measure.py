@@ -42,7 +42,14 @@ def run_once(plan, *, prefetch, faults=0.0, latency=True, seed=3, hazard_sample=
             calls = {}
             for (actor, method), n in sorted(sim.scene.net.calls.items()):
                 calls.setdefault(actor, {})[method] = n
-            return {'readiness': ready, 'prefetch_health': health.get('prefetch'), 'calls_by_actor': calls,
+            medians = {}
+            for kind, getter, names in (('features', lambda row, n: (row.get('fields') or {}).get(n), ('tx_count_first_10m',)),
+                                        ('flow', lambda row, n: row.get(n), ('unique_buyers', 'window_txs', 'max_runup_pct', 'tx_rate_per_s'))):
+                rows = [json.loads(o['raw']) for o in r.store.rows('observations', kind=kind, limit=100000)]
+                for name in names:
+                    values = sorted(float(getter(row, name)) for row in rows if getter(row, name) is not None)
+                    medians['%s.%s' % (kind, name)] = values[len(values) // 2] if values else None
+            return {'readiness': ready, 'medians': medians, 'prefetch_health': health.get('prefetch'), 'calls_by_actor': calls,
                     'decision_lag_s': {'min': round(min(lag), 2), 'p50': round(sorted(lag)[len(lag) // 2], 2), 'max': round(max(lag), 2)},
                     'fills': len(r.store.rows('fills', limit=100000)), 'entered': sum(1 for f in r.store.rows('fills', limit=100000) if f['side'] == 'buy')}
         finally:
@@ -91,6 +98,10 @@ def main(argv=None):
     else:
         print(text)
     noise = run_once(plan, prefetch=False, seed=a.noise_seed, **kw) if a.noise_seed is not None else None
+    print('\nmedian on / off: ' + ', '.join('%s %s' % (k, None if not off['medians'][k] or on['medians'][k] is None else round(on['medians'][k] / off['medians'][k], 2))
+                                          for k in sorted(on['medians'])))
+    ph = on['prefetch_health']['ready_at_decision']
+    print('staleness_s mean %s max %s' % (ph['staleness_s_mean'], ph['staleness_s_max']))
     print('\n%-40s %5s %12s %12s %12s %12s%s' % ('feature', 'n', 'ready off', 'ready on', 'usable off', 'usable on', '  usable off (seed %s)' % a.noise_seed
                                                   if noise else ''))
     for row in table(off, on):

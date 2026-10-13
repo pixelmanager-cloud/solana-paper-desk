@@ -68,10 +68,10 @@ DEFAULTS = {
     'probe': True,                      # the shadow screen: hazard gate + dev wallet / supply / holders (3 low-lane calls per candidate)
     'skip_hazards': True,               # do not prefetch a candidate the probe shows to be a hazard
     # seconds BEFORE the earliest screen (discovery + min_age_seconds) at which a job starts: about how long it needs, with slack
-    'lead_s': {'risk_external': 40.0, 'features': 30.0, 'wallet_signals': 30.0, 'clusters': 22.0, 'flow': 22.0},
+    'lead_s': {'risk_external': 25.0, 'features': 16.0, 'wallet_signals': 16.0, 'clusters': 14.0, 'flow': 15.0},       # W2b2 #1: closer to the decision
     'probe_at_s': 2.0,                  # the probe runs this long after discovery
     'min_start_s': 2.0,                 # no job starts earlier than this after discovery
-    'settle_s': 3.0,                    # as-of = start - settle_s (a transaction needs a moment to be visible at "confirmed")
+    'settle_s': 2.0,                    # as-of = start - settle_s (a transaction needs a moment to be visible at "confirmed")
     'max_stale_s': 120.0,               # a result whose as-of is older than this at the decision is not used
     'pass_interval_s': 1.0,
     'discover_interval_s': 2.0,
@@ -83,10 +83,12 @@ DEFAULTS = {
     'patience_s': 3.0,                  # the longest a prefetch waits for a low-lane token per request (own thread)
     'reserve_tokens': 1,                # only call while this many MORE low-lane tokens would remain for the other users
     'scan_limit': 200,
+    'flow_calls_per_hour': 450,         # W2b2 #3: the prefetch's OWN hourly flow budget (flow.max_calls_per_hour stays the post-screen pass's)
 }
 _FLOATS = {'probe_at_s': (0, 600), 'min_start_s': (0, 600), 'settle_s': (0, 60), 'max_stale_s': (1, 3600), 'pass_interval_s': (0.1, 60),
            'discover_interval_s': (0.1, 60), 'ttl_s': (60, 86400), 'retry_delay_s': (0, 600), 'patience_s': (0, 60)}
-_INTS = {'max_jobs_per_pass': (1, 50), 'max_entries': (1, 10000), 'max_attempts': (1, 10), 'reserve_tokens': (0, 10), 'scan_limit': (1, 2000)}
+_INTS = {'max_jobs_per_pass': (1, 50), 'max_entries': (1, 10000), 'max_attempts': (1, 10), 'reserve_tokens': (0, 10), 'scan_limit': (1, 2000),
+         'flow_calls_per_hour': (1, 100_000)}
 SCREEN_LAG_S = 3.0              # the screen decides about this long after discovery + min_age (p50 2.6 s in production: TOOL_AUDIT B03)
 WINDOWED = frozenset({'flow', 'wallet_signals', 'features', 'clusters'})        # their as-of is start - settle_s; RugCheck's is the start itself
 
@@ -136,21 +138,23 @@ def config(raw):
 
 
 class Job:
-    __slots__ = ('kind', 'state', 'attempts', 'next_at', 'asof', 'started_at', 'finished_at', 'payload', 'why', 'used')
+    __slots__ = ('kind', 'state', 'attempts', 'next_at', 'asof', 'started_at', 'finished_at', 'payload', 'why', 'used', 'cancelled')
 
     def __init__(self, kind):
         self.kind, self.state, self.attempts, self.next_at = kind, 'pending', 0, 0.0
         self.asof = self.started_at = self.finished_at = self.payload = self.why = None
         self.used = False
+        self.cancelled = False            # W2b2 #6: the decision came while the job was running: it ends 'cancelled', never 'done'
 
 
 class Entry:
-    __slots__ = ('candidate', 'received', 'seen_at', 'probe', 'probe_at', 'gate', 'jobs', 'decided_at', 'real')
+    __slots__ = ('candidate', 'received', 'seen_at', 'probe', 'probe_at', 'gate', 'soft', 'jobs', 'decided_at', 'real')
 
     def __init__(self, candidate, seen_at):
         self.candidate, self.received, self.seen_at = candidate, float(candidate.migrated_at), seen_at
         self.probe = self.probe_at = None
         self.gate = None                  # None (unknown) | 'FREE' | 'HAZARD' (the probe's verdict)
+        self.soft = None                  # W2b2 #3: None (unknown) | True / False: the probe's market figures are outside / inside the screen's bands
         self.jobs = OrderedDict((kind, Job(kind)) for kind in ORDER)
         self.decided_at = None
         self.real = None                  # 'FREE' | 'HAZARD' | 'FAILED' by the real screen
@@ -175,6 +179,7 @@ class Prefetch:
         self.probe_cfg = {**self.screen_cfg, 'min_age_seconds': 0, 'max_age_seconds': 10 ** 9, 'min_market_cap_usd': 0,
                           'max_market_cap_usd': 10 ** 18, 'min_liquidity_usd': 0}
         self.code_version, self.strategy_version = code_version, strategy_version
+        self.sol_usd = None                                # W2b2 #3: callable -> Decimal | None, the runner's cached SOL/USD (None = bands cannot be judged)
         self.gate = None                                   # callable -> bool: False pauses the prefetch (the runner takes no new entries: halted / kill switch)
         self.flow = self.wallet_signals = self.features = self.risk_external = self.clusters = None
         self.entries = OrderedDict()                       # mint -> Entry
@@ -187,6 +192,7 @@ class Prefetch:
         self.used = _fresh_counts()
         self.misses = {kind: {} for kind in KINDS}
         # readiness AT THE DECISION (on_decision): over hazard-free decisions (PASS or soft reject) and, for flow, PASS decisions
+        self.flow_gate = {'skipped_soft': 0, 'skipped_soft_but_passed': 0, 'ran_but_not_passed': 0}      # W2b2 #3: the soft-reject gate vs the screen
         self.ready = {'decisions': 0, 'hazard_free': 0, 'passed': 0, 'kinds': _fresh_counts(), 'flow_passed': 0,
                       'probe': {'tp': 0, 'fp': 0, 'fn': 0, 'tn': 0, 'unknown': 0}, 'staleness_s': {'n': 0, 'sum': 0.0, 'max': 0.0}}
         self.last_error = None
@@ -200,6 +206,9 @@ class Prefetch:
             setattr(self, name, worker)
             if worker is not None:
                 worker.prefetch = self
+                if name == 'flow':                       # W2b2 #3: the prefetch spends its own hourly budget, the post-screen fallback keeps its
+                    from lean import flow as _flow
+                    worker.prefetch_budget = _flow.HourBudget(self.cfg['flow_calls_per_hour'], self.clock)
         return self
 
     def _worker(self, kind):
@@ -258,11 +267,15 @@ class Prefetch:
             self.counts['scan_errors'] += 1
             return
         self._cursor = max(self._cursor, scan.next_cursor)
-        for candidate in scan.candidates:
-            with self._lock:
+        with self._lock:
+            fresh = [c for c in scan.candidates if c.mint not in self.entries]
+        # W2b2 #7: the store read happens OUTSIDE the lock, so the candidate thread's ``on_decision`` never waits behind it
+        handled = {c.mint for c in fresh if self._handled(c.mint)}
+        with self._lock:
+            for candidate in fresh:
                 if candidate.mint in self.entries:
                     continue
-                if self._handled(candidate.mint):
+                if candidate.mint in handled:
                     self.counts['already_handled'] += 1
                     continue
                 while len(self.entries) >= self.cfg['max_entries']:
@@ -326,6 +339,10 @@ class Prefetch:
                 if kind == 'features' and probe.state != 'done':
                     job.state, job.why = 'skipped', 'NO_PROBE'      # the dev wallet comes from the probe
                     return 'skip'
+                if kind == 'flow' and entry.soft is True:           # W2b2 #3: flow is collected for PASS decisions only: a soft reject would waste it
+                    job.state, job.why = 'skipped', 'SOFT_REJECT'
+                    self.flow_gate['skipped_soft'] += 1
+                    return 'skip'
         if kind == 'clusters' and self.wallet_signals is not None and 'wallet_signals' in self.cfg['kinds'] \
                 and entry.jobs['wallet_signals'].state == 'pending':
             return 'wait'                                          # its funders / early buyers come from the wallet job
@@ -348,6 +365,7 @@ class Prefetch:
     def _run(self, entry, job):
         kind, candidate = job.kind, entry.candidate
         job.attempts += 1
+        job.state = 'running'                                # W2b2 #6: not 'pending': the decision must be able to tell a job in flight
         job.started_at = self.clock()
         job.asof = job.started_at - (self.cfg['settle_s'] if kind in WINDOWED else 0.0)
         self.counts['jobs_run'] += 1
@@ -356,7 +374,8 @@ class Prefetch:
             if kind == 'probe':
                 done = self._probe(entry, job)
             elif kind == 'features':
-                payload = self.features.prefetch_run(candidate, entry.probe, job.asof, patience_s=self.cfg['patience_s'], stop=self.stop)
+                payload = self.features.prefetch_run(candidate, entry.probe, job.asof, patience_s=self.cfg['patience_s'], stop=self.stop,
+                                                     need_holders=entry.soft is True)
                 shed = [why for why in payload['missing'].values() if why in (LANE_SHED, 'STOPPED')]
                 done = self._retry(job, shed[0]) if shed and payload['calls'] == 0 else self._finish(job, payload)       # a shed lane: ask again
             elif kind == 'risk_external':
@@ -375,8 +394,9 @@ class Prefetch:
                 probe = entry.probe
                 bodies = dict(probe.raw) if probe is not None else {}
                 wallet = entry.jobs['wallet_signals']
+                # W2b2 #2: no holder body: the job READS the holder list itself, now (the probe's is ~60 s old at the decision)
                 self.clusters.collect(None, candidate.mint, candidate.pool, candidate.slot, decision_ts=job.asof, sink=sink,
-                                      screen_data=(dict(probe.features or {}), bodies.get('holders'), bodies.get('accounts_mint_pool')),
+                                      screen_data=(dict(probe.features or {}), None, bodies.get('accounts_mint_pool')),
                                       signals=wallet.payload['features'] if wallet.state == 'done' else None)
                 done = self._finish(job, sink) if 'row' in sink else self._retry(job, 'NO_RESULT')
             else:                                                  # flow
@@ -400,6 +420,9 @@ class Prefetch:
 
     def _finish(self, job, payload):
         job.finished_at = self.clock()
+        if job.cancelled:                                    # W2b2 #6: decided while running: its result is dropped, it is not counted as done
+            job.state, job.why = 'cancelled', 'DECIDED_WHILE_RUNNING'
+            return False
         job.payload, job.state = payload, 'done'
         self.counts['jobs_done'] += 1
         return True
@@ -407,7 +430,9 @@ class Prefetch:
     def _retry(self, job, why):
         """Nothing usable came of this try (a stop, a shed lane, a transient failure before anything was learned): try again soon."""
         job.why = str(why)
-        if self.stop.is_set() or job.attempts >= self.cfg['max_attempts']:
+        if job.cancelled:
+            job.state, job.why = 'cancelled', 'DECIDED_WHILE_RUNNING'
+        elif self.stop.is_set() or job.attempts >= self.cfg['max_attempts']:
             job.state = 'failed'
             self.counts['jobs_failed'] += 1
         else:
@@ -431,7 +456,25 @@ class Prefetch:
             return False
         entry.probe, entry.probe_at = result, self.clock()
         entry.gate = 'HAZARD' if is_hazard_reject(result) else 'FREE'
-        return self._finish(job, {'gate': entry.gate, 'reasons': list(result.reasons)})
+        entry.soft = self._soft(result)
+        return self._finish(job, {'gate': entry.gate, 'soft': entry.soft, 'reasons': list(result.reasons)})
+
+    def _soft(self, result):
+        """W2b2 #3: would the screen reject this pool for its MARKET figures (market cap / liquidity outside the strategy's bands)? The probe
+        ran with SOL/USD = 1, so its USD figures are the SOL figures: x the runner's cached SOL/USD gives the screen's. None when that rate is
+        unknown (then nothing is skipped on this ground)."""
+        try:
+            usd = self.sol_usd() if self.sol_usd is not None else None
+            f = result.features or {}
+            if usd is None or Decimal(str(usd)) <= 0 or f.get('market_cap_usd') is None or f.get('liquidity_usd') is None:
+                return None
+            usd = Decimal(str(usd))
+            cap, liquidity = Decimal(str(f['market_cap_usd'])) * usd, Decimal(str(f['liquidity_usd'])) * usd
+            cfg = self.screen_cfg
+            return bool(cap < Decimal(str(cfg['min_market_cap_usd'])) or cap > Decimal(str(cfg['max_market_cap_usd']))
+                        or liquidity < Decimal(str(cfg['min_liquidity_usd'])))
+        except (ArithmeticError, ValueError, TypeError, KeyError):
+            return None
 
     # ------------------------------------------------------------------------------------------------- results
     def take(self, kind, mint, decision_ts):
@@ -446,6 +489,8 @@ class Prefetch:
                 why = 'NO_ENTRY'
             elif job.state != 'done':
                 why = 'NOT_DONE:' + (job.why or job.state)
+            elif job.used:                                   # W2b2 #6: ONE row per job: a second decision of the mint falls back to the collector
+                why = 'ALREADY_USED'
             elif job.finished_at > decision_ts:
                 why = 'FINISHED_AFTER_DECISION'
             elif job.asof > decision_ts:
@@ -492,6 +537,7 @@ class Prefetch:
         body = copy.deepcopy(sink['body'])
         body['started_at'] = pre['finished_at']                  # collected_at = when the last value was observed
         body['prefetch'] = self._stamp(pre, decision_ts)
+        body['window_mode'] = 'prefetch'                         # W2b2 #1: version 'flow_v1p': the learner keeps it in its own columns
         body['window_end_ts'] = sink.get('window_end_ts')
         self._note_staleness(decision_ts, pre)
         return collector._write(decision_id, decision_ts, mint, cid, pool, body)
@@ -505,12 +551,14 @@ class Prefetch:
         features = copy.deepcopy(sink['features'])
         events = copy.deepcopy(sink['events'])
         features.update(decision_ts=decision_ts, collected_at=pre['finished_at'], late_s=round(pre['finished_at'] - decision_ts, 3),
-                        prefetch=self._stamp(pre, decision_ts), window_end_ts=sink.get('window_end_ts'))
+                        prefetch=self._stamp(pre, decision_ts), window_end_ts=sink.get('window_end_ts'),
+                        version=features['version'] + 'p', window_mode='prefetch')      # W2b2 #1
         features.get('unavailable', {}).pop('decision_ts', None)
         features['partial'] = bool(features.get('unavailable'))
         collector._attempts.pop(mint, None)
         self._note_staleness(decision_ts, pre)
         collector._persist(features, events, cid, mint)
+        collector._persist_raws(sink.get('raws'), cid, mint)                 # W2b2 #8: with the candidate id
         return features
 
     def commit_clusters(self, collector, cid, mint, pool, grad_slot, decision_ts):
@@ -522,7 +570,8 @@ class Prefetch:
         row = copy.deepcopy(sink['row'])
         lookups = copy.deepcopy(sink['lookups'])
         row.update(decision_ts=decision_ts, collected_at=pre['finished_at'], late_s=round(pre['finished_at'] - decision_ts, 3),
-                   prefetch=self._stamp(pre, decision_ts), window_end_ts=sink.get('window_end_ts'))
+                   prefetch=self._stamp(pre, decision_ts), window_end_ts=sink.get('window_end_ts'),
+                   version=row['version'] + 'p', window_mode='prefetch')                # W2b2 #1
         self._note_staleness(decision_ts, pre)
         collector._persist(row, lookups, cid, mint)
         return row
@@ -543,6 +592,9 @@ class Prefetch:
                     if job.state == 'pending':
                         job.state, job.why = 'cancelled', 'DECIDED'
                         self.counts['cancelled'] += 1
+                    elif job.state == 'running':
+                        job.cancelled = True                  # W2b2 #6: ends 'cancelled' when it returns (see ``_finish``), is not counted done
+                        self.counts['cancelled'] += 1
                 entry.real = 'FREE' if eligible(screen) else 'HAZARD'
                 r = self.ready
                 r['decisions'] += 1
@@ -558,6 +610,11 @@ class Prefetch:
                 r['hazard_free'] += 1
                 passed = bool(getattr(screen, 'passed', False))
                 r['passed'] += 1 if passed else 0
+                flow_job = entry.jobs['flow']                  # W2b2 #3: was the soft-reject gate right?
+                if passed and flow_job.why == 'SOFT_REJECT':
+                    self.flow_gate['skipped_soft_but_passed'] += 1
+                elif not passed and flow_job.state in ('done', 'running', 'cancelled') and flow_job.why != 'DECIDED':
+                    self.flow_gate['ran_but_not_passed'] += 1
                 for kind in KINDS:
                     if kind == 'flow' and not passed:
                         continue
@@ -587,7 +644,15 @@ class Prefetch:
                                           'ready': dict(r['kinds']), 'rate': rate,
                                           'staleness_s_mean': None if not s['n'] else round(s['sum'] / s['n'], 3),
                                           'staleness_s_max': round(s['max'], 3) if s['n'] else None},
-                    'probe_vs_screen': dict(r['probe']), 'last_error': self.last_error, 'kinds': list(self.cfg['kinds'])}
+                    'probe_vs_screen': dict(r['probe']), 'probe_fp_rate': self._fp_rate(r['probe']), 'flow_gate': dict(self.flow_gate),
+                    'last_error': self.last_error, 'kinds': list(self.cfg['kinds'])}
+
+    @staticmethod
+    def _fp_rate(probe):
+        """W2b2 #5: fp / (fp + tn): of the candidates the screen found hazard-FREE, the share the probe wrongly called hazard (their prefetch was
+        skipped). The rollback criterion: above 10 % the gate costs more than it saves. None before any such decision."""
+        n = probe['fp'] + probe['tn']
+        return None if not n else round(probe['fp'] / n, 4)
 
 
 class _Patient:

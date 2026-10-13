@@ -369,6 +369,7 @@ class RiskExternal:
                       'stopped': 0, 'unknown_mint': 0, 'http_429': 0, 'raw_kept': 0, 'dropped': 0}
         self.last_error = None
         self.prefetch = None                              # W2b #8: lean.prefetch.Prefetch (set by build_runner when configured)
+        self._deferred_raw = {}                           # W2b2 #8: mint -> (body, ts) of a prefetch's report, written with the candidate id at the commit
         self._stop = None
         self._seen = set()
         self._seen_lock = threading.Lock()                # only around the dedupe set; never held while anything is sent
@@ -510,9 +511,12 @@ class RiskExternal:
             else:
                 raw = {'bytes': len(body), 'sha256': meta.get('raw_sha256'), 'kept': False}
                 if len(body) <= self.cfg['raw_max_bytes']:
-                    self.store.add_observation(RAW_KIND, body, mint=mint, candidate_id=candidate_id,
-                                               meta={'provider': 'rugcheck', 'endpoint': 'report', 'bytes': len(body)},
-                                               code_version=self.code_version, strategy_version=self.strategy_version, ts=self.clock())
+                    if asof is None:
+                        self._store_raw(mint, candidate_id, body, self.clock())
+                    else:                                         # W2b2 #8: a prefetch has no candidate id yet: the commit writes it
+                        self._deferred_raw[mint] = (body, self.clock())
+                        while len(self._deferred_raw) > 64:
+                            self._deferred_raw.pop(next(iter(self._deferred_raw)))
                     # M1b #4: under raw_policy errors_only the store keeps only the sha256 / size / meta of this body
                     keeps = getattr(self.store, 'keeps_raw', None)
                     raw['kept'] = bool(keeps(RAW_KIND)) if callable(keeps) else True
@@ -537,6 +541,11 @@ class RiskExternal:
         return build_row(mint, screen_passed=passed, decision_ts=decision, collected_at=self.clock(), calls=counter[0], fields=fields,
                          missing=missing, identity=identity, raw=raw, candidate_id=candidate_id)
 
+    def _store_raw(self, mint, candidate_id, body, ts):
+        self.store.add_observation(RAW_KIND, body, mint=mint, candidate_id=candidate_id,
+                                   meta={'provider': 'rugcheck', 'endpoint': 'report', 'bytes': len(body)},
+                                   code_version=self.code_version, strategy_version=self.strategy_version, ts=ts)
+
     # --- W2b #8 ---
     def _commit_prefetched(self, mint, candidate_id, passed, decision):
         """The row of a RugCheck report fetched BEFORE the screen: its fields as collected (``AT_COLLECTION`` snapshots read before the
@@ -546,6 +555,9 @@ class RiskExternal:
         pre = self.prefetch.take('risk_external', mint, decision)
         if pre is None:
             return None
+        deferred = self._deferred_raw.pop(mint, None)
+        if deferred is not None:                                  # W2b2 #8: the raw report, now with the candidate id
+            self._store_raw(mint, candidate_id, deferred[0], deferred[1])
         row = pre['payload']
         fields = {k: v for k, v in row['fields'].items() if v is not None}
         missing = dict(row['missing'])
@@ -562,6 +574,7 @@ class RiskExternal:
                         missing=missing, identity=identity, raw=row.get('raw'), candidate_id=candidate_id)
         out['prefetch'] = {'asof': pre['asof'], 'started_at': pre['started_at'], 'finished_at': pre['finished_at'],
                            'staleness_s': round(decision - pre['asof'], 3)}
+        out['version'], out['window_mode'] = VERSION + 'p', 'prefetch'                  # W2b2 #1: its own column in the learner
         return out
     # --- end W2b ---
 

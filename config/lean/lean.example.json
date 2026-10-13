@@ -37,7 +37,7 @@
     "low_shed_s": 30
   },
   "paths": {
-    "_comment": "L07R price-path recorder (low lane, run mode only): every hazard-free candidate, entered or not, is marked every interval_s for path_hours into its OWN db (null = <state-dir>/paths.sqlite; never lean.sqlite). Past max_db_gb the file rolls over to paths-YYYYMMDD.sqlite; below min_free_gb of free disk nothing is written. W2b #9 hazard_path_sample (a fraction in [0, 1]; absent = 0 = off): a deterministic random sample (sha256 of the mint) of the HAZARD rejects (MAYHEM_POOL, HOLDER_CONCENTRATION_ABOVE_MAX, HOLDER_REWARD_POOL ...) also gets a path, labelled stage hazard_reject with reason 'hazard_reject: <reason>'. They are NEVER traded; the learner reports them in their own section (was the filter right?) and keeps them out of every table and rule. Cost: one getMultipleAccounts (<= 50 pools) per start batch plus a few more accounts per 15 s poll on the low lane.",
+    "_comment": "L07R price-path recorder (low lane, run mode only): every hazard-free candidate, entered or not, is marked every interval_s for path_hours into its OWN db (null = <state-dir>/paths.sqlite; never lean.sqlite). Past max_db_gb the file rolls over to paths-YYYYMMDD.sqlite; below min_free_gb of free disk nothing is written. W2b #9 hazard_path_sample (a fraction in [0, 1]; absent = 0 = off): a deterministic random sample (sha256 of the mint) of the HAZARD rejects (MAYHEM_POOL, HOLDER_CONCENTRATION_ABOVE_MAX, HOLDER_REWARD_POOL ...) also gets a path, labelled stage hazard_reject with reason 'hazard_reject: <reason>'. They are NEVER traded; the learner reports them in their own section (was the filter right?) and keeps them out of every table and rule. Cost (measured by the W2b pre-deploy review, corrected in W2b2): about 120 MB/day of path_marks at 0.2, so ~60 MB/day at the 0.1 the example ships (paths.sqlite rolls over at max_db_gb), one getMultipleAccounts (<= 50 pools) per start batch and about one more getMultipleAccounts per 15 s poll on the low lane once the active paths pass a multiple of 50 pools.",
     "enabled": true,
     "db": null,
     "path_hours": 6,
@@ -46,7 +46,7 @@
     "max_paths": 2000,
     "max_db_gb": 2,
     "min_free_gb": 2,
-    "hazard_path_sample": 0.2
+    "hazard_path_sample": 0.1
   },
   "route_check": {
     "enabled": true
@@ -222,10 +222,10 @@
     "kinds": ["features", "risk_external", "wallet_signals", "clusters", "flow"],
     "probe": true,
     "skip_hazards": true,
-    "lead_s": {"risk_external": 40.0, "features": 30.0, "wallet_signals": 30.0, "clusters": 22.0, "flow": 22.0},
+    "lead_s": {"risk_external": 25.0, "features": 16.0, "wallet_signals": 16.0, "clusters": 14.0, "flow": 15.0},
     "probe_at_s": 2.0,
     "min_start_s": 2.0,
-    "settle_s": 3.0,
+    "settle_s": 2.0,
     "max_stale_s": 120.0,
     "pass_interval_s": 1.0,
     "discover_interval_s": 2.0,

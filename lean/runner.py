@@ -1122,6 +1122,7 @@ class Runner:
                 # --- end L21 ---
                 # --- W2b hook ---
                 'prefetch': self._aux_health('prefetch', self.prefetch),
+                'low_lane': self._low_lane_health(),
                 # --- end W2b ---
                 # --- L07R hook ---
                 'paths': self._l07r_health(),
@@ -1139,6 +1140,24 @@ class Runner:
                 # --- L15 hook ---
                 **({} if self.ops is None else self.ops.health())}
                 # --- end L15 ---
+
+    # --- W2b2 #5 hook ---
+    def _low_lane_health(self):
+        """The shared low lane's own counters (granted / shed_no_token / shed_backoff / sheds, all users together) and, apart from them, how many of the
+        held-position probes (L11) were shed and why: the rollback signals of the prefetch (held-risk probes must not be starved). Never raises."""
+        try:
+            limiter = None
+            for worker in (self.held_risk and self.held_risk.low, self.features, self.flow):
+                client = getattr(worker, 'helius', None) or getattr(worker, 'low', None)
+                limiter = getattr(getattr(client, 'transport', None), 'limiter', None)
+                if limiter is not None and isinstance(getattr(limiter, 'stats', None), dict):
+                    break
+                limiter = None
+            held = {} if self.held_risk is None else {k: v for k, v in self.held_risk.counts.items() if k.startswith('shed')}
+            return {'lane': None if limiter is None else dict(limiter.stats), 'held_risk_shed': held}
+        except Exception as error:                                     # noqa: BLE001
+            return {'health_error': type(error).__name__}
+    # --- end W2b2 ---
 
     # --- M1 hook ---
     def _m1_health(self):
