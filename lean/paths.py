@@ -31,7 +31,26 @@ Budget: at most 100 ACCOUNTS per call (the RPC limit) = 50 pools. The low lane n
 now, THIS thread paces itself within 80% of ``interval_s``. A shed (429 / -32005 on any lane) or the exhausted budget
 ends the poll; the skipped paths get ``path_gaps`` rows and are polled FIRST next time (the order rotates), so the
 newest paths are not the ones always dropped. ``stop`` is checked between calls.
+
+W2b (#9): HAZARD REJECT SAMPLE. About 58 % of the screened candidates are hazard rejects (MAYHEM_POOL, HOLDER_CONCENTRATION_ABOVE_MAX,
+HOLDER_REWARD_POOL ...) and never got a path, so the learner could only ever tighten the screen. ``hazard_path_sample`` (a fraction in
+[0, 1]; ABSENT = 0 = off) records the price path of a deterministic random sample of them: ``sha256('lean.paths.hazard_sample:' + mint)``
+as a number in [0, 1) below the fraction, so the same mint is always in or out (a restart, a replay and a second recorder agree). Such a
+path is NEVER traded and never mixed with the real population:
+  * it is labelled ``stage = 'hazard_reject'`` and ``reason = ['hazard_reject: <screen reason>', ...]`` (``screen_reasons`` keeps the
+    plain reasons); ``entered`` is always 0;
+  * the recorder starts it on its own thread (the runner hook only queues the screen result in memory: no provider I/O there). A hazard
+    that stopped the screen before its market stage (MAYHEM_POOL, HOLDER_REWARD_POOL ...) carries no reserves, so ONE batched
+    ``getMultipleAccounts`` of the two vaults (<= 50 pools per call, low lane, paced like a poll) reads them; the pool and mint accounts
+    come from the screen's retained ``accounts_mint_pool`` body. A hazard that reached the market stage (HOLDER_CONCENTRATION_ABOVE_MAX)
+    starts at once from the screen's own figures;
+  * ``lean.learn`` reports them in their OWN section (per reject reason: label counts, rug / win rate, simulated PnL if they had been
+    entered) and leaves them out of every table, rule and window; ``lean.wallet_signals.read_path`` ignores them (a wallet is never
+    rated by a hazard token's path);
+  * health counts them: ``hazard_seen``, ``hazard_sampled``, ``hazard_started``, ``hazard_unrecordable``, ``hazard_expired``,
+    ``hazard_by_reason``, plus the configured fraction.
 """
+import hashlib
 import json
 import logging
 import os
@@ -39,6 +58,7 @@ import shutil
 import sqlite3
 import threading
 import time
+from collections import deque
 from dataclasses import asdict, dataclass
 from datetime import datetime, timezone
 from decimal import Decimal
@@ -50,12 +70,18 @@ from lean.providers import LANE_SHED, MAX_MULTIPLE_ACCOUNTS, ProviderError, _pub
 log = logging.getLogger('lean.paths')
 
 SOFT_SCREEN_REASONS = frozenset({'MARKET_CAP_BELOW_MIN', 'MARKET_CAP_ABOVE_MAX', 'LIQUIDITY_BELOW_MIN'})
+HAZARD_STAGE = 'hazard_reject'        # W2b #9: ``paths.stage`` of a sampled hazard reject (never traded)
+HAZARD_REASON_PREFIX = 'hazard_reject: '
+HAZARD_SAMPLE_SALT = 'lean.paths.hazard_sample:'
+HAZARD_QUEUE_MAX = 500                # sampled hazards waiting for their first read (memory only)
+HAZARD_MAX_WAIT_S = 300.0             # a sample not started this long after its screen is dropped (its start would be stale)
 ACCOUNTS_PER_POOL = 2
 POOLS_PER_CALL = MAX_MULTIPLE_ACCOUNTS // ACCOUNTS_PER_POOL          # 50 pools = 100 accounts
 PACE_BUDGET = 0.8            # a poll may pace its calls over at most 80% of the interval
 GB = 1024 ** 3
 DEFAULTS = {'enabled': False, 'db': None, 'path_hours': 6.0, 'interval_s': 15.0, 'ref_size_sol': '0.2', 'max_paths': 2000,
-            'max_db_gb': 2.0, 'min_free_gb': 2.0}
+            'max_db_gb': 2.0, 'min_free_gb': 2.0,
+            'hazard_path_sample': 0.0}       # W2b #9: fraction of hazard rejects whose price path is recorded (never traded); 0 = off
 
 
 def config(raw):
@@ -77,6 +103,10 @@ def config(raw):
         out[key] = float(out[key])
     if type(out['max_paths']) is not int or not 1 <= out['max_paths'] <= 100_000:
         raise ValueError('paths.max_paths out of range')
+    sample = out['hazard_path_sample']                                 # W2b #9
+    if isinstance(sample, bool) or not isinstance(sample, (int, float)) or not 0 <= sample <= 1:
+        raise ValueError('paths.hazard_path_sample must be a number in [0, 1]')
+    out['hazard_path_sample'] = float(sample)
     try:
         size = Decimal(str(out['ref_size_sol']))
     except ArithmeticError:
@@ -102,6 +132,31 @@ def eligible(screen):
         return True
     reasons = tuple(screen.reasons or ())
     return bool(reasons) and all(r in SOFT_SCREEN_REASONS for r in reasons)
+
+
+def is_hazard_reject(screen):
+    """W2b #9: a screen that REJECTED for at least one hazard (not only the soft market bands). A failed screen is not a reject."""
+    if screen is None or getattr(screen, 'error', None) or getattr(screen, 'passed', False):
+        return False
+    reasons = tuple(screen.reasons or ())
+    return bool(reasons) and not all(r in SOFT_SCREEN_REASONS for r in reasons)
+
+
+def hazard_selected(mint, fraction):
+    """W2b #9: is ``mint`` in the deterministic random sample of ``fraction`` of the hazard rejects? The sha256 of the mint (with a
+    fixed salt) read as a number in [0, 1): below ``fraction`` is in. Monotone in ``fraction`` (a larger sample contains the smaller
+    one), identical on every machine and every restart. 0 is never, 1 is always."""
+    if fraction <= 0:
+        return False
+    if fraction >= 1:
+        return True
+    digest = hashlib.sha256((HAZARD_SAMPLE_SALT + str(mint)).encode()).digest()
+    return int.from_bytes(digest[:8], 'big') / 2.0 ** 64 < fraction
+
+
+def hazard_reasons(screen):
+    """The label of a sampled hazard path: ``hazard_reject: <reason>`` for every reason of the screen."""
+    return [HAZARD_REASON_PREFIX + str(r) for r in (screen.reasons or ())]
 
 
 def outcome(screen, *, entry_reasons=None, fill=None, error=None):
@@ -290,11 +345,52 @@ class _Stopped(Exception):
     """Internal: ``stop`` was set while this poll was pacing."""
 
 
+
+def hazard_base(screen, mint):
+    """W2b #9: what a hazard reject's screen already loaded about its pool, from the retained ``accounts_mint_pool`` body (no request):
+    ``{decimals, supply_raw, pool, pool_base_token_account, pool_quote_token_account, protocol_fees, creator_fees,
+    virtual_quote_reserves}`` or None when the mint or the pool account was not retained / not readable."""
+    from desk.pools import parse_pool
+    from desk.security import mint_policy
+    from lean import candidates as C
+    body = next((b for label, b in (getattr(screen, 'raw', ()) or ()) if label == 'accounts_mint_pool'), None)
+    if body is None:
+        return None
+    try:
+        mint_account, pool_account = json.loads(body)['result']['value']
+        policy = mint_policy(mint_account, mint=mint, token_profile_version=2)
+        fields = parse_pool(pool_account)
+        if 'decimals' not in policy or fields['base_mint'] != mint:
+            return None
+        return {'decimals': int(policy['decimals']), 'supply_raw': str(policy['supply_raw']), 'pool': C.expected_pool(mint),
+                'pool_base_token_account': fields['pool_base_token_account'], 'pool_quote_token_account': fields['pool_quote_token_account'],
+                'protocol_fees': int(fields['protocol_fees']), 'creator_fees': int(fields['creator_fees']),
+                'virtual_quote_reserves': int(fields['virtual_quote_reserves'])}
+    except (ValueError, KeyError, TypeError, IndexError, AttributeError, StopIteration):
+        return None
+
+
+def hazard_features(mint, base, accounts, screen, at):
+    """The path-start figures of a sampled hazard reject: the screen's own features, and for what its early stop never measured the
+    vault amounts READ at ``at`` (``hazard_probe_at``). Raises AdapterError / ValueError when the pool cannot be marked."""
+    base_raw, quote_raw = A.vault_amount(accounts[0]), A.vault_amount(accounts[1])
+    spendable = quote_raw - base['protocol_fees'] - base['creator_fees']
+    if base_raw <= 0 or quote_raw <= 0 or spendable <= 0:
+        raise ValueError('empty pool')
+    probe = {'mint': mint, 'pool': base['pool'], 'decimals': base['decimals'], 'supply_raw': base['supply_raw'],
+             'pool_base_token_account': base['pool_base_token_account'], 'pool_quote_token_account': base['pool_quote_token_account'],
+             'base_reserve_raw': str(base_raw), 'quote_gross_raw': str(quote_raw), 'quote_spendable_raw': str(spendable),
+             'quote_effective_raw': str(quote_raw + base['virtual_quote_reserves']),
+             'virtual_quote_reserves_raw': str(base['virtual_quote_reserves']), 'boosted': bool(base['virtual_quote_reserves'] or
+                                                                                              base['protocol_fees'] or base['creator_fees']),
+             'hazard_probe_at': at}
+    return {**probe, **dict(screen.features or {})}                       # the screen's own figures win where it measured them
+
 # ------------------------------------------------------------------------------------------------------ the recorder
 class PathRecorder:
     def __init__(self, *, db, helius, pcfg, code_version, strategy_version, pool_fee_bps=25, path_hours=6.0,
                  interval_s=15.0, ref_size_sol='0.2', max_paths=2000, max_db_gb=2.0, min_free_gb=2.0, clock=time.time,
-                 sleep=time.sleep, mark_model=None):
+                 sleep=time.sleep, mark_model=None, hazard_path_sample=0.0):
         self.db, self.helius, self.pcfg, self.clock, self.sleep = db, helius, pcfg, clock, sleep
         self.code_version, self.strategy_version = code_version, strategy_version
         self.pool_fee_bps = int(pool_fee_bps)
@@ -310,7 +406,13 @@ class PathRecorder:
         self._lock = threading.Lock()              # in-memory state only: never held across I/O
         self.stats = {'started': 0, 'resumed': 0, 'ended': 0, 'polls': 0, 'calls': 0, 'marks': 0, 'gaps': 0, 'shed': 0,
                       'paced': 0, 'errors': 0, 'write_failures': 0, 'hazard_skipped': 0, 'duplicates': 0,
-                      'capacity_dropped': 0, 'rollovers': 0, 'disk_low': 0}
+                      'capacity_dropped': 0, 'rollovers': 0, 'disk_low': 0,
+                      # --- W2b #9: sampled hazard rejects (never traded) ---
+                      'hazard_seen': 0, 'hazard_sampled': 0, 'hazard_started': 0, 'hazard_unrecordable': 0, 'hazard_expired': 0,
+                      'hazard_queue_full': 0, 'hazard_probe_calls': 0}
+        self.hazard_path_sample = float(hazard_path_sample)
+        self.hazard_by_reason = {}                  # reason -> sampled count (health)
+        self._hazard_queue = deque()                # sampled hazards waiting for their first read (memory only)
         self.errors_by_code = {}
         self.last_error = None
         self.last_poll_at = None
@@ -336,12 +438,102 @@ class PathRecorder:
         with self._lock:
             out = {'enabled': True, 'active_paths': len(self._paths), 'last_poll_at': self.last_poll_at,
                    'last_error': self.last_error, 'errors_by_code': dict(self.errors_by_code), **self.stats}
+        out['hazard_path_sample'] = self.hazard_path_sample                     # W2b #9
+        with self._lock:
+            out['hazard_by_reason'] = dict(sorted(self.hazard_by_reason.items()))
+            out['hazard_queued'] = len(self._hazard_queue)
         out['db'] = str(self.db.path)
         out['db_bytes'] = self.db.size_bytes()
         limiter = getattr(getattr(self.helius, 'transport', None), 'limiter', None)
         if isinstance(getattr(limiter, 'stats', None), dict):
             out['low_lane'] = dict(limiter.stats)
         return out
+
+
+    # -- W2b #9: the hazard-reject sample (never traded) ------------------------------------------------------------
+    def _queue_hazard(self, note, screen):
+        """Remember a SAMPLED hazard reject until the recorder thread starts its path (memory only: no provider I/O here, no lock
+        but the in-memory one). False when the queue is full (it is then counted like any other unrecorded hazard)."""
+        with self._lock:
+            self.stats['hazard_sampled'] += 1
+            for reason in screen.reasons or ():
+                self.hazard_by_reason[str(reason)] = self.hazard_by_reason.get(str(reason), 0) + 1
+            if len(self._hazard_queue) >= HAZARD_QUEUE_MAX:
+                self.stats['hazard_queue_full'] += 1
+                return False
+            self._hazard_queue.append({'mint': note['mint'], 'cid': note.get('cid'), 'screen': screen, 'queued_at': self.clock()})
+        return True
+
+    @staticmethod
+    def _hazard_complete(features):
+        return all(k in features for k in ('pool', 'pool_base_token_account', 'pool_quote_token_account', 'decimals', 'base_reserve_raw',
+                                           'quote_gross_raw', 'quote_spendable_raw'))
+
+    def _start_hazards(self, stop):
+        """Start the paths of the queued hazard samples: ONE batched read of the vaults of those whose screen stopped before its market
+        stage. Runs on the recorder thread at the head of a poll. A shed leaves the queue as it is (tried again next poll); a sample
+        older than ``HAZARD_MAX_WAIT_S``, or one that cannot be marked, is dropped and counted. Never raises."""
+        try:
+            with self._lock:
+                items = [self._hazard_queue.popleft() for _ in range(min(len(self._hazard_queue), POOLS_PER_CALL))]
+            if not items:
+                return 0
+            now = self.clock()
+            ready, reading = [], []
+            for item in items:
+                if now - item['queued_at'] > HAZARD_MAX_WAIT_S:
+                    self._bump('hazard_expired')
+                    continue
+                features = dict(item['screen'].features or {})
+                if self._hazard_complete(features):
+                    ready.append((item, features))
+                    continue
+                base = hazard_base(item['screen'], item['mint'])
+                if base is None:
+                    self._bump('hazard_unrecordable')
+                    continue
+                reading.append((item, base))
+            if reading:
+                keys = [k for _item, base in reading for k in (base['pool_base_token_account'], base['pool_quote_token_account'])]
+                deadline = now + self.interval_s * PACE_BUDGET
+                try:
+                    result = self._call(keys, deadline, stop)
+                except _Stopped:
+                    result = None
+                except ProviderError as error:
+                    result = None
+                    if error.code == LANE_SHED:                              # nothing was sent: keep them for the next poll
+                        self._bump('shed')
+                    else:
+                        self._bump('calls')
+                        self._bump('hazard_probe_calls')
+                        self._fail('HAZARD_PROBE', error)
+                        self._bump('hazard_unrecordable', len(reading))
+                        reading = []
+                if result is None:
+                    with self._lock:
+                        self._hazard_queue.extendleft(reversed([item for item, _ in reading]))
+                    reading = []
+                else:
+                    self._bump('calls')
+                    self._bump('hazard_probe_calls')
+                    values, at = result['value'], self.clock()
+                    for i, (item, base) in enumerate(reading):
+                        try:
+                            ready.append((item, hazard_features(item['mint'], base, values[2 * i:2 * i + 2], item['screen'], at)))
+                        except (A.AdapterError, ValueError, KeyError, TypeError):
+                            self._bump('hazard_unrecordable')
+            started = 0
+            for item, features in ready:
+                screen = item['screen']
+                if self.start(item['mint'], item['cid'], features, entered=False, stage=HAZARD_STAGE, reasons=hazard_reasons(screen),
+                              screen_reasons=list(screen.reasons or ()), fill=None):
+                    started += 1
+                    self._bump('hazard_started')
+            return started
+        except Exception as error:                                          # noqa: BLE001 - never reaches the trader
+            self._fail('HAZARD_START_FAILED', error)
+            return 0
 
     # -- starting a path ------------------------------------------------------------------------------------------
     def on_candidate(self, note):
@@ -350,6 +542,12 @@ class PathRecorder:
         try:
             screen = note['screen']
             if not eligible(screen):
+                # --- W2b #9 hook: a deterministic random sample of the HAZARD rejects gets a path too (queued in memory; never traded) ---
+                if is_hazard_reject(screen):
+                    self._bump('hazard_seen')
+                    if hazard_selected(note['mint'], self.hazard_path_sample) and self._queue_hazard(note, screen):
+                        return True
+                # --- end W2b ---
                 self._bump('hazard_skipped')
                 return False
             stage, reasons, entered = outcome(screen, entry_reasons=note.get('entry_reasons'), fill=note.get('fill'),
@@ -453,6 +651,8 @@ class PathRecorder:
             return 0
 
     def _poll(self, stop):
+        if self._hazard_queue:                                         # W2b #9: first reads of the sampled hazard rejects
+            self._start_hazards(stop)
         now = self.clock()
         with self._lock:
             self.stats['polls'] += 1
@@ -647,4 +847,5 @@ def build(cfg, *, state_dir, keys, pcfg, code_version, strategy_version, pool_fe
                         code_version=code_version, strategy_version=strategy_version, pool_fee_bps=pool_fee_bps,
                         path_hours=cfg['path_hours'], interval_s=cfg['interval_s'], ref_size_sol=cfg['ref_size_sol'],
                         max_paths=cfg['max_paths'], max_db_gb=cfg['max_db_gb'], min_free_gb=cfg['min_free_gb'],
-                        clock=clock, sleep=transport_kwargs.get('sleep', time.sleep), mark_model=mark_model)
+                        clock=clock, sleep=transport_kwargs.get('sleep', time.sleep), mark_model=mark_model,
+                        hazard_path_sample=cfg.get('hazard_path_sample', 0.0))                  # W2b #9

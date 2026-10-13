@@ -510,6 +510,11 @@ def _route_check_section(db):
         connection.close()
 
 
+def _readiness(db):
+    from lean import prefetch
+    return prefetch.readiness(db, use_raw=False)          # (the report never selects an observation blob)
+
+
 def _section(function, *args):
     try:
         return {'status': 'OK', 'data': function(*args)}
@@ -756,6 +761,9 @@ def build(db, *, counterfactual_db=None, horizon=3600, now=None, config_hash=Non
     # --- L12 hook ---
     summary['features'] = _section(features_report, db)
     # --- end L12 ---
+    # --- W2b hook: how many of the features existed AT the screen decision (strictly before it), and how many the learner can use ---
+    summary['readiness'] = _section(_readiness, db)
+    # --- end W2b ---
     # --- W2a hook: shadow arms (arms.sqlite beside the store unless given; absent = not provided, never an error) ---
     arms_path = Path(arms_db) if arms_db is not None else Path(db).with_name('arms.sqlite')
     summary['arms'] = _section(_arms_section, arms_path, db, main_trades_for_arms(all_trades)) if arms_path.is_file() else {'status': 'NOT_PROVIDED'}
@@ -869,6 +877,17 @@ def render_html(s):
         if d['missing']:
             parts.append('<p>Most common missing fields: %s</p>' % e(json.dumps(d['missing'], sort_keys=True)))
     # --- end L12 ---
+    # --- W2b hook ---
+    rd = s.get('readiness', {'status': 'NOT_PROVIDED'})
+    if rd['status'] == 'OK' and rd['data']['population']['free']:
+        d = rd['data']
+        parts.append('<h2>Features ready at the decision</h2><p>%d screened, %d hazard-free (flow: %d passed). <b>ready</b> = a value observed strictly BEFORE the '
+                     'screen decision (the strategy could have used it); the learner-usable share is in the <code>lean.learn</code> report. With '
+                     '<code>prefetch</code> off the collectors start after the screen and nothing is ready.</p>'
+                     % (d['population']['screened'], d['population']['free'], d['population']['passed']))
+        parts.append(table(['feature', 'candidates', 'with a value', 'ready', 'ready rate'],
+                           [[name, f['n'], f['row'], f['ready'], f['ready_rate']] for name, f in d['features'].items()]))
+    # --- end W2b ---
     c = s['counterfactual']
     parts.append('<h2>Rejections vs forward price (counterfactual)</h2>' + note(c) + ('<p>Not provided.</p>' if c['status'] == 'NOT_PROVIDED' else ''))
     if c['status'] == 'OK':

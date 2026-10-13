@@ -134,6 +134,9 @@ class Runner:
         # --- L24 hook ---
         self.clusters = None                       # lean.clusters.Clusters (set by build_runner when configured)
         # --- end L24 ---
+        # --- W2b hook ---
+        self.prefetch = None                       # lean.prefetch.Prefetch (set by build_runner when prefetch.enabled): collectors start before the screen
+        # --- end W2b ---
         # --- LINT2b hook: the feature / wallet-signal threads (health ``alive``; one shared shutdown deadline) ---
         self._aux_threads = {}                     # name -> Thread (features, wallet_signals, flow, bot_exit, clusters, risk_external)
         # --- end LINT2b ---
@@ -614,6 +617,10 @@ class Runner:
         # --- L12 hook ---
         self._l12_screened = (cid, result)
         # --- end L12 ---
+        # --- W2b hook: what the prefetch had READY at this decision (a dictionary lookup: no I/O, never raises, never waits) ---
+        if self.prefetch is not None:
+            self.prefetch.on_decision(mint, self.clock(), result)
+        # --- end W2b ---
         # --- L21 hook: external risk collection starts right after the screen decision (non-blocking hand-over) ---
         self._l21_submit(candidate, cid, result)
         # --- end L21 ---
@@ -1113,6 +1120,9 @@ class Runner:
                 # --- L21 hook ---
                 'risk_external': self._aux_health('risk_external', self.risk_external),
                 # --- end L21 ---
+                # --- W2b hook ---
+                'prefetch': self._aux_health('prefetch', self.prefetch),
+                # --- end W2b ---
                 # --- L07R hook ---
                 'paths': self._l07r_health(),
                 # --- end L07R ---
@@ -1233,6 +1243,11 @@ class Runner:
             specs.append(('bot_exit', self.bot_exit.run_loop, (self,)))
         if self.risk_external is not None:                                  # L21 (its own RugCheck bucket)
             specs.append(('risk_external', self.risk_external.run, (self.stop,)))
+        # --- W2b hook: the prefetcher (low lane; runs the collectors' work for a candidate during the min-age wait) ---
+        if self.prefetch is not None:
+            self.prefetch.stop = self.stop
+            specs.append(('prefetch', self.prefetch.run_loop, ()))
+        # --- end W2b ---
         if self.arms is not None:                                           # W2a: shadow arms (own arms.sqlite, low lane only)
             specs.append(('arms', self.arms.run_loop, (self.stop,)))
         return specs

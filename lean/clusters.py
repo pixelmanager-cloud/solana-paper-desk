@@ -438,6 +438,7 @@ class Clusters:
         self.signals_enabled = signals_enabled     # False: L13 is off, never wait for its row
         self._attempts = {}
         self.last_pending = None
+        self.prefetch = None                       # W2b #8: lean.prefetch.Prefetch (set by build_runner when configured)
         self.counts = {'collected': 0, 'partial': 0, 'calls': 0, 'sheds': 0, 'yielded': 0, 'shed_stops': 0, 'cap_stops': 0,
                        'transient_failures': 0, 'errors': 0, 'stopped': 0, 'waiting_for_signals': 0}
 
@@ -545,7 +546,7 @@ class Clusters:
                         raise
                     self.counts['sheds'] += 1
                     why, error = failure.meta.get('why'), failure
-            if why != 'no_token' or waited >= self.cfg['shed_wait_s']:
+            if why != 'no_token' or waited >= (self.cfg['shed_wait_s'] if calls.patience is None else calls.patience):
                 if not calls.learned:
                     raise error
                 raise W._Cap(LANE_SHED) from None
@@ -600,14 +601,28 @@ class Clusters:
         return {s for s in sources if len(mints.get(s, ())) + 1 >= self.cfg['hub_min_mints']}
 
     # -- one candidate --------------------------------------------------------------------------------------------------------
-    def collect(self, cid, mint, pool, grad_slot, *, decision_ts):
+    def collect(self, cid, mint, pool, grad_slot, *, decision_ts, sink=None, screen_data=None, signals=None):
         """Collect, analyze and record one candidate AS OF ``decision_ts``. A stop writes nothing; a transient failure before anything
-        was learned is retried later; everything else is recorded with its reasons."""
+        was learned is retried later; everything else is recorded with its reasons.
+
+        W2b #8: with a ``sink`` (a dict) this is a PREFETCH: ``decision_ts`` is the AS-OF time the window ends at (never later than the
+        decision the row will be committed to); ``screen_data`` = (screen features, holders body, pool-account body) of the shadow screen
+        and ``signals`` = the prefetched wallet-signals row replace the two store reads; nothing is written, ``sink`` receives ``row`` /
+        ``lookups`` / ``finished_at``; a failure leaves no trace in this collector's retry bookkeeping. Without a sink, a finished prefetch
+        of this candidate is committed instead of collecting (no request)."""
+        # --- W2b hook ---
+        if sink is None and self.prefetch is not None:
+            committed = self.prefetch.commit_clusters(self, cid, mint, pool, grad_slot, decision_ts)
+            if committed is not None:
+                return committed
+        # --- end W2b ---
         cfg, started = self.cfg, self.clock()
         calls = W._Calls(cfg['max_calls'], None, self.stop)
+        if sink is not None:
+            calls.patience = sink.get('patience_s')
         unavailable, flags, notes = {}, {}, {}
-        feats, holders_body, pool_body = self._screen(cid, mint, decision_ts)
-        signals = self._signals(mint)
+        feats, holders_body, pool_body = self._screen(cid, mint, decision_ts) if sink is None else screen_data
+        signals = self._signals(mint) if sink is None else signals
         l13_funders = dict((signals or {}).get('funders') or {})
         l13_hubs = set((signals or {}).get('hub_funders') or ())
         buyers = list((signals or {}).get('buyer_wallets') or [])
@@ -616,7 +631,7 @@ class Clusters:
             unavailable['creator'] = why
         supply = feats.get('supply_raw')
         supply = int(supply) if isinstance(supply, (int, str)) and str(supply).isdecimal() and int(supply) > 0 else None
-        supply_source = 'screen' if supply is not None else None
+        supply_source = ('screen' if sink is None else 'prefetch') if supply is not None else None
         holders, holders_source, holders_ok = {}, None, False
         window, window_ok = [], False
         lookups = {}
@@ -625,7 +640,7 @@ class Clusters:
             try:
                 if holders_body is not None:
                     rows = largest_rows(json.loads(holders_body)['result'])
-                    holders_source = 'screen'
+                    holders_source = 'screen' if sink is None else 'prefetch'
                 else:
                     rows = largest_rows(self._rpc(calls, 'getTokenLargestAccounts', [mint, {'commitment': 'confirmed'}]))
                     holders_source = 'rpc_at_collection'
@@ -673,6 +688,8 @@ class Clusters:
             unavailable['stopped'] = stop.code
             self.counts['shed_stops' if stop.code == LANE_SHED else 'cap_stops'] += 1
         except ProviderError as error:
+            if sink is not None and not calls.learned and error.transient:      # W2b #8: the prefetch retries on its own schedule
+                return None
             if not calls.learned and error.transient:
                 attempts = self._attempts.get(mint, (0, 0.0))[0] + 1
                 if attempts <= cfg['max_retries']:
@@ -698,6 +715,16 @@ class Clusters:
                                'first_ts': x.get('first_ts')} for w, x in sorted(lookups.items())},
                'calls': calls.used, 'call_cap': cfg['max_calls'], 'decision_ts': decision_ts, 'collected_at': started,
                'late_s': round(started - decision_ts, 3), 'flags': flags, 'unavailable': unavailable, 'partial': bool(unavailable)}
+        # --- W2b hook: a prefetch keeps the row; the commit writes it stamped with the real decision ---
+        if sink is not None:
+            sink.update(row=row, lookups=lookups, finished_at=self.clock(), window_end_ts=decision_ts)
+            return row
+        # --- end W2b ---
+        self._persist(row, lookups, cid, mint)
+        return row
+
+    def _persist(self, row, lookups, cid, mint):
+        """Write one ``clusters`` row and the ``cluster_funding`` events of the funders it looked up itself."""
         self._write(self.store.add_observation, OBSERVATION_KIND, _canonical(row), mint=mint, candidate_id=cid, meta=_meta(row), ts=self.clock())
         for wallet, found in sorted(lookups.items()):
             if found.get('funder') is not None and found.get('funder_source') == 'lookup':
@@ -705,7 +732,6 @@ class Clusters:
                             ts=self.clock())
         self.counts['collected'] += 1
         self.counts['partial'] += 1 if row['partial'] else 0
-        return row
 
     def _lookup(self, calls, wallet, decision_ts, known_funder, unavailable):
         """One history page of ``wallet`` (+ its first transaction when the page is its complete history and its funder is not

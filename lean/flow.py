@@ -386,6 +386,7 @@ class FlowCollector:
         self._attempts = {}                       # decision id -> (count, not_before)
         self.counts = {'rows': 0, 'partial': 0, 'calls': 0, 'retries': 0, 'stopped': 0, 'errors': 0, 'budget_stops': 0, 'shed_stops': 0}
         self.last_pending = None
+        self.prefetch = None                      # W2b #8: lean.prefetch.Prefetch (set by build_runner when configured)
 
     def health(self):
         return {'enabled': True, **self.counts, 'pending': self.last_pending, 'calls_last_hour': self.budget.used(),
@@ -471,11 +472,23 @@ class FlowCollector:
             self.stop.wait(self.cfg['pass_interval_s'])
 
     # -- one decision ------------------------------------------------------------------------------------------------------
-    def collect(self, decision_id, decision_ts, mint, cid, pool, migrated_at=None):
-        """Collect and write the row of one PASS decision; raises _Retry when nothing was learned and it should be tried later."""
+    def collect(self, decision_id, decision_ts, mint, cid, pool, migrated_at=None, sink=None):
+        """Collect and write the row of one PASS decision; raises _Retry when nothing was learned and it should be tried later.
+
+        W2b #8: with a ``sink`` (a dict) this is a PREFETCH: ``decision_ts`` is the AS-OF time the window ends at (never later than the
+        decision it will be committed to), nothing is written, the row body is left in ``sink['body']`` with ``sink['finished_at']``,
+        and ``sink['patience_s']`` (optional) replaces ``shed_wait_s``. Without a sink, a finished prefetch of this decision is committed
+        instead of collecting (no request)."""
+        # --- W2b hook ---
+        if sink is None and self.prefetch is not None:
+            committed = self.prefetch.commit_flow(self, decision_id, decision_ts, mint, cid, pool)
+            if committed is not None:
+                return committed
+        # --- end W2b ---
         cfg, started = self.cfg, self.clock()
         calls = LowCalls(self.helius, limit=cfg['sig_pages'] + cfg['max_txs'], budget=self.budget, wait=self.sleep, pace_s=cfg['pace_s'],
-                         patience_s=cfg['shed_wait_s'], stop=self.stop, reserve=cfg['reserve_tokens'])
+                         patience_s=cfg['shed_wait_s'] if sink is None or sink.get('patience_s') is None else sink['patience_s'],
+                         stop=self.stop, reserve=cfg['reserve_tokens'])
         unavailable, flags, notes = {}, {}, {}
         window_start = decision_ts - cfg['window_s']
         if isinstance(migrated_at, (int, float)) and not isinstance(migrated_at, bool) and migrated_at > window_start:
@@ -572,8 +585,13 @@ class FlowCollector:
         for name in FEATURES:
             if out.get(name) is None and name not in unavailable:
                 unavailable[name] = unavailable.get('window') or unavailable.get('stopped') or 'UNKNOWN'
-        return self._write(decision_id, decision_ts, mint, cid, pool, {**notes, **out, 'unavailable': unavailable, 'flags': flags,
-                                                                       'calls': calls.used, 'started_at': started})
+        body = {**notes, **out, 'unavailable': unavailable, 'flags': flags, 'calls': calls.used, 'started_at': started}
+        # --- W2b hook: a prefetch keeps the body (the commit writes it, stamped with the real decision) ---
+        if sink is not None:
+            sink.update(body=body, finished_at=self.clock(), window_end_ts=float(end_s))
+            return body
+        # --- end W2b ---
+        return self._write(decision_id, decision_ts, mint, cid, pool, body)
 
     def _write(self, decision_id, decision_ts, mint, cid, pool, body):
         now = self.clock()
