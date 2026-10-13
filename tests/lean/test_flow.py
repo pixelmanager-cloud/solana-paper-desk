@@ -94,7 +94,7 @@ class ParseTests(unittest.TestCase):
                                                (T + 2, TP.wallet(3), 'sell', 5 * 10 ** 8, True)])
 
     def body(self, i):
-        return self.tape.transaction([TP.signature(1, i), {'encoding': 'jsonParsed', 'maxSupportedTransactionVersion': 0}], T + 100)
+        return self.tape.transaction([TP.signature(1, i), {'encoding': 'jsonParsed', 'maxSupportedTransactionVersion': 1}], T + 100)
 
     def test_a_buy_and_a_sell_from_the_pool_vaults_and_the_signer(self):
         buy = FL.parse_trade(self.body(0), TP.signature(1, 0), self.tok.mint, self.tok.pool)

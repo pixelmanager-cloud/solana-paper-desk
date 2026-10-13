@@ -60,7 +60,7 @@ from decimal import Decimal
 from pathlib import Path
 from urllib.parse import quote
 
-from lean.providers import LANE_SHED, ProviderError
+from lean.providers import LANE_SHED, ProviderError, MAX_TX_VERSION
 from lean.store import StoreError
 
 log = logging.getLogger('lean.wallet_signals')
@@ -596,7 +596,7 @@ class WalletSignals:
                 for entry in window[:cfg['max_swap_txs']]:
                     try:
                         body = self._rpc(calls, 'getTransaction', [entry['signature'], {'encoding': 'jsonParsed', 'commitment': 'confirmed',
-                                                                                        'maxSupportedTransactionVersion': 0}],
+                                                                                        'maxSupportedTransactionVersion': MAX_TX_VERSION}],
                                          'tx', False, mint, cid)
                         view = parse_swap_tx(body, entry['signature'], mint, pool)
                     except (ProviderError, SignalError):
@@ -703,7 +703,7 @@ class WalletSignals:
                 return None
             oldest = prior[-1]
             body = self._rpc(calls, 'getTransaction', [oldest['signature'], {'encoding': 'jsonParsed', 'commitment': 'confirmed',
-                                                                              'maxSupportedTransactionVersion': 0}], 'funding_tx', False, mint, cid)
+                                                                              'maxSupportedTransactionVersion': MAX_TX_VERSION}], 'funding_tx', False, mint, cid)
             options = [t for t in transfers_to(body, wallet) if t[1] >= cfg['min_funding_lamports']]
         except ProviderError as error:
             unavailable[key] = 'FUNDING_UNAVAILABLE:' + error.code

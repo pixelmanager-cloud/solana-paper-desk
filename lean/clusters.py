@@ -57,7 +57,7 @@ from decimal import Decimal
 
 from lean import features as F
 from lean import wallet_signals as W
-from lean.providers import LANE_SHED, ProviderError
+from lean.providers import LANE_SHED, ProviderError, MAX_TX_VERSION
 
 log = logging.getLogger('lean.clusters')
 
@@ -774,7 +774,7 @@ class Clusters:
             return out
         try:
             body = self._rpc(calls, 'getTransaction', [oldest['signature'], {'encoding': 'jsonParsed', 'commitment': 'confirmed',
-                                                                             'maxSupportedTransactionVersion': 0}])
+                                                                             'maxSupportedTransactionVersion': MAX_TX_VERSION}])
             options = [t for t in W.transfers_to(body, wallet) if t[1] >= cfg['min_funding_lamports']]
         except ProviderError as error:
             if error.code == LANE_SHED:
@@ -827,7 +827,7 @@ class Clusters:
         for pos, entry in window[:cfg['max_window_txs']]:
             try:
                 body = self._rpc(calls, 'getTransaction', [entry['signature'], {'encoding': 'jsonParsed', 'commitment': 'confirmed',
-                                                                                'maxSupportedTransactionVersion': 0}])
+                                                                                'maxSupportedTransactionVersion': MAX_TX_VERSION}])
                 view = W.parse_swap_tx(body, entry['signature'], mint, pool)
                 links = tx_links(body, mint, pool, tips)
             except ProviderError as error:

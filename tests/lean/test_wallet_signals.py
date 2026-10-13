@@ -115,7 +115,7 @@ class Chain:
                 rows = [] if at is None else rows[at + 1:]
             return [{k: v for k, v in r.items() if k != '_seq'} for r in rows[:options['limit']]]
         if method == 'getTransaction':
-            assert params[1]['encoding'] == 'jsonParsed' and params[1]['maxSupportedTransactionVersion'] == 0
+            assert params[1]['encoding'] == 'jsonParsed' and params[1]['maxSupportedTransactionVersion'] == 1
             return None if params[0] in self.null_tx else json.loads(json.dumps(self.bodies[params[0]]))
         if method == 'getTokenSupply':
             return {'context': {'slot': 1}, 'value': {'amount': str(self.supply.get(params[0], SUPPLY)), 'decimals': 6}}

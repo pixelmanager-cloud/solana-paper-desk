@@ -48,7 +48,7 @@ import time
 from collections import deque
 from decimal import Decimal
 
-from lean.providers import LANE_SHED, ProviderError
+from lean.providers import LANE_SHED, ProviderError, MAX_TX_VERSION
 from lean.wallet_signals import SignalError, _token_amounts, parse_signatures
 
 log = logging.getLogger('lean.flow')
@@ -552,7 +552,7 @@ class FlowCollector:
                 for entry in sample:
                     try:
                         view = parse_trade(calls.rpc('getTransaction', [entry['signature'], {'encoding': 'jsonParsed', 'commitment': 'confirmed',
-                                                                                           'maxSupportedTransactionVersion': 0}]),
+                                                                                           'maxSupportedTransactionVersion': MAX_TX_VERSION}]),
                                            entry['signature'], mint, pool)
                     except (ProviderError, SignalError):
                         view = None

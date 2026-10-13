@@ -554,7 +554,7 @@ class BotExit:
     def _sample(self, runner, watch, signature, budget):
         try:
             body = self._call(runner, budget, 'getTransaction',
-                              [signature, {'encoding': 'jsonParsed', 'commitment': 'confirmed', 'maxSupportedTransactionVersion': 0}])
+                              [signature, {'encoding': 'jsonParsed', 'commitment': 'confirmed', 'maxSupportedTransactionVersion': providers.MAX_TX_VERSION}])
             swap = parse_swap(body, watch.mint, watch.pool)
         except _Skip:
             raise
