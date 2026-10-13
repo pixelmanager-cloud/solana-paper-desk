@@ -245,6 +245,10 @@ def _scan(discovery_db, cursor, now, limit, low, high, stats, out, seen, next_cu
                          'FROM raw_events WHERE seq>? ORDER BY seq LIMIT ?', (cursor, limit + 1)).fetchall()
         if len(rows) > limit:
             stats['truncated'], rows = True, rows[:limit]
+        # M1 #10: when the feed last wrote anything (the newest frame, by seq: one indexed row), for discovery staleness events
+        newest = d.execute('SELECT received_at FROM raw_events ORDER BY seq DESC LIMIT 1').fetchone()
+        if newest is not None and type(newest[0]) in (int, float) and math.isfinite(newest[0]):
+            stats['newest_received_at'] = float(newest[0])
         for seq, received, slot, stored_hash, kind, size in rows:
             if type(received) not in (int, float) or not math.isfinite(received) or type(slot) is not int:
                 stats['altered'] += 1

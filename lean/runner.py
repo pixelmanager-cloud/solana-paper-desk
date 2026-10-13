@@ -45,6 +45,8 @@ SOL_MINT = A.SOL_MINT
 MAX_KEYS_PER_CALL = 100
 AUX_JOIN_S = 10.0             # LINT2b: total wait for the auxiliary threads on stop (TimeoutStopSec is 30 s)
 UNEXITABLE_BLOCKS = ('NO_ROUTE', 'STUCK_POSITION', 'SELL_QUOTE_INVALID', 'SELL_QUOTE_MISSING')
+EXIT_BACKOFF_BASE_S = 10.0    # M1 #13: first back-off of a failing exit (one position pass)
+PEAK_PERSIST_STEP = Decimal('1.01')    # M1 #13: a peak rise of >= 1% is always persisted at once
 
 
 class _Halt(Exception):
@@ -55,7 +57,8 @@ class Runner:
     def __init__(self, *, store, providers, exit_providers, strategy_cfg, discovery_db, state_dir, code_version,
                  screen_overrides=None, pool_fee_bps=25, taker=PAPER_TAKER, kill_switch=None, clock=time.time,
                  scan_limit=500, max_retries=3, sol_usd_ttl_s=30, stale_mark_s=30, unexitable_after_s=7200, route_check=None,
-                 execution=None, held_risk=None, extra_sources=None, watchlist=None, ops=None):
+                 execution=None, held_risk=None, extra_sources=None, watchlist=None, ops=None, mark_model=None,
+                 blocked_log_s=300, exit_backoff_max_s=60, peak_persist_s=60, discovery_stale_s=600, lean_config_hash=None):
         # --- L10 hook: latency-aware fills + cost model (None = today's instant fills). The priority fee + Jito tip enter
         # through the strategy config, so the fill fee, the marks and the entry/exit cost checks share one number. ---
         self.execution = execution
@@ -141,6 +144,23 @@ class Runner:
         # --- L21 hook ---
         self.risk_external = None                  # lean.risk_external.RiskExternal (set by build_runner when risk_external.enabled)
         # --- end L21 ---
+        # --- M1 hook ---
+        from lean import marks as _marks
+        self.mark_model = mark_model if mark_model is not None else _marks.MarkModel(None, pool_fee_bps=self.pool_fee_bps)   # #7
+        self.mark_info = {}                        # mint -> the inputs of its latest vault mark (model, reserves, fee)
+        self.lean_config_hash = lean_config_hash   # #10 sha256 of the whole lean.json (None when not built from a file)
+        self.discovery_stale_s = float(discovery_stale_s)
+        self._feed = {'newest_at': None, 'stale': False, 'stale_since': None, 'events': 0}
+        self.blocked_log_s, self.exit_backoff_max_s = float(blocked_log_s), float(exit_backoff_max_s)          # #13
+        self.peak_persist_s = float(peak_persist_s)
+        self._blocked_log = {}                     # mint -> [open_id, key, last_written_at, suppressed]
+        self._exit_backoff = {}                    # mint -> [open_id, failures, next_attempt_at]
+        self._pending_state = {}                   # mint -> (open_id, state): the in-memory (authoritative) unpersisted peak
+        self._persisted = {}                       # mint -> (open_id, written_at, peak_ratio Decimal)
+        self._raw_cache = {}                       # observation id -> raw quote body (route_check under raw_policy errors_only)
+        self.m1_counts = {'blocked_suppressed': 0, 'exit_backoff_skips': 0, 'peak_updates_deferred': 0}
+        self.last_outage = None
+        # --- end M1 ---
         self.startup()
         # --- L10 hook ---
         if execution is not None and self.halted is None:
@@ -165,13 +185,84 @@ class Runner:
             self._halt('STORE_FAILURE: %s' % type(error).__name__)
         self.cursor_initialized = os.path.exists(self.cursor_path)
         self.cursor = C.read_cursor(self.cursor_path)
+        self._record_outage()                                                  # M1 #10
         if self.halted is None:
             self.store.record('start', {'cursor': self.cursor, 'config_hash': self.cfg.config_hash,
+                                        'strategy_config_hash': self.cfg.config_hash, 'lean_config_hash': self.lean_config_hash,
+                                        'marks': self.mark_model.cfg, 'raw_policy': getattr(self.store, 'raw_policy', 'all'),
                                         'paper': {'fee_lamports': self.pcfg.fee_lamports, 'slippage_bps': self.pcfg.slippage_bps},
                                         'pool_fee_bps': self.pool_fee_bps, 'stale_mark_s': self.stale_mark_s,
                                         'unexitable_after_s': self.unexitable_after_s,
+                                        'logging': {'blocked_log_s': self.blocked_log_s, 'exit_backoff_max_s': self.exit_backoff_max_s,
+                                                    'peak_persist_s': self.peak_persist_s, 'discovery_stale_s': self.discovery_stale_s},
                                         'screen': {k: str(v) for k, v in self.screen_cfg.items()}},
                               code_version=self.code_version, strategy_version=self.strategy_version, ts=self.clock())
+
+    # --- M1 #10 hook ---
+    def _record_outage(self):
+        """At startup: an ``outage`` event from the previous run's last sign of life (health.json ``at`` and the newest
+        store row) to now. Data only; never raises (a failure to write it is logged)."""
+        try:
+            previous_health = None
+            try:
+                with open(self.health_path) as stream:
+                    value = json.load(stream).get('at')
+                previous_health = float(value) if isinstance(value, (int, float)) and not isinstance(value, bool) else None
+            except (OSError, ValueError, AttributeError):
+                pass
+            last_write = None
+            for table in ('events', 'observations', 'decisions', 'errors', 'fills', 'position_state'):
+                row = self.store.db.execute('SELECT ts FROM %s ORDER BY id DESC LIMIT 1' % table).fetchone()
+                if row and (last_write is None or row[0] > last_write):
+                    last_write = row[0]
+            seen = [t for t in (previous_health, last_write) if t is not None]
+            if not seen:
+                return None                                                  # a new store: nothing was down
+            now = self.clock()
+            down_since = max(seen)
+            payload = {'previous_health_at': previous_health, 'last_store_write_at': last_write, 'down_since': down_since,
+                       'up_at': now, 'duration_s': round(max(0.0, now - down_since), 3)}
+            self.store.record('outage', payload, code_version=self.code_version, strategy_version=self.strategy_version, ts=now)
+            self.last_outage = payload
+            return payload
+        except Exception:                                                    # noqa: BLE001 - data only, never stops a start
+            log.exception('outage event could not be written')
+            return None
+
+    def _m1_feed(self, newest_at):
+        try:
+            self._feed_check(newest_at)
+        except (StoreError, sqlite3.Error) as error:
+            self._halt('STORE_FAILURE: %s' % type(error).__name__)
+            raise _Halt from None
+        except Exception:                                                    # noqa: BLE001 - data only
+            log.exception('discovery staleness check failed')
+
+    def _feed_check(self, newest_at):
+        """Discovery staleness transitions: ``discovery_stale`` when the newest frame is older than ``discovery_stale_s``,
+        ``discovery_recovered`` when frames flow again. ``newest_at`` None = unknown this pass (keep the last known)."""
+        feed = self._feed
+        if newest_at is not None and (feed['newest_at'] is None or newest_at > feed['newest_at']):
+            feed['newest_at'] = float(newest_at)
+        if feed['newest_at'] is None:
+            return None
+        now = self.clock()
+        silent = now - feed['newest_at']
+        if not feed['stale'] and silent > self.discovery_stale_s:
+            feed.update(stale=True, stale_since=feed['newest_at'])
+            kind, payload = 'discovery_stale', {'newest_frame_at': feed['newest_at'], 'silent_s': round(silent, 3),
+                                                'threshold_s': self.discovery_stale_s}
+        elif feed['stale'] and silent <= self.discovery_stale_s:
+            since = feed['stale_since']
+            feed.update(stale=False, stale_since=None)
+            kind, payload = 'discovery_recovered', {'stale_since': since, 'newest_frame_at': feed['newest_at'],
+                                                    'duration_s': round(feed['newest_at'] - since, 3)}
+        else:
+            return None
+        feed['events'] += 1
+        self.store.record(kind, payload, code_version=self.code_version, strategy_version=self.strategy_version, ts=now)
+        return kind
+    # --- end M1 ---
 
     def _now(self):
         return int(self.clock())
@@ -253,7 +344,14 @@ class Runner:
             raise
         observed_at = self._now()
         ref = self.store.add_observation(kind, raw, mint=mint, candidate_id=candidate_id, ts=self.clock(),
-                                         meta={'amount': amount, 'attempts': meta.get('attempts'), 'route': list(quote.route_labels)})
+                                         meta={'amount': amount, 'attempts': meta.get('attempts'), 'route': list(quote.route_labels),
+                                               'in_amount': quote.in_amount, 'out_amount': quote.out_amount})      # M1: parsed fields
+        # --- M1 #12: route_check reads the filled quote's body from here (the store may keep only its sha256) ---
+        with self._counts_lock:
+            self._raw_cache[ref] = bytes(raw) if isinstance(raw, (bytes, bytearray)) else raw
+            while len(self._raw_cache) > 64:
+                self._raw_cache.pop(next(iter(self._raw_cache)))
+        # --- end M1 ---
         return quote, ref, observed_at
 
     def _sol_usd_value(self):
@@ -316,10 +414,13 @@ class Runner:
                 scan = C.scan_new(self.discovery_db, self.cursor, now=self.clock(), limit=self.scan_limit, cfg=self.screen_cfg)
             except C.DiscoveryUnavailable as error:
                 self._error('DISCOVERY_UNAVAILABLE', transient=True, scope='discovery', message=str(error))
+                self._m1_feed(None)                                            # M1 #10: an unreadable feed is silent too
                 return done
             except (OSError, ValueError, sqlite3.Error) as error:
                 self._error('DISCOVERY_INVALID', transient=False, scope='discovery', message=type(error).__name__)
+                self._m1_feed(None)
                 return done
+            self._m1_feed((getattr(scan, 'stats', None) or {}).get('newest_received_at'))        # M1 #10
             handled_to = self.cursor
             for candidate in scan.candidates:
                 if self.stop.is_set() or not self.entries_allowed():
@@ -516,8 +617,11 @@ class Runner:
                 fill, open_extra = self.execution.finish_buy(self, fill, xmeta)
                 features = {**features, '_exec_state': open_extra}
             # --- end L10 ---
+            if self.mark_model.effective:                                      # M1 #7: the screen's pool fields, for the marks
+                from lean import marks as _marks
+                features = {**features, '_pool_info': _marks.screen_pool_info(result.features)}
             self.store.add_fill(fill, candidate_id=cid, state={'event': 'open', 'state': A.open_state(features, fill, self.cfg)})
-            self.route_check.on_fill('entry', mint, buy_ref, candidate_id=cid, trade=cid)      # --- L16 hook ---
+            self.route_check.on_fill('entry', mint, buy_ref, candidate_id=cid, trade=cid, raw=self._raw_cache.get(buy_ref))   # L16 (+M1 raw)
             self._count('entered')
             self._l07r_note(fill=fill)                                         # --- L07R hook (one line) ---
             self._check()
@@ -578,32 +682,53 @@ class Runner:
         """ONE getMultipleAccounts per <=50 positions (base + quote vault each) on the exit lane; net marks with read time.
         After a failed read, marks older than ``stale_mark_s`` are evicted."""
         mints = [m for m in positions if m in states]
-        per_call = MAX_KEYS_PER_CALL // 2
+        # M1 #7: marks.model effective also reads each pool account (+1 key per position) and the fee schedule (+1 key per call)
+        model = self.mark_model
+        per_key, call_keys = model.keys_per_position, model.call_keys()
+        per_call = (MAX_KEYS_PER_CALL - len(call_keys)) // per_key
         for start in range(0, len(mints), per_call):
             chunk = mints[start:start + per_call]
-            keys = [k for m in chunk for k in (states[m]['state']['base_vault'], states[m]['state']['quote_vault'])]
+            keys = [k for m in chunk for k in model.position_keys(states[m]['state']['base_vault'], states[m]['state']['quote_vault'],
+                                                                  states[m]['state'].get('pool'))] + call_keys
             try:
                 result, raw, _meta = self.exit_providers.helius.get_multiple_accounts(keys)
             except ProviderError as error:
                 self._error(error.code, transient=error.transient, scope='marks', message='%d positions' % len(chunk), raw=error.raw)
                 continue
             mark_at = self._now()
-            self.store.add_observation('marks', raw, meta={'mints': chunk, 'slot': result['context']['slot']}, ts=self.clock())
+            values = result['value']
+            if call_keys:
+                model.observe_call(values[len(chunk) * per_key:], mark_at)
+            stored = {}
             for i, mint in enumerate(chunk):
+                accounts = values[per_key * i:per_key * (i + 1)]
                 try:
-                    base, quote = A.vault_amount(result['value'][2 * i]), A.vault_amount(result['value'][2 * i + 1])
-                    self.marks[mint] = (A.mark(positions[mint].qty_raw, base, quote, pool_fee_bps=self.pool_fee_bps, pcfg=self.pcfg),
-                                        mark_at, 'vaults')
+                    if model.effective:
+                        net, info = model.value_accounts(positions[mint].qty_raw, accounts, now=mark_at,
+                                                         pool_info=states[mint]['state'].get('pool_info'), fee_lamports=self.pcfg.fee_lamports)
+                        mark = A.sol(net)
+                        base, quote = info['base_raw'], info['quote_raw']
+                    else:                                                     # today's mark, unchanged
+                        base, quote = A.vault_amount(accounts[0]), A.vault_amount(accounts[1])
+                        mark = A.mark(positions[mint].qty_raw, base, quote, pool_fee_bps=self.pool_fee_bps, pcfg=self.pcfg)
+                        info = {'model': 'vault', 'base_raw': base, 'quote_raw': quote, 'fee_bps': self.pool_fee_bps}
+                    self.marks[mint] = (mark, mark_at, 'vaults')
+                    self.mark_info[mint] = info
+                    stored[mint] = {**info, 'net_lamports': int(mark * paper.LAMPORTS)}
                     # --- L11 hook ---
                     if self.held_risk is not None:
                         self.held_risk.observe(mint, base, quote, mark_at)
                     # --- end L11 ---
                 except A.AdapterError as error:
                     # --- L11 hook ---
-                    if self.held_risk is not None and None in (result['value'][2 * i], result['value'][2 * i + 1]):
+                    if self.held_risk is not None and None in (accounts[0], accounts[1]):
                         self.held_risk.observe_missing(mint, mark_at)
                     # --- end L11 ---
                     self._error('MARK_INVALID', transient=False, mint=mint, scope='marks', message=str(error))
+            # the decoded inputs of every mark ride in the meta, so a mark is reproducible even when the body is not kept (#12)
+            self.store.add_observation('marks', raw, meta={'mints': chunk, 'slot': result['context']['slot'], 'model': model.model,
+                                                           'layout': 'base,quote,pool' if model.effective else 'base,quote',
+                                                           'call_keys': len(call_keys), 'marks': stored}, ts=self.clock())
         now = self._now()
         for mint in list(self.marks):
             if mint not in positions or now - self.marks[mint][1] > self.stale_mark_s:
@@ -645,10 +770,93 @@ class Runner:
         """A wanted exit could not be quoted/filled (no route / 4xx): remember since when (persisted, survives restarts)."""
         if state.get('exit_failing_since') is None:
             state = dict(state, exit_failing_since=self._now(), exit_failing_reason=why)
-            updated = True
-        if updated:
             self.store.add_position_state(mint, open_id, state, ts=self.clock())
+            self._state_written(mint, open_id, state)
+        elif updated:
+            self._persist_updates(mint, open_id, state, updated)             # M1 #13: a peak-only change may wait
         return state
+
+    # --- M1 #13 hooks: per-pass row spam ------------------------------------------------------------------------------
+    def _state_written(self, mint, open_id, state):
+        """Any position_state row of ``mint`` was just written (it carries the in-memory state): nothing is pending."""
+        self._pending_state.pop(mint, None)
+        try:
+            peak = Decimal(str(state.get('peak_ratio')))
+        except ArithmeticError:
+            peak = None
+        self._persisted[mint] = (open_id, self.clock(), peak)
+
+    def _persist_updates(self, mint, open_id, state, updates, *, force=False):
+        """Persist a strategy state update. A PEAK-ONLY change (``peak_ratio`` the only updated field) is written at most once
+        per ``peak_persist_s`` unless the peak rose >= 1% since the last written row; meanwhile the in-memory state is the
+        authoritative one (``_pending_state``, read by ``_manage`` and carried by every later row: rung, close, failure,
+        update) and is flushed when the runner stops. A restart can lose at most that window of peak drift."""
+        keys = set(updates) if isinstance(updates, (dict, set, list, tuple)) else set()
+        if not force and self.peak_persist_s > 0 and keys == {'peak_ratio'}:
+            last = self._persisted.get(mint)
+            now = self.clock()
+            try:
+                peak = Decimal(str(state['peak_ratio']))
+            except (KeyError, ArithmeticError):
+                peak = None
+            if (last is not None and last[0] == open_id and last[2] is not None and peak is not None
+                    and 0 <= now - last[1] < self.peak_persist_s and peak < last[2] * PEAK_PERSIST_STEP):
+                self._pending_state[mint] = (open_id, state)
+                with self._counts_lock:
+                    self.m1_counts['peak_updates_deferred'] += 1
+                return False
+        self.store.add_position_state(mint, open_id, state, ts=self.clock())
+        self._state_written(mint, open_id, state)
+        return True
+
+    def flush_pending_states(self):
+        """Write every deferred peak-only state (on stop). Never raises for one position."""
+        for mint, (open_id, state) in list(self._pending_state.items()):
+            try:
+                self.store.add_position_state(mint, open_id, state, ts=self.clock())
+                self._state_written(mint, open_id, state)
+            except Exception:                                                # noqa: BLE001 - the position may have closed
+                self._pending_state.pop(mint, None)
+
+    def _forget(self, mint):
+        for table in (self._pending_state, self._persisted, self._blocked_log, self._exit_backoff, self.mark_info):
+            table.pop(mint, None)
+
+    def _backoff_active(self, mint, open_id):
+        held = self._exit_backoff.get(mint)
+        return (self.exit_backoff_max_s > 0 and held is not None and held[0] == open_id and self.clock() < held[2])
+
+    def _exit_attempt_failed(self, mint, open_id):
+        """No route / an unexitable quote / a failing quote on a zero mark: the next exit quote waits 10 s, 20 s, 40 s ... capped
+        at ``exit_backoff_max_s``. Only the re-quoting backs off: the D2 write-off clock (``exit_failing_since``) is persisted
+        and checked every pass."""
+        if self.exit_backoff_max_s <= 0:
+            return
+        held = self._exit_backoff.get(mint)
+        failures = held[1] + 1 if held is not None and held[0] == open_id else 1
+        delay = min(self.exit_backoff_max_s, EXIT_BACKOFF_BASE_S * 2 ** (failures - 1))
+        self._exit_backoff[mint] = [open_id, failures, self.clock() + delay]
+
+    def _exit_decision_row(self, mint, open_id, final, features):
+        """The exit decision row. An unchanged BLOCKED (same reasons, same lifecycle) is written at most once per ``blocked_log_s``;
+        the next row written carries ``suppressed_since_last``. Any other action resets it."""
+        if final.action != 'BLOCKED' or self.blocked_log_s <= 0:
+            self._blocked_log.pop(mint, None)
+            self.store.add_decision('exit', final.action, mint=mint, reasons=final.reasons, ts=self.clock(), features=features)
+            return True
+        key, now = tuple(final.reasons), self.clock()
+        held = self._blocked_log.get(mint)
+        if held is not None and held[0] == open_id and held[1] == key and 0 <= now - held[2] < self.blocked_log_s:
+            held[3] += 1
+            with self._counts_lock:
+                self.m1_counts['blocked_suppressed'] += 1
+            return False
+        suppressed = held[3] if held is not None and held[0] == open_id else 0
+        self.store.add_decision('exit', final.action, mint=mint, reasons=final.reasons, ts=self.clock(),
+                                features={**features, 'suppressed_since_last': suppressed})
+        self._blocked_log[mint] = [open_id, key, now, 0]
+        return True
+    # --- end M1 ---
 
     def _write_off(self, mint, position, open_id, state):
         """D2: zero-proceeds paper write-off of a position whose exit stayed impossible for ``unexitable_after_s``."""
@@ -666,6 +874,7 @@ class Runner:
                                     features={'failing_since': state.get('exit_failing_since'), 'why': state.get('exit_failing_reason'),
                                               'qty_raw': position.qty_raw})
             self.store.add_fill(fill, state={'event': 'closed', 'open_fill_id': open_id, 'state': closed})
+            self._forget(mint)                                                                      # M1 #13
             self.marks.pop(mint, None)
             self._count('write_offs')
             self._count('closed')
@@ -674,6 +883,14 @@ class Runner:
 
     def _manage(self, mint, position, row, liquidate):
         open_id, state = row['open_fill_id'], row['state']
+        # --- M1 #13: a deferred peak-only update is the authoritative state of this lifecycle ---
+        pending = self._pending_state.get(mint)
+        if pending is not None:
+            if pending[0] == open_id:
+                state = pending[1]
+            else:
+                self._pending_state.pop(mint, None)
+        # --- end M1 ---
         # --- L11 hook --- (a rug trigger makes the exit wanted as DANGER and is stamped on the state, durably once it is saved)
         rug = None if self.held_risk is None else self.held_risk.trigger(mint, open_id)
         if rug and state.get('rug_trigger') != rug:
@@ -693,20 +910,33 @@ class Runner:
             held = A.strategy_position(position, state)
         if decision.action == 'HOLD' and since is not None:            # the exit is no longer wanted: forget the failure
             state = {k: v for k, v in state.items() if k not in ('exit_failing_since', 'exit_failing_reason')}
+        if decision.action != 'SELL':
+            self._exit_backoff.pop(mint, None)                         # M1 #13: the exit is no longer wanted
         if decision.action != 'SELL' or not decision.quote_required:
             if decision.position_updates or (decision.action == 'HOLD' and since is not None):
-                self.store.add_position_state(mint, open_id, state, ts=self.clock())
+                self._persist_updates(mint, open_id, state, decision.position_updates,
+                                      force=decision.action == 'HOLD' and since is not None)          # M1 #13
             return 0
+        # --- M1 #13: a failing exit (no route, unexitable quote, zero mark) is re-quoted with a back-off, not every pass ---
+        if self._backoff_active(mint, open_id):
+            with self._counts_lock:
+                self.m1_counts['exit_backoff_skips'] += 1
+            if decision.position_updates:
+                self._persist_updates(mint, open_id, state, decision.position_updates)
+            return 0
+        # --- end M1 ---
         qty = A.sell_qty_raw(decision.qty, position.qty_raw)
         try:
             quote, ref, quote_at = self._quote(self.exit_providers, mint, SOL_MINT, qty, 'quote:exit', mint)
         except ProviderError as error:
             if qty == position.qty_raw:                                             # --- L16 hook --- (full exits only)
                 self.route_check.on_quote_error('exit', mint, error, trade=open_id)  # --- end L16 ---
+            if not error.transient or (mark is not None and mark <= 0):            # M1 #13: no route, or a zero mark
+                self._exit_attempt_failed(mint, open_id)
             if not error.transient:
                 self._exit_failed(mint, open_id, state, error.code, bool(decision.position_updates))
             elif decision.position_updates:
-                self.store.add_position_state(mint, open_id, state, ts=self.clock())
+                self._persist_updates(mint, open_id, state, decision.position_updates)                # M1 #13
             raise
         # --- L10 hook: phase 1 defers here; phase 2 (and a direct call) gets q1 and the pair of quotes ---
         xmeta = None
@@ -717,15 +947,16 @@ class Runner:
             now = self._now()
             final = S.exit_decision(held, mark, A.strategy_quote(quote, 'sell', quote_at), now, self.cfg, mark_at=mark_at,
                                     liquidate=liquidate, danger=bool(rug), bot_exit=bool(bot))     # L23
-            self.store.add_decision('exit', final.action, mint=mint, reasons=final.reasons, ts=self.clock(),
-                                    features={**_jsonable(final.detail), 'qty_raw': qty, 'fraction_of_initial': str(final.fraction),
-                                              'quote_ref': ref, 'mark_sol': None if mark is None else str(mark),
-                                              'mark_source': _source})
+            self._exit_decision_row(mint, open_id, final,                                     # M1 #13: BLOCKED throttled
+                                    {**_jsonable(final.detail), 'qty_raw': qty, 'fraction_of_initial': str(final.fraction),
+                                     'quote_ref': ref, 'mark_sol': None if mark is None else str(mark),
+                                     'mark_source': _source, 'mark_info': _jsonable(self.mark_info.get(mint))})
             if final.action != 'SELL' or A.sell_qty_raw(final.qty, position.qty_raw) != qty:
                 if final.action == 'BLOCKED' and final.reason in UNEXITABLE_BLOCKS:
+                    self._exit_attempt_failed(mint, open_id)                                # M1 #13
                     self._exit_failed(mint, open_id, state, final.reason, bool(decision.position_updates))
                 elif decision.position_updates:
-                    self.store.add_position_state(mint, open_id, state, ts=self.clock())
+                    self._persist_updates(mint, open_id, state, decision.position_updates)  # M1 #13
                 return 0
             fill = paper.sell(position, A.paper_quote(quote, mint=mint, side='sell', decimals=position.decimals, ts=self.clock(),
                                                       ref=ref), cfg=self.pcfg, qty_raw=qty)
@@ -739,12 +970,15 @@ class Runner:
                 closed = dict(state, reason=final.reason, trade_pnl_lamports=position.realized_lamports + fill.realized_lamports,
                               cooldown_until=S.cooldown_until('STOP' if rug else final.reason, now, self.cfg))     # L11: a rug cools down like a stop
                 self.store.add_fill(fill, state={'event': 'closed', 'open_fill_id': open_id, 'state': closed})
-                self.route_check.on_fill('exit', mint, ref, trade=open_id)                          # --- L16 hook ---
+                self._forget(mint)                                                                  # M1 #13
+                self.route_check.on_fill('exit', mint, ref, trade=open_id, raw=self._raw_cache.get(ref))   # L16 (+M1 raw)
                 self.marks.pop(mint, None)
                 self._count('closed')
             else:
                 rung = dict(A.apply_updates(state, final.after_fill), last_reason=final.reason)
                 self.store.add_fill(fill, state={'event': 'rung', 'open_fill_id': open_id, 'state': rung})
+                self._state_written(mint, open_id, rung)                                            # M1 #13
+                self._exit_backoff.pop(mint, None)
             self._count('exits')
             self._check()
             return 1
@@ -787,9 +1021,24 @@ class Runner:
                 'held_risk': None if self.held_risk is None else self.held_risk.health(),      # L11
                 'honeypot_sim': None if self.honeypot is None else self.honeypot.health(),     # L22
                 'bot_exit': self._aux_health('bot_exit', self.bot_exit),                        # L23
+                # --- M1 hook ---
+                'lean_config_hash': self.lean_config_hash, 'strategy_config_hash': self.cfg.config_hash,
+                'marks_model': self.mark_model.health(), 'raw_policy': getattr(self.store, 'raw_policy', 'all'),
+                'discovery_feed': {**self._feed, 'stale_after_s': self.discovery_stale_s},
+                'last_outage': self.last_outage, 'log_throttle': self._m1_health(),
+                # --- end M1 ---
                 # --- L15 hook ---
                 **({} if self.ops is None else self.ops.health())}
                 # --- end L15 ---
+
+    # --- M1 hook ---
+    def _m1_health(self):
+        with self._counts_lock:
+            counts = dict(self.m1_counts)
+        return {**counts, 'blocked_log_s': self.blocked_log_s, 'exit_backoff_max_s': self.exit_backoff_max_s,
+                'peak_persist_s': self.peak_persist_s, 'backing_off': sorted(self._exit_backoff),
+                'pending_peak_states': len(self._pending_state)}
+    # --- end M1 ---
 
     # --- L20 hook ---
     def _sell_evidence_health(self):
@@ -930,6 +1179,7 @@ class Runner:
         for thread in aux:
             thread.join(max(0.0, aux_deadline - time.monotonic()))
         # --- end LINT2b/LINT4 ---
+        self.flush_pending_states()                                            # M1 #13: deferred peak-only states
         try:
             self.write_health()
         except Exception:
