@@ -83,7 +83,7 @@ FEATURE_NOT_READY = 'FEATURE_NOT_READY'
 PEAK_STEP = Decimal('1.01')
 CONFIG_DEFAULTS = {'enabled': True, 'db': None, 'initial_cash_sol': None, 'queue_size': 200, 'max_scale': 2.0, 'exit_wait_s': 120.0,
                    'exit_grace_s': 1.0, 'eval_interval_s': 15.0, 'quote_marks_per_pass': 3, 'peak_persist_s': 60.0,
-                   'reserve_tokens': 1}
+                   'reserve_tokens': 1, 'row_grace_s': 10.0}
 
 
 class ArmsConfigError(ValueError):
@@ -232,6 +232,7 @@ def config(raw, base_dir=None):
     out['peak_persist_s'] = _number(out['peak_persist_s'], 'peak_persist_s', 0, 3600)
     if type(out['quote_marks_per_pass']) is not int or not 0 <= out['quote_marks_per_pass'] <= 20:
         raise ArmsConfigError('arms.quote_marks_per_pass must be an integer between 0 and 20')
+    out['row_grace_s'] = _number(out['row_grace_s'], 'row_grace_s', 0, 600)
     if type(out['reserve_tokens']) is not int or not 0 <= out['reserve_tokens'] <= 10:
         raise ArmsConfigError('arms.reserve_tokens must be an integer between 0 and 10')
     listed = raw.get('arms')
@@ -489,19 +490,31 @@ class RowsReader:
                 self._db = None
 
     def latest(self, kind, mint, upto_ts):
-        """('OK', ts, meta) for the newest row of ``kind`` written at or before ``upto_ts``; ('AFTER', ts, None) when rows exist but
-        all were written later; ('NO_ROW', None, None); ('UNREADABLE', None, None)."""
+        """('OK', ts, meta) for the newest row of ``kind`` that was known at ``upto_ts``: written at or before it, OR (a W2b prefetch commits
+        its row a few seconds after the screen decision) OBSERVED before the screen decision, i.e. ``late_s`` <= 0 with ``collected_at`` and
+        ``decision_ts`` not after ``upto_ts``. ('AFTER', ts, None) when rows exist but none was known yet; ('NO_ROW', None, None);
+        ('UNREADABLE', None, None)."""
         try:
             with self._lock:
-                db = self._connect()
-                row = db.execute('SELECT ts,meta FROM observations WHERE mint=? AND kind=? AND ts<=? ORDER BY id DESC LIMIT 1',
-                                 (mint, kind, upto_ts)).fetchone()
-                if row is not None:
-                    return 'OK', row[0], json.loads(row[1])
-                later = db.execute('SELECT MIN(ts) FROM observations WHERE mint=? AND kind=?', (mint, kind)).fetchone()[0]
-            return ('NO_ROW', None, None) if later is None else ('AFTER', later, None)
-        except (sqlite3.Error, ValueError, OSError):
+                rows = self._connect().execute('SELECT ts,meta FROM observations WHERE mint=? AND kind=? ORDER BY id DESC LIMIT 20',
+                                               (mint, kind)).fetchall()
+            for ts, text in rows:
+                meta = json.loads(text)
+                if ts <= upto_ts or observed_before(meta, upto_ts):
+                    return 'OK', ts, meta
+            return ('NO_ROW', None, None) if not rows else ('AFTER', min(r[0] for r in rows), None)
+        except (sqlite3.Error, ValueError, OSError, TypeError):
             return 'UNREADABLE', None, None
+
+
+def observed_before(meta, upto_ts):
+    """The row's figures were all OBSERVED before the screen decision it belongs to (``late_s`` <= 0: ``collected_at`` is not after
+    ``decision_ts``), and that decision is not after ``upto_ts``: no lookahead, whenever the row was written."""
+    def number(value):
+        return value if isinstance(value, (int, float)) and not isinstance(value, bool) else None
+    late, collected, decision = number(meta.get('late_s')), number(meta.get('collected_at')), number(meta.get('decision_ts'))
+    return (late is not None and late <= 0 and collected is not None and decision is not None and collected <= decision
+            and decision <= upto_ts)
 
 
 def _decimal(value):
@@ -533,6 +546,8 @@ def evaluate_filter(flt, screen, reader, mint, t_dec):
             else:
                 value, why = _decimal((meta or {}).get(feature)), 'VALUE_NULL'
                 info['row_written_at'] = ts
+                info.update(row_collected_at=(meta or {}).get('collected_at'), row_late_s=(meta or {}).get('late_s'),
+                            row_known_at_decision=ts is not None and ts <= t_dec)
                 if value is None:
                     info['unavailable'] = ((meta or {}).get('unavailable') or {}).get(feature)
         if value is None:
@@ -644,8 +659,9 @@ class Arm:
         self.view = BookView(self.book)
         self.shim = types.SimpleNamespace(store=self.view)               # lean.execution.finish_buy reads runner.store.positions()
         self.marks = {}                                                  # mint -> (Decimal SOL, mark_at, source)
-        self.pending_exits, self.pending_entries, self.pending_fills = {}, [], []
+        self.pending_exits, self.pending_entries, self.pending_fills, self.pending_rows = {}, [], [], []
         self.filter_stats = collections.Counter()                        # W2a2 #5: PASS / REJECT / NOT_READY (+ why) of the entry filter
+        self.filter_counted = set()                                      # ... once per candidate, at its final verdict
         self.persisted = {}                                              # mint -> (ts, peak Decimal)
         self.decided = set()
         self.halted = None
@@ -655,7 +671,15 @@ class Arm:
 
     def holds(self, cid):
         """The candidate is waiting for this arm's feature or L10 re-quote."""
-        return any(e.cid == cid for e in self.pending_entries) or any(p.ev.cid == cid for p in self.pending_fills)
+        return (any(e.cid == cid for e in self.pending_entries) or any(p.ev.cid == cid for p in self.pending_fills)
+                or any(e.cid == cid for e in self.pending_rows))
+
+    def count_filter(self, cid, verdict, info):
+        if cid not in self.filter_counted:
+            self.filter_counted.add(cid)
+            self.filter_stats[verdict] += 1
+            if verdict == 'NOT_READY':
+                self.filter_stats['why:' + str(info.get('why'))] += 1
 
     def portfolio(self, now, usable_s):
         marks = {m: v for m, v in self.marks.items() if 0 <= now - v[1] <= usable_s}
@@ -895,11 +919,19 @@ class Arms:
             for arm in self.arms:
                 if arm.halted or ev.cid in arm.decided or arm.holds(ev.cid):
                     continue
-                if self._guard(arm, 'entry', self._entry, arm, ev, now_f, False) == 'DEFER':
+                verdict = self._guard(arm, 'entry', self._entry, arm, ev, now_f, False)
+                if verdict == 'DEFER':
                     arm.pending_entries.append(ev)
+                elif verdict == 'ROWWAIT':
+                    arm.pending_rows.append(ev)
 
     def _retry_deferred(self, now_f):
         for arm in self.arms:
+            if not arm.halted and arm.pending_rows:                        # the prefetch's row is written a few seconds after the screen decision
+                waiting, arm.pending_rows = arm.pending_rows, []
+                for ev in waiting:
+                    if ev.cid not in arm.decided and self._guard(arm, 'entry', self._entry, arm, ev, now_f, False, True) == 'ROWWAIT':
+                        arm.pending_rows.append(ev)
             if arm.halted or not arm.pending_entries:
                 continue
             waiting, arm.pending_entries = arm.pending_entries, []
@@ -950,8 +982,9 @@ class Arms:
         self.counts['lane_yielded'] += 1
         return False
 
-    def _entry(self, arm, ev, now_f, deferred):
-        """One arm, one candidate. Returns 'DEFER' (hold it for the feature), 'PENDING' (waiting for its L10 re-quote) or 'DONE'."""
+    def _entry(self, arm, ev, now_f, deferred, again=False):
+        """One arm, one candidate. Returns 'DEFER' (hold it for the feature), 'ROWWAIT' (the feature row is a few seconds from being written:
+        a W2b prefetch), 'PENDING' (waiting for its L10 re-quote) or 'DONE'. ``again``: the retry of a 'ROWWAIT'."""
         usable = self.runner.stale_mark_s
         t_dec = now_f if deferred else ev.ts
         t_int = int(t_dec)
@@ -966,16 +999,21 @@ class Arms:
         if arm.filter is not None:
             verdict, info = evaluate_filter(arm.filter, ev.screen, self.reader, ev.mint, t_dec)
             detail['entry_filter'] = info
-            if not deferred:                                              # W2a2 #5: how often the feature is ready (health)
-                arm.filter_stats[verdict] += 1
-                if verdict == 'NOT_READY':
-                    arm.filter_stats['why:' + str(info.get('why'))] += 1
             if verdict == 'NOT_READY':
                 if arm.filter['wait_s'] > 0 and now_f - ev.ts < arm.filter['wait_s']:
                     if not deferred:
                         self._record(arm, ev, 'DEFER', [FEATURE_NOT_READY], {'wait_s': arm.filter['wait_s'], **_plain(detail)}, now_f)
                     return 'DEFER'
+                # W2b: with the prefetch on, a row OBSERVED before the decision is written a few seconds after it. Waiting for that write
+                # costs no lookahead (the row's figures predate the decision; the entry keeps the main arm's own prices) and is bounded.
+                if (self.runner.prefetch is not None and not deferred and info.get('why') in ('NO_ROW', 'WRITTEN_AFTER_DECISION')
+                        and now_f - ev.ts < self.cfg['row_grace_s']):
+                    if not again:
+                        self._record(arm, ev, 'DEFER', ['ROW_PENDING'], {'row_grace_s': self.cfg['row_grace_s'], **_plain(detail)}, now_f)
+                    return 'ROWWAIT'
+                arm.count_filter(ev.cid, verdict, info)                  # W2a2 #5: how often the feature is ready (health)
                 return self._skip(arm, ev, [FEATURE_NOT_READY], detail, now_f)
+            arm.count_filter(ev.cid, verdict, info)
             if verdict == 'REJECT':
                 return self._skip(arm, ev, ['ENTRY_FILTER'], detail, now_f)
         priced = self._price_entry(arm, ev, gate.size_sol, now_f, deferred)
@@ -1600,6 +1638,7 @@ class Arms:
             arms[arm.name] = {'strategy_version': arm.strategy_version, 'config_hash': arm.config_hash, 'halted': arm.halted,
                               'open_positions': len(arm.book.positions), 'pending_exits': len(arm.pending_exits),
                               'pending_entries': len(arm.pending_entries), 'pending_fills': len(arm.pending_fills),
+                              'pending_rows': len(arm.pending_rows),
                               'mirror_main': arm.mirror, 'cash_lamports': arm.book.cash,
                               'realized_lamports': arm.book.realized, **dict(arm.counts), 'skips': dict(arm.skips),
                               **({'filter': filter_health(arm.filter_stats)} if arm.filter is not None else {})}

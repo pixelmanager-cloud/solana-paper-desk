@@ -250,6 +250,8 @@
     "eval_interval_s": 15,
     "quote_marks_per_pass": 3,
     "peak_persist_s": 60,
+    "reserve_tokens": 1,
+    "row_grace_s": 10,
     "arms": [
       {
         "name": "hold2m",

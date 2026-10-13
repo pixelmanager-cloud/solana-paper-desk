@@ -435,6 +435,131 @@ def sqlite3_memory():
     return sqlite3.connect(':memory:')
 
 
+# --------------------------------------------------------------------------------------- W2b: prefetched feature rows
+def cluster_meta(value, *, decision, late, collected=None, **extra):
+    return {'version': 'clusters_v1', 'largest_cluster_supply_pct': value, 'decision_ts': decision, 'late_s': late,
+            'collected_at': decision + late if collected is None else collected, 'flags': {}, 'unavailable': {}, **extra}
+
+
+class PrefetchedRows(unittest.TestCase):
+    """A W2b prefetch commits its row a few seconds AFTER the screen decision, with the figures observed BEFORE it (late_s <= 0)."""
+
+    def setUp(self):
+        self.tmp = tempfile.TemporaryDirectory()
+        self.addCleanup(self.tmp.cleanup)
+        self.store = Store(Path(os.path.realpath(self.tmp.name)) / 'lean.sqlite', initial_cash_sol='10', code_version='t', strategy_version='t')
+        self.addCleanup(self.store.close)
+        self.reader = W.RowsReader(self.store.path)
+        self.addCleanup(self.reader.close)
+
+    def row(self, written, **kw):
+        self.store.add_observation('clusters', b'{}', mint='M', meta=cluster_meta(0.2, **kw), ts=written)
+
+    def test_a_row_observed_before_the_decision_counts_whenever_it_was_written(self):
+        self.row(1005.0, decision=1000.0, late=-3.0, prefetch={'asof': 995.0})          # written 5 s after the decision, observed 3 s before it
+        status, ts, meta = self.reader.latest('clusters', 'M', 1002.0)                    # the arm decides at 1002: the row is not even written yet
+        self.assertEqual((status, ts), ('OK', 1005.0))
+        self.assertEqual(self.reader.latest('clusters', 'M', 1000.0)[0], 'OK')           # the decision itself
+        self.assertEqual(self.reader.latest('clusters', 'M', 999.0)[0], 'AFTER')         # a decision BEFORE the row's own screen decision: never
+
+    def test_a_row_observed_after_the_decision_does_not_count_before_it_is_written(self):
+        self.row(1040.0, decision=1000.0, late=38.0)                                      # the L24 collector's usual row: collected 38 s late
+        self.assertEqual(self.reader.latest('clusters', 'M', 1002.0)[0], 'AFTER')
+        self.assertEqual(self.reader.latest('clusters', 'M', 1039.9)[0], 'AFTER')
+        self.assertEqual(self.reader.latest('clusters', 'M', 1040.0)[0], 'OK')           # known once written
+
+    def test_nothing_that_is_not_a_clean_as_of_row_is_accepted_early(self):
+        for meta in ({'late_s': None}, {'late_s': 'x'}, {'late_s': True}, {'late_s': 0.0}, {'late_s': -1.0, 'collected_at': 2000.0},
+                     {'late_s': -1.0, 'decision_ts': None}):
+            with self.subTest(meta=meta):
+                base = cluster_meta(0.2, decision=1000.0, late=-1.0)
+                row = {**base, **meta}
+                self.assertEqual(W.observed_before(row, 1002.0), meta == {'late_s': 0.0})   # late_s 0 (observed AT the decision) is fine, the rest is not
+
+    def test_the_newest_known_row_wins(self):
+        self.row(1005.0, decision=1000.0, late=-3.0)
+        self.store.add_observation('clusters', b'{}', mint='M', meta=cluster_meta(5.0, decision=1000.0, late=60.0), ts=1060.0)   # a later re-collection
+        self.assertEqual(self.reader.latest('clusters', 'M', 1010.0)[2]['largest_cluster_supply_pct'], 0.2)
+        self.assertEqual(self.reader.latest('clusters', 'M', 1060.0)[2]['largest_cluster_supply_pct'], 5.0)
+
+
+class NullPrefetch:
+    def on_decision(self, *args):
+        pass
+
+    def health(self):
+        return {}
+
+
+class PrefetchGrace(unittest.TestCase):
+    """The arm waits (bounded) for the write of a row it can already know, and only when the prefetch is on."""
+
+    def run_with_row(self, written_after, *, prefetch=True, late=-2.0, grace=None):
+        run = E.Run(self, scenario=[('solo', dict(), 0)], clusters={})
+        if grace is not None:
+            run.r.arms.cfg['row_grace_s'] = grace
+        run.r.prefetch = NullPrefetch() if prefetch else None                           # the arms only ask whether a prefetch is on
+        decision_ts = float(T0)
+        arm = [a for a in run.r.arms.arms if a.name == 'nocluster_hold2m'][0]
+        row = lambda: run.r.store.add_observation('clusters', b'{}', mint=run.by_role['solo'].mint,
+                                                  meta=cluster_meta(0.3, decision=decision_ts, late=late), ts=T0 + written_after)
+        return run, arm, row
+
+    def test_a_row_written_a_few_seconds_after_the_decision_is_used_with_the_main_arms_prices(self):
+        run, arm, write = self.run_with_row(5)
+        run.r.position_pass()
+        run.r.candidate_pass()                                                           # the arm decides; the row does not exist yet
+        self.assertEqual([(d['action'], d['reasons']) for d in run.decisions('nocluster_hold2m', 'solo')], [('DEFER', ['ROW_PENDING'])])
+        self.assertEqual(len(arm.pending_rows), 1)
+        self.assertEqual(run.rows('arm_fills', 'nocluster_hold2m'), [])
+        run.clock.t = T0 + 5
+        write()
+        run.r.arms.process()
+        d = run.decisions('nocluster_hold2m', 'solo')
+        self.assertEqual([(x['action'], x['reasons']) for x in d], [('DEFER', ['ROW_PENDING']), ('BUY', ['ENTRY'])])
+        bought = d[1]['features']
+        self.assertTrue(bought['price_source'].startswith('main_entry_quote'), bought['price_source'])      # the main arm's own prices, as at the decision
+        self.assertEqual(bought['deferred_s'], 0.0)
+        self.assertEqual(bought['entry_filter']['conditions'][0]['row_known_at_decision'], False)       # not written yet at ev.ts: known by its figures
+        self.assertEqual(bought['entry_filter']['conditions'][0]['row_late_s'], -2.0)
+        self.assertEqual(arm.filter_stats['PASS'], 1)
+        fill = [f for f in run.rows('arm_fills', 'nocluster_hold2m') if f['side'] == 'buy'][0]
+        self.assertEqual(fill['ts'], run.r.store.rows('fills', limit=10)[0]['ts'])                      # filled at the main arm's moment
+        self.assertEqual(arm.pending_rows, [])
+
+    def test_the_wait_is_bounded_and_off_without_a_prefetch(self):
+        run, arm, _write = self.run_with_row(500)                                         # the row never arrives in time
+        run.r.position_pass()
+        run.r.candidate_pass()
+        self.assertEqual(len(arm.pending_rows), 1)
+        run.clock.t = T0 + 14                                                            # ev.ts is T0 + 3 (the entry delay): 10 s are over
+        run.r.arms.process()
+        d = run.decisions('nocluster_hold2m', 'solo')
+        self.assertEqual((d[-1]['action'], d[-1]['reasons']), ('SKIP', ['FEATURE_NOT_READY']))
+        self.assertEqual(arm.pending_rows, [])
+        self.assertEqual(arm.filter_stats['NOT_READY'], 1)                                # counted once, at its final verdict
+        off, arm_off, _ = self.run_with_row(5, prefetch=False)
+        off.r.position_pass()
+        off.r.candidate_pass()
+        self.assertEqual(arm_off.pending_rows, [])
+        self.assertEqual([(x['action'], x['reasons']) for x in off.decisions('nocluster_hold2m', 'solo')], [('SKIP', ['FEATURE_NOT_READY'])])
+
+    def test_a_row_observed_after_the_decision_is_not_waited_for_into_a_lookahead(self):
+        run, arm, write = self.run_with_row(5, late=40.0)                                 # collected 40 s late: not known at the decision
+        run.r.position_pass()
+        run.r.candidate_pass()
+        run.clock.t = T0 + 5
+        write()
+        run.r.arms.process()
+        d = run.decisions('nocluster_hold2m', 'solo')
+        self.assertEqual((d[-1]['action'], d[-1]['reasons']), ('DEFER', ['ROW_PENDING']))     # written, but NOT a row the decision could know
+        run.clock.t = T0 + 14                                                            # ev.ts is T0 + 3 (the entry delay): 10 s are over
+        run.r.arms.process()
+        d = run.decisions('nocluster_hold2m', 'solo')
+        self.assertEqual((d[-1]['action'], d[-1]['reasons'], d[-1]['features']['entry_filter']['why']),
+                         ('SKIP', ['FEATURE_NOT_READY'], 'WRITTEN_AFTER_DECISION'))
+
+
 # ---------------------------------------------------------------------------------------------------------- 5 filter health
 class FilterHealth(unittest.TestCase):
     def test_the_not_ready_share_is_in_the_arms_health(self):
@@ -469,7 +594,7 @@ class FilterHealth(unittest.TestCase):
         run.r.arms.arms[2].filter['wait_s'] = 200.0
         run.drive(until=T0 + 1200)
         f = run.r.arms.health()['arms']['nocluster_hold2m']['filter']
-        candidates = {d['candidate_id'] for d in run.decisions('nocluster_hold2m') if 'entry_filter' in d['features']}
+        candidates = {d['candidate_id'] for d in run.decisions('nocluster_hold2m') if 'entry_filter' in d['features'] and d['action'] != 'DEFER'}
         self.assertEqual(f['evaluated'], len(candidates))                                      # a DEFER and its later verdict are ONE candidate
 
 
@@ -633,3 +758,54 @@ class LaneReserve(unittest.TestCase):
 
 if __name__ == '__main__':
     unittest.main()
+
+
+# ----------------------------------------------------------------------------------- W2b: the real prefetch, the real world
+class PrefetchWorld(unittest.TestCase):
+    """tests/lean/w2bworld.py (realistic latencies, the real collectors): with the prefetch ON the L24 row is observed before the decision and the
+    nocluster arm reads it; with it OFF the row comes tens of seconds late and the arm refuses to look ahead."""
+    maxDiff = None
+
+    def sim(self, prefetch):
+        from tests.lean import w2bworld as WW
+        tmp = tempfile.TemporaryDirectory()
+        self.addCleanup(tmp.cleanup)
+        plan = WW.scenario(14, seed=7)
+        sim = WW.Sim(Path(os.path.realpath(tmp.name)), plan, prefetch=prefetch, patch={'arms': E.shipped_arms()})
+        self.addCleanup(sim.close)
+        self.addCleanup(providers.configure_lanes)
+        sim.run(plan[-1][1] + 300.0 + 240.0)
+        return sim
+
+    def nocluster(self, sim):
+        arms = sim.runner.arms
+        decisions = [d for d in arms.store.rows('arm_decisions', 'nocluster_hold2m') if d['kind'] == 'entry']
+        return arms, [{**d, 'reasons': json.loads(d['reasons']), 'features': json.loads(d['features'])} for d in decisions]
+
+    def test_prefetched_clusters_rows_are_read_at_the_decision_and_never_ahead_of_it(self):
+        on, off = self.sim(True), self.sim(False)
+        arms_on, d_on = self.nocluster(on)
+        arms_off, d_off = self.nocluster(off)
+        rows = [(json.loads(o['meta']), json.loads(o['raw'])) for o in on.runner.store.rows('observations', kind='clusters', limit=100000)]
+        prefetched = [m for m, raw in rows if raw.get('prefetch')]
+        self.assertTrue(prefetched, 'the world produced no prefetched clusters row')
+        for meta in prefetched:
+            self.assertLessEqual(meta['late_s'], 0)                                         # observed before the screen decision
+            self.assertLessEqual(meta['collected_at'], meta['decision_ts'])
+        used = [d for d in d_on if d['action'] != 'DEFER' and d['features'].get('entry_filter', {}).get('conditions')]
+        self.assertTrue(used, 'the arm used no row')
+        self.assertTrue([d for d in used if not d['features']['entry_filter']['conditions'][0]['row_known_at_decision']])      # at least one prefetched row
+        for d in used:                                                                      # NO LOOKAHEAD, for every row it used
+            condition = d['features']['entry_filter']['conditions'][0]
+            self.assertLessEqual(condition['row_collected_at'], d['ts'])
+            written_early = condition['row_written_at'] <= d['ts']
+            self.assertTrue(written_early or condition['row_late_s'] <= 0, condition)       # written by then, or observed before the decision
+        # the not-ready share falls with the prefetch; without it the arm can never have the figure at the decision
+        f_on = arms_on.health()['arms']['nocluster_hold2m']['filter']
+        f_off = arms_off.health()['arms']['nocluster_hold2m']['filter']
+        self.assertEqual(f_off['not_ready_share'], 1.0)
+        self.assertLess(f_on['not_ready_share'], 0.5, f_on)
+        self.assertGreater(f_on['pass'] + f_on['reject'], 0)
+        for d in d_off:                                                                     # without the prefetch no row is usable early
+            for condition in d['features'].get('entry_filter', {}).get('conditions', []):
+                self.assertTrue(condition.get('row_late_s') is None or condition['row_late_s'] <= 0)
