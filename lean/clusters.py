@@ -632,7 +632,7 @@ class Clusters:
         supply = feats.get('supply_raw')
         supply = int(supply) if isinstance(supply, (int, str)) and str(supply).isdecimal() and int(supply) > 0 else None
         supply_source = ('screen' if sink is None else 'prefetch') if supply is not None else None
-        holders, holders_source, holders_ok = {}, None, False
+        holders, holders_source, holders_ok, holders_at = {}, None, False, None
         window, window_ok = [], False
         lookups = {}
         try:
@@ -643,7 +643,8 @@ class Clusters:
                     holders_source = 'screen' if sink is None else 'prefetch'
                 else:
                     rows = largest_rows(self._rpc(calls, 'getTokenLargestAccounts', [mint, {'commitment': 'confirmed'}]))
-                    holders_source = 'rpc_at_collection'
+                    holders_source = 'rpc_at_collection' if sink is None else 'prefetch'      # a job's own read is BEFORE the decision (stamped, not AT_COLLECTION)
+                    holders_at = self.clock()                        # W2b2 #2: when this snapshot was read
                 skip = F.exclusions({'features': feats}) or set()
                 skip.add(feats.get('pool_base_token_account'))
                 rows = [(a, n) for a, n in rows if a not in skip and n > 0]
@@ -717,6 +718,8 @@ class Clusters:
                'late_s': round(started - decision_ts, 3), 'flags': flags, 'unavailable': unavailable, 'partial': bool(unavailable)}
         # --- W2b hook: a prefetch keeps the row; the commit writes it stamped with the real decision ---
         if sink is not None:
+            if holders_at is not None:
+                row['snapshot_at'] = {'holders': holders_at}          # W2b2 #2: the learner refuses a holder list older than max_snapshot_age_s
             sink.update(row=row, lookups=lookups, finished_at=self.clock(), window_end_ts=decision_ts)
             return row
         # --- end W2b ---

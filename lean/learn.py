@@ -127,12 +127,23 @@ RISK_FEATURES = ('rc_score', 'rc_score_norm', 'rc_danger_count', 'rc_warn_count'
                  'same_image_count')
 RISK_VERSION = 'risk_external_v1'
 # --- end L21 ---
-FEATURE_NAMES = ROW_FEATURES + WALLET_FEATURES + FLOW_FEATURES + CLUSTER_FEATURES + RISK_FEATURES
+BASE_FEATURE_NAMES = ROW_FEATURES + WALLET_FEATURES + FLOW_FEATURES + CLUSTER_FEATURES + RISK_FEATURES
+# --- W2b2 #1: a PREFETCHED row measures a different window / snapshot time than the same row collected after the screen (its window ends
+# ~25-40 s before the decision: tx_count_first_10m 0.61x, unique_buyers 0.63x, max_runup_pct 0.48x ... of the decision-time figure), so the two
+# are DIFFERENT features: the prefetch's values live in their own columns (``name@p``), never pooled with the others. Of a features row only
+# the fields the prefetch itself measured (``prefetch_fields``) are split off; the screen-time fields in it are the screen's, as always. ---
+PREFETCH_SUFFIX = '@p'
+PREFETCH_ROW_FEATURES = ('top10_pct', 'top1_pct', 'dev_holding_pct', 'tx_count_first_10m')
+PREFETCH_FEATURE_NAMES = tuple(n + PREFETCH_SUFFIX for n in PREFETCH_ROW_FEATURES + WALLET_FEATURES + FLOW_FEATURES + CLUSTER_FEATURES + RISK_FEATURES)
+FEATURE_NAMES = BASE_FEATURE_NAMES + PREFETCH_FEATURE_NAMES
+# --- end W2b2 ---
 # known from the screen itself; the others come from the extra calls (L12F) or the wallet collector (L13) that run after it
 SCREEN_TIME_FEATURES = frozenset({'market_cap_usd', 'liquidity_usd', 'age_seconds_at_screen', 'transfer_fee_bps'})
 MIN_FEATURES_VERSION = 3
+FEATURES_PREFETCH_VERSION = F.FEATURES_PREFETCH_VERSION      # W2b2 #1: '3p', the features_version of a prefetched row (not an int: an older learner skips it)
 WALLET_VERSION = 'wallet_signals_v2'
 DEFAULT_MAX_LATE_S = 15.0
+DEFAULT_MAX_SNAPSHOT_AGE_S = 45.0               # W2b2 #2: a snapshot (holder list, dev balance) older than this at the decision is not used
 OK_FLAGS = frozenset({'CUT_AT_DECISION'})           # a field cut at the decision is pre-decision by construction
 # a not-entered candidate that passed the screen and was refused ONLY by one of these would have been entered on its own merits
 PORTFOLIO_REASONS = frozenset({'PORTFOLIO_INVALID', 'DAILY_LOSS_STOP', 'LOSS_STREAK_PAUSE', 'MAX_POSITIONS', 'ALREADY_HELD', 'COOLDOWN',
@@ -320,15 +331,17 @@ class Dataset:
 class LookaheadPolicy:
     max_late_s: float = DEFAULT_MAX_LATE_S          # an AT_COLLECTION snapshot later than this after the decision is excluded
     eps_s: float = 1e-6                             # the rows and the decision are stamped by the same store clock
+    max_snapshot_age_s: float = DEFAULT_MAX_SNAPSHOT_AGE_S      # W2b2 #2: a snapshot stamped ``snapshot_at`` older than this BEFORE the decision is excluded
 
     def __post_init__(self):
-        for name in ('max_late_s', 'eps_s'):
+        for name in ('max_late_s', 'eps_s', 'max_snapshot_age_s'):
             value = getattr(self, name)
             if not _num(value) or value < 0:
                 raise LearnError('%s must be a finite number >= 0' % name)
 
     def to_dict(self):
-        return {'max_late_s': float(self.max_late_s), 'eps_s': float(self.eps_s), 'min_features_version': MIN_FEATURES_VERSION,
+        return {'max_late_s': float(self.max_late_s), 'eps_s': float(self.eps_s), 'max_snapshot_age_s': float(self.max_snapshot_age_s),
+                'min_features_version': MIN_FEATURES_VERSION,
                 'wallet_version': WALLET_VERSION, 'clusters_version': CLUSTERS_VERSION, 'ok_flags': sorted(OK_FLAGS)}
 
 
@@ -405,12 +418,44 @@ def _pick(rows, decision_ts, candidate_id, policy, counts, prefix):
     return best
 
 
+# --- W2b2 #1 / #2 ---
+def is_prefetch(row) -> bool:
+    """A row written from a prefetch (``window_mode == 'prefetch'``; its version carries a ``p`` suffix too, so a learner that does not
+    know the suffix skips it instead of pooling it)."""
+    return isinstance(row, dict) and row.get('window_mode') == 'prefetch'
+
+
+def _version_is(row, key, base) -> bool:
+    """The row's version is ``base`` (decision-time) or ``base + 'p'`` (prefetch) AND agrees with its ``window_mode``."""
+    version = row.get(key)
+    return version == base and not is_prefetch(row) or version == base + 'p' and is_prefetch(row)
+
+
+def _snapshot_fresh(row, name, decision_ts, policy, counts, key=None) -> bool:
+    """A value stamped with the time its snapshot was read (``snapshot_at[name]`` or ``[key]``) is used only if that was at most
+    ``max_snapshot_age_s`` BEFORE the decision. No stamp (a screen-time value, a fallback row) = no age limit here."""
+    stamps = row.get('snapshot_at')
+    at = None if not isinstance(stamps, dict) else stamps.get(name, stamps.get(key) if key else None)
+    if at is None:
+        return True
+    if not _num(at) or decision_ts - at > policy.max_snapshot_age_s:
+        counts.exclude(name, 'SNAPSHOT_TOO_OLD')
+        return False
+    return True
+# --- end W2b2 ---
+
+
 def feature_values(row, decision_ts, policy, counts, names=ROW_FEATURES) -> dict:
     """``{name: Decimal | None}`` of one L12F v3 row, every post-decision field excluded (and counted)."""
     out = {name: None for name in names}
     if row is None:
         return out
-    if not isinstance(row.get('features_version'), int) or row['features_version'] < MIN_FEATURES_VERSION:
+    version = row.get('features_version')
+    if is_prefetch(row):                                   # W2b2: '3p' (a prefetched row); anything else claiming the mode is refused
+        if version != FEATURES_PREFETCH_VERSION:
+            counts.skip('FEATURES_BAD_PREFETCH_VERSION')
+            return out
+    elif not isinstance(version, int) or version < MIN_FEATURES_VERSION:
         counts.skip('FEATURES_PRE_V3')                     # no decision_ts / flags: a v1/v2 tx count runs past the decision
         return out
     fields, flags = row.get('fields') or {}, row.get('flags') or {}
@@ -418,6 +463,8 @@ def feature_values(row, decision_ts, policy, counts, names=ROW_FEATURES) -> dict
     for name in names:
         value = _to_decimal(fields.get(name)) if isinstance(fields, dict) else None
         if value is None:
+            continue
+        if not _snapshot_fresh(row, name, decision_ts, policy, counts):
             continue
         flag = flags.get(name) if isinstance(flags, dict) else None
         if flag == 'AT_COLLECTION':
@@ -436,7 +483,7 @@ def wallet_values(row, decision_ts, policy, counts, names=WALLET_FEATURES) -> di
     out = {name: None for name in names}
     if row is None:
         return out
-    if row.get('version') != WALLET_VERSION:
+    if not _version_is(row, 'version', WALLET_VERSION):
         counts.skip('WALLET_SIGNALS_OLD_VERSION')
         return out
     after = row.get('window_after_decision_s')
@@ -463,7 +510,7 @@ def flow_values(row, decision_ts, policy, counts, names=FLOW_FEATURES) -> dict:
     out = {name: None for name in names}
     if row is None:
         return out
-    if row.get('version') != FLOW_VERSION:
+    if not _version_is(row, 'version', FLOW_VERSION):
         counts.skip('FLOW_OLD_VERSION')
         return out
     after, flags = row.get('window_after_decision_s'), row.get('flags') or {}
@@ -496,7 +543,7 @@ def cluster_values(row, decision_ts, policy, counts, names=CLUSTER_FEATURES) -> 
     out = {name: None for name in names}
     if row is None:
         return out
-    if row.get('version') != CLUSTERS_VERSION:
+    if not _version_is(row, 'version', CLUSTERS_VERSION):
         counts.skip('CLUSTERS_OLD_VERSION')
         return out
     flags, late = row.get('flags') or {}, row.get('late_s')
@@ -505,6 +552,8 @@ def cluster_values(row, decision_ts, policy, counts, names=CLUSTER_FEATURES) -> 
         value = _to_decimal(row.get(name))
         if value is None:
             continue
+        if name != 'jito_bundled_buys' and not _snapshot_fresh(row, name, decision_ts, policy, counts, key='holders'):
+            continue                                                     # W2b2 #2: the holder list must not be older than max_snapshot_age_s
         flag = flags.get(name) if isinstance(flags, dict) else None
         if flag == 'AT_COLLECTION':
             if not (_num(late) and late <= policy.max_late_s):          # a snapshot read too long after the decision
@@ -535,7 +584,7 @@ def risk_values(row, decision_ts, policy, counts, names=RISK_FEATURES) -> dict:
     out = {name: None for name in names}
     if row is None:
         return out
-    if row.get('version') != RISK_VERSION:
+    if not _version_is(row, 'version', RISK_VERSION):
         counts.skip('RISK_EXTERNAL_OLD_VERSION')
         return out
     fields, flags = row.get('fields') or {}, row.get('flags') or {}
@@ -588,6 +637,8 @@ def build_dataset(lean_db, paths_db, strategy: S.StrategyConfig, *, label_cfg=No
         connections, owned = None, True
     rows, by_label, n_paths, load_skipped = [], {}, 0, {}
     hazard_rows, hazard_labels, hazard_paths = [], {}, 0                 # W2b #9
+    hazard_counts = _Counts()                                            # W2b2 #4: a hazard path's skips / exclusions never touch the coverage figures
+    window_modes = {}                                                    # W2b2 #1: kind -> {'decision' | 'prefetch': rows used}
     try:
         if connections is None:
             connections = LB.open_paths(paths_db, extra_paths)
@@ -604,30 +655,34 @@ def build_dataset(lean_db, paths_db, strategy: S.StrategyConfig, *, label_cfg=No
         cluster_rows = _observations(live, 'clusters', counts, 'CLUSTERS')          # L24
         risk_rows = _observations(live, 'risk_external', counts, 'RISK_EXTERNAL')                    # L21
         for path in LB.iter_paths(connections, load_skipped):           # one path's marks in memory at a time
-            n_paths += 1
+            # --- W2b #9 / W2b2 #4: a sampled hazard reject is labelled and replayed, but kept in its OWN list and its OWN counters: never a
+            # row of the tables, the rule search, the windows, the label counts or the coverage figures (paths, skipped) of the real population ---
+            hazard = path.stage == HAZARD_STAGE
+            skip = hazard_counts if hazard else counts
+            if hazard:
+                hazard_paths += 1
+            else:
+                n_paths += 1
             decision = decision_time(decisions.get(path.mint, []), path.candidate_id, path.start_ts)
             if decision is None:
-                counts.skip('DECISION_UNKNOWN')
+                skip.skip('DECISION_UNKNOWN')
                 continue
             if windows is not None and not _report.in_windows(float(decision), windows):         # M1 #10
-                counts.skip('OTHER_CONFIG_HASH')
+                skip.skip('OTHER_CONFIG_HASH')
                 continue
             try:
                 ref = LB.reference(path, pcfg)
             except LB.LabelError:
-                counts.skip('REFERENCE_UNUSABLE')
+                skip.skip('REFERENCE_UNUSABLE')
                 continue
             label = LB.label_path(path, decision, ref, label_cfg, pool_fee_bps=pool_fee_bps, pcfg=pcfg)
-            # --- W2b #9: a sampled hazard reject is labelled and replayed, but kept in its OWN list: never a row of the tables, the
-            # rule search, the windows or the label counts of the real population ---
-            if path.stage == HAZARD_STAGE:
-                hazard_paths += 1
+            if hazard:
                 hazard_labels[label.label] = hazard_labels.get(label.label, 0) + 1
                 if label.usable:
                     trade = LB.simulate_exits(path, decision, ref, strategy, pool_fee_bps=pool_fee_bps, pcfg=pcfg)
                     hazard_rows.append(HazardRow(path.mint, decision, label, trade.pnl_lamports, tuple(path.screen_reasons), trade.status))
                 continue
-            # --- end W2b ---
+            # --- end W2b / W2b2 ---
             by_label[label.label] = by_label.get(label.label, 0) + 1
             if not label.usable:
                 counts.skip('%s:%s' % (LB.INSUFFICIENT, label.why_insufficient))
@@ -640,10 +695,21 @@ def build_dataset(lean_db, paths_db, strategy: S.StrategyConfig, *, label_cfg=No
             if frow is None and wrow is None and xrow is None and crow is None and rrow is None:
                 counts.skip('NO_FEATURES_AT_DECISION')
                 continue
-            values = {**feature_values(frow, decision, policy, counts), **wallet_values(wrow, decision, policy, counts),
-                      **flow_values(xrow, decision, policy, counts),
-                      **cluster_values(crow, decision, policy, counts),
-                      **risk_values(rrow, decision, policy, counts)}
+            values = {name: None for name in FEATURE_NAMES}
+            for kind, got_row, got in (('features', frow, feature_values(frow, decision, policy, counts)),
+                                       ('wallet_signals', wrow, wallet_values(wrow, decision, policy, counts)),
+                                       ('flow', xrow, flow_values(xrow, decision, policy, counts)),
+                                       ('clusters', crow, cluster_values(crow, decision, policy, counts)),
+                                       ('risk_external', rrow, risk_values(rrow, decision, policy, counts))):
+                if got_row is None:
+                    continue
+                mode = 'prefetch' if is_prefetch(got_row) else 'decision'
+                window_modes.setdefault(kind, {}).setdefault(mode, 0)
+                window_modes[kind][mode] += 1
+                # W2b2 #1: what a prefetch measured goes to its own column; the screen-time fields of its features row stay where they were
+                split = got_row.get('prefetch_fields') if kind == 'features' and mode == 'prefetch' else None
+                for name, value in got.items():
+                    values[name + PREFETCH_SUFFIX if mode == 'prefetch' and (split is None or name in split) else name] = value
             trade = LB.simulate_exits(path, decision, ref, strategy, pool_fee_bps=pool_fee_bps, pcfg=pcfg)
             rows.append(Row(path.mint, decision, label, {n: values[n] for n in feature_names}, trade.pnl_lamports, enterable(path),
                             trade.status))
@@ -658,7 +724,10 @@ def build_dataset(lean_db, paths_db, strategy: S.StrategyConfig, *, label_cfg=No
     rows.sort(key=lambda r: (r.ts, r.mint))
     hazard_rows.sort(key=lambda r: (r.ts, r.mint))
     return Dataset(rows, {'paths': n_paths, 'labels': dict(sorted(by_label.items())), 'with_features': len(rows),
-                          **({'hazard_paths': hazard_paths, 'hazard_labels': dict(sorted(hazard_labels.items()))} if hazard_paths else {}),
+                          **({'hazard_paths': hazard_paths, 'hazard_labels': dict(sorted(hazard_labels.items())),
+                              'hazard_skipped': dict(sorted(hazard_counts.skipped.items()))} if hazard_paths else {}),
+                          **({'window_modes': {k: dict(sorted(v.items())) for k, v in sorted(window_modes.items())}}
+                             if any('prefetch' in v for v in window_modes.values()) else {}),
                           'enterable': sum(1 for r in rows if r.enterable), 'skipped': dict(sorted(counts.skipped.items())),
                           'excluded': {k: dict(sorted(v.items())) for k, v in sorted(counts.excluded.items())},
                           'label_config': label_cfg.to_dict(), 'lookahead': policy.to_dict(), 'pool_fee_bps': pool_fee_bps, 'config_hash_filter': config_hash,
@@ -1263,7 +1332,7 @@ def _warnings(result):
 
 def runner_changes(chosen):
     """What the runner must do before a proposed rule can be applied at the decision."""
-    names = {c.feature for rule in chosen for c in rule.conditions}
+    names = {c.feature.replace(PREFETCH_SUFFIX, '') for rule in chosen for c in rule.conditions}      # (a prefetch column needs the same wait)
     out = ['selection_rules'] if chosen else []
     enriched = sorted((names & set(ROW_FEATURES)) - SCREEN_TIME_FEATURES)
     wallet = sorted(names & set(WALLET_FEATURES))
@@ -1444,6 +1513,8 @@ def main(argv=None):
     p.add_argument('--seed', type=int, default=SEED)
     p.add_argument('--min-bucket', type=int, default=MIN_BUCKET)
     p.add_argument('--max-late-s', type=float, default=DEFAULT_MAX_LATE_S, help='AT_COLLECTION snapshots later than this after the decision are excluded')
+    p.add_argument('--max-snapshot-age-s', type=float, default=DEFAULT_MAX_SNAPSHOT_AGE_S,
+                   help='W2b2: a stamped snapshot (holder list, dev balance) read more than this long BEFORE the decision is excluded')
     p.add_argument('--max-gap-fraction', type=float, default=LB.LabelConfig.max_gap_fraction)
     p.add_argument('--max-hole-s', type=float, default=LB.LabelConfig.max_hole_s)
     p.add_argument('--embargo-s', type=float, default=None,
@@ -1478,7 +1549,7 @@ def main(argv=None):
             raise LearnError('--config-hash and --all-configs exclude each other')
         config_hash = None if args.all_configs else (args.config_hash or latest_config_hash(args.lean_db))
         label_cfg = LB.LabelConfig.from_strategy(strategy, max_gap_fraction=args.max_gap_fraction, max_hole_s=args.max_hole_s)
-        dataset = build_dataset(args.lean_db, args.paths_db, strategy, label_cfg=label_cfg, policy=LookaheadPolicy(max_late_s=args.max_late_s),
+        dataset = build_dataset(args.lean_db, args.paths_db, strategy, label_cfg=label_cfg, policy=LookaheadPolicy(max_late_s=args.max_late_s, max_snapshot_age_s=args.max_snapshot_age_s),
                                 pool_fee_bps=pool_fee_bps, extra_paths=args.paths_archive, config_hash=config_hash)
         now = time.time() if args.now is None else args.now
         embargo_s = float(path_hours) * 3600 if args.embargo_s is None else args.embargo_s

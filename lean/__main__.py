@@ -462,6 +462,7 @@ def build_runner(cfg, *, state_dir, discovery_db, keys, code_version, clock=None
     if r.prefetch is not None:
         r.prefetch.attach(features=r.features, risk_external=r.risk_external, wallet_signals=r.wallet_signals, clusters=r.clusters, flow=r.flow)
         r.prefetch.gate = r.entries_allowed                                  # a halted trader / the kill switch also stops the prefetch
+        r.prefetch.sol_usd = lambda: None if r._sol_usd is None else r._sol_usd[0]       # W2b2 #3: the runner's cached SOL/USD (to judge the bands)
     # --- end W2b ---
     # --- W2a: the shadow arms (own arms.sqlite, shared low lane). A store that cannot be opened never stops the trader. ---
     if cfg.get('arms') is not None:

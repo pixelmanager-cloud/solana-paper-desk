@@ -387,9 +387,11 @@ class FlowCollector:
         self.counts = {'rows': 0, 'partial': 0, 'calls': 0, 'retries': 0, 'stopped': 0, 'errors': 0, 'budget_stops': 0, 'shed_stops': 0}
         self.last_pending = None
         self.prefetch = None                      # W2b #8: lean.prefetch.Prefetch (set by build_runner when configured)
+        self.prefetch_budget = None               # W2b2 #3: the prefetch's own HourBudget (set by Prefetch.attach): it never eats the post-screen cap
 
     def health(self):
         return {'enabled': True, **self.counts, 'pending': self.last_pending, 'calls_last_hour': self.budget.used(),
+                **({} if self.prefetch_budget is None else {'prefetch_calls_last_hour': self.prefetch_budget.used()}),
                 'max_calls_per_hour': self.cfg['max_calls_per_hour']}
 
     def _query(self, sql, args=()):
@@ -486,7 +488,9 @@ class FlowCollector:
                 return committed
         # --- end W2b ---
         cfg, started = self.cfg, self.clock()
-        calls = LowCalls(self.helius, limit=cfg['sig_pages'] + cfg['max_txs'], budget=self.budget, wait=self.sleep, pace_s=cfg['pace_s'],
+        calls = LowCalls(self.helius, limit=cfg['sig_pages'] + cfg['max_txs'],
+                         budget=self.prefetch_budget if sink is not None and self.prefetch_budget is not None else self.budget,
+                         wait=self.sleep, pace_s=cfg['pace_s'],
                          patience_s=cfg['shed_wait_s'] if sink is None or sink.get('patience_s') is None else sink['patience_s'],
                          stop=self.stop, reserve=cfg['reserve_tokens'])
         unavailable, flags, notes = {}, {}, {}
@@ -603,13 +607,16 @@ class FlowCollector:
         for name in FEATURES:
             if row.get(name) is None:
                 unavailable.setdefault(name, unavailable.get('window') or 'UNKNOWN')
-        row.update({'version': VERSION, 'mint': mint, 'pool': pool, 'decision_id': decision_id, 'decision_ts': decision_ts,
+        row.update({'version': VERSION + ('p' if row.get('window_mode') == 'prefetch' else ''),     # W2b2 #1: a prefetched row is a different feature
+                    'mint': mint, 'pool': pool, 'decision_id': decision_id, 'decision_ts': decision_ts,
                     'collected_at': collected, 'late_s': round(collected - decision_ts, 3), 'window_s': self.cfg['window_s'],
                     'window_after_decision_s': 0.0, 'unavailable': unavailable,
                     'flags': {k: v for k, v in flags.items() if row.get(k) is not None}, 'partial': bool(unavailable)})
         row.setdefault('calls', 0)
         meta = {k: row.get(k) for k in ('version', 'decision_id', 'decision_ts', 'collected_at', 'late_s', 'calls', 'partial', 'window_txs',
                                         'sampled', 'trades') + FEATURES}
+        if row.get('window_mode'):
+            meta['window_mode'] = row['window_mode']
         self.store.add_observation(KIND, _canonical(row), mint=mint, candidate_id=cid, meta=meta, code_version=self.code_version,
                                    strategy_version=self.strategy_version, ts=now)
         self.counts['rows'] += 1

@@ -130,18 +130,19 @@ class Net:
             sim.sleep(lat / 2)
 
 
-CANARY_OFFSETS = (14.5, 29.0, 37.0)       # seconds after the frame's receive time: in the gap between a prefetch's as-of and its first call
+CANARY_OFFSETS = (43.7, 44.3, 44.9, 45.5, 46.1, 46.7)       # seconds after the frame's receive time: in the gap between a prefetch's as-of and its first call
 
 
 def canary_wallet(index, k):
-    return TP.wallet(5000 + index * 3 + k)
+    return TP.wallet(5000 + index * 8 + k)
 
 
 def sparse_tape(token, born, index, *, seed, end=420.0):
     """Quiet at first (the creation, a same-slot buyer, one swap), then THREE CANARY BUYS timed to fall between the as-of of the default
-    prefetch jobs and their first call: +14.5 s after the frame (features: start +15 s, as-of +12 s), +29.0 s (wallet signals: start +30 s,
-    as-of +27 s; it is the 5th of the six transactions it examines) and +37.0 s (flow and clusters: start +38 s, as-of +35 s). A collector
-    whose window were not cut at its as-of would count one. Busy after a minute."""
+    prefetch jobs and their first call: six of them spread over +43.7 .. +46.7 s after the frame. With the default leads features and wallet
+    signals start at +44 s (as-of +42 s) and flow / clusters at +45 .. +46 s (as-of +43 .. +44 s), so most canaries come after an as-of and
+    are already on chain when the job asks. A collector whose window were not cut at its as-of would count one (the wallet collector needs a
+    wide window for this: ``wallet_window_s=120``, the production 60 s window ends at +35 s). Busy after a minute."""
     trades = [(born, TP.wallet(900 + index), 'buy', 300_000_000, False), (born + 0.4, TP.wallet(901 + index), 'buy', 200_000_000, False),
               (born + 1.5, TP.wallet(index * 100), 'buy', 150_000_000, False)]
     received = born + BLOCK_BEFORE_RECEIPT
@@ -266,7 +267,8 @@ class Sim:
     DT = 0.5
 
     def __init__(self, root, plan, *, prefetch, latency=True, fault_p=0.0, hazard_sample=0.0, seed=3, tape_end=420.0,
-                 patch=None, prefetch_cfg=None, rugcheck=True, shed_windows=(), clusters=True, sparse=False):
+                 patch=None, prefetch_cfg=None, rugcheck=True, shed_windows=(), clusters=True, sparse=False, wallet_window_s=None,
+                 wallet_retain_raw=None):
         from pathlib import Path
         from lean import flow, honeypot_sim, paths, prefetch as PF, providers, sell_evidence
         from lean.__main__ import build_runner, load_config
@@ -286,6 +288,10 @@ class Sim:
         cfg['watchlist'] = {**cfg['watchlist'], 'enabled': False}
         cfg['paths'] = paths.config({**cfg['paths'], 'hazard_path_sample': hazard_sample})
         cfg['prefetch'] = PF.config({'enabled': True, **(prefetch_cfg or {})}) if prefetch else PF.config(None)
+        if wallet_window_s is not None:
+            cfg['wallet_signals'] = {**cfg['wallet_signals'], 'window_s': wallet_window_s}
+        if wallet_retain_raw is not None:
+            cfg['wallet_signals'] = {**cfg['wallet_signals'], 'retain_raw': wallet_retain_raw}
         for key, value in (patch or {}).items():
             cfg[key] = value
         self.cfg = cfg

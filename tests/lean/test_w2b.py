@@ -78,7 +78,7 @@ class PathsConfigTests(unittest.TestCase):
         self.assertEqual(L.config(None)['hazard_path_sample'], 0.0)
         self.assertEqual(L.config({'enabled': True})['hazard_path_sample'], 0.0)
         example = json.loads((ROOT / 'config' / 'lean' / 'lean.example.json').read_text())
-        self.assertEqual(L.config(example['paths'])['hazard_path_sample'], 0.2)
+        self.assertEqual(L.config(example['paths'])['hazard_path_sample'], 0.1)
 
     def test_it_is_a_number_in_zero_one(self):
         for bad in (-0.1, 1.5, True, '0.2', None, float('nan')):
@@ -258,7 +258,7 @@ class ProductionConfigUnchanged(unittest.TestCase):
     def test_the_example_lists_both_and_turns_them_on(self):
         example = json.loads((ROOT / 'config' / 'lean' / 'lean.example.json').read_text())
         self.assertTrue(example['prefetch']['enabled'])
-        self.assertEqual(example['paths']['hazard_path_sample'], 0.2)
+        self.assertEqual(example['paths']['hazard_path_sample'], 0.1)
         PF.config(example['prefetch'])
 
 
@@ -286,6 +286,7 @@ class PrefetchRules(unittest.TestCase):
     def done(entry, kind, *, asof, finished, payload=None):
         job = entry.jobs[kind]
         job.state, job.asof, job.started_at, job.finished_at, job.payload = 'done', asof, asof + 3, finished, payload or {'p': kind}
+        job.used = False
         return job
 
     def entry(self, p, mint='MintA', received=1000.0):
@@ -297,11 +298,11 @@ class PrefetchRules(unittest.TestCase):
         p = self.build()
         e = self.entry(p)
         self.done(e, 'flow', asof=1030.0, finished=1034.0)
-        got = p.take('flow', 'MintA', 1062.0)
-        self.assertEqual((got['asof'], got['finished_at'], got['payload']), (1030.0, 1034.0, {'p': 'flow'}))
         self.assertIsNone(p.take('flow', 'MintA', 1033.99))                      # finished AFTER this decision: never
         self.assertIsNone(p.take('flow', 'MintA', 1029.0))
         self.assertEqual(p.misses['flow'], {'FINISHED_AFTER_DECISION': 2})
+        got = p.take('flow', 'MintA', 1062.0)
+        self.assertEqual((got['asof'], got['finished_at'], got['payload']), (1030.0, 1034.0, {'p': 'flow'}))
         odd = self.done(e, 'wallet_signals', asof=1030.0, finished=1010.0)             # (cannot happen: a job finishes after it starts; still refused)
         self.assertIsNone(p.take('wallet_signals', 'MintA', 1020.0))
         self.assertEqual(p.misses['wallet_signals'], {'ASOF_AFTER_DECISION': 1})
@@ -314,16 +315,16 @@ class PrefetchRules(unittest.TestCase):
         p = self.build()
         e = self.entry(p)
         self.done(e, 'flow', asof=1030.0, finished=1040.0)
-        self.assertIsNotNone(p.take('flow', 'MintA', 1040.0))
         self.assertIsNone(p.take('flow', 'MintA', 1039.999999))
+        self.assertIsNotNone(p.take('flow', 'MintA', 1040.0))
 
     def test_a_result_older_than_max_stale_at_the_decision_is_not_used(self):
         p = self.build(max_stale_s=30)
         e = self.entry(p)
         self.done(e, 'flow', asof=1000.0, finished=1004.0)
-        self.assertIsNotNone(p.take('flow', 'MintA', 1030.0))
         self.assertIsNone(p.take('flow', 'MintA', 1030.5))
         self.assertEqual(p.misses['flow'], {'STALE': 1})
+        self.assertIsNotNone(p.take('flow', 'MintA', 1030.0))
 
     def test_features_need_the_probes_holders_for_a_soft_reject_else_the_recorder_reads_them(self):
         p = self.build()
@@ -338,12 +339,12 @@ class PrefetchRules(unittest.TestCase):
         p = self.build()
         e = self.entry(p, received=1000.0)
         self.assertEqual(p.due(e, 'probe'), 1002.0)
-        self.assertEqual(p.due(e, 'flow'), 1000.0 + 60 - 22)
-        self.assertEqual(p.due(e, 'risk_external'), 1000.0 + max(2.0, 60 - 40))
+        self.assertEqual(p.due(e, 'flow'), 1000.0 + 60 - 15)
+        self.assertEqual(p.due(e, 'risk_external'), 1000.0 + max(2.0, 60 - 25))
         p300 = PF.Prefetch(cfg=PF.config({'enabled': True}), store=None, helius=None, discovery_db='x', screen_cfg={}, min_age_s=300, clock=Clock())
         e300 = PF.Entry(candidate(), 1000.0)
-        self.assertEqual(p300.due(e300, 'flow'), 1000.0 + 300 - 22)               # scales with the screen's min age
-        pshort = PF.Prefetch(cfg=PF.config({'enabled': True}), store=None, helius=None, discovery_db='x', screen_cfg={}, min_age_s=20, clock=Clock())
+        self.assertEqual(p300.due(e300, 'flow'), 1000.0 + 300 - 15)               # scales with the screen's min age
+        pshort = PF.Prefetch(cfg=PF.config({'enabled': True}), store=None, helius=None, discovery_db='x', screen_cfg={}, min_age_s=10, clock=Clock())
         self.assertEqual(pshort.due(e300, 'flow'), 1000.0 + 2.0)                  # never earlier than min_start_s
 
     def test_readiness_counts_only_what_finished_before_the_decision_and_only_for_hazard_free_candidates(self):
@@ -406,9 +407,9 @@ class PrefetchRules(unittest.TestCase):
         e.gate, flow.state = 'FREE', 'pending'
         self.assertEqual(p._ready(e, flow, 1045.0), 'run')
         self.assertEqual(p._ready(e, flow, 1020.0), 'wait')                       # before its start time
-        # too late to finish before the earliest screen (1060) plus its usual 3 s lag: a flow job needs ~5.5 s (a quarter of its 22 s lead)
-        self.assertEqual(p._ready(e, flow, 1057.0), 'run')
-        self.assertEqual(p._ready(e, flow, 1057.6), 'skip')
+        # too late to finish before the earliest screen (1060) plus its usual 3 s lag: a flow job needs ~3.75 s (a quarter of its 15 s lead)
+        self.assertEqual(p._ready(e, flow, 1059.0), 'run')
+        self.assertEqual(p._ready(e, flow, 1059.5), 'skip')
         self.assertEqual((flow.state, flow.why, p.counts['late_start']), ('skipped', 'LATE_START', 1))
         probe = PF.Entry(candidate('MintB', 1000.0), 1000.0)
         self.assertEqual(p.needs('probe'), 3.0)
@@ -578,6 +579,32 @@ class LearnerAcceptsPrefetchedRows(unittest.TestCase):
         self.assertEqual(LN.risk_values(risk, 1062.0, self.POLICY, counts, ('rc_score',))['rc_score'], 120)
         risk['late_s'] = 40.0
         self.assertIsNone(LN.risk_values(risk, 1062.0, self.POLICY, counts, ('rc_score',))['rc_score'])
+
+
+class ApplyPrefetchHolders(unittest.TestCase):
+    """A job started for a probable soft reject read holders; a screen that then PASSES keeps its own shares (the job's are dropped)."""
+
+    def pre(self):
+        payload = {'extra': {'dev_holding_pct': 1.0, 'top1_pct': 9.0, 'top10_pct': 40.0, 'graduation_block_time': 1000},
+                   'missing': {}, 'flags': {'top1_pct': 'AT_COLLECTION', 'top10_pct': 'AT_COLLECTION'}, 'calls': 3,
+                   'snapshot_at': {'dev_holding_pct': 5.0, 'top1_pct': 6.0, 'top10_pct': 6.0}}
+        return {'payload': payload, 'finished_at': 7.0}
+
+    def test_a_pass_drops_the_job_holder_shares(self):
+        from lean import features as F
+        extra, _m, _c, flags, _at, measured, snap = F.apply_prefetch(self.pre(), need_holders=False, screen_time=1100)
+        self.assertNotIn('top1_pct', extra)
+        self.assertNotIn('top10_pct', extra)
+        self.assertNotIn('top10_pct', flags)
+        self.assertNotIn('top10_pct', measured)
+        self.assertNotIn('top10_pct', snap)
+
+    def test_a_soft_reject_takes_them(self):
+        from lean import features as F
+        extra, _m, _c, flags, _at, measured, snap = F.apply_prefetch(self.pre(), need_holders=True, screen_time=1100)
+        self.assertEqual((extra['top1_pct'], extra['top10_pct']), (9.0, 40.0))
+        self.assertEqual(flags['top10_pct'], 'AT_COLLECTION')
+        self.assertEqual(snap['top10_pct'], 6.0)
 
 
 if __name__ == '__main__':

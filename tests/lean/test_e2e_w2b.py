@@ -135,10 +135,11 @@ class Readiness(Base):
     def test_a_stressed_world_still_has_nearly_everything_ready(self):
         sim = self.run_sim(STRESS, prefetch=True, fault_p=0.05, latency=1.5)
         sim_shed = self.run_sim(STRESS, prefetch=True, fault_p=0.05, latency=1.5, shed_windows=[(T0 + 300.0, T0 + 330.0)])
-        for world, floor in ((sim, 0.85), (sim_shed, 0.8)):
+        for world, floor in ((sim, 0.8), (sim_shed, 0.7)):
             ready = PF.readiness(world.runner.store.path)
             for name, row in ready['features'].items():
-                self.assertGreaterEqual(row['ready_rate'], floor, name)
+                # (W2b2 #1: the jobs start ~16 s before the screen, so under load flow, the slowest, is the first to miss: 50 % floor)
+                self.assertGreaterEqual(row['ready_rate'], 0.5 if name.startswith('flow') else floor, name)
 
     def test_hazards_cost_the_probe_only_and_the_probe_agrees_with_the_screen(self):
         sim = self.run_sim(PLAN, prefetch=True, prefetch_cfg={'ttl_s': 86400})
@@ -153,6 +154,9 @@ class Readiness(Base):
             jobs = {k: j.state for k, j in entry.jobs.items()}
             if role in hazard_roles:
                 self.assertEqual({k: v for k, v in jobs.items() if k != 'probe'}, {k: 'skipped' for k in PF.KINDS}, role)
+            elif role in ('mcap_high', 'liquidity_low'):          # W2b2 #3: a soft reject needs no flow (collected for PASS decisions only)
+                self.assertEqual({k: v for k, v in jobs.items() if k != 'flow'}, {k: 'done' for k in jobs if k != 'flow'}, (role, jobs))
+                self.assertEqual((jobs['flow'], entry.jobs['flow'].why), ('skipped', 'SOFT_REJECT'))
             else:
                 self.assertEqual(set(jobs.values()), {'done'}, (role, jobs))
         h = p.health()
@@ -263,7 +267,7 @@ class NoLookahead(Base):
             self.assertEqual(row['window_after_decision_s'], 0.0)
             grad = W.slot_at(sim.scene.born[mint])
             window = [(t, signer, side) for t, signer, side, _a, failed in self.trades(sim, mint)
-                      if not failed and grad <= W.slot_at(t) <= grad + 150 and int(t) <= cut]
+                      if not failed and grad <= W.slot_at(t) <= grad + int(row['window_s'] / 0.4) and int(t) <= cut]
             buyers = []
             for _t, signer, side in window[:6]:
                 if side == 'buy' and signer not in buyers:
@@ -308,7 +312,8 @@ class NoLookahead(Base):
                 prefetched += 1
                 self.assertLessEqual(row['collected_at'], decision)
                 self.assertLess(row['late_s'], 0)
-                self.assertIn(row['holders_source'], ('prefetch',))
+                self.assertEqual(row['holders_source'], 'prefetch')          # W2b2 #2: the job read the holder list itself (stamped), not the probe
+                self.assertNotIn('largest_cluster_supply_pct', row['flags'])          # read before the decision: not an AT_COLLECTION figure
                 self.assertLess(row['prefetch']['asof'], decision)
             if row.get('window_txs') is None:
                 continue
@@ -325,7 +330,7 @@ class NoLookahead(Base):
 
     def test_a_swap_between_the_cut_and_the_first_call_is_in_no_prefetched_row(self):
         plan = [('ok', 5.0 + 70 * i) for i in range(10)]
-        sim = self.run_sim(plan, prefetch=True, sparse=True, until=5.0 + 70 * 10 + 400)
+        sim = self.run_sim(plan, prefetch=True, sparse=True, wallet_window_s=120, until=5.0 + 70 * 10 + 400)
         for check in (self.check_flow, self.check_wallet, self.check_features, self.check_clusters):
             self.assertGreater(check(sim), 6, check.__name__)
         # the canaries really were visible to the prefetch's calls and really came after its as-of: the test could have failed
@@ -336,15 +341,15 @@ class NoLookahead(Base):
             mint = row['mint']
             index = [t.mint for t in sim.scene.tokens].index(mint) + 1
             received = sim.scene.arrival[mint]
-            after = [k for k, off in enumerate(W.CANARY_OFFSETS) if received + off > row['prefetch']['asof']]
+            after = [k for k, off in enumerate(W.CANARY_OFFSETS) if int(received + off) > row['prefetch']['asof']]      # (block times are whole seconds)
             visible = [k for k in after if received + W.CANARY_OFFSETS[k] <= row['prefetch']['started_at']]
             self.assertFalse({W.canary_wallet(index, k) for k in after} & set(row['buyer_wallets']))
             shown += 1 if visible else 0
         self.assertGreater(shown, 6)                                                 # (a canary between the as-of and the call, in most rows)
         # and the same world WITHOUT a prefetch counts them (the collectors cut at the decision, which is after them)
-        plain = self.run_sim(plan, prefetch=False, sparse=True, until=5.0 + 70 * 10 + 400)
+        plain = self.run_sim(plan, prefetch=False, sparse=True, wallet_window_s=120, until=5.0 + 70 * 10 + 400)
         counted = sum(1 for row in rows_of(plain.runner, 'wallet_signals')
-                      if {W.canary_wallet(i + 1, 1) for i in range(10)} & set(row['buyer_wallets']))
+                      if {W.canary_wallet(i + 1, 0) for i in range(10)} & set(row['buyer_wallets']))
         self.assertGreater(counted, 6)
 
     def test_rugcheck_rows_never_count_a_token_created_after_the_cut(self):

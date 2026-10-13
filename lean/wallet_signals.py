@@ -335,6 +335,7 @@ class _Calls:
     def __init__(self, limit, shed, stop=None):
         self.limit, self.used, self.shed, self.learned, self.stop = limit, 0, shed, False, stop
         self.patience = None                       # W2b #8: a prefetch's own (shorter) patience per request; None = shed_wait_s
+        self.raws = None                           # W2b2 #8: a prefetch's kept raw bodies [(label, raw, meta, ts)], written WITH the candidate id at the commit
 
     def check(self):
         """Raise _Cap before a request that the stop (LINT2b), the cap or the credit shed forbids."""
@@ -504,8 +505,11 @@ class WalletSignals:
         self.counts['calls'] += 1
         keep = self.cfg['retain_raw']
         if keep == 'all' or (keep == 'signatures' and retained):
-            self._write(self.store.add_observation, 'wallet_signals:raw:' + label, raw, mint=mint, candidate_id=cid,
-                        meta={'method': method, 'attempts': meta.get('attempts')}, ts=self.clock())
+            if calls.raws is not None:                 # W2b2 #8: a prefetch has no candidate id yet: keep the body for the commit
+                calls.raws.append((label, raw, {'method': method, 'attempts': meta.get('attempts')}, self.clock()))
+            else:
+                self._write(self.store.add_observation, 'wallet_signals:raw:' + label, raw, mint=mint, candidate_id=cid,
+                            meta={'method': method, 'attempts': meta.get('attempts')}, ts=self.clock())
         return result
 
     def _signatures(self, calls, address, mint, cid, label, *, before=None, limit):
@@ -544,6 +548,7 @@ class WalletSignals:
         calls = _Calls(cfg['max_calls'], self.shed, self.stop)
         if sink is not None:
             calls.patience = sink.get('patience_s')
+            calls.raws = sink.setdefault('raws', [])
         unavailable, notes = {}, {}
         txs, funding, supply, window = [], {}, None, []
         supply_source = None
@@ -673,6 +678,11 @@ class WalletSignals:
         # --- end W2b ---
         self._persist(features, events, cid, mint)
         return features
+
+    def _persist_raws(self, raws, cid, mint):
+        """W2b2 #8: the raw bodies a prefetch kept, written now WITH the candidate id (at their own read times)."""
+        for label, raw, meta, at in raws or ():
+            self._write(self.store.add_observation, 'wallet_signals:raw:' + label, raw, mint=mint, candidate_id=cid, meta=meta, ts=at)
 
     def _persist(self, features, events, cid, mint):
         """Write one ``wallet_signals`` row and its events (``wallet_buy`` / ``wallet_funding`` / a newly detected ``wallet_hub``)."""

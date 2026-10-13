@@ -330,7 +330,7 @@ class HeldRisk:
         except ProviderError as error:
             if providers.is_shed(error):                              # LINT1: nothing was sent; probe again next pass
                 life.last_probe = previous
-                self.counts['shed'] += 1
+                self._count_shed(error)
                 return
             runner._error(error.code, transient=error.transient, mint=mint, scope='route_probe', raw=error.raw)
             if error.transient:
@@ -342,6 +342,15 @@ class HeldRisk:
                 self._trigger(mint, row, life, 'NO_ROUTE', {'since': life.no_route_since, 'code': error.code})
             return
         self._route_ok(mint, row, life, net_lamports(quote.out_amount, runner.pcfg), now)
+
+    def _count_shed(self, error):
+        """W2b2 #5: a shed held-position probe, by why (``no_token``: the shared low lane had no token; ``backoff``: a 429 / credit shed window),
+        so a rollback can be judged on held-risk probes alone and not on the whole lane."""
+        self.counts['shed'] += 1
+        why = getattr(error, 'meta', {}).get('why')
+        if why in ('no_token', 'backoff'):
+            key = 'shed_' + why
+            self.counts[key] = self.counts.get(key, 0) + 1
 
     def _account_checks(self, runner, held, retry=False):
         """ONE batched read of [mint, pool] per held position on the low lane (LINT1): freeze authority, pool closed or migrated."""
@@ -355,7 +364,7 @@ class HeldRisk:
                 result, _raw, _meta = self._lane(runner).helius.get_multiple_accounts(keys)
             except ProviderError as error:
                 if providers.is_shed(error):                          # LINT1: nothing was sent
-                    self.counts['shed'] += 1
+                    self._count_shed(error)
                     self._account_retry = not retry                   # LINT2b: retried once on the next pass, not 6 passes later
                     continue
                 runner._error(error.code, transient=error.transient, scope='held_risk', message='%d positions' % len(chunk), raw=error.raw)
