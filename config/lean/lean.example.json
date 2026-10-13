@@ -214,5 +214,37 @@
     "copycat_window_s": 86400.0,
     "raw_max_bytes": 16384,
     "backoff_s": 60.0
+  },
+  "arms": {
+    "_comment": "W2a shadow paper ARMS = an A/B test on the SAME candidate stream (absent/null = off; reports/W2a.md has the call budget). Each arm has its own virtual book (cash, equity, positions, cooldowns) and writes ONLY to its own arms.sqlite (append-only; arm_name, strategy_version, config_hash per row), never to lean.sqlite. Entry: the main arm's q0/q1 quote for the same mint is reused and scaled to the arm's size (no extra call); a candidate the main arm did not quote costs ONE buy quote on the shared LOW lane (the sell leg is modeled; a shed = ARM_SKIPPED_SHED). Exits: the real strategy.exit_decision on the marks the main position loop already reads (a mint only an arm holds is read in one batched LOW-lane call); fills at the L10 q1 quote, the main arm's own when it exits at the same time, else ONE low-lane quote; same fees/ATA rent/transfer fee as live. No call on the exit lane, no per-fill messages (Telegram /arms is the summary). strategy_config is a path (relative to this file), a full inline object, or {base, set} = a base file with some keys replaced. entry_filter uses decision-time features only: a collector row (source clusters/features/...) counts only if it was WRITTEN before the arm's decision and is not flagged AT_COLLECTION, else the arm skips with FEATURE_NOT_READY; wait_s > 0 holds the candidate up to that long and enters when the row exists (at that later time, on a fresh low-lane quote). hold2m: the live strategy but max_hold_seconds 120. tp110: one full take-profit at 1.10x (strategy full_take_profit_ratio) and the live stop (stop_fraction 0.18 = 0.82). nocluster_hold2m: hold2m only when no linked-wallet cluster holds supply (the lead of lean-analysis/REPORT.md, largest_cluster_supply_pct <= 0.71, a percent of the supply as L24 records it). live_copy: identical to the main strategy, the control (its results must track the main arm).",
+    "enabled": true,
+    "db": null,
+    "initial_cash_sol": null,
+    "queue_size": 200,
+    "max_scale": 2.0,
+    "exit_wait_s": 120,
+    "exit_grace_s": 1.0,
+    "eval_interval_s": 15,
+    "quote_marks_per_pass": 3,
+    "peak_persist_s": 60,
+    "arms": [
+      {
+        "name": "hold2m",
+        "strategy_config": {"base": "strategy-default.json", "set": {"strategy_version": "lean-1-hold2m", "max_hold_seconds": 120}}
+      },
+      {
+        "name": "tp110",
+        "strategy_config": {"base": "strategy-default.json", "set": {"strategy_version": "lean-1-tp110", "stop_fraction": "0.18", "full_take_profit_ratio": "1.10"}}
+      },
+      {
+        "name": "nocluster_hold2m",
+        "strategy_config": {"base": "strategy-default.json", "set": {"strategy_version": "lean-1-nocluster-hold2m", "max_hold_seconds": 120}},
+        "entry_filter": {"feature": "largest_cluster_supply_pct", "op": "<=", "value": 0.71, "source": "clusters", "wait_s": 0}
+      },
+      {
+        "name": "live_copy",
+        "strategy_config": "strategy-default.json"
+      }
+    ]
   }
 }
