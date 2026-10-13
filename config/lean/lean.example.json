@@ -203,5 +203,19 @@
     "copycat_window_s": 86400.0,
     "raw_max_bytes": 16384,
     "backoff_s": 60.0
+  },
+  "backfill": {
+    "_comment": "C4 discovery gap backfill (OFF here: enabled=false; absent = off). Polls getSignaturesForAddress on the pump.fun migration authority (the address the discovery feed filters on) every interval_s on the LOW lane, skips signatures the discovery database already holds, fetches the rest (getTransaction, at most max_tx_per_poll) and feeds the graduations the feed missed to the runner as source 'backfill' with their detection latency; older than screen.max_age_seconds they are recorded and rejected TOO_OLD, never entered. Credits: ~1 getSignaturesForAddress per interval_s (720/day at 120 s) + 1 getTransaction per MISSING signature; health.sources.backfill reports the per-day feed gap rate and a credit estimate (credits_per_* are the plan's costs, edit them if they differ).",
+    "enabled": false,
+    "name": "backfill",
+    "interval_s": 120,
+    "limit": 100,
+    "max_pages": 3,
+    "max_tx_per_poll": 40,
+    "max_attempts_per_signature": 5,
+    "lookback_s": 21600,
+    "credits_per_signatures_call": 1,
+    "credits_per_transaction": 1,
+    "day_history": 14
   }
 }
