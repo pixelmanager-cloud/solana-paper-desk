@@ -296,7 +296,8 @@
     "lookback_s": 21600,
     "credits_per_signatures_call": 1,
     "credits_per_transaction": 1,
-    "day_history": 14
+    "day_history": 14,
+    "reserve_tokens": 2
   },
   "curves": {
     "_comment": "C2 bonding-curve recorder (RECORDING ONLY; shared LOW lane, shed = skip; own curves.sqlite with size rollover and a disk floor; absent/null or enabled false = off and left out of lean_config_hash). OFF here: the V2 call must be verified live first (reports/LINT5.md 'C2 live verification'). One getProgramAccountsV2 listing per poll (memcmp on the 8-byte BondingCurve discriminator, limit page_limit, changedSinceSlot = the lowest slot of the last poll; max_pages per poll, an overflow is a gap and moves on); getProgramAccounts (v1) lists EVERY pump curve ever made and is for fakes/small clusters only. ~10 credits per page (+1 getSlot only if the V2 response carries no slot); max_credits_month 450,000 becomes a rolling-hour budget checked before every call and stretches poll_s 10 s to ~58 s (62 calls/hour, < 0.5M credits/month). Tracks SOL-quoted curves at progress >= min_progress (0.5), at most max_tracked; marks on change; ends GRADUATED / STALE; join_by_mint() continues into paths.sqlite.",

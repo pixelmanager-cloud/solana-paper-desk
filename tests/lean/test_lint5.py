@@ -273,6 +273,35 @@ class C4CpiMigrations(unittest.TestCase):
         self.assertEqual([o['maxSupportedTransactionVersion'] for o in options], [providers.MAX_TX_VERSION])
 
 
+class C4LaneReserve(unittest.TestCase):
+    def test_a_short_low_lane_is_left_to_the_other_users(self):
+        calls, tokens = [], [2.5]
+
+        class Limiter:
+            def available(self):
+                return tokens[0]
+
+        class Helius:
+            transport = type('T', (), {'limiter': Limiter()})()
+
+            def rpc(self, method, params):
+                calls.append(method)
+                return [], b'', {}
+        with tempfile.TemporaryDirectory() as tmp:
+            db = Path(tmp) / 'd.sqlite'
+            from discovery import continuous as discovery
+            with mock.patch.object(discovery.time, 'time', return_value=TB - 100_000):
+                discovery.initialize(db)
+            src = BF.BackfillSource(Helius(), db, tmp, cfg={}, screen_cfg={'min_age_seconds': 60, 'max_age_seconds': 7200}, clock=lambda: TB)
+            self.assertEqual(src.iter_new(0), ([], 0))
+            self.assertEqual(calls, [])                                            # 2.5 tokens < 1 + reserve 2: nothing sent
+            self.assertEqual(src.health()['sheds'], 1)
+            tokens[0] = 3.0
+            src.next_poll_at = 0
+            src.iter_new(0)
+            self.assertEqual(calls, ['getSignaturesForAddress'])
+
+
 class C4CpiEndToEnd(BackfillEndToEnd):
     """The C4 e2e world with f2 stored by the feed AS A CPI migration (the intake rejects it) and m1 missed by the feed AS A CPI
     migration (fetched). Both are entered from the backfill; f2 costs no getTransaction."""

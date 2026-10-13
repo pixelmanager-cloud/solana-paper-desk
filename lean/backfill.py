@@ -65,7 +65,7 @@ AUTHORITY = discovery.AUTHORITY
 DEFAULTS = {
     'interval_s': 120, 'limit': 100, 'max_pages': 3, 'max_tx_per_poll': 40, 'max_attempts_per_signature': 5,
     'lookback_s': 21_600, 'authority': AUTHORITY, 'credits_per_signatures_call': 1, 'credits_per_transaction': 1,
-    'day_history': 14,
+    'day_history': 14, 'reserve_tokens': 2,
 }
 DAY = 86_400
 
@@ -102,6 +102,7 @@ def make_config(raw):
     integer('credits_per_signatures_call', 0, 1000)
     integer('credits_per_transaction', 0, 1000)
     integer('day_history', 1, 60)
+    integer('reserve_tokens', 0, 10)
     try:
         address(cfg['authority'])
     except (ValueError, TypeError, KeyError):
@@ -288,7 +289,7 @@ class BackfillSource(Source):
                 params['until'] = until
             if before:
                 params['before'] = before
-            result, _raw, _meta = self.helius.rpc('getSignaturesForAddress', [self.cfg['authority'], params])
+            result, _raw, _meta = self._rpc('getSignaturesForAddress', [self.cfg['authority'], params])
             day['calls_signatures'] += 1
             rows = _valid_rows(result)
             reached = False
@@ -345,10 +346,21 @@ class BackfillSource(Source):
         return BackfillCandidate(base.seq, base.mint, base.pool, base.signature, base.slot, base.migrated_at, base.payload_hash,
                                  source=self.name, latency_s=latency, beyond_max_age=latency > self.max_age)
 
+    def _rpc(self, method, params):
+        """LINT5: one low-lane call that leaves ``reserve_tokens`` for the other low-lane users (the path recorder's marks, L11, the
+        collectors), like ``lean.flow.LowCalls``: with fewer tokens it is a LANE_SHED that sent nothing (skip, look again soon)."""
+        reserve = self.cfg['reserve_tokens']
+        if reserve:
+            limiter = getattr(getattr(self.helius, 'transport', None), 'limiter', None)
+            available = getattr(limiter, 'available', None)
+            if available is not None and available() < 1 + reserve:
+                raise ProviderError(LANE_SHED, True, meta={'why': 'reserve'}, provider='helius')
+        return self.helius.rpc(method, params)
+
     def _fetch(self, entry, now, day):
         sig = entry['signature']
         try:
-            result, _raw, _meta = self.helius.rpc('getTransaction', [sig, {'encoding': 'jsonParsed', 'commitment': 'confirmed',
+            result, _raw, _meta = self._rpc('getTransaction', [sig, {'encoding': 'jsonParsed', 'commitment': 'confirmed',
                                                                            'maxSupportedTransactionVersion': MAX_TX_VERSION}])
         except ProviderError as error:
             if error.code == LANE_SHED:
