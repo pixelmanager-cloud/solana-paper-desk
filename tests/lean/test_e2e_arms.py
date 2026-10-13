@@ -77,6 +77,13 @@ def setUpModule():
     unittest.addModuleCleanup(patcher.stop)
 
 
+def fee_schedule():
+    from tests.lean.fakeworld import mainnet_fee_schedule
+    from lean import marks as M
+    address, account, _fields = mainnet_fee_schedule()
+    return address, account, M.decode_schedule(account)
+
+
 def shipped_arms(**overrides):
     """The ``arms`` block of config/lean/lean.example.json, normalised exactly as lean.__main__.load_config does."""
     raw = json.loads((ROOT / 'config' / 'lean' / 'lean.example.json').read_text())['arms']
@@ -87,7 +94,7 @@ def shipped_arms(**overrides):
 class Run:
     """One run of the 20-candidate world."""
 
-    def __init__(self, test, *, arms=True, arms_cfg=None, execution=EXEC, shed=None, clusters=CLUSTERS, opener=None, marks=None, scenario=None):
+    def __init__(self, test, *, arms=True, arms_cfg=None, execution=EXEC, shed=None, clusters=CLUSTERS, opener=None, marks=None, scenario=None, wrap_opener=None):
         self.test = test
         scenario = SCENARIO if scenario is None else scenario
         self.tmp = tempfile.TemporaryDirectory()
@@ -107,7 +114,7 @@ class Run:
         self.cfg['arms'] = (arms_cfg or shipped_arms()) if arms else None
         self.shed = shed                                      # (start, end): the shared LOW lane of both providers is shed in this window
         self.clusters = clusters
-        self.opener = opener or self.world.opener
+        self.opener = opener or (wrap_opener(self.world.opener) if wrap_opener else self.world.opener)
         self.state = self.root / 'state'
         self.r = self.build()
         self.shed_done = False
@@ -128,7 +135,7 @@ class Run:
                     'unavailable': {} if value is not None else {'largest_cluster_supply_pct': 'NO_HOLDERS'}, 'decision_ts': self.ready[role]}
             self.r.store.add_observation('clusters', b'{}', mint=self.by_role[role].mint, meta=meta, ts=self.ready[role] + offset)
 
-    def drive(self, until=END, start=None, process_arms=True):
+    def drive(self, until=END, start=None, process_arms=True, step=STEP):
         r, clock = self.r, self.clock
         tick = start if start is not None else T0
         while tick <= until:
@@ -147,7 +154,7 @@ class Run:
             self.test.assertIsNone(r.halted, r.halted)
             self.test.assertTrue(r.store.check_invariants())
             self.test.assertTrue(r.store.check_position_states())
-            tick += STEP
+            tick += step
         return r
 
     # -- views ---------------------------------------------------------------------------------------------------------------
@@ -343,7 +350,8 @@ class ArmsE2E(unittest.TestCase):
         calls_off = [c for c in off.world.calls if c[0] == 'jupiter']
         arms = run.r.arms
         extra = len(calls_on) - len(calls_off)
-        counted = arms.calls['jupiter_entry_quote'] + arms.calls['jupiter_exit_quote'] + arms.calls['jupiter_quote_mark']
+        counted = (arms.calls['jupiter_entry_quote'] + arms.calls['jupiter_entry_requote'] + arms.calls['jupiter_exit_quote']
+                   + arms.calls['jupiter_quote_mark'])
         self.assertEqual(extra, counted)                                                  # every extra call is an accounted low-lane call
         self.assertEqual(arms.calls['jupiter_quote_mark'], 0)
         # a candidate the main arm quoted costs NOTHING: its arm entries are priced from the main quote
@@ -357,15 +365,16 @@ class ArmsE2E(unittest.TestCase):
                     self.assertTrue(d['features']['price_source'].startswith('main_entry_quote'), (arm, role, d['features']['price_source']))
                     self.assertIn('SCALED_FROM_MAIN', d['features']['flags'])
         # a candidate the main arm did not quote: one low-lane quote, flagged, the sell leg modeled
-        low = [d for d in run.decisions('hold2m') if d['features'].get('price_source') == 'low_lane_entry_quote']
+        low = [d for d in run.decisions('hold2m') if d['features'].get('price_source', '').startswith('low_lane_entry_quote')]
         self.assertTrue(low)
         for d in low:
             self.assertTrue(d['action'] == 'BUY' or d['reasons'] == ['COST_BUDGET'], d)
-            self.assertLessEqual({'LATENCY_MODEL_ABSENT', 'SELL_LEG_MODELED'}, set(d['features']['flags']))
+            self.assertIn('SELL_LEG_MODELED', d['features']['flags'])
+            self.assertNotIn('LATENCY_MODEL_ABSENT', d['features']['flags'])        # the L10 model IS applied (q0, delay, q1)
         self.assertTrue([d for d in low if d['action'] == 'BUY'])
         # ONE call per candidate, shared by every arm that needs one (the others scale it: SHARED_QUOTE)
         entry_calls = len({d['candidate_id'] for arm in ('hold2m', 'tp110', 'nocluster_hold2m', 'live_copy') for d in run.decisions(arm)
-                           if d['features'].get('price_source') == 'low_lane_entry_quote'
+                           if d['features'].get('price_source', '').startswith('low_lane_entry_quote')
                            or any(x.startswith('ARM_QUOTE_FAILED') for x in d['reasons'])})
         shared = [d for arm in ('tp110', 'live_copy') for d in run.decisions(arm) if 'SHARED_QUOTE' in d['features'].get('flags', [])]
         self.assertTrue(shared)
@@ -377,7 +386,8 @@ class ArmsE2E(unittest.TestCase):
         # live_copy is refused exactly like the main arm (its portfolio gate, before any quote)
         self.assertEqual(run.decisions('hold2m', 'cost')[0]['reasons'], ['COST_BUDGET'])
         main_cost = [d for d in run.r.store.rows('decisions', limit=100000) if d['kind'] == 'entry' and run.role[d['mint']] == 'cost']
-        self.assertEqual(run.decisions('live_copy', 'cost')[0]['reasons'], json.loads(main_cost[0]['reasons']))
+        self.assertEqual(json.loads(main_cost[0]['reasons']), ['MAX_POSITIONS'])
+        self.assertEqual(run.decisions('live_copy', 'cost')[0]['reasons'], ['MAIN_DID_NOT_BUY'])           # the control follows the main arm
 
     def test_a_provider_shed_affects_only_the_arms(self):
         plain = self.run_world()
@@ -396,13 +406,13 @@ class ArmsE2E(unittest.TestCase):
         # no arm entered a candidate through the shed lane inside the window
         for arm in ('hold2m', 'tp110', 'live_copy'):
             for d in shed.decisions(arm):
-                if d['features'].get('price_source') == 'low_lane_entry_quote':
+                if d['features'].get('price_source', '').startswith('low_lane_entry_quote'):
                     self.assertFalse(shed_window[0] <= d['ts'] < shed_window[1], (arm, d['ts']))
         self.assertEqual(shed.r.arms.health()['failures'], 0)
         # the shed arms hold positions longer or exit by the flagged mark fill, never by a made-up price
         sources = {f['price_source'] for f in shed.rows('arm_fills')}
-        self.assertFalse(sources - {'main_entry_quote:q0', 'main_entry_quote:q1', 'main_exit_quote', 'low_lane_entry_quote',
-                                    'low_lane_exit_quote', 'mark_model', 'write_off', 'main_quote_mark'}, sources)
+        self.assertFalse(sources - {'main_entry_quote:q0', 'main_entry_quote:q1', 'main_exit_quote', 'low_lane_entry_quote:q0',
+                                    'low_lane_entry_quote:q1', 'low_lane_exit_quote', 'mark_model', 'write_off', 'main_quote_mark'}, sources)
 
     def test_an_arm_failure_never_reaches_the_main_arm_or_the_other_arms(self):
         plain = self.run_world()

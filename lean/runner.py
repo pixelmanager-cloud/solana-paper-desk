@@ -60,7 +60,8 @@ class Runner:
                  screen_overrides=None, pool_fee_bps=25, taker=PAPER_TAKER, kill_switch=None, clock=time.time,
                  scan_limit=500, max_retries=3, sol_usd_ttl_s=30, stale_mark_s=30, unexitable_after_s=7200, route_check=None,
                  execution=None, held_risk=None, extra_sources=None, watchlist=None, ops=None, mark_model=None,
-                 blocked_log_s=300, exit_backoff_max_s=60, peak_persist_s=60, discovery_stale_s=600, lean_config_hash=None):
+                 blocked_log_s=300, exit_backoff_max_s=60, peak_persist_s=60, discovery_stale_s=600, lean_config_hash=None,
+                 arms_config_hash=None):
         # --- L10 hook: latency-aware fills + cost model (None = today's instant fills). The priority fee + Jito tip enter
         # through the strategy config, so the fill fee, the marks and the entry/exit cost checks share one number. ---
         self.execution = execution
@@ -155,6 +156,7 @@ class Runner:
         self.mark_model = mark_model if mark_model is not None else _marks.MarkModel(None, pool_fee_bps=self.pool_fee_bps)   # #7
         self.mark_info = {}                        # mint -> the inputs of its latest vault mark (model, reserves, fee)
         self.lean_config_hash = lean_config_hash   # #10 sha256 of the whole lean.json (None when not built from a file)
+        self.arms_config_hash = arms_config_hash   # W2a2 #1: sha256 of the arms block alone (None = no arms); NOT part of lean_config_hash
         self.discovery_stale_s = float(discovery_stale_s)
         self._feed = {'newest_at': None, 'stale': False, 'stale_since': None, 'events': 0}
         self.blocked_log_s, self.exit_backoff_max_s = float(blocked_log_s), float(exit_backoff_max_s)          # #13
@@ -195,6 +197,7 @@ class Runner:
         if self.halted is None:
             self.store.record('start', {'cursor': self.cursor, 'config_hash': self.cfg.config_hash,
                                         'strategy_config_hash': self.cfg.config_hash, 'lean_config_hash': self.lean_config_hash,
+                                        'arms_config_hash': self.arms_config_hash,
                                         'marks': self.mark_model.cfg, 'raw_policy': getattr(self.store, 'raw_policy', 'all'),
                                         'paper': {'fee_lamports': self.pcfg.fee_lamports, 'slippage_bps': self.pcfg.slippage_bps},
                                         'pool_fee_bps': self.pool_fee_bps, 'stale_mark_s': self.stale_mark_s,
@@ -1121,7 +1124,8 @@ class Runner:
                 'bot_exit': self._aux_health('bot_exit', self.bot_exit),                        # L23
                 'arms': self._aux_health('arms', self.arms),                                    # W2a
                 # --- M1 hook ---
-                'lean_config_hash': self.lean_config_hash, 'strategy_config_hash': self.cfg.config_hash,
+                'lean_config_hash': self.lean_config_hash, 'arms_config_hash': self.arms_config_hash,
+                'strategy_config_hash': self.cfg.config_hash,
                 'marks_model': self.mark_model.health(), 'raw_policy': getattr(self.store, 'raw_policy', 'all'),
                 'discovery_feed': {**self._feed, 'stale_after_s': self.discovery_stale_s},
                 'last_outage': self.last_outage, 'log_throttle': self._m1_health(),

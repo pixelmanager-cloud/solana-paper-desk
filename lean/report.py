@@ -554,29 +554,34 @@ def _sources(db):
 
 
 # --- W2a hook: the shadow arms (arms.sqlite, a separate file; opened read-only) ---
-def main_trades_for_arms(all_trades):
-    """The scored main trades in the shape lean.arms compares against (return on cost, rent-free like the report itself)."""
+def main_trades_for_arms(all_trades, forced=None):
+    """The scored main trades in the shape lean.arms compares against (return on cost, rent-free like the report itself). ``forced`` =
+    ``arms.forced_main_exits``: the trades that ended by an exit the arms do not model carry their labels and are not compared."""
     out = []
     for t in all_trades:
         if t['scored']:
-            out.append({'mint': t['mint'], 'ret': (t['proceeds'] - t['cost']) / t['cost'], 'entry_at': float(t['entry_at']), 'exit_at': float(t['exit_at']),
+            out.append({'mint': t['mint'], 'forced': (forced or {}).get(t['mint'], []), 'ret': (t['proceeds'] - t['cost']) / t['cost'], 'entry_at': float(t['entry_at']), 'exit_at': float(t['exit_at']),
                         'pnl_lamports': int((t['proceeds'] - t['cost']) * LAMPORTS), 'hold_s': float(t['exit_at'] - t['entry_at'])})
     return out
 
 
-def _arms_section(arms_db, db, main_trades):
+def _arms_section(arms_db, db, all_trades, exclude_flags=None):
     from lean import arms
-    connection = arms.open_ro(arms_db)
-    try:
-        data = arms.report_section(connection, main_trades, min_sample=MIN_SAMPLE)
-    finally:
-        connection.close()
     lean = open_ro(db)
     try:
         row = lean.execute("SELECT value FROM meta WHERE key='initial_cash_lamports'").fetchone()
+        forced = arms.forced_main_exits(lean)
     finally:
         lean.close()
-    data['main'] = {**arms.stats(main_trades, int(row[0]) if row else None), 'sample': sample_flag(len(main_trades))}
+    main_trades = main_trades_for_arms(all_trades, forced)
+    connection = arms.open_ro(arms_db)
+    try:
+        data = arms.report_section(connection, main_trades, min_sample=MIN_SAMPLE,
+                                   **({} if exclude_flags is None else {'exclude_flags': exclude_flags}))
+    finally:
+        connection.close()
+    data['main'] = {**arms.stats(main_trades, int(row[0]) if row else None), 'sample': sample_flag(len(main_trades)),
+                    'forced_exits': {m: labels for m, labels in forced.items() if any(t['mint'] == m for t in main_trades)}}
     return data
 
 
@@ -618,7 +623,21 @@ def render_arms(a):
         ci = v['ev_ci95']
         rows.append([name, ', '.join(v['strategy_versions']), v['trades'], _pct(v['ev_per_trade']) + ('' if ci is None else ' [%s, %s]' % (_pct(ci[0]), _pct(ci[1]))),
                      _pct(v['win_rate']), _pct(v['p_le_minus_50']), num_or_dash(v['pnl_sol']), v['median_hold_s'], v['open'], v['sample']])
+    parts.append('<p>Headline: trades with a fill flagged %s are left out and shown below (<code>--arms-exclude-flags</code>).</p>'
+                 % e(', '.join(d.get('exclude_flags') or ['(none)'])))
     parts.append(table(['arm', 'strategy_version', 'closed trades', 'EV / trade [95% CI]', 'win rate', 'P(<= -50%)', 'PnL SOL', 'median hold s', 'open', 'sample'], rows))
+    left_out = [[name, v['excluded']['trades'], json.dumps(v['excluded']['by_flag'], sort_keys=True), _pct(v['excluded']['stats']['ev_per_trade']),
+                 num_or_dash(v['excluded']['stats']['pnl_sol'])] for name, v in sorted(d['arms'].items()) if v['excluded']['trades']]
+    if left_out:
+        parts.append('<p class="flag">Left out of the headline:</p>' + table(['arm', 'trades', 'by flag', 'EV / trade', 'PnL SOL'], left_out))
+    source_rows = []
+    for name, v in sorted(d['arms'].items()):
+        for kind, groups in (('entry', v['by_entry_source']), ('exit', v['by_exit_source'])):
+            for source, brief in groups.items():
+                source_rows.append([name, kind, source, brief['trades'], _pct(brief['ev_per_trade']), _pct(brief['win_rate']), num_or_dash(brief['pnl_sol'])])
+    if source_rows:
+        parts.append('<p>EV by price source (all closed trades, flagged ones included):</p>'
+                     + table(['arm', 'fill', 'price_source', 'trades', 'EV / trade', 'win rate', 'PnL SOL'], source_rows))
     paired_rows = []
     for name, v in sorted(d['arms'].items()):
         p = v['paired_vs_main']
@@ -629,7 +648,13 @@ def render_arms(a):
                             _pct(p['mean_diff']) + ('' if ci is None else ' [%s, %s]' % (_pct(ci[0]), _pct(ci[1]))), _pct(p['arm_better_share'])])
     if paired_rows:
         parts.append('<p>Paired comparison against the main arm on the candidates BOTH traded (return on cost per trade, arm minus main). '
-                     'A small number of pairs is not a finding.</p>' + table(['arm', 'pairs', 'arm only', 'main only', 'arm mean', 'main mean', 'mean diff [95% CI]', 'arm better'], paired_rows))
+                     'Main trades that ended by an exit the arms do not model (L11 rug, L20 unverified sell, L23 bot exit, D2 write-off) are not '
+                     'compared. A small number of pairs is not a finding.</p>'
+                     + table(['arm', 'pairs', 'arm only', 'main only', 'arm mean', 'main mean', 'mean diff [95% CI]', 'arm better'], paired_rows))
+    forced = main.get('forced_exits') or {}
+    if forced:
+        parts.append('<p class="flag">Main trades left out of the comparison (forced exits):</p>'
+                     + table(['mint', 'exit'], [[m, ', '.join(labels)] for m, labels in sorted(forced.items())]))
     curves = {'main': main['equity_curve'], **{name: v['equity_curve'] for name, v in sorted(d['arms'].items())}}
     parts.append('<p>Equity curve (initial + realized, SOL):</p>' + svg_curves(curves))
     for name, v in sorted(d['arms'].items()):
@@ -696,7 +721,7 @@ def filter_events(events, windows):
     return out
 
 
-def build(db, *, counterfactual_db=None, horizon=3600, now=None, config_hash=None, arms_db=None):
+def build(db, *, counterfactual_db=None, horizon=3600, now=None, config_hash=None, arms_db=None, arms_exclude_flags=None):
     now = time.time() if now is None else now
     connection = open_ro(db)
     try:
@@ -758,7 +783,7 @@ def build(db, *, counterfactual_db=None, horizon=3600, now=None, config_hash=Non
     # --- end L12 ---
     # --- W2a hook: shadow arms (arms.sqlite beside the store unless given; absent = not provided, never an error) ---
     arms_path = Path(arms_db) if arms_db is not None else Path(db).with_name('arms.sqlite')
-    summary['arms'] = _section(_arms_section, arms_path, db, main_trades_for_arms(all_trades)) if arms_path.is_file() else {'status': 'NOT_PROVIDED'}
+    summary['arms'] = _section(_arms_section, arms_path, db, all_trades, arms_exclude_flags) if arms_path.is_file() else {'status': 'NOT_PROVIDED'}
     # --- end W2a ---
     if counterfactual_db is None:
         summary['counterfactual'] = {'status': 'NOT_PROVIDED'}
@@ -961,10 +986,13 @@ def main(argv=None):
     p.add_argument('--now', type=float)
     p.add_argument('--config-hash', help='M1: only the runs whose lean.json hash or strategy hash starts with this (>= 8 hex)')
     p.add_argument('--arms-db', help='W2a: arms.sqlite (default: arms.sqlite beside --db when it exists); opened read-only')
+    p.add_argument('--arms-exclude-flags', default=None,
+                   help='W2a2: comma list of fill flags whose trades leave the arms headline (default MARK_FILL,LATENCY_MODEL_ABSENT; empty = none)')
     args = p.parse_args(argv)
     try:
         summary = build(args.db, counterfactual_db=args.counterfactual, horizon=args.horizon, now=args.now, config_hash=args.config_hash,
-                        arms_db=args.arms_db)
+                        arms_db=args.arms_db,
+                        arms_exclude_flags=None if args.arms_exclude_flags is None else [f for f in args.arms_exclude_flags.split(',') if f])
         html_path, json_path = write_report(args.out_dir, summary)
     except (ReportError, sqlite3.Error, OSError) as error:
         print(json.dumps({'status': 'ERROR', 'code': type(error).__name__, 'detail': str(error)[:200]}))

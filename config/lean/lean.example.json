@@ -243,7 +243,8 @@
       },
       {
         "name": "live_copy",
-        "strategy_config": "strategy-default.json"
+        "strategy_config": "strategy-default.json",
+        "mirror_main": true
       }
     ]
   }
