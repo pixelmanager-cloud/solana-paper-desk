@@ -1,0 +1,22 @@
+name: Frozen desk suite
+# desk/ is FROZEN since 2026-10-11; its ~45 min suite runs only when desk-side code changes, weekly, or on demand.
+# lean/ still imports a few pure desk modules, so the lean job above covers those imports on every push.
+on:
+  push:
+    paths: ['desk/**', 'discovery/**', 'tools/**', 'tests/test_*.py']
+  schedule:
+    - cron: '17 3 * * 1'
+  workflow_dispatch:
+permissions:
+  contents: read
+jobs:
+  desk:
+    runs-on: ubuntu-latest
+    timeout-minutes: 60
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+      - run: python -m pip install -e . -r requirements-live.txt
+      - run: python -m unittest discover -q
