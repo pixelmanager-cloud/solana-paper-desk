@@ -149,6 +149,10 @@ class Runner:
         # --- L21 hook ---
         self.risk_external = None                  # lean.risk_external.RiskExternal (set by build_runner when risk_external.enabled)
         # --- end L21 ---
+        # --- W2a hook ---
+        self.arms = None                           # lean.arms.Arms (set by build_runner when lean.json has an arms block)
+        self._w2a = None                           # what the main arm did with the candidate being handled (read by the arms)
+        # --- end W2a ---
         # --- M1 hook ---
         from lean import marks as _marks
         self.mark_model = mark_model if mark_model is not None else _marks.MarkModel(None, pool_fee_bps=self.pool_fee_bps)   # #7
@@ -357,6 +361,10 @@ class Runner:
             while len(self._raw_cache) > 64:
                 self._raw_cache.pop(next(iter(self._raw_cache)))
         # --- end M1 ---
+        # --- W2a hook: a sell quote the main arm just fetched may price an arm's exit (memory only, never raises) ---
+        if self.arms is not None:
+            self.arms.seen_sell_quote(kind, mint, quote, ref, observed_at)
+        # --- end W2a ---
         return quote, ref, observed_at
 
     def _sol_usd_value(self):
@@ -480,6 +488,54 @@ class Runner:
         # --- L12 hook ---
         self._l12_after(candidate)
         # --- end L12 ---
+        # --- W2a hook ---
+        self._w2a_after(candidate)
+        # --- end W2a ---
+
+    # --- W2a hook ---
+    def _w2a_candidate(self, candidate, cid, result, features):
+        """Remember a candidate that PASSED the screen (memory only; the arms read it when the main arm is done with it)."""
+        if self.arms is None:
+            return
+        try:
+            honeypot = getattr(self.honeypot, 'stats', None)
+            self._w2a = {'mint': candidate.mint, 'cid': cid, 'features': features, 'screen': dict(result.features), 'raw': list(result.raw),
+                         'plan': None, 'aborted0': self.counts.get('entry_aborted_latency', 0), 'entered0': self.counts['entered'],
+                         'hazard0': 0 if honeypot is None else honeypot.get('rejected', 0), 'attempt': 1}
+        except Exception:                                                       # the trader never notices
+            self._w2a = None
+
+    def _w2a_plan(self, buy, sell_leg, xmeta):
+        if self._w2a is not None:
+            self._w2a['plan'] = (buy, sell_leg, xmeta)
+
+    def _w2a_after(self, candidate):
+        """Hand the finished candidate to the arms: one append to a bounded queue, never I/O, never raises, never waits. A candidate that
+        will be retried is handed over on its final attempt."""
+        note, self._w2a = self._w2a, None
+        if self.arms is None or note is None or note['mint'] != candidate.mint:
+            return
+        try:
+            if any(queued.mint == candidate.mint for queued, _attempt in self.retry):
+                return
+            from lean import arms as _arms
+            honeypot = getattr(self.honeypot, 'stats', None)
+            self.arms.submit(_arms.Evidence(
+                mint=candidate.mint, cid=note['cid'], at=self._now(), ts=self.clock(), features=note['features'], screen=note['screen'],
+                raw=note['raw'], plan=note['plan'],
+                aborted=self.counts.get('entry_aborted_latency', 0) > note['aborted0'],
+                hazard='HONEYPOT_SIM_BLOCKED' if honeypot is not None and honeypot.get('rejected', 0) > note['hazard0'] else None,
+                main_acted=self.counts['entered'] > note['entered0'], attempt=note['attempt']))
+        except Exception:                                                       # the trader never notices
+            log.debug('arms hook failed', exc_info=True)
+
+    def _w2a_marks_ready(self):
+        if self.arms is not None:
+            try:
+                self.arms.marks_ready()
+            except Exception:                                                   # the trader never notices
+                log.debug('arms marks hook failed', exc_info=True)
+    # --- end W2a ---
 
     # --- L12 hook ---
     def _l12_after(self, candidate):
@@ -579,6 +635,9 @@ class Runner:
             return
         self._count('passed')
         features = A.entry_features(result.features, mint)
+        # --- W2a hook: the arms see every candidate that passed the screen, whatever the main arm's own portfolio then decides ---
+        self._w2a_candidate(candidate, cid, result, features)
+        # --- end W2a ---
         now = self._now()
         gate = S.entry_decision(features, None, self.portfolio(now), self.cfg)
         if gate.action != 'BUY' or not gate.quote_required:
@@ -609,6 +668,9 @@ class Runner:
                 return
             (buy_q, buy_ref, buy_at), (sell_q, sell_at), xmeta = plan
         # --- end L10 ---
+        # --- W2a hook: the quote plan the main arm fills at, for the arms to scale ---
+        self._w2a_plan((buy_q, buy_ref, buy_at), (sell_q, sell_at), xmeta)
+        # --- end W2a ---
         with self._trade_lock:
             if not self.entries_allowed():                                    # a halt may have started meanwhile
                 return
@@ -648,6 +710,7 @@ class Runner:
             states = self.store.position_states()
             if not positions:
                 self.marks.clear()
+                self._w2a_marks_ready()                    # --- W2a hook: arms may hold positions the main arm does not ---
                 return 0
             self._read_marks(positions, states)
             # --- L11 hook --- (no I/O: baselines, trigger detection, valuation of rug positions whose exit is failing)
@@ -741,6 +804,8 @@ class Runner:
                         info = {**info, 'pinned_from_open': True}
                     self.marks[mint] = (mark, mark_at, 'vaults')
                     self.mark_info[mint] = info
+                    if self.arms is not None:                                 # --- W2a hook: the arms value their own quantity from these accounts ---
+                        self.arms.seen_accounts(mint, accounts, mark_at)
                     stored[mint] = {**info, 'net_lamports': int(mark * paper.LAMPORTS)}
                     # --- L11 hook ---
                     if self.held_risk is not None:
@@ -762,6 +827,7 @@ class Runner:
         for mint in list(self.marks):
             if mint not in positions or now - self.marks[mint][1] > self.stale_mark_s:
                 del self.marks[mint]
+        self._w2a_marks_ready()                                               # --- W2a hook ---
 
     def _quote_marks(self, positions):
         """D1: a position without a mark younger than ``stale_mark_s`` is marked by a Jupiter sell quote for its whole
@@ -1063,6 +1129,7 @@ class Runner:
                 'held_risk': None if self.held_risk is None else self.held_risk.health(),      # L11
                 'honeypot_sim': None if self.honeypot is None else self.honeypot.health(),     # L22
                 'bot_exit': self._aux_health('bot_exit', self.bot_exit),                        # L23
+                'arms': self._aux_health('arms', self.arms),                                    # W2a
                 # --- M1 hook ---
                 'lean_config_hash': self.lean_config_hash, 'strategy_config_hash': self.cfg.config_hash,
                 'marks_model': self.mark_model.health(), 'raw_policy': getattr(self.store, 'raw_policy', 'all'),
@@ -1181,6 +1248,8 @@ class Runner:
             self.prefetch.stop = self.stop
             specs.append(('prefetch', self.prefetch.run_loop, ()))
         # --- end W2b ---
+        if self.arms is not None:                                           # W2a: shadow arms (own arms.sqlite, low lane only)
+            specs.append(('arms', self.arms.run_loop, (self.stop,)))
         return specs
     # --- end LINT4 ---
 
@@ -1189,6 +1258,8 @@ class Runner:
         if install_signals:
             signal.signal(signal.SIGTERM, lambda *_: self.stop.set())
             signal.signal(signal.SIGINT, lambda *_: self.stop.set())
+        if self.arms is not None:                                           # --- W2a hook: from here the arm thread does the arms' work ---
+            self.arms.threaded = True
         threads = [threading.Thread(target=self._loop, args=('candidates', self.candidate_pass, candidate_interval), name='candidates'),
                    threading.Thread(target=self._loop, args=('positions', self.position_pass, min(10.0, position_interval)),
                                     name='positions')]

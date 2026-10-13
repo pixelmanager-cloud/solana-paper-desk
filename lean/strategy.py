@@ -84,6 +84,9 @@ class StrategyConfig:
     # Optional. None (key absent) keeps the original rule: at most one entry per wall-clock minute.
     # An int N means: at least N seconds between entries (0 = no spacing).
     min_entry_interval_seconds: Optional[int] = None
+    # W2a. Optional. None (key absent) keeps the ladder as the only take-profit. A ratio R > 1 sells the WHOLE remaining position
+    # (reason TAKE_PROFIT) when the net mark reaches R x cost, ahead of the ladder; stop, trailing stop and holds rank above it.
+    full_take_profit_ratio: Optional[Decimal] = None
     config_hash: str = field(default="", compare=False)
 
     _DECIMALS = ("min_market_cap_usd", "max_market_cap_usd", "min_liquidity_usd", "max_roundtrip_cost_fraction",
@@ -100,7 +103,7 @@ class StrategyConfig:
         if not isinstance(raw, Mapping):
             raise ConfigError("config must be an object")
         names = {"strategy_version", "tp_ladder", *cls._DECIMALS, *cls._INTS}
-        optional = {"min_entry_interval_seconds"}
+        optional = {"min_entry_interval_seconds", "full_take_profit_ratio"}
         extra, missing = set(raw) - names - optional, names - set(raw)
         if extra or missing:
             raise ConfigError(f"config keys: unknown={sorted(extra)} missing={sorted(missing)}")
@@ -122,6 +125,11 @@ class StrategyConfig:
             if spacing < 0:
                 raise ConfigError("min_entry_interval_seconds must be >= 0")
             values["min_entry_interval_seconds"] = spacing
+        if "full_take_profit_ratio" in raw:
+            full_tp = _dec(raw["full_take_profit_ratio"], "full_take_profit_ratio")
+            if full_tp <= ONE:
+                raise ConfigError("full_take_profit_ratio must be > 1")
+            values["full_take_profit_ratio"] = full_tp
         cfg = cls(strategy_version=version, tp_ladder=tuple(rungs), **values)
         cfg._validate()
         digest = hashlib.sha256(json.dumps(raw, sort_keys=True, separators=(",", ":"), default=str).encode()).hexdigest()
@@ -439,6 +447,8 @@ def exit_decision(position: Position, mark: Optional[Decimal], quote: Optional[Q
                 reason = "MAX_HOLD"
             elif not touched and age >= cfg.time_stop_seconds:
                 reason = "TIME_STOP"
+            elif cfg.full_take_profit_ratio is not None and ratio >= cfg.full_take_profit_ratio:
+                reason = "TAKE_PROFIT"      # W2a: the whole remaining position (a ladder rung sells a fraction)
     detail = {"ratio": str(ratio)} if ratio is not None else {}
     if reason is not None:
         return _sell(position, reason, ONE, quote, now, cfg, updates, {}, detail)

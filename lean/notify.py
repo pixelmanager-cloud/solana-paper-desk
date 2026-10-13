@@ -62,7 +62,7 @@ CONFIG_KEYS = {
     'timezone': 'Asia/Seoul',
     'daily_summary_at': '09:00',    # local time; null disables the daily summary
     'quiet_hours': None,            # e.g. ["00:00", "08:00"] local: BUY/SELL batched into one digest at the end
-    'allowed_chat_ids': None,       # who may use /status /today /pnl (default: the telegram.json chat_id)
+    'allowed_chat_ids': None,       # who may use /status /today /pnl /arms (default: the telegram.json chat_id)
     'commands': True,
     'poll_interval_s': 5,           # store poll period == getUpdates long-poll timeout
     'max_outbox': 200,
@@ -1060,7 +1060,47 @@ class Notifier:
             lines.append('없음')
         return '\n'.join(lines)
 
-    COMMANDS = {'/status': 'cmd_status', '/today': 'cmd_today', '/pnl': 'cmd_pnl'}
+    # --- W2a hook: /arms is the ONLY arms message (a summary on request); the shadow arms never send a fill message ---
+    def cmd_arms(self, view, now):
+        from lean import arms
+        path = self.db.parent / 'arms.sqlite'
+        if not path.is_file():
+            return '🧪 <b>섀도 암</b>\n꺼져 있습니다 (arms.sqlite 없음).'
+        try:
+            connection = arms.open_ro(path)
+            try:
+                data = arms.report_section(connection, [], min_sample=30)['arms']
+            finally:
+                connection.close()
+        except (sqlite3.Error, arms.ArmsStoreError, OSError, ValueError) as error:
+            return '🧪 <b>섀도 암</b>\n읽을 수 없습니다: %s' % esc(type(error).__name__)
+
+        def line(name, v, extra=''):
+            ev = '-' if v['ev_per_trade'] is None else fmt_pct(v['ev_per_trade'])
+            wr = '-' if v['win_rate'] is None else fmt_pct(v['win_rate'], sign=False)
+            tail = '' if v['p_le_minus_50'] is None else ' · P(≤-50%%) %s' % fmt_pct(v['p_le_minus_50'], sign=False)
+            flag = ' ⚠ 표본부족' if v['trades'] < 30 else ''
+            pnl = fmt_sol(Decimal(str(v['pnl_sol'])), sign=True)
+            return '%s: %d건 · EV %s · 승률 %s%s · %s%s%s' % (esc(name), v['trades'], ev, wr, tail, pnl, extra, flag)
+        closed = view.closed()
+        returns = [Decimal(t['pnl']) / Decimal(t['cost']) for t in closed if t['cost']]
+        main = {'trades': len(returns), 'ev_per_trade': (sum(returns) / len(returns)) if returns else None,
+                'win_rate': (Decimal(sum(1 for r in returns if r > 0)) / len(returns)) if returns else None,
+                'p_le_minus_50': (Decimal(sum(1 for r in returns if r <= Decimal('-0.5'))) / len(returns)) if returns else None,
+                'pnl_sol': sol_of(sum(t['pnl'] for t in closed))}
+        lines = ['🧪 <b>섀도 암 (같은 후보 A/B, 모의)</b>', line('main', main)]
+        for name, v in sorted(data.items()):
+            paired = v['paired_vs_main']
+            extra = ' · 보유 %d' % v['open']
+            if paired and paired['pairs']:
+                extra += ' · main 대비 %s (%d쌍)' % (fmt_pct(paired['mean_diff']), paired['pairs'])
+            lines.append(line(name, v, extra))
+        if len(lines) == 2:
+            lines.append('아직 기록이 없습니다.')
+        return '\n'.join(lines)
+    # --- end W2a ---
+
+    COMMANDS = {'/status': 'cmd_status', '/today': 'cmd_today', '/pnl': 'cmd_pnl', '/arms': 'cmd_arms'}
 
     def poll_commands(self, timeout=0):
         """One getUpdates long poll. Only ``allowed_chat_ids`` are answered; anyone else is ignored silently."""

@@ -4,7 +4,8 @@ Keeps KEEP_DAYS daily sets under /var/backups/lean/<UTC date>/ (root 0700), gzip
 import datetime, gzip, os, shutil, sqlite3, tarfile, time
 
 DBS = {"lean": "/var/lib/solana-desk-lean/lean.sqlite", "paths": "/var/lib/solana-desk-lean/paths.sqlite",
-       "discovery": "/var/lib/solana-desk/discovery/continuous.sqlite"}
+       "discovery": "/var/lib/solana-desk/discovery/continuous.sqlite",
+       "arms": "/var/lib/solana-desk-lean/arms.sqlite"}
 ROOT, KEEP_DAYS = "/var/backups/lean", 7
 
 def main():
@@ -13,6 +14,8 @@ def main():
     shutil.rmtree(tmp, ignore_errors=True); os.makedirs(tmp, mode=0o700)
     report = {}
     for name, path in DBS.items():
+        if not os.path.exists(path):          # optional stores (e.g. arms.sqlite before arms are enabled)
+            continue
         t0 = time.time(); raw = os.path.join(tmp, name + ".sqlite")
         src = sqlite3.connect("file:%s?mode=ro" % path, uri=True, timeout=30); dst = sqlite3.connect(raw)
         src.backup(dst, pages=4096, sleep=0.05); dst.close(); src.close()

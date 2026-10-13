@@ -224,6 +224,7 @@ class ProductionConfigUnchanged(unittest.TestCase):
         before = strip(cfg)
         del before['prefetch']
         del before['paths']['hazard_path_sample']
+        before.pop('arms', None)                                                      # (W2a's key is left out of the hash while it is None)
         text = json.dumps(before, sort_keys=True, separators=(',', ':'), ensure_ascii=True, default=str)
         self.assertEqual(lean_config_hash(cfg), hashlib.sha256(text.encode()).hexdigest())
 
