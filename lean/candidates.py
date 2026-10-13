@@ -391,7 +391,11 @@ def _screen(candidate, providers, cfg, now, sol_usd, reasons, unknowns, raw, fea
     features['age_seconds'] = round(age, 3)
     if age < _cfg(cfg, 'min_age_seconds'):
         reasons.append('TOO_YOUNG')
-    if age > _cfg(cfg, 'max_age_seconds'):
+    max_age = _cfg(cfg, 'max_age_seconds')
+    cap = getattr(candidate, 'entry_max_age_s', None)                # backfill.max_entry_age_s (None = no cap)
+    if cap is not None:
+        max_age = min(max_age, cap)
+    if age > max_age:
         reasons.append('TOO_OLD')
     try:
         address(candidate.mint), address(candidate.pool)

@@ -276,6 +276,38 @@ class AgeTests(Base):
         self.assertGreater(T - found[0].migrated_at, MAX_AGE)         # the screen's own TOO_OLD test will reject it
 
 
+class EntryAgeCapTests(Base):
+    """backfill.max_entry_age_s (coordinator, 2026-10-14): a late-found graduation is recorded but never entered once older
+    than the cap, even when screen.max_age_seconds would still allow it."""
+
+    def test_cap_is_carried_and_the_screen_rejects_too_old_above_it(self):
+        from lean import candidates as C
+        self.migration(self.tokens[0], 100, MIN_AGE + 20)
+        self.migration(self.tokens[1], 101, 700)
+        found, _ = self.source(max_entry_age_s=600).iter_new(0)
+        self.assertEqual([c.entry_max_age_s for c in found], [600, 600])
+        self.assertEqual([c.beyond_max_age for c in found], [False, True])
+        cfg = {**C.DEFAULTS, 'min_age_seconds': MIN_AGE, 'max_age_seconds': MAX_AGE}
+        for cand, too_old in zip(found, [False, True]):
+            reasons = []
+            try:
+                C._screen(cand, None, cfg, T, None, reasons, [], [], {})
+            except Exception:
+                pass                                     # later stages need providers; the age check runs first
+            self.assertEqual('TOO_OLD' in reasons, too_old)
+
+    def test_absent_cap_keeps_the_screen_max_age(self):
+        self.migration(self.tokens[0], 100, 700)
+        found, _ = self.source().iter_new(0)
+        self.assertIsNone(found[0].entry_max_age_s)
+        self.assertFalse(found[0].beyond_max_age)
+
+    def test_cap_bounds(self):
+        for bad in (59, 'x', 8 * 86400):
+            with self.assertRaises(B.ConfigError):
+                B.make_config({'max_entry_age_s': bad})
+
+
 class CursorTests(Base):
     def test_until_is_the_last_handled_signature_after_the_runner_persisted_the_cursor(self):
         a, b, c = self.tokens[:3]
