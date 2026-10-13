@@ -13,7 +13,7 @@ import sys
 from pathlib import Path
 
 ROOT = Path(__file__).resolve().parents[2]
-TESTS = ['tests.lean.test_arms', 'tests.lean.test_e2e_arms']
+TESTS = ['tests.lean.test_arms', 'tests.lean.test_e2e_arms', 'tests.lean.test_arms_w2a2']
 FILES = {'arms': 'lean/arms.py', 'runner': 'lean/runner.py', 'strategy': 'lean/strategy.py', 'main': 'lean/__main__.py',
          'notify': 'lean/notify.py', 'report': 'lean/report.py'}
 
@@ -88,7 +88,43 @@ MUTANTS = [
     # --- strategy, loader, notifier, report
     ('strategy', 'the full take-profit needs more than its ratio', "ratio >= cfg.full_take_profit_ratio:", "ratio > cfg.full_take_profit_ratio:"),
     ('strategy', 'the full take-profit never fires', '                reason = "TAKE_PROFIT"      # W2a: the whole', '                reason = None      # W2a: the whole'),
-    ('main', 'arms OFF changes the config hash', "if not (k == 'arms' and v is None)}", "if True}"),
+    # --- W2a2 (the pre-deploy review)
+    ('main', 'the arms change the config hash', "plain = {k: v for k, v in cfg.items() if k != 'arms'}", "plain = dict(cfg)"),
+    ('runner', 'the start event lacks the arms hash', "                                        'arms_config_hash': self.arms_config_hash,\n", ""),
+    ('runner', 'health lacks the arms hash', "'lean_config_hash': self.lean_config_hash, 'arms_config_hash': self.arms_config_hash,",
+     "'lean_config_hash': self.lean_config_hash,"),
+    ('arms', 'a low-lane entry always fills at q0', "        if q1.out_amount >= q0.out_amount:                               # the market did not move", "        if True:                               # the market did not move"),
+    ('arms', 'a low-lane entry fills at the better quote', "        if q1.out_amount >= q0.out_amount:                               # the market did not move", "        if q1.out_amount <= q0.out_amount:                               # the market did not move"),
+    ('arms', 'a low-lane entry does not wait', "due_at=now_f + delay, fee_bps=fee_bps,", "due_at=now_f, fee_bps=fee_bps,"),
+    ('arms', 'a worse q1 is not cost-checked', "            if check.action != 'BUY':\n                return self._abort(", "            if False:\n                return self._abort("),
+    ('arms', 'a q1 failure is a plain skip', "return self._abort(arm, ev, ['Q1_UNAVAILABLE:%s' % got[1]], detail, now_f)", "return self._skip(arm, ev, ['Q1_UNAVAILABLE:%s' % got[1]], detail, now_f)"),
+    ('arms', 'a q1 shed is not recorded', "return self._skip(arm, ev, [SKIP_SHED], {**detail, 'shed': got[1], 'stage': 'q1'}, now_f)",
+     "return self._skip(arm, ev, ['Q1_SHED'], {**detail, 'shed': got[1], 'stage': 'q1'}, now_f)"),
+    ('arms', 'the sell leg has a fixed buy fee', "net_in = quote.in_amount * 10000 // (10000 + shape['fee_bps'])", "net_in = quote.in_amount * 10000 // (10000 + 120)"),
+    ('arms', 'the sell leg keeps the screen price', "effective = base * net_in // quote.out_amount - net_in", "effective = gross + virtual"),
+    ('arms', 'MARK_FILL uses the decision-time mark', "        latest = arm.marks.get(pend.mint)\n        ttl", "        latest = (pend.mark, pend.mark_at)\n        ttl"),
+    ('arms', 'MARK_FILL uses a stale mark', "if latest is None or latest[0] <= 0 or not 0 <= now_f - latest[1] <= ttl:", "if latest is None or latest[0] <= 0:"),
+    ('arms', 'the headline keeps the flagged fills', "        trades = [t for t in every if not (t['flags'] & excluded_flags)]", "        trades = list(every)"),
+    ('arms', 'the entry price source is not recorded', "            t['entry_source'] = t['entry_source'] or source", "            pass"),
+    ('arms', 'the control leads the main arm', "        if arm.mirror and not ev.main_acted:", "        if False:"),
+    ('arms', 'forced main exits are compared', "        if t.get('forced'):\n            forced.setdefault(t['mint'], t['forced'])\n        else:",
+     "        if False:\n            forced.setdefault(t['mint'], t['forced'])\n        else:"),
+    ('arms', 'a rug trigger is not a forced exit', "        if state.get('rug_trigger'):", "        if False:"),
+    ('arms', 'an L20 write-off is not a forced exit', " or payload.get('write_off_reason') == 'SELL_UNVERIFIED':", ":"),
+    ('arms', 'the filter health counts nothing', "                arm.filter_stats[verdict] += 1", "                pass"),
+    ('arms', 'the pin is not written at an open', "{**(M.screen_pool_info(ev.screen) or {}), **self.runner.mark_model.pin()}", "(M.screen_pool_info(ev.screen) or {})"),
+    ('arms', 'the pin is not used for the marks', "fee_lamports=arm.pcfg.fee_lamports, model=pinned,", "fee_lamports=arm.pcfg.fee_lamports, model=None,"),
+    ('arms', 'one bad mark stops the others', "                except Exception:                                          # noqa: BLE001 - this position only\n",
+     "                except ZeroDivisionError:                                  # noqa: BLE001 - this position only\n"),
+    ('arms', 'one bad position stops the others', "            except Exception:                                                # noqa: BLE001 - this position only (W2a2 #7)",
+     "            except ZeroDivisionError:                                        # noqa: BLE001 - this position only (W2a2 #7)"),
+    ('arms', 'one bad layout stops the read', "            except Exception:                                              # noqa: BLE001\n                self.counts['marks_layout_errors'] += 1",
+     "            except ZeroDivisionError:                                      # noqa: BLE001\n                self.counts['marks_layout_errors'] += 1"),
+    ('arms', 'the reserve token is not kept', "        if available() >= need:\n            return True", "        if True:\n            return True"),
+    ('arms', 'the reserve ignores the lane burst', "need = min(1.0 + reserve, float(getattr(limiter, 'burst', 1.0 + reserve)))", "need = 1.0"),
+    ('arms', 'a marks read ignores the reserve', "            if not self._lane_open(self.low.helius):", "            if False:"),
+    ('arms', 'an entry quote ignores the reserve', "        if not self._lane_open(self.low.jupiter):\n            self.counts['entry_shed'] += 1", "        if False:\n            self.counts['entry_shed'] += 1"),
+    ('arms', 'an exit quote ignores the reserve', "        if not (shared is not None and shared[1] >= int(pend.due_at)) and not self._lane_open(self.low.jupiter):", "        if False:"),
     ('main', 'the arms block is not validated', "        cfg['arms'] = arms.config(cfg['arms'], base_dir=path.parent)", "        pass"),
     ('notify', '/arms is not a command', ", '/arms': 'cmd_arms'}", "}"),
     ('report', 'the report has no arms section',

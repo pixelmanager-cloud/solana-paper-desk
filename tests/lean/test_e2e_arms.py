@@ -376,15 +376,16 @@ class ArmsE2E(unittest.TestCase):
         entry_calls = len({d['candidate_id'] for arm in ('hold2m', 'tp110', 'nocluster_hold2m', 'live_copy') for d in run.decisions(arm)
                            if d['features'].get('price_source', '').startswith('low_lane_entry_quote')
                            or any(x.startswith('ARM_QUOTE_FAILED') for x in d['reasons'])})
-        shared = [d for arm in ('tp110', 'live_copy') for d in run.decisions(arm) if 'SHARED_QUOTE' in d['features'].get('flags', [])]
+        shared = [d for arm in ('tp110', 'nocluster_hold2m', 'live_copy') for d in run.decisions(arm) if 'SHARED_QUOTE' in d['features'].get('flags', [])]
         self.assertTrue(shared)
         self.assertEqual(arms.calls['jupiter_entry_quote'], entry_calls)
         # the no-route candidate: the main arm's quote failed and so did the arm's own
         reasons = run.decisions('hold2m', 'no_route')[0]['reasons']
         self.assertTrue(reasons[0].startswith('ARM_QUOTE_FAILED'), reasons)
-        # the expensive route: hold2m has room (its slots free after 2 minutes), prices it with ONE low-lane quote and refuses on cost;
-        # live_copy is refused exactly like the main arm (its portfolio gate, before any quote)
-        self.assertEqual(run.decisions('hold2m', 'cost')[0]['reasons'], ['COST_BUDGET'])
+        # the expensive route: hold2m has room (its slots free after 2 minutes) and prices it with ONE low-lane quote. The cost cap there runs on
+        # the MODELED sell leg (re-derived from the buy quote), which cannot see an extra route fee: it enters (a known optimism, reports/W2a2.md);
+        # live_copy follows the main arm, which was refused by its portfolio gate before any quote
+        self.assertEqual(run.decisions('hold2m', 'cost')[0]['reasons'], ['ENTRY'])
         main_cost = [d for d in run.r.store.rows('decisions', limit=100000) if d['kind'] == 'entry' and run.role[d['mint']] == 'cost']
         self.assertEqual(json.loads(main_cost[0]['reasons']), ['MAX_POSITIONS'])
         self.assertEqual(run.decisions('live_copy', 'cost')[0]['reasons'], ['MAIN_DID_NOT_BUY'])           # the control follows the main arm

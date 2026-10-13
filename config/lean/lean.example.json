@@ -221,7 +221,7 @@
     "db": null,
     "initial_cash_sol": null,
     "queue_size": 200,
-    "max_scale": 2.0,
+    "max_scale": 4.0,
     "exit_wait_s": 120,
     "exit_grace_s": 1.0,
     "eval_interval_s": 15,
