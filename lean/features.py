@@ -524,10 +524,12 @@ class FeatureRecorder:
         self.stats['errors'] += 1
         self.last_error = type(error).__name__
 
-    def _write(self, candidate, candidate_id, screen, entered, reason, screen_at, decision_ts=None, collected_at=None, **kwargs):
+    def _write(self, candidate, candidate_id, screen, entered, reason, screen_at, decision_ts=None, collected_at=None, stamp=None, **kwargs):
         payload = build_row(candidate, screen, entered=entered, reason=reason, screen_at=screen_at,
                             collected_at=self.clock() if collected_at is None else collected_at,        # W2b: a prefetched row keeps its real time
                             decision_ts=decision_ts, **kwargs)
+        if stamp is not None:                                                                            # W2b: when the prefetch measured it
+            payload['prefetch'] = stamp
         # the same payload in ``meta`` (queryable; the report never selects the ``raw`` blob) and as canonical bytes in ``raw``
         self.store.add_observation(KIND, canonical(payload), mint=payload['mint'], candidate_id=candidate_id, meta=payload,
                                    code_version=self.code_version, strategy_version=self.strategy_version, ts=self.clock())
@@ -627,7 +629,8 @@ class FeatureRecorder:
                     self.stats['enriched'] += 1
                     self.stats['prefetched'] = self.stats.get('prefetched', 0) + 1
                     self._write(candidate, candidate_id, screen, entered, reason, screen_at, decision_ts, extra=extra, extra_missing=extra_missing,
-                                default_why=why, calls=calls, flags=flags, collected_at=collected_at)
+                                default_why=why, calls=calls, flags=flags, collected_at=collected_at,
+                                stamp=self.prefetch._stamp(pre, decision_ts))
                     return True
                 # --- end W2b ---
                 extra, extra_missing, calls = enrich(candidate, screen, self.helius, creator=creator, need_holders=need_holders,

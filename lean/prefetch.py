@@ -15,6 +15,7 @@ and bundle 70 % of the labelled candidates had a usable value (TOOL_AUDIT B03). 
                features        dev balance + pool history (+ the probe's holder shares for a soft reject)   lean.features.prefetch_enrich
                risk_external   the RugCheck report, creator history                                          lean.risk_external (asof=)
                wallet_signals  early buyers, funders, bundle                                                  lean.wallet_signals (sink=)
+               clusters        linked-wallet clusters (the probe's holders + the wallet job's funders)       lean.clusters (sink=)
                flow            the pool's order flow                                                          lean.flow (sink=)
              Nothing is written: the result waits in memory (``Prefetch.entries``), stamped with its REAL times.
   commit     when the screen has decided, the collector's own pass finds the finished job (``Prefetch.take``) and writes its row from
@@ -51,7 +52,7 @@ from lean.providers import LANE_SHED, ProviderError
 log = logging.getLogger('lean.prefetch')
 
 VERSION = 'prefetch_v1'
-KINDS = ('features', 'risk_external', 'wallet_signals', 'flow')
+KINDS = ('features', 'risk_external', 'wallet_signals', 'clusters', 'flow')      # (clusters after wallet_signals: it uses that row's funders)
 ORDER = ('probe',) + KINDS
 DEFAULTS = {
     'enabled': False,
@@ -59,7 +60,7 @@ DEFAULTS = {
     'probe': True,                      # the shadow screen: hazard gate + dev wallet / supply / holders (3 low-lane calls per candidate)
     'skip_hazards': True,               # do not prefetch a candidate the probe shows to be a hazard
     # seconds BEFORE the earliest screen (discovery + min_age_seconds) at which a job starts: about how long it needs, with slack
-    'lead_s': {'risk_external': 55.0, 'features': 45.0, 'wallet_signals': 40.0, 'flow': 30.0},
+    'lead_s': {'risk_external': 40.0, 'features': 30.0, 'wallet_signals': 30.0, 'clusters': 22.0, 'flow': 22.0},
     'probe_at_s': 2.0,                  # the probe runs this long after discovery
     'min_start_s': 2.0,                 # no job starts earlier than this after discovery
     'settle_s': 3.0,                    # as-of = start - settle_s (a transaction needs a moment to be visible at "confirmed")
@@ -78,7 +79,7 @@ DEFAULTS = {
 _FLOATS = {'probe_at_s': (0, 600), 'min_start_s': (0, 600), 'settle_s': (0, 60), 'max_stale_s': (1, 3600), 'pass_interval_s': (0.1, 60),
            'discover_interval_s': (0.1, 60), 'ttl_s': (60, 86400), 'retry_delay_s': (0, 600), 'patience_s': (0, 60)}
 _INTS = {'max_jobs_per_pass': (1, 50), 'max_entries': (1, 10000), 'max_attempts': (1, 10), 'reserve_tokens': (0, 10), 'scan_limit': (1, 2000)}
-WINDOWED = frozenset({'flow', 'wallet_signals', 'features'})        # their as-of is start - settle_s; RugCheck's is the start itself
+WINDOWED = frozenset({'flow', 'wallet_signals', 'features', 'clusters'})        # their as-of is start - settle_s; RugCheck's is the start itself
 
 
 class ConfigError(ValueError):
@@ -165,6 +166,7 @@ class Prefetch:
         self.probe_cfg = {**self.screen_cfg, 'min_age_seconds': 0, 'max_age_seconds': 10 ** 9, 'min_market_cap_usd': 0,
                           'max_market_cap_usd': 10 ** 18, 'min_liquidity_usd': 0}
         self.code_version, self.strategy_version = code_version, strategy_version
+        self.gate = None                                   # callable -> bool: False pauses the prefetch (the runner takes no new entries: halted / kill switch)
         self.flow = self.wallet_signals = self.features = self.risk_external = self.clusters = None
         self.entries = OrderedDict()                       # mint -> Entry
         self._lock = threading.RLock()
@@ -182,7 +184,7 @@ class Prefetch:
 
     # ------------------------------------------------------------------------------------------------- wiring
     def attach(self, **collectors):
-        """Wire the collectors this prefetcher drives (``flow``, ``wallet_signals``, ``features``, ``risk_external``)."""
+        """Wire the collectors this prefetcher drives (``features``, ``risk_external``, ``wallet_signals``, ``clusters``, ``flow``)."""
         for name, worker in collectors.items():
             if name not in KINDS:
                 raise ValueError('unknown collector ' + name)
@@ -199,6 +201,8 @@ class Prefetch:
         """Discover new frames, run the due jobs (at most ``max_jobs_per_pass``), forget old entries. Never raises."""
         done = 0
         try:
+            if self.gate is not None and not self.gate():
+                return 0                                         # the runner screens nothing now: spend nothing on candidates it will not screen
             now = self.clock()
             if now - self._last_discover >= self.cfg['discover_interval_s']:
                 self._last_discover = now
@@ -309,6 +313,9 @@ class Prefetch:
                 if kind == 'features' and probe.state != 'done':
                     job.state, job.why = 'skipped', 'NO_PROBE'      # the dev wallet comes from the probe
                     return 'skip'
+        if kind == 'clusters' and self.wallet_signals is not None and 'wallet_signals' in self.cfg['kinds'] \
+                and entry.jobs['wallet_signals'].state == 'pending':
+            return 'wait'                                          # its funders / early buyers come from the wallet job
         if now < self.due(entry, kind) or now < job.next_at:
             return 'wait'
         # the earliest screen has passed by 30 s: the decision is made, a result would be unusable
@@ -316,7 +323,7 @@ class Prefetch:
             job.state, job.why = 'skipped', 'TOO_LATE'
             self.counts['cancelled'] += 1
             return 'skip'
-        need = {'probe': 3, 'features': 2, 'wallet_signals': 2, 'flow': 2, 'risk_external': 0}[kind]
+        need = {'probe': 3, 'features': 2, 'wallet_signals': 2, 'clusters': 2, 'flow': 2, 'risk_external': 0}[kind]
         tokens = self._lane_tokens() if need else None
         if tokens is not None and tokens < need + self.cfg['reserve_tokens']:
             self.counts['lane_waits'] += 1                        # the lane is busy with the others: this pass skips it, nothing was sent
@@ -336,15 +343,28 @@ class Prefetch:
                 done = self._probe(entry, job)
             elif kind == 'features':
                 payload = self.features.prefetch_run(candidate, entry.probe, job.asof, patience_s=self.cfg['patience_s'], stop=self.stop)
-                done = self._finish(job, payload)
+                shed = [why for why in payload['missing'].values() if why in (LANE_SHED, 'STOPPED')]
+                done = self._retry(job, shed[0]) if shed and payload['calls'] == 0 else self._finish(job, payload)       # a shed lane: ask again
             elif kind == 'risk_external':
                 payload = self.risk_external.collect(candidate.mint, None, True, job.started_at, asof=job.asof)
-                done = self._finish(job, payload)
+                why = payload['missing'].get('rc_score')
+                # a report that could not be read for a transient reason (429 / back-off / timeout) is asked for again, not committed as a gap;
+                # "RugCheck does not know this mint" (400) is an answer
+                done = (self._retry(job, why) if payload['fields'].get('rc_score') is None and why not in (None, 'RC_UNKNOWN_MINT')
+                        else self._finish(job, payload))
             elif kind == 'wallet_signals':
                 supply = (entry.probe.features or {}).get('supply_raw') if entry.probe is not None else None
                 self.wallet_signals.collect(None, candidate.mint, candidate.pool, candidate.slot, decision_ts=job.asof, sink=sink,
-                                            supply=int(supply) if supply is not None and str(supply).isdecimal() and int(supply) > 0 else None)
+                                            prefetched_supply=int(supply) if supply is not None and str(supply).isdecimal() and int(supply) > 0 else None)
                 done = self._finish(job, sink) if 'features' in sink else self._retry(job, 'NO_RESULT')
+            elif kind == 'clusters':
+                probe = entry.probe
+                bodies = dict(probe.raw) if probe is not None else {}
+                wallet = entry.jobs['wallet_signals']
+                self.clusters.collect(None, candidate.mint, candidate.pool, candidate.slot, decision_ts=job.asof, sink=sink,
+                                      screen_data=(dict(probe.features or {}), bodies.get('holders'), bodies.get('accounts_mint_pool')),
+                                      signals=wallet.payload['features'] if wallet.state == 'done' else None)
+                done = self._finish(job, sink) if 'row' in sink else self._retry(job, 'NO_RESULT')
             else:                                                  # flow
                 from lean import flow as _flow
                 try:
@@ -419,8 +439,7 @@ class Prefetch:
             elif decision_ts - job.asof > self.cfg['max_stale_s']:
                 why = 'STALE'
             if why is not None:
-                key = why.split(':')[0]
-                self.misses[kind][key] = self.misses[kind].get(key, 0) + 1
+                self.misses[kind][why] = self.misses[kind].get(why, 0) + 1
                 return None
             job.used = True
             self.used[kind] += 1
@@ -479,6 +498,20 @@ class Prefetch:
         self._note_staleness(decision_ts, pre)
         collector._persist(features, events, cid, mint)
         return features
+
+    def commit_clusters(self, collector, cid, mint, pool, grad_slot, decision_ts):
+        """The clusters row of a finished prefetch, written with the real decision (no request). None: collect as usual."""
+        pre = self.take('clusters', mint, decision_ts)
+        if pre is None:
+            return None
+        sink = pre['payload']
+        row = copy.deepcopy(sink['row'])
+        lookups = copy.deepcopy(sink['lookups'])
+        row.update(decision_ts=decision_ts, collected_at=pre['finished_at'], late_s=round(pre['finished_at'] - decision_ts, 3),
+                   prefetch=self._stamp(pre, decision_ts), window_end_ts=sink.get('window_end_ts'))
+        self._note_staleness(decision_ts, pre)
+        collector._persist(row, lookups, cid, mint)
+        return row
 
     # ------------------------------------------------------------------------------------------------- the decision
     def on_decision(self, mint, decision_ts, screen):
@@ -599,7 +632,7 @@ def readiness(db, *, max_late_s=15.0):
 
     For every candidate with a screen decision: ``decision`` = its first PASS / REJECT screen decision. Per feature:
       ``row``      a collector row of the candidate exists with a value;
-      ``ready``    ... and the value was OBSERVED at or before the decision (``collected_at`` <= decision, i.e. ``late_s`` <= 0): the
+      ``ready``    ... and the value was OBSERVED strictly before the screen decision (``collected_at`` < decision, ``late_s`` < 0): the
                    strategy could have used it at the decision;
       ``usable``   ... and the selection learner's lookahead guards accept it (``lean.learn``, ``max_late_s``): a value collected after the
                    decision can still be usable (a window cut at the decision), but only a READY one was available to decide with.
@@ -615,6 +648,7 @@ def readiness(db, *, max_late_s=15.0):
         first = {}
         for _id, ts, mint, cid, action, reasons in decisions:
             first.setdefault((mint, cid), (ts, action, reasons))
+        learner_decisions = LN.read_decisions(connection)
         by_kind = {k: LN._observations(connection, k, counts, k.upper()) for k in ('features', 'flow', 'wallet_signals', 'risk_external', 'clusters')}
     finally:
         connection.close()
@@ -639,16 +673,18 @@ def readiness(db, *, max_late_s=15.0):
     out = {}
     for name, kind, field, pop in READINESS_FIELDS:
         n = row = ready = usable = 0
-        for mint, cid, decision in members[pop]:
+        for mint, cid, screen_ts in members[pop]:
             n += 1
             rows = [r for r in by_kind[kind].get(mint, []) if r.get('_candidate_id') in (None, cid)]
             if not rows:
                 continue
+            # the learner's decision of this candidate (the entry decision that followed its screen, else the screen)
+            decision = LN.decision_time(learner_decisions.get(mint, []), cid, float('inf')) or screen_ts
             picked = LN._pick(rows, decision, cid, policy, LN._Counts(), kind)
             observed = [r for r in rows if _value(kind, r, field) is not None]
             if observed:
                 row += 1
-                if any(_collected(r) is not None and _collected(r) <= decision + 1e-6 for r in observed):
+                if any(_collected(r) is not None and _collected(r) < screen_ts - 1e-6 for r in observed):         # strictly BEFORE the decision
                     ready += 1
             if picked is not None and guards[kind](picked, decision, policy, LN._Counts(), (field,)).get(field) is not None:
                 usable += 1

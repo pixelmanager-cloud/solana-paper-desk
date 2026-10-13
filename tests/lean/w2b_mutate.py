@@ -1,0 +1,105 @@
+"""W2b mutation check: #8 (lean/prefetch.py and the collectors' prefetch / commit hooks) and #9 (the hazard-reject path sample and its separation
+in the learner). NOT a test module (no ``test_`` prefix).
+
+Each mutant is ONE textual replacement in one file; the file is restored after every run (also on Ctrl-C). A mutant is KILLED when the W2b
+tests (tests/lean/test_w2b.py and tests/lean/test_e2e_w2b.py) fail with it. Run from the repository root:
+
+    TMPDIR=/private/tmp/ .venv/bin/python tests/lean/w2b_mutate.py
+
+Exit code 0 only when every mutant is killed and the unmutated tree passes.
+"""
+import subprocess
+import sys
+from pathlib import Path
+
+ROOT = Path(__file__).resolve().parents[2]
+TESTS = ['tests.lean.test_w2b', 'tests.lean.test_e2e_w2b']
+
+MUTANTS = [
+    # --- #8 the use rules: a result is usable only if it finished AND is as-of before the decision
+    ('prefetch', 'a result that finished after the decision is used', "            elif job.finished_at > decision_ts:", "            elif False:"),
+    ('prefetch', 'a stale result is used', "            elif decision_ts - job.asof > self.cfg['max_stale_s']:", "            elif False:"),
+    ('prefetch', 'as-of later than the start (lookahead)', "        job.asof = job.started_at - (self.cfg['settle_s'] if kind in WINDOWED else 0.0)",
+     "        job.asof = job.started_at + 40.0"),
+    ('prefetch', 'no settle time before the as-of', "        job.asof = job.started_at - (self.cfg['settle_s'] if kind in WINDOWED else 0.0)",
+     "        job.asof = job.started_at"),
+    ('prefetch', 'hazards are prefetched', "                if entry.gate == 'HAZARD' and self.cfg['skip_hazards']:", "                if False:"),
+    ('prefetch', 'a job may start after the screen', "        if now > entry.received + self.min_age_s + 30.0:", "        if False:"),
+    ('prefetch', 'readiness counts a late job', "if job.state == 'done' and job.finished_at is not None and job.finished_at <= decision_ts and job.asof <= decision_ts:",
+     "if job.state == 'done':"),
+    # --- #8 the commits: the real times, never the commit's own
+    ('prefetch', 'wallet row late_s from the commit time', "late_s=round(pre['finished_at'] - decision_ts, 3),", "late_s=round(self.clock() - decision_ts, 3),"),
+    ('prefetch', 'wallet row collected at the commit time', "features.update(decision_ts=decision_ts, collected_at=pre['finished_at'],",
+     "features.update(decision_ts=decision_ts, collected_at=self.clock(),"),
+    ('prefetch', 'flow row collected at the commit time', "        body['started_at'] = pre['finished_at']", "        body['started_at'] = self.clock()"),
+    ('flow', 'a prefetched flow window ends at the finish', "        end_s = math.floor(decision_ts)          # whole block-time seconds",
+     "        end_s = math.floor(decision_ts if sink is None else self.clock())          # whole block-time seconds"),
+    ('wallet_signals', 'the wallet window is not cut at the cut', "                    window = [s for s in window if s['block_time'] is not None and s['block_time'] <= decision_ts]",
+     "                    pass"),
+    ('features', 'the prefetched pool history is not cut', "creator=creator, need_holders=False, screen_time=None, decision_ts=asof,",
+     "creator=creator, need_holders=False, screen_time=None, decision_ts=None,"),
+    ('features', 'the prefetched row is stamped with the commit time', "                                default_why=why, calls=calls, flags=flags, collected_at=collected_at,",
+     "                                default_why=why, calls=calls, flags=flags, collected_at=None,"),
+    ('risk_external', 'a token created after the cut is counted', "creator_tokens if m != mint and ts is not None and ts < decision_ts]",
+     "creator_tokens if m != mint and ts is not None and ts < decision_ts + 10 ** 7]"),
+    ('risk_external', 'the prefetched RugCheck row is stamped with the commit time',
+     "out = build_row(mint, screen_passed=passed, decision_ts=decision, collected_at=pre['finished_at'], calls=row['calls'], fields=fields,",
+     "out = build_row(mint, screen_passed=passed, decision_ts=decision, collected_at=self.clock(), calls=row['calls'], fields=fields,"),
+    ('learn', 'a prefetch supply is trusted whatever its lateness',
+     "row.get('supply_source') == 'rpc_prefetch' and _num(row.get('late_s')) and row['late_s'] <= policy.eps_s)", "row.get('supply_source') == 'rpc_prefetch')"),
+    ('runner', 'the runner never tells the prefetch about a decision', "            self.prefetch.on_decision(mint, self.clock(), result)", "            pass"),
+    ('__main__', 'the hash covers the new keys while they are off', "    if prefetch is None or (isinstance(prefetch, dict) and not prefetch.get('enabled')):",
+     "    if False:"),
+    # --- #9 the hazard sample
+    ('paths', 'the sample ignores its fraction', "    return int.from_bytes(digest[:8], 'big') / 2.0 ** 64 < fraction", "    return True"),
+    ('paths', 'the sample is not deterministic', "    return int.from_bytes(digest[:8], 'big') / 2.0 ** 64 < fraction",
+     "    import random\n    return random.random() < fraction"),
+    ('paths', 'the fraction is not range checked', "not 0 <= sample <= 1:", "not 0 <= sample <= 100:"),
+    ('paths', 'a hazard path is not labelled', "stage=HAZARD_STAGE, reasons=hazard_reasons(screen),", "stage='screen', reasons=hazard_reasons(screen),"),
+    ('paths', 'the hazard reason is not named', "HAZARD_REASON_PREFIX = 'hazard_reject: '", "HAZARD_REASON_PREFIX = ''"),
+    ('paths', 'hazards are not counted', "                    self._bump('hazard_seen')", "                    pass"),
+    ('paths', 'a hazard is entered', "                if self.start(item['mint'], item['cid'], features, entered=False, stage=HAZARD_STAGE,",
+     "                if self.start(item['mint'], item['cid'], features, entered=True, stage=HAZARD_STAGE,"),
+    ('learn', 'hazard paths are mixed into the real rows',
+     "hazard_rows.append(HazardRow(path.mint, decision, label, trade.pnl_lamports, tuple(path.screen_reasons), trade.status))\n                continue",
+     "hazard_rows.append(HazardRow(path.mint, decision, label, trade.pnl_lamports, tuple(path.screen_reasons), trade.status))"),
+    ('wallet_signals', 'a hazard path is an outcome for the smart wallets', "            if hazard:\n                continue", "            if False:\n                continue"),
+]
+
+
+def run_tests():
+    return subprocess.run([sys.executable, '-m', 'unittest', '-q'] + TESTS, cwd=ROOT, capture_output=True, text=True).returncode
+
+
+def main():
+    files = {name: ROOT / 'lean' / (name + '.py') for name in ('prefetch', 'flow', 'wallet_signals', 'features', 'risk_external', 'learn', 'runner',
+                                                               '__main__', 'paths')}
+    originals = {k: p.read_text() for k, p in files.items()}
+    if run_tests() != 0:
+        print('BASELINE FAILS: fix the tests first')
+        return 2
+    survived = []
+    try:
+        for target, name, old, new in MUTANTS:
+            text = originals[target]
+            if text.count(old) != 1:
+                print('BAD MUTANT (pattern found %d times): %s' % (text.count(old), name))
+                survived.append(name)
+                continue
+            files[target].write_text(text.replace(old, new))
+            try:
+                rc = run_tests()
+            finally:
+                files[target].write_text(text)
+            print('%-8s %s' % ('killed' if rc != 0 else 'SURVIVED', name))
+            if rc == 0:
+                survived.append(name)
+    finally:
+        for k, p in files.items():
+            p.write_text(originals[k])
+    print('%d/%d killed' % (len(MUTANTS) - len(survived), len(MUTANTS)))
+    return 1 if survived else 0
+
+
+if __name__ == '__main__':
+    sys.exit(main())

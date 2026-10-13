@@ -381,7 +381,8 @@ def build_runner(cfg, *, state_dir, discovery_db, keys, code_version, clock=None
                                 screen_cfg=r.screen_cfg, min_age_s=r.screen_cfg['min_age_seconds'], code_version=code_version,
                                 strategy_version=strategy_cfg.strategy_version, clock=clock, transport_kwargs=transport_kwargs)
     if r.prefetch is not None:
-        r.prefetch.attach(features=r.features, risk_external=r.risk_external, wallet_signals=r.wallet_signals, flow=r.flow)
+        r.prefetch.attach(features=r.features, risk_external=r.risk_external, wallet_signals=r.wallet_signals, clusters=r.clusters, flow=r.flow)
+        r.prefetch.gate = r.entries_allowed                                  # a halted trader / the kill switch also stops the prefetch
     # --- end W2b ---
     return r
 

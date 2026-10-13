@@ -363,6 +363,12 @@ def flow_values(row, decision_ts, policy, counts, names=FLOW_FEATURES) -> dict:
 
 
 # --- L24 ---
+def _before_decision_source(row, key, late, policy):
+    """The screen's own snapshot, or (W2b #8) a prefetch's: read BEFORE the decision, i.e. in a row whose ``late_s`` is <= 0."""
+    source = row.get(key)
+    return source == 'screen' or (source == 'prefetch' and _num(late) and late <= policy.eps_s)
+
+
 def cluster_values(row, decision_ts, policy, counts, names=CLUSTER_FEATURES) -> dict:
     """``{name: Decimal | None}`` of one L24 clusters row, as of the decision only (every exclusion counted): the pool-window figure
     only when the window was cut at the decision; a holder snapshot read at collection (``AT_COLLECTION``) only within ``max_late_s``;
@@ -387,13 +393,13 @@ def cluster_values(row, decision_ts, policy, counts, names=CLUSTER_FEATURES) -> 
         elif flag not in (None, *OK_FLAGS):
             counts.exclude(name, 'FLAG_' + str(flag)[:40])
             continue
-        elif name != 'jito_bundled_buys' and row.get('holders_source') != 'screen':
+        elif name != 'jito_bundled_buys' and not _before_decision_source(row, 'holders_source', late, policy):
             counts.exclude(name, 'HOLDERS_NOT_FROM_SCREEN')         # an unflagged holder figure must come from the screen's snapshot
             continue
         if name == 'jito_bundled_buys' and (not _num(after) or after > 0):
             counts.exclude(name, 'WINDOW_NOT_CUT_AT_DECISION')
             continue
-        if name in CLUSTER_SUPPLY_FEATURES and row.get('supply_source') != 'screen':
+        if name in CLUSTER_SUPPLY_FEATURES and not _before_decision_source(row, 'supply_source', late, policy):
             counts.exclude(name, 'SUPPLY_READ_AFTER_DECISION')
             continue
         out[name] = value

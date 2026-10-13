@@ -525,12 +525,12 @@ class WalletSignals:
                     return None
         return None
 
-    def collect(self, cid, mint, pool, grad_slot, *, decision_ts=None, sink=None, supply=None):
+    def collect(self, cid, mint, pool, grad_slot, *, decision_ts=None, sink=None, prefetched_supply=None):
         """Collect, analyze and record one candidate AS OF ``decision_ts`` (LINT2b). A transient failure before anything was learned
         is retried later (up to ``max_retries``); a stop writes nothing; everything else is recorded with its reasons.
 
         W2b #8: with a ``sink`` (a dict) this is a PREFETCH: ``decision_ts`` is the AS-OF time the window ends at (never later than the
-        decision the row will be committed to), the supply is ``supply`` (read before the decision) or one call, nothing is written,
+        decision the row will be committed to), the supply is ``prefetched_supply`` (read before the decision) or one call, nothing is written,
         ``sink`` receives ``features`` / ``events`` / ``finished_at`` (``sink['patience_s']`` optionally shortens the token patience), and
         a failure leaves no trace in this collector's own retry bookkeeping. Without a sink, a finished prefetch of this candidate is
         committed instead of collecting (no request)."""
@@ -580,8 +580,8 @@ class WalletSignals:
             notes.update(signatures_seen=len(seen), window_txs=len(window), examined_txs=0)
             if 'window' not in unavailable:
                 # -- 2. the supply (for bundled_supply_pct): the one the screen read, else a call (flagged: read after the decision)
-                # W2b #8: a prefetch has no screen yet: the supply read before the decision (``supply``) or one call, flagged rpc_prefetch
-                supply = self._screen_supply(cid, mint) if sink is None else supply
+                # W2b #8: a prefetch has no screen yet: the supply read before the decision (``prefetched_supply``) or one call, flagged rpc_prefetch
+                supply = self._screen_supply(cid, mint) if sink is None else prefetched_supply
                 supply_source = ('screen' if sink is None else 'rpc_prefetch') if supply is not None else None
                 if supply is None:
                     try:
