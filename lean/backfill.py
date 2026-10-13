@@ -49,6 +49,7 @@ from lean.sources import NAME_RE, Source
 NAME = 'backfill'
 STATE_FILE = 'backfill-state.json'
 STATE_VERSION = 1
+KEEP_SIGNATURES = 1000
 AUTHORITY = discovery.AUTHORITY
 DEFAULTS = {
     'interval_s': 120, 'limit': 100, 'max_pages': 3, 'max_tx_per_poll': 40, 'max_attempts_per_signature': 5,
@@ -129,7 +130,9 @@ class BackfillSource(Source):
         self.state_path = os.path.join(os.fspath(state_dir), STATE_FILE)
         self.state = self._load()
         self.next_poll_at = 0.0
-        self.attempts, self.counted, self.outcome = {}, set(), set()
+        self.attempts = {}
+        self.counted = dict.fromkeys(self.state.get('counted', []))      # signatures already in the counters (survives a restart)
+        self.outcome = dict.fromkeys(self.state.get('outcome', []))
         self.stats = {'polls': 0, 'sheds': 0, 'errors': 0, 'last_poll_at': None, 'last_error': None, 'last_found': 0}
         self.last_stats = {}
 
@@ -151,6 +154,8 @@ class BackfillSource(Source):
         days = self.state['days']
         for old in sorted(days)[:-self.cfg['day_history']]:
             del days[old]
+        self.state['counted'] = list(self.counted)[-KEEP_SIGNATURES:]
+        self.state['outcome'] = list(self.outcome)[-KEEP_SIGNATURES:]
         tmp = '%s.tmp.%d' % (self.state_path, os.getpid())
         fd = os.open(tmp, os.O_WRONLY | os.O_CREAT | os.O_TRUNC | os.O_NOFOLLOW, 0o600)
         try:
@@ -195,7 +200,7 @@ class BackfillSource(Source):
             self.state['pending'] = {'until': last_sig, 'slot': high_slot}
         self._save()
         self.stats['last_found'] = len(found)
-        return found, max(cursor, high_slot)
+        return found, high_slot                                              # starts at the cursor: never moves backward
 
     def _poll(self, cursor, now, day):
         """-> (candidates oldest-first, highest processed slot, last handled signature). Raises ProviderError."""
@@ -215,7 +220,7 @@ class BackfillSource(Source):
             sig, slot = entry['signature'], entry['slot']
             first = sig not in self.counted                               # counters never double count a re-examined signature
             if first:
-                self.counted.add(sig)
+                self.counted[sig] = True
                 day['authority_txs'] += 1
             if entry.get('err') is not None:
                 if first:
@@ -241,10 +246,10 @@ class BackfillSource(Source):
                     self.next_poll_at = now + min(self.cfg['interval_s'], 15)
                     break
                 if candidate is _FAILED:
-                    self.outcome.add(sig)                                  # already counted as fetch_failed; moved past
+                    self.outcome[sig] = True                               # already counted as fetch_failed; moved past
                     candidate = None
                 elif sig not in self.outcome:
-                    self.outcome.add(sig)
+                    self.outcome[sig] = True
                     if candidate is None:
                         day['not_migration'] += 1
                     else:
@@ -253,9 +258,10 @@ class BackfillSource(Source):
                 if candidate is not None:
                     found.append(candidate)
             high_slot, last_sig = max(high_slot, slot), sig
-        for name in ('counted', 'outcome'):
-            if len(getattr(self, name)) > 5000:                               # bounded memory; a very old repeat may recount once
-                setattr(self, name, set(list(getattr(self, name))[-2500:]))
+        for name in ('counted', 'outcome'):                                   # bounded; the newest are kept (and persisted by _save)
+            book = getattr(self, name)
+            if len(book) > 2 * KEEP_SIGNATURES:
+                setattr(self, name, dict.fromkeys(list(book)[-KEEP_SIGNATURES:]))
         return found, high_slot, last_sig
 
     def _signatures(self, until, cursor, now, day):

@@ -258,6 +258,12 @@ class AgeTests(Base):
         self.migration(self.tokens[0], 100, MIN_AGE)
         self.assertEqual(len(self.source().iter_new(0)[0]), 1)
 
+    def test_max_age_boundary_matches_the_screen_exceeds_not_equals(self):
+        self.migration(self.tokens[0], 100, MAX_AGE)
+        self.migration(self.tokens[1], 101, MAX_AGE + 1)
+        found, _ = self.source().iter_new(0)
+        self.assertEqual([c.beyond_max_age for c in found], [False, True])      # the screen rejects TOO_OLD only when age > max_age
+
     def test_a_migration_older_than_max_age_is_still_emitted_but_flagged(self):
         token = self.tokens[0]
         self.migration(token, 100, MAX_AGE + 600)
@@ -296,6 +302,12 @@ class CursorTests(Base):
         found, _ = again.iter_new(0)
         self.assertEqual(sorted(self.mints(found)), sorted([a.mint, b.mint]))
         self.assertNotIn('until', [p for m, p in self.helius.calls if m == 'getSignaturesForAddress'][-1][1])
+        # the same process re-walking the overlap does not double count it
+        src2 = self.source()
+        src2.iter_new(0)
+        self.clock.t += 130
+        src2.iter_new(0)
+        self.assertEqual((src2.health()['today']['authority_txs'], src2.health()['today']['missed_migrations']), (2, 2))
 
     def test_state_survives_a_restart(self):
         a, b = self.tokens[:2]
@@ -354,11 +366,14 @@ class BudgetTests(Base):
         sigs = [self.migration(self.tokens[i], 100 + i, 3000 - i) for i in range(5)]
         src = self.source(max_tx_per_poll=2)
         got, cursor = [], 0
-        for _ in range(4):
+        for n in range(4):
             found, cursor = src.iter_new(cursor)
+            if n == 0:
+                self.assertEqual(len(found), 2)                       # the per-poll budget binds ...
+                self.assertEqual(self.helius.count('getTransaction'), 2)
             got += self.mints(found)
             self.clock.t += 130
-        self.assertEqual(got, [t.mint for t in self.tokens[:5]])      # oldest first, each exactly once
+        self.assertEqual(got, [t.mint for t in self.tokens[:5]])      # ... and the rest follows, oldest first, each exactly once
         self.assertEqual(self.helius.count('getTransaction'), 5)
         self.assertEqual(src.health()['today']['missed_migrations'], 5)
 
