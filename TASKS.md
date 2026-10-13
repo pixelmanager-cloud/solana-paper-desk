@@ -2155,7 +2155,7 @@ Fix:
 4. The full suite passes in one process (rc=0). Add an e2e test on fakeworld, and try mutations.
 
 ## L08BH — Take over L08BF (worker silent for 2h)
-STATUS: OPEN
+STATUS: SUPERSEDED by C1 (2026-10-13). Do not take.
 BASE: origin/cloud/L08BF (continue it), then merge the CURRENT origin/integration/r1 (it has L07R2 paths.sqlite, LINT1, LINT2/LINT2b)
 OWNS: same as L08BF
 - Finish every item in `## L08BF`.
@@ -2169,3 +2169,82 @@ STATUS: CLAIMED by coordinator (local agent, branch cloud/L20). Do not take.
 
 ## L21 RugCheck/creator-history/copycat · L22 honeypot sell-simulation filter · L23 bot-exit (shadow) · L24 linked-wallet clusters
 STATUS: CLAIMED by coordinator (local agents, branches cloud/L21..L24). Do not take. L20 also absorbs #1 wash-ratio and #7 price-shape.
+
+---
+
+# ROUND C (2026-10-13). Cloud workers: take ONLY these C-tasks. Every other open item is SUPERSEDED or coordinator-owned.
+
+**Context, read first:** `~/` is not available to you, so the coordinator copied the key findings here.
+- The current universe (pump.fun tokens ~60 s after graduation) has NO edge after costs: 76% dump below −50% within 30 min, and 0 of 32k subsets survive multiple-testing correction.
+- The PumpSwap fee is MCAP-TIERED per side: ~1.25% below 420 SOL mcap, 1.20% at 420–1,470 SOL, ~0.95% around 9.8k SOL, 0.30% at ≥98k SOL. The tier table is in `fixtures/mainnet-dynamic-fees.json`; the fee program is `pfeeUxB6jkeY1Hxd7CsFCAjcbHA9rWtchMGdZ6VojVZ`.
+- `adapters.mark` currently ignores `virtual_quote_reserves`, so marks come out ~12% low. Coordinator task M1 is fixing this behind config `marks.model: "effective"`. Use `adapters.mark` as-is and don't fix it yourself; your code must still work after M1 lands.
+- Coordinator agents M1 (`adapters`, `store`, runner logging and events) and M2 (`learn.py`, `labels.py`) are in flight. Do NOT touch those files.
+
+**Rules for ALL C-tasks:**
+- BASE is `origin/integration/r1`. Your code goes in your own NEW module or modules. Add only a small, delimited, additive runner/`__main__` hook, and only where a task says so.
+- Default is OFF when the config key is absent.
+- Never edit `desk/`. No keys or network in tests; use fixtures and fake HTTP.
+- The full suite passes in ONE process with the real rc=0: `python -m unittest discover -s tests/lean -t .`
+- Include an e2e on fakeworld with the real modules, 2–3 mutations you have killed, and `reports/<ID>.md`.
+- The final commit message is `DONE <ID>: ...`. Push only `cloud/<ID>`.
+
+## C1 — Offline exit-rule optimizer (replaces L08/L08B/L08BF/L08BH)
+STATUS: OPEN
+OWNS: lean/replay.py, lean/tune.py, tests/lean/test_replay.py, tests/lean/test_tune.py, tests/lean/test_e2e_replay.py
+
+This is an OFFLINE CLI with no runner hook: `python -m lean.tune --lean-db ... --paths-db ... --grid grid.json --out-dir ...`. It reads `paths.sqlite` (`paths`, `path_marks`, `path_gaps`, `path_ends`, plus the `paths-*.sqlite` archives) and `lean.sqlite`, both in plain `mode=ro`.
+
+1. **Replay.** For each path, replay an exit policy with the REAL `lean/strategy.py` `exit_decision`.
+   - Mark with `adapters.mark` on the stored raw reserves.
+   - Apply costs: the tier fee per side from the fixture table at the path's mcap, plus 50 bps adverse slippage per leg, plus 0.00025 SOL per fill.
+   - Fill at the NEXT mark after the trigger (lag1) as the default, with lag0 as an option.
+   - `path_gaps` mean missing data, not flat prices.
+2. **Exit families.** At minimum:
+   - the live ladder;
+   - a full TP at X;
+   - hold N minutes;
+   - TP X with a hard time cap;
+   - trailing from entry;
+   - a partial TP followed by trailing.
+
+   The `grid.json` parameterizes the family.
+3. **Tuning.** Use a purged time-blocked walk-forward with an embargo equal to the path hours. Report EV per trade, a bootstrap CI, a 1st/2nd-half split, the p5 tail, P(≤ −50%) and the fill-past-trigger distribution (how far exits fill past their trigger price).
+   - Select on train blocks only. The test block is used once.
+   - Apply Benjamini–Hochberg over the grid.
+4. **Output.** An HTML/JSON report. Plus `proposal.json` ONLY when a policy has a test-block CI lower bound above 0 net of costs; otherwise write `NO_PROPOSAL`.
+5. **Calibration test.** Replaying the live `lean-1-collect-c` config on traded paths must reproduce the live exit reasons on a synthetic fakeworld run.
+
+## C2 — Bonding-curve recorder (new universe #2, recording only)
+STATUS: OPEN
+OWNS: lean/curves.py, tests/lean/test_curves.py, tests/lean/test_e2e_curves.py, + delimited runner/__main__ hook
+
+Record price paths for pump.fun bonding curves BEFORE graduation, into their OWN `curves.sqlite`.
+- **Polling.** Poll the pump.fun program for curves that changed, using ONE program-accounts call per poll every `poll_s` (default 10 s). Use `getProgramAccounts` with a `dataSize`/`memcmp` filter, or the V2 `changedSinceSlot` variant if Helius supports it. The coordinator will verify the V2 call live, so make the method configurable and tested with fakes.
+- **Decoding.** Decode bonding-curve accounts: virtual/real token and SOL reserves, complete flag, creator. Use desk's pure decoders if present and import them read-only; otherwise write a fixture-tested decoder. Write down the account size and discriminator you rely on.
+- **What to track.** Only curves with progress ≥ `min_progress` (default 0.5).
+- **What to record.** Marks with curve price, progress and SOL raised. A `path_end` row on graduation (complete) or when the curve goes stale.
+- **Joining.** Join to the post-graduation PumpSwap paths by mint, so analysis gets one continuous path.
+- **Budget.** Low lane only, shed means skip, `max_tracked` cap, with a calls/hour estimate in the report. Credits: `getProgramAccounts` is 10 credits per call. Default must stay under 0.5M credits/month.
+- **Retention.** Follow the L07R2 pattern (size rotation, disk floor).
+
+## C3 — Launchpad census (new universe #3, counts only)
+STATUS: OPEN
+OWNS: lean/census.py, tests/lean/test_census.py, + delimited runner/__main__ hook
+
+Every `interval_s` (default 600 s), count NEW pools/tokens created per launchpad and write `census.sqlite` rows: `ts`, launchpad, `new_count`, sample mints. Launchpads and program IDs:
+- pump.fun graduations (already known from discovery)
+- Raydium LaunchLab: `LanMV9sAd7wArD4vJFi2qDdfnVhFxYSUg6eADduJ3uj`
+- Meteora DBC: `dbcij3LWUppWqq96dh6gJWwBifmcGfLSB5D4DuSMaqN`
+
+Use bounded `getSignaturesForAddress` on each program with the `until` cursor, low lane, ≤ 50k credits/month. The goal is to measure which launchpads are active. No decoding beyond counting create instructions is needed. Make the log/instruction matching fixture-tested, and keep it config-driven so new programs can be added.
+
+## C4 — Discovery gap backfill
+STATUS: OPEN
+OWNS: lean/backfill.py, tests/lean/test_backfill.py, tests/lean/test_e2e_backfill.py, + delimited runner hook
+
+The discovery websocket (frozen `desk/discovery`) has unverified gaps: about 43 interrupted receives per day, plus 2.4 h and 3.5 h outages. Build a lean-side backfill that finds graduations the feed missed:
+- Poll the pump.fun migration path every `interval_s` (default 120 s) with `getSignaturesForAddress` (the migration authority/program used by `lean/candidates.py`/discovery), using the `until` cursor, low lane.
+- Parse migrations into the SAME candidate shape that `lean/candidates.py` produces.
+- Feed ONLY the ones absent from the discovery DB (and not yet in lean `candidates`) into the runner as a second source, through the existing L14 `Source` interface.
+- Label them with `source='backfill'` and the detection latency. If the latency exceeds `screen.max_age_seconds`, record the candidate but never enter.
+- Report the gap rate per day in health.
