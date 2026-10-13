@@ -70,6 +70,8 @@ def main(argv=None):
     p.add_argument('--latency', type=float, default=1.0, help='multiplier of the measured call latencies')
     p.add_argument('--shed', default='', help='from,to[;from,to]: offsets (s) at which auxiliary Helius calls get HTTP 429 (the low lane then sheds 30 s)')
     p.add_argument('--lead', default='', help='kind=seconds[,kind=seconds]: prefetch lead_s overrides')
+    p.add_argument('--pf', default='', help='a JSON object of prefetch settings, e.g. {"reserve_tokens": 2}')
+    p.add_argument('--noise-seed', type=int, default=None, help='also run the OFF world with this other fault / jitter seed: the natural run-to-run spread')
     a = p.parse_args(argv)
     patcher = mock.patch.object(socket.socket, 'connect', side_effect=AssertionError('network used'))
     patcher.start()
@@ -79,15 +81,21 @@ def main(argv=None):
     lead = {k: float(v) for k, v in (kv.split('=') for kv in a.lead.split(',') if kv)}
     kw = dict(faults=a.faults, hazard_sample=a.hazard_sample, latency=a.latency if a.latency != 1.0 else True, shed_windows=shed)
     off = run_once(plan, prefetch=False, **kw)
-    on = run_once(plan, prefetch=True, prefetch_cfg={'lead_s': lead} if lead else None, **kw)
+    pf = json.loads(a.pf) if a.pf else {}
+    if lead:
+        pf['lead_s'] = lead
+    on = run_once(plan, prefetch=True, prefetch_cfg=pf or None, **kw)
     text = json.dumps({'population': on['readiness']['population'], 'off': off, 'on': on}, indent=1, sort_keys=True, default=str)
     if a.out:
         Path(a.out).write_text(text)
     else:
         print(text)
-    print('\n%-40s %5s %12s %12s %12s %12s' % ('feature', 'n', 'ready off', 'ready on', 'usable off', 'usable on'))
+    noise = run_once(plan, prefetch=False, seed=a.noise_seed, **kw) if a.noise_seed is not None else None
+    print('\n%-40s %5s %12s %12s %12s %12s%s' % ('feature', 'n', 'ready off', 'ready on', 'usable off', 'usable on', '  usable off (seed %s)' % a.noise_seed
+                                                  if noise else ''))
     for row in table(off, on):
-        print('%-40s %5s %12s %12s %12s %12s' % row)
+        extra = '  %20s' % noise['readiness']['features'][row[0]]['usable_rate'] if noise else ''
+        print('%-40s %5s %12s %12s %12s %12s%s' % (row + (extra,)))
     return 0
 
 

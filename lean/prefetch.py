@@ -35,6 +35,14 @@ low-lane users, the collectors' own hourly caps (flow ``max_calls_per_hour``) sh
 candidate is the probe (3 calls) plus the calls its collectors would have made after the screen anyway; a hazard costs the probe only;
 a mis-gated candidate (the probe said hazard-free, the screen says hazard, or the reverse) wastes or loses its prefetch, never its trade.
 The screen, the entry and the exits never wait for, call or read anything here: ``on_decision`` is a dict lookup.
+
+OVERLOAD. One prefetch thread, in arrival order. A job that cannot finish before the earliest screen (it would start later than
+``min_age + 3 s - a quarter of its lead``) is not started (``LATE_START``): under a launch burst or a slow provider the prefetch sheds
+ITSELF, candidates fall back to the collectors' own post-screen pass, and the low lane is not spent on results that would be refused.
+Measured (tests/lean/w2b_measure.py): production-like load (a launch every 30-70 s) 100 % of the hazard-free candidates ready; a stressed
+world (every 6-30 s, 1.5x latencies, 5 % failed calls, a 30 s 429 shed window) 92-100 %; far beyond production (every 3-9 s, 3x latencies)
+the prefetch cannot keep up (4-17 % ready) and, the low lane being the bottleneck, any extra user of it can cost the collectors' own pass
+a few points of learner-usable rows: raise ``reserve_tokens`` to leave more of the lane to them.
 """
 import copy
 import json
@@ -79,6 +87,7 @@ DEFAULTS = {
 _FLOATS = {'probe_at_s': (0, 600), 'min_start_s': (0, 600), 'settle_s': (0, 60), 'max_stale_s': (1, 3600), 'pass_interval_s': (0.1, 60),
            'discover_interval_s': (0.1, 60), 'ttl_s': (60, 86400), 'retry_delay_s': (0, 600), 'patience_s': (0, 60)}
 _INTS = {'max_jobs_per_pass': (1, 50), 'max_entries': (1, 10000), 'max_attempts': (1, 10), 'reserve_tokens': (0, 10), 'scan_limit': (1, 2000)}
+SCREEN_LAG_S = 3.0              # the screen decides about this long after discovery + min_age (p50 2.6 s in production: TOOL_AUDIT B03)
 WINDOWED = frozenset({'flow', 'wallet_signals', 'features', 'clusters'})        # their as-of is start - settle_s; RugCheck's is the start itself
 
 
@@ -173,7 +182,7 @@ class Prefetch:
         self._cursor = None
         self._last_discover = -1e18
         self.counts = {'discovered': 0, 'already_handled': 0, 'probes': 0, 'probe_calls': 0, 'probe_failed': 0, 'hazard_skipped': 0,
-                       'jobs_run': 0, 'jobs_done': 0, 'jobs_failed': 0, 'retries': 0, 'lane_waits': 0, 'cancelled': 0, 'errors': 0,
+                       'jobs_run': 0, 'jobs_done': 0, 'jobs_failed': 0, 'retries': 0, 'lane_waits': 0, 'cancelled': 0, 'late_start': 0, 'errors': 0,
                        'expired': 0, 'dropped': 0, 'scan_errors': 0}
         self.used = _fresh_counts()
         self.misses = {kind: {} for kind in KINDS}
@@ -282,6 +291,10 @@ class Prefetch:
             return entry.received + self.cfg['probe_at_s']
         return entry.received + max(self.cfg['min_start_s'], self.min_age_s - self.cfg['lead_s'][kind])
 
+    def needs(self, kind):
+        """About how long a job takes: a quarter of its ``lead_s`` (the lead is the duration plus slack); the probe's three calls ~3 s."""
+        return 3.0 if kind == 'probe' else 0.25 * self.cfg['lead_s'][kind]
+
     def _lane_tokens(self):
         limiter = getattr(getattr(self.helius, 'transport', None), 'limiter', None)
         available = getattr(limiter, 'available', None)
@@ -318,10 +331,11 @@ class Prefetch:
             return 'wait'                                          # its funders / early buyers come from the wallet job
         if now < self.due(entry, kind) or now < job.next_at:
             return 'wait'
-        # the earliest screen has passed by 30 s: the decision is made, a result would be unusable
-        if now > entry.received + self.min_age_s + 30.0:
-            job.state, job.why = 'skipped', 'TOO_LATE'
-            self.counts['cancelled'] += 1
+        # too late to finish before the earliest screen (+ the screen's usual lag): a result would be refused at the decision, and the calls
+        # would only crowd the low lane the collectors' own post-screen pass needs. Under overload the prefetch sheds ITSELF.
+        if now > entry.received + self.min_age_s + SCREEN_LAG_S - self.needs(kind):
+            job.state, job.why = 'skipped', 'LATE_START'
+            self.counts['late_start'] += 1
             return 'skip'
         need = {'probe': 3, 'features': 2, 'wallet_signals': 2, 'clusters': 2, 'flow': 2, 'risk_external': 0}[kind]
         tokens = self._lane_tokens() if need else None

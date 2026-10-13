@@ -24,7 +24,7 @@ MUTANTS = [
     ('prefetch', 'no settle time before the as-of', "        job.asof = job.started_at - (self.cfg['settle_s'] if kind in WINDOWED else 0.0)",
      "        job.asof = job.started_at"),
     ('prefetch', 'hazards are prefetched', "                if entry.gate == 'HAZARD' and self.cfg['skip_hazards']:", "                if False:"),
-    ('prefetch', 'a job may start after the screen', "        if now > entry.received + self.min_age_s + 30.0:", "        if False:"),
+    ('prefetch', 'a job may start after the screen', "        if now > entry.received + self.min_age_s + SCREEN_LAG_S - self.needs(kind):", "        if False:"),
     ('prefetch', 'readiness counts a late job', "if job.state == 'done' and job.finished_at is not None and job.finished_at <= decision_ts and job.asof <= decision_ts:",
      "if job.state == 'done':"),
     # --- #8 the commits: the real times, never the commit's own

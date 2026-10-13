@@ -403,8 +403,13 @@ class PrefetchRules(unittest.TestCase):
         e.gate, flow.state = 'FREE', 'pending'
         self.assertEqual(p._ready(e, flow, 1045.0), 'run')
         self.assertEqual(p._ready(e, flow, 1020.0), 'wait')                       # before its start time
-        self.assertEqual(p._ready(e, flow, 1091.0), 'skip')                       # 31 s after the earliest screen: the decision is made
-        self.assertEqual(flow.why, 'TOO_LATE')
+        # too late to finish before the earliest screen (1060) plus its usual 3 s lag: a flow job needs ~5.5 s (a quarter of its 22 s lead)
+        self.assertEqual(p._ready(e, flow, 1057.0), 'run')
+        self.assertEqual(p._ready(e, flow, 1057.6), 'skip')
+        self.assertEqual((flow.state, flow.why, p.counts['late_start']), ('skipped', 'LATE_START', 1))
+        probe = PF.Entry(candidate('MintB', 1000.0), 1000.0)
+        self.assertEqual(p.needs('probe'), 3.0)
+        self.assertEqual(p._ready(probe, probe.jobs['probe'], 1060.5), 'skip')       # a probe after the earliest screen is of no use either
 
     def test_a_busy_low_lane_postpones_a_job_without_sending_anything(self):
         p = self.build()
