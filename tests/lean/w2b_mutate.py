@@ -28,7 +28,9 @@ MUTANTS = [
     ('prefetch', 'readiness counts a late job', "if job.state == 'done' and job.finished_at is not None and job.finished_at <= decision_ts and job.asof <= decision_ts:",
      "if job.state == 'done':"),
     # --- #8 the commits: the real times, never the commit's own
-    ('prefetch', 'wallet row late_s from the commit time', "late_s=round(pre['finished_at'] - decision_ts, 3),", "late_s=round(self.clock() - decision_ts, 3),"),
+    ('prefetch', 'wallet row late_s from the commit time',
+     "features.update(decision_ts=decision_ts, collected_at=pre['finished_at'], late_s=round(pre['finished_at'] - decision_ts, 3),",
+     "features.update(decision_ts=decision_ts, collected_at=pre['finished_at'], late_s=round(self.clock() - decision_ts, 3),"),
     ('prefetch', 'wallet row collected at the commit time', "features.update(decision_ts=decision_ts, collected_at=pre['finished_at'],",
      "features.update(decision_ts=decision_ts, collected_at=self.clock(),"),
     ('prefetch', 'flow row collected at the commit time', "        body['started_at'] = pre['finished_at']", "        body['started_at'] = self.clock()"),
@@ -94,16 +96,18 @@ def run_tests():
     return subprocess.run([sys.executable, '-m', 'unittest', '-q'] + TESTS, cwd=ROOT, capture_output=True, text=True).returncode
 
 
-def main():
+def main(argv=None):
+    only = [a.lower() for a in (sys.argv[1:] if argv is None else argv)]      # optional: only the mutants whose name contains one of these words
+    mutants = [m for m in MUTANTS if not only or any(word in m[1].lower() for word in only)]
     files = {name: ROOT / 'lean' / (name + '.py') for name in ('prefetch', 'flow', 'wallet_signals', 'features', 'risk_external', 'learn', 'runner',
-                                                               '__main__', 'paths')}
+                                                               '__main__', 'paths', 'clusters')}
     originals = {k: p.read_text() for k, p in files.items()}
     if run_tests() != 0:
         print('BASELINE FAILS: fix the tests first')
         return 2
     survived = []
     try:
-        for target, name, old, new in MUTANTS:
+        for target, name, old, new in mutants:
             text = originals[target]
             if text.count(old) != 1:
                 print('BAD MUTANT (pattern found %d times): %s' % (text.count(old), name))
@@ -120,7 +124,7 @@ def main():
     finally:
         for k, p in files.items():
             p.write_text(originals[k])
-    print('%d/%d killed' % (len(MUTANTS) - len(survived), len(MUTANTS)))
+    print('%d/%d killed' % (len(mutants) - len(survived), len(mutants)))
     return 1 if survived else 0
 
 

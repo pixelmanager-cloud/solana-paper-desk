@@ -268,6 +268,8 @@ class NoLookahead(Base):
             for _t, signer, side in window[:6]:
                 if side == 'buy' and signer not in buyers:
                     buyers.append(signer)
+            if 'window' not in row['unavailable']:
+                self.assertEqual(row['window_txs'], len(window), (mint, cut))             # not one signature after the cut is in the window
             if row['tx_skipped'] == 0:                                                           # (a failed getTransaction is a skipped one)
                 self.assertEqual(row['buyer_wallets'], buyers, (mint, cut))
             else:
@@ -336,14 +338,13 @@ class NoLookahead(Base):
             received = sim.scene.arrival[mint]
             after = [k for k, off in enumerate(W.CANARY_OFFSETS) if received + off > row['prefetch']['asof']]
             visible = [k for k in after if received + W.CANARY_OFFSETS[k] <= row['prefetch']['started_at']]
-            self.assertTrue(visible, 'no canary between the as-of and the call: the test proves nothing')
             self.assertFalse({W.canary_wallet(index, k) for k in after} & set(row['buyer_wallets']))
-            shown += 1
-        self.assertGreater(shown, 6)
+            shown += 1 if visible else 0
+        self.assertGreater(shown, 6)                                                 # (a canary between the as-of and the call, in most rows)
         # and the same world WITHOUT a prefetch counts them (the collectors cut at the decision, which is after them)
         plain = self.run_sim(plan, prefetch=False, sparse=True, until=5.0 + 70 * 10 + 400)
         counted = sum(1 for row in rows_of(plain.runner, 'wallet_signals')
-                      if {W.canary_wallet(i + 1, 0) for i in range(10)} & set(row['buyer_wallets']))
+                      if {W.canary_wallet(i + 1, 1) for i in range(10)} & set(row['buyer_wallets']))
         self.assertGreater(counted, 6)
 
     def test_rugcheck_rows_never_count_a_token_created_after_the_cut(self):

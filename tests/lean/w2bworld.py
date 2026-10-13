@@ -130,7 +130,7 @@ class Net:
             sim.sleep(lat / 2)
 
 
-CANARY_OFFSETS = (14.5, 19.5, 29.5)       # seconds after the frame's receive time: in the gap between a prefetch's as-of and its first call
+CANARY_OFFSETS = (14.5, 29.0, 37.0)       # seconds after the frame's receive time: in the gap between a prefetch's as-of and its first call
 
 
 def canary_wallet(index, k):
@@ -138,11 +138,12 @@ def canary_wallet(index, k):
 
 
 def sparse_tape(token, born, index, *, seed, end=420.0):
-    """Quiet at first (the creation, a same-slot buyer, two swaps), then THREE CANARY BUYS timed to fall between the as-of of the default
-    prefetch jobs (features +12 s, wallet signals +17 s, flow and clusters +35 s after the frame) and their first call, by distinct wallets;
-    a collector whose window were not cut at its as-of would count one. Busy after a minute."""
+    """Quiet at first (the creation, a same-slot buyer, one swap), then THREE CANARY BUYS timed to fall between the as-of of the default
+    prefetch jobs and their first call: +14.5 s after the frame (features: start +15 s, as-of +12 s), +29.0 s (wallet signals: start +30 s,
+    as-of +27 s; it is the 5th of the six transactions it examines) and +37.0 s (flow and clusters: start +38 s, as-of +35 s). A collector
+    whose window were not cut at its as-of would count one. Busy after a minute."""
     trades = [(born, TP.wallet(900 + index), 'buy', 300_000_000, False), (born + 0.4, TP.wallet(901 + index), 'buy', 200_000_000, False),
-              (born + 1.5, TP.wallet(index * 100), 'buy', 150_000_000, False), (born + 21.5, TP.wallet(index * 100 + 1), 'sell', 100_000_000, False)]
+              (born + 1.5, TP.wallet(index * 100), 'buy', 150_000_000, False)]
     received = born + BLOCK_BEFORE_RECEIPT
     trades += [(received + off, canary_wallet(index, k), 'buy', 500_000_000, False) for k, off in enumerate(CANARY_OFFSETS)]
     trades += TP.organic(born + 70, born + end, every=5.0, seed=seed, sell_share=0.3, wallets=50, base=index * 100 + 50)
