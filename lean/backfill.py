@@ -23,6 +23,15 @@ persisted a cursor at or beyond it, so a crash between "batch returned" and "bat
 dedupes by mint) instead of losing it. Without a usable ``until`` (first start) the walk stops at the cursor slot or at
 ``lookback_s`` (default 6 h), never at genesis.
 
+LINT5 (UPDATE 2, live 2026-10-13): MANY real migrations run as a CPI (``migrate`` is an INNER instruction of another program)
+and ``lean.candidates`` only accepts a TOP-LEVEL ``migrate``, so the discovery feed STORES those transactions and the trader still
+never sees them. Both paths here therefore use ``frame_candidate_any_depth``: ``lean.candidates``' own rule, with the migrate
+allowed at any depth (its CompletePumpAmmMigrationEvent must be emitted from INSIDE that migrate, one frame deeper:
+``meta.innerInstructions`` + ``stackHeight``). A signature the feed HAS is no longer skipped blindly: its stored frame is decoded
+locally (no RPC, no credit) and, when ``lean.candidates`` rejects it but the any-depth rule accepts it, it is fed as a backfill
+candidate (counted as ``intake_rejected_migrations``). A top-level migration the feed has stays the discovery path's own.
+Every ``getTransaction`` asks for ``maxSupportedTransactionVersion = providers.MAX_TX_VERSION`` (version-1 transactions exist).
+
 Gaps are measured, not hidden: per UTC day ``authority_txs`` (distinct signatures examined), ``seen_by_feed``,
 ``missing_from_feed``, ``missed_migrations`` (missing AND decoded as a migration), ``not_migration``, ``fetch_failed``,
 ``overflow_polls`` (the page budget ended before reaching the resume point: older signatures were NOT examined) and
@@ -39,11 +48,13 @@ import time
 from contextlib import closing
 from dataclasses import dataclass, field
 
+from desk.decode import decode
 from desk.model import digest
+from desk.programs import unbase58
 from desk.programs import address
 from discovery import continuous as discovery
 from lean import candidates as C
-from lean.providers import LANE_SHED, ProviderError
+from lean.providers import LANE_SHED, MAX_TX_VERSION, ProviderError
 from lean.sources import NAME_RE, Source
 
 NAME = 'backfill'
@@ -113,7 +124,7 @@ class BackfillCandidate(C.Candidate):
 def _zero_day():
     return {'polls': 0, 'authority_txs': 0, 'seen_by_feed': 0, 'missing_from_feed': 0, 'missed_migrations': 0, 'not_migration': 0,
             'failed_tx': 0, 'fetch_failed': 0, 'overflow_polls': 0, 'beyond_max_age': 0, 'calls_signatures': 0, 'calls_transaction': 0,
-            'sheds': 0}
+            'sheds': 0, 'intake_rejected_migrations': 0}
 
 
 class BackfillSource(Source):
@@ -228,6 +239,9 @@ class BackfillSource(Source):
             elif sig in known:
                 if first:
                     day['seen_by_feed'] += 1
+                candidate = self._from_feed(entry, known[sig], now, day)       # LINT5: a CPI migration the intake rejected
+                if candidate is not None:
+                    found.append(candidate)
             else:
                 if first:
                     day['missing_from_feed'] += 1
@@ -292,7 +306,7 @@ class BackfillSource(Source):
     def _known_signatures(self, signatures):
         """Which of these signatures the discovery feed already stored. Unreadable database = the poll fails (transient): without
         it we cannot tell a missed migration from a seen one, and we must not spend credits on guesses."""
-        known = set()
+        known = {}
         if not signatures:
             return known
         try:
@@ -300,20 +314,42 @@ class BackfillSource(Source):
                 for i in range(0, len(signatures), 200):
                     chunk = signatures[i:i + 200]
                     marks = ','.join('?' * len(chunk))
-                    for (source_id,) in db.execute('SELECT source_id FROM raw_events WHERE source_id IN (%s)' % marks,
-                                                   ['confirmed:' + s for s in chunk]):
-                        known.add(source_id[len('confirmed:'):])
+                    for (source_id, seq, received, slot, payload, stored_hash) in db.execute(
+                            'SELECT source_id, seq, received_at, slot, payload, payload_hash FROM raw_events WHERE source_id IN (%s)'
+                            % marks, ['confirmed:' + s for s in chunk]):
+                        known[source_id[len('confirmed:'):]] = (seq, received, slot, payload, stored_hash)
         except C.DiscoveryUnavailable:
             raise
         except (FileNotFoundError, PermissionError, sqlite3.Error) as error:
             raise C.DiscoveryUnavailable('DISCOVERY_UNAVAILABLE: %s' % type(error).__name__) from None
         return known
 
+    def _from_feed(self, entry, row, now, day):
+        """LINT5: the frame the feed stored for ``entry`` -> a BackfillCandidate when it is a migration that ``lean.candidates``
+        REJECTS (a CPI migrate) and the any-depth rule accepts; else None (the discovery path owns it, or it is not a migration).
+        Local decoding only: no provider call."""
+        seq, received, slot, payload, stored_hash = row
+        if not isinstance(payload, str) or len(payload.encode()) > C.MAX_FRAME_BYTES or type(slot) is not int:
+            return None
+        if C._frame_candidate(seq, received, slot, stored_hash, payload, _stats()) is not None:
+            return None                                                     # the trader's own scan takes it
+        base = frame_candidate_any_depth(slot, entry['blockTime'], slot, stored_hash, payload, _stats())
+        if base is None:
+            return None
+        sig = entry['signature']
+        latency = max(0.0, now - entry['blockTime'])
+        if sig not in self.outcome:
+            self.outcome[sig] = True
+            day['intake_rejected_migrations'] += 1
+            day['beyond_max_age'] += 1 if latency > self.max_age else 0
+        return BackfillCandidate(base.seq, base.mint, base.pool, base.signature, base.slot, base.migrated_at, base.payload_hash,
+                                 source=self.name, latency_s=latency, beyond_max_age=latency > self.max_age)
+
     def _fetch(self, entry, now, day):
         sig = entry['signature']
         try:
             result, _raw, _meta = self.helius.rpc('getTransaction', [sig, {'encoding': 'jsonParsed', 'commitment': 'confirmed',
-                                                                           'maxSupportedTransactionVersion': 0}])
+                                                                           'maxSupportedTransactionVersion': MAX_TX_VERSION}])
         except ProviderError as error:
             if error.code == LANE_SHED:
                 raise
@@ -376,13 +412,97 @@ def migration_candidate(tx, signature, *, now, max_age, name=NAME):
     if tx['meta'].get('err') is not None or (tx['transaction'].get('signatures') or [None])[0] != signature:
         return None
     payload = json.dumps(tx, sort_keys=True)
-    stats = {'frames': 0, 'undecodable': 0, 'not_migration': 0, 'ambiguous': 0, 'unsupported_pool': 0, 'altered': 0}
-    base = C._frame_candidate(tx['slot'], tx['blockTime'], tx['slot'], digest(json.loads(payload)), payload, stats)
+    base = frame_candidate_any_depth(tx['slot'], tx['blockTime'], tx['slot'], digest(json.loads(payload)), payload, _stats())
     if base is None:
         return None
     latency = max(0.0, now - tx['blockTime'])
     return BackfillCandidate(base.seq, base.mint, base.pool, base.signature, base.slot, base.migrated_at, base.payload_hash,
                              source=name, latency_s=latency, beyond_max_age=latency > max_age)
+
+
+def _stats():
+    return {'frames': 0, 'undecodable': 0, 'not_migration': 0, 'ambiguous': 0, 'unsupported_pool': 0, 'altered': 0}
+
+
+def event_hint_any_depth(raw, decoded, parent):
+    """``lean.candidates._event_hint`` with the migrate at ANY depth (LINT5). A top-level migrate is judged by
+    ``lean.candidates._event_hint`` itself (unchanged). An inner one (path ``i.j``, a CPI) needs exactly one decoded
+    CompletePumpAmmMigrationEvent of the same program with the same mint and pool, emitted INSIDE that migrate: a later
+    instruction of the same inner group, one stack frame deeper (``stackHeight`` = the migrate's + 1), before any instruction
+    at the migrate's own depth or above (the migrate returned)."""
+    path = parent.get('instruction')
+    if parent.get('status') != 'IDENTIFIED' or not isinstance(path, str):
+        return False
+    if '.' not in path:
+        return C._event_hint(raw, decoded, parent)
+    parts = path.split('.')
+    if len(parts) != 2 or not all(x.isdecimal() for x in parts):
+        return False
+    top, position = parts[0], int(parts[1])
+    container = raw['params']['result']['transaction'] if raw.get('method') == 'transactionNotification' else raw
+    groups = [g for g in (container['meta'].get('innerInstructions') or []) if type(g.get('index')) is int and str(g['index']) == top]
+    if len(groups) != 1:
+        return False
+    instructions = groups[0]['instructions']
+    if position >= len(instructions):
+        return False
+    height = instructions[position].get('stackHeight')
+    if type(height) is not int or height < 2:
+        return False
+    end = position + 1
+    while end < len(instructions) and type(instructions[end].get('stackHeight')) is int and instructions[end]['stackHeight'] > height:
+        end += 1                                                                # the migrate's own frame: [position + 1, end)
+    events = []
+    for event in decoded['program_observations']:
+        if (event.get('name') != 'CompletePumpAmmMigrationEvent' or event.get('status') != 'EVENT_DECODED'
+                or event.get('schema_complete') is not True or event.get('program') != parent['program']):
+            continue
+        where = event['instruction'].split('.')
+        if len(where) != 2 or where[0] != top or not where[1].isdecimal():
+            continue
+        i = int(where[1])
+        if not position < i < end or instructions[i].get('stackHeight') != height + 1:
+            continue
+        fields = event.get('fields', {})
+        if fields.get('mint') != parent.get('mint') or fields.get('pool') != parent.get('pool'):
+            continue
+        events.append(event)
+    return len(events) == 1
+
+
+def frame_candidate_any_depth(seq, received, slot, stored_hash, payload, stats):
+    """``lean.candidates._frame_candidate`` (same checks, same Candidate) with ``event_hint_any_depth`` (LINT5)."""
+    stats['frames'] += 1
+    try:
+        raw = json.loads(payload, parse_constant=lambda _: (_ for _ in ()).throw(ValueError('Nonfinite')))
+        if digest(raw) != stored_hash:
+            stats['altered'] += 1
+            return None
+        decoded = decode(raw)
+        if decoded['status'] != 'OBSERVED':
+            stats['not_migration'] += 1
+            return None
+        found = [o for o in decoded['program_observations']
+                 if o.get('name') in ('migrate', 'migrate_v2') and o.get('status') == 'IDENTIFIED' and event_hint_any_depth(raw, decoded, o)]
+        if not found:
+            stats['not_migration'] += 1
+            return None
+        if len(found) > 1:
+            stats['ambiguous'] += 1
+            return None
+        mint, pool = found[0]['mint'], found[0]['pool']
+        address(mint), address(pool)
+        if pool != C.expected_pool(mint):
+            stats['unsupported_pool'] += 1
+            return None
+        signature = decoded['signature']
+        if type(signature) is not str or len(unbase58(signature)) != 64:
+            stats['undecodable'] += 1
+            return None
+    except (ValueError, KeyError, TypeError, IndexError, AttributeError, OverflowError):
+        stats['undecodable'] += 1
+        return None
+    return C.Candidate(seq, mint, pool, signature, slot, float(received), stored_hash)
 
 
 def build(cfg, *, helius_low, discovery_db, state_dir, screen_cfg=None, clock=time.time):

@@ -183,5 +183,149 @@ class RoundCConfigHash(unittest.TestCase):
         self.assertEqual(lean_config_hash(dict(cfg, census=None)), base)
 
 
+
+# ================================================================================================================ C4
+import copy as _copy  # noqa: E402
+
+from desk.model import canonical as _canonical, digest as _digest  # noqa: E402
+from lean import backfill as BF, candidates as CAND  # noqa: E402
+from tests.lean.test_backfill import signature_of, tx_for  # noqa: E402
+from tests.lean.test_e2e_backfill import BackfillEndToEnd  # noqa: E402
+from tests.lean.fakeworld import Token  # noqa: E402
+
+AGGREGATOR = 'JUP6LkbZbjS1jKKwapdHNy74zcZ3tLUZoi5QNyVTaV4'
+TB = 1_800_000_000.0
+
+
+def cpi_tx(token, *, slot, block_time, after=None):
+    """``token``'s migration as a CPI: another program's top-level instruction calls pump ``migrate`` (stack height 2), which
+    emits its CompletePumpAmmMigrationEvent one frame deeper (3). ``after``: instructions appended to the inner group."""
+    raw = tx_for(token, slot=slot, block_time=block_time)
+    migrate = raw['transaction']['message']['instructions'][0]
+    inner = raw['meta']['innerInstructions'][0]['instructions']
+    raw['transaction']['message']['instructions'] = [{'programId': AGGREGATOR, 'accounts': [], 'data': '3Bxs4h24hBtQy9rw'}]
+    raw['meta']['innerInstructions'] = [{'index': 0, 'instructions': [dict(migrate, stackHeight=2)]
+                                         + [dict(ix, stackHeight=ix['stackHeight'] + 1) for ix in inner] + list(after or ())}]
+    return raw
+
+
+def wire(tx, sig):
+    w = {'method': 'transactionNotification', 'params': {'result': {'signature': sig, 'slot': tx['slot'], 'blockTime': tx['blockTime'],
+                                                                     'transaction': {'transaction': tx['transaction'], 'meta': tx['meta']}}}}
+    return _canonical(w), _digest(w)
+
+
+class C4CpiMigrations(unittest.TestCase):
+    def setUp(self):
+        self.token = Token(61)
+        self.sig = signature_of(self.token)
+
+    def test_a_cpi_migration_is_a_candidate_here_and_rejected_by_the_intake(self):
+        tx = cpi_tx(self.token, slot=100, block_time=TB - 1000)
+        cand = BF.migration_candidate(tx, self.sig, now=TB, max_age=7200)
+        self.assertIsNotNone(cand)
+        self.assertEqual((cand.mint, cand.pool, cand.signature), (self.token.mint, self.token.pool, self.sig))
+        payload, h = wire(tx, self.sig)
+        stats = BF._stats()
+        self.assertIsNone(CAND._frame_candidate(1, TB - 1000, 100, h, payload, stats))          # the live intake gap
+        self.assertEqual(stats['not_migration'], 1)
+        self.assertIsNotNone(BF.frame_candidate_any_depth(1, TB - 1000, 100, h, payload, BF._stats()))
+
+    def test_the_top_level_rule_is_unchanged(self):
+        tx = tx_for(self.token, slot=100, block_time=TB - 1000)
+        payload, h = wire(tx, self.sig)
+        a = CAND._frame_candidate(1, TB - 1000, 100, h, payload, BF._stats())
+        b = BF.frame_candidate_any_depth(1, TB - 1000, 100, h, payload, BF._stats())
+        self.assertEqual(a, b)
+
+    def test_an_event_outside_the_migrate_frame_or_at_the_wrong_depth_is_refused(self):
+        tx = cpi_tx(self.token, slot=100, block_time=TB - 1000)
+        group = tx['meta']['innerInstructions'][0]['instructions']
+        wrong_depth = _copy.deepcopy(tx)
+        wrong_depth['meta']['innerInstructions'][0]['instructions'][1]['stackHeight'] = 4
+        returned = _copy.deepcopy(tx)                        # the migrate returned (a sibling at height 2) before the event
+        event = returned['meta']['innerInstructions'][0]['instructions'].pop(1)
+        returned['meta']['innerInstructions'][0]['instructions'] += [{'programId': AGGREGATOR, 'accounts': [], 'data': '3Bxs4h24hBtQy9rw',
+                                                                      'stackHeight': 2}, event]
+        twice = _copy.deepcopy(tx)
+        twice['meta']['innerInstructions'][0]['instructions'].append(_copy.deepcopy(group[1]))
+        for bad in (wrong_depth, returned, twice):
+            self.assertIsNone(BF.migration_candidate(bad, self.sig, now=TB, max_age=7200))
+
+    def test_get_transaction_asks_for_version_1(self):
+        from lean import providers
+        calls = []
+
+        class Helius:
+            def rpc(self, method, params):
+                calls.append((method, params))
+                if method == 'getSignaturesForAddress':
+                    return [{'signature': 'S' * 88, 'slot': 5, 'blockTime': int(TB - 1000), 'err': None}], b'', {}
+                return None, b'', {}
+        with tempfile.TemporaryDirectory() as tmp:
+            db = Path(tmp) / 'd.sqlite'
+            from discovery import continuous as discovery
+            with mock.patch.object(discovery.time, 'time', return_value=TB - 100_000):
+                discovery.initialize(db)
+            src = BF.BackfillSource(Helius(), db, tmp, cfg={}, screen_cfg={'min_age_seconds': 60, 'max_age_seconds': 7200}, clock=lambda: TB)
+            src.iter_new(0)
+        options = [p[1] for m, p in calls if m == 'getTransaction']
+        self.assertEqual([o['maxSupportedTransactionVersion'] for o in options], [providers.MAX_TX_VERSION])
+
+
+class C4CpiEndToEnd(BackfillEndToEnd):
+    """The C4 e2e world with f2 stored by the feed AS A CPI migration (the intake rejects it) and m1 missed by the feed AS A CPI
+    migration (fetched). Both are entered from the backfill; f2 costs no getTransaction."""
+    for _name in [n for n in dir(BackfillEndToEnd) if n.startswith('test')]:
+        locals()[_name] = None
+    del _name
+
+    def store_feed(self, names):
+        for name in ('f2', 'm1'):                       # before the feed stores f2: these two migrations ran as a CPI
+            token = self.tokens[name]
+            sig = signature_of(token)
+            old = self.txs[sig]
+            self.txs[sig] = cpi_tx(token, slot=old['slot'], block_time=old['blockTime'])
+        super().store_feed(names)
+
+    def test_cpi_migrations_are_recovered_from_the_feed_and_from_the_chain(self):
+        r = self.runner()
+        self.run_until(r, self._end())
+        meta, screens, entered = self.facts(r)
+        self.assertEqual(meta['f2']['source'], 'backfill')                               # the intake rejected it; the backfill fed it
+        self.assertEqual(meta['m1']['source'], 'backfill')
+        self.assertEqual(meta['f1']['source'], 'pump_graduation')
+        self.assertEqual(entered, {'f1', 'f2', 'm1', 'm2'})
+        fetched = [c for c in self.world.calls if c[0] == 'helius' and c[1] == 'getTransaction']
+        self.assertEqual(len(fetched), 5)                                                 # old, PLAIN, m1, m2, hz: never f1 / f2
+        today = json.loads((self.state / 'health.json').read_text())['sources']['backfill']['today']
+        self.assertEqual((today['seen_by_feed'], today['intake_rejected_migrations'], today['missed_migrations']), (2, 1, 4))
+        self.assertEqual(r.store.counts()['candidates'], 6)
+
+    def test_without_the_backfill_the_cpi_migration_the_feed_stored_is_lost_and_main_fills_are_identical(self):
+        on = self.runner()
+        self.run_until(on, self._end())
+        fills_on = [(f['mint'], f['side'], f['qty_raw'], f['sol_lamports']) for f in on.store.rows('fills', limit=1000)
+                    if self.role[f['mint']] == 'f1']
+        on.store.close()
+        cfg = dict(self.cfg)
+        cfg['backfill'] = None
+        self.state = self.root / 'state-off'
+        self.clock.t = __import__('tests.lean.fakeworld', fromlist=['T0']).T0
+        self.world.calls.clear()
+        off = self.runner(cfg)
+        self.run_until(off, self._end())
+        meta, screens, entered = self.facts(off)
+        self.assertEqual(set(meta), {'f1'})                                               # f2 (CPI) never reaches the trader
+        fills_off = [(f['mint'], f['side'], f['qty_raw'], f['sol_lamports']) for f in off.store.rows('fills', limit=1000)
+                     if self.role[f['mint']] == 'f1']
+        self.assertTrue(fills_on)
+        self.assertEqual(fills_on, fills_off)
+
+    def _end(self):
+        from tests.lean.test_e2e_backfill import END
+        return END
+
+
 if __name__ == '__main__':
     unittest.main()

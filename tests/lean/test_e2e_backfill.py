@@ -45,6 +45,8 @@ class BackfillEndToEnd(unittest.TestCase):
     def setUp(self):
         self.tmp = tempfile.TemporaryDirectory()
         self.addCleanup(self.tmp.cleanup)
+        from lean import providers
+        self.addCleanup(providers.configure_lanes)          # LINT5: the example's lane shares are process-global
         self.root = Path(os.path.realpath(self.tmp.name))
         self.state = self.root / 'state'
         self.clock = FakeTime(T0)

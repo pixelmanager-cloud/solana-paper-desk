@@ -70,6 +70,8 @@ class CensusEndToEnd(unittest.TestCase):
     def run_world(self, census):
         tmp = tempfile.TemporaryDirectory()
         self.addCleanup(tmp.cleanup)
+        from lean import providers
+        self.addCleanup(providers.configure_lanes)          # LINT5: the example's lane shares are process-global
         root = Path(os.path.realpath(tmp.name))
         clock = FakeTime(T0)
         tokens = [Token(81 + 2 * i, **kw) for i, (_, kw, _) in enumerate(SCENARIO)]
