@@ -203,5 +203,6 @@
     "copycat_window_s": 86400.0,
     "raw_max_bytes": 16384,
     "backoff_s": 60.0
-  }
+  },
+  "census": {"enabled": false}
 }
