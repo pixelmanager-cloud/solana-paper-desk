@@ -16,7 +16,7 @@ TESTS = ['tests.lean.test_labels', 'tests.lean.test_learn', 'tests.lean.test_e2e
 
 MUTANTS = [
     # --- labels: the mark, the decision, the gaps, the reference, the live exits
-    ('labels', 'mark without the pool fee', "pool_fee_bps=pool_fee_bps, pcfg=pcfg) * paper.LAMPORTS)", "pool_fee_bps=0, pcfg=pcfg) * paper.LAMPORTS)"),
+    ('labels', 'mark without the pool fee', "pool_fee_bps=point.vault_fee_bps, pcfg=pcfg) * paper.LAMPORTS)", "pool_fee_bps=0, pcfg=pcfg) * paper.LAMPORTS)"),
     ('labels', 'label reads marks before the decision', "points = [p for p in path.points if p.ts >= decision_ts]", "points = list(path.points)"),
     ('labels', 'gaps ignored', "if fraction > cfg.max_gap_fraction:", "if False:"),
     ('labels', 'holes ignored', "if hole > cfg.max_hole_s:", "if False:"),
@@ -48,12 +48,12 @@ MUTANTS = [
     ('learn', 'insufficient paths learned', "if not label.usable:", "if False:"),
     ('learn', 'pnl not the live-exit replay', "{n: values[n] for n in feature_names}, trade.pnl_lamports,", "{n: values[n] for n in feature_names}, 0,"),
     ('learn', 'anything enterable', "return bool(path.reasons) and all(str(r) in PORTFOLIO_REASONS for r in path.reasons)", "return True"),
-    # --- learn: walk-forward and statistics
-    ('learn', 'select on the confirm window', "chosen, evidence = select_rules(candidates, select_rows,", "chosen, evidence = select_rules(candidates, confirm_rows,"),
-    ('learn', 'confirm gate removed', "elif not confirmed(union['confirm'], min_confirm=min_confirm, z_confirm=z_confirm):", "elif False:"),
-    ('learn', 'select significance removed', "if z is None or z > -z_select:", "if z is None:"),
-    ('learn', 'mine support removed', "if len(idx) >= min_n and len(idx) <= max_reject_fraction * n and total(idx) < 0:",
-     "if len(idx) >= 1 and len(idx) <= max_reject_fraction * n and total(idx) < 0:"),
+    # --- learn: windows and statistics (M2 reworked them; the full set of statistics mutants is tests/lean/m2_mutate.py)
+    ('learn', 'confirm gate removed', "status, consumed = confirm_verdict(confirm_test, min_confirm=min_confirm, alpha=alpha), True",
+     "status, consumed = 'CONFIRMED', True"),
+    ('learn', 'mine support removed', "return min_n <= len(idx) <= max_reject_fraction * n", "return 1 <= len(idx) <= max_reject_fraction * n"),
+    ('learn', 'select on the confirm block', "    dev = enterable[:plan['dev']]\n    tests, folds, by_rule = {}, [], {}\n",
+     "    dev = enterable[:plan['dev']]\n    tests, folds, by_rule = {}, [], {}\n    plan = dict(plan, folds=[dict(f, test=plan['confirm']) for f in plan['folds']])\n"),
     ('learn', 'unknown values match', "            return False                      # an unknown value never matches", "            return True"),
     ('learn', 'unconfirmed rules proposed', "chosen if result['confirmed'] else []", "chosen"),
 ]

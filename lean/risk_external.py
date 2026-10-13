@@ -513,8 +513,10 @@ class RiskExternal:
                     self.store.add_observation(RAW_KIND, body, mint=mint, candidate_id=candidate_id,
                                                meta={'provider': 'rugcheck', 'endpoint': 'report', 'bytes': len(body)},
                                                code_version=self.code_version, strategy_version=self.strategy_version, ts=self.clock())
-                    raw['kept'] = True
-                    self.stats['raw_kept'] += 1
+                    # M1b #4: under raw_policy errors_only the store keeps only the sha256 / size / meta of this body
+                    keeps = getattr(self.store, 'keeps_raw', None)
+                    raw['kept'] = bool(keeps(RAW_KIND)) if callable(keeps) else True
+                    self.stats['raw_kept'] += int(raw['kept'])
                 try:
                     f, m, identity, tokens = parse_report(parsed)
                 except Exception:                         # noqa: BLE001 - a shape we did not foresee is a gap, not a failure

@@ -123,8 +123,11 @@ def screen_pool_info(features):
     fallback when a mark cannot read the pool account, and the supply that sets the fee tier. None when absent."""
     try:
         gross, spendable = int(features['quote_gross_raw']), int(features['quote_spendable_raw'])
-        return {'virtual_quote_reserves_raw': int(features.get('virtual_quote_reserves_raw') or 0),
-                'accrued_fees_raw': gross - spendable, 'supply_raw': int(features['supply_raw'])}
+        out = {'virtual_quote_reserves_raw': int(features.get('virtual_quote_reserves_raw') or 0),
+               'accrued_fees_raw': gross - spendable, 'supply_raw': int(features['supply_raw'])}
+        if type(features.get('decimals')) is int:
+            out['decimals'] = features['decimals']                            # M1b #3b: the supply sanity check
+        return out
     except (KeyError, TypeError, ValueError):
         return None
 
@@ -194,7 +197,10 @@ def config_fees(pool_fee_bps):
 
 # ------------------------------------------------------------------------------------------------------------ model
 class MarkModel:
-    """The runner's / path recorder's mark: which accounts to read, and their value. Thread-safe (one small cache)."""
+    """The runner's / path recorder's mark: which accounts to read, and their value. Thread-safe (one small cache).
+
+    M1b #6: every method takes an optional ``model`` ('vault' | 'effective'): a position keeps the model it was OPENED with
+    (``pool_info.model``, see ``pinned``), whatever the configured one is now; None = the configured model."""
 
     def __init__(self, cfg=None, *, pool_fee_bps=25):
         self.cfg = config(cfg)
@@ -203,22 +209,47 @@ class MarkModel:
         self._lock = threading.Lock()
         self._schedule = None                    # (fields, decoded_at)
         self._schedule_raw = None                # (owner, base64 data) the schedule was decoded from
-        self.stats = {'schedule_reads': 0, 'schedule_undecodable': 0, 'fee_dynamic': 0, 'fee_config': 0, 'pool_screen': 0}
+        self._schedule_bad_since = None          # M1b #3a: the FeeConfig read is missing / undecodable since (None = fine)
+        self.stats = {'schedule_reads': 0, 'schedule_undecodable': 0, 'fee_dynamic': 0, 'fee_config': 0, 'pool_screen': 0,
+                      'schedule_stale_marks': 0, 'supply_invalid': 0}
 
     @property
     def effective(self):
         return self.model == 'effective'
 
+    def _model(self, model):
+        return self.model if model is None else model
+
+    def pinned(self, pool_info):
+        """(model, vault fee bps) a position is marked with (M1b #6): the ones recorded at its open (``pool_info.model`` /
+        ``pool_info.pool_fee_bps``). A position without a pin was opened before M1: M1 wrote ``pool_info`` only under
+        ``effective``, so a ``pool_info`` without ``model`` is effective, and no ``pool_info`` at all is the vault model at
+        the configured fee when the runner is configured vault, else at the pre-M1 fee (``LEGACY_VAULT_FEE_BPS``)."""
+        if isinstance(pool_info, dict):
+            model = pool_info.get('model', 'effective')
+            if model in MODELS:
+                fee = pool_info.get('pool_fee_bps')
+                return model, int(fee) if type(fee) is int else self.pool_fee_bps
+        return 'vault', self.pool_fee_bps if self.model == 'vault' else LEGACY_VAULT_FEE_BPS
+
+    def pin(self):
+        """The ``pool_info`` keys written at an open: the model and the vault fee in force."""
+        return {'model': self.model, 'pool_fee_bps': self.pool_fee_bps}
+
     @property
     def keys_per_position(self):
         return 3 if self.effective else 2
 
-    def position_keys(self, base_vault, quote_vault, pool):
-        return [base_vault, quote_vault, pool] if self.effective else [base_vault, quote_vault]
+    def keys_for(self, model=None):
+        return 3 if self._model(model) == 'effective' else 2
 
-    def call_keys(self):
-        """Accounts read once per batched call (the fee schedule)."""
-        return [fee_config_address()] if self.effective and self.cfg['fee_source'] == 'dynamic' else []
+    def position_keys(self, base_vault, quote_vault, pool, model=None):
+        return [base_vault, quote_vault, pool] if self._model(model) == 'effective' else [base_vault, quote_vault]
+
+    def call_keys(self, models=None):
+        """Accounts read once per batched call (the fee schedule): when any position of the call is marked effective."""
+        wanted = (self.effective,) if models is None else tuple(m == 'effective' for m in models)
+        return [fee_config_address()] if any(wanted) and self.cfg['fee_source'] == 'dynamic' else []
 
     def observe_call(self, accounts, at):
         """The once-per-call accounts of a marks call (in ``call_keys`` order)."""
@@ -232,43 +263,56 @@ class MarkModel:
             if same:                                         # unchanged bytes: the decoded schedule, refreshed
                 self.stats['schedule_reads'] += 1
                 self._schedule = (self._schedule[0], float(at))
+                self._schedule_bad_since = None
                 return
         fields = decode_schedule(account)
-        with self._lock:
-            self._schedule_raw = (account.get('owner'), raw) if fields is not None else None
         with self._lock:
             self.stats['schedule_reads'] += 1
             if fields is None:
                 self.stats['schedule_undecodable'] += 1
+                if self._schedule_bad_since is None:
+                    self._schedule_bad_since = float(at)
             else:
+                self._schedule_raw = (account.get('owner'), raw)
                 self._schedule = (fields, float(at))
+                self._schedule_bad_since = None
 
     def schedule(self, now):
+        """The last good schedule, unless older than ``schedule_ttl_s``. A read stamped (by another thread) up to
+        ``SCHEDULE_SKEW_S`` AFTER ``now`` is fresh (M1b #2: the paths thread stamps float seconds, the runner asks with an int)."""
         with self._lock:
             held = self._schedule
-        if held is None or not 0 <= float(now) - held[1] <= self.cfg['schedule_ttl_s']:
+        if held is None or not -SCHEDULE_SKEW_S <= float(now) - held[1] <= self.cfg['schedule_ttl_s']:
             return None
         return held[0]
+
+    def schedule_stale(self):
+        """M1b #3a: True while the schedule in use is the last GOOD one but the FeeConfig reads since failed."""
+        with self._lock:
+            return self._schedule_bad_since is not None
 
     def health(self):
         with self._lock:
             out = {'model': self.model, 'fee_source': self.cfg['fee_source'], 'pool_fee_bps': self.pool_fee_bps, **self.stats,
-                   'schedule_at': None if self._schedule is None else self._schedule[1]}
+                   'schedule_at': None if self._schedule is None else self._schedule[1],
+                   'schedule_bad_since': self._schedule_bad_since}
         return out
 
     def _bump(self, name):
         with self._lock:
             self.stats[name] += 1
 
-    def value(self, qty, base, quote, *, pool=None, pool_info=None, now, fee_lamports):
+    def value(self, qty, base, quote, *, pool=None, pool_info=None, now, fee_lamports, model=None, vault_fee_bps=None):
         """(net lamports, info) of selling ``qty`` with the vault amounts ``base`` / ``quote`` (ints). ``pool`` is the decoded
-        live pool (``pool_fields``) or None; ``pool_info`` the screen snapshot (``screen_pool_info``) or None."""
-        if not self.effective:
+        live pool (``pool_fields``) or None; ``pool_info`` the screen snapshot (``screen_pool_info``) or None. ``model`` /
+        ``vault_fee_bps`` override the configured model / fee (a pinned position)."""
+        if self._model(model) != 'effective':
+            fee_bps = self.pool_fee_bps if vault_fee_bps is None else int(vault_fee_bps)
             if base <= 0 or quote <= 0 or qty <= 0:
                 raise MarkError('empty pool or position')
             gross = quote * qty // (base + qty)
-            out = gross * (MAX_BPS - self.pool_fee_bps) // MAX_BPS
-            return max(0, out - fee_lamports), {'model': 'vault', 'base_raw': base, 'quote_raw': quote, 'fee_bps': self.pool_fee_bps}
+            out = gross * (MAX_BPS - fee_bps) // MAX_BPS
+            return max(0, out - fee_lamports), {'model': 'vault', 'base_raw': base, 'quote_raw': quote, 'fee_bps': fee_bps}
         info = pool_info or {}
         if pool is not None:
             virtual = pool['virtual_quote_reserves_raw']
@@ -276,21 +320,28 @@ class MarkModel:
             has_creator = pool.get('coin_creator') not in (None, DEFAULT_PUBKEY)
             creator_override = int(pool.get('creator_fee_bps') or 0)
             pool_source = 'live'
-        elif pool_info:
+        elif 'virtual_quote_reserves_raw' in info:
             virtual, accrued = int(info['virtual_quote_reserves_raw']), int(info.get('accrued_fees_raw') or 0)
             has_creator, creator_override, pool_source = True, int(info.get('creator_fee_bps') or 0), 'screen'
             self._bump('pool_screen')
         else:
             raise MarkError('pool fields unavailable')
         quote_eff = effective_quote(quote, virtual)
-        cap, fee_source = None, 'config'
+        cap, fee_source, flags = None, 'config', {}
         schedule = self.schedule(now)
         supply = int(info.get('supply_raw') or 0)
+        if schedule is not None and supply > 0 and not supply_plausible(supply, base, info.get('decimals')):
+            flags['supply_invalid'] = True                     # M1b #3b: never a tier from an impossible market cap
+            self._bump('supply_invalid')
+            schedule = None
         if schedule is not None and supply > 0:
             fees, cap = tier_fees(schedule, quote_eff, base, supply)
             fee_source = 'dynamic'
             if creator_override:                 # a per-coin creator fee (newer IDLs) replaces the tier's creator component
                 fees = dict(fees, creator_fee_bps=creator_override)
+            if self.schedule_stale():                          # M1b #3a: the last good schedule, the reads since failed
+                flags['schedule_stale'] = True
+                self._bump('schedule_stale_marks')
         else:
             fees = config_fees(self.pool_fee_bps)          # FALLBACK (flagged): the schedule did not decode, or no supply
         self._bump('fee_' + fee_source)
@@ -300,15 +351,32 @@ class MarkModel:
                                             'accrued_fees_raw': accrued, 'quote_effective_raw': quote_eff,
                                             'fee_bps': sum(charged.values()), 'fees_bps': charged, 'fee_source': fee_source,
                                             'fee_fallback': fee_source == 'config', 'pool_source': pool_source,
+                                            'schedule_stale': bool(flags.get('schedule_stale')), **flags,
                                             **({'market_cap_lamports': cap} if cap is not None else {})}
 
-    def value_accounts(self, qty, accounts, *, pool_info=None, now, fee_lamports):
+    def value_accounts(self, qty, accounts, *, pool_info=None, now, fee_lamports, model=None, vault_fee_bps=None):
         """``value`` from the raw accounts of one position, in ``position_keys`` order. AdapterError when unusable."""
         base, quote = A.vault_amount(accounts[0]), A.vault_amount(accounts[1])
         pool = None
-        if self.effective and len(accounts) > 2 and accounts[2] is not None:
+        if self._model(model) == 'effective' and len(accounts) > 2 and accounts[2] is not None:
             try:
                 pool = pool_fields(accounts[2])
             except MarkError:
                 pool = None                     # an unreadable pool account: the screen snapshot instead (recorded)
-        return self.value(qty, base, quote, pool=pool, pool_info=pool_info, now=now, fee_lamports=fee_lamports)
+        return self.value(qty, base, quote, pool=pool, pool_info=pool_info, now=now, fee_lamports=fee_lamports, model=model,
+                          vault_fee_bps=vault_fee_bps)
+
+
+LEGACY_VAULT_FEE_BPS = 25          # M1b #6: the pool_fee_bps every pre-M1 (unpinned) position was opened and marked with
+SCHEDULE_SKEW_S = 60.0             # M1b #2
+SUPPLY_TOKENS_RANGE = (10 ** 6, 10 ** 12)     # M1b #3b: whole tokens a pump mint can plausibly have (pump: 1e9)
+
+
+def supply_plausible(supply, base_reserve, decimals=None):
+    """M1b #3b: the pool cannot hold more than the supply, and the supply in whole tokens must be in SUPPLY_TOKENS_RANGE."""
+    if supply <= 0 or base_reserve > supply:
+        return False
+    if type(decimals) is int and 0 <= decimals <= 18:
+        low, high = SUPPLY_TOKENS_RANGE
+        return low * 10 ** decimals <= supply <= high * 10 ** decimals
+    return True
