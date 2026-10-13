@@ -1,0 +1,7 @@
+[Unit]
+Description=Lean desk nightly backups at 19:30 UTC (04:30 KST)
+[Timer]
+OnCalendar=*-*-* 19:30:00 UTC
+Persistent=true
+[Install]
+WantedBy=timers.target

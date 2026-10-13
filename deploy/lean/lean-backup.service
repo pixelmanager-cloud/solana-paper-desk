@@ -1,0 +1,8 @@
+[Unit]
+Description=Lean desk nightly backups (lean/paths/discovery stores + /etc/solana-paper)
+[Service]
+Type=oneshot
+Nice=10
+IOSchedulingClass=idle
+ExecStart=/usr/bin/python3 /usr/local/bin/lean-backup.py
+TimeoutStartSec=3600
