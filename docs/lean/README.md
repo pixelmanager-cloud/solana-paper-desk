@@ -225,3 +225,21 @@ Nothing here is a gate: no decision reads these rows.
   change against the log's own earlier samples, and candidates per hour. A feature only, never a gate.
 * **Morning report.** `deploy/lean/desk-lean-report.timer` runs `python -m lean.ops report` at 23:00 UTC (08:00 KST) into
   `/var/lib/solana-desk-lean/reports/YYYY-MM-DD.html`. No notifications.
+
+## Bonding-curve recorder (C2, recording only)
+`lean.curves` records the pump.fun BONDING-CURVE phase (before graduation) into its own `curves.sqlite` in the state dir, so analysis can
+read one continuous path per mint with `lean.curves.join_by_mint(curves.sqlite, paths.sqlite, mint)`. Off unless `lean.json` has a
+`curves` block with `"enabled": true` (see the example config; unknown keys are refused). Nothing reads these rows: no entry or exit depends on
+them and a recorder failure never reaches the trader. Own daemon thread in run mode, on the shared Helius LOW lane (a shed lane = the poll is skipped
+and a `curve_poll_gaps` row says so).
+* **Call.** One `getProgramAccounts`-style call per poll on the pump program, filtered by the 8-byte BondingCurve discriminator (all layout versions;
+  no server-side `complete` filter, so graduation is seen). `method` is `getProgramAccounts` (one huge response: only for fakes/small clusters) or
+  `getProgramAccountsV2` (Helius: `limit`, `paginationKey`, `changedSinceSlot` = only curves changed since the last COMPLETE poll; the coordinator verifies
+  it live). The account layout relied on (offsets, sizes 49..125 bytes) is in the module docstring and pinned to `desk/schemas/pump.json` by a test.
+* **What is tracked.** SOL-quoted curves from the first poll that shows them incomplete with progress >= `min_progress` (0.5), at most `max_tracked` (500).
+  A mark (price, progress, SOL raised, raw reserves) is written when a curve CHANGES; the path ends `GRADUATED` (final complete mark first) or `STALE`
+  (no change for `stale_s`; a later change starts segment 1). The account has no mint: a mint's curve is the PDA `["bonding-curve", mint]` (`curve_address`).
+* **Budget.** `getProgramAccounts` ~10 credits per call; `max_credits_month` (500,000) becomes a rolling HOUR budget checked before every call (read from
+  the file, so a restart does not reset it) and stretches the requested `poll_s` (10 s) to ~52 s (69 calls/hour); V2 paging counts every page.
+  `python -m lean.curves report --db curves.sqlite [--config lean.json]` prints the summary and the calls/hour, credits/month estimate; `health.json` has both.
+* **Retention.** Own WAL file; past `max_db_gb` it rolls to `curves-YYYYMMDD.sqlite` carrying the live paths; below `min_free_gb` of free disk nothing is written.

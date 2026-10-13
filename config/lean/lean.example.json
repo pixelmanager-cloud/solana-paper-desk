@@ -297,5 +297,23 @@
     "credits_per_signatures_call": 1,
     "credits_per_transaction": 1,
     "day_history": 14
+  },
+  "curves": {
+    "_comment": "C2 bonding-curve recorder (recording only; low lane; own curves.sqlite). OFF here: the V2 call (getProgramAccountsV2 + changedSinceSlot) must be verified live first. getProgramAccounts costs ~10 credits per call; max_credits_month (500k) becomes a rolling-hour budget and stretches poll_s to ~52 s. method: getProgramAccounts (one huge response, small clusters/fakes only) or getProgramAccountsV2.",
+    "enabled": false,
+    "db": null,
+    "poll_s": 10,
+    "method": "getProgramAccountsV2",
+    "min_progress": 0.5,
+    "max_tracked": 500,
+    "page_limit": 1000,
+    "max_pages": 3,
+    "stale_s": 7200,
+    "changed_since": true,
+    "data_slice_len": 125,
+    "credit_per_call": 10,
+    "max_credits_month": 500000,
+    "max_db_gb": 2,
+    "min_free_gb": 2
   }
 }

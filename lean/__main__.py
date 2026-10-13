@@ -72,6 +72,9 @@ CONFIG_KEYS = {
     # --- W2a ---
     'arms': None,                      # lean.arms shadow paper arms ({"enabled", "db", "arms": [{name, strategy_config, entry_filter}]}); None/absent = off
     # --- end W2a ---
+    # --- C2 ---
+    'curves': None,                    # lean.curves settings ({"enabled", "method", "poll_s", ...}); None / absent = off. Recording only.
+    # --- end C2 ---
     # --- C4 ---
     'backfill': None,                  # lean.backfill settings ({"interval_s", "limit", ...}): graduations the discovery feed missed; None = off
     # --- end C4 ---
@@ -174,6 +177,13 @@ def load_config(path):
     if cfg['sell_evidence']['enabled'] and cfg['execution'] is None:
         raise ConfigError('sell_evidence needs execution (the probe runs inside the L10 exit delay)')
     # --- end L20 ---
+    # --- C2: strict at load (unknown keys, bad method and out-of-range values are refused); absent = off ---
+    from lean import curves
+    try:
+        cfg['curves'] = curves.config(cfg['curves'])
+    except curves.ConfigError as error:
+        raise ConfigError(str(error)) from None
+    # --- end C2 ---
     # --- L22 ---
     from lean import honeypot_sim
     try:
@@ -434,6 +444,11 @@ def build_runner(cfg, *, state_dir, discovery_db, keys, code_version, clock=None
                                     strategy_version=strategy_cfg.strategy_version, clock=clock, transport_kwargs=transport_kwargs,
                                     signals_enabled=cfg.get('wallet_signals') is not None)
     # --- end L24 ---
+    # --- C2: the bonding-curve recorder (low lane, its own curves.sqlite, own thread in run mode; None when absent/disabled) ---
+    from lean import curves
+    r.curves = curves.build(curves.config(cfg.get('curves')), state_dir=state, keys=keys, code_version=code_version, clock=clock,
+                            transport_kwargs=transport_kwargs)
+    # --- end C2 ---
     # --- L21: external risk rows (RugCheck, its own bucket; recording only) ---
     from lean import risk_external
     r.risk_external = risk_external.build(risk_external.config(cfg.get('risk_external')), store=the_store, code_version=code_version,
