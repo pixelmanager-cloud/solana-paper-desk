@@ -470,6 +470,7 @@ class PrefetchedRows(unittest.TestCase):
 
     def test_nothing_that_is_not_a_clean_as_of_row_is_accepted_early(self):
         for meta in ({'late_s': None}, {'late_s': 'x'}, {'late_s': True}, {'late_s': 0.0}, {'late_s': -1.0, 'collected_at': 2000.0},
+                     {'late_s': 38.0, 'collected_at': 900.0},
                      {'late_s': -1.0, 'decision_ts': None}):
             with self.subTest(meta=meta):
                 base = cluster_meta(0.2, decision=1000.0, late=-1.0)
