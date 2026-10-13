@@ -553,6 +553,97 @@ def _sources(db):
         connection.close()
 
 
+# --- W2a hook: the shadow arms (arms.sqlite, a separate file; opened read-only) ---
+def main_trades_for_arms(all_trades):
+    """The scored main trades in the shape lean.arms compares against (return on cost, rent-free like the report itself)."""
+    out = []
+    for t in all_trades:
+        if t['scored']:
+            out.append({'mint': t['mint'], 'ret': (t['proceeds'] - t['cost']) / t['cost'], 'entry_at': float(t['entry_at']), 'exit_at': float(t['exit_at']),
+                        'pnl_lamports': int((t['proceeds'] - t['cost']) * LAMPORTS), 'hold_s': float(t['exit_at'] - t['entry_at'])})
+    return out
+
+
+def _arms_section(arms_db, db, main_trades):
+    from lean import arms
+    connection = arms.open_ro(arms_db)
+    try:
+        data = arms.report_section(connection, main_trades, min_sample=MIN_SAMPLE)
+    finally:
+        connection.close()
+    lean = open_ro(db)
+    try:
+        row = lean.execute("SELECT value FROM meta WHERE key='initial_cash_lamports'").fetchone()
+    finally:
+        lean.close()
+    data['main'] = {**arms.stats(main_trades, int(row[0]) if row else None), 'sample': sample_flag(len(main_trades))}
+    return data
+
+
+def svg_curves(curves, width=640, height=170):
+    """Equity curves (SOL, initial + realized, stepping at each close) as one inline SVG: {name: [[ts, equity], ...]}."""
+    points = [p for c in curves.values() for p in c]
+    if not points:
+        return '<p>No closed trades yet.</p>'
+    t0, t1 = min(p[0] for p in points), max(p[0] for p in points)
+    v0, v1 = min(p[1] for p in points), max(p[1] for p in points)
+    span_t, span_v = (t1 - t0) or 1.0, (v1 - v0) or 1.0
+    palette = ['#d62728', '#1f77b4', '#2ca02c', '#ff7f0e', '#9467bd', '#8c564b', '#e377c2', '#7f7f7f', '#17becf', '#bcbd22']
+    lines, legend = [], []
+    for i, (name, curve) in enumerate(curves.items()):
+        if not curve:
+            continue
+        color = '#000000' if name == 'main' else palette[i % len(palette)]
+        xy = ' '.join('%.1f,%.1f' % (8 + (p[0] - t0) / span_t * (width - 16), height - 8 - (p[1] - v0) / span_v * (height - 16)) for p in curve)
+        lines.append('<polyline fill="none" stroke="%s" stroke-width="1.5" points="%s"/>' % (color, xy))
+        legend.append('<span style="color:%s">&#9632;</span> %s' % (color, e(name)))
+    return ('<svg viewBox="0 0 %d %d" width="100%%" role="img" aria-label="equity curves" style="background:rgba(127,127,127,.08)">%s</svg>'
+            '<p>%s &middot; equity %.4f to %.4f SOL</p>' % (width, height, ''.join(lines), ' &nbsp; '.join(legend), v0, v1))
+
+
+def _pct(value):
+    return '-' if value is None else '%.1f%%' % (100 * value)
+
+
+def render_arms(a):
+    """HTML of the arms section (``a`` = the ``arms`` entry of the summary)."""
+    parts = ['<h2>Shadow arms (A/B on the same candidates)</h2>' + note(a)]
+    if a['status'] != 'OK':
+        return ''.join(parts)
+    d = a['data']
+    main = d['main']
+    rows = [['main', 'live strategy', main['trades'], _pct(main['ev_per_trade']), _pct(main['win_rate']), _pct(main['p_le_minus_50']),
+             num_or_dash(main['pnl_sol']), main['median_hold_s'], '-', main['sample']]]
+    for name, v in sorted(d['arms'].items()):
+        ci = v['ev_ci95']
+        rows.append([name, ', '.join(v['strategy_versions']), v['trades'], _pct(v['ev_per_trade']) + ('' if ci is None else ' [%s, %s]' % (_pct(ci[0]), _pct(ci[1]))),
+                     _pct(v['win_rate']), _pct(v['p_le_minus_50']), num_or_dash(v['pnl_sol']), v['median_hold_s'], v['open'], v['sample']])
+    parts.append(table(['arm', 'strategy_version', 'closed trades', 'EV / trade [95% CI]', 'win rate', 'P(<= -50%)', 'PnL SOL', 'median hold s', 'open', 'sample'], rows))
+    paired_rows = []
+    for name, v in sorted(d['arms'].items()):
+        p = v['paired_vs_main']
+        if p is None:
+            continue
+        ci = p['diff_ci95']
+        paired_rows.append([name, p['pairs'], p['arm_only'], p['main_only'], _pct(p['arm_mean']), _pct(p['main_mean']),
+                            _pct(p['mean_diff']) + ('' if ci is None else ' [%s, %s]' % (_pct(ci[0]), _pct(ci[1]))), _pct(p['arm_better_share'])])
+    if paired_rows:
+        parts.append('<p>Paired comparison against the main arm on the candidates BOTH traded (return on cost per trade, arm minus main). '
+                     'A small number of pairs is not a finding.</p>' + table(['arm', 'pairs', 'arm only', 'main only', 'arm mean', 'main mean', 'mean diff [95% CI]', 'arm better'], paired_rows))
+    curves = {'main': main['equity_curve'], **{name: v['equity_curve'] for name, v in sorted(d['arms'].items())}}
+    parts.append('<p>Equity curve (initial + realized, SOL):</p>' + svg_curves(curves))
+    for name, v in sorted(d['arms'].items()):
+        parts.append('<p><b>%s</b> &middot; hashes %s &middot; exits %s &middot; skips %s &middot; price sources %s &middot; fill flags %s</p>' % (
+            e(name), e(', '.join(h[:8] for h in v['config_hashes'])), e(json.dumps(v['exit_reasons'], sort_keys=True)),
+            e(json.dumps(v['skips'], sort_keys=True)), e(json.dumps(v['price_sources'], sort_keys=True)), e(json.dumps(v['fill_flags'], sort_keys=True))))
+    return ''.join(parts)
+
+
+def num_or_dash(value):
+    return '-' if value is None else value
+# --- end W2a ---
+
+
 def run_windows(connection):
     """M1 #10: [(start_ts, end_ts or None, lean_config_hash, strategy_config_hash)] from the store's ``start`` events: each run
     lasts until the next start. Rows of a store written before M1 carry None hashes."""
@@ -605,7 +696,7 @@ def filter_events(events, windows):
     return out
 
 
-def build(db, *, counterfactual_db=None, horizon=3600, now=None, config_hash=None):
+def build(db, *, counterfactual_db=None, horizon=3600, now=None, config_hash=None, arms_db=None):
     now = time.time() if now is None else now
     connection = open_ro(db)
     try:
@@ -665,6 +756,10 @@ def build(db, *, counterfactual_db=None, horizon=3600, now=None, config_hash=Non
     # --- L12 hook ---
     summary['features'] = _section(features_report, db)
     # --- end L12 ---
+    # --- W2a hook: shadow arms (arms.sqlite beside the store unless given; absent = not provided, never an error) ---
+    arms_path = Path(arms_db) if arms_db is not None else Path(db).with_name('arms.sqlite')
+    summary['arms'] = _section(_arms_section, arms_path, db, main_trades_for_arms(all_trades)) if arms_path.is_file() else {'status': 'NOT_PROVIDED'}
+    # --- end W2a ---
     if counterfactual_db is None:
         summary['counterfactual'] = {'status': 'NOT_PROVIDED'}
     elif funnel_result['status'] != 'OK':
@@ -824,6 +919,10 @@ def render_html(s):
                              v['rescreens'], v['entered_after_watch'], ', '.join('%s:%d' % kv for kv in sorted(v['watch_ended'].items()))]
                             for k, v in sorted(src['data'].items())]))
     # --- end L14 ---
+    # --- W2a hook ---
+    if s.get('arms', {'status': 'NOT_PROVIDED'})['status'] != 'NOT_PROVIDED':
+        parts.append(render_arms(s['arms']))
+    # --- end W2a ---
     parts.append('<h2>Errors by code</h2>' + (table(['code', 'count'], list(s['errors']['data'].items())) if s['errors']['data'] else '<p>None recorded.</p>'))
     parts.append('<h2>Versions</h2>' + table(['kind', 'version', 'events'], [['strategy', k, v] for k, v in s['versions']['strategy'].items()] +
                                               [['code', k, v] for k, v in s['versions']['code'].items()]))
@@ -861,9 +960,11 @@ def main(argv=None):
     p.add_argument('--horizon', type=int, default=3600)
     p.add_argument('--now', type=float)
     p.add_argument('--config-hash', help='M1: only the runs whose lean.json hash or strategy hash starts with this (>= 8 hex)')
+    p.add_argument('--arms-db', help='W2a: arms.sqlite (default: arms.sqlite beside --db when it exists); opened read-only')
     args = p.parse_args(argv)
     try:
-        summary = build(args.db, counterfactual_db=args.counterfactual, horizon=args.horizon, now=args.now, config_hash=args.config_hash)
+        summary = build(args.db, counterfactual_db=args.counterfactual, horizon=args.horizon, now=args.now, config_hash=args.config_hash,
+                        arms_db=args.arms_db)
         html_path, json_path = write_report(args.out_dir, summary)
     except (ReportError, sqlite3.Error, OSError) as error:
         print(json.dumps({'status': 'ERROR', 'code': type(error).__name__, 'detail': str(error)[:200]}))

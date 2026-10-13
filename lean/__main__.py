@@ -63,6 +63,9 @@ CONFIG_KEYS = {
     'peak_persist_s': 60,              # #13 a peak-only state change is persisted at most this often, or on a >= 1% rise (0 = every change)
     'discovery_stale_s': 600,          # #10 the discovery feed silent longer than this writes a discovery_stale event (and _recovered)
     # --- end M1 ---
+    # --- W2a ---
+    'arms': None,                      # lean.arms shadow paper arms ({"enabled", "db", "arms": [{name, strategy_config, entry_filter}]}); None/absent = off
+    # --- end W2a ---
 }
 RAW_POLICIES = ('all', 'errors_only')
 REQUIRED = ('strategy_config', 'initial_cash_sol')
@@ -199,6 +202,13 @@ def load_config(path):
     if cfg['discovery_stale_s'] < 60:
         raise ConfigError('discovery_stale_s must be at least 60')
     # --- end M1 ---
+    # --- W2a: strict at load (unknown keys, bad strategies and filters fail before the trader starts); None stays None ---
+    from lean import arms
+    try:
+        cfg['arms'] = arms.config(cfg['arms'], base_dir=path.parent)
+    except arms.ArmsConfigError as error:
+        raise ConfigError(str(error)) from None
+    # --- end W2a ---
     return cfg
 
 
@@ -214,7 +224,8 @@ def lean_config_hash(cfg):
     """M1 #10: sha256 of the WHOLE loaded lean.json (``load_config`` output: every key, defaults filled in, so an added key at
     its default is not a new run; canonical JSON; ``_comment`` keys left out so a comment edit is not one either). The strategy
     file has its own ``StrategyConfig.config_hash``; both go into the start event and health."""
-    text = json.dumps(_strip_comments(cfg), sort_keys=True, separators=(',', ':'), ensure_ascii=True, default=str)
+    plain = {k: v for k, v in cfg.items() if not (k == 'arms' and v is None)}      # W2a: arms OFF leaves every earlier config's hash as it was
+    text = json.dumps(_strip_comments(plain), sort_keys=True, separators=(',', ':'), ensure_ascii=True, default=str)
     return hashlib.sha256(text.encode()).hexdigest()
 
 
@@ -351,6 +362,21 @@ def build_runner(cfg, *, state_dir, discovery_db, keys, code_version, clock=None
     r.risk_external = risk_external.build(risk_external.config(cfg.get('risk_external')), store=the_store, code_version=code_version,
                                           strategy_version=strategy_cfg.strategy_version, clock=clock, transport_kwargs=transport_kwargs)
     # --- end L21 ---
+    # --- W2a: the shadow arms (own arms.sqlite, shared low lane). A store that cannot be opened never stops the trader. ---
+    if cfg.get('arms') is not None:
+        from lean import arms
+        try:
+            r.arms = arms.build(cfg['arms'], runner=r, state_dir=state, keys=keys, code_version=code_version, clock=clock,
+                                transport_kwargs=transport_kwargs)
+        except Exception as error:                                       # noqa: BLE001 - arms are optional, trading is not
+            logging.getLogger('lean.arms').exception('shadow arms could not start; trading continues without them')
+            r.arms = None
+            try:
+                r.store.record('arms_unavailable', {'error': type(error).__name__}, code_version=code_version,
+                               strategy_version=strategy_cfg.strategy_version, ts=clock())
+            except Exception:                                            # noqa: BLE001
+                pass
+    # --- end W2a ---
     return r
 
 

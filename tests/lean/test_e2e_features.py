@@ -103,6 +103,7 @@ class E2E(unittest.TestCase):
         cfg['features'] = F.config({'enabled': True}) if features else F.config(None)
         from lean import flow, sell_evidence                                                    # L20: the shipped example turns
         cfg['sell_evidence'], cfg['flow'] = sell_evidence.config(None), flow.config(None)       # them ON; the lane stays the recorder's
+        cfg['arms'] = None                                                                      # W2a: ... and the shadow arms
         r = build_runner(cfg, state_dir=root / 'state', discovery_db=world.discovery_db, keys=KEYS, code_version='e2e-features',
                          clock=clock.time, transport_kwargs={'opener': world.opener, 'clock': clock.time, 'monotonic': clock.monotonic,
                                                              'sleep': clock.sleep, 'rng': lambda: 0.5})
