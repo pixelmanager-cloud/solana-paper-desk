@@ -682,3 +682,17 @@ class NoNetworkTests(unittest.TestCase):
 
 if __name__ == '__main__':
     unittest.main()
+
+
+class TransactionVersionTests(unittest.TestCase):
+    """Live 2026-10-13: version-1 transactions exist on mainnet; getTransaction with maxSupportedTransactionVersion 0
+    failed 22 of 60 pool transactions with RPC -32015, silently thinning every swap sample (L13/L20/L23/L24)."""
+
+    def test_every_get_transaction_accepts_version_1(self):
+        import pathlib, re
+        from lean import providers as P
+        self.assertGreaterEqual(P.MAX_TX_VERSION, 1)
+        root = pathlib.Path(P.__file__).parent
+        offenders = [str(f) for f in root.glob('*.py')
+                     if re.search(r"maxSupportedTransactionVersion['\"]\s*:\s*0\b", f.read_text())]
+        self.assertEqual(offenders, [])

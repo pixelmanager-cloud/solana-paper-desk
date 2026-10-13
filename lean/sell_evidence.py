@@ -27,7 +27,7 @@ import threading
 import time
 
 from lean.flow import HourBudget, LowCalls, Stop, is_organic_sell, parse_trade, stratified
-from lean.providers import PAPER_TAKER, ProviderError
+from lean.providers import PAPER_TAKER, ProviderError, MAX_TX_VERSION
 from lean.wallet_signals import SignalError, parse_signatures
 
 log = logging.getLogger('lean.sell_evidence')
@@ -93,7 +93,7 @@ def probe(calls, pool, mint, *, now, cfg, exclude):
         for entry in plan:
             try:
                 view = parse_trade(calls.rpc('getTransaction', [entry['signature'], {'encoding': 'jsonParsed', 'commitment': 'confirmed',
-                                                                                   'maxSupportedTransactionVersion': 0}]),
+                                                                                   'maxSupportedTransactionVersion': MAX_TX_VERSION}]),
                                    entry['signature'], mint, pool)
             except (ProviderError, SignalError):
                 failed += 1

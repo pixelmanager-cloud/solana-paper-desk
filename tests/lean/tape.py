@@ -85,7 +85,7 @@ class Tape:
         return out
 
     def transaction(self, params, t):
-        assert params[1]['encoding'] == 'jsonParsed' and params[1]['maxSupportedTransactionVersion'] == 0
+        assert params[1]['encoding'] == 'jsonParsed' and params[1]['maxSupportedTransactionVersion'] == 1
         self.calls.append(('getTransaction', params[0], t))
         address, i = self.by_sig[params[0]]
         pool = self.pools[address]

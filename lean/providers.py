@@ -61,6 +61,10 @@ MAX_RETRY_AFTER = 30.0
 MAX_MULTIPLE_ACCOUNTS = 100
 MAX_PRICE_IDS = 50
 SOL_MINT = 'So11111111111111111111111111111111111111112'
+# getTransaction must accept every live transaction version: version-1 transactions exist on mainnet since 2026
+# and a lower value fails them with RPC -32015 (measured live: 22 of 60 pool transactions failed at 0).
+MAX_TX_VERSION = 1
+
 READ_ONLY_RPC = frozenset({
     'getAccountInfo', 'getMultipleAccounts', 'getTokenLargestAccounts', 'getTokenSupply',
     'getTokenAccountsByOwner', 'getSlot', 'getBlockTime', 'getBalance', 'getTransaction',
