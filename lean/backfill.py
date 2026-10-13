@@ -42,6 +42,7 @@ getTransaction per NEW signature absent from the feed, at most ``max_tx_per_poll
 (~720 calls when the feed is healthy: every authority signature is already in the database and costs nothing more).
 """
 import json
+from decimal import Decimal
 import os
 import sqlite3
 import time
@@ -66,6 +67,9 @@ DEFAULTS = {
     'interval_s': 120, 'limit': 100, 'max_pages': 3, 'max_tx_per_poll': 40, 'max_attempts_per_signature': 5,
     'lookback_s': 21_600, 'authority': AUTHORITY, 'credits_per_signatures_call': 1, 'credits_per_transaction': 1,
     'day_history': 14, 'reserve_tokens': 2,
+    # Optional cap on the age at which a BACKFILLED candidate may still be entered (None = screen.max_age_seconds).
+    # The strategy enters ~60 s after graduation; a late-found candidate older than this is recorded, never entered.
+    'max_entry_age_s': None,
 }
 DAY = 86_400
 
@@ -103,6 +107,8 @@ def make_config(raw):
     integer('credits_per_transaction', 0, 1000)
     integer('day_history', 1, 60)
     integer('reserve_tokens', 0, 10)
+    if cfg['max_entry_age_s'] is not None:
+        integer('max_entry_age_s', 60, 7 * DAY)
     try:
         address(cfg['authority'])
     except (ValueError, TypeError, KeyError):
@@ -116,6 +122,9 @@ class BackfillCandidate(C.Candidate):
     source: str = NAME
     latency_s: float = 0.0
     beyond_max_age: bool = False
+    # Per-candidate entry age cap (backfill.max_entry_age_s): the screen rejects TOO_OLD above it even when it is below
+    # screen.max_age_seconds, so a late-found graduation is recorded but never entered long after the strategy's ~60 s.
+    entry_max_age_s: object = None
 
     @property
     def meta(self):
@@ -139,6 +148,8 @@ class BackfillSource(Source):
         screen = screen_cfg or {}
         self.min_age = screen.get('min_age_seconds', C.DEFAULTS['min_age_seconds'])
         self.max_age = screen.get('max_age_seconds', C.DEFAULTS['max_age_seconds'])
+        if self.cfg['max_entry_age_s'] is not None:
+            self.max_age = min(self.max_age, self.cfg['max_entry_age_s'])
         self.state_path = os.path.join(os.fspath(state_dir), STATE_FILE)
         self.state = self._load()
         self.next_poll_at = 0.0
@@ -344,7 +355,8 @@ class BackfillSource(Source):
             day['intake_rejected_migrations'] += 1
             day['beyond_max_age'] += 1 if latency > self.max_age else 0
         return BackfillCandidate(base.seq, base.mint, base.pool, base.signature, base.slot, base.migrated_at, base.payload_hash,
-                                 source=self.name, latency_s=latency, beyond_max_age=latency > self.max_age)
+                                 source=self.name, latency_s=latency, beyond_max_age=latency > self.max_age,
+                                 entry_max_age_s=self.cfg['max_entry_age_s'])
 
     def _rpc(self, method, params):
         """LINT5: one low-lane call that leaves ``reserve_tokens`` for the other low-lane users (the path recorder's marks, L11, the
@@ -378,7 +390,8 @@ class BackfillSource(Source):
                 day['fetch_failed'] += 0 if sig in self.outcome else 1       # a re-examined signature counts once
                 return _FAILED
             raise _Retry
-        return migration_candidate(result, sig, now=now, max_age=self.max_age, name=self.name)
+        return migration_candidate(result, sig, now=now, max_age=self.max_age, name=self.name,
+                                   entry_max_age_s=self.cfg['max_entry_age_s'])
 
     # ------------------------------------------------------------------------------------------------ health
     def health(self):
@@ -414,7 +427,7 @@ def _valid_rows(result):
     return rows
 
 
-def migration_candidate(tx, signature, *, now, max_age, name=NAME):
+def migration_candidate(tx, signature, *, now, max_age, name=NAME, entry_max_age_s=None):
     """A ``getTransaction`` (jsonParsed) result -> BackfillCandidate, or None when it is not a clean migration. The decision is
     ``lean.candidates``' own (``_frame_candidate``: exactly one decoded CompletePumpAmmMigrationEvent as the depth-2 child of
     migrate / migrate_v2, canonical pool, valid addresses); this wrapper only checks that the transaction is the one asked for."""
@@ -423,13 +436,26 @@ def migration_candidate(tx, signature, *, now, max_age, name=NAME):
         return None
     if tx['meta'].get('err') is not None or (tx['transaction'].get('signatures') or [None])[0] != signature:
         return None
-    payload = json.dumps(tx, sort_keys=True)
+    payload = json.dumps(_plain(tx), sort_keys=True)     # providers parse fractions as Decimal; frames are plain JSON
     base = frame_candidate_any_depth(tx['slot'], tx['blockTime'], tx['slot'], digest(json.loads(payload)), payload, _stats())
     if base is None:
         return None
     latency = max(0.0, now - tx['blockTime'])
     return BackfillCandidate(base.seq, base.mint, base.pool, base.signature, base.slot, base.migrated_at, base.payload_hash,
-                             source=name, latency_s=latency, beyond_max_age=latency > max_age)
+                             source=name, latency_s=latency, beyond_max_age=latency > max_age, entry_max_age_s=entry_max_age_s)
+
+
+def _plain(value):
+    """The provider's exact-JSON parse (Decimal fractions) back to plain JSON types, as the discovery feed's json.loads sees
+    the same transaction, so the frame digest and the candidate match the feed's (live 2026-10-14: json.dumps raised on
+    Decimal token-balance amounts in every real getTransaction result)."""
+    if isinstance(value, Decimal):
+        return float(value)
+    if isinstance(value, dict):
+        return {k: _plain(v) for k, v in value.items()}
+    if isinstance(value, list):
+        return [_plain(v) for v in value]
+    return value
 
 
 def _stats():
