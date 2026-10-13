@@ -55,7 +55,16 @@ CONFIG_KEYS = {
     # --- L21 ---
     'risk_external': None,             # lean.risk_external settings ({"enabled", ...}): RugCheck / creator / copycat rows; None = off
     # --- end L21 ---
+    # --- M1 ---
+    'marks': None,                     # #7 lean.marks: {"model": "vault"|"effective", "fee_source": "dynamic"|"config", "schedule_ttl_s"}; None = vault
+    'raw_policy': 'all',               # #12 "all" (every provider body kept) | "errors_only" (bodies of failures only; sha256 + size + meta otherwise)
+    'blocked_log_s': 300,              # #13 an unchanged exit BLOCKED decision is written at most once per this many seconds (0 = every pass)
+    'exit_backoff_max_s': 60,          # #13 exit re-quotes of a position whose exit keeps failing back off 10 s, 20 s, ... up to this (0 = off)
+    'peak_persist_s': 60,              # #13 a peak-only state change is persisted at most this often, or on a >= 1% rise (0 = every change)
+    'discovery_stale_s': 600,          # #10 the discovery feed silent longer than this writes a discovery_stale event (and _recovered)
+    # --- end M1 ---
 }
+RAW_POLICIES = ('all', 'errors_only')
 REQUIRED = ('strategy_config', 'initial_cash_sol')
 
 
@@ -175,7 +184,38 @@ def load_config(path):
     except ValueError as error:
         raise ConfigError(str(error)) from None
     # --- end L21 ---
+    # --- M1 ---
+    from lean import marks
+    try:
+        cfg['marks'] = marks.config(cfg['marks'])
+    except marks.MarkConfigError as error:
+        raise ConfigError(str(error)) from None
+    if cfg['raw_policy'] not in RAW_POLICIES:
+        raise ConfigError('raw_policy must be one of %s' % (RAW_POLICIES,))
+    for key, high in (('blocked_log_s', 86400), ('exit_backoff_max_s', 3600), ('peak_persist_s', 3600), ('discovery_stale_s', 86400)):
+        value = cfg[key]
+        if isinstance(value, bool) or not isinstance(value, (int, float)) or not 0 <= value <= high:
+            raise ConfigError('%s must be a number between 0 and %d' % (key, high))
+    if cfg['discovery_stale_s'] < 60:
+        raise ConfigError('discovery_stale_s must be at least 60')
+    # --- end M1 ---
     return cfg
+
+
+def _strip_comments(value):
+    if isinstance(value, dict):
+        return {k: _strip_comments(v) for k, v in value.items() if k != '_comment'}
+    if isinstance(value, list):
+        return [_strip_comments(v) for v in value]
+    return value
+
+
+def lean_config_hash(cfg):
+    """M1 #10: sha256 of the WHOLE loaded lean.json (``load_config`` output: every key, defaults filled in, so an added key at
+    its default is not a new run; canonical JSON; ``_comment`` keys left out so a comment edit is not one either). The strategy
+    file has its own ``StrategyConfig.config_hash``; both go into the start event and health."""
+    text = json.dumps(_strip_comments(cfg), sort_keys=True, separators=(',', ':'), ensure_ascii=True, default=str)
+    return hashlib.sha256(text.encode()).hexdigest()
 
 
 def code_version():
@@ -199,7 +239,8 @@ def build_runner(cfg, *, state_dir, discovery_db, keys, code_version, clock=None
     os.makedirs(state, mode=0o700, exist_ok=True)
     clock = clock or time.time
     the_store = store.Store(os.path.join(state, 'lean.sqlite'), initial_cash_sol=str(cfg['initial_cash_sol']),
-                            code_version=code_version, strategy_version=strategy_cfg.strategy_version, clock=clock)
+                            code_version=code_version, strategy_version=strategy_cfg.strategy_version, clock=clock,
+                            raw_policy=cfg.get('raw_policy', 'all'))                                     # M1 #12
     transport_kwargs = transport_kwargs or {}
     # --- L07R: lane shares before any client exists ---
     from lean import paths
@@ -212,6 +253,7 @@ def build_runner(cfg, *, state_dir, discovery_db, keys, code_version, clock=None
         from lean import execution
         exec_model = execution.Execution(execution.ExecConfig.from_dict(cfg['execution']), sleep=transport_kwargs.get('sleep', time.sleep))
     # --- end L10 ---
+    from lean import marks                                                  # M1 #7
     # --- L14 hook ---
     from lean import adapters, sources, watchlist
     screen_cfg = adapters.screen_config(strategy_cfg, cfg['screen'])
@@ -242,7 +284,15 @@ def build_runner(cfg, *, state_dir, discovery_db, keys, code_version, clock=None
         pool_fee_bps=cfg['pool_fee_bps'], clock=clock, scan_limit=cfg['scan_limit'],
         max_retries=cfg['max_candidate_retries'], sol_usd_ttl_s=cfg['sol_usd_ttl_s'], stale_mark_s=cfg['stale_mark_s'],
         unexitable_after_s=cfg['unexitable_after_s'], route_check=cfg['route_check'], execution=exec_model,
-        held_risk=cfg['held_risk'], **l14)
+        held_risk=cfg['held_risk'], **l14,
+        # --- M1 ---
+        mark_model=marks.MarkModel(cfg.get('marks'), pool_fee_bps=cfg['pool_fee_bps']),
+        blocked_log_s=cfg.get('blocked_log_s', CONFIG_KEYS['blocked_log_s']),
+        exit_backoff_max_s=cfg.get('exit_backoff_max_s', CONFIG_KEYS['exit_backoff_max_s']),
+        peak_persist_s=cfg.get('peak_persist_s', CONFIG_KEYS['peak_persist_s']),
+        discovery_stale_s=cfg.get('discovery_stale_s', CONFIG_KEYS['discovery_stale_s']),
+        lean_config_hash=lean_config_hash(cfg))
+        # --- end M1 ---
     # --- L07R: the path recorder (low lane, its own paths.sqlite) is only a FACTORY here: Runner.run() builds and
     # resumes it; --once and --clear-halt never open paths.sqlite ---
     paths_cfg = paths.config(cfg.get('paths'))
@@ -250,7 +300,7 @@ def build_runner(cfg, *, state_dir, discovery_db, keys, code_version, clock=None
         r._l07r_build = lambda: paths.build(paths_cfg, state_dir=state, keys=keys, pcfg=r.pcfg, code_version=code_version,
                                             strategy_version=strategy_cfg.strategy_version,
                                             pool_fee_bps=cfg['pool_fee_bps'], clock=clock,
-                                            transport_kwargs=transport_kwargs)
+                                            transport_kwargs=transport_kwargs, mark_model=r.mark_model)     # M1 #7
     # --- end L07R ---
     # --- LINT1 hook: L11 probes / account checks on the shared non-blocking low lane, never on the exit lane ---
     if r.held_risk is not None:
@@ -332,6 +382,7 @@ def main(argv=None):
     if a.once:
         r.position_pass()
         r.candidate_pass()
+        r.flush_pending_states()                       # M1 #13
         r.write_health()
         return 0 if r.halted is None else 3
     # A halt does NOT end the process (exits keep running); only a dead loop does, non-zero, so systemd restarts it.

@@ -112,10 +112,16 @@ class Point:
     base_raw: Optional[int] = None        # the pool's base (token) vault amount; None for a dead mark
     quote_raw: Optional[int] = None       # the pool's quote (SOL) vault amount in lamports; None for a dead mark
     status: str = 'OK'                    # OK | ACCOUNT_MISSING | EMPTY_POOL
+    virtual_raw: Optional[int] = None     # M1 #7: set when the recorder marked with marks.model effective (virtual quote reserves)
+    fee_bps: Optional[int] = None         # M1 #7: the total pool fee of that mark (dynamic tier or the config fallback)
 
     @property
     def dead(self):
         return self.status != 'OK'
+
+    @property
+    def effective(self):
+        return self.virtual_raw is not None and self.fee_bps is not None
 
 
 @dataclass(frozen=True)
@@ -208,14 +214,20 @@ def iter_paths(connections, skipped):
             continue
         marks, missing, ended = {}, set(), None
         for connection in connections:
-            for ts, base, quote, status in connection.execute('SELECT ts, base_raw, quote_raw, status FROM path_marks WHERE mint=?', (mint,)):
+            # M1 #7: a recorder file with the mark-input columns marks effective rows with their virtual reserves and fee
+            extra = {'model', 'virtual_raw', 'fee_bps'} <= {r[1] for r in connection.execute('PRAGMA table_info(path_marks)')}
+            sql = ('SELECT ts, base_raw, quote_raw, status, model, virtual_raw, fee_bps FROM path_marks WHERE mint=?' if extra else
+                   'SELECT ts, base_raw, quote_raw, status, NULL, NULL, NULL FROM path_marks WHERE mint=?')
+            for ts, base, quote, status, model, virtual, fee in connection.execute(sql, (mint,)):
                 if not _finite(ts):
                     bump('MARK_UNREADABLE')
                     continue
                 if status in DEAD_STATUSES:
                     marks.setdefault(float(ts), Point(float(ts), None, None, status))
                 elif status == 'OK' and type(base) is int and type(quote) is int and base > 0 and quote > 0:
-                    marks.setdefault(float(ts), Point(float(ts), base, quote))
+                    effective = model == 'effective' and type(virtual) is int and type(fee) is int and 0 <= fee < paper.MAX_BPS
+                    marks.setdefault(float(ts), Point(float(ts), base, quote, virtual_raw=virtual if effective else None,
+                                                      fee_bps=fee if effective else None))
                 else:                                               # MALFORMED / corrupt amounts: an observation that was NOT made
                     bump('MARK_NOT_USABLE')
                     missing.add(float(ts))
@@ -266,6 +278,8 @@ def mark_lamports(point: Point, qty_raw: int, pool_fee_bps: int, pcfg) -> int:
     """THE live mark (``lean.adapters.mark``) in lamports; a dead or empty pool is worth nothing."""
     if point.dead:
         return 0
+    if point.effective:                                       # M1 #7: the recorder's effective-reserves mark, reproduced
+        return max(0, sell_quote_lamports(point, qty_raw, pool_fee_bps) - pcfg.fee_lamports)
     try:
         return int(A.mark(qty_raw, point.base_raw, point.quote_raw, pool_fee_bps=pool_fee_bps, pcfg=pcfg) * paper.LAMPORTS)
     except A.AdapterError:
@@ -390,7 +404,15 @@ class SimTrade:
 
 
 def sell_quote_lamports(point: Point, qty_raw: int, pool_fee_bps: int) -> int:
-    """Lamports out for ``qty_raw`` tokens: the constant-product output ``adapters.mark`` uses, after the pool fee."""
+    """Lamports out for ``qty_raw`` tokens: the constant-product output ``adapters.mark`` uses, after the pool fee. M1 #7: a point
+    recorded with marks.model effective uses its own reserves (vault + virtual) and fee (one component, rounded up)."""
+    if point.effective:
+        from lean import marks as M
+        try:
+            return M.sell_output(qty_raw, point.base_raw, M.effective_quote(point.quote_raw, point.virtual_raw),
+                                 M.config_fees(point.fee_bps))
+        except M.MarkError:
+            return 0
     return point.quote_raw * qty_raw // (point.base_raw + qty_raw) * (paper.MAX_BPS - pool_fee_bps) // paper.MAX_BPS
 
 

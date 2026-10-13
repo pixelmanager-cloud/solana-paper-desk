@@ -126,6 +126,20 @@ def _guards():
 
 GUARDS = _guards()
 
+# --- M1 #12: raw_policy ---
+RAW_POLICIES = ('all', 'errors_only')
+# Provider bodies nothing reads back (quotes are re-read only by route_check, which gets them from runner memory). Kept even
+# under errors_only: every ``error:*`` body, the screen bodies other modules parse later (clusters / bot_exit / sell_evidence
+# read screen:accounts_mint_pool and screen:holders), and every derived row (features, wallet_signals, flow, clusters, ...).
+RAW_KEEP_SCREEN = frozenset({'screen:accounts_mint_pool', 'screen:holders'})
+
+
+def raw_droppable(kind):
+    kind = str(kind)
+    return (kind.startswith('quote:') or kind in ('marks', 'sol_usd', 'risk_external:rugcheck')
+            or (kind.startswith('screen:') and kind not in RAW_KEEP_SCREEN))
+# --- end M1 ---
+
 
 class Store:
     """``Store(path, initial_cash_sol=..., code_version=..., strategy_version=...)``.
@@ -133,7 +147,10 @@ class Store:
     A new file needs ``initial_cash_sol``; an existing one keeps its own (a different value is refused). ``code_version`` and
     ``strategy_version`` are the defaults for rows written without an explicit value."""
 
-    def __init__(self, path, *, initial_cash_sol=None, code_version=None, strategy_version=None, clock=time.time):
+    def __init__(self, path, *, initial_cash_sol=None, code_version=None, strategy_version=None, clock=time.time, raw_policy='all'):
+        if raw_policy not in RAW_POLICIES:
+            raise StoreError('raw_policy must be one of %s' % (RAW_POLICIES,))
+        self.raw_policy = raw_policy                                         # M1 #12
         self.path = Path(path)
         self.code_version, self.strategy_version, self.clock = code_version, strategy_version, clock
         self._lock = threading.RLock()
@@ -285,6 +302,12 @@ class Store:
         code, strategy = self._versions(code_version, strategy_version)
         full = bytes(raw)
         kept = full[:MAX_RAW_BYTES]
+        # --- M1 #12: raw_policy errors_only keeps a successful provider body as sha256 + size + meta only: an EMPTY kept prefix
+        # with raw_truncated=1 (the existing truncation columns, so no schema change and every reader already copes) ---
+        if self.raw_policy == 'errors_only' and raw_droppable(kind) and full:
+            kept = b''
+            meta = {**(meta or {}), 'raw_omitted': 'errors_only'}
+        # --- end M1 ---
         text, stamp = _json(self._clean(meta or {})), self._ts(ts)
         full_sha = hashlib.sha256(full).hexdigest()
         return self._write(lambda: self.db.execute(

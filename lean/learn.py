@@ -426,7 +426,7 @@ def enterable(path: LB.PathRecord) -> bool:
 
 
 def build_dataset(lean_db, paths_db, strategy: S.StrategyConfig, *, label_cfg=None, policy=None, pool_fee_bps=LB.DEFAULT_POOL_FEE_BPS,
-                  feature_names=FEATURE_NAMES, extra_paths=()) -> Dataset:
+                  feature_names=FEATURE_NAMES, extra_paths=(), config_hash=None) -> Dataset:
     """Label every recorded path from its decision, join the features known at that decision and replay the live exit rules on it.
     ``lean_db`` / ``paths_db`` are file paths (opened ``mode=ro``) or open sqlite3 connections (``paths_db`` may be a list)."""
     from lean.report import open_ro
@@ -450,6 +450,12 @@ def build_dataset(lean_db, paths_db, strategy: S.StrategyConfig, *, label_cfg=No
         if connections is None:
             connections = LB.open_paths(paths_db, extra_paths)
         decisions = read_decisions(live)
+        # --- M1 #10: only candidates decided inside the runs of one lean.json / strategy hash ---
+        windows = None
+        if config_hash:
+            from lean import report as _report
+            windows = _report.matching_windows(_report.run_windows(live), config_hash)
+        # --- end M1 ---
         feature_rows = _observations(live, 'features', counts, 'FEATURES')
         wallet_rows = _observations(live, 'wallet_signals', counts, 'WALLET_SIGNALS')
         flow_rows = _observations(live, 'flow', counts, 'FLOW')                                 # L20
@@ -460,6 +466,9 @@ def build_dataset(lean_db, paths_db, strategy: S.StrategyConfig, *, label_cfg=No
             decision = decision_time(decisions.get(path.mint, []), path.candidate_id, path.start_ts)
             if decision is None:
                 counts.skip('DECISION_UNKNOWN')
+                continue
+            if windows is not None and not _report.in_windows(float(decision), windows):         # M1 #10
+                counts.skip('OTHER_CONFIG_HASH')
                 continue
             try:
                 ref = LB.reference(path, pcfg)
@@ -498,7 +507,7 @@ def build_dataset(lean_db, paths_db, strategy: S.StrategyConfig, *, label_cfg=No
     return Dataset(rows, {'paths': n_paths, 'labels': dict(sorted(by_label.items())), 'with_features': len(rows),
                           'enterable': sum(1 for r in rows if r.enterable), 'skipped': dict(sorted(counts.skipped.items())),
                           'excluded': {k: dict(sorted(v.items())) for k, v in sorted(counts.excluded.items())},
-                          'label_config': label_cfg.to_dict(), 'lookahead': policy.to_dict(), 'pool_fee_bps': pool_fee_bps,
+                          'label_config': label_cfg.to_dict(), 'lookahead': policy.to_dict(), 'pool_fee_bps': pool_fee_bps, 'config_hash_filter': config_hash,
                           'strategy_version': strategy.strategy_version, 'feature_names': list(feature_names),
                           'pnl_model': 'lean.labels.simulate_exits: lean.strategy.exit_decision on every recorded mark (adapters.mark), '
                                        'one isolated position per path; L10 latency and L11 DANGER exits not modelled'})
@@ -942,6 +951,7 @@ def main(argv=None):
     p.add_argument('--max-gap-fraction', type=float, default=LB.LabelConfig.max_gap_fraction)
     p.add_argument('--max-hole-s', type=float, default=LB.LabelConfig.max_hole_s)
     p.add_argument('--embargo-s', type=float, default=0)
+    p.add_argument('--config-hash', default=None, help='M1: only candidates decided in runs whose lean.json or strategy hash starts with this')
     p.add_argument('--now', type=float, default=None, help='epoch seconds for the file names (default: the current time)')
     args = p.parse_args(argv)
     try:
@@ -966,7 +976,7 @@ def main(argv=None):
             raise LearnError('out_dir missing or a symlink')
         label_cfg = LB.LabelConfig.from_strategy(strategy, max_gap_fraction=args.max_gap_fraction, max_hole_s=args.max_hole_s)
         dataset = build_dataset(args.lean_db, args.paths_db, strategy, label_cfg=label_cfg, policy=LookaheadPolicy(max_late_s=args.max_late_s),
-                                pool_fee_bps=pool_fee_bps, extra_paths=args.paths_archive)
+                                pool_fee_bps=pool_fee_bps, extra_paths=args.paths_archive, config_hash=args.config_hash)
         now = time.time() if args.now is None else args.now
         result = learn(dataset.rows, strategy=strategy, fractions=fractions, min_n=args.min_n, min_confirm=args.min_confirm,
                        min_bucket=args.min_bucket, embargo_s=args.embargo_s, now=now, proposals_dir=out / 'proposals',

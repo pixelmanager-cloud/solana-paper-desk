@@ -31,7 +31,8 @@ UNSUPPORTED_ERROR_CODES = frozenset({'INSUFFICIENT_FUNDS', 'INSUFFICIENT_BALANCE
 # Codes that are about OUR call or the transport, never about the route: never evidence of "no route".
 INCONCLUSIVE_CODES = frozenset({'AUTH_REJECTED', 'REDIRECT_REFUSED', 'ARGUMENT_INVALID', 'RESPONSE_MALFORMED', 'RESPONSE_INVALID',
                                 'RESPONSE_OVERSIZED', 'RESPONSE_TRUNCATED', 'RESPONSE_HEADERS_INVALID', 'TRANSPORT_ERROR',
-                                'CONNECTION_ERROR', 'TIMEOUT', 'RATE_LIMITED', 'DEADLINE_EXCEEDED', 'CHECK_FAILED'})
+                                'CONNECTION_ERROR', 'TIMEOUT', 'RATE_LIMITED', 'DEADLINE_EXCEEDED', 'CHECK_FAILED',
+                                'RAW_NOT_RETAINED'})                                       # M1 #12
 MAX_LABELS = 8
 
 
@@ -125,12 +126,20 @@ class RouteChecker:
 
     # -- hooks (called by the runner; they never raise except for a store failure) ------------------------------
     # ``trade`` identifies the trade a check belongs to: the candidate id for an entry, the opening fill id for an exit.
-    def on_fill(self, side, mint, observation_ref, *, candidate_id=None, trade=None):
+    def on_fill(self, side, mint, observation_ref, *, candidate_id=None, trade=None, raw=None):
+        """``raw`` (M1 #12): the quote body from runner memory; the store copy is read only when it is not given. A body the
+        store did not retain (raw_policy errors_only) with no memory copy is INCONCLUSIVE, never NOT_ROUTABLE."""
         if not self.enabled:
             return None
         try:
-            observation = self.store.observation(observation_ref)
-            facts = analyze(observation['raw'] if observation else b'')
+            if isinstance(raw, (bytes, bytearray)) and raw:
+                facts = analyze(bytes(raw))
+            else:
+                observation = self.store.observation(observation_ref)
+                if observation and observation['raw_truncated'] and not observation['raw']:
+                    facts = {'buildable': False, 'error_code': 'RAW_NOT_RETAINED', 'conclusive': False}
+                else:
+                    facts = analyze(observation['raw'] if observation else b'')
         except (StoreError, sqlite3.Error):
             raise
         except Exception:
