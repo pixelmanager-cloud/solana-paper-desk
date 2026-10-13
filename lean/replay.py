@@ -28,8 +28,13 @@ position fields; the decision function itself is never reimplemented):
                      field after a fill, to arm the trailing stop)
 The ratio is mark / cost, both net of the same fixed fee, exactly as live.
 
-``adapters.mark`` is called through ``_net_mark`` only, so a change of that function's inputs (the coordinator's M1 effective
-reserves model) is a one-place change here; the stored values are the raw vault balances either way.
+Mark models (LINT5). A mark row the recorder wrote with ``marks.model: effective`` (M1: ``path_marks.model / virtual_raw /
+fee_bps``) is replayed with THAT row's model and fee: the reserves are vault + virtual and the fee is the row's own ``fee_bps``
+(the dynamic FeeConfig tier the recorder used), through the SAME helpers the labels use (``lean.labels.mark_lamports`` /
+``sell_quote_lamports`` = ``lean.marks.sell_output``; the entry is ``lean.marks.buy_output``), whatever ``costs.fee_model`` says.
+A vault row (pre-M1, or recorded under ``marks.model: vault``) keeps the vault reserves and the fixture tier / flat fee above;
+its recorded ``fee_bps`` is the configured flat fee, not the pool's, so it is not used. ``adapters.mark`` (vault rows) and the
+labels helpers (effective rows) are called through ``Prepared.value`` / ``Prepared.proceeds`` only.
 """
 import dataclasses
 import itertools
@@ -41,7 +46,7 @@ from dataclasses import dataclass, field
 from decimal import Decimal
 from pathlib import Path
 
-from lean import adapters as A, paper, strategy as S
+from lean import adapters as A, labels as LB, marks as M, paper, strategy as S
 
 LAMPORTS = paper.LAMPORTS
 MAX_BPS = paper.MAX_BPS
@@ -129,7 +134,7 @@ class PathData:
     entered: bool
     features: dict
     target: dict
-    marks: list = field(default_factory=list)       # (ts, base_raw, quote_raw, status), ascending, no duplicates
+    marks: list = field(default_factory=list)       # (ts, base_raw, quote_raw, status, model, virtual_raw, fee_bps), ascending, no dups
     gaps: list = field(default_factory=list)        # ascending timestamps of skipped polls
     end_why: str = None
 
@@ -166,9 +171,13 @@ def load_paths(paths_db, archives=True):
                 if mint not in out:
                     out[mint] = PathData(mint, float(start), float(ends), bool(entered), f if isinstance(f, dict) else {},
                                          t if isinstance(t, dict) else {})
-            for mint, ts, base, quote, status in connection.execute('SELECT mint, ts, base_raw, quote_raw, status FROM path_marks ORDER BY ts'):
+            # LINT5: a recorder file with the M1 mark-input columns: each row keeps its own model / virtual reserves / fee
+            m1 = {'model', 'virtual_raw', 'fee_bps'} <= {r[1] for r in connection.execute('PRAGMA table_info(path_marks)')}
+            sql = ('SELECT mint, ts, base_raw, quote_raw, status, model, virtual_raw, fee_bps FROM path_marks ORDER BY ts' if m1 else
+                   'SELECT mint, ts, base_raw, quote_raw, status, NULL, NULL, NULL FROM path_marks ORDER BY ts')
+            for mint, ts, base, quote, status, model, virtual, fee in connection.execute(sql):
                 if mint in out:
-                    out[mint].marks.append((float(ts), base, quote, status))
+                    out[mint].marks.append((float(ts), base, quote, status, model, virtual, fee))
             for mint, ts in connection.execute('SELECT mint, ts FROM path_gaps ORDER BY ts'):
                 if mint in out:
                     out[mint].gaps.append(float(ts))
@@ -307,13 +316,27 @@ class Prepared:
     ts: list
     base: list
     quote: list
-    bps: list                       # the side fee (bps) at each mark
+    bps: list                       # the side fee (bps) at each mark (an effective row: its own recorded fee_bps)
     gap_ts: list
     entry_idx: int
     qty0: int
     cost0: int                      # lamports: spend + the entry fill fee
     supply: int
-    marks_full: dict = field(default_factory=dict)
+    points: list = field(default_factory=list)      # LINT5: a labels.Point for an effective row, None for a vault row
+
+    def value(self, i, qty, pcfg):
+        """The live mark (Decimal SOL, net of the fixed fee) of ``qty`` at mark ``i``."""
+        point = self.points[i] if self.points else None
+        if point is not None:
+            return A.sol(LB.mark_lamports(point, qty, None, pcfg))
+        return _net_mark(qty, self.base[i], self.quote[i], self.bps[i], pcfg)
+
+    def proceeds(self, i, qty, costs):
+        """Lamports a sell of ``qty`` at mark ``i`` returns: pool output after the fee, slippage, minus the fill fee."""
+        point = self.points[i] if self.points else None
+        if point is not None:
+            return LB.sell_quote_lamports(point, qty, None) * (MAX_BPS - costs.slippage_bps) // MAX_BPS - costs.fee_lamports
+        return _proceeds(qty, self.base[i], self.quote[i], self.bps[i], costs)
 
 
 @dataclass
@@ -349,23 +372,48 @@ def prepare(path, costs, size_lamports):
         return None
     if supply <= 0:
         return None
-    ts, base, quote, bps = [], [], [], []
-    for t, b, q, status in path.marks:
+    ts, base, quote, bps, points = [], [], [], [], []
+    for row in path.marks:
+        t, b, q, status = row[:4]
+        model, virtual, fee = row[4:7] if len(row) >= 7 else (None, None, None)
         if status not in USABLE or b is None or q is None:
             continue
+        point = effective_point(t, b, q, status, model, virtual, fee)
         ts.append(t)
         base.append(int(b))
         quote.append(int(q))
-        bps.append(costs.side_bps(int(q) * supply // int(b)) if int(b) > 0 else costs.side_bps(0))
+        points.append(point)
+        if point is not None:
+            bps.append(point.fee_bps)                                  # the row's own (dynamic tier) fee
+        else:
+            bps.append(costs.side_bps(int(q) * supply // int(b)) if int(b) > 0 else costs.side_bps(0))
     entry = next((i for i in range(len(ts)) if base[i] > 0 and quote[i] > 0), None)
     if entry is None or len(ts) - entry < 2:                          # nothing after the entry to decide on
         return None
-    spent = size_lamports * (MAX_BPS - bps[entry]) // MAX_BPS
-    out = base[entry] * spent // (quote[entry] + spent)
+    if points[entry] is not None:                                      # effective row: the program's buy (fee off the input)
+        try:
+            out = M.buy_output(size_lamports, base[entry], M.effective_quote(quote[entry], points[entry].virtual_raw), bps[entry])
+        except M.MarkError:
+            return None
+    else:
+        spent = size_lamports * (MAX_BPS - bps[entry]) // MAX_BPS
+        out = base[entry] * spent // (quote[entry] + spent)
     qty0 = out * (MAX_BPS - costs.slippage_bps) // MAX_BPS
     if qty0 <= 0:
         return None
-    return Prepared(path, ts, base, quote, bps, path.gaps, entry, qty0, size_lamports + costs.fee_lamports, supply)
+    return Prepared(path, ts, base, quote, bps, path.gaps, entry, qty0, size_lamports + costs.fee_lamports, supply,
+                    points=points if any(p is not None for p in points) else [])
+
+
+def effective_point(ts, base, quote, status, model, virtual, fee):
+    """A ``labels.Point`` for a row the recorder marked with the effective model (same acceptance as ``labels.iter_paths``),
+    else None (a vault row)."""
+    if status != 'OK' or model != 'effective' or type(base) is not int or type(quote) is not int or base <= 0 or quote <= 0:
+        return None
+    if type(virtual) is not int or type(fee) is not int or not 0 <= fee < MAX_BPS:
+        return None
+    point = LB.Point(float(ts), base, quote, virtual_raw=virtual, fee_bps=fee, model='effective')
+    return point if point.effective else None
 
 
 def _proceeds(qty, base, quote, bps, costs):
@@ -388,7 +436,7 @@ def replay_path(prep, policy, base_cfg, costs, lag=1):
 
     def sell(decision_idx, fill_idx, amount, reason):
         nonlocal qty, proceeds_total, crossed
-        p = _proceeds(amount, prep.base[fill_idx], prep.quote[fill_idx], prep.bps[fill_idx], costs)
+        p = prep.proceeds(fill_idx, amount, costs)
         proceeds_total += p
         qty -= amount
         fills.append((ts[fill_idx], amount, p, reason))
@@ -396,8 +444,8 @@ def replay_path(prep, policy, base_cfg, costs, lag=1):
         if fill_idx != decision_idx:
             lo, hi = bisect_right(prep.gap_ts, ts[decision_idx]), bisect_left(prep.gap_ts, ts[fill_idx])
             crossed += 1 if hi > lo else 0
-            at_fill = _net_mark(amount, prep.base[fill_idx], prep.quote[fill_idx], prep.bps[fill_idx], pcfg)
-            at_trigger = _net_mark(amount, prep.base[decision_idx], prep.quote[decision_idx], prep.bps[decision_idx], pcfg)
+            at_fill = prep.value(fill_idx, amount, pcfg)
+            at_trigger = prep.value(decision_idx, amount, pcfg)
             if at_trigger > 0:
                 past.append(float(at_fill / at_trigger - ONE))
         return p
@@ -406,7 +454,7 @@ def replay_path(prep, policy, base_cfg, costs, lag=1):
     marks_used = 0
     for i in range(prep.entry_idx + 1, len(ts)):
         marks_used += 1
-        mark = _net_mark(qty, prep.base[i], prep.quote[i], prep.bps[i], pcfg)
+        mark = prep.value(i, qty, pcfg)
         now = int(ts[i])
         d = S.exit_decision(pos, mark, None, now, cfg, mark_at=now)
         updates = dict(d.position_updates)

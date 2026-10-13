@@ -226,6 +226,10 @@ def decide_proposal(wf, cfg, results, policies):
     if pooled['ci_lo'] is None or pooled['ci_lo'] <= 0:
         return None, 'OOS_CI_LOWER_BOUND_NOT_ABOVE_ZERO (%s)' % (None if pooled['ci_lo'] is None else '%.4f' % pooled['ci_lo'])
     latest = next(f for f in reversed(wf['folds']) if f['selected'])
+    # LINT5: the policy proposed must ALSO clear zero on its own test block (the pooled series mixes every fold's selection)
+    if latest.get('test_ci_lo') is None or latest['test_ci_lo'] <= 0:
+        return None, 'PROPOSED_POLICY_TEST_BLOCK_CI_NOT_ABOVE_ZERO (%s)' % (
+            None if latest.get('test_ci_lo') is None else '%.4f' % latest['test_ci_lo'])
     policy = next(p for p in policies if p.name == latest['selected'])
     return {'kind': 'exit_policy_proposal_v1', 'label': LABEL, 'apply': 'NEVER AUTOMATIC: review by the coordinator and CK first',
             'policy': policy.name, 'family': policy.family, 'params': dict(policy.params),
