@@ -272,5 +272,16 @@
         "mirror_main": true
       }
     ]
+  },
+  "census": {
+    "_comment": "C3 launchpad census (RECORDING ONLY; absent/null or enabled false = off, and then it is left out of lean_config_hash). Every interval_s: per launchpad the NEW create count from bounded getSignaturesForAddress (until cursor) + at most max_tx_per_poll getTransaction log samples (maxSupportedTransactionVersion = providers.MAX_TX_VERSION), shared LOW lane, own thread, own census.sqlite; pump.fun graduations are counted from the discovery db (no RPC). Worst case 2 pads x (1 + 4) calls x 4320 polls = 43,200 credits/month (refused above credit_budget_month). The create log patterns are UNVERIFIED on live transactions: run reports/LINT5.md 'C3 live verification' before enabling.",
+    "enabled": false,
+    "db": "census.sqlite",
+    "interval_s": 600,
+    "sig_limit": 100,
+    "max_pages": 1,
+    "max_tx_per_poll": 4,
+    "credit_budget_month": 50000,
+    "pump_graduations": true
   }
 }

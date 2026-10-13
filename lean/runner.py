@@ -138,6 +138,9 @@ class Runner:
         # --- W2b hook ---
         self.prefetch = None                       # lean.prefetch.Prefetch (set by build_runner when prefetch.enabled): collectors start before the screen
         # --- end W2b ---
+        # --- C3 hook ---
+        self.census = None                         # lean.census.Census (set by build_runner when census.enabled; recording only)
+        # --- end C3 ---
         # --- LINT2b hook: the feature / wallet-signal threads (health ``alive``; one shared shutdown deadline) ---
         self._aux_threads = {}                     # name -> Thread (features, wallet_signals, flow, bot_exit, clusters, risk_external)
         # --- end LINT2b ---
@@ -1120,6 +1123,9 @@ class Runner:
                 # --- L24 hook ---
                 'clusters': self._aux_health('clusters', self.clusters),
                 # --- end L24 ---
+                # --- C3 hook ---
+                'census': self._aux_health('census', self.census),
+                # --- end C3 ---
                 # --- L21 hook ---
                 'risk_external': self._aux_health('risk_external', self.risk_external),
                 # --- end L21 ---
@@ -1237,7 +1243,7 @@ class Runner:
         specs = []
         if self.features is not None:                                       # L12: on stop it writes the queued rows unenriched
             specs.append(('features', self.features.run, (self.stop,)))
-        for name in ('wallet_signals', 'flow', 'clusters'):                 # L13, L20, L24: run_loop() polls their own .stop
+        for name in ('wallet_signals', 'flow', 'clusters', 'census'):       # L13, L20, L24, C3: run_loop() polls their own .stop
             worker = getattr(self, name)
             if worker is not None:
                 worker.stop = self.stop
