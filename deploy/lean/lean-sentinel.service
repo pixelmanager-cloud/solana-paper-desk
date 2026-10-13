@@ -1,0 +1,6 @@
+[Unit]
+Description=Lean desk sentinel (discovery/trader liveness, self-heal + Telegram alert)
+[Service]
+Type=oneshot
+ExecStart=/usr/bin/python3 /usr/local/bin/lean-sentinel.py
+TimeoutStartSec=120
