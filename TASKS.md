@@ -2172,6 +2172,8 @@ STATUS: CLAIMED by coordinator (local agents, branches cloud/L21..L24). Do not t
 
 ---
 
+> **UPDATE (M1 merged into integration/r1):** marks now live in `lean/marks.py`. `adapters.mark` supports `marks.model: effective` (vault+virtual reserves, dynamic fee tier from FeeConfig). `path_marks` gained columns `model, virtual_raw, accrued_fees_raw, fee_bps, fee_source`. There is also `raw_policy` and `--config-hash` filtering. BEFORE your DONE, merge the latest `origin/integration/r1` into your branch and re-run the full suite. C1: replay with the EFFECTIVE model where the path rows carry the fields.
+
 # ROUND C (2026-10-13). Cloud workers: take ONLY these C-tasks. Every other open item is SUPERSEDED or coordinator-owned.
 
 **Context, read first:** `~/` is not available to you, so the coordinator copied the key findings here.
