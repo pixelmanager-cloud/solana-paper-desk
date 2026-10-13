@@ -3,8 +3,8 @@
 Branch `cloud/M1b`, cut from `origin/integration/r1` (26e9c52, which has M1 merged). Paper only: `desk/` untouched, no network in any
 test, no key printed.
 
-**Suite:** `TMPDIR=/private/tmp/ .venv/bin/python -m unittest discover -s tests/lean -t .` in ONE process gives **1197 tests, OK
-(skipped=1), rc=0**. The new tests are in `tests/lean/test_m1b.py`.
+**Suite:** `TMPDIR=/private/tmp/ .venv/bin/python -m unittest discover -s tests/lean -t .` in ONE process gives **1216 tests, OK
+(skipped=1), rc=0**. That count is after merging M2. The 16 new tests are in `tests/lean/test_m1b.py`.
 
 **Fail-first:** all 14 of the original `test_m1b` tests fail or error on 26e9c52. I checked this by running the file against a
 `git archive` of that commit. The review's repro failed exactly as reported: the STOP filled at **+250 s instead of +200 s**. Two more
@@ -108,8 +108,21 @@ vault fee at the open, plus the screen's pool fields. `pool_info` is now written
 
 | script | killed |
 |---|---|
-| m1 | 57/57 |
-| l23 | see below |
-| lint3 | see below |
-| lint4 | see below |
-| l21 | see below |
+| m1 | 57/57 (after the M2 merge) |
+| m2 | 25/25 (after the M2 merge) |
+| lint3 | 32/32 (after the M2 merge) |
+| l23 | 28/28 (before the M2 merge, no file of theirs changed by it) |
+| lint4 | 13/13 (before the M2 merge, no file of theirs changed by it) |
+| l21 | 29/29 (before the M2 merge, no file of theirs changed by it) |
+
+On lint3, the pattern of its "mark without the pool fee" mutant moved with fix 5. It was updated in `tests/lean/lint3_mutate.py`
+and is killed.
+
+## Merge with M2
+
+`origin/integration/r1` at f6ffc71 (M2: learner statistics) is merged. The only conflict was in `lean/learn.py` `main()`; the
+resolution keeps all of M2's statistics. `latest_config_hash` / `--all-configs` and the filtering in `build_dataset` sit on top of
+M2's code. The vault-row fee and the mixed-model refusal live in `lean/labels.py`, which M2 calls unchanged
+(`label_path` / `simulate_exits`).
+
+**Suite after the merge:** 1216 tests, OK (skipped=1), rc=0.
