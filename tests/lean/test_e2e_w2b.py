@@ -312,7 +312,8 @@ class NoLookahead(Base):
                 prefetched += 1
                 self.assertLessEqual(row['collected_at'], decision)
                 self.assertLess(row['late_s'], 0)
-                self.assertEqual(row['holders_source'], 'rpc_at_collection')          # W2b2 #2: the job read the holder list itself, not the probe
+                self.assertEqual(row['holders_source'], 'prefetch')          # W2b2 #2: the job read the holder list itself (stamped), not the probe
+                self.assertNotIn('largest_cluster_supply_pct', row['flags'])          # read before the decision: not an AT_COLLECTION figure
                 self.assertLess(row['prefetch']['asof'], decision)
             if row.get('window_txs') is None:
                 continue

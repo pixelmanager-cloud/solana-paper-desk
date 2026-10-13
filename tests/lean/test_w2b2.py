@@ -156,7 +156,8 @@ class SnapshotsAreStampedAndAged(Base):
         rows = [r for r in rows_of(sim.runner, 'clusters') if 'prefetch' in r]
         self.assertGreater(len(rows), 8)
         for row in rows:
-            self.assertEqual(row['holders_source'], 'rpc_at_collection')
+            self.assertEqual(row['holders_source'], 'prefetch')
+            self.assertNotIn('AT_COLLECTION', row['flags'].values())          # read before the decision, so the arms may use it
             at = row['snapshot_at']['holders']
             self.assertGreater(at, row['prefetch']['asof'] - 5)
             self.assertLessEqual(at, row['collected_at'])
@@ -173,9 +174,9 @@ class SnapshotsAreStampedAndAged(Base):
         self.assertEqual(counts.excluded, {'top10_pct': {'SNAPSHOT_TOO_OLD': 1}})
         relaxed = LN.feature_values(row, 1062.0, LN.LookaheadPolicy(max_snapshot_age_s=120), LN._Counts(), ('top10_pct',))
         self.assertIsNotNone(relaxed['top10_pct'])
-        cluster = {'version': 'clusters_v1p', 'window_mode': 'prefetch', 'holders_source': 'rpc_at_collection', 'supply_source': 'prefetch',
+        cluster = {'version': 'clusters_v1p', 'window_mode': 'prefetch', 'holders_source': 'prefetch', 'supply_source': 'prefetch',
                    'late_s': -20.0, 'window_after_decision_s': 0.0, 'largest_cluster_supply_pct': 12.0, 'jito_bundled_buys': 2,
-                   'flags': {'largest_cluster_supply_pct': 'AT_COLLECTION'}, 'snapshot_at': {'holders': 980.0}}
+                   'flags': {}, 'snapshot_at': {'holders': 980.0}}
         old = LN.cluster_values(cluster, 1062.0, policy, LN._Counts(), ('largest_cluster_supply_pct', 'jito_bundled_buys'))
         self.assertIsNone(old['largest_cluster_supply_pct'])                           # 82 s old holder list
         self.assertEqual(old['jito_bundled_buys'], 2)                                  # the pool-window figure is not a snapshot

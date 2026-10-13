@@ -643,7 +643,7 @@ class Clusters:
                     holders_source = 'screen' if sink is None else 'prefetch'
                 else:
                     rows = largest_rows(self._rpc(calls, 'getTokenLargestAccounts', [mint, {'commitment': 'confirmed'}]))
-                    holders_source = 'rpc_at_collection'
+                    holders_source = 'rpc_at_collection' if sink is None else 'prefetch'      # a job's own read is BEFORE the decision (stamped, not AT_COLLECTION)
                     holders_at = self.clock()                        # W2b2 #2: when this snapshot was read
                 skip = F.exclusions({'features': feats}) or set()
                 skip.add(feats.get('pool_base_token_account'))

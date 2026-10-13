@@ -42,6 +42,7 @@ MUTANTS = [
      "screen_data=(dict(probe.features or {}), bodies.get('holders'), bodies.get('accounts_mint_pool')),"),
     ('clusters', 'the clusters holder read is not stamped', "                    holders_at = self.clock()                        # W2b2 #2: when this snapshot was read",
      "                    pass"),
+    ('clusters', 'a job holder read is flagged AT_COLLECTION', "'rpc_at_collection' if sink is None else 'prefetch'", "'rpc_at_collection'"),
     # --- #3 flow only where it can be used, on its own budget
     ('prefetch', 'flow is prefetched for a soft reject', "                if kind == 'flow' and entry.soft is True:", "                if False:"),
     ('prefetch', 'the market bands are never judged', "usd = self.sol_usd() if self.sol_usd is not None else None", "usd = None"),
